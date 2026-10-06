@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import type { McpServer } from '../../lib/types';
 import { McpServersPanel } from './MachineSettings';
+import { OpenBands } from '../../dev/OpenBands';
 
 /**
  * MCP servers start with their enable switch, followed by the name and endpoint.
@@ -116,6 +117,14 @@ function Panel({ servers }: { servers: McpServer[] }) {
 const meta = {
   title: 'Screens/MCP servers panel',
   component: Panel,
+  // These stories show what the bands hold, so every band starts open.
+  decorators: [
+    (Story) => (
+      <OpenBands>
+        <Story />
+      </OpenBands>
+    ),
+  ],
   parameters: { layout: 'padded' },
 } satisfies Meta<typeof Panel>;
 

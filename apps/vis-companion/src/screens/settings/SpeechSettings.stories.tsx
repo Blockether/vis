@@ -5,6 +5,7 @@ import type { SpeechPrefs, SpeechVoice } from '../../lib/types';
 import { VoicesPanel } from './SpeechSettings';
 import { SettingsPanel } from './SettingsLayout';
 import { getSpeechPrefs } from '../../lib/storage';
+import { OpenBands } from '../../dev/OpenBands';
 
 const prefs: SpeechPrefs = {
   asrEngine: null,
@@ -92,6 +93,14 @@ function VoiceSetup({ hasVoice = false, failsToSave = false, failsToSpeak = fals
 const meta = {
   title: 'Screens/Voice setup',
   component: VoiceSetup,
+  // These stories show what the bands hold, so every band starts open.
+  decorators: [
+    (Story) => (
+      <OpenBands>
+        <Story />
+      </OpenBands>
+    ),
+  ],
   parameters: { layout: 'fullscreen' },
   args: { hasVoice: false, failsToSave: false, failsToSpeak: false },
 } satisfies Meta<typeof VoiceSetup>;

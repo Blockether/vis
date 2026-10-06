@@ -3,7 +3,8 @@
 // band's ＋ opened `Add a machine` as its own modal ON TOP of Settings — a dialog
 // inside a dialog, with two close marks, two Escape targets and the fleet greyed
 // out behind the form that joins it. Pairing is a band in the machines column.
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, screen, within } from '@testing-library/react';
+import { renderOpenBands } from '../test-settings';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -36,7 +37,7 @@ afterEach(() => {
 });
 
 const open = (onClose: () => void = () => {}) =>
-  render(<SettingsDialog gateways={[MACHINE]} onAddMachine={async () => {}} onClose={onClose} />);
+  renderOpenBands(<SettingsDialog gateways={[MACHINE]} onAddMachine={async () => {}} onClose={onClose} />);
 
 /** The one field every way of pairing ends in. */
 const field = () => screen.queryByPlaceholderText(/vis:\/\/gateway/);

@@ -3,6 +3,7 @@ import { expect, userEvent, within } from 'storybook/test';
 import type { ComponentProps } from 'react';
 import type { SettingsResponse, SettingsTarget, Toggle } from '../../lib/types';
 import { ScopedSettingsDialog } from './ScopedSettingsDialog';
+import { OpenBands } from '../../dev/OpenBands';
 
 const target: SettingsTarget = { scope: 'group', target_id: 'wallet', label: 'Wallet work' };
 const settings: SettingsResponse = {
@@ -35,6 +36,14 @@ const client = fixtureClient(settings);
 const meta = {
   title: 'Screens/Scoped settings dialog',
   component: ScopedSettingsDialog,
+  // These stories show what the bands hold, so every band starts open.
+  decorators: [
+    (Story) => (
+      <OpenBands>
+        <Story />
+      </OpenBands>
+    ),
+  ],
   args: { client, target, onClose: () => {} },
 } satisfies Meta<typeof ScopedSettingsDialog>;
 

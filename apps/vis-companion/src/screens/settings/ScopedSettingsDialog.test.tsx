@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../../lib/gateway';
@@ -30,7 +31,7 @@ it('writes and inherits only the selected owner, without carrying form state to 
     own = action !== 'inherit';
     return response(target).groups[0].toggles[0];
   });
-  const view = render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  const view = renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
   await screen.findByText('Inherited from global');
   await user.click(screen.getByRole('switch', { name: 'Subagents a: off' }));
   await screen.findByText('Set here');
@@ -44,6 +45,29 @@ it('writes and inherits only the selected owner, without carrying form state to 
   expect(screen.queryByText('Subagents a')).toBeNull();
   expect(screen.getByRole('searchbox', { name: 'Search settings' })).toHaveValue('');
   await waitFor(() => expect(read).toHaveBeenLastCalledWith(expect.any(AbortSignal), { scope: 'session', target_id: 'b' }));
+});
+// Every settings band opens folded, so the dialog first shows only group names. A
+// search opens every band again, so a folded band cannot hide a match.
+it('opens with every band folded and opens them all for a search', async () => {
+  const user = userEvent.setup();
+  const target: SettingsTarget = { scope: 'session', target_id: 'a' };
+  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
+  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
+  vi.spyOn(client, 'settings').mockResolvedValue({
+    revision: 'scoped-1',
+    scope: 'session', target_id: 'a',
+    groups: [{ id: 'agent', title: 'Agent', toggles: [{
+      id: 'subagents', label: 'Subagents', type: 'boolean',
+      enabled: false, scopes: ['global', 'session'], source: 'global', is_override: false,
+    }] }],
+  });
+  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
+  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
+  render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  await screen.findByRole('heading', { name: 'Agent' });
+  expect(screen.queryByRole('switch', { name: 'Subagents: off' })).toBeNull();
+  await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'agent');
+  expect(await screen.findByRole('switch', { name: 'Subagents: off' })).toBeInTheDocument();
 });
 
 it('keeps gateway caches and writes separate for equal setting ids in different scopes', async () => {
@@ -80,7 +104,7 @@ it.each(['session', 'group', 'project'] as const)(
     });
     vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
     vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-    render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+    renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
     const dialog = screen.getByRole('dialog', { name: `${scope[0].toUpperCase()}${scope.slice(1)} settings` });
     expect(dialog.parentElement).toHaveClass('sm:h-auto', 'sm:max-w-4xl', 'mouse:max-w-6xl');
@@ -115,7 +139,7 @@ it('does not claim a failed search before one exists when the catalog has no tog
   vi.spyOn(client, 'settings').mockResolvedValue(data);
   vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
   vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-  render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
   expect(screen.getByRole('heading', { name: 'MCP servers' })).toBeInTheDocument();
   expect(screen.queryByText(/No settings match/)).toBeNull();
 });
@@ -140,7 +164,7 @@ it.each(['session', 'group', 'project'] as const)(
     vi.spyOn(client, 'settings').mockResolvedValue(data);
     vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
     vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-    render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+    renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
     expect(screen.getByRole('heading', { name: `${scope[0].toUpperCase()}${scope.slice(1)} settings`, level: 2 })).toBeInTheDocument();
     const panel = (title: string) => screen.getByRole('heading', { name: title, level: 3 }).closest('section');

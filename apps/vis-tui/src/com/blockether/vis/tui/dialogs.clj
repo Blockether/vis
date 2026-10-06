@@ -4217,8 +4217,8 @@
 
 (defn- settings-fold-rows
   "Mark each section header that has rows below it with `:fold` `:open` or `:closed`.
-   A section named in `folded` keeps only its header, with `:folded-count` settings hidden."
-  [rows folded]
+   A section not named in `opened` keeps only its header, with `:folded-count` settings hidden."
+  [rows opened]
   (let [rows
         (vec rows)
 
@@ -4245,7 +4245,7 @@
               (if (= :section (:type row)) (long (section-end i)) (inc i))]
 
           (cond (= (inc i) end) (recur (inc i) (conj! out row))
-                (contains? folded (:label row))
+                (not (contains? opened (:label row)))
                 (recur end
                        (conj! out
                               (assoc row
@@ -5413,8 +5413,19 @@
              inventories-pending
              (volatile! true)
 
+             ;; Every section opens folded to its header line. Only a section that the
+             ;; caller asks to focus opens at once.
+             opened
+             (atom (into #{} (keep identity) [(:focus-section callbacks)]))
+
+             ;; The first selectable row of the folded list.
+             initial-index
+             (fn []
+               (settings-initial-index (settings-fold-rows (settings-rows) @opened)
+                                       (:focus-section callbacks)))
+
              selected
-             (atom (settings-initial-index (settings-rows) (:focus-section callbacks)))
+             (atom (initial-index))
 
              toc-scroll
              (atom 0)
@@ -5434,10 +5445,6 @@
              query
              (atom "")
 
-             ;; Labels of the sections folded to their header line.
-             folded
-             (atom #{})
-
              ;; One status glyph and a gap precede each compact setting label.
              check-w
              2]
@@ -5450,7 +5457,7 @@
               (let [;; A search shows every match, so folds apply only to the full list.
                     filtered
                     (let [found (filter-settings-rows (settings-rows) @query)]
-                      (if (str/blank? @query) (settings-fold-rows found @folded) found))
+                      (if (str/blank? @query) (settings-fold-rows found @opened) found))
 
                     rows
                     (if (and (empty? filtered) (not (str/blank? @query)))
@@ -5849,8 +5856,7 @@
                     ;; Refocus the requested section after the first inventory answer.
                     (do (vreset! inventories-pending false)
                         (load-inventories!)
-                        (reset! selected (settings-initial-index (settings-rows)
-                                                                 (:focus-section callbacks)))
+                        (reset! selected (initial-index))
                         (reset! scroll 0)
                         (recur))
                     (let [key
@@ -5884,9 +5890,9 @@
                           ;; Fold or open one section, then select its header or first setting.
                           fold-section!
                           (fn [label fold?]
-                            (swap! folded (if fold? conj disj) label)
+                            (swap! opened (if fold? disj conj) label)
                             (reset! selected (settings-initial-index
-                                               (settings-fold-rows (settings-rows) @folded)
+                                               (settings-fold-rows (settings-rows) @opened)
                                                label)))]
 
                       (when key
@@ -5965,7 +5971,7 @@
                                             (fold-section! label (= :open fold))
 
                                             :toc
-                                            (when (contains? @folded (:section pressed))
+                                            (when-not (contains? @opened (:section pressed))
                                               (fold-section! (:section pressed) false))
 
                                             nil)))

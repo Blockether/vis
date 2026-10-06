@@ -24,6 +24,14 @@
 ;; leaks PUA marker chars (\uE200, \uE201) into the stored value.
 (defn has-provider? [& _] false)
 
+(defn- open-settings-sections
+  "The settings fold with every section open. Settings opens with every section
+   folded; a test about the rows themselves uses this to see them all."
+  []
+  (let [fold @#'dlg/settings-fold-rows]
+    (fn [rows opened]
+      (fold rows (into (set opened) (keep :label) rows)))))
+
 (defdescribe smoke-test
              (it "dialogs namespace loads and text-input-dialog! is public"
                  (expect (fn? (var-get #'dlg/text-input-dialog!)))))
@@ -3350,6 +3358,7 @@
                 (try (doseq [key (concat keys [KeyType/Enter KeyType/Escape])]
                        (.addInput terminal (ks key)))
                      (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
+                                      #'dlg/settings-fold-rows (open-settings-sections)
                                       #'dlg/settings-rows (constantly rows)}
                        #(dlg/settings-dialog! screen {}))
                      (finally (.stopScreen screen)))))
@@ -3447,6 +3456,7 @@
       ;; Settings reads its gateway inventories once its first frame is up; this
       ;; test is about the scrollbar, so it never pays for that round trip.
       (with-redefs-fn {#'dlg/load-inventories! (constantly nil)
+                       #'dlg/settings-fold-rows (open-settings-sections)
                        #'dlg/settings-rows (constantly (vec (cons
                                                               {:type :section :label "Responses"}
                                                               (for [i (range 50)]
@@ -3539,7 +3549,8 @@
 
       (with-redefs-fn {#'dlg/settings-rows (fn []
                                              rows)
-                       #'dlg/load-inventories! (constantly nil)}
+                       #'dlg/load-inventories! (constantly nil)
+                       #'dlg/settings-fold-rows (open-settings-sections)}
         (fn []
           (try
             ;; Paint once, then find the target from the actual terminal grid so

@@ -357,12 +357,15 @@ export function MachineSettings({
   speechPrefs,
   onSpeechChange,
   contextSessionId,
+  isProvidersOpen = false,
 }: {
   gateway: GatewayConn;
   speechPrefs: SpeechPrefs;
   onSpeechChange: SaveSpeechPrefs;
   /** The session open on this machine: rows its own scopes decide stay locked. */
   contextSessionId?: string;
+  /** Opens the Providers band, for a route from the model picker. */
+  isProvidersOpen?: boolean;
 }) {
   // ONE CLIENT PER MACHINE, and the transport pair is its whole identity. A fresh
   // `new GatewayClient(...)` per render re-fired every panel's `load` on every
@@ -493,7 +496,7 @@ export function MachineSettings({
 
       {failure === null && (
         <>
-          <ProvidersPanel client={client} />
+          <ProvidersPanel client={client} isOpen={isProvidersOpen} />
           <NotificationsPanel client={client} gateway={gateway} />
           <AutomationsPanel client={client} gatewayUrl={gateway.url} />
           <McpServersPanel client={client} />
@@ -1380,7 +1383,7 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
  * and asks for verdicts, but never holds a token, verifier, or device code.
  * The exchange itself is `useProviderAuth`, shared with the router dialog.
  */
-function ProvidersPanel({ client }: { client: GatewayClient }) {
+function ProvidersPanel({ client, isOpen }: { client: GatewayClient; isOpen: boolean }) {
   const auth = useProviderAuth(client);
   const { providers, err, note } = auth;
   const [isAdding, setIsAdding] = useState(false);
@@ -1392,6 +1395,8 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Providers"
+      // Only a route from the model picker opens the band; else the bands context decides.
+      defaultOpen={isOpen || undefined}
       /* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS, and it renders nothing
          until the gateway has said something is addable — so the band asks for it
          unconditionally and `AddProviderButton` answers with its own silence. */

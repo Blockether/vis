@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // #302: settings show extension load failures and offer an explicit refresh and reload.
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, screen, within } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GatewayClient, GatewayError } from '../../lib/gateway';
@@ -82,7 +83,7 @@ it('keeps a failed project extension visible and runs its code only on request',
         finishReload = resolve;
       }),
   );
-  render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
   expect(await screen.findByText(/Extension failed to load/)).toHaveTextContent('SyntaxError: invalid syntax');
   const { band, names, scope } = extensionsBand(4);
@@ -121,7 +122,7 @@ it('keeps matching extensions under Extensions while a search hides the actions'
   vi.spyOn(client, 'settings').mockResolvedValue({ ...catalog('project', '.vis/extensions'), scope: 'project', target_id: 'p1' });
   vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
   vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-  render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
   await user.type(await screen.findByRole('searchbox', { name: 'Search settings' }), 'desktop');
   const { names, scope } = extensionsBand(4);
@@ -144,7 +145,7 @@ it('reloads machine extensions from machine settings and explains an older gatew
     .mockRejectedValueOnce(
       new GatewayError(404, 'no such route', { error: { type: 'not-found', message: 'no such route' } }),
     );
-  render(
+  renderOpenBands(
     <MachineSettings
       gateway={{ id: 'extensions-test', url: 'http://127.0.0.1:7890', token: 'test' }}
       speechPrefs={DEFAULT_SPEECH_PREFS}
@@ -209,7 +210,7 @@ it('names each extension once, on the row of its Auto/On/Off choice', async () =
   });
   vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
   vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
-  render(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
   await screen.findByRole('heading', { name: 'vis-spel' });
   const { band, names, scope } = extensionsBand(4);

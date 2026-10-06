@@ -1,4 +1,4 @@
-import { Children, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Children, createContext, useContext, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import { SettingsHeader, Text } from '../../components/ui';
 
@@ -129,13 +129,18 @@ export function SettingsColumn({
   );
 }
 
+/**
+ * Whether settings bands without their own `defaultOpen` start open. Settings opens
+ * with every band folded. A search opens them all, so a folded band cannot hide a match.
+ */
+export const SettingsBandsOpen = createContext(false);
 export function SettingsPanel({
   title,
   headingLevel = 4,
   meta,
   action,
   disclosure,
-  defaultOpen = true,
+  defaultOpen,
   children,
 }: {
   title: string;
@@ -150,10 +155,11 @@ export function SettingsPanel({
   defaultOpen?: boolean;
   children: ReactNode;
 }) {
-  // EVERY BAND WITH A BODY FOLDS. A long settings list is easier to scan when each
-  // band can close to its name. A band with only a header, such as a lone switch,
-  // has nothing to hide and shows no chevron.
-  const [isOwnOpen, setOwnOpen] = useState(defaultOpen);
+  // EVERY BAND WITH A BODY FOLDS, AND STARTS FOLDED. Settings opens as a short list
+  // of names, and the reader opens only the band they came for. A band with only a
+  // header, such as a lone switch, has nothing to hide and shows no chevron.
+  const bandsOpen = useContext(SettingsBandsOpen);
+  const [isOwnOpen, setOwnOpen] = useState(defaultOpen ?? bandsOpen);
   const hasBody = Children.toArray(children).length > 0;
   const fold =
     disclosure ??
@@ -203,7 +209,24 @@ export function SettingsPanel({
           not fit beside it drops to its own line. */}
       {/* The same centered header fits a lone switch without an empty body below. */}
       <header>
-        <SettingsHeader action={action} disclosure={fold}>
+        <SettingsHeader
+          action={
+            action && (
+              // The band's own verb opens the band, so the form or result it adds is seen.
+              <span
+                className="contents"
+                onClickCapture={() => {
+                  if (disclosure) {
+                    if (!disclosure.isOpen) disclosure.onToggle();
+                  } else setOwnOpen(true);
+                }}
+              >
+                {action}
+              </span>
+            )
+          }
+          disclosure={fold}
+        >
           {titleBlock}
         </SettingsHeader>
       </header>

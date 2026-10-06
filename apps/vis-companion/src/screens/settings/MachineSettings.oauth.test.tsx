@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { McpServersPanel } from './MachineSettings';
 import { GatewayClient, GatewayError, GatewayOAuthError } from '../../lib/gateway';
@@ -76,7 +77,7 @@ it('opens the browser at once, without a panel, and finishes when the callback r
   const opened = vi.spyOn(window, 'open').mockReturnValue(null);
   const { returns } = browser();
   const gateway = client();
-  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await waitFor(() =>
     expect(host.authorize).toHaveBeenCalledWith(
@@ -120,7 +121,7 @@ it('keeps asking while the signed-in server is still connecting, until it lands'
       .mockResolvedValueOnce([connecting])
       .mockResolvedValueOnce([connecting])
       .mockResolvedValue([connected]);
-    render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+    renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
     fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
     await settle();
     expect(host.authorize).toHaveBeenCalled();
@@ -142,7 +143,7 @@ it('keeps asking while the signed-in server is still connecting, until it lands'
 it('takes the sign-in back from the same slot it started in', async () => {
   browser();
   const gateway = client();
-  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await screen.findByRole('button', { name: 'Cancel signing in to work' });
   fireEvent.click(screen.getByRole('button', { name: 'Cancel signing in to work' }));
@@ -160,7 +161,7 @@ it('cancels a start that returns after unmount without opening the browser', asy
       release = resolve;
     }),
   );
-  const view = render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  const view = renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   view.unmount();
   await act(async () => release(flow));
@@ -172,7 +173,7 @@ it('does not send an old callback to a different paired gateway', async () => {
   const { returns } = browser();
   const first = client();
   const second = client();
-  const view = render(<McpServersPanel client={first as unknown as GatewayClient} />);
+  const view = renderOpenBands(<McpServersPanel client={first as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await waitFor(() => expect(host.authorize).toHaveBeenCalledOnce());
   view.rerender(<McpServersPanel client={second as unknown as GatewayClient} />);
@@ -205,7 +206,7 @@ it('starts native MCP sign-in on a paired HTTP gateway without another consent d
   vi.stubGlobal('fetch', fetch);
   const { returns } = browser();
   const gateway = pairedHttpClient();
-  render(<McpServersPanel client={gateway} />);
+  renderOpenBands(<McpServersPanel client={gateway} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await waitFor(() => expect(host.authorize).toHaveBeenCalledOnce());
   expect(confirm).not.toHaveBeenCalled();
@@ -234,7 +235,7 @@ it.each([
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
   const gateway = client();
   gateway.mcpAuthStart.mockRejectedValue(error);
-  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await screen.findByText(message as string);
   expect(screen.queryByText('test-sensitive-callback-value')).toBeNull();

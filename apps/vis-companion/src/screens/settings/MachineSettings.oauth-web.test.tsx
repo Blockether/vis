@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import { afterEach, expect, it, vi } from 'vitest';
 import { McpServersPanel } from './MachineSettings';
 import type { GatewayClient } from '../../lib/gateway';
@@ -61,7 +62,7 @@ it('claims the tab inside the tap and navigates it once the gateway issues the U
         issue = resolve;
       }),
   );
-  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   expect(opened).toHaveBeenCalledExactlyOnceWith('', '_blank');
   expect(tab.location.href).toBe('');
@@ -75,7 +76,7 @@ it('closes the claimed tab when the gateway cannot start the flow', async () => 
   const tab = reserved();
   vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
   const gateway = client(() => Promise.reject(new Error('down')));
-  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await waitFor(() => expect(tab.close).toHaveBeenCalledOnce());
   expect(tab.location.href).toBe('');
@@ -85,7 +86,7 @@ it('closes the claimed tab when the gateway cannot start the flow', async () => 
 it('falls back to a plain open when the browser refuses the popup', async () => {
   const opened = vi.spyOn(window, 'open').mockReturnValue(null);
   const gateway = client(() => Promise.resolve(flow));
-  render(<McpServersPanel client={gateway as unknown as GatewayClient} />);
+  renderOpenBands(<McpServersPanel client={gateway as unknown as GatewayClient} />);
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to work' }));
   await waitFor(() =>
     expect(opened).toHaveBeenLastCalledWith(flow.url, '_blank', 'noopener,noreferrer'),

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../../lib/gateway';
 import { DEFAULT_SPEECH_PREFS } from '../../lib/storage';
@@ -36,7 +37,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 async function open() {
-  render(
+  renderOpenBands(
     <MachineSettings
       gateway={gateway}
       speechPrefs={DEFAULT_SPEECH_PREFS}

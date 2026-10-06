@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import { expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../../lib/gateway';
 import type { McpServer } from '../../lib/types';
@@ -20,7 +21,7 @@ async function showServer(spec: McpServer) {
     cachedMcpServers: () => [spec],
     mcpServers: vi.fn().mockResolvedValue([spec]),
   };
-  render(<McpServersPanel client={client as unknown as GatewayClient} />);
+  renderOpenBands(<McpServersPanel client={client as unknown as GatewayClient} />);
   await waitFor(() => expect(client.mcpServers).toHaveBeenCalledOnce());
   return screen.getByRole('button', { name: /^opennews/ });
 }

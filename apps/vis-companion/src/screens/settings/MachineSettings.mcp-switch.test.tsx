@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../../lib/gateway';
 import type { McpServer } from '../../lib/types';
@@ -29,7 +30,7 @@ async function openServer(patch: Partial<McpServer> = {}) {
       return server;
     }),
   };
-  render(<McpServersPanel client={client as unknown as GatewayClient} />);
+  renderOpenBands(<McpServersPanel client={client as unknown as GatewayClient} />);
   await waitFor(() => expect(client.mcpServers).toHaveBeenCalledOnce());
   return {
     client,
@@ -104,7 +105,7 @@ it('shows unhealthy after 30 seconds of silence without timing out another serve
   };
   vi.useFakeTimers();
   try {
-    render(<McpServersPanel client={client as unknown as GatewayClient} />);
+    renderOpenBands(<McpServersPanel client={client as unknown as GatewayClient} />);
     await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(client.mcpServers).toHaveBeenCalledOnce();
     expect(screen.getByRole('button', { name: /^iMCP/ })).toHaveAccessibleDescription('Connecting');
@@ -133,7 +134,7 @@ it('shows unhealthy even when the inventory request itself never answers', async
   };
   vi.useFakeTimers();
   try {
-    render(<McpServersPanel client={client as unknown as GatewayClient} />);
+    renderOpenBands(<McpServersPanel client={client as unknown as GatewayClient} />);
     expect(screen.getByRole('button', { name: /^linear/ })).toHaveAccessibleDescription('Connecting');
     await act(async () => vi.advanceTimersByTimeAsync(30_000));
     expect(screen.getByRole('button', { name: /^linear/ })).toHaveAccessibleDescription('Unhealthy — could not connect');

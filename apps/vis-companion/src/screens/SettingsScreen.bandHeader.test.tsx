@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ListRow } from '../components/ui';
-import { SettingsPanel } from './settings/SettingsLayout';
+import { SettingsBandsOpen, SettingsPanel } from './settings/SettingsLayout';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -95,20 +95,37 @@ describe('a band and the rows under it keep one rail', () => {
 });
 
 describe('every settings band with a body folds', () => {
-  it('opens by default and hides its body behind its own chevron', () => {
+  it('starts folded and shows its body behind its own chevron', () => {
     render(
       <SettingsPanel title="Theme">
         <p>Vis Light</p>
       </SettingsPanel>,
     );
-    expect(screen.getByText('Vis Light')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Hide Theme' }));
     expect(screen.queryByText('Vis Light')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show Theme' }));
     expect(screen.getByText('Vis Light')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide Theme' }));
+    expect(screen.queryByText('Vis Light')).toBeNull();
   });
 
-  it('keeps the band action a separate control beside the chevron', () => {
+  it('starts open where the caller or a search asks for it', () => {
+    render(
+      <>
+        <SettingsPanel title="Add a machine" defaultOpen>
+          <p>Pairing code</p>
+        </SettingsPanel>
+        <SettingsBandsOpen.Provider value>
+          <SettingsPanel title="Planning">
+            <p>Plan mode</p>
+          </SettingsPanel>
+        </SettingsBandsOpen.Provider>
+      </>,
+    );
+    expect(screen.getByText('Pairing code')).toBeVisible();
+    expect(screen.getByText('Plan mode')).toBeVisible();
+  });
+
+  it('keeps the band action a separate control that opens its band', () => {
     let added = 0;
     render(
       <SettingsPanel
@@ -122,8 +139,12 @@ describe('every settings band with a body folds', () => {
         <p>context7</p>
       </SettingsPanel>,
     );
+    expect(screen.queryByText('context7')).toBeNull();
+    // The verb runs once and shows what it adds; it does not toggle the fold.
     fireEvent.click(screen.getByRole('button', { name: 'Add an MCP server' }));
     expect(added).toBe(1);
+    expect(screen.getByText('context7')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Add an MCP server' }));
     expect(screen.getByText('context7')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Hide MCP servers' }));
     expect(screen.queryByText('context7')).toBeNull();

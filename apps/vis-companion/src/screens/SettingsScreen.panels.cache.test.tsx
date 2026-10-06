@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 // Machine panels are warmed before settings open. Once they have answered,
 // reopening that machine must paint the cached answer immediately instead of flickering.
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
+import { renderOpenBands } from '../test-settings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SettingsDialog } from './SettingsScreen';
@@ -61,7 +62,7 @@ afterEach(() => {
 });
 
 const open = () =>
-  render(<SettingsDialog gateways={[MACHINE]} onAddMachine={async () => {}} onClose={() => {}} />);
+  renderOpenBands(<SettingsDialog gateways={[MACHINE]} onAddMachine={async () => {}} onClose={() => {}} />);
 
 describe('opening settings for a machine that already answered', () => {
   it('paints the MCP servers and providers in the first open frame', async () => {

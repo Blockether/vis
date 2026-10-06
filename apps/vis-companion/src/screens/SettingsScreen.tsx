@@ -250,7 +250,7 @@ export function SettingsDialog({
                 asked for, so the cog still opens on the fleet it was pressed for. */}
             {isAdding && (
               <div ref={addRef}>
-                <SettingsPanel title="Add a machine">
+                <SettingsPanel title="Add a machine" defaultOpen>
                   <div className="p-3 sm:p-4">
                     <AddMachine
                       onAdd={async (conn, makeActive) => {
@@ -282,11 +282,12 @@ export function SettingsDialog({
                     speechPrefs={speechPrefs}
                     onSpeechChange={changeSpeech}
                     contextSessionId={contextSession?.url === conn.url ? contextSession.sid : undefined}
+                    isProvidersOpen={conn.url === providerMachineUrl}
                   />
                 )}
               />
             ) : (
-              <SettingsPanel title="No machine yet">
+              <SettingsPanel title="No machine yet" defaultOpen>
                 <div className="px-4 py-6 text-center">
                   <Text as="p" variant="description">
                     Add a machine above, and its settings live under its own row.

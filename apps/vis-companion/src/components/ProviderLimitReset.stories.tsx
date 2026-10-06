@@ -3,10 +3,19 @@ import { expect, fn, mocked, userEvent, waitFor, within } from 'storybook/test';
 import type { ProviderResetOutcome } from '../lib/types';
 import { ProviderLimitReset } from './ProviderLimitReset';
 import { SettingsPanel } from '../screens/settings/SettingsLayout';
+import { OpenBands } from '../dev/OpenBands';
 
 const meta = {
   title: 'Components/Provider limit reset',
   component: ProviderLimitReset,
+  // These stories show what the bands hold, so every band starts open.
+  decorators: [
+    (Story) => (
+      <OpenBands>
+        <Story />
+      </OpenBands>
+    ),
+  ],
   parameters: { layout: 'fullscreen' },
   render: (args) => (
     <div className="p-4">

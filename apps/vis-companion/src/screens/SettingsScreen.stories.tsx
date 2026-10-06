@@ -8,6 +8,7 @@ import { resolveTheme } from '../lib/theme';
 import { THEMES } from '../lib/themes.generated';
 import { SettingsDialog } from './SettingsScreen';
 import { IterationTrace } from '../components/ChatContent';
+import { OpenBands } from '../dev/OpenBands';
 
 /** The real dialog over a fixture transport; preferences remain local to this preview. */
 function StorySettings({
@@ -46,7 +47,9 @@ const meta = {
         theme={String(globals.theme)}
         populated={parameters.populated === true}
       >
-        <Story />
+        <OpenBands>
+          <Story />
+        </OpenBands>
       </StorySettings>
     ),
   ],

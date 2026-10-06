@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,7 +27,7 @@ function fixture(status: RoomsStatus = CONFIGURED, machineName = 'Laptop') {
     deleteRoom: vi.fn().mockResolvedValue({}), removeRoomMember: vi.fn().mockResolvedValue({}),
     inviteToRoom: vi.fn(), revokeRoomInvite: vi.fn().mockResolvedValue({}),
     disconnectRooms: vi.fn().mockResolvedValue(NOT_CONNECTED), setSetting: vi.fn() };
-  render(<CouncilRooms client={client as unknown as GatewayClient} machineName={machineName} onChanged={vi.fn()} />);
+  renderOpenBands(<CouncilRooms client={client as unknown as GatewayClient} machineName={machineName} onChanged={vi.fn()} />);
   return client;
 }
 
@@ -58,7 +59,7 @@ describe('Council room Settings', () => {
       ] }],
     });
     vi.spyOn(GatewayClient.prototype, 'rooms').mockResolvedValue(NOT_CONNECTED);
-    render(
+    renderOpenBands(
       <MachineSettings
         gateway={{ id: 'rooms-test', url: 'http://127.0.0.1:7890', token: 'test' }}
         speechPrefs={DEFAULT_SPEECH_PREFS}

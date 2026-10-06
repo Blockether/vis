@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { renderOpenBands } from '../test-settings';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 
@@ -180,7 +181,7 @@ function choice(name: RegExp) {
 describe('the speech-engines band', () => {
   it('presents ASR and TTS as disclosures instead of separate listening and reply sections', async () => {
     const { client } = machine();
-    render(<Harness client={client} />);
+    renderOpenBands(<Harness client={client} />);
 
     const asr = await screen.findByRole('button', { name: /ASR/ });
     const tts = screen.getByRole('button', { name: /TTS/ });
@@ -199,7 +200,7 @@ describe('the speech-engines band', () => {
 
   it('stores the specific ASR engine chosen from the expanded list', async () => {
     const { client, asked } = machine();
-    render(<Harness client={client} />);
+    renderOpenBands(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /ASR/ }));
     const whisper = await screen.findByRole('button', { name: /Whisper \(gateway\)/ });
@@ -215,7 +216,7 @@ describe('the speech-engines band', () => {
   // settings for every other engine were inaccessible from their own rows.
   it('keeps every TTS engine disclosure closed and independent from selection', async () => {
     const { client } = machine();
-    render(<Harness client={client} />);
+    renderOpenBands(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /TTS/ }));
     const engines = await screen.findByRole('group', { name: 'TTS engines' });
@@ -274,7 +275,7 @@ describe('the speech-engines band', () => {
     const pendingPaint = new Promise<void>((resolve) => {
       releasePaint = resolve;
     });
-    render(
+    renderOpenBands(
       <Harness
         client={client}
         beforePaint={(prefs) => (prefs.ttsEngine === 'pocket-tts-local' ? pendingPaint : undefined)}
@@ -331,7 +332,7 @@ describe('the speech-engines band', () => {
       value: { getVoices: () => synthesis.getVoices(), speak, cancel },
     });
     vi.stubGlobal('SpeechSynthesisUtterance', DevicePreviewUtterance);
-    render(<Harness client={client} />);
+    renderOpenBands(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /TTS/ }));
     const engines = await screen.findByRole('group', { name: 'TTS engines' });
@@ -357,7 +358,7 @@ describe('the speech-engines band', () => {
   // every speech engine instead of belonging to the engine whose disclosure opened.
   it('keeps gateway voices directly under their owning TTS engine', async () => {
     const { client } = machine();
-    render(<Harness client={client} />);
+    renderOpenBands(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /TTS/ }));
     const piper = choice(/Piper \(gateway\)/)!;
@@ -394,7 +395,7 @@ describe('the speech-engines band', () => {
         return Promise.resolve(ready(engine ?? 'parakeet-local'));
       },
     );
-    render(<Harness client={client} />);
+    renderOpenBands(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /ASR/ }));
     await waitFor(() => expect(asked).toContain('asr:whisper-local:read'));
@@ -411,7 +412,7 @@ describe('the speech-engines band', () => {
       engine: 'parakeet-local',
       error: 'the archive did not match its checksum',
     });
-    render(<Harness client={client} />);
+    renderOpenBands(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /ASR/ }));
     expect(
@@ -431,7 +432,7 @@ describe('the speech-engines band', () => {
       absent('no speech synthesis engine is registered'),
       { hasAsr: false, hasTts: false },
     );
-    render(<Harness client={client} />);
+    renderOpenBands(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /ASR/ }));
     expect(await screen.findByText(/could not load its native library/)).toBeVisible();

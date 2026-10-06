@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { SearchIcon } from '../../components/icons';
 import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, SettingsResponse, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow } from './MachineSettings';
 import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
-import { SettingsPanel } from './SettingsLayout';
+import { SettingsBandsOpen, SettingsPanel } from './SettingsLayout';
 
 type ScopedSettingsProps = {
   client: GatewayClient;
@@ -66,6 +66,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     setData(await client.settings(undefined, owner));
   };
   const needle = search.toLowerCase().trim();
+  const bandsOpen = useContext(SettingsBandsOpen);
   const groups = (data?.groups ?? [])
     .map((group) => ({
       ...group,
@@ -136,15 +137,17 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
             </div>
           )}
           {(groups.length > 0 || !needle) && (
+            // A search opens every band again, so a folded band cannot hide a match.
+            <SettingsBandsOpen.Provider value={bandsOpen || Boolean(needle)}>
             <div className="divide-y divide-dialog-edge">
-              {/* A search opens every group again, so a folded group cannot hide a match. */}
               {groups.filter((group) => !isExtensionGroup(group)).map((group) => <SettingsPanel key={needle ? `${group.id}:search` : group.id} title={group.title} headingLevel={3}>
                 {rows(group)}
               </SettingsPanel>)}
-              {(!needle || extensions.length > 0) && <ExtensionsPanel client={client} target={owner} groups={extensions} hasActions={!needle}
+              {(!needle || extensions.length > 0) && <ExtensionsPanel key={needle ? 'extensions:search' : 'extensions'} client={client} target={owner} groups={extensions} hasActions={!needle}
                 onRefresh={reread} renderSetting={row} />}
               {!needle && <McpServersPanel client={client} target={owner} />}
             </div>
+            </SettingsBandsOpen.Provider>
           )}
         </div>
       </DialogFrame>

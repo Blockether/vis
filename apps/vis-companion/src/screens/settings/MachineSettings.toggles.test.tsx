@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import { renderOpenBands } from '../../test-settings';
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../../lib/gateway';
@@ -47,7 +48,7 @@ afterEach(() => {
 });
 
 async function openSettings() {
-  render(
+  renderOpenBands(
     <MachineSettings
       gateway={gateway}
       speechPrefs={DEFAULT_SPEECH_PREFS}
@@ -119,7 +120,7 @@ describe('settings the open session decides elsewhere', () => {
       }],
     });
     const save = vi.spyOn(GatewayClient.prototype, 'setSetting');
-    render(
+    renderOpenBands(
       <MachineSettings
         gateway={gateway}
         speechPrefs={DEFAULT_SPEECH_PREFS}
@@ -247,7 +248,7 @@ describe('experimental feature flags', () => {
       enabled = !enabled;
       return { ...feature, enabled };
     });
-    render(
+    renderOpenBands(
       <MachineSettings
         gateway={gateway}
         speechPrefs={DEFAULT_SPEECH_PREFS}
@@ -282,7 +283,7 @@ describe('typed settings', () => {
       revision: 'typed-1',
       groups: [{ id: 'limits', title: 'Limits', toggles: [turns, filesystem] }],
     });
-    render(
+    renderOpenBands(
       <MachineSettings
         gateway={gateway}
         speechPrefs={DEFAULT_SPEECH_PREFS}
