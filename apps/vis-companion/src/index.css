@@ -404,11 +404,8 @@
 }
 
 /* The transcript outline rail (#316) stands in a gutter of its own, beside the text.
-   The rail is 2rem wide at the right edge, so the text stops well before it. */
-.transcript-column.has-outline {
-  padding-right: calc(env(safe-area-inset-right) + 2.5rem);
-}
-
+   The rail is 2rem wide at the right edge, so the text stops well before it. A narrow
+   screen keeps the whole width for the text: there the rail stands over it, hidden. */
 @media (width >= 40rem) {
   .transcript-column.has-outline {
     padding-right: calc(env(safe-area-inset-right) + 4rem);

@@ -14,6 +14,10 @@
  * whole prompt and the start of its answer. A finger that drags on the rail SCRUBS
  * through the turns. The preview follows the finger, and each held turn comes to the
  * top of the transcript at once. The release jumps to the last turn that it named.
+ *
+ * A NARROW SCREEN has no room for a gutter, so the rail stands over the text and is
+ * hidden. It shows when the reader scrolls the transcript or taps its place, and hides
+ * again `RAIL_SHOW_MS` later. A tap on the hidden rail only shows it.
  */
 import {
   useCallback,
@@ -34,9 +38,11 @@ import type { Viewport } from '../lib/anchored-menu';
 import { useBackLayer } from '../lib/edge-back';
 import {
   mergeOutline,
+  NARROW_SCREEN,
   OUTLINE_WIDTH,
   outlinePanelPosition,
   previewPosition,
+  RAIL_SHOW_MS,
   railLines,
   readingTurnId,
   scrubIndex,
@@ -193,6 +199,12 @@ export function TranscriptOutline({
   const scrubRef = useRef<Scrub | null>(null);
   // Some browsers end a scrub with a click on the rail. That click is not a press.
   const scrubbedRef = useRef(false);
+  // The rail of a narrow screen shows for a time after each scroll or tap.
+  const [shown, setShown] = useState(false);
+  const shownRef = useRef(false);
+  const hideRef = useRef<number | null>(null);
+  // A tap that starts on the hidden rail only shows it. The tap does not open the card.
+  const hiddenTapRef = useRef(false);
 
   const cancelTimer = useCallback(() => {
     if (timerRef.current === null) return;
@@ -200,6 +212,18 @@ export function TranscriptOutline({
     timerRef.current = null;
   }, []);
 
+  const reveal = useCallback(() => {
+    shownRef.current = true;
+    setShown(true);
+    if (hideRef.current !== null) window.clearTimeout(hideRef.current);
+    hideRef.current = window.setTimeout(() => {
+      hideRef.current = null;
+      shownRef.current = false;
+      setShown(false);
+    }, RAIL_SHOW_MS);
+  }, []);
+
+  // A closed card leaves the rail on screen for a time, also on a narrow screen.
   const close = useCallback(() => {
     cancelTimer();
     readRef.current?.abort();
@@ -207,15 +231,35 @@ export function TranscriptOutline({
     pressedRef.current = false;
     setPlace(null);
     setPreview(null);
-  }, [cancelTimer]);
+    reveal();
+  }, [cancelTimer, reveal]);
 
   useEffect(
     () => () => {
       cancelTimer();
       readRef.current?.abort();
+      if (hideRef.current !== null) window.clearTimeout(hideRef.current);
     },
     [cancelTimer],
   );
+
+  // The scroll of the reader shows the rail. Momentum scrolls on after the finger lifts,
+  // and that scroll keeps a shown rail on screen.
+  useEffect(() => {
+    const viewport = scroller.current;
+    if (!viewport) return;
+    const onScroll = () => {
+      if (shownRef.current) reveal();
+    };
+    viewport.addEventListener('touchmove', reveal, { passive: true });
+    viewport.addEventListener('wheel', reveal, { passive: true });
+    viewport.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      viewport.removeEventListener('touchmove', reveal);
+      viewport.removeEventListener('wheel', reveal);
+      viewport.removeEventListener('scroll', onScroll);
+    };
+  }, [scroller, reveal]);
 
   const later = (delay: number, action: () => void) => {
     cancelTimer();
@@ -278,6 +322,10 @@ export function TranscriptOutline({
     // A key presses with `detail` 0. Only a pointer can end a scrub with a click.
     if (scrubbedRef.current && event.detail !== 0) {
       scrubbedRef.current = false;
+      return;
+    }
+    if (hiddenTapRef.current && event.detail !== 0) {
+      hiddenTapRef.current = false;
       return;
     }
     if (isOpen && pressedRef.current) {
@@ -365,6 +413,9 @@ export function TranscriptOutline({
   // the gateway waits for the release, because the jump pages it in.
   const onRailDown = (event: ReactPointerEvent) => {
     scrubbedRef.current = false;
+    hiddenTapRef.current =
+      !shownRef.current && !isOpen && window.matchMedia?.(NARROW_SCREEN).matches === true;
+    reveal();
     if (event.pointerType === 'mouse' || !event.isPrimary) return;
     scrubRef.current = {
       pointerId: event.pointerId,
@@ -531,7 +582,9 @@ export function TranscriptOutline({
         aria-label="Jump to a message"
         aria-haspopup="dialog"
         aria-expanded={isOpen}
-        className={`flex w-8 touch-none select-none flex-col items-center gap-0.75 py-3 [-webkit-touch-callout:none] focus-visible:bg-hover focus-visible:outline-none ${className}`}
+        className={`flex w-8 touch-none select-none flex-col items-center gap-0.75 py-3 transition-opacity duration-200 [-webkit-touch-callout:none] focus-visible:bg-hover focus-visible:opacity-100 focus-visible:outline-none motion-reduce:transition-none ${
+          shown || isOpen || preview ? '' : 'max-sm:opacity-0'
+        } ${className}`}
         onClick={onRailClick}
         onPointerDown={onRailDown}
         onPointerMove={onRailMove}
@@ -545,8 +598,8 @@ export function TranscriptOutline({
             key={line}
             aria-hidden
             data-active={line === rail.active ? '' : undefined}
-            className={`block h-0.5 w-4 bg-current transition-colors duration-150 motion-reduce:transition-none ${
-              line === rail.active ? 'text-dialog-foreground' : 'text-dialog-hint/50'
+            className={`block h-0.5 bg-current transition-[color,width] duration-150 motion-reduce:transition-none ${
+              line === rail.active ? 'w-5 text-dialog-foreground' : 'w-4 text-dialog-hint/50'
             }`}
           />
         ))}

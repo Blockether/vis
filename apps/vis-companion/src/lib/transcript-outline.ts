@@ -31,6 +31,12 @@ export type OutlineStatus = 'done' | 'running' | 'queued' | 'waiting' | 'cancell
 /** The most lines the rail paints. In a longer session, turns share a line. */
 export const RAIL_MAX_LINES = 12;
 
+/** A narrow screen. There the rail stands over the text and hides until the reader needs it. */
+export const NARROW_SCREEN = '(width < 40rem)';
+
+/** How long a narrow screen shows the rail after the last scroll or tap, in milliseconds. */
+export const RAIL_SHOW_MS = 1500;
+
 /** Where a jump puts the top of a turn, below the top edge of the scroller. */
 export const JUMP_MARGIN = 16;
 

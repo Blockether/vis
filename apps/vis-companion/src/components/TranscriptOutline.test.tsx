@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { OutlineEntry } from '../lib/transcript-outline';
+import { NARROW_SCREEN, RAIL_SHOW_MS, type OutlineEntry } from '../lib/transcript-outline';
 import { TranscriptOutline } from './TranscriptOutline';
 
 const LONG_ANSWER =
@@ -73,5 +73,81 @@ describe('TranscriptOutline preview', () => {
     await user.hover(whole);
     await waitFor(() => expect(within(screen.getByRole('tooltip')).getByText('Done')).toHaveClass('text-ok'));
     expect(within(screen.getByRole('tooltip')).getByText('Yes.').className).not.toContain('mask-image');
+  });
+});
+
+/** Makes the screen as narrow as a phone. */
+function narrowScreen() {
+  vi.spyOn(window, 'matchMedia').mockImplementation(
+    (query: string) =>
+      ({
+        matches: query === NARROW_SCREEN,
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList,
+  );
+}
+
+/** A finger taps the rail. */
+function tap(rail: HTMLElement) {
+  const finger = { pointerType: 'touch', isPrimary: true, pointerId: 1 };
+  fireEvent.pointerDown(rail, finger);
+  fireEvent.pointerUp(rail, finger);
+  fireEvent.click(rail, { detail: 1 });
+}
+
+describe('TranscriptOutline rail on a narrow screen', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('shows the hidden rail while the reader scrolls, and hides it again after', () => {
+    vi.useFakeTimers();
+    narrowScreen();
+    const { container } = render(<Outline />);
+    const scroller = container.firstElementChild as HTMLElement;
+    const rail = screen.getByRole('button', { name: 'Jump to a message' });
+    expect(rail).toHaveClass('max-sm:opacity-0');
+
+    fireEvent.touchMove(scroller);
+    expect(rail).not.toHaveClass('max-sm:opacity-0');
+    act(() => vi.advanceTimersByTime(RAIL_SHOW_MS - 1));
+    // Momentum scrolls on after the finger lifts and keeps the rail on screen.
+    fireEvent.scroll(scroller);
+    act(() => vi.advanceTimersByTime(RAIL_SHOW_MS - 1));
+    expect(rail).not.toHaveClass('max-sm:opacity-0');
+    act(() => vi.advanceTimersByTime(1));
+    expect(rail).toHaveClass('max-sm:opacity-0');
+  });
+
+  it('only shows the hidden rail on the first tap, and opens the card on the next', () => {
+    narrowScreen();
+    render(<Outline />);
+    const rail = screen.getByRole('button', { name: 'Jump to a message' });
+
+    tap(rail);
+    expect(rail).not.toHaveClass('max-sm:opacity-0');
+    expect(screen.queryByRole('dialog', { name: 'Jump to a message' })).not.toBeInTheDocument();
+
+    tap(rail);
+    expect(screen.getByRole('dialog', { name: 'Jump to a message' })).toBeInTheDocument();
+  });
+
+  it('paints the line of the turn on screen longer than the others', async () => {
+    render(<Outline />);
+    const rail = screen.getByRole('button', { name: 'Jump to a message' });
+    const active = await waitFor(() => {
+      const line = rail.querySelector('[data-active]');
+      expect(line).not.toBeNull();
+      return line;
+    });
+    expect(active).toHaveClass('w-5');
+    for (const line of rail.querySelectorAll('span:not([data-active])')) expect(line).toHaveClass('w-4');
   });
 });

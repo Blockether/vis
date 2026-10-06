@@ -5159,6 +5159,7 @@ export function SessionScreen({
             {showsOutline && (
               // The rail stands in the gutter that `has-outline` keeps beside the text,
               // centred on the transcript, and never in the unsafe edge of a notched phone.
+              // A narrow screen has no gutter: the rail stands over the text, hidden.
               <div className="pointer-events-none absolute inset-0 z-10 mx-auto flex max-w-3xl items-center justify-end pr-[env(safe-area-inset-right)] mouse:max-w-6xl">
                 <TranscriptOutline
                   key={sid}
