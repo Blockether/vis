@@ -4,6 +4,7 @@
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.composer-attachment-rail :as rail]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.theme :as t]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (def attachments
@@ -54,7 +55,30 @@
                    (expect (= ["image-1" "doc-1" "audio-1"]
                               (mapv :attachment-id
                                     (filter #(= :attachment-remove (:kind %)) regions))))
-                   (expect (= 3 (count (filter #(= :attachment-inspect (:kind %)) regions)))))))
+                   (expect (= 3 (count (filter #(= :attachment-inspect (:kind %)) regions))))))
+             (it "paints Remove as the standard primary action button"
+                 ;; Regression, user report: Remove was dim `[remove]` text, not a button.
+                 (let [{:keys [capture]}
+                       (paint-rail 72 false)
+
+                       row
+                       (nth (str/split-lines (cap/frame-text capture)) 2)
+
+                       col
+                       (inc (long (str/index-of row " Remove ")))
+
+                       cell
+                       (get-in (last (:frames capture)) [2 col])
+
+                       rgb
+                       (fn [^com.googlecode.lanterna.TextColor c]
+                         [(.getRed c) (.getGreen c) (.getBlue c)])]
+
+                   (expect (not (str/includes? row "[remove]")))
+                   (expect (= "R" (:ch cell)))
+                   (expect (:bold cell))
+                   (expect (= (rgb t/dialog-hint-key) (:bg cell)))
+                   (expect (= (rgb t/dialog-bg) (:fg cell))))))
 
 (defdescribe compact-attachment-spacing
              ;; #249: a staged PNG must not reserve a yellow shadow row.
@@ -85,8 +109,8 @@
                    (expect (= 3 (rail/rail-height [image]) (:ret capture)))
                    (expect (= 100 (p/display-width row)))
                    (expect (str/starts-with? row (str "│  " (rail/attachment-label image))))
-                   (expect (str/ends-with? row " [remove] │"))
-                   (expect (= 99 (+ (:col remove-bounds) (:width remove-bounds))))
+                   (expect (str/ends-with? row " Remove  │"))
+                   (expect (= 98 (+ (:col remove-bounds) (:width remove-bounds))))
                    (expect (every? #(= paper (:bg %)) (nth frame 4)))))
              (it "reserves and paints nothing without attachments"
                  (let [{:keys [capture regions]} (paint-rail 100 false [])]

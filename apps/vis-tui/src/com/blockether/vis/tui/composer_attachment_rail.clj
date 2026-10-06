@@ -5,6 +5,7 @@
    Every row retains its identity, filename, dimensions/size and remove action.
    C-x i focuses this keyboard surface without moving the text cursor."
   (:require [clojure.string :as str]
+            [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
@@ -73,9 +74,6 @@
           width
           (max 1 (long cols))
 
-          remove-label
-          " [remove] "
-
           bordered?
           (>= width 4)
 
@@ -88,17 +86,25 @@
           content-left
           (+ left inset)
 
+          ;; Remove is the standard primary action button: an ink cap with a light label.
+          ;; A narrow rail keeps a `×` cap, and a rail under one cap keeps only the target.
           remove-label
-          (if (>= inner-w 18) remove-label " × ")
+          (if (>= inner-w 18) "Remove" "×")
 
-          remove-label
-          (p/truncate-cols remove-label inner-w)
+          cap-w
+          (+ 2 (long (p/display-width remove-label)))
+
+          cap?
+          (>= inner-w cap-w)
+
+          gap
+          (if (and cap? (>= inner-w 18)) 1 0)
 
           remove-w
-          (long (p/display-width remove-label))
+          (if cap? cap-w inner-w)
 
           body-w
-          (max 0 (- inner-w remove-w))
+          (max 0 (- inner-w remove-w gap))
 
           height
           (rail-height attachments)]
@@ -122,8 +128,12 @@
           (when focused-row? (.enableModifiers g (into-array SGR [SGR/BOLD])))
           (p/put-str! g content-left row padded)
           (when focused-row? (.disableModifiers g (into-array SGR [SGR/BOLD])))
-          (p/set-colors! g (if focused-row? t/header-active-tab-fg t/dialog-hint) bg)
-          (p/put-str! g (+ content-left body-w) row remove-label)
+          (when cap?
+            (components/action-button! g
+                                       (+ content-left body-w)
+                                       row
+                                       remove-label
+                                       {:variant :primary :is-focused focused-row?}))
           (when (pos? body-w)
             (.register interactions/hit-map
                        {:bounds {:row row :col content-left :width body-w}
