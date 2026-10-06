@@ -8978,7 +8978,7 @@
                    (do (activate-detail-label! screen db key) (recur))
                    :else
                    (let [escaped-char (and (:loading? db) (input/escaped-typing-character key))
-                         {:keys [action state character]}
+                         {:keys [action state character queue-index]}
                          (if escaped-char
                            {:action :escaped-typing :state (:input db) :character escaped-char}
                            (resolve-prefix! screen db (input/handle-key key (:input db))))]
@@ -9351,6 +9351,11 @@
                          ;; next step (the header's `→ Send now`).
                          :queue-send-all-now
                          (do (state/dispatch [:queue-send-all-now nil]) (recur))
+
+                         ;; C-x 1-9 — send that queue row at the next step, or take
+                         ;; its mark back (the row's own button).
+                         :queue-send-nth
+                         (do (state/dispatch [:queue-send-nth nil queue-index]) (recur))
 
                          :show-sessions
                          (do (show-sessions!) (recur))

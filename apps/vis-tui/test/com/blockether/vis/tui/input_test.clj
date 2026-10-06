@@ -105,6 +105,19 @@
       (let [plain (char-key (Character. \g))]
         (expect (identical? plain (input/normalize-abort-key plain))))
       (expect (nil? (input/normalize-abort-key nil))))
+  (it "C-x 1-9 presses the Send button of that queue row and keeps the draft"
+      (let [state
+            (-> (input/empty-input)
+                (input/paste-text "draft"))
+
+            armed
+            (:state (input/handle-key (ctrl-key (Character. \x)) state))]
+
+        (expect (= {:action :queue-send-nth :queue-index 3 :state state}
+                   (input/handle-key (char-key (Character. \3)) armed)))
+        ;; C-x 0 binds nothing: the prefix aborts as for any unknown key.
+        (expect (= {:action :continue :state state}
+                   (input/handle-key (char-key (Character. \0)) armed)))))
   (it "C-x C-g aborts the prefix instead of running a C-x verb"
       (let [state
             (-> (input/empty-input)
@@ -272,7 +285,9 @@
         (expect (= unchanged (input/handle-key (KeyStroke. KeyType/Tab false false true) state)))
         (expect (= unchanged (input/handle-key (special-key KeyType/ArrowLeft) armed)))
         (expect (= unchanged (input/handle-key (special-key KeyType/ArrowRight) armed)))
-        (expect (= unchanged (input/handle-key (char-key (Character. \1)) armed)))
+        ;; C-x 1 presses queue row 1 now; it still never changes sessions.
+        (expect (= {:action :queue-send-nth :queue-index 1 :state state}
+                   (input/handle-key (char-key (Character. \1)) armed)))
         (expect (= unchanged (input/handle-key (alt-key (Character. \3)) state)))
         (expect (= :continue
                    (:action (input/handle-key (ctrl-special-key KeyType/ArrowLeft) state))))

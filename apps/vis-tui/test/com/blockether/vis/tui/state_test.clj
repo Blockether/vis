@@ -6575,6 +6575,17 @@
           ;; Nothing left to mark: no change, no call.
           (expect (= (pending db') (pending db'')))
           (expect (empty? fx'))))
+    (it "C-x N presses the button of queue row N: send it now, or take a mark back"
+        (let [nth-fn (handler :queue-send-nth)]
+          (expect (= [[:dispatch [:queue-send-now :a "t-1" "next_iteration"]]]
+                     (:fx (nth-fn db [:queue-send-nth :a 1]))))
+          (expect (= [[:dispatch [:queue-send-now :a "t-4" "turn_end"]]]
+                     (:fx (nth-fn db [:queue-send-nth :a 4]))))
+          ;; A command, a local-only row and a missing row have no button.
+          (doseq [n [2 3 9]]
+            (let [{db' :db :keys [fx]} (nth-fn db [:queue-send-nth :a n])]
+              (expect (= db db'))
+              (expect (empty? fx))))))
     (it "`:set-queued-deliver` rolls one row back when the gateway refused"
         (let [set-fn
               (handler :set-queued-deliver)

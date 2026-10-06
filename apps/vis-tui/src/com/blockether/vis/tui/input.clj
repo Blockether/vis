@@ -1027,6 +1027,7 @@
    The prefix is cleared either way:
      • C-x p (or C-x C-p) (`keymap/prefix-palette-key`) → the Command Palette.
      • C-x <letter> in `keymap/prefix-commands` → the vis verb.
+     • C-x 1-9 → toggle that queue row for the next step (`keymap/queue-row-index`).
      • anything else → abort the prefix (no-op), so a stray C-x never swallows
        the next keystroke."
   [^KeyStroke key state]
@@ -1047,6 +1048,9 @@
                                                                              :state state}
       ;; C-x <letter> → a vis verb (plain second key).
       (and c (keymap/prefix-action-for c)) {:action (keymap/prefix-action-for c) :state state}
+      ;; C-x 1-9 → send that queue row at the next step, or take its mark back.
+      (keymap/queue-row-index c)
+      {:action :queue-send-nth :queue-index (keymap/queue-row-index c) :state state}
       ;; C-x TAB / C-x S-TAB toggle every disclosure without binding bare Tab.
       (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key)) {:action :toggle-all-details
                                                              :state state}

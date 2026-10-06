@@ -169,6 +169,17 @@
   [ch]
   (when ch (prefix-action-by-char (Character/toLowerCase ^char ch))))
 
+(defn queue-row-index
+  "The 1-based queue row that C-x followed by `ch` toggles for the next step, or nil.
+   Only the digits 1-9 bind; row 1 is the next message to send."
+  [ch]
+  (when (and ch (Character/isDigit ^char ch) (not= \0 ch)) (long (Character/digit ^char ch 10))))
+
+(defn queue-row-chord
+  "The chord label that toggles queue row `n` (1-based), or nil past row 9."
+  [n]
+  (when (<= 1 (long n) 9) (str "C-x " n)))
+
 (defn label-for
   "Display label for `action`'s shortcut, or nil. Direct chord → `C-l`; a C-x
    prefix command → `C-x <key>` with a PLAIN second key (e.g. `C-x s`).

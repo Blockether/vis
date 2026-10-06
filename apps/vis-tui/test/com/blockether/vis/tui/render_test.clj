@@ -11628,7 +11628,8 @@ print(paths)"
             [marked-line marked-meta]
             (row-with d "third queued message")]
 
-        (expect (= {:session-id "s1" :label "Send all now"} (:queue-send-all hdr-meta)))
+        (expect (= {:session-id "s1" :label "Send all now" :chord "C-x k"}
+                   (:queue-send-all hdr-meta)))
         ;; The header counts the queue, as the Companion header does.
         (expect (str/includes? hdr-line "Queued · 4"))
         ;; Plain ordinals: the button is painted from meta, never an arrow in the text.
@@ -11638,6 +11639,7 @@ print(paths)"
                     :label "Send it now"
                     :turn-id "t1"
                     :marked? false
+                    :chord "C-x 1"
                     :deliver "next_iteration"}
                    (:queue-send first-meta)))
         (expect (str/includes? cmd-line "2. /help"))
@@ -11647,9 +11649,13 @@ print(paths)"
         ;; The marked row stays in place, says so, and its button undoes the mark.
         ;; User report: the marked row still said Send it now, so the undo was unclear.
         (expect (str/includes? marked-line "4. third queued message · next iter"))
-        (expect (=
-                  {:session-id "s1" :label "Unsend" :turn-id "t3" :marked? true :deliver "turn_end"}
-                  (:queue-send marked-meta)))
+        (expect (= {:session-id "s1"
+                    :label "Unsend"
+                    :chord "C-x 4"
+                    :turn-id "t3"
+                    :marked? true
+                    :deliver "turn_end"}
+                   (:queue-send marked-meta)))
         (expect (= " · next iter" (:queue-suffix marked-meta)))))
     (it "drops the header control once every markable row is marked"
         (let [d
@@ -11732,10 +11738,10 @@ print(paths)"
 
         (expect (= 1 (count (:queue-send-all-now by-kind))))
         (expect (= "s1" (:session-id send-all)))
-        (expect (= (count " Send all now ") (long (:width (:bounds send-all)))))
+        (expect (= (count "Send all now  C-x k") (long (:width (:bounds send-all)))))
         ;; One button per markable row (t1, t3): not the command, not the local row.
         ;; Every button ends at the same right edge as the header button.
-        (expect (= [(count " Send it now ") (count " Unsend ")]
+        (expect (= [(count "Send it now  C-x 1") (count "Unsend  C-x 4")]
                    (mapv #(long (:width (:bounds %))) sends)))
         (let [right-edge (fn [region]
                            (+ (long (:col (:bounds region))) (long (:width (:bounds region)))))]
@@ -11746,7 +11752,81 @@ print(paths)"
         (expect (= [[:queue-send-now "s1" "t1"] [:queue-send-now "s1" "t3"]]
                    (mapv interactions/label-key sends)))
         (expect (= [:queue-send-all-now "s1"] (interactions/label-key send-all)))
-        (expect (= 3 (count (interactions/assign-labels regions))))))))
+        (expect (= 3 (count (interactions/assign-labels regions))))))
+    ;; Regression, user report: the header sat on a dark band and each `Send it now` on a
+    ;; dark fill. Now every queue control is accent text on the row's own paper, and each
+    ;; one shows the chord that presses it.
+    (it
+      "paints the header and its controls without a dark fill, each with its chord"
+      (let [d
+            (payload {:iterations [{:activity :provider-call}]} pending {})
+
+            puts
+            (atom [])
+
+            fills
+            (atom [])
+
+            fg
+            (atom nil)
+
+            bg
+            (atom nil)
+
+            g
+            (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+              (clearModifiers [] this)
+              (enableModifiers [_] this)
+              (disableModifiers [_] this)
+              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+              (setForegroundColor [c] (reset! fg c) this)
+              (setBackgroundColor [c] (reset! bg c) this)
+              (getForegroundColor [] @fg)
+              (getBackgroundColor [] @bg)
+              (putString [_col row text]
+                (swap! puts conj {:row row :text (put-text text) :fg @fg :bg @bg})
+                this)
+              (fillRectangle [pos _size _ch]
+                (swap! fills conj
+                  {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos) :bg @bg})
+                this)
+              (setCharacter [_ _ _] this))
+
+            _
+            (do (.reset interactions/hit-map) (.beginFrame interactions/hit-map))
+
+            _
+            (render/draw-chat-bubble!
+              g
+              {:role :assistant :text "" :prewrapped-lines (:lines d) :line-meta (:line-meta d)}
+              0 2
+              130 {:viewport-top 0 :viewport-h 80})
+
+            _
+            (.commitFrame interactions/hit-map)
+
+            put-of
+            (fn [text]
+              (first (filter #(= text (:text %)) @puts)))
+
+            header
+            (first (filter #(str/includes? (:text %) "Queued · 4") @puts))
+
+            paper
+            (:bg header)
+
+            dark
+            #{t/dialog-title-bg t/dialog-hint t/header-active-tab-accent}]
+
+        (expect (some? header))
+        (expect (not (contains? dark paper)))
+        (expect (= t/header-active-tab-accent (:fg header)))
+        (expect (not-any? #(and (= (:row header) (:row %)) (= t/dialog-title-bg (:bg %))) @fills))
+        (doseq [text ["Send all now" "Send it now" "Unsend"]]
+          (expect (= {:fg t/header-active-tab-accent :bg paper}
+                     (select-keys (put-of text) [:fg :bg]))))
+        (doseq [chord ["C-x k" "C-x 1" "C-x 4"]]
+          (expect (= {:fg t/dialog-hint :bg paper} (select-keys (put-of chord) [:fg :bg]))))))))
 
 (defdescribe
   delivered-user-input-test

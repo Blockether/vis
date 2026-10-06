@@ -186,6 +186,20 @@
                  (expect (nil? (keymap/prefix-action-for keymap/abort-key)))
                  (expect (= "C-x d" (keymap/label-for :session-group)))))
 
+(defdescribe queue-row-chord-test
+             ;; User report: the queue's Send buttons had no keys. C-x 1-9 presses the
+             ;; button of that queue row; C-x k stays the header's Send all now.
+             (it "binds the digits 1-9 to queue rows and leaves 0 and letters alone"
+                 (expect (= [1 5 9] (mapv keymap/queue-row-index [\1 \5 \9])))
+                 (expect (every? nil? (map keymap/queue-row-index [\0 \k \a nil])))
+                 ;; No letter verb uses a digit, so the two keyspaces cannot collide.
+                 (expect (not-any? #(Character/isDigit ^char (:key %)) keymap/prefix-commands)))
+             (it "labels rows 1-9 with their chord and gives later rows none"
+                 (expect (= "C-x 1" (keymap/queue-row-chord 1)))
+                 (expect (= "C-x 9" (keymap/queue-row-chord 9)))
+                 (expect (nil? (keymap/queue-row-chord 10)))
+                 (expect (= "C-x k" (keymap/label-for :queue-send-all-now)))))
+
 (defn- shortcuts-page
   "The Keyboard shortcuts guide, found by walking up from the working directory."
   []

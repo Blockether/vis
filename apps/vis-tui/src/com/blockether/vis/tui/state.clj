@@ -5664,6 +5664,24 @@
                     {:db (set-queued-deliver db workspace-id turn-id deliver)
                      :fx [[:gateway-mark-queued sid turn-id deliver workspace-id]]}))))
 
+(reg-event-fx :queue-send-nth
+              ;; C-x 1-9: press the ` Send it now ` / ` Unsend ` button of queue row `n`
+              ;; (1-based, top row first). A row without a button does nothing.
+              (fn [db [_ workspace-id n]]
+                (let [workspace-id
+                      (or workspace-id (current-tab-id db))
+
+                      row
+                      (get (vec (:pending-sends (db-for-tab db workspace-id))) (dec (long n)))]
+
+                  (if-not (and row (render/markable-queued-row? row))
+                    {:db db}
+                    {:fx [[:dispatch
+                           [:queue-send-now workspace-id (:turn-id row)
+                            (if (render/marked-queued-row? row)
+                              gateway-contract/default-queued-turn-deliver
+                              gateway-contract/queued-turn-deliver-next-iteration)]]]}))))
+
 (reg-event-fx
   :queue-send-all-now
   ;; `→ Send now` on the queue header: mark EVERY markable row for the next

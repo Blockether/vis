@@ -73,6 +73,7 @@ once it can act.
 | Ctrl+X d | Move this session to a group |
 | Ctrl+X u | Show session metrics: context health, totals and cache |
 | Ctrl+X k | Send the queued messages now: the running turn reads them at its next step |
+| Ctrl+X 1 to 9 | Send that queued message now, or press again to keep it for the turn end |
 
 ### Models and answers
 

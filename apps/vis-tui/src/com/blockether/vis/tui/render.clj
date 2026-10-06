@@ -7,6 +7,7 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.table :as table]
@@ -1885,19 +1886,47 @@
                    :enabled? true
                    :bounds {:row (+ (long viewport-top) (long y)) :col col :width width})))))
 
-(defn- draw-queue-send-all!
-  "Paint the ` Send all now ` button at the right edge of the Queued header and register
-   it as the `:queue-send-all-now` hit region. `used-cols` is the width of the header
-   text; the button is skipped when the row leaves no room for it."
-  [g {:keys [session-id label]} x y iw used-cols viewport-top]
-  (let [cap
-        (str " " label " ")
+(defn- queue-control-text
+  "Text of a queue control: its label, then its chord when it has one."
+  [label chord]
+  (cond-> (str label)
+    chord
+    (str "  " chord)))
+
+(defn- draw-queue-control!
+  "Paint a queue control at the right edge of row `y` on the row's own paper, without a
+   fill: the label in bold accent, then its chord in the hint color. A hovered control
+   underlines its label. Returns the hit bounds `{:col :width}`."
+  [g label chord x y iw bg hovered?]
+  (let [text
+        (queue-control-text label chord)
 
         width
-        (long (p/display-width cap))
+        (long (p/display-width text))
+
+        label-w
+        (long (p/display-width label))
 
         col
-        (+ (long x) (max 0 (- (long iw) width)))
+        (+ (long x) (max 0 (- (long iw) width)))]
+
+    (p/clear-styles! g)
+    (p/set-colors! g t/header-active-tab-accent bg)
+    (p/styled g [p/BOLD] (p/put-str! g col y label))
+    (when hovered?
+      (dotimes [dc label-w]
+        (p/underline-cell! g (+ col (long dc)) y t/link-chrome-hover-fg)))
+    (when chord (p/set-colors! g t/dialog-hint bg) (p/put-str! g (+ col label-w 2) y chord))
+    (p/clear-styles! g)
+    {:col col :width width}))
+
+(defn- draw-queue-send-all!
+  "Paint the `Send all now` control and its chord at the right edge of the Queued header
+   and register it as the `:queue-send-all-now` hit region. `used-cols` is the width of
+   the header text; the control is skipped when the row leaves no room for it."
+  [g {:keys [session-id label chord]} x y iw used-cols bg viewport-top]
+  (let [width
+        (long (p/display-width (queue-control-text label chord)))
 
         abs-row
         (+ (long viewport-top) (long y))
@@ -1909,36 +1938,18 @@
         (and (= :queue-send-all-now (:kind hovered)) (= abs-row (:row (:bounds hovered))))]
 
     (when (>= (- (long iw) (long used-cols) 2) width)
-      (p/clear-styles! g)
-      ;; Primary: the accent fill, as the Companion's header button.
-      (p/set-colors!
-        g
-        (if hovered? t/header-active-tab-fg (t/contrast-ink t/header-active-tab-accent))
-        (if hovered? t/header-active-tab-bg t/header-active-tab-accent))
-      (p/enable! g p/BOLD)
-      (p/put-str! g col y cap)
-      (p/clear-styles! g)
-      (.register interactions/hit-map
-                 {:bounds {:row abs-row :col col :width width}
-                  :kind :queue-send-all-now
-                  :session-id session-id}))))
+      (let [{:keys [col]} (draw-queue-control! g label chord x y iw bg hovered?)]
+        (.register interactions/hit-map
+                   {:bounds {:row abs-row :col col :width width}
+                    :kind :queue-send-all-now
+                    :session-id session-id})))))
 
 (defn- draw-queue-send-button!
-  "Paint a queue row's ` Send it now ` button at the right edge and register it as its
-   `:queue-send-now` hit region. An unmarked row wears the button fill; a row marked for
-   the next step wears the primary fill and reads ` Unsend `. `deliver` is the mode a
-   press sets, so one button serves both the mark and its undo."
-  [g {:keys [session-id turn-id deliver marked? label]} x y iw viewport-top]
-  (let [cap
-        (str " " label " ")
-
-        width
-        (long (p/display-width cap))
-
-        col
-        (+ (long x) (max 0 (- (long iw) width)))
-
-        abs-row
+  "Paint a queue row's `Send it now` control and its chord at the right edge and register
+   it as its `:queue-send-now` hit region. A row marked for the next step reads `Unsend`.
+   `deliver` is the mode a press sets, so one control serves both the mark and its undo."
+  [g {:keys [session-id turn-id deliver marked? label chord]} x y iw bg viewport-top]
+  (let [abs-row
         (+ (long viewport-top) (long y))
 
         hovered
@@ -1947,20 +1958,11 @@
         hovered?
         (and (= :queue-send-now (:kind hovered))
              (= abs-row (:row (:bounds hovered)))
-             (= (str turn-id) (str (:turn-id hovered))))]
+             (= (str turn-id) (str (:turn-id hovered))))
 
-    (p/clear-styles! g)
-    ;; Secondary at rest (the muted dialog-button fill), primary accent once marked.
-    (p/set-colors! g
-                   (cond hovered? t/header-active-tab-fg
-                         marked? (t/contrast-ink t/header-active-tab-accent)
-                         :else t/dialog-bg)
-                   (cond hovered? t/header-active-tab-bg
-                         marked? t/header-active-tab-accent
-                         :else t/dialog-hint))
-    (p/enable! g p/BOLD)
-    (p/put-str! g col y cap)
-    (p/clear-styles! g)
+        {:keys [col width]}
+        (draw-queue-control! g label chord x y iw bg hovered?)]
+
     (.register interactions/hit-map
                {:bounds {:row abs-row :col col :width width}
                 :kind :queue-send-now
@@ -2537,12 +2539,13 @@
                     ;; left edge.
                     (str/starts-with? line queue-hdr-marker)
                     (let [raw (subs line 1)]
-                      ;; The dark title band, as the Companion's queue header.
-                      (p/set-bg! g t/dialog-title-bg)
+                      ;; User decision: no dark band. The header sits on the row's own
+                      ;; paper in bold accent, like the rail below it.
+                      (p/set-bg! g bg-color)
                       (p/fill-rect! g fbx y fill-iw 1)
-                      (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+                      (p/set-colors! g t/header-active-tab-accent bg-color)
                       (p/styled g [p/BOLD] (p/put-str! g x y (str "┌ " raw)))
-                      ;; ` Send all now ` at the right edge while a turn runs, two or more
+                      ;; `Send all now  C-x k` at the right edge while a turn runs, two or more
                       ;; rows are markable and one is still unmarked (`queued-progress-entries`).
                       (when-let [send-all (:queue-send-all meta)]
                         (draw-queue-send-all! g
@@ -2551,6 +2554,7 @@
                                               y
                                               iw
                                               (+ 2 (long (p/display-width raw)))
+                                              bg-color
                                               viewport-top)))
                     ;; ── Queued message row — left rail `│`, then the ordinal
                     ;; ("1. ") in the accent gutter, then the single-line
@@ -2599,10 +2603,10 @@
                                     (+ (long x) 2 gutter-n (long (p/display-width body)))
                                     y
                                     suffix))
-                      ;; ` Send it now ` ends the row while a turn runs. The preview
+                      ;; `Send it now  C-x N` ends the row while a turn runs. The preview
                       ;; already left room for it.
                       (when-let [send (:queue-send meta)]
-                        (draw-queue-send-button! g send x y iw viewport-top)))
+                        (draw-queue-send-button! g send x y iw bg-color viewport-top)))
                     ;; ── Queue bottom border — a square corner `└` at the rail
                     ;; column, then a horizontal rule filling the rest of the
                     ;; width. Caps the left rail and separates the queued items
@@ -9030,9 +9034,9 @@
             ;; the marker painters) so the whole block reads as ONE bracketed
             ;; group — the same left-bar affordance a "You" bubble uses.
             ;;
-            ;; Header row: the dark title band with "Queued · N". While a turn runs, two or
-            ;; more rows are markable and one is still unmarked, the painter adds ` Send all now `
-            ;; at the right edge and registers it as the `:queue-send-all-now` hit region.
+            ;; Header row: "Queued · N" in bold accent on the row's own paper. While a turn
+            ;; runs, two or more rows are markable and one is still unmarked, the painter adds
+            ;; `Send all now  C-x k` at the right edge as the `:queue-send-all-now` hit region.
             hdr-line
             (str queue-hdr-marker
                  "Queued · "
@@ -9049,7 +9053,10 @@
             (and (>= (count markable) 2) (some #(not (marked-queued-row? %)) markable))
 
             hdr-meta
-            (when send-all? {:queue-send-all {:session-id session-id :label queue-send-all-label}})
+            (when send-all?
+              {:queue-send-all {:session-id session-id
+                                :label queue-send-all-label
+                                :chord (keymap/label-for :queue-send-all-now)}})
 
             ;; Rail + its trailing space eat 2 cols before any content.
             rail-w
@@ -9081,12 +9088,18 @@
                     suffix
                     (when marked? queue-marked-suffix)
 
-                    ;; Room for the wider label, so a toggle never moves the preview.
+                    ;; C-x 1-9 presses the button of rows 1-9 (`keymap/queue-row-index`).
+                    chord
+                    (keymap/queue-row-chord (inc (long idx)))
+
+                    ;; Room for the wider label and two gap columns, so a toggle never
+                    ;; moves the preview.
                     button-w
                     (if markable?
-                      (+ 3
-                         (long (max (p/display-width queue-send-it-label)
-                                    (p/display-width queue-unsend-label))))
+                      (+ 2
+                         (long (max (p/display-width (queue-control-text queue-send-it-label chord))
+                                    (p/display-width (queue-control-text queue-unsend-label
+                                                                         chord)))))
                       0)
 
                     avail
@@ -9113,6 +9126,7 @@
                          (assoc :queue-send
                            {:session-id session-id
                             :label (if marked? queue-unsend-label queue-send-it-label)
+                            :chord chord
                             :turn-id (:turn-id entry)
                             :marked? marked?
                             ;; The mode a press SETS: a marked row goes back to the
