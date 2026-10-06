@@ -1318,7 +1318,7 @@
   (commandline/stdout! "  --model MODEL        Override the configured model. Also accepts")
   (commandline/stdout! "                       provider/name (e.g. openai/gpt-4o).")
   (commandline/stdout!
-    "  --reasoning-effort E  Exact provider-native effort (e.g. low, high or max).")
+    "  --reasoning-effort E  Exact provider-native effort that the model offers (e.g. low or xhigh).")
   (commandline/stdout! "  --name NAME          Set the agent name (default: cli).")
   (commandline/stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
   (commandline/stdout! "  --session-id ID      Continue an existing persisted session.")
@@ -2441,7 +2441,7 @@
      (help-row "--full-trace-json-stream" "Stream raw JSON trace frames.")
      (help-row "--provider PROVIDER" "Override provider.")
      (help-row "--model MODEL" "Override model, or use provider/model.")
-     (help-row "--reasoning-effort E" "Exact provider-native effort: high or max.")
+     (help-row "--reasoning-effort E" "Exact provider-native effort that the model offers.")
      (help-row "--name NAME" "Agent name for this run.")
      (help-row "--db PATH|:memory" "SQLite DB path or in-memory DB.")
      (help-row "--session-id ID" "Continue an existing persisted session.")

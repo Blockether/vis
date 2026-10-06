@@ -3877,7 +3877,8 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :header-help :header-agents :footer-goal :header-tasks :header-search})
+  #{:copy-id :header-help :header-agents :footer-goal :footer-reasoning :header-tasks
+    :header-search})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 
@@ -5131,6 +5132,12 @@
           :id
           str))
 
+(defn- session-column-offset
+  "Left column of the live session pane, so that a picker stays in that pane."
+  [cols rows]
+  (let [db @state/app-db]
+    (if (project-sidebar-locked? db cols) 0 (or (:chat-left (projects/geometry db cols rows)) 0))))
+
 (defn- pick-session-model!
   "Open the model picker in the live session pane and apply its choice."
   [screen]
@@ -5141,20 +5148,34 @@
           current
           (when sid
             (or (:session-model-pref @state/app-db)
-                (try (vis/gateway-session-model-cached sid) (catch Throwable _ nil))))
+                (try (vis/gateway-session-model-cached sid) (catch Throwable _ nil))))]
 
-          column-offset
-          (fn [cols rows]
-            (let [db @state/app-db]
-              (if (project-sidebar-locked? db cols)
-                0
-                (or (:chat-left (projects/geometry db cols rows)) 0))))]
-
-      (when-let [choice (with-dialog-lock
-                          #(dlg/model-picker! screen current {:column-offset column-offset}))]
+      (when-let [choice
+                 (with-dialog-lock
+                   #(dlg/model-picker! screen current {:column-offset session-column-offset}))]
         (if (:reset? choice)
           (state/dispatch [:set-model nil nil])
           (state/dispatch [:set-model (:provider choice) (:model choice)]))))))
+
+(defn- pick-session-reasoning!
+  "Change the thinking level of the live session.
+
+   Simplified modes step to the next of quick, balanced and deep. With simplified
+   modes off, a list in the session pane offers every thinking level of the model."
+  [screen]
+  (when-not (:dialog-open? @state/app-db)
+    (if-let [{:keys [id title items selected]} (state/reasoning-picker @state/app-db)]
+      (if (= "reasoning_level" id)
+        (state/dispatch [:cycle-reasoning-level title])
+        (when-let [choice (with-dialog-lock #(dlg/list-dialog! screen
+                                                               title
+                                                               items
+                                                               {:height :content
+                                                                :selected selected
+                                                                :column-offset
+                                                                session-column-offset}))]
+          (state/dispatch [:set-reasoning-choice id title (:value choice)])))
+      (state/dispatch [:reasoning-unconfigurable]))))
 
 (defn- export-dialog-md
   "Markdown dialog document for the bare `/export` viewer, fetched from the
@@ -7715,6 +7736,10 @@
                  ;; the SAME per-session pref the C-x m cycle writes.
                  show-model-picker! (fn []
                                       (pick-session-model! screen))
+                 ;; Reasoning PICKER (C-x r, the footer chip and the palette): the simplified
+                 ;; modes, or every thinking level of the model when they are off.
+                 show-reasoning-picker! (fn []
+                                          (pick-session-reasoning! screen))
                  rearm-startup! (fn []
                                   ;; A provider may have appeared since the last attempt, so reload the
                                   ;; config the worker reads before arming the same deferred startup.
@@ -8151,6 +8176,9 @@
                                      :footer-model
                                      (show-model-picker!)
 
+                                     :footer-reasoning
+                                     (show-reasoning-picker!)
+
                                      ;; "↓ latest" chip → re-arm FOLLOW + repaint
                                      ;; (the click twin of C-l / Ctrl+End).
                                      :jump-bottom
@@ -8458,6 +8486,9 @@
                                  :footer-model
                                  (show-model-picker!)
 
+                                 :footer-reasoning
+                                 (show-reasoning-picker!)
+
                                  :jump-bottom
                                  (do (state/dispatch [:scroll-to-bottom])
                                      (state/dispatch [:bump-render-version]))
@@ -8619,6 +8650,9 @@
 
                                  :footer-model
                                  (show-model-picker!)
+
+                                 :footer-reasoning
+                                 (show-reasoning-picker!)
 
                                  ;; "↓ latest" chip → re-arm FOLLOW + repaint. MUST be
                                  ;; here on CLICK_DOWN (the gesture's first event swallows
@@ -8965,8 +8999,8 @@
                                      :pick-model
                                      (show-model-picker!)
 
-                                     :cycle-reasoning
-                                     (state/dispatch [:cycle-reasoning-level])
+                                     :pick-reasoning
+                                     (show-reasoning-picker!)
 
                                      :toggle-codex-fast
                                      (state/dispatch [:toggle-codex-fast-mode])
@@ -9183,8 +9217,8 @@
                                (state/dispatch [:history-down]))
                              (recur))
 
-                         :cycle-reasoning
-                         (do (state/dispatch [:cycle-reasoning-level]) (recur))
+                         :pick-reasoning
+                         (do (show-reasoning-picker!) (recur))
 
                          :toggle-codex-fast
                          (do (state/dispatch [:toggle-codex-fast-mode]) (recur))

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { GatewayConn, SpeechPrefs, ThemePref } from '../lib/types';
+import type { GatewayConn, SpeechPrefs, ThemePref, Toggle } from '../lib/types';
+import { GatewayClient } from '../lib/gateway';
 import { applyTheme } from '../lib/theme';
 import {
   setPythonCodeShown,
@@ -173,6 +174,37 @@ export function SettingsDialog({
 
   const { health, retry } = useFleetHealth(gateways);
 
+  // Simplified thinking modes belong to the primary machine. The row stays hidden
+  // until that machine answers, because a guess would show the wrong state. An offline
+  // machine gets no read, like its own settings.
+  const thinkingConn = gateways.find((conn) => conn.url === primaryUrl) ?? gateways[0];
+  const thinkingOnline = thinkingConn ? health[thinkingConn.url]?.state === 'online' : false;
+  const [thinkingModes, setThinkingModes] = useState<Toggle | null>(null);
+  const [thinkingBusy, setThinkingBusy] = useState(false);
+  useEffect(() => {
+    if (!thinkingConn || !thinkingOnline) return;
+    const ctrl = new AbortController();
+    new GatewayClient(thinkingConn)
+      .setting('simplified_thinking_modes', ctrl.signal)
+      .then((row) => setThinkingModes(row.type === 'boolean' ? row : null))
+      .catch(() => setThinkingModes(null));
+    return () => ctrl.abort();
+  }, [thinkingConn, thinkingOnline]);
+
+  async function toggleThinkingModes() {
+    if (!thinkingConn || !thinkingModes || thinkingBusy) return;
+    setThinkingBusy(true);
+    try {
+      setThinkingModes(
+        await new GatewayClient(thinkingConn).setSetting(thinkingModes.id, 'toggle'),
+      );
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setThinkingBusy(false);
+    }
+  }
+
   return (
     // The app's ONE dialog: `Modal` + `DialogFrame`, the same outer component
     // "Manage projects" and every ask already open in. `wide` is the one size that
@@ -312,6 +344,27 @@ export function SettingsDialog({
                   onClick={() => setStepsSummarized(!summarizeSteps)}
                 />
               </div>
+              {thinkingModes && (
+                <div className="flex items-center justify-between gap-4 px-3 py-3 sm:px-4">
+                  <div className="min-w-0 space-y-1">
+                    <Text as="p" variant="label">
+                      {thinkingModes.label}
+                    </Text>
+                    {thinkingModes.description && (
+                      <Text as="p" variant="description">
+                        {thinkingModes.description}
+                      </Text>
+                    )}
+                  </div>
+                  <Switch
+                    label={thinkingModes.label}
+                    isOn={thinkingModes.enabled === true}
+                    isBusy={thinkingBusy}
+                    disabled={thinkingBusy}
+                    onClick={() => void toggleThinkingModes()}
+                  />
+                </div>
+              )}
             </div>
             <SettingsPanel title="Theme">
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">

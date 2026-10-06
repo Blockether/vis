@@ -1387,10 +1387,11 @@
    not view options, so busting the render caches for them is pure damage:
    `virtual/invalidate-heights!` drops every sticky height, the whole
    transcript falls back to estimates and the view visibly jumps while the
-   background re-warm lands. Cycling reasoning effort with Ctrl+X r must not
+   background re-warm lands. Picking reasoning effort with Ctrl+X r must not
    repaint history. Fast mode is deliberately NOT listed: its footer chip must
    repaint immediately even though it still skips transcript-cache invalidation."
-  #{"reasoning_level" "verbosity" "thinking_summary"})
+  #{"reasoning_level" "simplified_thinking_modes" "reasoning_effort" "verbosity"
+    "thinking_summary"})
 
 (reg-event-db :resync-toggle-settings
               ;; Triggered by the toggles-registry listener whenever a flip
@@ -1436,38 +1437,95 @@
                                         :on-warm #(dispatch [:bump-render-version])}))
                     (assoc db :settings settings)))))
 
+(def ^:private session-setting-keys
+  "App-db keys of the session setting rows that the TUI reads, by row id."
+  {"reasoning_level" :reasoning-level
+   "simplified_thinking_modes" :simplified-thinking-modes
+   "reasoning_effort" :reasoning-effort
+   "verbosity" :verbosity
+   "codex_fast_mode" :codex-fast-mode
+   "thinking_summary" :thinking-summary})
+
+(def ^:private session-setting-choice-keys
+  "App-db keys of the choices and the label that the reasoning picker shows, by row id."
+  {"reasoning_level" [:reasoning-level-choices :reasoning-level-label]
+   "reasoning_effort" [:reasoning-effort-choices :reasoning-effort-label]})
+
 (reg-event-db :session-settings-loaded
               (fn [db [_ sid rows]]
                 (assoc-in db
                   [:session-settings (str sid)]
                   (into {}
-                        (keep (fn [row]
-                                (when-let [k ({"reasoning_level" :reasoning-level
-                                               "verbosity" :verbosity
-                                               "codex_fast_mode" :codex-fast-mode
-                                               "thinking_summary" :thinking-summary}
-                                              (get row "id"))]
-                                  [k
-                                   (if (= "boolean" (get row "type"))
-                                     (get row "enabled")
-                                     (some-> (get row "value")
-                                             keyword))])))
+                        (mapcat
+                          (fn [row]
+                            (let [id
+                                  (get row "id")
+
+                                  k
+                                  (session-setting-keys id)
+
+                                  [choices-k label-k]
+                                  (session-setting-choice-keys id)]
+
+                              (cond-> []
+                                k
+                                (conj [k
+                                       (if (= "boolean" (get row "type"))
+                                         (get row "enabled")
+                                         (some-> (get row "value")
+                                                 keyword))])
+
+                                (and choices-k (seq (get row "choices")))
+                                (conj [choices-k (mapv str (get row "choices"))])
+
+                                (and label-k (get row "label"))
+                                (conj [label-k (get row "label")])))))
                         rows))))
 
 (reg-event-fx :refresh-session-settings
               (fn [db [_ sid]]
                 {:db db :fx [[:refresh-session-settings sid]]}))
 
-(reg-event-fx
-  :cycle-reasoning-level
-  (fn [db _]
-    (if-not (reasoning-effort-configurable? db)
-      {:db db
-       :fx [[:notify "Reasoning effort is not configurable for this model" :warn
-             settings-notification-ttl-ms]]}
-      ;; Cycle the registry as an effect, never inside `swap!`; its synchronous
-      ;; listener dispatches again and would make CAS retries repeat the action.
-      {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "reasoning_level" "Reasoning"]]})))
+(defn- session-settings
+  "Settings that the next turn of the session reads: its rows over the global ones."
+  [db]
+  (merge (:settings db) (get-in db [:session-settings (str (get-in db [:session :id]))])))
+
+(defn reasoning-picker
+  "The reasoning picker for the session's model, or nil when that model takes no
+   caller-chosen depth: `{:id setting-id :title label :items [...] :selected index}`.
+   Each item is `{:label choice :value choice}`, and the current choice has a hint."
+  [db]
+  (when (reasoning-effort-configurable? db)
+    (let [{:keys [id label choices current]} (vis/reasoning-choices (session-model-info db)
+                                                                    (session-settings db))]
+      (when (seq choices)
+        {:id id
+         :title label
+         :items (mapv (fn [choice]
+                        (cond-> {:label choice :value choice}
+                          (= choice current)
+                          (assoc :hint "current")))
+                      choices)
+         :selected (max 0 (.indexOf ^java.util.List choices current))}))))
+
+(reg-event-fx :set-reasoning-choice
+              (fn [db [_ id label value]]
+                ;; Write the setting as an effect, never inside `swap!`; its synchronous
+                ;; listener dispatches again and would make CAS retries repeat the action.
+                {:db db :fx [[:set-setting-value (get-in db [:session :id]) id label value]]}))
+
+(reg-event-fx :cycle-reasoning-level
+              (fn [db [_ label]]
+                ;; Simplified modes have three levels, so one key press steps to the next.
+                ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
+                {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "reasoning_level" label]]}))
+
+(reg-event-fx :reasoning-unconfigurable
+              (fn [db _]
+                {:db db
+                 :fx [[:notify "Reasoning effort is not configurable for this model" :warn
+                       settings-notification-ttl-ms]]}))
 
 (reg-event-fx :cycle-verbosity
               (fn [db _]
@@ -1475,7 +1533,7 @@
                   {:db db
                    :fx [[:notify "Answer length is not configurable for this model" :warn
                          settings-notification-ttl-ms]]}
-                  ;; Effect, not an in-swap mutation - see :cycle-reasoning-level.
+                  ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
                   {:db db
                    :fx [[:cycle-toggle (get-in db [:session :id]) "verbosity" "Verbosity"]]})))
 
@@ -1494,7 +1552,7 @@
                   {:db db
                    :fx [[:notify "Thinking summary is available only for Claude adaptive thinking"
                          :warn settings-notification-ttl-ms]]}
-                  ;; Effect, not an in-swap mutation - see :cycle-reasoning-level.
+                  ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
                   {:db db
                    :fx [[:toggle-boolean (get-in db [:session :id]) "thinking_summary"
                          "Thinking summary"]]})))
@@ -6661,25 +6719,37 @@
                       (vis/notify! (str "Settings unavailable: " (ex-message e)) :level :warn)))))))
 
 (defn- change-session-setting!
-  [sid id label action]
-  (if-not sid
-    (vis/notify! "Open a session first to change its settings" :level :warn)
-    (gateway-queue-io!
-      #(try (let [row (vis/change-setting! id action {:scope "session" :target-id (str sid)})]
-              (refresh-session-settings! sid)
-              (vis/notify! (str label
-                                ": "
-                                (if (= "boolean" (get row "type"))
-                                  (if (get row "enabled") "on" "off")
-                                  (get row "value")))
-                           :level :info
-                           :ttl-ms settings-notification-ttl-ms))
-            (catch Exception e
-              (vis/notify! (str "Setting unchanged: " (ex-message e)) :level :error))))))
+  ([sid id label action] (change-session-setting! sid id label action nil))
+  ([sid id label action value]
+   (if-not sid
+     (vis/notify! "Open a session first to change its settings" :level :warn)
+     (gateway-queue-io!
+       #(try (let [target
+                   {:scope "session" :target-id (str sid)}
+
+                   row
+                   (if (some? value)
+                     (vis/change-setting! id action target value)
+                     (vis/change-setting! id action target))]
+
+               (refresh-session-settings! sid)
+               (vis/notify! (str label
+                                 ": "
+                                 (if (= "boolean" (get row "type"))
+                                   (if (get row "enabled") "on" "off")
+                                   (get row "value")))
+                            :level :info
+                            :ttl-ms settings-notification-ttl-ms))
+             (catch Exception e
+               (vis/notify! (str "Setting unchanged: " (ex-message e)) :level :error)))))))
 
 (reg-fx :cycle-toggle
         (fn [sid id label]
           (change-session-setting! sid id label "cycle")))
+
+(reg-fx :set-setting-value
+        (fn [sid id label value]
+          (change-session-setting! sid id label "value" value)))
 
 (reg-fx :toggle-boolean
         (fn [sid id label]

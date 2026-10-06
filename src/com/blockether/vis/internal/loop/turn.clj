@@ -904,8 +904,8 @@
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
   (let [{:keys [spec provider model max-context-tokens system-prompt debug? hooks cancel-token
-                eval-timeout-ms reasoning-default reasoning-effort routing extra-body
-                session-turn-id request-kind council-entry-id]
+                eval-timeout-ms reasoning-default reasoning-effort preferred-reasoning-effort
+                routing extra-body session-turn-id request-kind council-entry-id]
          :or {debug? false}}
         opts]
     (when-not (:db-info env)
@@ -1143,6 +1143,7 @@
        :reasoning-default reasoning-default
        :reasoning-effort (:effective reasoning-effort-resolution)
        :reasoning-effort-resolution reasoning-effort-resolution
+       :preferred-reasoning-effort preferred-reasoning-effort
        :routing routing
        :extra-body extra-body
        :turn-features (get opts :turn/features)
@@ -1153,8 +1154,9 @@
   "Runs the main iteration loop via run-turn!.
    Returns iteration-result, session-turn-id, cost atoms, and merge-cost! fn."
   [{:keys [environment user-request spec max-context-tokens system-prompt hooks cancel-atom
-           cancel-token reasoning-default reasoning-effort routing extra-body turn-features
-           workspace-overrides session-turn-id request-kind council-entry-id]}]
+           cancel-token reasoning-default reasoning-effort preferred-reasoning-effort routing
+           extra-body turn-features workspace-overrides session-turn-id request-kind
+           council-entry-id]}]
   (let [iteration-result
         (run-turn! environment
                    user-request
@@ -1163,6 +1165,7 @@
                             :system-prompt system-prompt
                             :reasoning-default reasoning-default
                             :reasoning-effort reasoning-effort
+                            :preferred-reasoning-effort preferred-reasoning-effort
                             :hooks hooks
                             :cancel-atom cancel-atom
                             :cancel-token cancel-token
@@ -1282,13 +1285,28 @@
   "Fill the response options a caller left unset from the turn's resolved
    setting `snapshot`: `reasoning_level` becomes the base reasoning level and
    each provider fast mode switched on becomes a turn feature, so project, group
-   and session values reach every channel. An explicit caller value wins,
-   including a feature set to false."
+   and session values reach every channel. With `simplified_thinking_modes` off,
+   `reasoning_effort` becomes the preferred provider rung: svar sends the nearest
+   rung of each attempted model, and a model without rungs keeps the base level.
+   An explicit caller value wins, including a feature set to false."
   [opts snapshot]
-  (let [features (loop-router/setting-turn-features snapshot)]
+  (let [features
+        (loop-router/setting-turn-features snapshot)
+
+        caller-depth?
+        (some some? (map opts [:reasoning-default :reasoning-effort :preferred-reasoning-effort]))
+
+        preferred-effort
+        (when (false? (get snapshot "simplified_thinking_modes"))
+          (some-> (get snapshot "reasoning_effort")
+                  name))]
+
     (cond-> opts
       (nil? (:reasoning-default opts))
       (assoc :reasoning-default (get snapshot "reasoning_level"))
+
+      (and preferred-effort (not caller-depth?))
+      (assoc :preferred-reasoning-effort preferred-effort)
 
       features
       (update :turn/features #(merge features %)))))
@@ -1311,8 +1329,10 @@
         code evaluation, LLM responses at :debug level with :rlm-phase context.
       - :reasoning-default - Optional base reasoning effort for reasoning-capable models.
         Accepts :low/:medium/:high or low/medium/high strings. Adaptive escalation still applies.
-      - :reasoning-effort - Exact provider-native effort string, `high` or `max`.
-        Catalog-gated and threaded unchanged through every iteration.
+      - :reasoning-effort - Exact provider-native effort string, a rung of
+        `svar/REASONING_EFFORTS`. Catalog-gated and threaded unchanged through every iteration.
+      - :preferred-reasoning-effort - Provider-native rung to aim for. Each attempt sends
+        the nearest rung of its model; a model without rungs uses :reasoning-default.
       - :extra-body - Optional provider-specific request-body params merged into the
         upstream LLM call after auto max_tokens + reasoning translation.
       - :request-kind - Request origin, :user (default) or :council.

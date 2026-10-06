@@ -764,25 +764,90 @@
                     (vis/toggle-reset-to-default! "verbosity")))))
 
 (defdescribe
+  reasoning-picker-test
+  (it "stores the reasoning rows and the choices that the picker offers"
+      (reset! state/app-db {:session {:id "s1"} :render-version 0})
+      (state/dispatch [:session-settings-loaded "s1"
+                       [{"id" "simplified_thinking_modes" "type" "boolean" "enabled" false}
+                        {"id" "reasoning_effort"
+                         "label" "Thinking level"
+                         "type" "enum"
+                         "value" "xhigh"
+                         "choices" ["low" "medium" "high" "xhigh"]}
+                        {"id" "reasoning_level"
+                         "label" "Reasoning effort"
+                         "type" "enum"
+                         "value" "deep"
+                         "choices" ["quick" "balanced" "deep"]}]])
+      (expect (= {:simplified-thinking-modes false
+                  :reasoning-effort :xhigh
+                  :reasoning-effort-choices ["low" "medium" "high" "xhigh"]
+                  :reasoning-effort-label "Thinking level"
+                  :reasoning-level :deep
+                  :reasoning-level-choices ["quick" "balanced" "deep"]
+                  :reasoning-level-label "Reasoning effort"}
+                 (get-in @state/app-db [:session-settings "s1"]))))
+  (it "offers the simplified modes and selects the current one"
+      (with-redefs [vis/get-router
+                    (constantly :router)
+
+                    vis/resolve-model-info
+                    (fn [_ _provider _model]
+                      {:provider :openai-codex
+                       :name "gpt-6-astra"
+                       :reasoning-effort? true
+                       :reasoning-effort-options ["low" "medium" "high" "xhigh"]})]
+
+        (let [picker (state/reasoning-picker {:session {:id "s1"}
+                                              :session-model-pref {:provider "openai-codex"
+                                                                   :model "gpt-6-astra"}
+                                              :settings {:reasoning-level "balanced"}})]
+          (expect (= "reasoning_level" (:id picker)))
+          (expect (= "Reasoning effort" (:title picker)))
+          (expect (= ["quick" "balanced" "deep"] (mapv :value (:items picker))))
+          (expect (= 1 (:selected picker)))
+          (expect (= [nil "current" nil] (mapv :hint (:items picker)))))))
+  (it "offers every thinking level of the model when simplified modes are off"
+      (with-redefs [vis/get-router
+                    (constantly :router)
+
+                    vis/resolve-model-info
+                    (fn [_ _provider _model]
+                      {:provider :openai-codex
+                       :name "gpt-6-astra"
+                       :reasoning-effort? true
+                       :reasoning-effort-options ["low" "medium" "high" "xhigh"]})]
+
+        (let [picker (state/reasoning-picker
+                       {:session {:id "s1"}
+                        :session-model-pref {:provider "openai-codex" :model "gpt-6-astra"}
+                        :settings {:reasoning-level "balanced"}
+                        :session-settings {"s1" {:simplified-thinking-modes false
+                                                 :reasoning-effort :max
+                                                 :reasoning-effort-label "Thinking level"
+                                                 :reasoning-effort-choices ["none" "minimal" "low"
+                                                                            "medium" "high" "xhigh"
+                                                                            "max"]}}})]
+          (expect (= "reasoning_effort" (:id picker)))
+          (expect (= "Thinking level" (:title picker)))
+          (expect (= ["low" "medium" "high" "xhigh"] (mapv :value (:items picker))))
+          ;; The model offers no max rung, so the next turn sends xhigh.
+          (expect (= 3 (:selected picker)))))))
+
+(defdescribe
   settings-shortcut-test
   (it
-    "cycles exactly once at the captured session without mutating the global registry"
+    "sets the picked reasoning choice once at the captured session without mutating the global registry"
     (let [calls
           (atom [])
 
           global
           (vis/toggle-value "reasoning_level")]
 
-      (with-redefs [vis/get-router
-                    (constantly :router)
-
-                    vis/resolve-effective-model
-                    (constantly {:reasoning-effort? true})
-
-                    vis/change-setting!
-                    (fn [id action target]
-                      (swap! calls conj [id action target])
-                      {"id" id "type" "enum" "value" "quick"})
+      (with-redefs [vis/change-setting!
+                    (fn [id action target value]
+                      (swap! calls conj [id action target value])
+                      {"id" id "type" "enum" "value" value})
 
                     vis/gateway-settings
                     (fn [_ target]
@@ -795,18 +860,35 @@
                       (state/dispatch [:bump-render-version]))]
 
         (reset! state/app-db {:session {:id "s1"} :render-version 0})
-        (state/dispatch [:cycle-reasoning-level])
+        (state/dispatch [:set-reasoning-choice "reasoning_level" "Reasoning effort" "quick"])
         (flush-queue-io!)
-        (expect (= [["reasoning_level" "cycle" {:scope "session" :target-id "s1"}]] @calls))
+        (expect (= [["reasoning_level" "value" {:scope "session" :target-id "s1"} "quick"]] @calls))
         (expect (= :quick (get-in @state/app-db [:session-settings "s1" :reasoning-level])))
         (expect (= global (vis/toggle-value "reasoning_level"))))))
+  (it "steps the simplified mode once at the captured session"
+      (let [calls (atom [])]
+        (with-redefs [vis/change-setting! (fn [id action target]
+                                            (swap! calls conj [id action target])
+                                            {"id" id "type" "enum" "value" "deep"})
+                      vis/gateway-settings (fn [_ _target]
+                                             {"groups" [{"toggles" [{"id" "reasoning_level"
+                                                                     "type" "enum"
+                                                                     "value" "deep"}]}]})
+                      vis/notify! (fn [& _]
+                                    (state/dispatch [:bump-render-version]))]
+
+          (reset! state/app-db {:session {:id "s1"} :render-version 0})
+          (state/dispatch [:cycle-reasoning-level "Reasoning effort"])
+          (flush-queue-io!)
+          (expect (= [["reasoning_level" "cycle" {:scope "session" :target-id "s1"}]] @calls))
+          (expect (= :deep (get-in @state/app-db [:session-settings "s1" :reasoning-level]))))))
   (it "keeps a late response under its original owner after switching sessions"
       (reset! state/app-db {:session {:id "s2"} :render-version 0})
       (state/dispatch [:session-settings-loaded "s1"
                        [{"id" "codex_fast_mode" "type" "boolean" "enabled" false}]])
       (expect (false? (get-in @state/app-db [:session-settings "s1" :codex-fast-mode])))
       (expect (nil? (get-in @state/app-db [:session-settings "s2"]))))
-  (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
+  (it "offers no reasoning picker for fixed-thinking Z.ai models"
       (let [notified (atom nil)]
         (with-redefs [vis/get-router (constantly :router)
                       vis/resolve-effective-model (fn [_]
@@ -820,7 +902,8 @@
 
           (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
                                 :render-version 0})
-          (state/dispatch [:cycle-reasoning-level])
+          (expect (nil? (state/reasoning-picker @state/app-db)))
+          (state/dispatch [:reasoning-unconfigurable])
           (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level])))
           (expect (= ["Reasoning effort is not configurable for this model"
                       [:level :warn :ttl-ms 1500]]

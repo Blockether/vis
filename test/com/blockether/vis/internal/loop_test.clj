@@ -1239,7 +1239,34 @@
                (expect (= "max" (:reasoning-effort @seen)))
                (expect (not (contains? @seen :reasoning)))
                (expect (= "max" (get-in result [:reasoning-effort-resolution :effective])))))
-           (finally (loop-env/dispose-environment! environment))))))
+           (finally (loop-env/dispose-environment! environment)))))
+  (it "sends the preferred provider rung beside the abstract level"
+      (let [environment
+            (loop-env/create-environment ::router {:db :memory})
+
+            seen
+            (atom nil)]
+
+        (try (with-redefs [svar/ask-code!
+                           (fn [_router opts]
+                             (reset! seen opts)
+                             {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
+               (iteration/run-iteration
+                 environment
+                 []
+                 {:iteration 0
+                  :reasoning-level :quick
+                  :preferred-reasoning-effort "xhigh"
+                   :resolved-model {:provider :zai-coding-plan
+                                    :name "glm-5.2"
+                                    :reasoning? true
+                                    :reasoning-effort? true}})
+               ;; svar picks the nearest rung of each attempted model; a model
+               ;; without rungs keeps the abstract level.
+               (expect (= "xhigh" (:preferred-reasoning-effort @seen)))
+               (expect (contains? @seen :reasoning))
+               (expect (not (contains? @seen :reasoning-effort))))
+             (finally (loop-env/dispose-environment! environment))))))
 
 (defdescribe
   thinking-display-ask-opts-test
@@ -6445,7 +6472,28 @@
                   (expect (= "deep" (:reasoning-default (defaults {} {"reasoning_level" "deep"}))))
                   (expect (= "quick"
                              (:reasoning-default (defaults {:reasoning-default "quick"}
-                                                           {"reasoning_level" "deep"})))))))
+                                                           {"reasoning_level" "deep"}))))))
+            (it "aims at the saved provider rung only with simplified thinking modes off"
+                (let [defaults
+                      (deref #'turn/with-setting-defaults)
+
+                      exact
+                      {"simplified_thinking_modes" false
+                       "reasoning_level" "balanced"
+                       "reasoning_effort" "xhigh"}]
+
+                  (expect (= "xhigh" (:preferred-reasoning-effort (defaults {} exact))))
+                  ;; The base level stays for a model without rungs.
+                  (expect (= "balanced" (:reasoning-default (defaults {} exact))))
+                  (expect (nil? (:preferred-reasoning-effort
+                                  (defaults {} (assoc exact "simplified_thinking_modes" true)))))
+                  (expect (nil? (:preferred-reasoning-effort
+                                  (defaults {} (dissoc exact "simplified_thinking_modes")))))
+                  ;; An explicit caller depth wins over the saved rung.
+                  (expect (nil? (:preferred-reasoning-effort (defaults {:reasoning-effort "low"}
+                                                                       exact))))
+                  (expect (nil? (:preferred-reasoning-effort (defaults {:reasoning-default "quick"}
+                                                                       exact)))))))
   (describe "fast mode"
             (it "turns on the provider fast modes the snapshot enables"
                 (expect (= {"codex_fast_mode" true}

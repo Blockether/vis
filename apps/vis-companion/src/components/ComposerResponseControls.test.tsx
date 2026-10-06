@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ComposerResponseControls } from './ComposerResponseControls';
@@ -9,7 +9,7 @@ afterEach(cleanup);
 describe('composer response controls', () => {
   it('owns the complete response-option vocabulary', () => {
     const choose = vi.fn();
-    const cycleReasoning = vi.fn();
+    const chooseReasoning = vi.fn();
     const cycleVerbosity = vi.fn();
     const toggleThinking = vi.fn();
     const toggleFast = vi.fn();
@@ -24,8 +24,9 @@ describe('composer response controls', () => {
           reasoning: {
             label: 'Reasoning',
             value: 'high',
+            choices: ['low', 'medium', 'high'],
             busy: false,
-            cycle: cycleReasoning,
+            choose: chooseReasoning,
           },
           verbosity: {
             label: 'Verbosity',
@@ -58,9 +59,10 @@ describe('composer response controls', () => {
     }
 
     fireEvent.click(screen.getByRole('button', { name: 'Change provider and model' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reasoning — high, choose a level' }));
     fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Reasoning — high, tap for the next level',
+      within(screen.getByRole('dialog', { name: 'Reasoning' })).getByRole('button', {
+        name: 'low',
       }),
     );
     fireEvent.click(
@@ -74,10 +76,88 @@ describe('composer response controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fast mode — on' }));
 
     expect(choose).toHaveBeenCalledOnce();
-    expect(cycleReasoning).toHaveBeenCalledOnce();
+    expect(chooseReasoning).toHaveBeenCalledWith('low');
     expect(cycleVerbosity).toHaveBeenCalledOnce();
     expect(toggleThinking).toHaveBeenCalledOnce();
     expect(toggleFast).toHaveBeenCalledOnce();
+  });
+
+  it('lists every reasoning level and keeps the current one without a write', () => {
+    const chooseReasoning = vi.fn();
+    render(
+      <ComposerResponseControls
+        controls={{
+          model: {
+            value: 'gpt-6-astra',
+            title: 'openai-codex/gpt-6-astra',
+            choose: vi.fn(),
+          },
+          reasoning: {
+            label: 'Thinking level',
+            value: 'high',
+            choices: ['none', 'low', 'medium', 'high', 'xhigh'],
+            busy: false,
+            choose: chooseReasoning,
+          },
+        }}
+      />,
+    );
+    const chip = screen.getByRole('button', {
+      name: 'Thinking level — high, choose a level',
+    });
+    expect(chip).toHaveAttribute('aria-haspopup', 'dialog');
+    expect(chip).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(chip);
+    const list = screen.getByRole('dialog', { name: 'Thinking level' });
+    expect(chip).toHaveAttribute('aria-expanded', 'true');
+    expect(
+      within(list)
+        .getAllByRole('button')
+        .map((row) => row.textContent),
+    ).toEqual(['none', 'low', 'medium', 'highcurrent', 'xhigh']);
+    fireEvent.click(within(list).getByRole('button', { name: /^high/ }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(chooseReasoning).not.toHaveBeenCalled();
+
+    // Escape closes the list before the screen can read it as "cancel the turn".
+    fireEvent.click(chip);
+    const cancelTurn = vi.fn();
+    window.addEventListener('keydown', cancelTurn);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    window.removeEventListener('keydown', cancelTurn);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(cancelTurn).not.toHaveBeenCalled();
+  });
+
+  it('steps the simplified modes with one tap and opens no list', () => {
+    const cycleReasoning = vi.fn();
+    render(
+      <ComposerResponseControls
+        controls={{
+          model: {
+            value: 'gpt-6-astra',
+            title: 'openai-codex/gpt-6-astra',
+            choose: vi.fn(),
+          },
+          reasoning: {
+            label: 'Reasoning',
+            value: 'balanced',
+            busy: false,
+            cycle: cycleReasoning,
+          },
+        }}
+      />,
+    );
+
+    const chip = screen.getByRole('button', {
+      name: 'Reasoning — balanced, tap for the next level',
+    });
+    expect(chip).not.toHaveAttribute('aria-haspopup');
+    fireEvent.click(chip);
+
+    expect(cycleReasoning).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('omits response knobs the provider does not expose', () => {

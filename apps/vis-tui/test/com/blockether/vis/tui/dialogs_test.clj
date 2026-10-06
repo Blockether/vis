@@ -148,6 +148,16 @@
 
 (def ^:private done-key :com.blockether.vis.tui.dialogs/done)
 
+(defdescribe select-modal-initial-selection-test
+             (it "starts on the :selected item"
+                 (let [{:keys [init measure reconcile]} (dlg/select-modal-component
+                                                          "Items"
+                                                          (mapv #(hash-map :label (str "item " %))
+                                                                (range 6))
+                                                          {:height :content :selected 4})]
+                   (expect (= 4 (:selected init)))
+                   (expect (= 4 (:selected (reconcile init (measure init 80 30))))))))
+
 (defdescribe select-modal-component-pure-test
              (it "arrow nav + Enter selects the right item with no screen"
                  (let [items
@@ -1394,6 +1404,37 @@
           (expect (not-any? #(= "reasoning_level" (:toggle-id %)) rows))
           ;; Settings no longer has a generic feature-toggle bucket.
           (expect (not-any? #{"Feature Toggles"} sections))))))
+  (it "shows the gateway's simplified thinking modes row after Compact mode"
+      (let [settings-rows
+            (var-get #'dlg/settings-rows)
+
+            thinking-modes
+            (var-get #'dlg/thinking-modes-setting)
+
+            before
+            @thinking-modes]
+
+        (try (reset! thinking-modes {"id" "simplified_thinking_modes"
+                                     "type" "boolean"
+                                     "enabled" true
+                                     "source" "default"
+                                     "label" "Simplified thinking modes"
+                                     "description" "Step through quick, balanced and deep."})
+             (with-redefs [vis/get-router (constantly nil)]
+               (let [rows (settings-rows)]
+                 (expect (= ["Code mode" "Compact mode" "Simplified thinking modes"]
+                            (mapv :label (take 3 rows))))
+                 (expect (= {:type :registry-toggle
+                             :toggle-id "simplified_thinking_modes"
+                             :toggle-value true}
+                            (select-keys (nth rows 2) [:type :toggle-id :toggle-value])))
+                 (expect
+                   (= 1 (count (filter #(= "simplified_thinking_modes" (:toggle-id %)) rows))))))
+             (reset! thinking-modes nil)
+             (with-redefs [vis/get-router (constantly nil)]
+               ;; Without a good gateway read, the row stays hidden.
+               (expect (not-any? #(= "simplified_thinking_modes" (:toggle-id %)) (settings-rows))))
+             (finally (reset! thinking-modes before)))))
   (it "registered extension themes appear in the channel Theme setting"
       (let [settings-rows
             (var-get #'dlg/settings-rows)
@@ -1512,7 +1553,7 @@
         ;; don't survive macOS — so the frequent ones must be present + runnable.
         (expect (every? ids [:search-open :show-sessions :pick-file :new-session :fork-session]))
         (expect (not (some ids
-                           [:cycle-model :pick-model :cycle-reasoning :cycle-verbosity
+                           [:cycle-model :pick-model :pick-reasoning :cycle-verbosity
                             :new-session-in :open-drafts])))
         (expect (not (contains? ids :open-resources)))))
   (it "a turnless session hides BOTH fork verbs from the palette"

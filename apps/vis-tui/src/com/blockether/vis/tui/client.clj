@@ -596,9 +596,11 @@
            (str "&target_id=" (enc (str id)))))))
 
 (defn change-setting!
-  "Apply an atomic action to a setting owned by the selected gateway target."
-  [id action target]
-  (send-json! "POST" "/v1/settings" (merge target {:id id :action action})))
+  "Apply an atomic action to a setting owned by the selected gateway target. The
+   `value` action takes the chosen `value`."
+  ([id action target] (send-json! "POST" "/v1/settings" (merge target {:id id :action action})))
+  ([id action target value]
+   (send-json! "POST" "/v1/settings" (merge target {:id id :action action :value value}))))
 
 (defn toggle-setting!
   "Atomically flip one boolean setting in the gateway and return its refreshed
@@ -2794,7 +2796,11 @@
       (contains? model "thinking_display_style")
       (assoc :thinking-display-style
         (some-> (get model "thinking_display_style")
-                keyword)))
+                keyword))
+
+      ;; Exact rungs for the reasoning picker, weakest first; [] when none.
+      (contains? model "reasoning_effort_options")
+      (assoc :reasoning-effort-options (vec (get model "reasoning_effort_options"))))
     {:name (str model)}))
 
 (defn- provider-entry
@@ -2915,6 +2921,45 @@
 (defn verbosity-configurable? [model] (some? (:verbosity-style model)))
 
 (defn thinking-display-configurable? [model] (some? (:thinking-display-style model)))
+
+(defn- nearest-reasoning-effort
+  "The rung of `options` that a turn sends for `wanted`, as svar's
+   `nearest-reasoning-effort` picks it: `wanted` when offered, else the strongest
+   offered rung below it, else the weakest. `ladder` orders every rung."
+  [ladder options wanted]
+  (let [rank (zipmap ladder (range))]
+    (cond (some #{wanted} options) wanted
+          (and (seq options) (contains? rank wanted))
+          (or (last (filter #(< (long (get rank % -1)) (long (get rank wanted))) options))
+              (first options)))))
+
+(defn reasoning-choices
+  "What the reasoning picker offers for `model` under the session `settings`:
+   `{:id setting-id :label title :choices [...] :current choice}`, choices
+   lightest first.
+
+   Simplified thinking modes offer `reasoning_level`. With them off, a model that
+   offers exact rungs offers those rungs, and `:current` is the rung that the next
+   turn sends for the saved `reasoning_effort`. A model without rungs keeps
+   `reasoning_level`. The `*-choices` and `*-label` keys hold the choices and the
+   label of each setting row."
+  [model settings]
+  (let [options (vec (:reasoning-effort-options model))]
+    (if (and (false? (:simplified-thinking-modes settings)) (seq options))
+      {:id "reasoning_effort"
+       :label (:reasoning-effort-label settings)
+       :choices options
+       :current (some->> (:reasoning-effort settings)
+                         name
+                         (nearest-reasoning-effort (:reasoning-effort-choices settings) options))}
+      {:id "reasoning_level"
+       :label (or (:reasoning-level-label settings)
+                  (:label (toggles/toggle-spec "reasoning_level")))
+       :choices (mapv name
+                      (or (not-empty (:reasoning-level-choices settings))
+                          (:choices (toggles/toggle-spec "reasoning_level"))))
+       :current (some-> (:reasoning-level settings)
+                        name)})))
 
 (defn model-routing-status [& _] nil)
 

@@ -3173,6 +3173,7 @@
           (expect (= ["gpt-6-astra"] (get codex "models")))
           (expect (= [{"name" "gpt-6-astra"
                        "is_reasoning_effort_configurable" true
+                       "reasoning_effort_options" ["low" "medium" "high" "xhigh" "max"]
                        "verbosity_style" "openai-text"
                        "thinking_display_style" nil}]
                      (get codex "model_details")))
@@ -3180,6 +3181,7 @@
                      (mapv #(get % "verbosity_style") (get copilot "model_details"))))
           (expect (= [{"name" "claude-opus-5"
                        "is_reasoning_effort_configurable" true
+                       "reasoning_effort_options" ["low" "medium" "high" "xhigh" "max"]
                        "verbosity_style" nil
                        "thinking_display_style" "anthropic-display"}]
                      (get anthropic "model_details")))))))

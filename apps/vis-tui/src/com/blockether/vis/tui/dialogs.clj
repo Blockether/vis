@@ -1933,7 +1933,7 @@
    (navigation / filtering / select) are plain functions of immutable state, so
    they can be exercised in tests WITHOUT a terminal. Only `:paint` touches the
    screen. `items`/opts match `list-dialog!`."
-  [title items {:keys [filter? placeholder enter-label height column-offset]}]
+  [title items {:keys [filter? placeholder enter-label height column-offset selected]}]
   (let [items
         (vec items)
 
@@ -1943,7 +1943,7 @@
         head-rows
         (if filter? 2 0)]
 
-    {:init {:query "" :selected 0 :scroll 0}
+    {:init {:query "" :selected (long (or selected 0)) :scroll 0}
      :measure
      (fn [{:keys [query]} cols rows]
        (let [offset
@@ -2138,7 +2138,8 @@
                     field), capped; nil uses the shared (tall) footprint, or
                     `:content` inside a `*dialog-region*` band.
      :column-offset (fn [cols rows] -> left) scopes the dialog to columns from
-                    `left` to the terminal edge. Recomputed for each paint."
+                    `left` to the terminal edge. Recomputed for each paint.
+     :selected     index of the item that starts selected (default 0)"
   [^TerminalScreen screen title items opts]
   (run-modal! screen
               (select-modal-component title
@@ -3306,27 +3307,51 @@
          (tel/log! :warn ["dialogs: available-theme-ids failed" (ex-message t)])
          [(keyword shared-theme/default-theme-id)])))
 
+(defonce ^:private thinking-modes-setting
+  ;; The gateway row of `simplified_thinking_modes`. Settings shows it with the
+  ;; terminal preferences, like the Application section of the app.
+  (atom nil))
+
+(defn- thinking-modes-rows
+  "The gateway's simplified thinking modes row, or nothing before a good read."
+  []
+  (let [row @thinking-modes-setting]
+    (when (= "boolean" (get row "type"))
+      [{:key :toggle/simplified-thinking-modes
+        :type :registry-toggle
+        :toggle-id "simplified_thinking_modes"
+        :toggle-type :boolean
+        :toggle-value (boolean (get row "enabled"))
+        :setting row
+        :source (get row "source")
+        :label (str (get row "label"))
+        :description (str (get row "description"))}])))
+
 (defn- settings-ui-options
   "Terminal-local response and theme preferences, grouped like the app's Settings.
+   The simplified thinking modes row is the gateway's, shown here like in the app.
    Engine settings use the registry."
   []
-  [{:key :show-python-code
-    :type :toggle
-    :label "Code mode"
-    :description
-    "Show Python code and raw results before Activity. Turn off to show only Activity."}
-   {:key :summarize-steps
-    :type :toggle
-    :label "Compact mode"
-    :description
-    "Fold the steps between progress notes into one row with their state, live views and time. Open the row to see their thinking, code and Activity. Turn off to show Activity for each step."}
-   {:type :section :label "Theme"}
-   {:key :theme-name
-    :type :choice
-    :choices (theme-choice-order)
-    :label "Theme"
-    :description
-    "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}])
+  (vec
+    (concat
+      [{:key :show-python-code
+        :type :toggle
+        :label "Code mode"
+        :description
+        "Show Python code and raw results before Activity. Turn off to show only Activity."}
+       {:key :summarize-steps
+        :type :toggle
+        :label "Compact mode"
+        :description
+        "Fold the steps between progress notes into one row with their state, live views and time. Open the row to see their thinking, code and Activity. Turn off to show Activity for each step."}]
+      (thinking-modes-rows)
+      [{:type :section :label "Theme"}
+       {:key :theme-name
+        :type :choice
+        :choices (theme-choice-order)
+        :label "Theme"
+        :description
+        "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}])))
 
 (declare titleize-label)
 
@@ -3385,6 +3410,7 @@
    after a flip renders the value the daemon just confirmed without a re-read."
   [row]
   (when-let [id (get row "id")]
+    (when (= id (get @thinking-modes-setting "id")) (swap! thinking-modes-setting merge row))
     (swap! (settings-inventory-atom) update
       :groups
       (fn [groups]
@@ -3882,7 +3908,10 @@
 (defn- load-agent-name!
   []
   (reset! agent-name-setting (try (vis/setting "agent_name")
-                                  (catch Exception e {"error" (ex-message e)}))))
+                                  (catch Exception e {"error" (ex-message e)})))
+  ;; A failed read hides the row; the next Settings open reads it again.
+  (reset! thinking-modes-setting (try (vis/setting "simplified_thinking_modes")
+                                      (catch Exception _ nil))))
 
 (defn- mark-inventories-loading!
   "Arm every gateway-backed inventory for a refresh WITHOUT clearing what they

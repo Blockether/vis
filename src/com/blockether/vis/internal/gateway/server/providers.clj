@@ -252,6 +252,9 @@
      :model-details (mapv (fn [model]
                             {:name (:name model)
                              :is-reasoning-effort-configurable (:reasoning-effort? model)
+                             ;; Exact rungs for the reasoning picker when simplified
+                             ;; thinking modes are off; [] when the model has none.
+                             :reasoning-effort-options (vec (:reasoning-effort-options model))
                              :verbosity-style (:verbosity-style model)
                              :thinking-display-style (:thinking-display-style model)})
                           models)

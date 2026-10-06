@@ -555,6 +555,11 @@ export interface RouterModelDetails {
   verbosity_style: string | null;
   /** Set only for Claude adaptive thinking; an older gateway omits it. */
   thinking_display_style?: string | null;
+  /**
+   * Exact reasoning levels, lightest first, for the level list when simplified
+   * thinking modes are off. Empty when the model has none; an older gateway omits it.
+   */
+  reasoning_effort_options?: string[];
 }
 
 export interface RouterProvider {

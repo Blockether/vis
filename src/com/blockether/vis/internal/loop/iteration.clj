@@ -448,7 +448,7 @@
   [environment messages &
    [{:keys [routing iteration reasoning-level reasoning-effort resolved-model on-chunk extra-body
             llm-headers active-extensions answer-validation-context request-context on-response
-            message-token-counter input-token-estimator turn-pricing]}]]
+            message-token-counter input-token-estimator preferred-reasoning-effort turn-pricing]}]]
   (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (transcript/runtime-turn-prefix environment)
@@ -687,6 +687,11 @@
 
               reasoning-effort
               (assoc :reasoning-effort reasoning-effort)
+
+              ;; svar sends the nearest rung of each attempted model; a model
+              ;; without rungs keeps the abstract `:reasoning` level above.
+              preferred-reasoning-effort
+              (assoc :preferred-reasoning-effort preferred-reasoning-effort)
 
               streaming-fn
               (assoc :on-chunk streaming-fn)
@@ -1829,7 +1834,7 @@
            ;; The limit feeds pressure hints and the pre-request budget gate;
            ;; canonical history itself is never trimmed.
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
-           reasoning-effort turn-features workspace-overrides]
+           reasoning-effort preferred-reasoning-effort turn-features workspace-overrides]
     trace-store ::trace-store}]
   (let [system-prompt
         (str (voice-system-prompt system-prompt turn-features)
@@ -2232,6 +2237,7 @@
      :message-base-atom message-base-atom
      :note-prompt-cache-status! note-prompt-cache-status!
      :on-chunk on-chunk
+     :preferred-reasoning-effort preferred-reasoning-effort
      :prompt-cache-status-atom prompt-cache-status-atom
      :reasoning-effort reasoning-effort
      :route-command-at-turn-start route-command-at-turn-start
@@ -2519,9 +2525,10 @@
    trailer, the council input and the provider messages, with the context-recovery
    state the provider call shares."
   [{:keys [canonical-messages effective-fold-budget emergency-summaries-atom environment iteration
-           iteration-extra-body loop-state message-base-atom pre-resolved-model raw-reasoning-level
-           reasoning-effort reasoning-level replay-target routing session-turn-id take-user-input
-           trailer-iters turn-position user-request]
+           iteration-extra-body loop-state message-base-atom pre-resolved-model
+           preferred-reasoning-effort raw-reasoning-level reasoning-effort reasoning-level
+           replay-target routing session-turn-id take-user-input trailer-iters turn-position
+           user-request]
     :as state}]
   (let [summaries
         (transcript/current-session-summaries environment)
@@ -2538,6 +2545,7 @@
                     {:message-count (count messages)
                      :reasoning reasoning-level
                      :reasoning-effort reasoning-effort
+                     :preferred-reasoning-effort preferred-reasoning-effort
                      :requested-reasoning raw-reasoning-level})
 
         transport-summaries
@@ -2717,10 +2725,10 @@
   [{:keys [accounting-atom active-exts cancel-atom canonical-messages context-recovery-state
            council-active effective-messages-atom emergency-summaries-atom emit-hook! environment
            install-projection! iteration iteration-extra-body max-context-tokens message-base-atom
-           message-token-counter on-chunk pre-resolved-model provider-output-started?
-           provider-replay-unsafe? reasoning-effort reasoning-level recall-options replay-target
-           request-budget-atom route-change route-command-at-turn-start routing session-turn-id
-           summaries trailer-iters turn-pricing user-request]
+           message-token-counter on-chunk pre-resolved-model preferred-reasoning-effort
+           provider-output-started? provider-replay-unsafe? reasoning-effort reasoning-level
+           recall-options replay-target request-budget-atom route-change route-command-at-turn-start
+           routing session-turn-id summaries trailer-iters turn-pricing user-request]
     :as state}]
   (let [resolved-model
         pre-resolved-model
@@ -2834,6 +2842,7 @@
                                                     (:prompt-cache-history-atom environment))
                            :reasoning-level reasoning-level
                            :reasoning-effort reasoning-effort
+                           :preferred-reasoning-effort preferred-reasoning-effort
                            :routing @iteration-routing
                            :resolved-model resolved-model
                            :turn-pricing turn-pricing

@@ -155,7 +155,7 @@
         ;; C-x arms the prefix; the next key runs the verb (with or without Ctrl).
         (expect (= :cx (:prefix armed)))
         (expect (= :cycle-model (:action (input/handle-key (char-key (Character. \m)) armed))))
-        (expect (= :cycle-reasoning (:action (input/handle-key (char-key (Character. \r)) armed))))
+        (expect (= :pick-reasoning (:action (input/handle-key (char-key (Character. \r)) armed))))
         (expect (= :toggle-codex-fast
                    (:action (input/handle-key (char-key (Character. \q)) armed))))
         (expect (= :cycle-verbosity (:action (input/handle-key (char-key (Character. \l)) armed))))
@@ -254,7 +254,7 @@
                       (input/paste-text "keep"))]
         (expect (= :recenter (:action (input/handle-key (ctrl-key (Character. \l)) state))))
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \t)) state))))
-        (expect (not= :cycle-reasoning
+        (expect (not= :pick-reasoning
                       (:action (input/handle-key (ctrl-key (Character. \r)) state))))))
   (it "bare Tab, reverse Tab and indexed chords never change sessions"
       (let [state

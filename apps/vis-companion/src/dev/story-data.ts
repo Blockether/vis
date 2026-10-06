@@ -1223,7 +1223,7 @@ export const STORY_RESPONSE_CONTROL_VALUES = {
     value: 'claude-opus-5',
     title: 'anthropic-coding-plan/claude-opus-5',
   },
-  reasoning: { label: 'Reasoning', value: 'high' },
+  reasoning: { label: 'Reasoning', value: 'high', choices: ['low', 'medium', 'high'] },
   verbosity: { label: 'Verbosity', value: 'medium' },
   thinking: { enabled: true },
   fast: { enabled: true },

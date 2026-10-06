@@ -91,7 +91,7 @@
    chord, palette, and help still list every verb."
   [{:action :cycle-model :key \m :label "model" :group "Model"}
    {:action :pick-model :key \c :label "choose model" :group "Model"}
-   {:action :cycle-reasoning :key \r :label "reasoning" :group "Model"}
+   {:action :pick-reasoning :key \r :label "reasoning" :group "Model"}
    {:action :toggle-codex-fast :key \q :label "fast mode" :group "Model"}
    {:action :cycle-verbosity :key \l :label "length" :group "Model" :show-when :never}
    {:action :search-open :key \f :label "search" :group "Buffer" :show-when :never}

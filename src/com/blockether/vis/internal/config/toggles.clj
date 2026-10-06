@@ -42,6 +42,7 @@
        prior metadata; the live VALUE in `state` is left alone so a
        user override survives a reload."
   (:require [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.contract.toggle :as toggle-contract]))
 
 ;; Registries
@@ -592,11 +593,43 @@
                        :description "Reasoning budget hint passed to reasoning-capable models."
                        :type :enum
                        :choices ["quick" "balanced" "deep"]
-                       ;; Lives on its OWN control (TUI Ctrl+R, footer), not the Settings
-                       ;; dialog — `:settings? false` keeps it registered + persisted but out
+                       ;; Lives on its OWN control (the reasoning picker: TUI Ctrl+X r and
+                       ;; footer chip, Companion composer), not the Settings dialog —
+                       ;; `:settings? false` keeps it registered + persisted but out
                        ;; of every channel's Settings list.
                        :settings? false
                        :default "balanced"
+                       :scopes toggle-contract/scopes
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
+    ;; ON keeps the three abstract levels above, and clients cycle them. OFF lets the
+    ;; reasoning picker offer the exact rungs that svar stamps on the session's model
+    ;; (`:reasoning-effort-options`), and each turn aims at `reasoning_effort`.
+    ;; Clients show it in their Application section, so it stays out of the
+    ;; machine settings list.
+    (register-toggle!
+      {:id "simplified_thinking_modes"
+       :label "Simplified thinking modes"
+       :description "Offer quick, balanced and deep. Off offers every thinking level of the model."
+       :type :boolean
+       :default true
+       :settings? false
+       :scopes toggle-contract/scopes
+       :owner :vis
+       :group :provider
+       :persist? true})
+    ;; One rung for every model: a turn sends the nearest rung that the attempted
+    ;; model offers, so a model switch never makes the saved choice invalid.
+    (register-toggle! {:id "reasoning_effort"
+                       :label "Thinking level"
+                       :description
+                       "Provider thinking level to aim for when simplified thinking modes are off."
+                       :type :enum
+                       :choices svar/REASONING_EFFORTS
+                       ;; Own control (the reasoning picker), like reasoning_level.
+                       :settings? false
+                       :default "medium"
                        :scopes toggle-contract/scopes
                        :owner :vis
                        :group :provider

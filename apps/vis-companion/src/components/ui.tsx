@@ -1269,7 +1269,8 @@ export function ComposerButton({
  * WHAT THIS TURN WILL RUN AS, and there is only one of it.
  *
  * The line under the composer reports the model and the reasoning level, and
- * both are pressable: one opens the picker, one cycles. They are the same small
+ * both are pressable: the model opens a list, and so does the reasoning level unless
+ * simplified thinking modes step it with one tap. They are the same small
  * caps at the same size and they had two different hovers, so the strip read as
  * one label beside one button. `isPicker` is the only difference that survived —
  * the dotted rule under the word that OPENS something.

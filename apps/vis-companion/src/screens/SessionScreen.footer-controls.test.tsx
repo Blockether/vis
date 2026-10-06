@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { GatewayClient } from '../lib/gateway';
@@ -201,6 +201,113 @@ describe('composer response controls', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /thinking summary — off/i })).toHaveTextContent('omitted'),
     );
+  });
+
+  // Simplified modes step with one tap. With them off, the chip lists the exact levels,
+  // so a tap never jumps past the wanted one.
+  describe('reasoning level list', () => {
+    const ladder = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+    const exactModel = routerProvider('openai-codex', {
+      model_details: [
+        {
+          name: 'gpt-6-astra',
+          is_reasoning_effort_configurable: true,
+          verbosity_style: null,
+          reasoning_effort_options: ['low', 'medium', 'high', 'xhigh'],
+        },
+      ],
+    });
+
+    function renderWithReasoning(simplifiedEnabled: boolean, setSetting: ReturnType<typeof vi.fn>) {
+      const settings = new Map<string, unknown>([
+        [
+          'reasoning_level',
+          toggle('reasoning_level', 'Reasoning effort', 'balanced', ['quick', 'balanced', 'deep']),
+        ],
+        ['reasoning_effort', toggle('reasoning_effort', 'Thinking level', 'max', ladder)],
+        [
+          'simplified_thinking_modes',
+          {
+            id: 'simplified_thinking_modes',
+            label: 'Simplified thinking modes',
+            type: 'boolean',
+            enabled: simplifiedEnabled,
+          },
+        ],
+      ]);
+      const setting = (id: string) => settings.get(id) ?? null;
+      const fleet = [exactModel];
+      renderSessionScreen({
+        client: {
+          cachedDefaultModel: () => ({
+            provider: 'openai-codex',
+            model: 'gpt-6-astra',
+          }),
+          defaultModel: () => Promise.resolve({ provider: 'openai-codex', model: 'gpt-6-astra' }),
+          cachedRouter: () => fleet,
+          router: () => Promise.resolve(fleet),
+          cachedSetting: setting,
+          setting: (id: string) => Promise.resolve(setting(id)),
+          setSetting,
+        },
+      });
+    }
+
+    it('steps to the next of quick, balanced and deep while simplified thinking modes are on', async () => {
+      const user = userEvent.setup();
+      const setSetting = vi.fn((id: string) =>
+        Promise.resolve(toggle(id, 'Reasoning effort', 'deep', ['quick', 'balanced', 'deep'])),
+      );
+      renderWithReasoning(true, setSetting);
+
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Reasoning effort — balanced, tap for the next level',
+        }),
+      );
+
+      // One tap steps to the next level; no list opens.
+      expect(screen.queryByRole('dialog', { name: 'Reasoning effort' })).toBeNull();
+      expect(setSetting).toHaveBeenCalledWith('reasoning_level', 'cycle', undefined, {
+        scope: 'session',
+        target_id: 's1',
+      });
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: /reasoning effort — deep/i }),
+        ).toBeInTheDocument(),
+      );
+    });
+
+    it('lists the exact levels of the model while simplified thinking modes are off', async () => {
+      const user = userEvent.setup();
+      const setSetting = vi.fn((id: string, _action: string, value: string) =>
+        Promise.resolve(toggle(id, 'Thinking level', value, ladder)),
+      );
+      renderWithReasoning(false, setSetting);
+
+      // The saved `max` is above every rung of this model: the next turn sends `xhigh`.
+      await user.click(
+        await screen.findByRole('button', {
+          name: 'Thinking level — xhigh, choose a level',
+        }),
+      );
+      const list = screen.getByRole('dialog', { name: 'Thinking level' });
+      expect(
+        within(list)
+          .getAllByRole('button')
+          .map((row) => row.textContent),
+      ).toEqual(['low', 'medium', 'high', 'xhighcurrent']);
+      await user.click(within(list).getByRole('button', { name: 'low' }));
+
+      expect(setSetting).toHaveBeenCalledWith('reasoning_effort', 'value', 'low', {
+        scope: 'session',
+        target_id: 's1',
+      });
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /thinking level — low/i })).toBeInTheDocument(),
+      );
+    });
   });
   // Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
   // Fast mode was encoded as an OpenAI-only request field before routing finished.

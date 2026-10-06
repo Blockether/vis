@@ -21,7 +21,7 @@
         ;; Names the wrong quote or bracket when Python refuses a `python_execution` block.
         com.blockether/parinferish {:mvn/version "0.2.4"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
-        com.blockether/svar {:mvn/version "0.7.201"}
+        com.blockether/svar {:mvn/version "0.7.202"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
         com.blockether/vis-python-runtime {:git/sha "98a3e1913ffbc8b6808ecde00411a2926cfa70f5"

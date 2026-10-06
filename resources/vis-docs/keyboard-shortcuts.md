@@ -81,13 +81,18 @@ once it can act.
 | Ctrl+X o | Open **Providers** to add a provider and sign in |
 | Ctrl+X c | Choose a model from a searchable list |
 | Ctrl+X m | Switch to the next model |
-| Ctrl+X r | Change the reasoning effort |
+| Ctrl+X r | Change the thinking level |
 | Ctrl+X l | Change the answer length |
 | Ctrl+X q | Turn fast mode on or off for OpenAI Codex models |
 
 To turn the thinking summary on or off for Claude models, open the command palette and
 choose **Thinking Summary**. With the summary off, Claude still thinks, but Vis shows no
 thinking text. The command appears only when the current model supports it.
+
+With **Simplified thinking modes** on, Ctrl+X r switches to the next of quick, balanced and deep.
+With the setting off, Ctrl+X r opens a list of every thinking level that the current model offers.
+The setting is in the top section of **Settings**. You can also click the reasoning label in the
+footer.
 
 ### Files, voice and search
 

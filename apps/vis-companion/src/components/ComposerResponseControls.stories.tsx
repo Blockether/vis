@@ -22,7 +22,7 @@ const meta = {
       reasoning: {
         ...STORY_RESPONSE_CONTROL_VALUES.reasoning,
         busy: false,
-        cycle: fn(),
+        choose: fn(),
       },
       verbosity: {
         ...STORY_RESPONSE_CONTROL_VALUES.verbosity,
@@ -59,6 +59,16 @@ export const AvailableOptions: Story = {
     await expect(args.controls.model.choose).toHaveBeenCalledOnce();
     await userEvent.click(canvas.getByRole('button', { name: /^Verbosity —/ }));
     await expect(args.controls.verbosity?.cycle).toHaveBeenCalledOnce();
+    // The level list hangs in a portal, outside the story canvas.
+    await userEvent.click(canvas.getByRole('button', { name: /^Reasoning —/ }));
+    const levels = within(canvasElement.ownerDocument.body).getByRole('dialog', {
+      name: 'Reasoning',
+    });
+    await userEvent.click(within(levels).getByRole('button', { name: 'low' }));
+    const reasoning = args.controls.reasoning;
+    await expect(
+      reasoning && 'choose' in reasoning ? reasoning.choose : undefined,
+    ).toHaveBeenCalledWith('low');
   },
 };
 
@@ -66,4 +76,31 @@ export const AvailableOptionsPointer: Story = {
   ...AvailableOptions,
   tags: ['!test'],
   globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+/** Simplified thinking modes step through quick, balanced and deep with one tap. */
+export const SimplifiedReasoning: Story = {
+  name: 'Simplified reasoning modes',
+  args: {
+    controls: {
+      ...meta.args.controls,
+      reasoning: {
+        label: 'Reasoning effort',
+        value: 'balanced',
+        busy: false,
+        cycle: fn(),
+      },
+    },
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole('button', { name: /^Reasoning effort — balanced, tap/ }),
+    );
+    const reasoning = args.controls.reasoning;
+    await expect(
+      reasoning && 'cycle' in reasoning ? reasoning.cycle : undefined,
+    ).toHaveBeenCalledOnce();
+    await expect(within(canvasElement.ownerDocument.body).queryByRole('dialog')).toBeNull();
+  },
 };

@@ -2,7 +2,8 @@
   "Feature-toggle registry contract: register, lookup, override,
    listener fan-out, persistence snapshot + hydrate, and the canonical
    internal toggles. Toggle ids are plain strings (no namespaces)."
-  (:require [com.blockether.vis.contract.toggle :as toggle-contract]
+  (:require [com.blockether.svar.core :as svar]
+            [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.config.toggles :as t]
             [com.blockether.vis.internal.config.validation :as validation]
             [lazytest.core :refer [defdescribe expect it]]
@@ -228,6 +229,23 @@
                  ;; identical to web's `block-code`). Both display gates were retired.
                  (expect (nil? (t/toggle-spec "show_raw_code")))
                  (expect (nil? (t/toggle-spec "show_tool_results")))))
+
+(defdescribe
+  thinking-level-toggles-test
+  (it "registers the exact thinking level beside the simplified modes"
+      (let [simplified
+            (t/toggle-spec "simplified_thinking_modes")
+
+            effort
+            (t/toggle-spec "reasoning_effort")]
+
+        ;; Simplified modes stay on by default and live in the Application section of clients.
+        (expect (= {:type :boolean :default true :group :provider :persist? true}
+                   (select-keys simplified [:type :default :group :persist?])))
+        (expect (false? (:settings? simplified)))
+        ;; The exact level offers every svar rung on its own control.
+        (expect (= {:type :enum :choices svar/REASONING_EFFORTS :default "medium" :settings? false}
+                   (select-keys effort [:type :choices :default :settings?]))))))
 
 (defdescribe thinking-summary-toggle-test
              (it "registers thinking_summary as an own control that defaults on"

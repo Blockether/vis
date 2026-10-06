@@ -240,8 +240,8 @@ a thank-you, are sent without a reasoning parameter.
 
 ### Evaluation runs
 
-`--reasoning-effort high|max` sends the provider's exact effort value instead of
-Vis's adaptive levels. The run exits `2` if the provider, model or value is not
+`--reasoning-effort LEVEL` sends one exact thinking level that the model offers, such as `high`
+or `max`, instead of Vis's adaptive levels. The run exits `2` if the provider, model or value is not
 accepted, or if any iteration switched provider or model. The JSON output
 includes an `eval` object describing the run.
 
@@ -615,6 +615,13 @@ overrides of the source session. Sessions without a group skip the group layer.
 
 Response options, including reasoning, verbosity, thinking summary and fast mode, are captured
 when you submit a message. Later edits do not change running or queued responses.
+
+With **Simplified thinking modes** on, the default, the reasoning control switches to the next of
+quick, balanced and deep with each tap or key press. Turn the setting off to choose from a list of
+every thinking level that the current model offers. The setting is in the **Application** section of
+the app's **Settings**, and in the top section of the terminal's **Settings**.
+Vis saves that choice as `reasoning_effort`. After a model change, each turn sends the nearest level
+that the new model offers.
 
 Paths and access rows use guided editors. Changes apply on the next turn.
 To edit configuration files directly, use a text editor outside the app or TUI.

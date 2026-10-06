@@ -683,7 +683,8 @@
                                                    (footer/draw-footer! g db 1 cols 0))})]
 
               (expect (nil? (:error capture)))
-              (expect (= (str "reasoning: deep (C-x r)  /  verbosity: low (C-x l)  /  "
+              ;; The reasoning chip is a button, so its padding adds a space before the hint.
+              (expect (= (str "reasoning: deep  (C-x r)  /  verbosity: low (C-x l)  /  "
                               "speed: fast (C-x q)")
                          (str/trim (nth (str/split-lines (cap/frame-text capture)) 1)))))))))
   (it "shows speed and its shortcut only for an active Codex session"
@@ -813,8 +814,8 @@
                                                                    :model "gpt-5.6-sol"}}
                                              0)
                              (mapv :text))]
-              (expect (= ["reasoning: deep" "verbosity: medium"]
-                         (filterv #{"reasoning: deep" "verbosity: medium"} texts))))))))
+              (expect (= [" reasoning: deep " "verbosity: medium"]
+                         (filterv #{" reasoning: deep " "verbosity: medium"} texts))))))))
   (it "resolves the SESSION's model, falling back to the router root without a pick"
       ;; The plumbing under the chips: the same GitHub Copilot provider serves an
       ;; Anthropic wire for Claude and a Responses wire for GPT, so asking the

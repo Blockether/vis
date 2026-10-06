@@ -150,6 +150,7 @@ import type {
   VoiceProgress,
   ModelPref,
   RouterProvider,
+  RouterModelDetails,
   Toggle,
   GatewayAttachment,
 } from '../lib/types';
@@ -595,6 +596,57 @@ function currentConnection(subscriptions: SessionSubscriptionHub): boolean {
     connected = live;
   })();
   return connected;
+}
+
+/**
+ * The rung of `options` that a turn sends for `wanted`, as Svar picks it: `wanted`
+ * when the model offers it, else the strongest offered rung below it, else the
+ * weakest. `ladder` orders every rung.
+ */
+function nearestRung(
+  ladder: readonly string[],
+  options: readonly string[],
+  wanted: string,
+): string | null {
+  if (options.includes(wanted)) return wanted;
+  const rank = ladder.indexOf(wanted);
+  if (rank < 0 || options.length === 0) return null;
+  const below = options.filter((option) => ladder.indexOf(option) < rank);
+  return below[below.length - 1] ?? options[0];
+}
+
+/**
+ * What the reasoning chip lists for `model`, as the TUI picker does. Simplified
+ * thinking modes list `reasoning_level`. With them off, a model with exact rungs
+ * lists those rungs through `reasoning_effort`, and `current` is the rung that the
+ * next turn sends for the saved effort. A model without rungs keeps the modes.
+ */
+function reasoningChoices(
+  model: RouterModelDetails | undefined,
+  level: Toggle | null,
+  effort: Toggle | null,
+  simplified: Toggle | null,
+): {
+  setting: Toggle;
+  choices: readonly string[];
+  current: string | null;
+} | null {
+  const options = model?.reasoning_effort_options ?? [];
+  if (simplified?.enabled === false && effort && options.length > 0) {
+    const wanted = typeof effort.value === 'string' ? effort.value : null;
+    return {
+      setting: effort,
+      choices: options,
+      current: wanted === null ? null : nearestRung(effort.choices ?? [], options, wanted),
+    };
+  }
+  const choices = level?.choices ?? [];
+  if (!level || choices.length === 0) return null;
+  return {
+    setting: level,
+    choices,
+    current: typeof level.value === 'string' ? level.value : null,
+  };
 }
 
 export function SessionScreen({
@@ -1242,6 +1294,14 @@ export function SessionScreen({
     client.cachedSetting('reasoning_level', settingsTarget),
   );
   const [reasoningBusy, setReasoningBusy] = useState(false);
+  // With simplified thinking modes off, the chip lists the model's exact levels and
+  // saves the pick in `reasoning_effort`.
+  const [reasoningEffort, setReasoningEffort] = useState<Toggle | null>(() =>
+    client.cachedSetting('reasoning_effort', settingsTarget),
+  );
+  const [simplifiedThinking, setSimplifiedThinking] = useState<Toggle | null>(() =>
+    client.cachedSetting('simplified_thinking_modes', settingsTarget),
+  );
   const [verbosity, setVerbosity] = useState<Toggle | null>(() =>
     client.cachedSetting('verbosity', settingsTarget),
   );
@@ -1270,6 +1330,8 @@ export function SessionScreen({
         ['verbosity', setVerbosity],
         ['thinking_summary', setThinkingSummary],
         ['codex_fast_mode', setCodexFast],
+        ['reasoning_effort', setReasoningEffort],
+        ['simplified_thinking_modes', setSimplifiedThinking],
       ] as const) {
         void client
           .setting(id, signal, settingsTarget)
@@ -1325,26 +1387,36 @@ export function SessionScreen({
     }
   }
 
-  // One tap = next choice. Cycling beats a popover for a two-to-four value
-  // enum, and the gateway owns the order (`cycle` action) — but it also HANDS
-  // that order over in `choices`, so the next word is known locally and the
-  // chip can show it on the tap instead of after the round-trip.
-  function nextReasoningLevel(toggle: Toggle): string | null {
-    const choices = toggle.choices ?? [];
-    if (choices.length < 2) return null;
-    const at = typeof toggle.value === 'string' ? choices.indexOf(toggle.value) : -1;
-    return choices[(at + 1) % choices.length] ?? null;
-  }
-
-  async function cycleReasoning() {
-    if (!reasoning || reasoningBusy) return;
-    // Optimistic: the guess is only ever a guess, and the gateway's answer
-    // below overwrites it — a disagreement re-keys the word and simply plays
-    // the swap a second time.
-    setPendingLevel(nextReasoningLevel(reasoning));
+  // With simplified thinking modes off, one tap opens the list and one row picks the
+  // level. A list beats a cycle once a model offers its exact levels: the chip lists
+  // the model's own rungs through `reasoning_effort`, not quick, balanced and deep.
+  async function chooseReasoning(setting: Toggle, value: string) {
+    if (reasoningBusy) return;
+    // Optimistic: the chip shows the pick at once, and the gateway's answer below
+    // replaces it — a disagreement re-keys the word and plays the swap again.
+    setPendingLevel(value);
     setReasoningBusy(true);
     try {
-      setReasoning(await client.setSetting(reasoning.id, 'cycle', undefined, settingsTarget));
+      const saved = await client.setSetting(setting.id, 'value', value, settingsTarget);
+      if (setting.id === 'reasoning_effort') setReasoningEffort(saved);
+      else setReasoning(saved);
+    } catch (e) {
+      setComposerNotice((e as Error).message);
+    } finally {
+      setPendingLevel(null);
+      setReasoningBusy(false);
+    }
+  }
+
+  // Simplified thinking modes have three levels, so a tap steps to the next one.
+  async function cycleReasoning(setting: Toggle, choices: readonly string[], current: string) {
+    if (reasoningBusy) return;
+    // Optimistic like `chooseReasoning`: the gateway's answer replaces the guess.
+    const at = choices.indexOf(current);
+    setPendingLevel(choices[(at + 1) % choices.length] ?? null);
+    setReasoningBusy(true);
+    try {
+      setReasoning(await client.setSetting(setting.id, 'cycle', undefined, settingsTarget));
     } catch (e) {
       setComposerNotice((e as Error).message);
     } finally {
@@ -1365,10 +1437,6 @@ export function SessionScreen({
     }
   }
 
-  // What the chip SAYS: the optimistic pick while the write is in flight, the
-  // gateway's own value the rest of the time. Never empty — that is the whole
-  // point of the swap.
-  const reasoningLevel = pendingLevel ?? (typeof reasoning?.value === 'string' ? reasoning.value : 'default');
   const activeProvider = modelPref?.provider ?? defaultPref?.provider;
   const codexFastAvailable = activeProvider === 'openai-codex' && codexFast;
   const selectedModel = modelPref?.model ?? defaultPref?.model;
@@ -1382,6 +1450,11 @@ export function SessionScreen({
     modelProvider?.model_details?.find((model) => model.name === selectedModel) ??
     modelProvider?.model_details?.find((model) => model.name === modelProvider.default_model) ??
     modelProvider?.model_details?.[0];
+  // What the chip lists and SAYS: the optimistic pick while the write is in flight,
+  // the gateway's own value the rest of the time. Never empty — that is the whole
+  // point of the swap.
+  const reasoningPick = reasoningChoices(modelInfo, reasoning, reasoningEffort, simplifiedThinking);
+  const reasoningLevel = pendingLevel ?? reasoningPick?.current ?? 'default';
   const verbosityAvailable = modelInfo?.verbosity_style != null && verbosity;
   // Only Claude adaptive thinking can show or omit its summary; Z.ai GLM cannot.
   const thinkingSummaryAvailable = modelInfo?.thinking_display_style != null && thinkingSummary;
@@ -4199,15 +4272,23 @@ export function SessionScreen({
         setRouterOpen(true);
       },
     },
-    reasoning:
-      reasoning && (reasoning.choices?.length ?? 0) > 0
+    reasoning: !reasoningPick
+      ? undefined
+      : reasoningPick.setting.id === 'reasoning_level'
         ? {
-            label: reasoning.label,
+            label: reasoningPick.setting.label,
             value: reasoningLevel,
             busy: reasoningBusy,
-            cycle: cycleReasoning,
+            cycle: () =>
+              cycleReasoning(reasoningPick.setting, reasoningPick.choices, reasoningLevel),
           }
-        : undefined,
+        : {
+            label: reasoningPick.setting.label,
+            value: reasoningLevel,
+            choices: reasoningPick.choices,
+            busy: reasoningBusy,
+            choose: (value: string) => chooseReasoning(reasoningPick.setting, value),
+          },
     verbosity:
       verbosityAvailable && (verbosityAvailable.choices?.length ?? 0) > 0
         ? {

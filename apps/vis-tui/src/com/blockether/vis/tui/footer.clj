@@ -555,8 +555,10 @@
         reasoning?
         (reasoning-effort-configurable? info)
 
+        ;; The chip shows the choice that the picker marks as current: a simplified
+        ;; mode, or the exact rung that the next turn sends with simplified modes off.
         reasoning-level
-        (or (:reasoning-level settings) default-reasoning-level)
+        (or (:current (lp/reasoning-choices info settings)) default-reasoning-level)
 
         ;; Verbosity is a WIRE capability, not a vendor: svar stamps
         ;; `:verbosity-style` on every model whose wire takes `text.verbosity`, so
@@ -602,14 +604,13 @@
       ;; Response controls read reasoning → verbosity → thinking → fast, matching
       ;; Companion.
       reasoning?
-      (conj {:text (str "reasoning: " (name reasoning-level))
-             :fg t/footer-fg-muted
-             :bold? false
+      (conj {:text (str " reasoning: " reasoning-level " ")
+             :kind :footer-reasoning
              :region :left
              :priority 3})
 
       reasoning?
-      (conj {:text (str "(" (keymap/label-for :cycle-reasoning) ")")
+      (conj {:text (str "(" (keymap/label-for :pick-reasoning) ")")
              :join-left? true
              :fg t/footer-fg-muted
              :bold? false
