@@ -7120,11 +7120,43 @@
      :preview-top body-top
      :preview-h avail}))
 
+(defn- navigator-markdown-lines
+  "Lay out one message `text` in `width` columns as the transcript does: Markdown
+   through the shared layout walker, with blank block gaps dropped. A line that the
+   wrapper broke is justified to both edges; the last line of a block stays ragged.
+   Each line is a vector of IR runs."
+  [text width]
+  (let [width
+        (max 1 (long width))
+
+        text
+        (str/trim (str/replace (str text) #"\r\n?" "\n"))]
+
+    (if (str/blank? text)
+      []
+      (->> (layout/ast->lines (vis/markdown->ast text) width)
+           (remove (fn [{:keys [runs]}]
+                     (every? #(str/blank? (:text %)) runs)))
+           (mapv (fn [{:keys [runs wrap?]}]
+                   (if wrap? (layout/justify-line-runs runs width) runs)))))))
+
+(defn- navigator-run-segments
+  "Split the IR `runs` of one line into `navigator-highlight-segments`. Each segment
+   is `{:text :style :match?}` and keeps the Markdown style of its run."
+  [runs query]
+  (into []
+        (comp (mapcat (fn [{:keys [text style]}]
+                        (map (fn [[segment match?]]
+                               {:text segment :style style :match? match?})
+                             (navigator-highlight-segments text query))))
+              (remove #(= "" (:text %))))
+        runs))
+
 (defn- navigator-preview-lines
   "Paint plan of the message pane for the selected `entry`, at most `height`
    lines of `width` columns. Each line is a map by `:kind`: `:title` the
    session's title; `:label` one message's author (`:label`, `:role`), place and
-   time; `:text` one wrapped line of its snippet as `navigator-highlight-segments`;
+   time; `:text` one laid-out Markdown line of its snippet as `navigator-run-segments`;
    `:note` why no message matches or shows; `:more` the messages that did not fit;
    `:blank` a spacer. Whole messages fit first: only a first message taller than
    the pane is clipped.
@@ -7160,9 +7192,9 @@
                           :role role
                           :place (when (= :thinking side) "thinking")
                           :stamp (when (some? at) (navigator-stamp at))}]
-                        (map (fn [line]
-                               {:kind :text :segments (navigator-highlight-segments line query)}))
-                        (p/word-wrap (str/trim (str/replace (str text) #"\s+" " ")) width)))
+                        (map (fn [runs]
+                               {:kind :text :segments (navigator-run-segments runs query)}))
+                        (navigator-markdown-lines text width)))
                 entries))
 
         fit
@@ -7315,9 +7347,46 @@
             (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row text)) (p/put-str! g cx row text))
             (recur (rest fields) (+ cx used) (- remaining used))))))))
 
+(defn md-run-paint!
+  "Paint one styled IR run at column `x`; returns the next x. Style →
+   dialog-palette mapping: headings title-accent bold, code/links/list
+   markers hint-key accent, dim/quote hint, **bold**/_italic_ as SGR."
+  [g x row {:keys [text style]}]
+  (let [style
+        (or style #{})
+
+        head?
+        (contains? style :heading)
+
+        code?
+        (or (contains? style :code) (contains? style :link))
+
+        ;; Headings paint dialog-fg + BOLD, NOT dialog-title-fg: the
+        ;; title token is white in BOTH palettes (it sits on the title
+        ;; bar), so on the light dialog body it was invisible.
+        fg
+        (cond code? t/dialog-hint-key
+              (contains? style :marker) t/dialog-hint-key
+              (or (contains? style :dim) (contains? style :quote)) t/dialog-hint
+              :else t/dialog-fg)
+
+        bold?
+        (or head? (contains? style :bold))
+
+        italic?
+        (contains? style :italic)]
+
+    (p/set-colors! g fg t/dialog-bg)
+    (cond (and bold? italic?) (p/styled g [p/BOLD p/ITALIC] (p/put-str! g x row text))
+          bold? (p/styled g [p/BOLD] (p/put-str! g x row text))
+          italic? (p/styled g [p/ITALIC] (p/put-str! g x row text))
+          :else (p/put-str! g x row text))
+    (+ (long x) (p/display-width text))))
+
 (defn- draw-navigator-segments!
-  "Paint `navigator-highlight-segments` from `x`, clipped to `width` columns. A
-   matched segment is marked in the accent ink, like a highlighter pen."
+  "Paint `navigator-run-segments` from `x`, clipped to `width` columns. A matched
+   segment is marked in the accent ink, like a highlighter pen; the others keep
+   their Markdown style through `md-run-paint!`."
   [g x row width segments]
   (loop [segments
          segments
@@ -7329,19 +7398,19 @@
          (long width)]
 
     (when (and (seq segments) (pos? remaining))
-      (let [[segment match?]
+      (let [{:keys [text match?] :as segment}
             (first segments)
 
-            segment
-            (p/truncate-cols segment remaining)
+            text
+            (p/truncate-cols (str text) remaining)
 
             segment-w
-            (long (p/display-width segment))]
+            (long (p/display-width text))]
 
         (if match?
           (do (p/set-colors! g t/dialog-bg t/dialog-hint-key)
-              (p/styled g [p/BOLD] (p/put-str! g cx row segment)))
-          (do (p/set-colors! g t/dialog-fg t/dialog-bg) (p/put-str! g cx row segment)))
+              (p/styled g [p/BOLD] (p/put-str! g cx row text)))
+          (md-run-paint! g cx row (assoc segment :text text)))
         (recur (rest segments) (+ cx segment-w) (- remaining segment-w))))))
 
 (defn- draw-navigator-preview!
@@ -8458,42 +8527,6 @@
                 (recur)))))))))
 
 ;;; ── Markdown viewer dialog ──────────────────────────────────────────────────
-(defn md-run-paint!
-  "Paint one styled IR run at column `x`; returns the next x. Style →
-   dialog-palette mapping: headings title-accent bold, code/links/list
-   markers hint-key accent, dim/quote hint, **bold**/_italic_ as SGR."
-  [g x row {:keys [text style]}]
-  (let [style
-        (or style #{})
-
-        head?
-        (contains? style :heading)
-
-        code?
-        (or (contains? style :code) (contains? style :link))
-
-        ;; Headings paint dialog-fg + BOLD, NOT dialog-title-fg: the
-        ;; title token is white in BOTH palettes (it sits on the title
-        ;; bar), so on the light dialog body it was invisible.
-        fg
-        (cond code? t/dialog-hint-key
-              (contains? style :marker) t/dialog-hint-key
-              (or (contains? style :dim) (contains? style :quote)) t/dialog-hint
-              :else t/dialog-fg)
-
-        bold?
-        (or head? (contains? style :bold))
-
-        italic?
-        (contains? style :italic)]
-
-    (p/set-colors! g fg t/dialog-bg)
-    (cond (and bold? italic?) (p/styled g [p/BOLD p/ITALIC] (p/put-str! g x row text))
-          bold? (p/styled g [p/BOLD] (p/put-str! g x row text))
-          italic? (p/styled g [p/ITALIC] (p/put-str! g x row text))
-          :else (p/put-str! g x row text))
-    (+ (long x) (p/display-width text))))
-
 (defn markdown-viewer-dialog!
   "Scrollable read-only MARKDOWN viewer: `md` is lifted to canonical IR
    (`vis/markdown->ast`) and painted with styled headings, bold, and code

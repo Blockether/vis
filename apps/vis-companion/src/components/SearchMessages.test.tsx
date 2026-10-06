@@ -52,6 +52,28 @@ describe('search messages pane', () => {
     expect(container.textContent).not.toMatch(/\*\*|~~|`|https:\/\//);
   });
 
+  // User report (paraphrased): the message pane showed lists as raw text and ragged
+  // lines; it must render Markdown blocks and justify prose like the chat.
+  it('renders lists and headings and justifies each paragraph and list item', () => {
+    const { container } = pane({
+      query: '',
+      match: snippet('## Changes\n\nSend all now shows from **two** messages.\n\n- app\n- TUI\n\n1. first'),
+    });
+    const message = container.querySelector('ol > li button > span:last-child') as HTMLElement;
+
+    expect(within(message).getByText('Changes')).toHaveClass('block', 'font-bold');
+    expect(message.querySelector('strong')).toHaveTextContent('two');
+    const items = [...message.querySelectorAll('span.list-item')];
+    expect(items.map((item) => item.textContent)).toEqual(['app', 'TUI', 'first']);
+    expect(items[0].parentElement).toHaveClass('list-disc');
+    expect(items[2].parentElement).toHaveClass('list-decimal');
+    expect(message.querySelector('span.block.text-justify')).toHaveTextContent(
+      'Send all now shows from two messages.',
+    );
+    expect(message.querySelector('ul, ol, li, p, h2')).toBeNull();
+    expect(message.textContent).not.toMatch(/\*\*|##|^- /m);
+  });
+
   it('labels each message with who wrote it, where and when', () => {
     pane();
     const items = screen.getAllByRole('listitem');

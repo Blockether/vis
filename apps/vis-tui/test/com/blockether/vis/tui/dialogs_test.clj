@@ -814,8 +814,10 @@
           ;; A thinking hit is the assistant's, and the label says where it matched.
           (expect (= {:label "Vis" :role :ai :place "thinking"}
                      (select-keys (nth plan 6) [:label :role :place])))
-          (expect (= [["…change how the session " false] ["search" true]] (:segments (nth plan 3))))
-          (expect (= [["…split the " false] ["popup" true] ["…" false]] (:segments (nth plan 7))))
+          (expect (= [["…change how the session " false] ["search" true]]
+                     (mapv (juxt :text :match?) (:segments (nth plan 3)))))
+          (expect (= [["…split the " false] ["popup" true] ["…" false]]
+                     (mapv (juxt :text :match?) (:segments (nth plan 7)))))
           ;; A short pane clips the first message and counts the messages left out.
           (expect (= [:title :blank :label :text :more] (mapv :kind short-plan)))
           (expect (= "+1 more message" (:text (last short-plan))))))
@@ -846,10 +848,31 @@
           (expect (= ["second ask" "first ask" "first answer"] (mapv :text entries)))
           (expect (= [:title :blank :label :text :blank :label :text :blank :label :text]
                      (mapv :kind plan)))
-          (expect (= [["second ask" false]] (:segments (nth plan 3))))
+          (expect (= [["second ask" false]] (mapv (juxt :text :match?) (:segments (nth plan 3)))))
           ;; A query without a message match keeps its note above the conversation.
           (expect (= [:title :blank :note :blank :label :text] (take 6 (mapv :kind searched))))
           (expect (= "No message matches." (:text (nth searched 2))))))
+    ;; User report (paraphrased): the message pane showed raw Markdown marks and ragged
+    ;; lines; it must render Markdown and justify wrapped lines in the TUI and the app.
+    (it "the message pane renders Markdown and justifies the lines that wrap"
+        (let [lines (var-get #'dlg/navigator-preview-lines)
+              entry {:title "T"
+                     :recent [{:label "Vis"
+                               :role :ai
+                               :side :reply
+                               :text (str "**Send all now** shows from two queued messages on, "
+                                          "in the app and in the TUI.\n\n- one\n- two")}]}
+              plan (lines entry "" {:width 24 :height 20})
+              texts (filterv #(= :text (:kind %)) plan)
+              line-text (fn [line]
+                          (apply str (map :text (:segments line))))]
+
+          (expect (not-any? #(str/includes? (line-text %) "**") texts))
+          (expect (= #{:bold} (:style (first (:segments (first texts))))))
+          ;; A line that the wrapper broke fills the pane; a block's last line stays ragged.
+          (expect (= 24 (count (line-text (first texts)))))
+          (expect (some #(str/includes? (line-text %) "one") texts))
+          (expect (< (count (line-text (last texts))) 24))))
     (it "the message pane says when the newest messages load, fail or do not exist"
         (let [lines (var-get #'dlg/navigator-preview-lines)
               note (fn [entry]
@@ -883,7 +906,10 @@
                      cell (fn [x]
                             (.getBackCharacter screen (int x) (int 3)))]
 
-                 (draw-segments g 2 3 20 [["the " false] ["popup" true] [" list" false]])
+                 (draw-segments g
+                                2 3
+                                20 [{:text "the " :match? false} {:text "popup" :match? true}
+                                    {:text " list" :match? false :style #{:bold}}])
                  (expect (= "p" (.getCharacterString (cell 6))))
                  (expect (= t/dialog-hint-key (.getBackgroundColor (cell 6))))
                  (expect (= t/dialog-bg (.getBackgroundColor (cell 2))))
@@ -1929,8 +1955,8 @@
                 (doseq [k "popup"]
                   (.addInput terminal (cap/key-stroke k))))
               (let [lines (terminal-lines terminal)]
-                (when (and (not (realized? seen))
-                           (some #(str/includes? % "split the search popup") lines))
+                ;; Wrapped lines are justified, so their gaps can grow: find one word.
+                (when (and (not (realized? seen)) (some #(str/includes? % "…split") lines))
                   (deliver seen lines)
                   (.addInput terminal (cap/key-stroke :esc)))))
             size))
@@ -2043,7 +2069,7 @@
             (column-of lines "┬")
 
             [ask-row ask-col]
-            (column-of lines "split the search popup")
+            (column-of lines "…split")
 
             ;; Both titles can share a terminal row in the compact list.
             title-cols
@@ -2063,7 +2089,7 @@
         (expect (some? (column-of lines "You  01-01 00:00")))
         (expect (some? (column-of lines "Vis  01-01 00:01")))
         ;; The preview gives the list most of the width, so a long reply wraps.
-        (expect (some? (column-of lines "the popup lists")))))
+        (expect (some? (column-of lines "…the")))))
   (it "a narrow picker keeps the messages beside the list"
       (let [{:keys [lines capture]}
             (capture-message-pane {:cols 80 :rows 32})
@@ -2075,14 +2101,14 @@
             (column-of lines "Beta notes")
 
             [ask-row ask-col]
-            (column-of lines "split the search popup")]
+            (column-of lines "…split")]
 
         (expect (nil? (:error capture)))
         (expect (some? border-col))
         (expect (< (long title-row) (long ask-row)))
         (expect (< (long title-col) (long border-col) (long ask-col)))
         ;; The narrower message pane wraps the reply without hiding it.
-        (expect (some? (column-of lines "the popup lists")))
+        (expect (some? (column-of lines "…the")))
         (expect (some? (column-of lines "messages…"))))))
 
 (defdescribe

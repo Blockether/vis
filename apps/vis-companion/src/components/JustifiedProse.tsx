@@ -720,12 +720,13 @@ export function JustifiedProse({
   className,
   enabled = true,
 }: {
-  as?: 'p' | 'li';
+  /** `span` serves phrasing-only parents, such as a button; give it a block class. */
+  as?: 'p' | 'li' | 'span';
   children: ReactNode;
   className?: string;
   enabled?: boolean;
 }) {
-  const ref = useRef<HTMLParagraphElement & HTMLLIElement>(null);
+  const ref = useRef<HTMLParagraphElement & HTMLLIElement & HTMLSpanElement>(null);
   const content = useMemo(() => (enabled ? inlineContent(children) : null), [children, enabled]);
   const signature = content?.signature ?? null;
   const [composition, setComposition] = useState<Composition | null>(null);

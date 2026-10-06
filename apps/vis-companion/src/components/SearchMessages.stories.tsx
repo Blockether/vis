@@ -58,3 +58,33 @@ export const TitleOnlyMatch: Story = {
     await expect(canvas.getByText('The title matches. No message matches.')).toBeVisible();
   },
 };
+
+// The pane lays out a reply like the chat: blocks keep their shape and prose is
+// justified by the shared engine, not by the browser's ragged wrap.
+export const MarkdownBlocks: Story = {
+  args: {
+    query: '',
+    className: 'h-dvh w-[22rem]',
+    match: {
+      ...STORY_SESSION_SEARCH_MATCH,
+      hits: [
+        {
+          side: 'reply',
+          at: null,
+          snippet:
+            '## Done\n\nThe **Send all now** button now shows only when the queue holds two or more messages that can be sent at once. With one message, only its own button stays.\n\n- the app\n- the terminal',
+        },
+      ],
+    },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByText('Done')).toHaveClass('font-bold');
+    // Justice composes in a real browser; jsdom checks only the structure here.
+    await expect(canvasElement.querySelector('span.block.text-justify')).toHaveTextContent(
+      /^The Send all now button/,
+    );
+    const items = [...canvasElement.querySelectorAll('span.list-item')];
+    await expect(items.map((item) => item.textContent)).toEqual(['the app', 'the terminal']);
+    await expect(canvasElement.textContent).not.toMatch(/\*\*|##/);
+  },
+};

@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import type { Element, Root, Text } from 'hast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -7,7 +7,8 @@ import { timeLabel } from '../lib/fleet';
 import type { SessionMatch, SessionMatchHit } from '../lib/gateway';
 import type { ForkPoint } from '../lib/types';
 import { searchRanges, searchSegments, searchTerms } from '../lib/search-highlight';
-import { Button } from './ui';
+import { JustifiedProse } from './JustifiedProse';
+import { Button, PROSE } from './ui';
 
 const MARK = 'bg-accent/20 px-0.5 font-bold text-white';
 
@@ -123,15 +124,45 @@ function MessageList({
                 </span>
               )}
             </span>
-            <span className="mt-1 block whitespace-pre-wrap break-words font-mono text-ui text-dialog-foreground">
+            {/* Phrasing elements only: the row is a button. Prose is justified like the chat. */}
+            <span className="mt-1 block break-words font-mono text-ui text-dialog-foreground">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[[highlightMarkdown, terms]]}
                 skipHtml
-                allowedElements={['p', 'strong', 'em', 'del', 'code', 'br', 'mark']}
+                allowedElements={[
+                  'p',
+                  'strong',
+                  'em',
+                  'del',
+                  'code',
+                  'br',
+                  'mark',
+                  'ul',
+                  'ol',
+                  'li',
+                  'h1',
+                  'h2',
+                  'h3',
+                  'h4',
+                  'h5',
+                  'h6',
+                ]}
                 unwrapDisallowed
                 components={{
-                  p: ({ children }) => <span className="block">{children}</span>,
+                  p: ({ children }) => (
+                    <JustifiedProse as="span" className={`block ${PROSE}`}>
+                      {children}
+                    </JustifiedProse>
+                  ),
+                  ...HEADINGS,
+                  ul: ({ children }) => <span className="block list-disc pl-5">{children}</span>,
+                  ol: ({ children }) => <span className="block list-decimal pl-6">{children}</span>,
+                  li: ({ children }) => (
+                    <JustifiedProse as="span" className={`list-item ${PROSE}`}>
+                      {children}
+                    </JustifiedProse>
+                  ),
                   strong: ({ children }) => <strong className="font-bold">{children}</strong>,
                   code: ({ children }) => (
                     <code className="bg-panel-2 px-0.5 font-mono">{children}</code>
@@ -148,6 +179,13 @@ function MessageList({
     </ol>
   );
 }
+
+/** A heading in a snippet is a bold line of its own; the row keeps one text size. */
+function Heading({ children }: { children?: ReactNode }) {
+  return <span className="block font-bold">{children}</span>;
+}
+
+const HEADINGS = { h1: Heading, h2: Heading, h3: Heading, h4: Heading, h5: Heading, h6: Heading };
 
 /** How many of a session's newest turns the pane shows when no message matches. */
 const RECENT_TURNS = 6;
