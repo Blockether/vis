@@ -6182,12 +6182,27 @@
                          "↗ click to open in the system viewer"
                          "Attachment unavailable"))]])
 
+              ;; Code rows set their words in by `code-block-h-pad` inside the band, and a
+              ;; heading's gutter mark fills that pad. Every other row takes the same inset,
+              ;; so all words of a body share one left edge.
+              text-col
+              (+ (long col) (long code-block-h-pad))
+
               entries
-              (mapv #(update % :meta assoc :activity-content? true :activity-content-col col)
-                    (layout/ast->entries
-                      ast
-                      (max 1 (- (long width) (long col)))
-                      {:mode :channel :code-spacing? false :session-id session-id}))]
+              (mapv
+                (fn [entry]
+                  (update entry
+                          :meta assoc
+                          :activity-content? true
+                          :activity-content-col (if (some #(str/starts-with? (str (:line entry)) %)
+                                                          [md-code-marker md-h3-marker])
+                                                  col
+                                                  text-col)))
+                (layout/ast->entries
+                  ast
+                  (max 1
+                       (- (long width) (if (contains? #{"code" "diff"} kind) (long col) text-col)))
+                  {:mode :channel :code-spacing? false :session-id session-id}))]
 
           (concat (when (= kind "heading")
                     [{:line "" :meta {:activity-content? true :activity-content-col col}}])

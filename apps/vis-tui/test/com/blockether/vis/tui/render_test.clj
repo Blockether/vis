@@ -9997,8 +9997,8 @@ print(paths)"
               "the disclosure follows the label, never shifting it")
       (expect (str/starts-with? (line-with rich "Searched") "Searched")
               "openable and inert rows share the same left edge")
-      (expect (= (.indexOf ^String (line-with rich "Listed") "Listed") content-col)
-              "what a step opens starts in the column its words do")))
+      (expect (= (+ 2 (.indexOf ^String (line-with rich "Listed") "Listed")) content-col)
+              "what a step opens sets its words in from the column its words do, like code")))
   (it
     "renders headings, Markdown, tables, code, progress and safe media fallback"
     (let [blocks
@@ -10033,6 +10033,38 @@ print(paths)"
                                    {}
                                    false))
                              "Stopped"))))
+  (it "sets text, Markdown and heading words in to the column of code words"
+      ;; Regression: a Council message body sat on the band edge, left of Command output.
+      (let [entries
+            (#'render/activity-content-entries
+             [{:type "heading" :text "Heading words"} {:type "text" :text "Text words"}
+              {:type "markdown" :text "### Inner heading\n\nMarkdown words"}
+              {:type "code" :text "Code words"}]
+             60
+             4
+             "s"
+             {}
+             false)
+
+            words-col
+            (fn [needle]
+              (some (fn [{:keys [line meta]}]
+                      (let [line
+                            (str line)
+
+                            text
+                            (str/replace line #"[\uE000-\uF8FF]" "")]
+
+                        (when (str/includes? text needle)
+                          (cond-> (+ (long (:activity-content-col meta))
+                                     (long (str/index-of text needle)))
+                            (str/starts-with? line p/MARKER_MD_CODE)
+                            (+ (long @#'render/code-block-h-pad))))))
+                    entries))]
+
+        (expect (= 6 (words-col "Code words")))
+        (doseq [needle ["Heading words" "Inner heading" "Text words" "Markdown words"]]
+          (expect (= (words-col "Code words") (words-col needle)) needle))))
   (it
     "resolves symbol media at its gateway descriptor's step and index"
     (let [entry

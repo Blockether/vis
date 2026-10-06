@@ -585,6 +585,12 @@ function activityContentRuns(content: ActivityContent[]): ActivityContent[][] {
   return runs;
 }
 
+/**
+ * Code rows set their words in by `px-3` inside their band. Every other block takes the
+ * same inset, so all words of a body share one left edge. Table cells add `px-2` to `px-1`.
+ */
+const ACTIVITY_TEXT_INSET = 'px-3';
+
 function ActivityBody({ content, running }: { content: ActivityContent[]; running: boolean }) {
   const attachment = useContext(ActivityAttachmentContext);
   return (
@@ -596,22 +602,27 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
             return (
               <h5
                 key={index}
-                className={`text-meta font-bold text-code-result ${index > 0 ? 'mt-3' : 'mt-[var(--text-meta--line-height)]'}`}
+                className={`${ACTIVITY_TEXT_INSET} text-meta font-bold text-code-result ${index > 0 ? 'mt-3' : 'mt-[var(--text-meta--line-height)]'}`}
               >
                 {block.text}
               </h5>
             );
           case 'text':
             return (
-              <p key={index} className="whitespace-pre-wrap break-words text-meta text-code-result">
+              <p
+                key={index}
+                className={`${ACTIVITY_TEXT_INSET} whitespace-pre-wrap break-words text-meta text-code-result`}
+              >
                 {block.text}
               </p>
             );
           case 'markdown':
             return (
-              <Markdown key={index} compact nested headingLevel={5}>
-                {block.text}
-              </Markdown>
+              <div key={index} className={`min-w-0 ${ACTIVITY_TEXT_INSET}`}>
+                <Markdown compact nested headingLevel={5}>
+                  {block.text}
+                </Markdown>
+              </div>
             );
           case 'code':
           case 'diff':
@@ -629,7 +640,7 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
             return (
               <div
                 key={index}
-                className="min-w-0 overflow-x-auto"
+                className="min-w-0 overflow-x-auto px-1"
                 role="group"
                 aria-label="Activity table"
                 tabIndex={0}
@@ -681,7 +692,7 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
             );
           case 'progress':
             return (
-              <div key={index} className="text-meta text-dialog-hint">
+              <div key={index} className={`${ACTIVITY_TEXT_INSET} text-meta text-dialog-hint`}>
                 <p>
                   {block.label}
                   {block.total !== undefined
@@ -702,7 +713,7 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
             );
           default:
             return (
-              <div key={index} className="min-w-0">
+              <div key={index} className={`min-w-0 ${ACTIVITY_TEXT_INSET}`}>
                 <p className="text-meta text-dialog-hint">{block.label}</p>
                 {attachment?.(block.attachment_id) ?? (
                   <p className="text-meta text-dialog-hint">Attachment unavailable</p>

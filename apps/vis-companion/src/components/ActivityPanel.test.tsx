@@ -195,6 +195,24 @@ it('keeps table schemas and intervening content separate, including empty groups
   expect(screen.getByRole('cell', { name: '**ready**' }).textContent).toBe('**ready**');
 });
 
+// Regression: a Council message body sat on the step edge, left of the code words.
+it('sets text, Markdown and heading words in to the column of code words', () => {
+  const activity = structuredClone(storyData.ACTIVITY_TABLES);
+  activity.rows[0].presentation!.content = [
+    { type: 'heading', text: 'Heading words' },
+    { type: 'text', text: 'Text words' },
+    { type: 'markdown', text: 'Markdown words' },
+    { type: 'code', text: 'Code words' },
+  ];
+  paintActivity({ activity });
+  openEverySettledStep();
+  const inset = (element: Element | null) => element?.className.split(' ').includes('px-3');
+  expect(inset(screen.getByText('Code words').closest('div'))).toBe(true);
+  expect(inset(screen.getByText('Heading words'))).toBe(true);
+  expect(inset(screen.getByText('Text words'))).toBe(true);
+  expect(inset(screen.getByText('Markdown words').closest('[data-activity-content] > div'))).toBe(true);
+});
+
 /**
  * The engine's own Activity fixture, parsed. Protocol 7 ships it as a bare
  * projection on the form that produced it, not as a classified view, so the
