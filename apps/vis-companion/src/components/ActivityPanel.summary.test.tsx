@@ -68,19 +68,22 @@ describe('Activity presentation summary links', () => {
     (state) => {
       paint(activity('markdown', state));
       const root = screen.getByRole('button', { name: /Find issues/ });
-      const section = screen.getByRole('button', { name: 'Related issues' });
+      // A closed step is its head line alone, so only its own summary link shows.
+      expect(screen.getAllByRole('link', { name: '#252' })).toHaveLength(1);
+      expect(screen.queryByRole('button', { name: /Related issues/ })).toBeNull();
+      fireEvent.click(root);
+      const section = screen.getByRole('button', { name: /Related issues/ });
       const links = screen.getAllByRole('link', { name: '#252' });
       expect(links).toHaveLength(2);
       for (const link of links) {
         expect(link.closest('button')).toBeNull();
         expect(link).toHaveAttribute('href', 'https://github.com/Blockether/vis/issues/252');
         expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-        const open = root.getAttribute('aria-expanded');
         fireEvent.click(link);
-        expect(root).toHaveAttribute('aria-expanded', open);
+        expect(root).toHaveAttribute('aria-expanded', 'true');
         expect(section).toHaveAttribute('aria-expanded', 'false');
       }
-      fireEvent.click(root);
+      expect(screen.queryByText('Related issue detail')).toBeNull();
       fireEvent.click(section);
       expect(screen.getAllByRole('link', { name: '#252' })).toHaveLength(2);
       expect(screen.getByText('Related issue detail')).toBeInTheDocument();
@@ -91,6 +94,7 @@ describe('Activity presentation summary links', () => {
     paint(activity(format));
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByText(`query: ${issue}`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Find issues/ }));
     expect(screen.getByText(issue)).toBeInTheDocument();
   });
 

@@ -213,7 +213,6 @@
           (click! ":#band")
           ;; A group click must not recursively open every invocation body.
           (click! "#group")
-          (click! "#group")
           (expect (empty? (bodies)))
           (when repeated?
             (expect (true? (:collapsed? (region "#arguments"))))
@@ -290,6 +289,8 @@
 
           (paint!)
           (click! ":#band")
+          ;; Every group opens shut; one press shows its runs.
+          (click! "#group")
           ;; The group counts its runs; each run says which one it is and how it ended.
           (expect (re-find #"Linted ×2" (text)))
           (expect (re-find #"1: Linted" (text)))
@@ -742,8 +743,9 @@
             (paint-activity-review! hs rows expanded)
             (let [rendered (paint-activity-review! ts rows expanded)]
               (expect (some #(str/includes? % "src/file-0.clj") (:lines rendered)))
+              ;; The failed run sits in its own closed group: the tone counts it, no body shows.
               (when (= status "failed")
-                (expect (some #(str/includes? % "Test suite failed") (:lines rendered)))))
+                (expect (not-any? #(str/includes? % "Test suite failed") (:lines rendered)))))
             ;; A streamed replacement keeps the group's manual expansion.
             (let [replacement
                   (paint-activity-review! ts (activity-review-rows "succeeded") expanded)]
@@ -783,7 +785,7 @@
                 (doseq [label (if code-expanded? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
                   (expect (= (+ 2 (column "Vis")) (column label))))
                 (expect (= (column "ACTIVITY") (column "Read ×3")))
-                (expect (some? (column "Command failed")))
+                (expect (some #(re-find #"Shell ×2 ▸ · 1 failed" %) lines))
                 (expect (not-any? #(str/includes? % "│") lines))
                 (if code-expanded?
                   (do (expect (= (column "CODE") (column "inspect_files()")))

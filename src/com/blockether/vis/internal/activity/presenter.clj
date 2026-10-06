@@ -80,8 +80,30 @@
         nil
         :else value))
 
+(defn- shell-headline
+  "Name what THIS call did, so a later read or input never reads as a new command."
+  [op running?]
+  (case op
+    "shell"
+    (if running? "Started command" "Command finished")
+
+    "_shell-logs"
+    "Read command output"
+
+    "_shell-wait"
+    (if running? "Command still running" "Command finished")
+
+    "_shell-type"
+    "Sent command input"
+
+    "_shell-stop"
+    "Stopped command"
+
+    (if running? "Running command" "Command finished")))
+
 (defn- shell-presentation
-  [value]
+  "Present one shell receipt. A nil `op` names the handle's current outcome."
+  [op value]
   (let [command
         (field value "command")
 
@@ -91,7 +113,7 @@
         running?
         (= "running" (field value "status"))]
 
-    {"headline" (if running? "Running command" "Command finished")
+    {"headline" (shell-headline op running?)
      "summary" (or command "")
      "content"
      (vec (concat
@@ -186,23 +208,20 @@
                 {}
                 (partition 2 1 blocks))
 
-        exit-text
+        exit-block
         (some (fn [block]
-                (when-let [[_ exit] (and (= "markdown" (get block "type"))
-                                         (re-matches #"\*\*Exit code:\*\* (-?\d+)"
-                                                     (get block "text" "")))]
-                  (Long/parseLong exit)))
+                (when (= "markdown" (get block "type"))
+                  (re-matches #"\*\*Exit code:\*\* (-?\d+|unavailable)" (get block "text" ""))))
               blocks)]
 
+    ;; The exit line is written only once a command settles, so it carries the status.
+    ;; Only the shell presenter's own blocks (its Command block) can set a status.
     (cond-> fields
-      (= "Running command" (get presentation "headline"))
-      (assoc "status" "running")
+      (or exit-block (contains? fields "command"))
+      (assoc "status" (if exit-block "exited" "running"))
 
-      (= "Command finished" (get presentation "headline"))
-      (assoc "status" "exited")
-
-      (some? exit-text)
-      (assoc "exit" exit-text))))
+      (and exit-block (not= "unavailable" (second exit-block)))
+      (assoc "exit" (Long/parseLong (second exit-block))))))
 
 (defn shell-receipt-presentation
   "One current shell outcome from ordered handle receipts, retaining distinct output and errors."
@@ -242,7 +261,7 @@
               (assoc "status" "running"))
 
             view
-            (shell-presentation value)]
+            (shell-presentation nil value)]
 
         (cond-> (assoc view "summary" command)
           (= :failed (:state current))
@@ -902,7 +921,7 @@
       (cond (= op "read_session") (read-session-presentation value)
             (str/starts-with? op "council.") (council-presentation op value)
             (str/starts-with? op "automations.") (automation-presentation op value)
-            (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
+            (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation op value)
             :else {"headline" headline "summary" summary "content" content}))))
 
 (defn for-tool

@@ -17,8 +17,9 @@ import { activityProjectionFromWire, type ActivityProjection } from '../lib/acti
 afterEach(cleanup);
 
 // Regression from session 8c5ed98b-851a-4e65-91c1-14fbdc04f1eb: a fast shell
-// finishes before wait; the shared projection reconciles its output and keeps both calls.
-it('shows one current shell outcome while retaining every invocation in history', () => {
+// finishes before wait; the shared projection reconciles its output into ONE receipt.
+// One handle is one command, so its calls are never listed again as identical rows.
+it('shows one shell command as one row with its reconciled outcome', () => {
   const activity = activityProjection();
   const command = 'git status --short --branch';
   const handle = [{ type: 'shell-handle', id: 'git' }];
@@ -57,6 +58,7 @@ it('shows one current shell outcome while retaining every invocation in history'
     {
       ...spawn,
       id: 'group-spawn',
+      handle_id: 'git',
       children: [spawn, wait],
       presentation: { ...wait.presentation, content: [...commandBody, ...output, exit] },
     },
@@ -65,7 +67,7 @@ it('shows one current shell outcome while retaining every invocation in history'
   paintActivity({ activity });
   expect(screen.queryByText('## main...origin/main')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
-  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(2);
+  expect(document.querySelector('[data-activity-children]')).toBeNull();
   expect(screen.getByText('## main...origin/main')).toBeVisible();
   const exitLabel = screen.getByText('Exit code:', { selector: 'strong' });
   expect(exitLabel.parentElement?.textContent).toBe('Exit code: 0');
@@ -79,9 +81,9 @@ it('shows one current shell outcome while retaining every invocation in history'
   paintActivity({ activity });
   fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
   expect(screen.getByText('earlier-only output')).toBeVisible();
-  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(2);
+  expect(screen.getAllByText(/Command finished/)).toHaveLength(1);
 
-  // A running spawn is also retained as history, without replacing the finished head.
+  // A running spawn stays in the data, but it never shows as a second command.
   cleanup();
   activity.rows[0].children = [
     { ...spawn, presentation: { ...spawn.presentation, headline: 'Running command' } },
@@ -89,8 +91,8 @@ it('shows one current shell outcome while retaining every invocation in history'
   ];
   paintActivity({ activity });
   fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
-  expect(document.querySelectorAll('[data-activity-children] [data-activity-row]')).toHaveLength(2);
-  expect(screen.getByText('Running command')).toBeVisible();
+  expect(document.querySelector('[data-activity-children]')).toBeNull();
+  expect(screen.queryByText('Running command')).toBeNull();
 });
 
 // A collapsed operation group reports live work in its tally, not in an extra line.
@@ -655,8 +657,9 @@ describe("one form's Activity on the phone", () => {
     // #251: directory breakdowns stay behind their specific List call.
     expect(document.querySelector('[data-activity-section]')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Listed 2 directories/ }));
+    const headline = activity.rows[0].presentation!.sections![0].headline;
     const toggle = screen.getByRole('button', {
-      name: activity.rows[0].presentation!.sections![0].headline,
+      name: (name) => name.startsWith(headline),
     });
     expect(screen.getByText('3 directories · 2 files')).toBeVisible();
     expect(screen.getByText('0 directories · 2 files')).toBeVisible();
@@ -1655,6 +1658,9 @@ it('renders symbol content and replaces progress without changing lifecycle', ()
   const { rerender } = render(<ActivityPanel activity={activity} />);
   fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
   expect(screen.getByRole('heading', { name: /Verification/ })).toBeVisible();
+  // Running work opens shut too; a press shows its live content.
+  expect(screen.queryByText('Prepared')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /Verification/ }));
   expect(screen.getByText('Prepared').tagName).toBe('STRONG');
   expect(screen.getByRole('cell', { name: 'passed' })).toBeVisible();
   expect(screen.getByRole('progressbar', { name: 'Checking' }).getAttribute('value')).toBe('1');
@@ -1711,24 +1717,31 @@ it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)(
     ];
     paintActivity({ activity });
     const root = screen.getByRole('button', { name: /Read session/ });
-    const turns = screen.getByRole('button', { name: 'Turn details' });
-    const failures = screen.getByRole('button', { name: 'Failure details' });
+    // A closed step is its head line alone: no section, no body.
+    expect(root.getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelector('[data-activity-section]')).toBeNull();
+    expect(screen.queryByText('Primary overview')).toBeNull();
+    fireEvent.click(root);
+    // An open step shows each section as one closed line: headline and summary.
+    const turns = screen.getByRole('button', { name: /^Turn details/ });
+    const failures = screen.getByRole('button', { name: /^Failure details/ });
     expect(turns.getAttribute('aria-expanded')).toBe('false');
     expect(failures.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('button', { name: 'No further diagnostics' })).toBeNull();
+    expect(turns.textContent).toContain('Three requests');
+    expect(screen.queryByRole('button', { name: /No further diagnostics/ })).toBeNull();
+    expect(screen.getByText('No further diagnostics')).toBeVisible();
     expect(screen.queryByText('Full request body')).toBeNull();
     expect(screen.queryByText('Unique failure body')).toBeNull();
-    fireEvent.click(root);
-    expect(screen.queryByText('Full request body')).toBeNull();
     fireEvent.click(turns);
     expect(screen.getByText('Full request body')).toBeVisible();
     expect(screen.queryByText('Unique failure body')).toBeNull();
-    fireEvent.click(root);
-    expect(screen.getByText('Full request body')).toBeVisible();
     fireEvent.click(failures);
     expect(screen.getAllByText('Unique failure body')).toHaveLength(1);
     fireEvent.click(turns);
     expect(screen.queryByText('Full request body')).toBeNull();
     expect(screen.getByText('Unique failure body')).toBeVisible();
+    fireEvent.click(root);
+    expect(document.querySelector('[data-activity-section]')).toBeNull();
+    expect(screen.queryByText('Unique failure body')).toBeNull();
   },
 );

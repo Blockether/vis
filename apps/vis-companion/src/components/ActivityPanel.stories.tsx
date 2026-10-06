@@ -423,8 +423,9 @@ export const ListingBatch: Story = {
     await expect(canvasElement.querySelector('[data-activity-section]')).toBeNull();
     await userEvent.click(canvas.getByRole('button', { name: /Listed 2 directories/ }));
     await expect(canvas.getByText('0 directories · 2 files')).toBeVisible();
+    const headline = ACTIVITY_LISTING_BATCH.rows[0].presentation!.sections![0].headline;
     const step = canvas.getByRole('button', {
-      name: ACTIVITY_LISTING_BATCH.rows[0].presentation!.sections![0].headline,
+      name: (name) => name.startsWith(headline),
     });
     await userEvent.click(step);
     await expect(canvas.getAllByRole('table')).toHaveLength(1);
@@ -599,8 +600,8 @@ export const ReadSession: Story = {
     await expect(main.textContent!.length).toBeLessThan(2000);
     await expect(canvasElement.textContent).not.toContain('Final request requirement.');
     await expect(canvasElement.textContent).not.toContain('Final failure detail.');
-    const turns = canvas.getByRole('button', { name: 'Turn details' });
-    const failures = canvas.getByRole('button', { name: 'Failure details' });
+    const turns = canvas.getByRole('button', { name: /^Turn details/ });
+    const failures = canvas.getByRole('button', { name: /^Failure details/ });
     await expect(turns).toHaveAttribute('aria-expanded', 'false');
     await expect(failures).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(turns);
@@ -692,15 +693,16 @@ export const LinkedSummariesNarrow: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Expand Activity' }));
     const root = canvas.getByRole('button', { name: /Find issues/ });
-    const section = canvas.getByRole('button', { name: 'Related issues' });
-    for (const expanded of [false, true]) {
-      if (expanded) {
-        await userEvent.click(root);
-        await userEvent.click(section);
+    // A closed step shows only its own line; its sections appear once it opens.
+    for (const phase of ['closed', 'open', 'section'] as const) {
+      if (phase === 'open') await userEvent.click(root);
+      if (phase === 'section') {
+        await userEvent.click(canvas.getByRole('button', { name: /^Related issues/ }));
         await expect(canvas.getByText('Related issue detail')).toBeVisible();
       }
+      const section = canvas.queryByRole('button', { name: /^Related issues/ });
       const links = canvas.getAllByRole('link', { name: '#252' });
-      await expect(links).toHaveLength(2);
+      await expect(links).toHaveLength(phase === 'closed' ? 1 : 2);
       for (const link of links) {
         await expect(link.closest('button')).toBeNull();
         await expect(link).toBeVisible();
@@ -715,8 +717,10 @@ export const LinkedSummariesNarrow: Story = {
           link.focus();
           await userEvent.keyboard('{Enter}');
           await expect(activated).toBe(2);
-          await expect(root).toHaveAttribute('aria-expanded', String(expanded));
-          await expect(section).toHaveAttribute('aria-expanded', String(expanded));
+          await expect(root).toHaveAttribute('aria-expanded', String(phase !== 'closed'));
+          if (section) {
+            await expect(section).toHaveAttribute('aria-expanded', String(phase === 'section'));
+          }
         } finally {
           link.removeEventListener('click', activate);
         }

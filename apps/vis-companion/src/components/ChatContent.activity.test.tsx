@@ -91,6 +91,9 @@ it.each(outcomes.flatMap((outcome) => [false, true].map((history) => ({ outcome,
     const view = renderOpenSteps(trace(running));
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     expect(screen.getByText('Checking suite')).toBeVisible();
+    // Running work opens shut like every step; a press shows its live progress.
+    expect(screen.queryByText('Suite progress · In progress')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Checking suite/ }));
     expect(screen.getByText('Suite progress · In progress')).toBeVisible();
     expect(screen.getByLabelText('Running')).toBeVisible();
 
@@ -123,6 +126,7 @@ it.each(
     const running = activityEvent(start(), initial);
     const view = renderOpenSteps(trace(running));
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    fireEvent.click(screen.getByRole('button', { name: /Checking suite/ }));
     expect(screen.getByRole('progressbar', { name: 'Suite progress' })).toBeVisible();
 
     // A terminal callback returning None retains authored presentation, not lifecycle state.

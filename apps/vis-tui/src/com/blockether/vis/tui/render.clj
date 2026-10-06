@@ -6196,7 +6196,7 @@
                     (map-indexed vector blocks)))))
 
 (defn- activity-section-entries
-  "Keep section summaries visible and disclose each body independently."
+  "Show each section as one closed head line; its body opens only on its own press."
   [sections row-id node-id width col session-id artifacts running? expanded?]
   (vec
     (mapcat
@@ -6208,7 +6208,7 @@
               (activity-summary-entry section)
 
               summary
-              (:line summary-entry)
+              (not-empty (:line summary-entry))
 
               content
               (:content section)
@@ -6225,36 +6225,29 @@
               mark
               (when openable? (if open? " ▾" " ▸"))
 
-              prefix
-              (str (activity-lead col) headline)
+              lead
+              (str (activity-lead col) headline mark (when summary " · "))
 
-              meta-base
-              {:session-id (str session-id) :item-id row-id}
+              prefix
+              (str lead summary)
 
               head
-              {:line (str activity-marker (inline-disclosure-prefix prefix mark width))
-               :meta (merge meta-base
-                            {:kind :activity-row
-                             :headline-prefix prefix
-                             :right-suffix ""
-                             :inline-disclosure mark
-                             :node-id (when openable? (str node-id ":" section-key))
-                             :collapsed? (not open?)
-                             :operation-col col
-                             :operation-label headline})}]
+              {:line (str activity-marker (ellipsize-cols prefix width))
+               :meta {:session-id (str session-id)
+                      :item-id row-id
+                      :kind :activity-row
+                      :headline-prefix prefix
+                      :summary-prefix prefix
+                      :summary-width width
+                      :links (activity-summary-links summary-entry (p/display-width lead))
+                      :node-id (when openable? (str node-id ":" section-key))
+                      :collapsed? (not open?)
+                      :operation-col col
+                      :operation-label headline}}]
 
-          (concat
-            [{:line activity-marker :meta nil} head]
-            (when (not-empty summary)
-              [{:line (str activity-marker (p/ellipsize (str (activity-lead col) summary) width))
-                :meta (assoc meta-base
-                        :kind :activity-evidence
-                        :summary-prefix (str (activity-lead col) summary)
-                        :summary-width width
-                        :links (activity-summary-links summary-entry
-                                                       (p/display-width (activity-lead col))))}])
-            (when open?
-              (activity-content-entries content width col session-id artifacts running?)))))
+          (concat [{:line activity-marker :meta nil} head]
+                  (when open?
+                    (activity-content-entries content width col session-id artifacts running?)))))
       (map-indexed vector sections))))
 
 (defn- activity-group-row
@@ -6479,43 +6472,6 @@
                                                                           rows)))))))
         (activity-contract/operation-groups rows)))
 
-(defn- shell-call-history-row
-  "Keep a shell handle's current receipt separate from its retained call details."
-  [{:keys [id children]}]
-  (let [verbs
-        {"shell" ["Starting command" "Started command" "Command start failed"
-                  "Command start cancelled"]
-         "_shell-logs" ["Reading command output" "Read command output" "Command output read failed"
-                        "Command output read cancelled"]
-         "_shell-wait" ["Waiting for command" "Waited for command" "Command wait failed"
-                        "Command wait cancelled"]
-         "_shell-type" ["Sending command input" "Sent command input" "Command input failed"
-                        "Command input cancelled"]
-         "_shell-stop" ["Stopping command" "Stopped command" "Command stop failed"
-                        "Command stop cancelled"]}
-
-        calls
-        (mapv (fn [row]
-                (if-let [labels (get verbs (:operation row))]
-                  (assoc-in row
-                    [:presentation :headline]
-                    (nth labels
-                         (case (activity-row-state row)
-                           :succeeded
-                           1
-
-                           :failed
-                           2
-
-                           :cancelled
-                           3
-
-                           0)))
-                  row))
-              children)]
-
-    (activity-group-row (str id "#calls") "Call history" calls calls)))
-
 (defn- activity-detail-entries
   "A joined Activity band, closed until the reader explicitly opens it.
    Disclosure choices inside the band remain independent of its outer fold."
@@ -6601,7 +6557,7 @@
                           (str row-id "#" id)
 
                           open?
-                          (boolean (and diff (expanded? file-key true)))
+                          (boolean (and diff (expanded? file-key false)))
 
                           mark
                           (cond (nil? diff) "›"
@@ -6786,22 +6742,13 @@
                                                            text))
 
                                                        ;; Only child rows are indented, never a top-level operation.
-                                                       ;; The header stays visible; only content follows the disclosure.
-                                                       ;; Opening a group reveals child summaries, not every nested body.
+                                                       ;; EVERY ROW OPENS SHUT: groups, running work and failures too.
+                                                       ;; A closed row is its head line alone; its tone carries the state.
                                                        openable?
                                                        (activity-row-openable? row)
 
                                                        open?
-                                                       (and openable?
-                                                            (expanded?
-                                                              id
-                                                              ;; Completed leaf results require a separate disclosure.
-                                                              ;; Groups, progress and failures retain their visible context.
-                                                              (and (zero? (long depth))
-                                                                   (or (seq children)
-                                                                       (#{:running :failed} state))
-                                                                   (not= "ls" (:operation row))
-                                                                   (not (:activity-list? row)))))
+                                                       (and openable? (expanded? id false))
 
                                                        suffix
                                                        (activity-row-tail row)
@@ -6922,11 +6869,12 @@
                                                                      {:kind :activity-evidence
                                                                       :item-id id})}
 
+                                                       ;; One shell handle is ONE command: its current receipt
+                                                       ;; already joins every call, so the calls are not listed again.
                                                        nested
                                                        (if (and (= "shell" (:presenter row))
-                                                                (:handle-id row)
-                                                                (seq children))
-                                                         [(shell-call-history-row row)]
+                                                                (:handle-id row))
+                                                         []
                                                          (vec children))
 
                                                        touched
@@ -6946,7 +6894,7 @@
                                                              (= :running state)))
 
                                                      (and detail
-                                                          (or open? (= :failed state))
+                                                          open?
                                                           (or (nil? presentation)
                                                               (= :failed state)))
                                                      (conj detail-row)
@@ -6966,32 +6914,8 @@
                                                      (and open? (or (seq touched) (seq diffs)))
                                                      (into (change-entries id touched diffs col))
 
-                                                     (and (or open? (= :failed state)) error)
+                                                     (and open? error)
                                                      (into (error-entries id error col))
-
-                                                     (and (not open?) (:activity-repeat-count row))
-                                                     (into (map (fn [message]
-                                                                  {:line (str activity-marker
-                                                                              (ellipsize-cols
-                                                                                (str (activity-lead
-                                                                                       col)
-                                                                                     message)
-                                                                                width))
-                                                                   :meta (merge meta-base
-                                                                                {:kind
-                                                                                 :activity-evidence
-                                                                                 :item-id id})})
-                                                                (distinct (keep :error-summary
-                                                                                nested))))
-
-                                                     (and (not open?)
-                                                          (seq nested)
-                                                          (not (:activity-repeat-count row)))
-                                                     (into (mapcat #(row-entry % (inc (long depth)))
-                                                                   (remove #(= :succeeded
-                                                                               (activity-row-state
-                                                                                 %))
-                                                                     nested)))
 
                                                      (and open? (seq nested))
                                                      (into (mapcat #(row-entry % (inc (long depth)))

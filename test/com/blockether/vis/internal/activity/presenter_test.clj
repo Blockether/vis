@@ -360,11 +360,31 @@
             with-output
             (result-view {:operation :_shell-logs} (assoc value :out "Server ready"))]
 
-        (expect (= "Running command" (get running "headline")))
+        (expect (= "Started command" (get running "headline")))
+        (expect (= "Read command output" (get with-output "headline")))
         (expect (= command (get running "content")))
         (expect (= (into command
                          [{"type" "heading" "text" "Output"} {"type" "code" "text" "Server ready"}])
                    (get with-output "content")))))
+  ;; A later call on the same handle names its own act, so a read, an input or a stop in
+  ;; another block never reads as a second run of the same command.
+  (it "names each handle call by its own act"
+      (let [running
+            {:command "npm test" :exit nil :status "running"}
+
+            exited
+            {:command "npm test" :exit 0 :status "exited"}
+
+            headline
+            (fn [op value]
+              (get (result-view {:operation op} value) "headline"))]
+
+        (expect (= "Started command" (headline :shell running)))
+        (expect (= "Read command output" (headline :_shell-logs running)))
+        (expect (= "Command still running" (headline :_shell-wait running)))
+        (expect (= "Command finished" (headline :_shell-wait exited)))
+        (expect (= "Sent command input" (headline :_shell-type running)))
+        (expect (= "Stopped command" (headline :_shell-stop exited)))))
   (it "labels an unavailable exit beside its bold label"
       (let [view (result-view {:operation :_shell-wait}
                               {:command "sleep 10" :exit nil :status "exited"})]

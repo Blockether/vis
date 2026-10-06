@@ -724,45 +724,58 @@ function ActivitySectionView({
   running: boolean;
   className: string;
 }) {
+  // A SECTION OPENS SHUT, AS ONE LINE: its headline, then its summary on the same line.
+  // Nothing of its body shows until the reader presses that line.
   const [open, setOpen] = useState(false);
   const hasContent = section.content.length > 0;
+  // Links cannot sit inside the press target, so a linked summary follows it on the line.
+  const linkedSummary = Boolean(section.summary) && section.summary_format === 'markdown';
   const label = (
     <span className="min-w-0 truncate" title={section.headline}>
       {section.headline}
     </span>
   );
+  const summary = section.summary && (
+    <span
+      data-activity-summary
+      className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
+      title={section.summary}
+    >
+      {section.summary_format === 'markdown' ? (
+        <InlineMarkdown links>{section.summary}</InlineMarkdown>
+      ) : (
+        section.summary
+      )}
+    </span>
+  );
 
   return (
     <section data-activity-section className={`min-w-0 pl-4.5 ${className}`}>
-      <h5 className="min-w-0 text-meta font-bold text-code-result">
+      <h5
+        className={`min-w-0 text-meta font-bold text-code-result ${
+          linkedSummary ? 'flex items-baseline gap-x-2' : ''
+        }`}
+      >
         {hasContent ? (
           <Disclosure
             isOpen={open}
             tone="execution"
             density="compact"
             inlineChevron
-            className="min-w-0 max-w-full"
+            className={linkedSummary ? 'min-w-0 w-auto! max-w-[45%]' : 'min-w-0 max-w-full'}
+            tally={linkedSummary ? undefined : summary || undefined}
             onClick={() => setOpen(!open)}
           >
             {label}
           </Disclosure>
         ) : (
-          label
+          <div className="flex min-h-6 min-w-0 items-center gap-x-2">
+            {label}
+            {summary}
+          </div>
         )}
+        {hasContent && linkedSummary && summary}
       </h5>
-      {section.summary && (
-        <p
-          data-activity-summary
-          className="truncate text-meta text-dialog-hint"
-          title={section.summary}
-        >
-          {section.summary_format === 'markdown' ? (
-            <InlineMarkdown links>{section.summary}</InlineMarkdown>
-          ) : (
-            section.summary
-          )}
-        </p>
-      )}
       {open && hasContent && <ActivityBody content={section.content} running={running} />}
     </section>
   );
@@ -780,12 +793,9 @@ function ActivityStep({
   const nested = depth > 0;
   const failed = row.state === 'failed';
   const running = row.state === 'running';
-  // A step opens shut. Only work still in flight shows itself, because it is still
-  // changing and has nowhere else to say so; a settled step — a failed one included —
-  // waits for a reader who pressed it, and folds itself away again once it settles.
-  const listing = row.operation === 'ls';
-  const [toggled, setToggled] = useState<boolean | null>(null);
-  const open = toggled ?? (!listing && running);
+  // EVERY STEP OPENS SHUT — running, failed and grouped work too. A closed step is its
+  // head line alone: the mark and the tone say how it went, and a press shows the rest.
+  const [open, setOpen] = useState(false);
   const presentation = row.presentation;
   const lead = presentation?.headline ?? activityStepLead(row);
   const content = presentation?.content;
@@ -797,7 +807,10 @@ function ActivityStep({
   const linkedSummary = Boolean(caption) && presentation?.summary_format === 'markdown';
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
-  const children = nested ? [] : (row.children ?? []);
+  // One shell handle is ONE command: its receipt already joins every call on that handle,
+  // so listing the calls again showed the same command two or three times.
+  const shellHandle = row.operation === 'shell' && row.handle_id !== undefined;
+  const children = nested || shellHandle ? [] : (row.children ?? []);
   const hasChildren = children.length > 0;
   const Headline = nested ? 'p' : 'h4';
   const diffs = row.evidence.filter((item): item is ActivityDiffEvidence => item.kind === 'diff');
@@ -823,7 +836,7 @@ function ActivityStep({
   // changes wears none and answers no press.
   const openable =
     Boolean(content?.length) ||
-    (listing && sections.length > 0) ||
+    sections.length > 0 ||
     showsOutcome ||
     showsFiles ||
     diffs.length > 0 ||
@@ -914,7 +927,7 @@ function ActivityStep({
               className={linkedSummary ? 'min-w-0 w-auto! max-w-[45%]' : 'min-w-0 max-w-full'}
               tally={detail}
               onClick={() => {
-                setToggled(!open);
+                setOpen(!open);
                 onToggle?.(!open);
               }}
             >
@@ -938,7 +951,7 @@ function ActivityStep({
       {open && content && content.length > 0 && (
         <ActivityBody content={content} running={running} />
       )}
-      {(!listing || open) &&
+      {open &&
         sections.map((section, index) => (
           <ActivitySectionView
             key={index}

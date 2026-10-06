@@ -709,70 +709,36 @@
         (fn [shown]
           (str/join "\n" (map :line shown)))]
 
-    (it "shows one current shell result with its call history closed by default"
+    ;; One handle is one command: its receipt already joins every call, so the TUI never
+    ;; lists the calls again as rows that repeat the same command.
+    (it "shows one shell command as one closed row"
         (let [shown
               (entries [receipt] {"#band" true})
 
-              history
-              (first (filter #(= "command#calls" (get-in % [:meta :item-id])) (heads shown)))]
+              head
+              (first (heads shown))]
 
+          (expect (= 1 (count (heads shown))))
           (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
-          (expect (= 1 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
-          (expect (= 2 (count (heads shown))))
-          (expect (str/includes? (:line history) "Call history ×2"))
-          (expect (true? (get-in history [:meta :collapsed?])))
-          (expect (= "activity:command#calls" (get-in history [:meta :node-id])))))
-    (it "opens the retained calls independently without repeating the receipt headline"
-        (let [shown
-              (entries [receipt] {"#band" true "command#calls" true})
-
-              ids
-              (map #(get-in % [:meta :item-id]) (heads shown))]
-
-          (expect (= ["command" "command#calls" "start-call" "wait-call"] ids))
-          (expect (str/includes? (text shown) "Started command"))
-          (expect (str/includes? (text shown) "Waited for command"))
-          (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
-          (expect (= 1 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
-          (expect (= 2
-                     (count (re-seq #"CURRENT_SHELL_RESULT"
-                                    (text (entries [receipt]
-                                                   {"#band" true
-                                                    "command#calls" true
-                                                    "wait-call" true}))))))))
-    (it "distinguishes each call when all details are explicitly expanded"
+          (expect (not (str/includes? (text shown) "CURRENT_SHELL_RESULT")))
+          (expect (true? (get-in head [:meta :collapsed?])))))
+    (it "opens to the joined result without listing its calls"
         (let [shown (entries [receipt] :all)]
+          (expect (= ["command"] (map #(get-in % [:meta :item-id]) (heads shown))))
           (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
-          (expect (str/includes? (text shown) "Call history ×2"))
-          (expect (str/includes? (text shown) "Started command"))
-          (expect (str/includes? (text shown) "Waited for command"))
-          (expect (= 2 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
-          (expect (= "Command finished" (get-in receipt [:children 1 :presentation :headline])))))
-    (it "keeps running and failed calls visible even when their history is closed"
-        (doseq [[state headline call-headline]
-                [["running" "Running command" "Waiting for command"]
-                 ["failed" "Command status unavailable" "Command wait failed"]
-                 ["cancelled" "Command cancelled" "Command wait cancelled"]]]
+          (expect (= 1 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
+          (doseq [call ["Call history" "Started command" "Waited for command" "Running command"]]
+            (expect (not (str/includes? (text shown) call))))))
+    (it "shows every state on the one closed row, without call rows"
+        (doseq [state ["running" "failed" "cancelled"]]
           (let [row (-> receipt
                         (assoc :state state)
-                        (assoc-in [:presentation :headline] headline)
-                        (assoc-in [:children 1 :state] state)
-                        (assoc-in [:children 1 :presentation :headline] headline))
-                shown (entries [row] {"#band" true "command#calls" false})
-                history (first (filter #(= "command#calls" (get-in % [:meta :item-id]))
-                                       (heads shown)))]
+                        (assoc-in [:children 1 :state] state))
+                shown (entries [row] {"#band" true})]
 
-            (expect (str/includes? (text shown) call-headline))
-            (expect (true? (get-in history [:meta :collapsed?]))))))
-    (it "uses readable call labels for every shell handle method"
-        (doseq [[operation headline] [["_shell-logs" "Read command output"]
-                                      ["_shell-type" "Sent command input"]
-                                      ["_shell-stop" "Stopped command"]]]
-          (let [row (assoc-in receipt [:children 1 :operation] operation)
-                shown (entries [row] :all)]
-
-            (expect (str/includes? (text shown) headline))
-            (expect (not (str/includes? (text shown) operation))))))
+            (expect (= 1 (count (heads shown))))
+            (expect (true? (get-in (first (heads shown)) [:meta :collapsed?])))
+            (expect (not (str/includes? (text shown) "CURRENT_SHELL_RESULT"))))))
     (it "does not merge different command handles with identical command text"
         (let [other
               (-> receipt
@@ -788,16 +754,13 @@
                                   children))))
 
               shown
-              (entries [receipt other] :receipts)]
+              (entries [receipt other] :all)]
 
+          (expect (= #{"command" "second-command"}
+                     (set (keep #(#{"command" "second-command"} (get-in % [:meta :item-id]))
+                                (heads shown)))))
           (expect (= 2 (count (re-seq #"Command finished" (text shown)))))
-          (expect (= 2 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
-          (expect (= 2 (count (re-seq #"Call history ×2" (text shown)))))
-          (expect (not (str/includes? (text shown) "Waited for command")))))
-    (it "does not add call history to a shell receipt without retained calls"
-        (let [shown (entries [(dissoc receipt :children)] :all)]
-          (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
-          (expect (not (str/includes? (text shown) "Call history")))))))
+          (expect (= 2 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))))))
 
 (defdescribe
   activity-leaf-disclosure-test
@@ -1301,6 +1264,7 @@
               (assoc opened
                 "search-1#arguments" true
                 "search-1" true
+                "search-3" true
                 "search-4" true)
 
               settled
@@ -8282,20 +8246,23 @@ h = 8"
           (expect (some? outcome-line) "observed resources remain available")
           (expect (str/includes? (line-with open "› git") "› git") "with the handle it touched")
           (expect (str/blank? (second open)) "the header stays separated from the operations")))
-    (it
-      "starts a running step and a failed step open, because their progress and their reason are the point"
-      (let [running
-            (assoc group :state "running")
+    ;; Every step opens shut, running and failed work too: a closed row is its head line
+    ;; alone, and its tone carries the state until the reader presses it.
+    (it "starts a running step and a failed step shut, with the reason one press away"
+        (let [running
+              (assoc group :state "running")
 
-            open
-            (lines [running failed] {})]
+              closed
+              (lines [running failed] {})]
 
-        (expect (re-find #"^Running ▾ git push origin main" (line-with open "Running")))
-        (expect (some #(str/includes? % "_shell-wait") open) "the running group shows its calls")
-        (expect (re-find #"^Search failed ▾ needle" (line-with open "Search failed")))
-        (expect (some #(str/includes? % "no matches in 3 paths") open) "and the failure says why")
-        (expect (some #(str/includes? % "no matches") (lines [failed] {"grep-2" false}))
-                "a manual fold never hides the failure reason")))))
+          (expect (re-find #"^Running ▸ git push origin main" (line-with closed "Running")))
+          (expect (not-any? #(str/includes? % "_shell-wait") closed)
+                  "a closed group lists no calls")
+          (expect (re-find #"^Search failed ▸ needle" (line-with closed "Search failed")))
+          (expect (not-any? #(str/includes? % "no matches in 3 paths") closed)
+                  "a closed failure shows no body")
+          (expect (some #(str/includes? % "no matches") (lines [failed] {"grep-2" true}))
+                  "a press shows the failure reason")))))
 
 ;; Regression, T126: the same step wore different words on the two surfaces - the app said
 ;; "Patch refused" where the terminal said "PATCHED" - because each surface kept its own
@@ -10323,6 +10290,39 @@ print(paths)"
               (let [index (first (keep-indexed #(when (str/includes? (:line %2) heading) %1)
                                                entries))]
                 (expect (= p/MARKER_ACTIVITY (:line (get entries (dec index))))))))))))
+  ;; A section opens shut as ONE line, its headline and summary together; nothing of its
+  ;; body, summary included, stands under that line until the reader presses it.
+  (it "shows each closed section as one head line with its summary"
+      (let [row
+            {:id "session"
+             :state "succeeded"
+             :operation "read_session"
+             :presentation {:headline "Read session"
+                            :summary "3 turns"
+                            :content []
+                            :sections
+                            [{:headline "Turn details"
+                              :summary "Full requests"
+                              :content [{:type "text" :text "Complete request"}]}
+                             {:headline "Empty details" :summary "No retries" :content []}]}}
+
+            entries
+            (#'render/activity-detail-entries
+             {:node-id "sections"
+              :activity-rows [row]
+              :activity-expanded? (fn [key default]
+                                    (get {"#band" true "session" true} key default))}
+             90
+             "sections")
+
+            line-with
+            (fn [text]
+              (first (filter #(str/includes? (:line %) text) entries)))]
+
+        (expect (re-find #"Turn details ▸ · Full requests" (:line (line-with "Turn details"))))
+        (expect (re-find #"Empty details · No retries" (:line (line-with "Empty details"))))
+        (expect (= 1 (count (filter #(str/includes? (:line %) "Full requests") entries))))
+        (expect (not-any? #(str/includes? (:line %) "Complete request") entries))))
   (it "does not offer an inert chevron for a summary-only presentation"
       (let [entry (nth (#'render/activity-detail-entries
                         {:node-id "summary"

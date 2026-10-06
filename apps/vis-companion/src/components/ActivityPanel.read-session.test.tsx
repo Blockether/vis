@@ -26,8 +26,8 @@ it('shows session usage and turn boundaries before independently revealing full 
   expect(main.textContent).not.toContain('[REDACTED]');
   expect(document.body.textContent).not.toContain('Final request requirement.');
   expect(document.body.textContent).not.toContain('Final failure detail.');
-  const turns = screen.getByRole('button', { name: 'Turn details' });
-  const failures = screen.getByRole('button', { name: 'Failure details' });
+  const turns = screen.getByRole('button', { name: /^Turn details/ });
+  const failures = screen.getByRole('button', { name: /^Failure details/ });
   expect(turns.getAttribute('aria-expanded')).toBe('false');
   expect(failures.getAttribute('aria-expanded')).toBe('false');
   fireEvent.click(turns);
