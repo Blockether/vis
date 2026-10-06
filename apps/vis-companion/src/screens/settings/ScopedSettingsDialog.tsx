@@ -137,7 +137,8 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
           )}
           {(groups.length > 0 || !needle) && (
             <div className="divide-y divide-dialog-edge">
-              {groups.filter((group) => !isExtensionGroup(group)).map((group) => <SettingsPanel key={group.id} title={group.title} headingLevel={3}>
+              {/* A search opens every group again, so a folded group cannot hide a match. */}
+              {groups.filter((group) => !isExtensionGroup(group)).map((group) => <SettingsPanel key={needle ? `${group.id}:search` : group.id} title={group.title} headingLevel={3}>
                 {rows(group)}
               </SettingsPanel>)}
               {(!needle || extensions.length > 0) && <ExtensionsPanel client={client} target={owner} groups={extensions} hasActions={!needle}

@@ -77,7 +77,10 @@ export const Appearance: Story = {
     await waitFor(() => expect(theme).toHaveAttribute('aria-pressed', 'true'));
     const heading = page.getByRole('heading', { name: 'Theme' });
     const panel = heading.closest('section')!;
-    const choices = within(panel).getAllByRole('button');
+    // The band's own fold button is not a theme choice.
+    const choices = within(panel)
+      .getAllByRole('button')
+      .filter((button) => !button.hasAttribute('aria-expanded'));
     await expect(choices).toHaveLength(THEMES.length);
     const alternative = THEMES.find(
       (choice) => choice.id !== resolveTheme(String(globals.theme)).id,

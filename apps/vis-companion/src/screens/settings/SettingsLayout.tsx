@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from 'react';
+import { Children, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import { SettingsHeader, Text } from '../../components/ui';
 
@@ -135,6 +135,7 @@ export function SettingsPanel({
   meta,
   action,
   disclosure,
+  defaultOpen = true,
   children,
 }: {
   title: string;
@@ -145,10 +146,26 @@ export function SettingsPanel({
   action?: ReactNode;
   /** Makes the whole named band the disclosure target; the caller owns its state. */
   disclosure?: HeaderDisclosure;
+  /** The first state of the band's own fold, when the caller gives no `disclosure`. */
+  defaultOpen?: boolean;
   children: ReactNode;
 }) {
-  const TitleContainer = disclosure ? 'span' : 'div';
-  const TitleHeading = disclosure ? 'span' : headingLevel === 3 ? 'h3' : 'h4';
+  // EVERY BAND WITH A BODY FOLDS. A long settings list is easier to scan when each
+  // band can close to its name. A band with only a header, such as a lone switch,
+  // has nothing to hide and shows no chevron.
+  const [isOwnOpen, setOwnOpen] = useState(defaultOpen);
+  const hasBody = Children.toArray(children).length > 0;
+  const fold =
+    disclosure ??
+    (hasBody
+      ? {
+          isOpen: isOwnOpen,
+          onToggle: () => setOwnOpen((open) => !open),
+          label: `${isOwnOpen ? 'Hide' : 'Show'} ${title}`,
+        }
+      : undefined);
+  const TitleContainer = fold ? 'span' : 'div';
+  const TitleHeading = fold ? 'span' : headingLevel === 3 ? 'h3' : 'h4';
   const titleBlock = (
     <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
       <Text
@@ -186,14 +203,17 @@ export function SettingsPanel({
           not fit beside it drops to its own line. */}
       {/* The same centered header fits a lone switch without an empty body below. */}
       <header>
-        <SettingsHeader action={action} disclosure={disclosure}>
+        <SettingsHeader action={action} disclosure={fold}>
           {titleBlock}
         </SettingsHeader>
       </header>
-      {/* A visible body owns one header divider; an empty body adds no second rule. */}
-      <div className="overflow-hidden divide-y divide-dialog-edge border-t border-dialog-edge empty:hidden">
-        {children}
-      </div>
+      {/* A visible body owns one header divider; an empty body adds no second rule.
+          A closed fold removes the body, so its content is not on the page. */}
+      {(!fold || fold.isOpen) && (
+        <div className="overflow-hidden divide-y divide-dialog-edge border-t border-dialog-edge empty:hidden">
+          {children}
+        </div>
+      )}
     </section>
   );
 }

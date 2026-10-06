@@ -1652,7 +1652,9 @@ export function SettingsChoiceGroup({
  * box for touch but uses `align="trailing"` to place its glyph over the
  * chevrons without narrowing long row names or their values.
  *
- * A disclosure makes the whole header the button.
+ * A disclosure makes the whole header the button. With an action as well, the fold
+ * button lies under the whole band and the action stands above it, so a press on the
+ * switch or add mark never folds the band. The chevron then follows the action.
  */
 export function SettingsHeader({
   children,
@@ -1679,6 +1681,26 @@ export function SettingsHeader({
       </span>
     </>
   );
+  if (disclosure && action) {
+    return (
+      <div className={`${layout} relative`}>
+        <button
+          type="button"
+          aria-label={disclosure.label}
+          aria-expanded={disclosure.isOpen}
+          onClick={disclosure.onToggle}
+          className="peer absolute inset-0 focus-visible:bg-hover focus-visible:outline-none"
+        />
+        <span className="pointer-events-none flex min-w-0 flex-auto items-center transition-colors duration-150 peer-hover:text-accent-ink motion-reduce:transition-none">
+          {children}
+        </span>
+        <span className="relative -my-1 flex shrink-0 items-center justify-end self-stretch">{action}</span>
+        <span className="pointer-events-none flex shrink-0 items-center transition-colors duration-150 peer-hover:text-accent-ink motion-reduce:transition-none">
+          <ChevronIcon open={disclosure.isOpen} className="size-3" />
+        </span>
+      </div>
+    );
+  }
   return disclosure ? (
     <button
       type="button"

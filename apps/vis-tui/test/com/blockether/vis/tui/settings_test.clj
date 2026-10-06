@@ -120,6 +120,67 @@
                                         :values {:read-files false :thinking false}
                                         :callbacks {:focus-section section})]
           (expect (= (assoc {:read-files false :thinking false} expected true) (:ret capture))))))
+  (it "folds a section with Left and opens it with Right or Enter"
+      (let [run
+            #(capture-settings settings-rows
+                               %
+                               :values {:read-files false :thinking false}
+                               :callbacks {:focus-section "Paths and access"})
+
+            folded
+            (cap/frame-text (run [:left :esc]))]
+
+        (expect (str/includes? folded "Paths and access ▸"))
+        (expect (str/includes? folded "Response ▾"))
+        (expect (not (str/includes? folded "Read filesystem")))
+        ;; The sidebar still counts the hidden setting.
+        (expect (= [["Extension engines" 4] ["Paths and access" 1] ["Response" 1]]
+                   (mapv (juxt :label :count)
+                         (#'dlg/settings-toc
+                          (#'dlg/settings-fold-rows settings-rows #{"Paths and access"})
+                          0))))
+        (doseq [open-key [:right :enter]]
+          (expect (= {:read-files true :thinking false}
+                     (:ret (run [:left open-key :enter :esc])))))))
+  (it
+    "folds and opens a section with a press on its header"
+    (let [[y x]
+          (first (keep-indexed (fn [y ^String line]
+                                 (let [x (.indexOf line "── Response")]
+                                   (when (<= 0 x) [y x])))
+                               (str/split-lines (cap/frame-text (capture-settings settings-rows
+                                                                                  [:esc])))))
+
+          press
+          (fn [x y]
+            [(MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. x y))
+             (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. x y))])
+
+          folded
+          (cap/frame-text (capture-settings settings-rows (conj (press (+ x 4) y) :esc)))
+
+          opened
+          (cap/frame-text (capture-settings settings-rows
+                                            (concat (press (+ x 4) y) (press (+ x 4) y) [:esc])))]
+
+      (expect (str/includes? folded "Response ▸"))
+      (expect (not (str/includes? folded "Show reasoning")))
+      (expect (str/includes? opened "Show reasoning"))))
+  (it "shows every match while a search runs"
+      (let [capture
+            (capture-settings settings-rows
+                              (concat [:left] "show" [:esc :esc])
+                              :callbacks
+                              {:focus-section "Response"})
+
+            ;; The frame before the first Esc shows the search result.
+            searched
+            (cap/frame-text capture (- (count (:frames capture)) 2))]
+
+        (expect (str/includes? searched "Show reasoning"))
+        (expect (not (str/includes? searched "▸")))
+        ;; Clearing the search shows the fold again.
+        (expect (str/includes? (cap/frame-text capture) "Response ▸"))))
   (it "pages through the full catalog in either direction without a category switch"
       (doseq [cols
               [40 100]
@@ -721,7 +782,8 @@
                  (mapv (juxt :type :label :tag :depth) rows)))
       ;; The one action stands inside the Extensions header rule, not on a row of its own.
       (expect (= "Reload" (:label (:button (nth rows 2)))))
-      (expect (re-find #"── Extensions ─+  Reload  ──" (str (line "── Extensions"))))
+      ;; The chevron after the name folds the section.
+      (expect (re-find #"── Extensions ▾ ─+  Reload  ──" (str (line "── Extensions"))))
       ;; The Reload button in the Extensions header is not counted as a setting.
       (expect (= [["Agents" 1] ["Extensions" 3]]
                  (mapv (juxt :label :count) (#'dlg/settings-toc rows 0))))

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ListRow } from '../components/ui';
@@ -29,7 +29,7 @@ describe('a settings band header carrying a long status', () => {
   it('measures the title at its own width so the status wraps instead', () => {
     const header = band('0 devices · via relay.example.com');
     expect(header.firstElementChild?.className).not.toContain('items-baseline');
-    const title = header.querySelector('h4');
+    const title = header.querySelector('[role="heading"]');
     expect(title?.parentElement?.className).toContain('flex-wrap');
     expect(title?.className).toContain('flex-auto');
   });
@@ -91,5 +91,52 @@ describe('a band and the rows under it keep one rail', () => {
 
     expect(gutter(band)).toBe('px-3 sm:px-4');
     expect(gutter(screen.getByRole('button', { name: 'Macbook' }))).toBe(gutter(band));
+  });
+});
+
+describe('every settings band with a body folds', () => {
+  it('opens by default and hides its body behind its own chevron', () => {
+    render(
+      <SettingsPanel title="Theme">
+        <p>Vis Light</p>
+      </SettingsPanel>,
+    );
+    expect(screen.getByText('Vis Light')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide Theme' }));
+    expect(screen.queryByText('Vis Light')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show Theme' }));
+    expect(screen.getByText('Vis Light')).toBeVisible();
+  });
+
+  it('keeps the band action a separate control beside the chevron', () => {
+    let added = 0;
+    render(
+      <SettingsPanel
+        title="MCP servers"
+        action={
+          <button type="button" onClick={() => (added += 1)}>
+            Add an MCP server
+          </button>
+        }
+      >
+        <p>context7</p>
+      </SettingsPanel>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add an MCP server' }));
+    expect(added).toBe(1);
+    expect(screen.getByText('context7')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide MCP servers' }));
+    expect(screen.queryByText('context7')).toBeNull();
+    expect(document.querySelector('header svg')?.getAttribute('class')).toContain('size-3');
+  });
+
+  it('shows no chevron on a band without a body', () => {
+    render(
+      <SettingsPanel title="Notifications" action={<button type="button">Notifications off</button>}>
+        {false}
+      </SettingsPanel>,
+    );
+    expect(screen.queryByRole('button', { name: /Notifications$/ })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Notifications' })).toBeVisible();
   });
 });

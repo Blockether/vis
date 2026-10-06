@@ -4200,12 +4200,13 @@
   values)
 
 (defn- settings-selectable?
-  [{:keys [type button]}]
+  [{:keys [type button fold]}]
   (or (contains? #{:toggle :choice :action :agent-name :text-setting :number-setting
                    :structured-setting :set-toggle :registry-toggle :mcp :provider}
                  type)
-      ;; A section header with a button takes the selection like a setting.
-      (and (= :section type) (some? button))))
+      ;; A section header with a button takes the selection like a setting. A folded
+      ;; header takes it too, so the keyboard can open the section again.
+      (and (= :section type) (or (some? button) (= :closed fold)))))
 
 (defn- first-selectable-index
   [rows]
@@ -4213,6 +4214,51 @@
                              (when (settings-selectable? row) i))
                            rows))
       0))
+
+(defn- settings-fold-rows
+  "Mark each section header that has rows below it with `:fold` `:open` or `:closed`.
+   A section named in `folded` keeps only its header, with `:folded-count` settings hidden."
+  [rows folded]
+  (let [rows
+        (vec rows)
+
+        n
+        (count rows)
+
+        section-end
+        (fn [i]
+          (or (first (filter #(= :section (:type (nth rows %))) (range (inc (long i)) n))) n))]
+
+    (loop [i
+           0
+
+           out
+           (transient [])]
+
+      (if (>= i n)
+        (persistent! out)
+        (let [row
+              (nth rows i)
+
+              ;; A row that is not a header ends where it starts.
+              end
+              (if (= :section (:type row)) (long (section-end i)) (inc i))]
+
+          (cond (= (inc i) end) (recur (inc i) (conj! out row))
+                (contains? folded (:label row))
+                (recur end
+                       (conj! out
+                              (assoc row
+                                :fold :closed
+                                :folded-count (count (filter settings-selectable?
+                                                             (subvec rows (inc i) end))))))
+                :else (recur (inc i) (conj! out (assoc row :fold :open)))))))))
+
+(defn- settings-section-of
+  "The section header at or above `index` in `rows`."
+  [rows index]
+  (some #(let [row (nth rows %)] (when (= :section (:type row)) row))
+        (range (min (long index) (dec (count rows))) -1 -1)))
 
 (defn- settings-focused-row
   "The row that Enter, a click and F1 use: the button of a section header, else `row`."
@@ -4224,8 +4270,19 @@
    its whole label before two closing rule characters, and the section label gives way first.
    Returns the label to show, and with room for a button also `:button {:x :end :label}` with an
    exclusive `:end`."
-  [{:keys [label button]} x width]
-  (let [x
+  [{:keys [label button fold]} x width]
+  (let [;; The chevron follows the name, as on every other fold in the TUI.
+        label
+        (case fold
+          :open
+          (str label " ▾")
+
+          :closed
+          (str label " ▸")
+
+          label)
+
+        x
         (long x)
 
         width
@@ -5124,8 +5181,11 @@
                   (:label (nth rows start))]
 
               {:label label
-               ;; The count covers the settings, not a button in the section header.
-               :count (count (filter settings-selectable? (subvec rows (inc (long start)) end)))
+               ;; The count covers the settings, not a button in the section header. A
+               ;; folded section still counts the settings it hides.
+               :count (or (:folded-count (nth rows start))
+                          (count (filter settings-selectable?
+                                         (subvec rows (inc (long start)) end))))
                :start start
                :end end
                :active? (<= start selected (dec (long end)))}))
@@ -5283,21 +5343,24 @@
                                             list-top
                                             rail-w
                                             (min (count toc) (long visible-h)))]
-          {:kind :toc :row-idx (settings-initial-index rows (:label (nth toc offset)))}))
+          (let [section (:label (nth toc offset))]
+            {:kind :toc :row-idx (settings-initial-index rows section) :section section})))
       (when-let [offset (mouse-row-offset key (inc (long pane-left)) list-top pane-width visible-h)]
         (let [entry-idx (+ (long scroll) (long offset))]
           (when-let [{:keys [row-idx part]} (get entries entry-idx)]
             (let [row (nth rows row-idx)]
               (if (= :section (:type row))
-                ;; A press on a section header runs its button only on the button itself.
-                (when-let [{:keys [x end]} (when (= :section part)
-                                             (:button (settings-section-layout
-                                                        row
-                                                        (+ (long pane-left) 2)
-                                                        (- (long pane-width) 2))))]
-                  (let [col (long (.getColumn (.getPosition ^MouseAction key)))]
-                    (when (and (<= (long x) col) (< col (long end)))
-                      {:kind :setting :row-idx row-idx})))
+                ;; A press on a header button runs the button. A press elsewhere on a
+                ;; header with rows below it folds or opens that section.
+                (let [button (when (= :section part)
+                               (:button (settings-section-layout row
+                                                                 (+ (long pane-left) 2)
+                                                                 (- (long pane-width) 2))))
+                      col (long (.getColumn (.getPosition ^MouseAction key)))]
+
+                  (cond (and button (<= (long (:x button)) col) (< col (long (:end button))))
+                        {:kind :setting :row-idx row-idx}
+                        (and (= :section part) (:fold row)) {:kind :fold :row-idx row-idx}))
                 (when (settings-selectable? row) {:kind :setting :row-idx row-idx}))))))))
 
 (defn settings-dialog!
@@ -5371,6 +5434,10 @@
              query
              (atom "")
 
+             ;; Labels of the sections folded to their header line.
+             folded
+             (atom #{})
+
              ;; One status glyph and a gap precede each compact setting label.
              check-w
              2]
@@ -5380,8 +5447,10 @@
          ((fn paint-settings! [paint-only?]
             (loop []
 
-              (let [filtered
-                    (filter-settings-rows (settings-rows) @query)
+              (let [;; A search shows every match, so folds apply only to the full list.
+                    filtered
+                    (let [found (filter-settings-rows (settings-rows) @query)]
+                      (if (str/blank? @query) (settings-fold-rows found @folded) found))
 
                     rows
                     (if (and (empty? filtered) (not (str/blank? @query)))
@@ -5634,7 +5703,11 @@
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
                             (p/put-str! g (+ lleft 2) row-y (settings-section-text shown paint-w))
                             (p/set-fg! g t/dialog-hint-key)
-                            (p/styled g [p/BOLD] (p/put-str! g (+ lleft 5) row-y shown))
+                            ;; A header without a button shows the selection on its name.
+                            (p/styled
+                              g
+                              (if (and selected? (nil? button)) (p/selection-styles true) [p/BOLD])
+                              (p/put-str! g (+ lleft 5) row-y shown))
                             ;; A header button stands inside the rule. The selection gives it the
                             ;; accent fill, as in a confirm dialog.
                             (when-let [{:keys [x end]} button]
@@ -5765,7 +5838,7 @@
                                 (if (< inner-w 50)
                                   [["↑/↓" "scroll"] ["F1" "details"] ["Esc" "clear/close"]]
                                   [["↑/↓" "scroll"] ["PgUp/PgDn" "scroll"] ["Enter" "change"]
-                                   ["F1" "details"] ["Esc" "clear/close"]]))
+                                   ["←/→" "fold"] ["F1" "details"] ["Esc" "clear/close"]]))
                 (when-not paint-only?
                   (.setCursorPosition screen search-cursor)
                   (frame/refresh! screen))
@@ -5806,7 +5879,15 @@
                                                       (fn [settings]
                                                         (notify-settings-change! callbacks settings)
                                                         (paint-settings! true)))
-                                                    row))]
+                                                    row))
+
+                          ;; Fold or open one section, then select its header or first setting.
+                          fold-section!
+                          (fn [label fold?]
+                            (swap! folded (if fold? conj disj) label)
+                            (reset! selected (settings-initial-index
+                                               (settings-fold-rows (settings-rows) @folded)
+                                               label)))]
 
                       (when key
                         (cond
@@ -5871,11 +5952,23 @@
                                     (let [pressed @pointer-down-target]
                                       (vreset! pointer-down-target nil)
                                       (when (and pressed (= pressed pointer-target))
-                                        (let [row-idx (:row-idx pressed)]
+                                        (let [row-idx (:row-idx pressed)
+                                              {:keys [label fold]} (nth rows row-idx)]
+
                                           (reset! selected row-idx)
-                                          (when (= :setting (:kind pressed))
+                                          (case (:kind pressed)
+                                            :setting
                                             (activate-row! (settings-focused-row (nth rows
-                                                                                      row-idx))))))
+                                                                                      row-idx)))
+
+                                            :fold
+                                            (fold-section! label (= :open fold))
+
+                                            :toc
+                                            (when (contains? @folded (:section pressed))
+                                              (fold-section! (:section pressed) false))
+
+                                            nil)))
                                       (recur))
                                     :else (do (when (= action MouseActionType/DRAG)
                                                 (vreset! pointer-down-target nil))
@@ -5941,7 +6034,19 @@
                                                       (reset! scroll 0)
                                                       (recur))
                                                   (recur)))
-                            KeyType/Enter (do (when selected-row (activate-row! selected-row))
+                            ;; Left folds the section of the selection; Right opens a folded header.
+                            KeyType/ArrowLeft (do (when-let [{:keys [label fold]}
+                                                             (settings-section-of rows @selected)]
+                                                    (when (= :open fold)
+                                                      (fold-section! label true)))
+                                                  (recur))
+                            KeyType/ArrowRight (do (let [{:keys [label fold]} (get rows @selected)]
+                                                     (when (= :closed fold)
+                                                       (fold-section! label false)))
+                                                   (recur))
+                            KeyType/Enter (do (let [{:keys [label fold]} (get rows @selected)]
+                                                (cond (= :closed fold) (fold-section! label false)
+                                                      selected-row (activate-row! selected-row)))
                                               (recur))
                             (recur))))))))))
            false))))))

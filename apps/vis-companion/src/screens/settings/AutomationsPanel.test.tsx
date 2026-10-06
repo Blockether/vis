@@ -7,9 +7,14 @@ import { storyAutomationsClient } from '../../dev/story-data';
 describe('Automations band in machine settings', () => {
   it('opens closed and shows the automations of the machine', async () => {
     render(<AutomationsPanel client={storyAutomationsClient()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Show automations' }));
+    // The closed band hides its list; its chevron used to turn while the list stayed.
+    await screen.findByRole('button', { name: 'Show automations' });
+    expect(screen.queryByText('Morning summary')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show automations' }));
     expect(await screen.findByText('Morning summary')).toBeVisible();
     expect(screen.getByRole('button', { name: 'New automation' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide automations' }));
+    expect(screen.queryByText('Morning summary')).toBeNull();
   });
 
   it('shows the band for a machine with no automations', async () => {
