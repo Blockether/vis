@@ -73,11 +73,15 @@ export function Text({
   className = '',
   ...props
 }: HTMLAttributes<HTMLElement> & {
-  variant: 'heading' | 'section' | 'label' | 'option' | 'description' | 'meta';
+  variant: 'page' | 'band' | 'group' | 'heading' | 'section' | 'label' | 'option' | 'description' | 'meta';
   as?: 'span' | 'p' | 'h3' | 'h4' | 'h5' | 'h6';
   tone?: 'default' | 'inherit';
 }) {
   const role = {
+    // Settings levels shrink from the column to the band to its groups; rows stay `label`.
+    page: 'text-head font-semibold',
+    band: 'text-subhead font-semibold',
+    group: 'text-ui font-bold uppercase tracking-[0.06em]',
     heading: 'text-title font-semibold',
     section: 'text-body font-semibold',
     label: 'text-title font-medium',
@@ -88,7 +92,7 @@ export function Text({
   const ink =
     tone === 'inherit'
       ? 'text-inherit'
-      : variant === 'description' || variant === 'meta'
+      : variant === 'description' || variant === 'meta' || variant === 'group'
         ? 'text-dialog-hint'
         : 'text-white';
   return (

@@ -103,7 +103,7 @@ export function SettingsColumn({
     <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
       <Text
         as={TitleHeading}
-        variant="heading"
+        variant="page"
         role="heading"
         aria-level={3}
         className="min-w-0 flex-auto truncate"
@@ -204,7 +204,7 @@ export function SettingsPanel({
     <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
       <Text
         as={TitleHeading}
-        variant={isNested ? 'label' : 'section'}
+        variant={isNested ? 'group' : 'band'}
         role="heading"
         aria-level={level}
         className="min-w-0 flex-auto truncate"
