@@ -731,7 +731,7 @@
           (expect (= 2 (scroll-start hs 2 0 1)))
           (expect (= 0 (scroll-start hs 0 0 99)))))
     (it
-      "names the location in neutral ink and keeps selected rows plain"
+      "names the location in neutral ink and paints a selected session on one background"
       (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
             draw-session (var-get #'dlg/draw-navigator-session!)
             entry {:focused? false
@@ -747,14 +747,17 @@
                      (for [column (range 80)]
                        (.getCharacterString (.getBackCharacter screen (int column) (int row))))))]
 
-        (try (let [g (.newTextGraphics screen)]
+        (try (let [g (.newTextGraphics screen)
+                   selection ((var-get #'dlg/navigator-selection-bg))]
+
                (draw-session g 4 6 70 entry true)
                (draw-session g 4 9 70 entry false)
-               (expect (= (.getBackgroundColor (.getBackCharacter screen 6 6))
-                          (.getBackgroundColor (.getBackCharacter screen 6 9))))
+               (expect (= selection (.getBackgroundColor (.getBackCharacter screen 6 6))))
+               (expect (= selection (.getBackgroundColor (.getBackCharacter screen 70 7))))
+               (expect (= t/dialog-bg (.getBackgroundColor (.getBackCharacter screen 6 9))))
                (expect (str/includes? (line 6) "now / Idle / First session"))
                (expect (str/includes? (line 7) "Project: Workbench / Group: Planning"))
-               (expect (= t/dialog-hint (.getForegroundColor (.getBackCharacter screen 4 6))))
+               (expect (= t/dialog-hint (.getForegroundColor (.getBackCharacter screen 4 10))))
                (expect (not (str/includes? (line 6) "abc1234")))
                (expect (str/blank? (line 8))))
              (finally (.stopScreen screen)))))
@@ -3947,13 +3950,54 @@
 
         (expect (= [:project] (mapv :action all)))
         (expect (= ["C-p"] (mapv :key all)))
-        (expect (= ["Project: All projects"] (mapv :label all)))
+        (expect (= ["Project"] (mapv :name all)))
+        (expect (= ["All projects"] (mapv :label all)))
         (expect (= [:project :groups] (mapv :action narrow)))
         (expect (= ["C-p" "C-g"] (mapv :key narrow)))
-        (expect (str/starts-with? (:label (first narrow)) "Project: A very"))
-        (expect (not= "Project: A very long project name indeed" (:label (first narrow))))
-        (expect (= "Groups: 2 selected" (:label (last narrow))))
+        (expect (str/starts-with? (:label (first narrow)) "A very"))
+        (expect (not= "A very long project name indeed" (:label (first narrow))))
+        (expect (= "2 selected" (:label (last narrow))))
         (expect (<= (+ (long (:x (last narrow))) (long (:width (last narrow)))) 50))))
+  ;; Regression for #320: the scope row was plain text in one style, one column left
+  ;; of the list, so it did not read as a control.
+  (it
+    "draws each control at the list column as a dim name, a bold value and a bold key"
+    (let [{:keys [^TerminalScreen screen]}
+          (term/virtual-screen)
+
+          controls
+          ((var-get #'dlg/navigator-scope-controls) 60 "All projects" 1 true)
+
+          cell
+          (fn [column]
+            (.getBackCharacter screen (int column) (int 3)))
+
+          bold?
+          (fn [column]
+            (.isBold ^TextCharacter (cell column)))]
+
+      (try (let [g (.newTextGraphics screen)]
+             ((var-get #'dlg/draw-navigator-scope-controls!) g 4 3 controls))
+           (let [line
+                 (apply str
+                   (for [column (range 80)]
+                     (.getCharacterString ^TextCharacter (cell column))))
+
+                 value-x
+                 (str/index-of line "All projects")
+
+                 key-x
+                 (str/index-of line "C-p")]
+
+             (expect (= 4 (str/index-of line "Project: All projects  C-p")))
+             (expect (str/includes? line "C-p  ·  Groups: 1 selected  C-g"))
+             (expect (= t/dialog-hint (.getForegroundColor ^TextCharacter (cell 4))))
+             (expect (not (bold? 4)))
+             (expect (= t/dialog-fg (.getForegroundColor ^TextCharacter (cell value-x))))
+             (expect (bold? value-x))
+             (expect (= t/dialog-hint-key (.getForegroundColor ^TextCharacter (cell key-x))))
+             (expect (bold? key-x)))
+           (finally (.stopScreen screen)))))
   (it
     "reissues the same blank query for project and OR groups, and All projects clears both"
     (let [sessions
@@ -4014,7 +4058,7 @@
                            (= {:project-id "p1"} scope)
                            (str/includes? text "First scoped"))
                       (do (expect (not (str/includes? text "Other project")))
-                          (expect (str/includes? text "C-g Groups: All groups"))
+                          (expect (str/includes? text "Groups: All groups  C-g"))
                           (expect (not (str/includes? text "Clear filters")))
                           (reset! phase 2)
                           (.addInput terminal (KeyStroke. (Character/valueOf \g) true false false)))

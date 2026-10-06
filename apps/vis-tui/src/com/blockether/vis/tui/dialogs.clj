@@ -6472,25 +6472,28 @@
   (and (some? (:project-id scope)) (= (:project-id scope) (str (get group "project_id")))))
 
 (defn- navigator-scope-controls
-  "The row below the search field says where the search looks. Each control is its key
-   in hint ink and its current choice in text ink, at its own width, so only a long
-   project, then a long groups label, gives up columns. Groups appear only while the
-   chosen project has groups to narrow to."
+  "The row below the search field says where the search looks. Each control reads
+   `Name: value  key`, at its own width, so only a long project, then a long groups
+   value, gives up columns. Groups appear only while the chosen project has groups to
+   narrow to. `:label` is the value as it fits."
   [width project group-count groups?]
   (let [gap
-        3
+        5
 
         controls
-        (cond-> [{:action :project :key "C-p" :text (str "Project: " project)}]
+        (cond-> [{:action :project :key "C-p" :name "Project" :value (str project)}]
           groups?
           (conj {:action :groups
                  :key "C-g"
-                 :text
-                 (str "Groups: "
-                      (if (pos? (long group-count)) (str group-count " selected") "All groups"))}))
+                 :name "Groups"
+                 :value (if (pos? (long group-count)) (str group-count " selected") "All groups")}))
+
+        fixed
+        (fn [{:keys [key name]}]
+          (+ (count name) 2 2 (count key)))
 
         natural
-        (mapv #(+ (count (:key %)) 1 (count (:text %))) controls)
+        (mapv #(+ (long (fixed %)) (count (:value %))) controls)
 
         spare
         (- (long width) (* gap (dec (count controls))))
@@ -6511,7 +6514,7 @@
                   (long (widths idx))
 
                   give
-                  (min over (max 0 (- w (+ (count (:key (controls idx))) 9))))]
+                  (min over (max 0 (- w (+ (long (fixed (controls idx))) 4))))]
 
               (recur (inc idx) (assoc widths idx (- w give)) (- over give)))))]
 
@@ -6533,7 +6536,7 @@
               (min (long (widths idx)) (- (long width) x))
 
               text-w
-              (- w (count (:key control)) 1)]
+              (- w (long (fixed control)))]
 
           (if (< text-w 1)
             out
@@ -6543,7 +6546,24 @@
                          (assoc control
                            :x x
                            :width w
-                           :label (p/ellipsize (:text control) text-w))))))))))
+                           :label (p/ellipsize (:value control) text-w))))))))))
+
+(defn- draw-navigator-scope-controls!
+  "Paint the scope row from `x`, in the footer hint style: the name in hint ink, the
+   current value in bold text ink, then the bold key. A dim dot separates controls."
+  [g x row controls]
+  (doseq [{:keys [name label key] :as control} controls]
+    (let [cx (+ (long x) (long (:x control)))
+          head (str name ": ")
+          value-x (+ cx (count head))]
+
+      (p/set-colors! g t/dialog-hint t/dialog-bg)
+      (when (pos? (long (:x control))) (p/put-str! g (- cx 3) row "·"))
+      (p/put-str! g cx row head)
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/styled g [p/BOLD] (p/put-str! g value-x row label))
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/styled g [p/BOLD] (p/put-str! g (+ value-x (long (p/display-width label)) 2) row key)))))
 
 (defn- navigator-selected-index
   "Keep the selected session when recency, pages or search results move its row.
@@ -6936,10 +6956,25 @@
 
     (vec (take height lines))))
 
+(defn- navigator-selection-bg
+  "Background of the selected session: the dialog surface moved a little toward the
+   theme accent, so the selection stays muted on dark and light themes."
+  []
+  (t/mix-color t/dialog-bg t/header-active-tab-accent 0.22))
+
 (defn- draw-navigator-session!
+  "Paint one session as two lines. A selected session gets ONE background over both
+   lines, text and padding alike; each span keeps its ink, made legible on it."
   [g x row width entry selected?]
   (let [focused?
         (:focused? entry)
+
+        bg
+        (if selected? (navigator-selection-bg) t/dialog-bg)
+
+        ink
+        (fn [color]
+          (if selected? (t/legible-ink color bg) color))
 
         status-color
         (session-status-ink (:status entry))
@@ -6959,8 +6994,8 @@
 
     (p/styled
       g
-      (p/selection-styles selected?)
-      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (if selected? [p/BOLD] [])
+      (p/set-colors! g t/dialog-fg bg)
       (p/fill-rect! g x row width 2)
       (loop [fields
              fields
@@ -6981,10 +7016,10 @@
                 used
                 (long (p/display-width text))]
 
-            (p/set-colors! g color t/dialog-bg)
+            (p/set-colors! g (ink color) bg)
             (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row text)) (p/put-str! g cx row text))
             (recur (rest fields) (+ cx used) (- remaining used)))))
-      (p/set-colors! g t/dialog-hint t/dialog-bg)
+      (p/set-colors! g (ink t/dialog-hint) bg)
       (p/put-str! g
                   x
                   (inc (long row))
@@ -7430,16 +7465,10 @@
                                                        content-w
                                                        @query
                                                        (count @query))]
-                (p/set-colors! g t/dialog-border t/dialog-bg)
-                (doseq [control scope-controls]
-                  (let [x (+ (inc (long left)) (long (:x control)))]
-                    (p/set-colors! g t/dialog-hint t/dialog-bg)
-                    (p/put-str! g x (inc (long content-top)) (:key control))
-                    (p/set-colors! g t/dialog-fg t/dialog-bg)
-                    (p/put-str! g
-                                (+ x (count (:key control)) 1)
-                                (inc (long content-top))
-                                (:label control))))
+                (draw-navigator-scope-controls! g
+                                                (+ (long left) 2)
+                                                (inc (long content-top))
+                                                scope-controls)
                 (p/set-colors! g t/dialog-border t/dialog-bg)
                 (p/draw-separator! g left right (+ (long content-top) 2))
                 (when (and page-status (pos? total))
@@ -7513,7 +7542,7 @@
                          (= MouseActionType/CLICK_DOWN (.getActionType ^MouseAction key))
                          (= (inc (long content-top)) (.getRow (.getPosition ^MouseAction key))))
                     (do (let [column (- (.getColumn (.getPosition ^MouseAction key))
-                                        (inc (long left)))
+                                        (+ (long left) 2))
                               control (some #(when (<= (long (:x %))
                                                        column
                                                        (dec (+ (long (:x %)) (long (:width %)))))

@@ -8,9 +8,11 @@
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.table :as table]
             [com.blockether.vis.tui.theme :as t])
-  (:import [com.googlecode.lanterna TextColor]))
+  (:import [com.googlecode.lanterna TextColor TextColor$RGB]))
 
 (defn- rgb [^TextColor color] [(.getRed color) (.getGreen color) (.getBlue color)])
+
+(defn- color [r g b] (TextColor$RGB. (int r) (int g) (int b)))
 
 (defn- row-text [row] (apply str (map :ch row)))
 
@@ -105,29 +107,47 @@
           (expect (= (rgb t/dialog-bg) (:bg cell)))
           (expect (not (:bold cell))))))))
 
-(defdescribe navigator-selection-style-test
-             (it "reverses colored session fields and padding without adding a cursor glyph"
-                 (let [entry
-                       {:modified "Today" :status "Idle" :title "Session"}
+(defdescribe
+  navigator-selection-style-test
+  ;; Regression for #320: reverse video turned each span's own ink into its background,
+  ;; so the selected session showed several shades instead of one block.
+  (it
+    "paints one muted background over both lines, text and padding, without a cursor glyph"
+    (let [entry
+          {:modified "Today"
+           :status "Idle"
+           :title "Session"
+           :group "Workbench"
+           :session-group "Planning"}
 
-                       frame
-                       (capture-frame (fn [{:keys [g]}]
-                                        (p/set-colors! g t/dialog-fg t/dialog-bg)
-                                        (p/fill-rect! g 0 0 80 28)
-                                        (#'dlg/draw-navigator-session! g 2 4 60 entry true)
-                                        (#'dlg/draw-navigator-session! g 2 5 60 entry false)))
+          frame
+          (capture-frame (fn [{:keys [g]}]
+                           (p/set-colors! g t/dialog-fg t/dialog-bg)
+                           (p/fill-rect! g 0 0 80 28)
+                           (#'dlg/draw-navigator-session! g 2 4 60 entry true)
+                           (#'dlg/draw-navigator-session! g 2 7 60 entry false)))
 
-                       selected
-                       (subvec (nth frame 4) 2 62)
+          selection
+          (rgb (#'dlg/navigator-selection-bg))
 
-                       unselected
-                       (subvec (nth frame 5) 2 62)]
+          selected
+          (mapcat #(subvec (nth frame %) 2 62) [4 5])
 
-                   (expect (= (row-text selected) (row-text unselected)))
-                   (doseq [[on off] (map vector selected unselected)]
-                     (expect (:bold on))
-                     (expect (= (:fg off) (:bg on)))
-                     (expect (= (:bg off) (:fg on)))))))
+          unselected
+          (mapcat #(subvec (nth frame %) 2 62) [7 8])]
+
+      (expect (not= (rgb t/dialog-bg) selection))
+      (expect (= (map :ch unselected) (map :ch selected)))
+      (expect (every? #(= selection (:bg %)) selected))
+      (expect (every? #(= (rgb t/dialog-bg) (:bg %)) unselected))
+      (expect (every? :bold selected))
+      (doseq [{:keys [ch fg]}
+              selected
+
+              :when (not (str/blank? ch))]
+
+        (expect (<= (double t/legible-contrast)
+                    (t/contrast-ratio (apply color fg) (apply color selection))))))))
 
 (defdescribe suggestion-selection-style-test
              (it
