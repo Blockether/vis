@@ -71,6 +71,37 @@
                      (:fx (handler {:session-model-pref {:provider "github-copilot" :model "gpt"}}
                                    [:toggle-codex-fast-mode]))))))))
 
+(defdescribe
+  thinking-summary-toggle-test
+  (it "toggles the thinking summary for adaptive Claude and refuses other models"
+      (let [handler (-> #'state/event-registry
+                        deref
+                        deref
+                        (get :toggle-thinking-summary)
+                        :fn)]
+        (with-redefs [vis/get-router (constantly :router)
+                      vis/resolve-model-info (fn [_ provider model]
+                                               (cond-> {:provider (keyword provider) :name model}
+                                                 (= "claude-opus-5" model)
+                                                 (assoc :thinking-display-style
+                                                   :anthropic-display)))]
+
+          (expect (= [[:toggle-boolean "s1" "thinking_summary" "Thinking summary"]]
+                     (:fx (handler {:session {:id "s1"}
+                                    :session-model-pref {:provider "anthropic"
+                                                         :model "claude-opus-5"}}
+                                   [:toggle-thinking-summary]))))
+          (expect (= [[:notify "Thinking summary is available only for Claude adaptive thinking"
+                       :warn 1500]]
+                     (:fx (handler {:session-model-pref {:provider "zai-coding-plan"
+                                                         :model "glm-5.2"}}
+                                   [:toggle-thinking-summary])))))))
+  (it "stores the session's thinking summary row"
+      (reset! state/app-db {:session {:id "s1"} :render-version 0})
+      (state/dispatch [:session-settings-loaded "s1"
+                       [{"id" "thinking_summary" "type" "boolean" "enabled" false}]])
+      (expect (false? (get-in @state/app-db [:session-settings "s1" :thinking-summary])))))
+
 (defdescribe always-on-display-test
              (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"
                  ;; Their toggles were retired (the trace IS the transcript — nothing to

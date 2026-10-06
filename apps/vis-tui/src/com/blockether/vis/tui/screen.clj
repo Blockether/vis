@@ -1233,7 +1233,8 @@
   (let [base
         (vec (concat (dlg/palette-commands-for
                        {:has-turns? (boolean (seq (:messages @state/app-db)))
-                        :improve? (improve/enabled? (:improve @state/app-db))})
+                        :improve? (improve/enabled? (:improve @state/app-db))
+                        :thinking-summary? (state/thinking-summary-configurable? @state/app-db)})
                      (registry-slash-commands)))
 
         ;; A registered slash shadows a same-named template (engine
@@ -8973,6 +8974,9 @@
                                      :cycle-verbosity
                                      (state/dispatch [:cycle-verbosity])
 
+                                     :toggle-thinking-summary
+                                     (state/dispatch [:toggle-thinking-summary])
+
                                      :agent-team
                                      (show-agent-team!)
 
@@ -9137,8 +9141,11 @@
                                                    (command-palette-extra-commands)
                                                    {:has-turns? (boolean (seq (:messages
                                                                                 @state/app-db)))
-                                                    :improve? (improve/enabled?
-                                                                (:improve @state/app-db))}))]
+                                                    :improve? (improve/enabled? (:improve
+                                                                                  @state/app-db))
+                                                    :thinking-summary?
+                                                    (state/thinking-summary-configurable?
+                                                      @state/app-db)}))]
                                  (run-command! cmd)))
                              (recur))
 
@@ -9184,6 +9191,9 @@
 
                          :cycle-verbosity
                          (do (state/dispatch [:cycle-verbosity]) (recur))
+
+                         :toggle-thinking-summary
+                         (do (state/dispatch [:toggle-thinking-summary]) (recur))
 
                          :cycle-model
                          (do (state/dispatch [:cycle-model]) (recur))

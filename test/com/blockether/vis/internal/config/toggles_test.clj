@@ -229,6 +229,12 @@
                  (expect (nil? (t/toggle-spec "show_raw_code")))
                  (expect (nil? (t/toggle-spec "show_tool_results")))))
 
+(defdescribe thinking-summary-toggle-test
+             (it "registers thinking_summary as an own control that defaults on"
+                 (expect (= {:type :boolean :default true :settings? false}
+                            (select-keys (t/toggle-spec "thinking_summary")
+                                         [:type :default :settings?])))))
+
 (defdescribe
   settings-description-test
   (it "a one-line sentence within the cap registers"

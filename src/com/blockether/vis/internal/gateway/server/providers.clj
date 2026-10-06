@@ -252,7 +252,8 @@
      :model-details (mapv (fn [model]
                             {:name (:name model)
                              :is-reasoning-effort-configurable (:reasoning-effort? model)
-                             :verbosity-style (:verbosity-style model)})
+                             :verbosity-style (:verbosity-style model)
+                             :thinking-display-style (:thinking-display-style model)})
                           models)
      :is-default is-default
      :default-model (when is-default (:model primary))

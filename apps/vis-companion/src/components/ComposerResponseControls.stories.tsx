@@ -29,6 +29,11 @@ const meta = {
         busy: false,
         cycle: fn(),
       },
+      thinking: {
+        ...STORY_RESPONSE_CONTROL_VALUES.thinking,
+        busy: false,
+        toggle: fn(),
+      },
       fast: {
         ...STORY_RESPONSE_CONTROL_VALUES.fast,
         busy: false,

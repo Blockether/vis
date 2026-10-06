@@ -766,6 +766,33 @@
                 texts (mapv :text (#'footer/build-segments db 0))]
 
             (expect (= expected (filterv #(str/starts-with? % "verbosity: ") texts)))))))
+  (it "uses gateway model details to show the thinking summary only for adaptive Claude"
+      (with-redefs [vis/router-cached
+                    (constantly [{"id" "anthropic"
+                                  "is_default" true
+                                  "default_model" "claude-opus-5"
+                                  "models" ["claude-opus-5"]
+                                  "model_details" [{"name" "claude-opus-5"
+                                                    "is_reasoning_effort_configurable" true
+                                                    "verbosity_style" nil
+                                                    "thinking_display_style" "anthropic-display"}]}
+                                 {"id" "zai-coding-plan"
+                                  "models" ["glm-5.2"]
+                                  "model_details" [{"name" "glm-5.2"
+                                                    "is_reasoning_effort_configurable" true
+                                                    "verbosity_style" nil
+                                                    "thinking_display_style" nil}]}])]
+        (doseq [[provider model session-settings expected]
+                [["anthropic" "claude-opus-5" nil ["thinking: summarized"]]
+                 ["anthropic" "claude-opus-5" {:thinking-summary false} ["thinking: omitted"]]
+                 ["zai-coding-plan" "glm-5.2" nil []]]]
+          (let [db {:messages []
+                    :session {:id "s1"}
+                    :session-settings {"s1" session-settings}
+                    :session-model-pref {:provider provider :model model}}
+                texts (mapv :text (#'footer/build-segments db 0))]
+
+            (expect (= expected (filterv #(str/starts-with? % "thinking: ") texts)))))))
   (it "reads capability off the SESSION's model, not the global router default"
       ;; Regression: opening a GitHub Copilot session offered no way to change
       ;; reasoning, because the footer asked the router's DEFAULT model instead

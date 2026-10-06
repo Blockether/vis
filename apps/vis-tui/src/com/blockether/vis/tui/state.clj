@@ -1269,6 +1269,16 @@
   (boolean (some-> (session-model-info db)
                    vis/verbosity-configurable?)))
 
+(defn thinking-summary-configurable?
+  "True when the session's model can show or omit its thinking summary.
+
+   Also svar's answer (`:thinking-display-style`): only adaptive Claude thinking
+   on the Anthropic wire has the field, Copilot's Claude tier included. Z.ai GLM
+   has none. Fails CLOSED, like verbosity."
+  [db]
+  (boolean (some-> (session-model-info db)
+                   vis/thinking-display-configurable?)))
+
 (defn- codex-session?
   "True only when this session's resolved route uses the Codex OAuth provider."
   [db]
@@ -1380,7 +1390,7 @@
    background re-warm lands. Cycling reasoning effort with Ctrl+X r must not
    repaint history. Fast mode is deliberately NOT listed: its footer chip must
    repaint immediately even though it still skips transcript-cache invalidation."
-  #{"reasoning_level" "verbosity"})
+  #{"reasoning_level" "verbosity" "thinking_summary"})
 
 (reg-event-db :resync-toggle-settings
               ;; Triggered by the toggles-registry listener whenever a flip
@@ -1434,7 +1444,8 @@
                         (keep (fn [row]
                                 (when-let [k ({"reasoning_level" :reasoning-level
                                                "verbosity" :verbosity
-                                               "codex_fast_mode" :codex-fast-mode}
+                                               "codex_fast_mode" :codex-fast-mode
+                                               "thinking_summary" :thinking-summary}
                                               (get row "id"))]
                                   [k
                                    (if (= "boolean" (get row "type"))
@@ -1476,6 +1487,17 @@
        :fx [[:notify "Fast mode is available only for OpenAI Codex" :warn
              settings-notification-ttl-ms]]}
       {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "codex_fast_mode" "Fast mode"]]})))
+
+(reg-event-fx :toggle-thinking-summary
+              (fn [db _]
+                (if-not (thinking-summary-configurable? db)
+                  {:db db
+                   :fx [[:notify "Thinking summary is available only for Claude adaptive thinking"
+                         :warn settings-notification-ttl-ms]]}
+                  ;; Effect, not an in-swap mutation - see :cycle-reasoning-level.
+                  {:db db
+                   :fx [[:toggle-boolean (get-in db [:session :id]) "thinking_summary"
+                         "Thinking summary"]]})))
 
 (reg-event-fx :cycle-model
               ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,

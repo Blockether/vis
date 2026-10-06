@@ -1250,6 +1250,10 @@ export function SessionScreen({
     client.cachedSetting('codex_fast_mode', settingsTarget),
   );
   const [codexFastBusy, setCodexFastBusy] = useState(false);
+  const [thinkingSummary, setThinkingSummary] = useState<Toggle | null>(() =>
+    client.cachedSetting('thinking_summary', settingsTarget),
+  );
+  const [thinkingSummaryBusy, setThinkingSummaryBusy] = useState(false);
   // The level the user just asked for, shown until the gateway confirms it.
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
@@ -1264,6 +1268,7 @@ export function SessionScreen({
       for (const [id, receive] of [
         ['reasoning_level', setReasoning],
         ['verbosity', setVerbosity],
+        ['thinking_summary', setThinkingSummary],
         ['codex_fast_mode', setCodexFast],
       ] as const) {
         void client
@@ -1305,6 +1310,18 @@ export function SessionScreen({
       setComposerNotice((e as Error).message);
     } finally {
       setCodexFastBusy(false);
+    }
+  }
+
+  async function toggleThinkingSummary() {
+    if (!thinkingSummary || thinkingSummaryBusy) return;
+    setThinkingSummaryBusy(true);
+    try {
+      setThinkingSummary(await client.setSetting(thinkingSummary.id, 'toggle', undefined, settingsTarget));
+    } catch (e) {
+      setComposerNotice((e as Error).message);
+    } finally {
+      setThinkingSummaryBusy(false);
     }
   }
 
@@ -1366,6 +1383,8 @@ export function SessionScreen({
     modelProvider?.model_details?.find((model) => model.name === modelProvider.default_model) ??
     modelProvider?.model_details?.[0];
   const verbosityAvailable = modelInfo?.verbosity_style != null && verbosity;
+  // Only Claude adaptive thinking can show or omit its summary; Z.ai GLM cannot.
+  const thinkingSummaryAvailable = modelInfo?.thinking_display_style != null && thinkingSummary;
   function turnFeaturesFor(voiceProjection: boolean): Record<string, boolean> | undefined {
     // The gateway snapshots response settings at submission, not from this UI cache.
     return voiceProjection ? { voice_projection: true } : undefined;
@@ -4198,6 +4217,13 @@ export function SessionScreen({
             cycle: cycleVerbosity,
           }
         : undefined,
+    thinking: thinkingSummaryAvailable
+      ? {
+          enabled: thinkingSummaryAvailable.enabled ?? true,
+          busy: thinkingSummaryBusy,
+          toggle: toggleThinkingSummary,
+        }
+      : undefined,
     fast: codexFastAvailable
       ? {
           enabled: codexFastAvailable.enabled ?? false,

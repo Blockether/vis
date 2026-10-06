@@ -2789,6 +2789,11 @@
       (contains? model "verbosity_style")
       (assoc :verbosity-style
         (some-> (get model "verbosity_style")
+                keyword))
+
+      (contains? model "thinking_display_style")
+      (assoc :thinking-display-style
+        (some-> (get model "thinking_display_style")
                 keyword)))
     {:name (str model)}))
 
@@ -2908,6 +2913,8 @@
 (defn reasoning-effort-configurable? [model] (not (false? (:reasoning-effort? model))))
 
 (defn verbosity-configurable? [model] (some? (:verbosity-style model)))
+
+(defn thinking-display-configurable? [model] (some? (:thinking-display-style model)))
 
 (defn model-routing-status [& _] nil)
 

@@ -138,11 +138,68 @@ describe('composer response controls', () => {
     expect(
       verbosityButton.compareDocumentPosition(fastButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // The GPT model has no thinking display, so its cached toggle stays hidden.
+    expect(screen.queryByRole('button', { name: /thinking summary/i })).not.toBeInTheDocument();
     await user.click(verbosityButton);
 
     expect(setSetting).toHaveBeenCalledWith('verbosity', 'cycle', undefined, { scope: 'session', target_id: 's1' });
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /verbosity — medium/i })).toBeInTheDocument(),
+    );
+  });
+
+  it('shows the thinking summary only for Claude adaptive thinking and toggles it', async () => {
+    const user = userEvent.setup();
+    const reasoning = toggle('reasoning_level', 'Reasoning effort', 'balanced', [
+      'low',
+      'balanced',
+      'deep',
+    ]);
+    const thinking = { id: 'thinking_summary', label: 'Thinking summary', type: 'boolean', enabled: true };
+    const setSetting = vi.fn(() => Promise.resolve({ ...thinking, enabled: false }));
+    const fleet = [
+      routerProvider('anthropic', {
+        models: ['claude-opus-5'],
+        default_model: 'claude-opus-5',
+        model_details: [
+          {
+            name: 'claude-opus-5',
+            is_reasoning_effort_configurable: true,
+            verbosity_style: null,
+            thinking_display_style: 'anthropic-display',
+          },
+        ],
+      }),
+    ];
+    const setting = (id: string) =>
+      id === 'reasoning_level' ? reasoning : id === 'thinking_summary' ? thinking : null;
+    renderSessionScreen({
+      client: {
+        cachedDefaultModel: () => ({ provider: 'anthropic', model: 'claude-opus-5' }),
+        defaultModel: () => Promise.resolve({ provider: 'anthropic', model: 'claude-opus-5' }),
+        cachedRouter: () => fleet,
+        router: () => Promise.resolve(fleet),
+        cachedSetting: setting,
+        setting: (id: string) => Promise.resolve(setting(id)),
+        setSetting,
+      },
+    });
+
+    const thinkingButton = await screen.findByRole('button', { name: /thinking summary — on/i });
+    const reasoningButton = screen.getByRole('button', { name: /reasoning effort — balanced/i });
+    expect(thinkingButton).toHaveTextContent('summarized');
+    expect(thinkingButton.querySelector('svg')).toBeInTheDocument();
+    expect(
+      reasoningButton.compareDocumentPosition(thinkingButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    await user.click(thinkingButton);
+
+    expect(setSetting).toHaveBeenCalledWith('thinking_summary', 'toggle', undefined, {
+      scope: 'session',
+      target_id: 's1',
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /thinking summary — off/i })).toHaveTextContent('omitted'),
     );
   });
   // Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:

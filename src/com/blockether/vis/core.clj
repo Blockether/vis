@@ -723,11 +723,12 @@
              [rebuild-router! loop-router/rebuild-router!]
              [resolve-effective-model loop-router/resolve-effective-model]
              ;; Model CAPABILITY, as svar stamped it from the wire — what a
-             ;; channel asks before offering a reasoning-depth or verbosity
-             ;; control, instead of testing a provider id.
+             ;; channel asks before offering a reasoning-depth, verbosity or
+             ;; thinking-display control, instead of testing a provider id.
              [resolve-model-info loop-router/resolve-model-info]
              [reasoning-effort-configurable? transcript/reasoning-effort-configurable?]
              [verbosity-configurable? transcript/verbosity-configurable?]
+             [thinking-display-configurable? transcript/thinking-display-configurable?]
              [model-routing-status loop-router/model-routing-status]
              [set-provider! loop-env/set-provider!])
 

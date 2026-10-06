@@ -7780,6 +7780,9 @@
    {:id :mcp :label "MCP Servers"} {:id :settings :label "Settings"}
    {:id :session-settings :label "Session settings"} {:id :group-settings :label "Group settings"}
    {:id :project-settings :label "Project settings"} {:id :automations :label "Automations"}
+   ;; Only Claude adaptive thinking can show or omit its summary. No C-x letter is
+   ;; free, so the palette is the keyboard entry, and the footer shows the state.
+   {:id :toggle-thinking-summary :label "Thinking Summary" :show-when :thinking-summary}
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
    {:id :toggle-help :label "Keyboard Shortcuts"}
@@ -7843,10 +7846,10 @@
    Fork Session verbs) is DROPPED in a session with no turns — forking a
    turnless session is prohibited, so it must not even be discoverable.
 
-   `ctx` is `{:has-turns? bool :improve? bool}`; a missing/nil ctx is the
-   conservative case — turnless, and with Improve off. Untagged entries always
-   survive."
-  [{:keys [has-turns? improve?]}]
+   `ctx` is `{:has-turns? bool :improve? bool :thinking-summary? bool}`; a
+   missing/nil ctx is the conservative case — turnless, with Improve off and no
+   thinking summary. Untagged entries always survive."
+  [{:keys [has-turns? improve? thinking-summary?]}]
   (filterv (fn [{:keys [show-when]}]
              (case show-when
                :has-turns
@@ -7854,6 +7857,9 @@
 
                :improve
                (boolean improve?)
+
+               :thinking-summary
+               (boolean thinking-summary?)
 
                true))
     palette-commands))

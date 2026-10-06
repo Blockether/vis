@@ -1225,6 +1225,7 @@ export const STORY_RESPONSE_CONTROL_VALUES = {
   },
   reasoning: { label: 'Reasoning', value: 'high' },
   verbosity: { label: 'Verbosity', value: 'medium' },
+  thinking: { enabled: true },
   fast: { enabled: true },
 } as const;
 

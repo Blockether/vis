@@ -612,7 +612,7 @@ The gateway database keeps group and session overrides. A session that you move 
 and follows its new ancestors. New sessions and forks inherit from their ancestors, not the
 overrides of the source session. Sessions without a group skip the group layer.
 
-Response options, including reasoning, verbosity and fast mode, are captured
+Response options, including reasoning, verbosity, thinking summary and fast mode, are captured
 when you submit a message. Later edits do not change running or queued responses.
 
 Paths and access rows use guided editors. Changes apply on the next turn.

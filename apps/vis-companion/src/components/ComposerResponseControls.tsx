@@ -1,4 +1,4 @@
-import { FastIcon, ReasoningIcon, VerbosityIcon } from './icons';
+import { FastIcon, ReasoningIcon, ThinkingIcon, VerbosityIcon } from './icons';
 import { keepKeyboard } from '../lib/keyboard';
 import { MetaButton } from './ui';
 
@@ -9,6 +9,12 @@ type CycleControl = {
   cycle: () => void | Promise<void>;
 };
 
+type ToggleControl = {
+  enabled: boolean;
+  busy: boolean;
+  toggle: () => void | Promise<void>;
+};
+
 export type ComposerResponseControlsModel = {
   model: {
     value: string;
@@ -17,11 +23,8 @@ export type ComposerResponseControlsModel = {
   };
   reasoning?: CycleControl;
   verbosity?: CycleControl;
-  fast?: {
-    enabled: boolean;
-    busy: boolean;
-    toggle: () => void | Promise<void>;
-  };
+  thinking?: ToggleControl;
+  fast?: ToggleControl;
 };
 
 function Divider() {
@@ -88,6 +91,26 @@ export function ComposerResponseControls({
           >
             <VerbosityIcon className="size-3" />
             {controls.verbosity.value}
+          </MetaButton>
+        </>
+      )}
+
+      {controls.thinking && (
+        <>
+          <Divider />
+          <MetaButton
+            density="compact"
+            className="shrink-0"
+            onMouseDown={keepKeyboard}
+            onClick={() => void controls.thinking?.toggle()}
+            disabled={controls.thinking.busy}
+            aria-busy={controls.thinking.busy}
+            aria-pressed={controls.thinking.enabled}
+            aria-label={`Thinking summary — ${controls.thinking.enabled ? 'on' : 'off'}`}
+            title={`Thinking summary: ${controls.thinking.enabled ? 'on' : 'off'}`}
+          >
+            <ThinkingIcon className="size-3" />
+            {controls.thinking.enabled ? 'summarized' : 'omitted'}
           </MetaButton>
         </>
       )}

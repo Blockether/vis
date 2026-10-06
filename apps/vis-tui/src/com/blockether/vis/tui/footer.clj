@@ -124,6 +124,14 @@
   (boolean (some-> info
                    lp/verbosity-configurable?)))
 
+(defn- thinking-summary-configurable?
+  "True when the session's model can show or omit its thinking summary (svar's
+   `:thinking-display-style`, only on adaptive Claude thinking). Fails CLOSED,
+   like verbosity: Z.ai GLM and other models have no such field."
+  [info]
+  (boolean (some-> info
+                   lp/thinking-display-configurable?)))
+
 (def ^:private git-label "git")
 
 (defn- git-change-bits
@@ -561,6 +569,13 @@
         verbosity
         (or (:verbosity settings) default-verbosity)
 
+        thinking-summary?
+        (thinking-summary-configurable? info)
+
+        ;; The toggle defaults on, so only an explicit `false` omits the summary.
+        thinking-summary
+        (not (false? (:thinking-summary settings)))
+
         codex-fast?
         (and (= :openai-codex (:provider info)) (true? (:codex-fast-mode settings)))
 
@@ -584,7 +599,8 @@
         (if draft? (draft-footer-spans ws) (git-footer-spans git-status))]
 
     (cond-> (vec git-spans)
-      ;; Response controls read reasoning → verbosity → fast, matching Companion.
+      ;; Response controls read reasoning → verbosity → thinking → fast, matching
+      ;; Companion.
       reasoning?
       (conj {:text (str "reasoning: " (name reasoning-level))
              :fg t/footer-fg-muted
@@ -614,6 +630,13 @@
              :bold? false
              :region :left
              :priority 5})
+
+      thinking-summary?
+      (conj {:text (str "thinking: " (if thinking-summary "summarized" "omitted"))
+             :fg t/footer-fg-muted
+             :bold? false
+             :region :left
+             :priority 3})
 
       codex-fast?
       (conj {:text "speed: fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})

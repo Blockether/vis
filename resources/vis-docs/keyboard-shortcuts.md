@@ -85,6 +85,10 @@ once it can act.
 | Ctrl+X l | Change the answer length |
 | Ctrl+X q | Turn fast mode on or off for OpenAI Codex models |
 
+To turn the thinking summary on or off for Claude models, open the command palette and
+choose **Thinking Summary**. With the summary off, Claude still thinks, but Vis shows no
+thinking text. The command appears only when the current model supports it.
+
 ### Files, voice and search
 
 | Keys | What they do |

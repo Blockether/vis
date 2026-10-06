@@ -36,6 +36,7 @@ import {
   Lightbulb,
   type LucideIcon,
   MessageSquare,
+  MessageSquareMore,
   Mic,
   MicVocal,
   Minus,
@@ -398,6 +399,14 @@ export function ReasoningIcon({ className }: { className?: string }) {
  */
 export function VerbosityIcon({ className }: { className?: string }) {
   return <Mark icon={AlignLeft} className={className} />;
+}
+
+/**
+ * THINKING SUMMARY — a speech bubble with dots: the model's thinking put into
+ * words. The chip says whether Claude streams that summary or omits it.
+ */
+export function ThinkingIcon({ className }: { className?: string }) {
+  return <Mark icon={MessageSquareMore} className={className} />;
 }
 
 /** FAST — the low-latency mode. The bolt is that word in every product. */

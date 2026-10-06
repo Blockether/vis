@@ -1241,6 +1241,34 @@
                (expect (= "max" (get-in result [:reasoning-effort-resolution :effective])))))
            (finally (loop-env/dispose-environment! environment))))))
 
+(defdescribe
+  thinking-display-ask-opts-test
+  "The `thinking_summary` toggle becomes svar's `:thinking-display` ask opt."
+  (let [ask-opts
+        (fn [overrides]
+          (let [environment (loop-env/create-environment ::router {:db :memory})
+                seen (atom nil)]
+
+            (try (with-redefs [svar/ask-code!
+                               (fn [_router opts]
+                                 (reset! seen opts)
+                                 {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
+                   (binding [toggles/*overrides* overrides]
+                     (iteration/run-iteration environment
+                                              []
+                                              {:iteration 0
+                                               :resolved-model {:provider :anthropic
+                                                                :name "claude-opus-5"
+                                                                :reasoning? true
+                                                                :thinking-display-style
+                                                                :anthropic-display}}))
+                   @seen)
+                 (finally (loop-env/dispose-environment! environment)))))]
+    (it "asks for the thinking summary by default"
+        (expect (= "summarized" (:thinking-display (ask-opts {})))))
+    (it "omits the thinking when the session turns it off"
+        (expect (= "omitted" (:thinking-display (ask-opts {"thinking_summary" false})))))))
+
 (def ^:private prose-beyond-code (deref #'transcript/prose-beyond-code))
 
 (def ^:private test-prompt-cache-context {:id "pcctx-v1-test" :fixed-prefix-weight 0})

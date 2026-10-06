@@ -11,6 +11,7 @@ describe('composer response controls', () => {
     const choose = vi.fn();
     const cycleReasoning = vi.fn();
     const cycleVerbosity = vi.fn();
+    const toggleThinking = vi.fn();
     const toggleFast = vi.fn();
     render(
       <ComposerResponseControls
@@ -32,6 +33,7 @@ describe('composer response controls', () => {
             busy: false,
             cycle: cycleVerbosity,
           },
+          thinking: { enabled: false, busy: false, toggle: toggleThinking },
           fast: { enabled: true, busy: false, toggle: toggleFast },
         }}
       />,
@@ -66,11 +68,15 @@ describe('composer response controls', () => {
         name: 'Verbosity — medium, tap for the next level',
       }),
     );
+    const thinking = screen.getByRole('button', { name: 'Thinking summary — off' });
+    expect(thinking).toHaveTextContent('omitted');
+    fireEvent.click(thinking);
     fireEvent.click(screen.getByRole('button', { name: 'Fast mode — on' }));
 
     expect(choose).toHaveBeenCalledOnce();
     expect(cycleReasoning).toHaveBeenCalledOnce();
     expect(cycleVerbosity).toHaveBeenCalledOnce();
+    expect(toggleThinking).toHaveBeenCalledOnce();
     expect(toggleFast).toHaveBeenCalledOnce();
   });
 
@@ -89,5 +95,6 @@ describe('composer response controls', () => {
 
     expect(screen.getAllByRole('button')).toHaveLength(1);
     expect(screen.queryByRole('button', { name: /Reasoning/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Thinking summary/ })).toBeNull();
   });
 });

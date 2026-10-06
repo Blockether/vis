@@ -641,6 +641,11 @@
                      :check-context? true
                      :input-token-estimator input-token-estimator
                      :preserved-thinking? true
+                     ;; svar sets `thinking.display` only on adaptive Claude
+                     ;; thinking, so a fallback to such a model also keeps the
+                     ;; session's choice. Every other model ignores the opt.
+                     :thinking-display
+                     (if (toggles/enabled? "thinking_summary") "summarized" "omitted")
                      :on-empty-reply-resend
                      (fn [{:keys [attempt max-resends delay-ms]}]
                        ;; LIVE, not post-hoc: emit the retry chunk the

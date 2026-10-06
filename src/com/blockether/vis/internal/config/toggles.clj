@@ -619,6 +619,23 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
+    ;; Claude adaptive thinking either streams a readable summary of the thinking
+    ;; or omits it. Omitted thinking keeps its signature, so replay still works,
+    ;; and the answer can start sooner. Channels offer the switch only when svar
+    ;; stamped `:thinking-display-style` on the model the session routes to
+    ;; (`loop/thinking-display-configurable?`). Z.ai GLM has no such field.
+    (register-toggle! {:id "thinking_summary"
+                       :label "Thinking summary"
+                       :description
+                       "Stream a summary of the model's thinking where the model supports it."
+                       :type :boolean
+                       ;; Own controls (TUI palette and footer, Companion composer), like verbosity.
+                       :settings? false
+                       :default true
+                       :scopes toggle-contract/scopes
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
     ;; A warm request shortly before the provider cache TTL ends keeps the cache of
     ;; a long tool run, so the next request reads it instead of writing it again.
     ;; `idle` also warms for 30 minutes after a turn ends. A warm runs only when

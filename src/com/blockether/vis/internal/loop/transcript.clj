@@ -554,6 +554,15 @@
   [resolved-model]
   (some? (:verbosity-style resolved-model)))
 
+(defn thinking-display-configurable?
+  "True when a model lets the caller show or omit its thinking summary.
+
+   svar stamps `:thinking-display-style` only on adaptive Claude thinking on the
+   Anthropic wire, Copilot's Claude tier included. Z.ai GLM and other models
+   have no display field, so they get no control."
+  [resolved-model]
+  (some? (:thinking-display-style resolved-model)))
+
 (defn- ^:private replay-reasoning-chars
   "Total `:thinking-signature` (or `:thinking` fallback) char count for
    the canonical thinking blocks on `assistant-message`. 0 when nil.

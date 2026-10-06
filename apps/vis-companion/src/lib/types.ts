@@ -553,6 +553,8 @@ export interface RouterModelDetails {
   name: string;
   is_reasoning_effort_configurable: boolean;
   verbosity_style: string | null;
+  /** Set only for Claude adaptive thinking; an older gateway omits it. */
+  thinking_display_style?: string | null;
 }
 
 export interface RouterProvider {

@@ -1537,6 +1537,13 @@
         ;; gating touches ONLY the fork verbs
         (expect (= #{:fork-session :fork-at-turn} (set (remove fresh with-turns))))
         (expect (contains? fresh :new-session))))
+  (it "offers Thinking Summary only where the model can show or omit it"
+      ;; Only Claude adaptive thinking has the setting; other models get no entry.
+      (let [ids-for (fn [ctx]
+                      (set (mapv :id (dlg/palette-commands-for ctx))))]
+        (expect (contains? (ids-for {:thinking-summary? true}) :toggle-thinking-summary))
+        (expect (not (contains? (ids-for {:thinking-summary? false}) :toggle-thinking-summary)))
+        (expect (not (contains? (ids-for nil) :toggle-thinking-summary)))))
   (it "command palette filters by a typed query (searchable)"
       ;; The palette is searchable: the filter is a case-insensitive substring
       ;; match on :label, the spine `searchable-select!` applies.
