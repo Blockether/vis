@@ -2649,7 +2649,7 @@
                     ;; received at this step (`→ Send now`): the left rail `│` in
                     ;; accent, then the user's words in the user bubble fg on the
                     ;; regular bubble bg. The header above it reuses the queue header
-                    ;; painter (`┌ You · sent now · step K`) and the border below it
+                    ;; painter (`┌ You · sent now · iter K`) and the border below it
                     ;; the queue border, so the block reads as one bracket.
                     (str/starts-with? line user-input-marker)
                     (let [raw (subs line 1)]
@@ -8175,7 +8175,7 @@
 
             (when (seq texts)
               (-> [(line-entry "")
-                   (line-entry (str queue-hdr-marker "You · sent now · step " iteration-number))]
+                   (line-entry (str queue-hdr-marker "You · sent now · iter " iteration-number))]
                   (into (mapcat (fn [i text]
                                   (cond->> (mapv #(line-entry (str user-input-marker %))
                                                  (wrap-text text text-w))

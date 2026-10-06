@@ -26,7 +26,8 @@ describe('a queued message delivered into the turn', () => {
     const { container } = render(<IterationTrace iterations={iterations} whole />);
 
     const [band] = bands(container);
-    expect(band?.textContent).toContain('You · sent now · step 2');
+    // User report: the band said `step N`; the transcript counts iterations, so it says `iter N`.
+    expect(band?.textContent).toContain('You · sent now · iter 2');
     expect(band?.textContent).toContain('Also check the lint config.');
     const text = container.textContent ?? '';
     expect(text.indexOf('Also check the lint config.')).toBeLessThan(
@@ -44,7 +45,7 @@ describe('a queued message delivered into the turn', () => {
     );
 
     expect(bands(container)).toHaveLength(1);
-    expect(container.textContent).toContain('step 3');
+    expect(container.textContent).toContain('iter 3');
     expect(container.textContent).toContain('Stop after the tests.');
   });
 

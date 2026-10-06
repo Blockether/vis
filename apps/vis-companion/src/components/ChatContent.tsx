@@ -2949,7 +2949,7 @@ function DeliveredUserInputBand({
   return (
     <div className="mb-2.5 min-w-0" data-transcript-user-input>
       <div className="mb-1.5 font-mono text-meta font-bold text-you-role">
-        You · sent now · step {step}
+        You · sent now · iter {step}
       </div>
       <div
         className={`${RAIL_SPINE} border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground mouse:text-title`}

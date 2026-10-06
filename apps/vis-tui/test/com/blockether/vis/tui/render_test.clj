@@ -11875,8 +11875,9 @@ print(paths)"
         lines
         (format-iteration-entry entry 60 2)
 
+        ;; User report: the header said `step K`; it counts iterations, so it says `iter K`.
         hdr
-        (str p/MARKER_QUEUE_HDR "You · sent now · step 2")]
+        (str p/MARKER_QUEUE_HDR "You · sent now · iter 2")]
 
     (it "opens with the delivery header, then the words in queue order on the rail"
         (expect (some #(= hdr %) lines))
