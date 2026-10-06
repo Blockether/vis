@@ -68,7 +68,12 @@
                                             (draw-preview g x row width lines))
             #'dlg/read-navigator-key!
             (fn [& _]
-              (swap! frames conj {:painted @painted :preview @preview})
+              (swap! frames conj
+                {:painted @painted
+                 :preview @preview
+                 :text (str/join "\n"
+                                 (map #(back-line screen %)
+                                      (range (.getRows (.getTerminalSize screen)))))})
               (reset! painted [])
               (let [input (first @inputs)]
                 (swap! inputs #(vec (rest %)))
@@ -254,6 +259,75 @@
                    (expect (= 3 (#'dlg/navigator-selected-index next-rows 2 {:rows rows})))
                    (expect (= 4 (#'dlg/navigator-selected-index next-rows 3 {:rows rows})))
                    (expect (= 0 (#'dlg/navigator-selected-index [] 3 {:rows rows}))))))
+
+(defn- painted-ids
+  "Session ids of one captured frame, top to bottom."
+  [frame]
+  (into [] (keep (comp :id :target :entry)) (:painted frame)))
+
+(defn- selected-ids
+  "Session ids that one captured frame paints as selected."
+  [frame]
+  (into [] (keep (comp :id :target :entry)) (filter :selected? (:painted frame))))
+
+(defn- open-on-kept-rows!
+  "Open the navigator on `kept` rows while its head page waits for the first frame.
+   The second frame comes after the head page landed; Enter then chooses."
+  [kept head]
+  (let [release
+        (promise)
+
+        landed
+        (promise)]
+
+    (capture-navigator! 100
+                        30
+                        {:sessions kept
+                         :active-session-id "current"
+                         :load-initial (fn []
+                                         @release
+                                         (deliver landed true)
+                                         {:sessions head :next-cursor nil})}
+                        [(fn [_]
+                           (deliver release true)
+                           (deref landed 1000 nil)
+                           (Thread/sleep 100)
+                           nil) (KeyStroke. KeyType/Enter)])))
+
+(defdescribe
+  session-navigator-kept-rows-test
+  ;; C-x s painted "Loading sessions…" on every open until the gateway answered.
+  (it "paints kept rows at once and trades them for the head page without a loading line"
+      (let [{:keys [choice frames]}
+            (open-on-kept-rows!
+              [{"id" "gone" "title" "Deleted session" "turn_count" 1 "modified_at" 3000}
+               {"id" "current" "title" "Current session" "turn_count" 1 "modified_at" 2000}
+               {"id" "renamed" "title" "Old title" "turn_count" 1 "modified_at" 1000}]
+              [{"id" "current" "title" "Current session" "turn_count" 1 "modified_at" 2000}
+               {"id" "renamed" "title" "New title" "turn_count" 1 "modified_at" 1000}])]
+        (expect (= ["gone" "current" "renamed"] (painted-ids (first frames))))
+        (expect (= ["current"] (selected-ids (first frames))))
+        (expect (str/includes? (:text (first frames)) "Old title"))
+        (expect (= ["current" "renamed"] (painted-ids (last frames))))
+        (expect (= ["current"] (selected-ids (last frames))))
+        (expect (str/includes? (:text (last frames)) "New title"))
+        (expect (not-any? #(re-find #"Loading (more )?sessions" (:text %)) frames))
+        (expect (= {:action :switch :id "current"} choice))))
+  (it "keeps the opening cursor for the session in use until the head page brings its row"
+      (let [kept
+            [{"id" "newest" "title" "Newest session" "turn_count" 1 "modified_at" 4000}
+             {"id" "middle" "title" "Middle session" "turn_count" 1 "modified_at" 3000}]
+
+            {:keys [choice frames]}
+            (open-on-kept-rows!
+              kept
+              (conj kept
+                    {"id" "current" "title" "Current session" "turn_count" 1 "modified_at" 2000}))]
+
+        (expect (= ["newest" "middle"] (painted-ids (first frames))))
+        (expect (= ["newest" "middle" "current"] (painted-ids (last frames))))
+        (expect (= ["current"] (selected-ids (last frames))))
+        (expect (= {:action :switch :id "current"} choice)))))
 
 (defdescribe
   session-navigator-interaction-test

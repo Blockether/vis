@@ -5588,54 +5588,107 @@
 
     {:projects projects :groups (into {} (map (juxt #(str (get % "id")) identity)) groups)}))
 
+(defonce ^:private picker-cache*
+  ;; The last head page and catalog that the picker read. The next C-x s paints them at
+  ;; once, and its own head page then replaces the rows.
+  (atom {}))
+
+(defonce ^:private picker-warming*
+  ;; True while a background picker read runs. At most one runs at a time.
+  (atom false))
+
+(def ^:private picker-rewarm-ms
+  "The shortest time between two background picker reads that fleet deltas start."
+  5000)
+
+(defn- picker-head!
+  "Read the head page of the picker and keep it for the next open."
+  [active-id]
+  (let [page (picker-first-page active-id)]
+    (swap! picker-cache* assoc :page page)
+    page))
+
+(defn- picker-catalog!
+  "Read the project and group catalog of the picker and keep it for the next open."
+  []
+  (let [catalog (fleet-search-catalog)]
+    (swap! picker-cache* assoc :catalog catalog)
+    catalog))
+
+(defn- warm-picker-cache!
+  "Read the head page off the UI thread, and the catalog when none is kept, so the next
+   C-x s opens on current rows. Returns false when a read already runs."
+  [active-id]
+  (boolean (when (compare-and-set! picker-warming* false true)
+             (try (vis/worker-future "tui-picker-warm"
+                                     (fn []
+                                       (try (picker-head! active-id)
+                                            (when-not (:catalog @picker-cache*) (picker-catalog!))
+                                            (catch Throwable _ nil)
+                                            (finally (reset! picker-warming* false)))))
+                  true
+                  (catch Throwable _ (reset! picker-warming* false) false)))))
+
+(defn- refresh-picker-after-change!
+  "Read the head page again after a picker action changed sessions. When the read
+   fails, forget the kept rows, so the next open does not paint the old list."
+  [active-id]
+  (try (picker-head! active-id) (catch Throwable _ (swap! picker-cache* dissoc :page))))
+
 (defn- show-session-picker!
-  "Open the navigator without gateway I/O on the input thread. The dialog owns
-   page loading, retry and cancellation; a search answers its hits WITH their rows."
+  "Open the navigator without gateway I/O on the input thread. Rows and the catalog of
+   the last read paint at once; the dialog then reads its head page again. The dialog
+   owns page loading, retry and cancellation; a search answers its hits WITH their rows."
   [screen active-id db]
-  (with-dialog-lock
-    #(dlg/navigator-dialog!
-       screen
-       {:load-initial (fn []
-                        (picker-first-page active-id))
-        :load-more (fn [cursor scope]
-                     (tui-session-page (assoc scope
-                                         :limit picker-page-size
-                                         :after cursor)))
-        :load-catalog fleet-search-catalog
-        :watch-fleet (fn [sink]
-                       (try (vis/gateway-fleet-subscribe! sink)
-                            (catch Throwable _
-                              (fn []))))
-        :active-session-id active-id
-        :db db
-        :recent-messages vis/fork-points
-        :search-sessions
-        (fn [q scope]
-          (try (let [answer (vis/gateway-search-sessions
-                              q
-                              (cond-> (with-session-drafts (assoc scope :limit picker-search-rows))
-                                (not (str/blank? q))
-                                (assoc :archived :include)))]
-                 {:sessions (mapv enrich-session-row (map session-summary (:sessions answer)))
-                  :next-cursor (:next-cursor answer)
-                  :total (:total answer)
-                  :matches (into {}
-                                 (map (fn [{:keys [id rank in-title? in-request? in-reply?
-                                                   in-thinking? request-snippet reply-snippet
-                                                   hits]}]
-                                        [id
-                                         {:rank rank
-                                          :kind (cond in-title? :title
-                                                      (and in-request? in-reply?) :both
-                                                      in-request? :request
-                                                      in-reply? :reply
-                                                      in-thinking? :thinking
-                                                      :else :both)
-                                          :request-snippet request-snippet
-                                          :reply-snippet reply-snippet
-                                          :hits hits}]))
-                                 (:matches answer))})
-               (catch Throwable _ nil)))})))
+  (let [{:keys [page catalog]} @picker-cache*]
+    (with-dialog-lock
+      #(dlg/navigator-dialog!
+         screen
+         {:sessions (:sessions page)
+          :next-cursor (:next-cursor page)
+          :groups (:groups catalog)
+          :projects (:projects catalog)
+          :load-initial (fn []
+                          (picker-head! active-id))
+          :load-more (fn [cursor scope]
+                       (tui-session-page (assoc scope
+                                           :limit picker-page-size
+                                           :after cursor)))
+          :load-catalog picker-catalog!
+          :watch-fleet (fn [sink]
+                         (try (vis/gateway-fleet-subscribe! sink)
+                              (catch Throwable _
+                                (fn []))))
+          :active-session-id active-id
+          :db db
+          :recent-messages vis/fork-points
+          :search-sessions
+          (fn [q scope]
+            (try
+              (let [answer (vis/gateway-search-sessions
+                             q
+                             (cond-> (with-session-drafts (assoc scope :limit picker-search-rows))
+                               (not (str/blank? q))
+                               (assoc :archived :include)))]
+                {:sessions (mapv enrich-session-row (map session-summary (:sessions answer)))
+                 :next-cursor (:next-cursor answer)
+                 :total (:total answer)
+                 :matches (into {}
+                                (map (fn [{:keys [id rank in-title? in-request? in-reply?
+                                                  in-thinking? request-snippet reply-snippet hits]}]
+                                       [id
+                                        {:rank rank
+                                         :kind (cond in-title? :title
+                                                     (and in-request? in-reply?) :both
+                                                     in-request? :request
+                                                     in-reply? :reply
+                                                     in-thinking? :thinking
+                                                     :else :both)
+                                         :request-snippet request-snippet
+                                         :reply-snippet reply-snippet
+                                         :hits hits}]))
+                                (:matches answer))})
+              (catch Throwable _ nil)))}))))
 
 (def ^:private startup-session-window
   "How many newest rows a STARTUP lookup reads from the gateway. The gateway owns the
@@ -6009,16 +6062,21 @@
           (state/dispatch [:project-sidebar {:loading? false :error "Load failed · r retry"}]))))))
 
 (defn- start-projects-refresh!
-  "Follow fleet status/title deltas and periodically catch arrivals outside this TUI."
+  "Follow fleet status/title deltas and periodically catch arrivals outside this TUI.
+   The same deltas keep the kept rows of the C-x s picker current."
   []
   (let [dirty?
+        (atom false)
+
+        picker-stale?
         (atom false)
 
         stop
         (try (vis/gateway-fleet-subscribe! (fn [event]
                                              (when (#{"session.status" "session.title_updated"}
                                                     (get event "type"))
-                                               (reset! dirty? true))))
+                                               (reset! dirty? true)
+                                               (reset! picker-stale? true))))
              (catch Throwable _
                (fn [])))
 
@@ -6030,7 +6088,13 @@
                    0
 
                    last-drafts
-                   (state/session-draft-ids @state/app-db)]
+                   (state/session-draft-ids @state/app-db)
+
+                   last-picker
+                   nil
+
+                   last-picker-read
+                   0]
 
               (when-not (:shutdown? @state/app-db)
                 (let [db
@@ -6055,11 +6119,29 @@
 
                       due?
                       (and ready?
-                           (or @dirty? (not= drafts last-drafts) (>= (- now last-read) 8000)))]
+                           (or @dirty? (not= drafts last-drafts) (>= (- now last-read) 8000)))
+
+                      picker-key
+                      [(str (get-in db [:session :id])) drafts]
+
+                      picker?
+                      (or (not= picker-key last-picker)
+                          (and @picker-stale? (>= (- now last-picker-read) picker-rewarm-ms)))
+
+                      _
+                      (when picker? (reset! picker-stale? false))
+
+                      picker-started?
+                      (and picker? (warm-picker-cache! (first picker-key)))]
 
                   (when due? (reset! dirty? false) (refresh-projects! true))
+                  ;; A picker read that could not start yet runs at a later tick.
+                  (when (and picker? (not picker-started?)) (reset! picker-stale? true))
                   (try (Thread/sleep 1000) (catch InterruptedException _ nil))
-                  (recur (if due? now last-read) (if due? drafts last-drafts))))))
+                  (recur (if due? now last-read)
+                         (if due? drafts last-drafts)
+                         (if picker-started? picker-key last-picker)
+                         (if picker-started? now last-picker-read))))))
           "vis-tui-projects-refresh")]
 
     (.setDaemon thread true)
@@ -7733,6 +7815,8 @@
                        (switch-session! choice)
                        ;; Refresh after mutations so pruning can continue.
                        (when (#{:delete :favorite :project :reorder} (:action choice))
+                         ;; Read the head page first, so the picker opens on the changed rows.
+                         (refresh-picker-after-change! (current-session-id))
                          (show-sessions!)))))
                  ;; Per-session model PICKER (C-x o + palette "Choose Model…").
                  ;; Mirrors the web footer chooser: a searchable list of every

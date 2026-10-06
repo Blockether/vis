@@ -4667,6 +4667,9 @@
                       (reset! sink callback)
                       #(swap! stops inc))
 
+                    screen/warm-picker-cache!
+                    (constantly true)
+
                     screen/refresh-projects!
                     (fn [automatic?]
                       (swap! reads conj automatic?))]

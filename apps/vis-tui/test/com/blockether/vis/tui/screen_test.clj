@@ -1384,6 +1384,122 @@
               (expect (= 51 (count (:sessions page))))
               (expect (= "next" (:next-cursor page))))
             (expect (= [["" {:limit 50}] [:soul "in-use"]] @requests))))))
+  ;; C-x s painted "Loading sessions…" on every open: the next open paints the last read.
+  (it
+    "opens on the head page and catalog of the last read without a gateway request"
+    (let [requests
+          (atom [])
+
+          options
+          (atom nil)]
+
+      (reset! @#'screen/picker-cache* {})
+      (with-redefs-fn {#'screen/with-dialog-lock (fn [f]
+                                                   (f))
+                       #'dlg/navigator-dialog! (fn [_ opts]
+                                                 (reset! options opts)
+                                                 {:action :new})
+                       #'vis/gateway-search-sessions (fn [query opts]
+                                                       (swap! requests conj [query opts])
+                                                       {:sessions [{"id" "a" "title" "Kept"}]
+                                                        :next-cursor "next"})
+                       #'vis/gateway-list-projects (fn [_]
+                                                     (swap! requests conj :projects)
+                                                     [{"id" "p1" "name" "Project"}])
+                       #'vis/gateway-list-session-groups (fn [_]
+                                                           (swap! requests conj :groups)
+                                                           [{"id" "g1" "name" "Group"}])}
+        (fn []
+          (#'screen/show-session-picker! nil "a" {})
+          (expect (empty? (:sessions @options)))
+          ((:load-initial @options))
+          ((:load-catalog @options))
+          (reset! requests [])
+          (#'screen/show-session-picker! nil "a" {})
+          (expect (empty? @requests))
+          (expect (= ["a"] (mapv #(get % "id") (:sessions @options))))
+          (expect (= "next" (:next-cursor @options)))
+          (expect (= ["p1"] (mapv #(get % "id") (:projects @options))))
+          (expect (= ["g1"] (keys (:groups @options))))))))
+  (it "reads the head page again after a picker action and forgets it when that read fails"
+      (let [fail? (atom false)]
+        (reset! @#'screen/picker-cache* {:page {:sessions [{"id" "deleted"}]}
+                                         :catalog {:projects []}})
+        (with-redefs-fn {#'vis/gateway-search-sessions
+                         (fn [_ _]
+                           (when @fail? (throw (ex-info "Gateway unavailable" {})))
+                           {:sessions [{"id" "a"}] :next-cursor nil})}
+          (fn []
+            (#'screen/refresh-picker-after-change! "a")
+            (expect (= ["a"]
+                       (mapv #(get % "id") (get-in @@#'screen/picker-cache* [:page :sessions]))))
+            (reset! fail? true)
+            (#'screen/refresh-picker-after-change! "a")
+            (expect (= {:catalog {:projects []}} @@#'screen/picker-cache*))))))
+  (it "warms the kept rows off the UI thread, one read at a time"
+      (let [release
+            (promise)
+
+            reads
+            (atom 0)]
+
+        (reset! @#'screen/picker-cache* {})
+        (with-redefs-fn {#'vis/gateway-search-sessions (fn [_ _]
+                                                         (swap! reads inc)
+                                                         @release
+                                                         {:sessions [{"id" "a"}] :next-cursor nil})
+                         #'vis/gateway-list-projects (fn [_]
+                                                       [])}
+          (fn []
+            (expect (true? (#'screen/warm-picker-cache! "a")))
+            (expect (false? (#'screen/warm-picker-cache! "a")))
+            (deliver release true)
+            (loop [attempt 0]
+              (when (and @@#'screen/picker-warming* (< attempt 100))
+                (Thread/sleep 10)
+                (recur (inc attempt))))
+            (expect (= ["a"]
+                       (mapv #(get % "id") (get-in @@#'screen/picker-cache* [:page :sessions]))))
+            (expect (= {:projects [] :groups {}} (:catalog @@#'screen/picker-cache*)))
+            (expect (= 1 @reads))))))
+  (it
+    "warms the kept rows on the first tick, on a session change and on fleet deltas"
+    (let [sink
+          (atom nil)
+
+          warms
+          (atom [])
+
+          db
+          (atom {:session {:id "a"}})
+
+          wait-for
+          (fn [expected]
+            (loop [attempt 0]
+              (when (and (not= expected @warms) (< attempt 60))
+                (Thread/sleep 50)
+                (recur (inc attempt))))
+            @warms)]
+
+      (with-redefs-fn {#'state/app-db db
+                       #'vis/gateway-fleet-subscribe! (fn [f]
+                                                        (reset! sink f)
+                                                        (fn []
+                                                          nil))
+                       #'screen/refresh-projects! (fn [_]
+                                                    nil)
+                       #'screen/picker-rewarm-ms 0
+                       #'screen/warm-picker-cache! (fn [id]
+                                                     (swap! warms conj id)
+                                                     true)}
+        (fn []
+          (let [stop (#'screen/start-projects-refresh!)]
+            (try (expect (= ["a"] (wait-for ["a"])))
+                 (swap! db assoc-in [:session :id] "b")
+                 (expect (= ["a" "b"] (wait-for ["a" "b"])))
+                 (@sink {"type" "session.title_updated"})
+                 (expect (= ["a" "b" "b"] (wait-for ["a" "b" "b"])))
+                 (finally (swap! db assoc :shutdown? true) (stop))))))))
   ;; A search answers its hits WITH their rows, so a hit the picker's window does not
   ;; hold yet is painted without a second read.
   (it

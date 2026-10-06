@@ -6579,6 +6579,14 @@
                 (map-indexed vector rows)))
         (p/clamp selected 0 (max 0 (dec (count rows)))))))
 
+(defn- navigator-keep-selection?
+  "True when this paint keeps `selection` as it is: no row shows, or the picker opens on
+   kept rows without the current session while the head page loads."
+  [selection rows seed-loading?]
+  (or (empty? rows)
+      (boolean (when-let [id (and seed-loading? (:id selection))]
+                 (not-any? #(= (str id) (str (:id (:target %)))) rows)))))
+
 (defn- navigator-all-rows
   "Build one newest-first list across projects, groups and stars. Empty untitled
    shells stay hidden by default, but the current session always survives."
@@ -7195,10 +7203,12 @@
     (p/set-char! g col bottom p/BOX_T_UP)))
 
 (defn navigator-dialog!
-  "C-x s session picker. `:load-initial` and `:load-more` fetch pages off the
-   paint/input thread; the latter takes a cursor. Loading and failure retain the
-   current rows and keyboard input; C-r retries a failed page. Transcript search
-   is debounced. Closing cancels outstanding page and search work."
+  "C-x s session picker. `:sessions` holds rows from an earlier read: they paint at
+   once, and the first head page from `:load-initial` replaces them without a loading
+   line. `:load-initial` and `:load-more` fetch pages off the paint/input thread; the
+   latter takes a cursor. Loading and failure retain the current rows and keyboard
+   input; C-r retries a failed page. Transcript search is debounced. Closing cancels
+   outstanding page and search work."
   [^TerminalScreen screen opts]
   (with-modal-background
     screen
@@ -7257,6 +7267,16 @@
 
           page-error
           (atom nil)
+
+          ;; Whether the last page started is a head page: the first window of a blank query.
+          ;; A failed page keeps it, so C-r starts that page again with the same kind.
+          page-head?
+          (atom false)
+
+          ;; `:sessions` rows come from an earlier read, so a session in them can be renamed
+          ;; or deleted since. The first head page replaces them; later pages merge.
+          seeded?
+          (atom (boolean (seq (:sessions opts))))
 
           load-more
           (:load-more opts)
@@ -7332,7 +7352,7 @@
                      (future-cancel running))
                    (reset! search-task nil)
                    (reset! search-result nil)
-                   (when search-sessions (start-page! #(search-sessions q scope))))
+                   (when search-sessions (start-page! #(search-sessions q scope) true)))
                (schedule-navigator-search! search-task
                                            search-generation
                                            search-result
@@ -7371,9 +7391,10 @@
                                {:id (some-> (:active-session-id opts)
                                             str)}))
            (when search? (start-search!)))
-         (start-page! [load!]
+         (start-page! [load! head?]
            (let [token (swap! page-generation inc)]
              (reset! page-error nil)
+             (reset! page-head? head?)
              (when-let [running @page-task]
                (future-cancel running))
              (reset! page-task (future (try (let [page (load!)]
@@ -7402,7 +7423,8 @@
                         (navigator-page-in? {:selected @selected :total total :next-cursor cursor}))
                (start-page! (if (and load-more (empty? q))
                               #(load-more cursor scope)
-                              #(search-sessions q (assoc scope :after cursor)))))))
+                              #(search-sessions q (assoc scope :after cursor)))
+                            false))))
          (change-scope! [scope label]
            (reset! search-scope scope)
            (reset! scope-project-label label)
@@ -7457,7 +7479,7 @@
              nil))]
         (try
           (when-let [load-initial (:load-initial opts)]
-            (start-page! load-initial))
+            (start-page! load-initial true))
           (when-let [load-catalog (:load-catalog opts)]
             (reset! groups-task (future (try (when-let [catalog (load-catalog)]
                                                (reset! groups-index (:groups catalog))
@@ -7473,7 +7495,9 @@
                 (reset! page-error retry)
                 (when-not retry
                   (reset! page-cursor (:next-cursor page))
-                  (swap! loaded-sessions navigator-merge-sessions (:sessions page))
+                  (if (and @page-head? @seeded?)
+                    (do (reset! seeded? false) (reset! loaded-sessions (vec (:sessions page))))
+                    (swap! loaded-sessions navigator-merge-sessions (:sessions page)))
                   (when (seq (:matches page)) (swap! transcript-ids merge (:matches page))))))
             (when (seq @fleet-frames)
               (let [frames (first (swap-vals! fleet-frames empty))]
@@ -7579,8 +7603,12 @@
                   _
                   (reset! selected (navigator-selected-index visible-rows @selected @selection))
 
+                  seed-loading?
+                  (boolean (and @page-task @page-head? @seeded?))
+
                   _
-                  (when (seq visible-rows) (reset! selection {:rows visible-rows}))
+                  (when-not (navigator-keep-selection? @selection visible-rows seed-loading?)
+                    (reset! selection {:rows visible-rows}))
 
                   _
                   (page-in! total)
@@ -7599,6 +7627,7 @@
 
                   page-status
                   (cond @page-error "Could not load sessions · C-r retry"
+                        seed-loading? nil
                         @page-task
                         (if (seq @loaded-sessions) "Loading more sessions…" "Loading sessions…"))]
 
@@ -7779,8 +7808,8 @@
                     (if-let [id (and (pos? total) (:id (:target (nth visible-rows @selected))))]
                       {:action :project :id id}
                       (recur))
-                    (and (input/ctrl-char? key \r) @page-error) (do (start-page! @page-error)
-                                                                    (recur))
+                    (and (input/ctrl-char? key \r) @page-error)
+                    (do (start-page! @page-error @page-head?) (recur))
                     (input/ctrl-char? key \u)
                     (do (swap! show-empty-untitled? not) (reset-list! false) (recur))
                     (= KeyType/PasteStart (.getKeyType ^KeyStroke key))

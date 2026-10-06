@@ -316,6 +316,7 @@
                        #'client/gateway-fleet-subscribe! (fn [_]
                                                            (fn []
                                                              nil))
+                       #'screen/warm-picker-cache! (constantly true)
                        #'screen/refresh-projects! (fn [_]
                                                     (let [ids (state/session-draft-ids @db)]
                                                       (swap! reads conj ids)
