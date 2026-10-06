@@ -3036,8 +3036,8 @@
                       :deadline-in-ms 215000
                       :deadline-action "retry"}
                      (notice pinged 25000)))
-          ;; No stream event for 30 seconds: the connection is silent too.
-          (expect (= "silent" (:connection (notice pinged 46000))))
+          ;; No stream event for a minute: the connection is silent too.
+          (expect (= "silent" (:connection (notice pinged 76000))))
           ;; Silence after the answer began: Svar ends the call and does not re-send it.
           (expect (= {:silent-ms 21000
                       :connection "silent"
@@ -3051,6 +3051,26 @@
                                 80000)))
           (expect (nil? (notice (advance answering {:phase :response-parse :status :started} 52000)
                                 80000)))))
+    ;; With the thinking display omitted, Claude sends no text while it thinks. Svar
+    ;; forwards each keepalive inside the thinking block, about 30 seconds apart.
+    (it "keeps hidden thinking alive without counting it as output"
+        (let [thinking (reduce (fn [stall ms]
+                                 (advance stall {:phase :provider-thinking :iteration 3} ms))
+                               (called 0)
+                               (range 30000 300000 30000))]
+          (expect (= 270000 (:last-ms thinking)))
+          (expect (false? (:produced? thinking)))
+          (expect (= {:byte-ms 270000 :thinking-ms 270000}
+                     (select-keys (:attempt thinking) [:byte-ms :thinking-ms :output-ms])))
+          ;; Svar re-sends only 240 seconds after the last keepalive.
+          (expect (= {:silent-ms 280000
+                      :connection "alive"
+                      :awaiting-output true
+                      :deadline-in-ms 230000
+                      :deadline-action "retry"}
+                     (select-keys (notice thinking 280000)
+                                  [:silent-ms :connection :awaiting-output :deadline-in-ms
+                                   :deadline-action])))))
     (it "sends the notice again only when it tells something new"
         (let [n
               {:connection "alive" :deadline-action "retry" :deadline-in-ms 200000}
@@ -7362,7 +7382,7 @@
 ;; provider wait notice on every keepalive.
 (defdescribe
   provider-keepalive-publishes-nothing-test
-  (it "publishes no delta for repeated text and no event for tool input"
+  (it "publishes no delta for repeated text and no event for tool input or hidden thinking"
       (let [sid
             (str (random-uuid))
 
@@ -7383,6 +7403,7 @@
                           (on-chunk {:phase :reasoning :iteration 1 :thinking "alpha"})
                           (on-chunk {:phase :reasoning :iteration 1 :thinking "alpha"})
                           (on-chunk {:phase :tool-input :iteration 1 :chars 40})
+                          (on-chunk {:phase :provider-thinking :iteration 1})
                           (on-chunk
                             {:phase :reasoning :iteration 1 :thinking "alpha beta" :done? true}))
                         {:status :ok :answer nil})]
@@ -7391,7 +7412,7 @@
           (expect (= ["alpha" " beta"]
                      (mapv #(get % "text")
                            (filterv #(= "content.block.delta" (get % "type")) events))))
-          (expect (not-any? #(= "tool-input" (get % "phase")) events))
+          (expect (not-any? #(re-find #"tool-input|provider-thinking" (pr-str %)) events))
           (expect (every? #(string? (get % "type")) events))))))
 
 ;; Regression: `iteration.completed` shipped the provider's CUT summary as the

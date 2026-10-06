@@ -3129,6 +3129,15 @@
 
           ;; The second chunk arrives in the same second, and the last one adds nothing.
           (expect (= [13 20] (mapv :chars (filterv #(= :tool-input (:phase %)) chunks))))))
+    (it "says that hidden thinking is alive and draws no text for it"
+        (let [chunks (chunks-of (fn [on-chunk]
+                                  (dotimes [_ 2]
+                                    (on-chunk {:content "" :thinking-alive? true :done? false}))))
+              thinking (filterv #(= :provider-thinking (:phase %)) chunks)]
+
+          (expect (= 2 (count thinking)))
+          (expect (every? #(= #{:phase :iteration} (set (keys %))) thinking))
+          (expect (not-any? #(and (= :content (:phase %)) (= "" (:content %))) chunks))))
     (it "hands the gateway the limits at which Svar re-sends the call"
         (let [call (first (filter #(= :provider-call (:phase %))
                                   (chunks-of (fn [_on-chunk]))))]
@@ -11972,7 +11981,13 @@
       (expect (nil? (loop-router/provider-resend-deadline-ms limits
                                                              {:started-ms 1000 :byte-ms 2000}
                                                              400000)))
-      (expect (nil? (loop-router/provider-resend-deadline-ms limits {} 1000)))))
+      (expect (nil? (loop-router/provider-resend-deadline-ms limits {} 1000)))
+      ;; Svar counts a keepalive inside a thinking block as model progress.
+      (expect (= 440000
+                 (loop-router/provider-resend-deadline-ms
+                   limits
+                   {:started-ms 1000 :byte-ms 200000 :thinking-ms 200000}
+                   201000)))))
   (it "follows the provider policy and an explicit nil that turns a watchdog off"
       (let [limits (loop-router/provider-resend-limits {:idle-timeout-ms 45000
                                                         :semantic-timeout-ms nil})]

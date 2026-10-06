@@ -526,6 +526,11 @@
                                             (on-chunk {:phase :provider-fallback
                                                        :iteration iteration-position
                                                        :event chunk}))
+                    ;; Hidden thinking sends no text. Svar forwards each provider keepalive
+                    ;; inside the thinking block: a sign of life for the gateway watchdog,
+                    ;; never text to draw.
+                    (:thinking-alive? chunk) (on-chunk {:phase :provider-thinking
+                                                        :iteration iteration-position})
                     :else (do (when (or (some? reasoning) done?)
                                 (let [;; The provider's trailing `…` is the summary-elision
                                       ;; MARKER, not text the model wrote; strip it at the

@@ -3113,8 +3113,9 @@
 
 (def ^:private provider-stream-phases
   "Chunks of a live provider stream: text deltas, the empty transport heartbeats
-   among them, and the `:tool-input` sign that the model writes a native tool call."
-  #{:reasoning :content :tool-input})
+   among them, the `:tool-input` sign that the model writes a native tool call and
+   the `:provider-thinking` keepalive of thinking that sends no text."
+  #{:reasoning :content :tool-input :provider-thinking})
 
 (def ^:private PROVIDER_WAIT_NOTICE_MS
   "Model silence in one provider attempt before channels name the wait: the model,
@@ -3122,8 +3123,9 @@
   20000)
 
 (def ^:private PROVIDER_ALIVE_WINDOW_MS
-  "A stream event this recent, inside the silence, shows a live connection."
-  30000)
+  "A stream event this recent, inside the silence, shows a live connection. Hidden
+   thinking sends only keepalives, about 30 seconds apart, so the window is twice that."
+  60000)
 
 (def ^:private PROVIDER_WAIT_REFRESH_MS
   "Repeat interval of an unchanged wait notice. The event is not stored, so a
@@ -3182,8 +3184,10 @@
 
    `:attempt` follows the live provider attempt for the wait notice: the last
    stream event, heartbeats included (`:byte-ms`), the last model output
-   (`:output-ms`, `:output-phase`), answer output after which Svar no longer
-   re-sends (`:answer?`) and the end of the stream (`:done?`)."
+   (`:output-ms`, `:output-phase`), the last keepalive of hidden thinking
+   (`:thinking-ms`), answer output after which Svar no longer re-sends
+   (`:answer?`) and the end of the stream (`:done?`). Hidden thinking moves the
+   deadline, but it is not output."
   [state chunk now]
   (let [phase
         (:phase chunk)
@@ -3191,8 +3195,11 @@
         meaningful?
         (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))
 
+        thinking?
+        (= :provider-thinking phase)
+
         output?
-        (and meaningful? (not (contains? stall-lifecycle-phases phase)))
+        (and meaningful? (not thinking?) (not (contains? stall-lifecycle-phases phase)))
 
         provider-call?
         (= :provider-call phase)
@@ -3242,6 +3249,9 @@
 
       (and stream? output?)
       (update :attempt assoc :output-ms now :output-phase phase)
+
+      (and stream? thinking?)
+      (assoc-in [:attempt :thinking-ms] now)
 
       (and stream? answer?)
       (assoc-in [:attempt :answer?] true)
@@ -3979,8 +3989,11 @@
                              (contains? @started-blocks block-id)
                              (= (count cumulative) previous-len))]
 
-                    ;; `:tool-input` is a sign of life for the turn watchdog only.
-                    (when-not (or nothing-said? unchanged? (= phase :tool-input))
+                    ;; `:tool-input` and `:provider-thinking` are signs of life for the turn
+                    ;; watchdog only.
+                    (when-not (or nothing-said?
+                                  unchanged?
+                                  (contains? #{:tool-input :provider-thinking} phase))
                       (when streaming?
                         (when (and (not= phase :tool-preview)
                                    (not (contains? @started-blocks block-id)))

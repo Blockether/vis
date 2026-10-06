@@ -223,13 +223,15 @@
 (defn provider-resend-deadline-ms
   "Wall-clock ms when Svar's next watchdog closes this provider attempt, or nil.
 
-   `attempt` has `:started-ms`, the last stream event `:byte-ms` and the last
-   model output `:output-ms`; the last two are nil until they occur. Before the
-   first stream event Svar waits for the response headers, then for the first
-   body byte. After it, Svar closes on transport silence (idle) or on model
-   silence (semantic). Channels see parsed events only, not SSE comments, so an
-   idle estimate that passed gives way to the next deadline that has not passed."
-  [limits {:keys [started-ms byte-ms output-ms]} now-ms]
+   `attempt` has `:started-ms`, the last stream event `:byte-ms`, the last model
+   output `:output-ms` and the last keepalive of hidden thinking `:thinking-ms`; the
+   last three are nil until they occur. Before the first stream event Svar waits for
+   the response headers, then for the first body byte. After it, Svar closes on
+   transport silence (idle) or on model silence (semantic). A keepalive inside a
+   thinking block is model progress. Channels see parsed events only, not SSE
+   comments, so an idle estimate that passed gives way to the next deadline that has
+   not passed."
+  [limits {:keys [started-ms byte-ms output-ms thinking-ms]} now-ms]
   (when started-ms
     (let [{:keys [ttft-timeout-ms first-byte-timeout-ms idle-timeout-ms semantic-timeout-ms
                   timeout-ms]}
@@ -247,7 +249,7 @@
             [(some-> idle-timeout-ms
                      (+ (long byte-ms)))
              (some-> semantic-timeout-ms
-                     (+ (long (or output-ms started-ms))))]
+                     (+ (max (long (or output-ms started-ms)) (long (or thinking-ms 0)))))]
             ;; Without Svar's own first-byte default, idle is the upper bound.
             (let [headers-ms
                   (some-> (shortest [ttft-timeout-ms timeout-ms])
