@@ -110,9 +110,11 @@ function ExtensionGroup({
           {members.map(memberRow)}
           {skills.length > 0 && (
             <section aria-labelledby={skillsId} className="min-w-0">
-              <Text role="heading" aria-level={headingLevel + 1} id={skillsId} variant="meta" className="block px-3 pt-2 sm:px-4">
-                Skills
-              </Text>
+              <div className="px-3 pt-2 sm:px-4">
+                <Text role="heading" aria-level={headingLevel + 1} id={skillsId} variant="meta" className="block">
+                  Skills
+                </Text>
+              </div>
               <div className="divide-y divide-dialog-edge">{skills.map(memberRow)}</div>
             </section>
           )}
@@ -198,7 +200,13 @@ export function ExtensionsPanel({
         ) : undefined
       }
     >
-      {choiceNote && <Text as="p" variant="description" className="break-words px-3 py-2 sm:px-4">{choiceNote}</Text>}
+      {choiceNote && (
+        <div className="px-3 py-2 sm:px-4">
+          <Text as="p" variant="description" className="break-words">
+            {choiceNote}
+          </Text>
+        </div>
+      )}
       {groups.map((group) => (
         <ExtensionGroup
           key={group.id}
