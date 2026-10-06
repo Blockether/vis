@@ -203,7 +203,7 @@ export const Button = forwardRef<
     compact: `${touchReach} h-8 min-h-8 px-2.5 self-center text-ui sm:px-3 mouse:h-7 mouse:min-h-7 mouse:text-meta`,
     panel: `${touchReach} min-h-8 px-3 font-mono text-ui mouse:min-h-7`,
     inline:
-      'relative h-6 min-h-6 self-center px-2 leading-none text-meta after:absolute after:inset-x-0 after:-top-2.5 after:-bottom-2.5 after:content-[""] mouse:h-5 mouse:min-h-5 mouse:after:content-none'
+      'relative inline-flex h-6 min-h-6 self-center items-center justify-center px-2 text-meta after:absolute after:inset-x-0 after:-top-2.5 after:-bottom-2.5 after:content-[""] mouse:h-5 mouse:min-h-5 mouse:after:content-none'
   }[density];
   const frame = `rounded-none py-0.5 ${scale}`;
 
