@@ -56,6 +56,12 @@ export interface FleetMachine {
    * the gateway still counts from one it has already let go (`readSinceCounted`).
    */
   countedUnread?: ReadonlySet<string>;
+  /**
+   * The rows of that same answer the gateway served as STOPPED: the ones its
+   * `stopped_count` includes. A message sent after a visit clears the row's own
+   * verdict before a fresh overview arrives, so the header keeps this one.
+   */
+  countedStopped?: ReadonlySet<string>;
 }
 
 /** Identity of a machine in this screen: its transport URL. */
@@ -305,7 +311,23 @@ export function servedUnread(
   rows: Session[],
   previous?: ReadonlySet<string>,
 ): ReadonlySet<string> {
-  const ids = new Set(rows.filter((row) => row.is_unread === true).map((row) => row.id));
+  return servedIds(rows, (row) => row.is_unread === true, previous);
+}
+
+/** The rows a session-list answer served as STOPPED, as `stopped_count` counted them. */
+export function servedStopped(
+  rows: Session[],
+  previous?: ReadonlySet<string>,
+): ReadonlySet<string> {
+  return servedIds(rows, (row) => row.is_unread === true && sessionWasStopped(row), previous);
+}
+
+function servedIds(
+  rows: Session[],
+  isServed: (row: Session) => boolean,
+  previous?: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const ids = new Set(rows.filter(isServed).map((row) => row.id));
   const isSame =
     previous !== undefined && previous.size === ids.size && [...ids].every((id) => previous.has(id));
   return isSame ? previous : ids;
@@ -321,7 +343,24 @@ export function readSinceCounted(
   machine: FleetMachine,
   isSeen: (session: Session) => boolean,
 ): (session: Session) => boolean {
-  const counted = machine.countedUnread;
+  return readSince(machine.countedUnread, isSeen);
+}
+
+/**
+ * The same for STOPPED: the rows counted as stopped and read here since. The served
+ * verdict decides, because a new turn clears the row's own verdict at once.
+ */
+export function stoppedReadSinceCounted(
+  machine: FleetMachine,
+  isSeen: (session: Session) => boolean,
+): (session: Session) => boolean {
+  return readSince(machine.countedStopped, isSeen);
+}
+
+function readSince(
+  counted: ReadonlySet<string> | undefined,
+  isSeen: (session: Session) => boolean,
+): (session: Session) => boolean {
   if (!counted || counted.size === 0) return () => false;
   return (session) => counted.has(session.id) && isSeen(session);
 }
@@ -634,13 +673,16 @@ export interface ProjectGroupView {
  * and a root gaining an overview must not move existing headers.
  * The gateway owns counts, NEW included; roots absent from its overview use the rows
  * on screen. `isReadSince` names the rows read here since the gateway counted them
- * (`readSinceCounted`).
+ * (`readSinceCounted`); `isStoppedReadSince` names the same for STOPPED
+ * (`stoppedReadSinceCounted`).
  */
 export function projectGroups(
   overview: GatewayOverview | null | undefined,
   rows: Session[],
   isUnread: (session: Session) => boolean = () => false,
   isReadSince: (session: Session) => boolean = () => false,
+  isStoppedReadSince: (session: Session) => boolean = (session) =>
+    sessionWasStopped(session) && isReadSince(session),
 ): ProjectGroupView[] {
   const tallied = overview?.projects ?? [];
   // A row NAMES its project with `project_id`; its path is only how a client
@@ -673,7 +715,7 @@ export function projectGroups(
           project.stopped_count,
           sessions,
           (session) => sessionWasStopped(session) && isUnread(session),
-          (session) => sessionWasStopped(session) && isReadSince(session),
+          isStoppedReadSince,
         ),
       },
       sessions,

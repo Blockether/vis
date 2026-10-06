@@ -24,7 +24,9 @@ import {
   sessionInputCount,
   sessionIsLive,
   sessionOrder,
+  servedStopped,
   servedUnread,
+  stoppedReadSinceCounted,
   timeLabel,
   type FleetMachine,
 } from './fleet';
@@ -820,6 +822,30 @@ describe('the STOPPED a header counts', () => {
     };
     const seen = readSinceCounted(held, (row) => row.id === 's1');
     const tally = projectGroups(held.overview, rows(), isUnread, seen)[0]?.tally;
+    expect(tally).toMatchObject({ unread: 2, stopped: 1 });
+  });
+
+  // Regression, user report (paraphrased: a project's STOPPED count stays after you open
+  // that stopped conversation and send a message): the new turn cleared the row's own
+  // verdict, so the header stopped taking the visit off the gateway's older count.
+  it('takes a visited stopped row off STOPPED after a new message clears its verdict', () => {
+    const held: FleetMachine = {
+      ...machine(studio, rows()),
+      overview: overviewOf(2),
+      countedUnread: servedUnread(rows()),
+      countedStopped: servedStopped(rows()),
+    };
+    const resumed = rows().map((row) =>
+      row.id === 's1' ? { ...row, live: true, was_interrupted: false } : row,
+    );
+    const isSeen = (row: Session) => row.id === 's1';
+    const tally = projectGroups(
+      held.overview,
+      resumed,
+      isUnread,
+      readSinceCounted(held, isSeen),
+      stoppedReadSinceCounted(held, isSeen),
+    )[0]?.tally;
     expect(tally).toMatchObject({ unread: 2, stopped: 1 });
   });
 

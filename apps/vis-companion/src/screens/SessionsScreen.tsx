@@ -74,7 +74,9 @@ import {
   reconcileMachines,
   resolveScope,
   sameOverview,
+  servedStopped,
   servedUnread,
+  stoppedReadSinceCounted,
   scopedMachines,
   searchFanout,
   searchTally,
@@ -646,6 +648,7 @@ export function SessionsScreen({
           // Rows are muted above for visits made here, but the overview counted what the
           // gateway SERVED: that verdict travels beside the rows it no longer matches.
           const countedUnread = servedUnread(rows, held?.countedUnread);
+          const countedStopped = servedStopped(rows, held?.countedStopped);
           setMachineReads((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
           if (
             held &&
@@ -653,7 +656,8 @@ export function SessionsScreen({
             held.answered &&
             merged === held.sessions &&
             overview === held.overview &&
-            countedUnread === held.countedUnread
+            countedUnread === held.countedUnread &&
+            countedStopped === held.countedStopped
           )
             return;
           setMachineMoves((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
@@ -662,6 +666,7 @@ export function SessionsScreen({
             sessions: merged,
             overview,
             countedUnread,
+            countedStopped,
             error: null,
             answered: true,
             isRemembered: false,
@@ -1736,6 +1741,7 @@ export function SessionsScreen({
           entry.sessions,
           (session) => isRowUnread(entry.machine.conn, session),
           readSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
+          stoppedReadSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
         ),
       })),
     [listed, pageSize, isVisible, isRowUnread, isRowSeen, machineMoves, machineReads],
