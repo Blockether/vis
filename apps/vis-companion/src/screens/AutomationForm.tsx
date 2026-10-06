@@ -1,5 +1,14 @@
 import { useState, type ReactNode } from 'react';
-import { Banner, Button, Checkbox, ChoiceCell, Input, Select } from '../components/ui';
+import {
+  Banner,
+  Button,
+  Checkbox,
+  ChoiceCell,
+  CloseButton,
+  ConfirmRow,
+  Input,
+  Select,
+} from '../components/ui';
 import { FormLabel } from './settings/SettingsLayout';
 import {
   ANSWER_OPTIONS,
@@ -255,14 +264,14 @@ export function AutomationForm({
   onSave: (draft: AutomationDraft) => void;
 }) {
   const isNew = !automation;
-  const [draft, setDraft] = useState(() =>
-    automationDraft(automation, Date.now(), deviceTimeZone()),
-  );
+  const [initial] = useState(() => automationDraft(automation, Date.now(), deviceTimeZone()));
+  const [draft, setDraft] = useState(initial);
   // A saved automation opens on its review: every answer is there, with a way to each step.
   const [at, setAt] = useState(isNew ? 0 : LAST);
   // The furthest step that you can open. A new automation opens each step in turn.
   const [reached, setReached] = useState(isNew ? 0 : LAST);
   const [problem, setProblem] = useState<string | null>(null);
+  const [isCancelAsked, setIsCancelAsked] = useState(false);
   const step = STEPS[at];
   const change = (fields: Partial<AutomationDraft>) =>
     setDraft((current) => ({ ...current, ...fields }));
@@ -299,6 +308,10 @@ export function AutomationForm({
   const first = draft.triggers[0];
   const input = step.id === 'review' ? automationInput(draft) : null;
   const isSaveShown = !isNew || at === LAST;
+  // The first choice of a new automation moves on by itself, so that step has no actions.
+  const isFooterShown = !isNew || at > 0;
+  const isChanged = JSON.stringify(draft) !== JSON.stringify(initial);
+  const cancel = () => (isChanged ? setIsCancelAsked(true) : onCancel());
   const question =
     step.id === 'when' && first?.kind === 'webhook' ? 'Which webhook starts it?' : step.question;
 
@@ -313,6 +326,10 @@ export function AutomationForm({
         else next();
       }}
     >
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-dialog-edge px-3 py-2">
+        <h2 className="min-w-0 break-words font-mono text-title font-bold text-white">{title}</h2>
+        <CloseButton label="Cancel" disabled={busy} onClick={cancel} />
+      </div>
       <ol
         aria-label="Steps"
         className="flex shrink-0 flex-wrap gap-x-4 gap-y-1 border-b border-dialog-edge px-3 py-2 font-mono text-ui"
@@ -336,34 +353,7 @@ export function AutomationForm({
         ))}
       </ol>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
-        <h2 className="break-words font-mono text-title font-bold text-white">{title}</h2>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="font-mono text-ui font-bold text-white">{question}</h3>
-          <div role="group" aria-label="Step actions" className="flex flex-wrap items-center gap-3">
-            {isSaveShown ? (
-              <Button type="submit" disabled={busy}>
-                {automation ? 'Save automation' : 'Create automation'}
-              </Button>
-            ) : (
-              <Button type="submit" disabled={busy}>
-                Next
-              </Button>
-            )}
-            {!isNew && at < LAST && (
-              <Button type="button" variant="secondary" disabled={busy} onClick={next}>
-                Next
-              </Button>
-            )}
-            {at > 0 && (
-              <Button type="button" variant="secondary" disabled={busy} onClick={() => go(at - 1)}>
-                Back
-              </Button>
-            )}
-            <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
-              Cancel
-            </Button>
-          </div>
-        </div>
+        <h3 className="font-mono text-ui font-bold text-white">{question}</h3>
         {problem && <Banner kind="err">{problem}</Banner>}
         {step.id === 'start' && first && (
           <Choices label="What starts it">
@@ -567,6 +557,36 @@ export function AutomationForm({
           </dl>
         )}
       </div>
+      {isCancelAsked ? (
+        <ConfirmRow
+          question={isNew ? 'Discard this automation?' : 'Discard your changes?'}
+          keepLabel="Keep editing"
+          confirmLabel="Discard"
+          onKeep={() => setIsCancelAsked(false)}
+          onConfirm={onCancel}
+        />
+      ) : (
+        isFooterShown && (
+          <div
+            role="group"
+            aria-label="Step actions"
+            className="flex shrink-0 items-center gap-3 border-t border-dialog-edge p-3"
+          >
+            {at > 0 && (
+              <Button type="button" variant="secondary" disabled={busy} onClick={() => go(at - 1)}>
+                Back
+              </Button>
+            )}
+            <Button type="submit" disabled={busy} className="ml-auto">
+              {isSaveShown
+                ? automation
+                  ? 'Save automation'
+                  : 'Create automation'
+                : `Next: ${STEPS[at + 1].label}`}
+            </Button>
+          </div>
+        )
+      )}
     </form>
   );
 }

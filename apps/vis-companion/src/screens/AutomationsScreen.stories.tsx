@@ -111,11 +111,11 @@ export const Create: Story = {
     await NewForm.play!(context);
     const { canvas } = context;
     await userEvent.click(canvas.getByRole('button', { name: /^Repeat at an interval/ }));
-    await userEvent.click(canvas.getByRole('button', { name: 'Next' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Next: Task' }));
     await userEvent.type(canvas.getByRole('textbox', { name: /^Name/ }), 'Nightly check');
     await userEvent.type(canvas.getByRole('textbox', { name: /^Prompt/ }), 'Check the build.');
     for (let step = 0; step < 3; step += 1)
-      await userEvent.click(canvas.getByRole('button', { name: 'Next' }));
+      await userEvent.click(canvas.getByRole('button', { name: /^Next: / }));
     await expect(canvas.getByText('Check the automation.')).toBeVisible();
     await userEvent.click(canvas.getByRole('button', { name: 'Create automation' }));
     await expect(await canvas.findByText('Automation created.')).toBeVisible();

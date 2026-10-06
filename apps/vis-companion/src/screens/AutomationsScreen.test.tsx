@@ -9,6 +9,7 @@ import { renderOpenBands } from '../test-settings';
 const renderBand = (client = storyAutomationsClient(), gatewayUrl?: string) =>
   renderOpenBands(<AutomationsPanel client={client} gatewayUrl={gatewayUrl} />);
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+const next = () => fireEvent.click(screen.getByRole('button', { name: /^Next: / }));
 /** A form field by the start of its label; the label also holds the hint. */
 const field = (name: RegExp) => screen.getByRole('textbox', { name });
 const type = (name: RegExp, value: string) => fireEvent.change(field(name), { target: { value } });
@@ -127,18 +128,18 @@ describe('Automations workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Repeat at an interval/ }));
     expect(screen.getByText('When does it run?')).toBeVisible();
     expect(screen.getByRole('group', { name: 'Trigger' })).toBeVisible();
-    click('Next');
+    click('Next: Task');
     expect(screen.getByText('What does Vis do at each run?')).toBeVisible();
-    click('Next');
+    click('Next: Session');
     expect(screen.getByText('Give the automation a name.')).toBeVisible();
     expect(screen.getByText('What does Vis do at each run?')).toBeVisible();
     type(/^Name/, 'Nightly check');
     type(/^Prompt/, 'Check the build.');
-    click('Next');
+    click('Next: Session');
     expect(screen.getByText('Where does it run?')).toBeVisible();
-    click('Next');
+    click('Next: Answer');
     expect(screen.getByText('How does Vis answer?')).toBeVisible();
-    click('Next');
+    click('Next: Review');
     expect(screen.getByText('Check the automation.')).toBeVisible();
     expect(screen.getByText('Every day')).toBeVisible();
     expect(screen.getByText('New session for each run')).toBeVisible();
@@ -173,19 +174,28 @@ describe('Automations workspace', () => {
     expect(screen.queryByRole('combobox', { name: 'Trigger kind' })).toBeNull();
   });
 
-  it('puts the step actions on the question line and frames the choices', async () => {
+  it('puts Back and the next step in the footer and asks before it drops changes', async () => {
     renderBand();
     expect(await screen.findByText('Morning summary')).toBeVisible();
     click('New automation');
+    expect(screen.queryByRole('group', { name: 'Step actions' })).toBeNull();
+    click('Cancel');
+    expect(screen.queryByRole('heading', { name: 'New automation' })).toBeNull();
+    click('New automation');
     fireEvent.click(screen.getByRole('button', { name: /^Run when a service sends an event/ }));
-    const question = screen.getByRole('heading', { name: 'Which webhook starts it?' });
+    expect(screen.getByRole('heading', { name: 'Which webhook starts it?' })).toBeVisible();
     const actions = screen.getByRole('group', { name: 'Step actions' });
-    expect(actions.parentElement).toBe(question.parentElement);
-    for (const name of ['Next', 'Back', 'Cancel']) {
-      expect(actions).toContainElement(screen.getByRole('button', { name }));
-    }
+    const buttons = Array.from(actions.querySelectorAll('button'), (button) => button.textContent);
+    expect(buttons).toEqual(['Back', 'Next: Task']);
     const signatures = screen.getByRole('group', { name: 'Trigger signature' });
     expect(signatures).toHaveClass('border', 'border-dialog-edge');
+    click('Cancel');
+    expect(screen.getByRole('group', { name: 'Discard this automation?' })).toBeVisible();
+    click('Keep editing');
+    expect(screen.getByRole('heading', { name: 'Which webhook starts it?' })).toBeVisible();
+    click('Cancel');
+    click('Discard');
+    expect(screen.queryByRole('heading', { name: 'New automation' })).toBeNull();
   });
 
   it('jumps to the step of a problem when you create the automation', async () => {
@@ -195,12 +205,12 @@ describe('Automations workspace', () => {
     expect(await screen.findByText('Morning summary')).toBeVisible();
     click('New automation');
     fireEvent.click(screen.getByRole('button', { name: /^Repeat at an interval/ }));
-    click('Next');
+    next();
     type(/^Name/, 'Session check');
     type(/^Prompt/, 'Check it.');
-    click('Next');
-    click('Next');
-    click('Next');
+    next();
+    next();
+    next();
     click('Change session');
     fireEvent.click(screen.getByRole('button', { name: /^One existing session/ }));
     click('6. Review');
@@ -220,12 +230,12 @@ describe('Automations workspace', () => {
     expect(await screen.findByText('Morning summary')).toBeVisible();
     click('New automation');
     fireEvent.click(screen.getByRole('button', { name: /^Repeat at an interval/ }));
-    click('Next');
+    next();
     type(/^Name/, 'One more');
     type(/^Prompt/, 'Check it.');
-    click('Next');
-    click('Next');
-    click('Next');
+    next();
+    next();
+    next();
     click('Create automation');
     expect(
       await screen.findByText('An automation store holds at most 256 automations'),
@@ -233,6 +243,7 @@ describe('Automations workspace', () => {
     click('Change name');
     expect(field(/^Name/)).toHaveValue('One more');
     click('Cancel');
+    click('Discard');
     expect(screen.queryByRole('heading', { name: 'New automation' })).toBeNull();
     expect(screen.queryByText(/holds at most 256/)).toBeNull();
     expect(screen.getByText('Morning summary')).toBeVisible();
