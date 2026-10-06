@@ -83,8 +83,18 @@ export const NewForm: Story = {
   play: async ({ canvas }) => {
     await userEvent.click(await canvas.findByRole('button', { name: 'New automation' }));
     await expect(canvas.getByRole('heading', { name: 'New automation' })).toBeVisible();
-    await expect(canvas.getByRole('group', { name: 'Trigger' })).toBeVisible();
-    await expect(canvas.getByRole('button', { name: 'Create automation' })).toBeEnabled();
+    await expect(canvas.getByText('What starts this automation?')).toBeVisible();
+    await expect(canvas.getByRole('button', { name: /^Repeat at an interval/ })).toBeEnabled();
+  },
+};
+
+export const WebhookStep: Story = {
+  play: async (context) => {
+    await NewForm.play!(context);
+    const { canvas } = context;
+    await userEvent.click(canvas.getByRole('button', { name: /^Run when a service sends an event/ }));
+    await expect(canvas.getByText('Which webhook starts it?')).toBeVisible();
+    await expect(canvas.getByRole('group', { name: 'Trigger signature' })).toBeVisible();
   },
 };
 
@@ -92,8 +102,13 @@ export const Create: Story = {
   play: async (context) => {
     await NewForm.play!(context);
     const { canvas } = context;
+    await userEvent.click(canvas.getByRole('button', { name: /^Repeat at an interval/ }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Next' }));
     await userEvent.type(canvas.getByRole('textbox', { name: /^Name/ }), 'Nightly check');
     await userEvent.type(canvas.getByRole('textbox', { name: /^Prompt/ }), 'Check the build.');
+    for (let step = 0; step < 3; step += 1)
+      await userEvent.click(canvas.getByRole('button', { name: 'Next' }));
+    await expect(canvas.getByText('Check the automation.')).toBeVisible();
     await userEvent.click(canvas.getByRole('button', { name: 'Create automation' }));
     await expect(await canvas.findByText('Automation created.')).toBeVisible();
     await expect(canvas.getByRole('heading', { name: 'Nightly check' })).toBeVisible();
@@ -104,6 +119,8 @@ export const Edit: Story = {
   play: async ({ canvas }) => {
     await userEvent.click(await canvas.findByText('Morning summary'));
     await userEvent.click(await canvas.findByRole('button', { name: 'Edit' }));
+    await expect(canvas.getByText('Check the automation.')).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: 'Change prompt' }));
     const prompt = canvas.getByRole('textbox', { name: /^Prompt/ });
     await userEvent.clear(prompt);
     await userEvent.type(prompt, 'List the open pull requests.');

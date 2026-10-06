@@ -55,6 +55,7 @@ import { FormLabel, SettingsPanel } from './SettingsLayout';
 import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingField } from './SettingField';
 import { CouncilRooms } from './CouncilRooms';
+import { AutomationsPanel } from './AutomationsPanel';
 import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 
 /** Closed-choice setting: one shared picker, with saving disabling input. */
@@ -494,6 +495,7 @@ export function MachineSettings({
         <>
           <ProvidersPanel client={client} />
           <NotificationsPanel client={client} gateway={gateway} />
+          <AutomationsPanel client={client} gatewayUrl={gateway.url} />
           <McpServersPanel client={client} />
           <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
         </>

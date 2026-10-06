@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { GatewayClient } from '../lib/gateway';
-import type { GatewayConn } from '../lib/types';
+import { useEffect, useState, type ReactNode } from 'react';
+import type { GatewayClient } from '../lib/gateway';
 import { timeLabel } from '../lib/fleet';
 import {
   automationInput,
@@ -19,7 +18,7 @@ import {
   type AutomationSecret,
   type AutomationSecretKind,
 } from '../lib/automations';
-import { Banner, Button, CopyChip, DialogFrame, ListRow, Modal, Select } from '../components/ui';
+import { Banner, Button, CopyChip, ListRow } from '../components/ui';
 import {
   AutomationsIcon,
   CircleAlertIcon,
@@ -47,47 +46,6 @@ const message = (error: unknown) =>
   error instanceof Error ? error.message : 'Automations could not complete this request.';
 
 const countLabel = (total: number) => `${total} ${total === 1 ? 'automation' : 'automations'}`;
-
-export function AutomationsDialog({
-  gateways,
-  initialUrl,
-  onClose,
-}: {
-  gateways: GatewayConn[];
-  initialUrl?: string;
-  onClose: () => void;
-}) {
-  const [url, setUrl] = useState(initialUrl ?? gateways[0]?.url ?? '');
-  const gateway = gateways.find((item) => item.url === url) ?? gateways[0];
-  const client = useMemo(() => (gateway ? new GatewayClient(gateway) : null), [gateway]);
-  return (
-    <Modal onDismiss={onClose}>
-      <DialogFrame
-        title="Automations"
-        subtitle="Prompts that run on a schedule or a webhook"
-        onClose={onClose}
-      >
-        {gateways.length > 1 && (
-          <label className="flex items-center gap-3 border-b border-dialog-edge px-3 py-2 font-mono text-ui">
-            Machine
-            <Select
-              aria-label="Automations machine"
-              value={gateway?.url ?? ''}
-              onValueChange={setUrl}
-              className="min-w-0 flex-1"
-              options={gateways.map((item) => ({ value: item.url, label: item.label || item.url }))}
-            />
-          </label>
-        )}
-        {client ? (
-          <AutomationsWorkspace key={gateway!.url} client={client} gatewayUrl={gateway!.url} />
-        ) : (
-          <Banner kind="neutral">Pair a machine to use automations.</Banner>
-        )}
-      </DialogFrame>
-    </Modal>
-  );
-}
 
 /** Production workflow; stories and tests replace only the authenticated gateway boundary. */
 export function AutomationsWorkspace({

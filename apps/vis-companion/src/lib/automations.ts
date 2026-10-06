@@ -237,11 +237,41 @@ export const TRIGGER_KIND_OPTIONS = [
   label: KIND_LABELS[properties.kind.const] ?? wordLabel(properties.kind.const),
 }));
 
+const KIND_CHOICES: Record<string, { label: string; hint: string }> = {
+  every: { label: 'Repeat at an interval', hint: 'For example, every hour or every day.' },
+  cron: { label: 'Run at set times', hint: 'For example, at 9:00 on weekdays.' },
+  once: { label: 'Run once', hint: 'At one date and time.' },
+  webhook: { label: 'Run when a service sends an event', hint: 'GitHub, GitLab or a script calls Vis.' },
+};
+
+/** The place of a kind among the wizard choices. Unknown kinds come last. */
+function kindRank(kind: string): number {
+  const at = Object.keys(KIND_CHOICES).indexOf(kind);
+  return at < 0 ? Object.keys(KIND_CHOICES).length : at;
+}
+
+/** The first question of the wizard: what starts the automation. */
+export const TRIGGER_CHOICES = [...TRIGGER_KIND_OPTIONS]
+  .sort((left, right) => kindRank(left.value) - kindRank(right.value))
+  .map(({ value, label }) => ({
+    value,
+    label: KIND_CHOICES[value]?.label ?? label,
+    hint: KIND_CHOICES[value]?.hint ?? '',
+  }));
+
 export const UNIT_OPTIONS = NAMED_UNITS.map(([, unit]) => ({ value: unit, label: `${unit}s` }));
+
+const SIGNATURE_HINTS: Record<string, string> = {
+  github: 'GitHub repositories and organizations.',
+  standard: 'Services that follow Standard Webhooks.',
+  generic: 'Your own scripts, signed with HMAC.',
+  token: 'GitLab, and senders without a signature.',
+};
 
 export const SIGNATURE_OPTIONS = SIGNATURE_KINDS.map((kind) => ({
   value: kind,
   label: SIGNATURES[kind] ?? kind,
+  hint: SIGNATURE_HINTS[kind] ?? '',
 }));
 
 const TARGET_LABELS: Record<string, string> = {
@@ -250,18 +280,29 @@ const TARGET_LABELS: Record<string, string> = {
   session: 'One existing session',
 };
 
+const TARGET_HINTS: Record<string, string> = {
+  new: 'The session stays in your list.',
+  temporary: 'Vis deletes it and keeps the answer.',
+  session: 'Each run adds a turn to it.',
+};
+
 export const TARGET_OPTIONS = [DEFS.new_target, DEFS.temporary_target, DEFS.session_target].map(
   ({ properties }) => ({
     value: properties.mode.const,
     label: TARGET_LABELS[properties.mode.const] ?? wordLabel(properties.mode.const),
+    hint: TARGET_HINTS[properties.mode.const] ?? '',
   }),
 );
 
 /** `prompt` sends the prompt as the answer without a model: `deliver_only`. */
 export const ANSWER_OPTIONS = [
-  { value: 'default', label: 'Machine default model' },
-  { value: 'model', label: 'A specific model' },
-  { value: 'prompt', label: 'No model: send the prompt as the answer' },
+  { value: 'default', label: 'Machine default model', hint: 'The machine chooses the model.' },
+  { value: 'model', label: 'A specific model', hint: 'You give the model name.' },
+  {
+    value: 'prompt',
+    label: 'No model: send the prompt as the answer',
+    hint: 'For reminders. No model call.',
+  },
 ];
 
 /** "run.completed" becomes "Completed". */
@@ -502,23 +543,58 @@ function triggerProblem(draft: TriggerDraft, now: number): string | null {
   }
 }
 
+/** The wizard steps that hold fields, in the order of `draftProblem`. */
+export type AutomationStep = 'task' | 'when' | 'place' | 'answer';
+
+/** The first reason why the gateway would refuse the fields of one step, or null. */
+export function stepProblem(
+  step: AutomationStep,
+  draft: AutomationDraft,
+  now: number = Date.now(),
+): string | null {
+  switch (step) {
+    case 'task':
+      if (!draft.name.trim()) return 'Give the automation a name.';
+      if (!draft.prompt.trim()) return 'Write the prompt.';
+      if (new TextEncoder().encode(draft.prompt).length > PROMPT_BYTES)
+        return `Make the prompt shorter. The limit is ${PROMPT_BYTES} bytes.`;
+      return null;
+    case 'when':
+      if (draft.triggers.length === 0) return 'Add a trigger.';
+      if (draft.triggers.filter((trigger) => trigger.kind === 'webhook').length > 1)
+        return 'An automation can have only one webhook trigger.';
+      for (const [index, trigger] of draft.triggers.entries()) {
+        const problem = triggerProblem(trigger, now);
+        if (problem)
+          return draft.triggers.length > 1 ? `Trigger ${index + 1}: ${problem}` : problem;
+      }
+      return null;
+    case 'place':
+      return draft.target === 'session' && !draft.sessionId.trim() ? 'Give the session ID.' : null;
+    case 'answer': {
+      const url = draft.callbackUrl.trim();
+      if (url && !/^https?:\/\/\S+$/.test(url))
+        return 'Start the callback address with https:// or http://.';
+      return draft.answer === 'model' && !draft.model.trim() ? 'Give the model name.' : null;
+    }
+  }
+}
+
+const PROBLEM_ORDER: AutomationStep[] = ['task', 'when', 'place', 'answer'];
+
+/** The first step that the gateway would refuse, with its reason, or null. */
+export function draftStepProblem(
+  draft: AutomationDraft,
+  now: number = Date.now(),
+): { step: AutomationStep; problem: string } | null {
+  for (const step of PROBLEM_ORDER) {
+    const problem = stepProblem(step, draft, now);
+    if (problem) return { step, problem };
+  }
+  return null;
+}
+
 /** The first reason why the gateway would refuse the form, or null. */
 export function draftProblem(draft: AutomationDraft, now: number = Date.now()): string | null {
-  if (!draft.name.trim()) return 'Give the automation a name.';
-  if (!draft.prompt.trim()) return 'Write the prompt.';
-  if (new TextEncoder().encode(draft.prompt).length > PROMPT_BYTES)
-    return `Make the prompt shorter. The limit is ${PROMPT_BYTES} bytes.`;
-  if (draft.triggers.length === 0) return 'Add a trigger.';
-  if (draft.triggers.filter((trigger) => trigger.kind === 'webhook').length > 1)
-    return 'An automation can have only one webhook trigger.';
-  for (const [index, trigger] of draft.triggers.entries()) {
-    const problem = triggerProblem(trigger, now);
-    if (problem) return draft.triggers.length > 1 ? `Trigger ${index + 1}: ${problem}` : problem;
-  }
-  if (draft.target === 'session' && !draft.sessionId.trim()) return 'Give the session ID.';
-  const url = draft.callbackUrl.trim();
-  if (url && !/^https?:\/\/\S+$/.test(url))
-    return 'Start the callback address with https:// or http://.';
-  if (draft.answer === 'model' && !draft.model.trim()) return 'Give the model name.';
-  return null;
+  return draftStepProblem(draft, now)?.problem ?? null;
 }

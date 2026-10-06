@@ -138,10 +138,14 @@ later, ask again, for example `Move the morning review list to 7:30.` The tool i
 while automations are on. A run that an automation started cannot create, change or delete
 automations.
 
-You can also create an automation in the app. Select the **Open automations** icon, choose the
-machine and select **New automation**. Fill in the name, the prompt and the triggers, then select
-**Create automation**. To change an automation, open it and select **Edit**. The form keeps the
-[filters](#filter-events) of a webhook trigger. To change them, ask Vis in a chat.
+You can also create an automation in the app. Open **Settings**, open the row of the machine and
+open its **Automations** band. Select **New automation**. The app asks one question at a time. It
+asks what starts the automation, when it runs, what Vis does, where it runs and how Vis answers.
+Check the summary on the **Review** step, then select **Create automation**.
+
+To change an automation, open it and select **Edit**. The review opens, and **Change** opens the
+step of that line. The app keeps the [filters](#filter-events) of a webhook trigger. To change
+them, ask Vis in a chat.
 
 To create automations from your own program, use the [Automations
 API](automations-api.md#create-an-automation). [How automations work](#how-automations-work) lists
@@ -154,10 +158,10 @@ In the TUI, open the command palette and choose **Automations**. Select an autom
 webhook trigger also shows **Create webhook secret**. An automation with a callback also shows
 **Create callback secret**.
 
-In the app, select the **Open automations** icon in the header. The icon shows when a connected
-machine allows automations or has automations. Choose the machine, then select an automation. The
-app shows its triggers, next run, target, delivery, webhook address and recent runs. It has buttons
-for the same actions. **New automation** and **Edit** open the form from [Create an
+In the app, open **Settings**, open the row of the machine and open its **Automations** band. The
+band shows only when the machine answers the automations request. Select an automation. The app
+shows its triggers, next run, target, delivery, webhook address and recent runs. It has buttons for
+the same actions. **New automation** and **Edit** open the steps from [Create an
 automation](#create-an-automation).
 
 **Run now** starts a manual run at once. **Pause** stops the triggers until you select **Resume**.

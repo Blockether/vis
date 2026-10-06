@@ -5,6 +5,7 @@ import {
   RUN_EVENT_OPTIONS,
   SIGNATURE_OPTIONS,
   TARGET_OPTIONS,
+  TRIGGER_CHOICES,
   TRIGGER_KIND_OPTIONS,
   TRIGGERS_MAX,
   automationDraft,
@@ -13,9 +14,11 @@ import {
   automationSummary,
   deliveryLabel,
   draftProblem,
+  draftStepProblem,
   everyLabel,
   localInput,
   runReason,
+  stepProblem,
   targetLabel,
   triggerLabel,
   wordLabel,
@@ -295,10 +298,29 @@ describe('automation form', () => {
     expect(draftProblem({ ...valid, answer: 'model' }, NOW)).toBe('Give the model name.');
   });
 
+  it('names the wizard step of each problem', () => {
+    const valid = { ...automationDraft(null, NOW, 'UTC'), name: 'Check', prompt: 'Check it.' };
+    expect(draftStepProblem(valid, NOW)).toBeNull();
+    expect(stepProblem('task', { ...valid, name: '' }, NOW)).toBe('Give the automation a name.');
+    expect(stepProblem('when', { ...valid, name: '' }, NOW)).toBeNull();
+    expect(stepProblem('place', { ...valid, target: 'session' }, NOW)).toBe('Give the session ID.');
+    expect(stepProblem('answer', { ...valid, answer: 'model' }, NOW)).toBe('Give the model name.');
+    expect(draftStepProblem({ ...valid, target: 'session', answer: 'model' }, NOW)).toEqual({
+      step: 'place',
+      problem: 'Give the session ID.',
+    });
+  });
+
   it('takes its choices and limits from the contract', () => {
     expect(TRIGGER_KIND_OPTIONS.map((option) => option.value)).toEqual([
       'cron',
       'every',
+      'once',
+      'webhook',
+    ]);
+    expect(TRIGGER_CHOICES.map((option) => option.value)).toEqual([
+      'every',
+      'cron',
       'once',
       'webhook',
     ]);
