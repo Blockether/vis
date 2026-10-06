@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.2.32] - 2026-10-06
+## [v0.2.33] - 2026-10-06
 
 ### Added
 - The session list shows the newest messages of the selected session beside it. The message
