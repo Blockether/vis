@@ -43,7 +43,11 @@
              "(limit: int = ..., *, ids: tuple[int, ...] = ()) -> tuple['RunSummary', ...]"}
             ;; Regression: a nullable record name gained ForwardRef(...) in the printed signature.
             "signature.optional-record-probe" {"binding" "signature_optional_record_probe"
-                                               "signature" "() -> 'Installation' | None"})
+                                               "signature" "() -> 'Installation' | None"}
+            ;; Regression: abstract collection annotations print with their module, so
+            ;; registered py.run_tests text differed from inspect.signature in CI.
+            "signature.sequence-probe" {"binding" "signature_sequence_probe"
+                                        "signature" "(paths: Sequence[str] = ()) -> None"})
 
           bindings
           (into {}
@@ -69,11 +73,14 @@
                (str
                  "import inspect\n"
                  "import re\n" "observed = {}\n"
+                 ;; The runtime resolves typing and collections.abc names and prints their module.
+                 "def bare(text):\n"
+                 "    return re.sub(r'\\b(?:collections\\.abc|typing)\\.', '', text)\n"
                  "for name, probe in signature_probes.items():\n"
                  "    fn = globals()[probe['binding']]\n"
                  "    actual = inspect.signature(fn)\n"
                  "    expected = re.sub(r'(=\\s*)\\.\\.\\.(?=\\s*[,)])', r'\\1Ellipsis', probe['signature'])\n"
-                 "    assert str(actual) == expected, (name, str(actual), expected)\n"
+                 "    assert bare(str(actual)) == bare(expected), (name, str(actual), expected)\n"
                  "    observed[name] = actual.parameters\n"
                  "publish = observed['council.publish']\n"
                  "assert publish['kind'].kind is inspect.Parameter.KEYWORD_ONLY\n"
