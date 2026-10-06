@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.32] - 2026-10-06
+
+### Added
+- The session list shows the newest messages of the selected session beside it. The message
+  pane renders Markdown and justifies its lines, in the app and the TUI.
+- The companion has a transcript outline. Use it to jump to a message (#316).
+- You can choose a simplified thinking mode or an exact level, and set the default level for
+  each provider. You can also turn the Claude thinking summary off.
+- The TUI footer shows the shortcuts inside the reasoning chip (`C-x r`) and the thinking chip
+  (`C-x x`). Click the thinking chip to turn the summary on or off.
+- The TUI and the app show a notice while a provider makes you wait.
+- `vis-agent desktop` starts a local gateway when you need one (#307).
+- Automations are in Settings, as a step wizard. Add one with the `+` in the band header.
+- The TUI draws every Mermaid diagram type in the theme colours.
+- The queue has "Send it now" and "Send all now" text buttons, and the TUI has queue send
+  keys. "Send all now" shows only for two or more messages. A marked row's button reads "Unsend".
+- The session picker shows the location of each session.
+- In the TUI sidebar, fold and unfold rows with the arrow keys.
+- In the TUI project sidebar, ← folds a row and → unfolds it, as in Settings.
+
+### Changed
+- Settings put machine settings in six sections. Each section and band starts folded, and
+  rows can nest at any depth.
+- Activity sections start closed and show one row for each command. A summary shows a shell
+  command with its exit code.
+- The memory overlay shows as a dot until you click it.
+- On narrow screens, the companion hides the outline rail over text.
+- The session picker and the dropdowns open faster.
+- Vis keeps the provider cache warm during long tools.
+
+### Removed
+- The Plan before coding setting.
+
+### Fixed
+- The launcher installs updates without the GitHub API (#309).
+- `--gateway` works the same for desktop, TUI and web, and starts no local gateway (#307).
+- Footers show the project default model, and a default change reaches every project (#311).
+- The TUI reads Subagents and the default for each session (#311).
+- The Python SDK passes standard type checks (#313, #314, #315).
+- Small result types and dotted imports survive a sandbox restart (#317).
+- Roots with `search: false` work when the jail is off.
+- Child processes no longer get the inherited `NODE_OPTIONS`.
+- Hidden Claude thinking no longer stops a turn.
+- The TUI draws a Mermaid fence only when it is closed, and reads subgraphs (#319).
+- The TUI paints one session selection and a styled scope row (#320).
+- The thinking level updates after a Settings change.
+- Justified text no longer moves when you switch sessions.
+- Live views stay closed until you click them when you open a session.
+- The TUI shows printed pictures and files below their step.
+- Text bodies in Activity line up with the code column.
+- The TUI paints the attachment Remove button as a primary action.
+- Activity text and Markdown line up with the code words in the TUI and the app.
+- Remove in the TUI attachment list is a normal button, not dim text.
+
 ## [v0.2.31] - 2026-10-05
 
 ### Added
