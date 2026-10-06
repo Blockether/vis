@@ -596,10 +596,11 @@
                        ;; Lives on its OWN control (the reasoning picker: TUI Ctrl+X r and
                        ;; footer chip, Companion composer), not the Settings dialog —
                        ;; `:settings? false` keeps it registered + persisted but out
-                       ;; of every channel's Settings list.
+                       ;; of every channel's Settings list. The picker changes only the
+                       ;; session; the provider entry's `reasoning_level` is the default.
                        :settings? false
                        :default "balanced"
-                       :scopes toggle-contract/scopes
+                       :scopes ["session"]
                        :owner :vis
                        :group :provider
                        :persist? true})
@@ -627,10 +628,11 @@
                        "Provider thinking level to aim for when simplified thinking modes are off."
                        :type :enum
                        :choices svar/REASONING_EFFORTS
-                       ;; Own control (the reasoning picker), like reasoning_level.
+                       ;; Own control (the reasoning picker), like reasoning_level, with
+                       ;; the provider entry's `reasoning_effort` as the default.
                        :settings? false
                        :default "medium"
-                       :scopes toggle-contract/scopes
+                       :scopes ["session"]
                        :owner :vis
                        :group :provider
                        :persist? true})

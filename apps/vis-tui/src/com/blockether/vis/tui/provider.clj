@@ -275,6 +275,9 @@
            is-fallback
            (conj {:id :clear-fallback :label "Clear Fallback" :key \c})
 
+           true
+           (conj {:id :thinking :label "Set Thinking Level..." :key \t})
+
            (provider-supports-auth? provider)
            (conj {:id :authenticate :label auth-label :key \a :force? is-authenticated})
 
@@ -296,9 +299,9 @@
          (conj {:id :remove :label "Remove Provider" :key \x})))))
 
 (def ^:private routing-action-ids
-  "The actions that re-point the ROUTER. A popup groups its commands by what
-   they touch, and these are the ones that change where requests go."
-  #{:default :fallback :clear-fallback})
+  "The actions that re-point the ROUTER or set how its turns think. A popup groups its
+   commands by what they touch, and these are the ones that change requests."
+  #{:default :fallback :clear-fallback :thinking})
 
 (defn provider-transient-spec
   "PURE: the transient spec for ONE provider row's `actions` (whatever
@@ -690,6 +693,62 @@
                (or (ex-message e) (str e)))
              ::rejected)))))
 
+(def ^:private thinking-levels
+  "The simplified thinking levels, lightest first."
+  ["quick" "balanced" "deep"])
+
+(defn provider-thinking-choices
+  "PURE: what the thinking-default picker of `provider` lists. Simplified thinking
+   modes list `reasoning_level`. With them off, a provider whose models offer exact
+   rungs lists those rungs through `reasoning_effort`, in model order."
+  [provider simplified?]
+  (let [rungs (into [] (comp (mapcat :reasoning-effort-options) (distinct)) (:models provider))]
+    (if (and (false? simplified?) (seq rungs))
+      {:setting "reasoning_effort" :choices rungs :current (:reasoning-effort provider)}
+      {:setting "reasoning_level" :choices thinking-levels :current (:reasoning-level provider)})))
+
+(defn thinking-transient-spec
+  "PURE: the band that picks a provider's default thinking level. Digits pick a level
+   and `x` removes the default, so sessions use the built-in one."
+  [{:keys [choices current]}]
+  {:groups [{:title "Default thinking level"
+             :items (into []
+                          (map-indexed
+                            (fn [i choice]
+                              {:key (str (inc (long i)))
+                               :type :action
+                               :id choice
+                               :label (if (= choice current) (str choice " (current)") choice)}))
+                          choices)}
+            {:title "Commands"
+             :items [{:key "x" :type :action :id ::clear :label "Use the built-in default"}]}]})
+
+(defn- choose-thinking-level!
+  "Pick the default thinking level of `provider` and save it on the daemon. The
+   session picker changes only one session; this sets the level for every session
+   on the provider that has no own value. Returns true when the daemon saved it."
+  [^TerminalScreen screen g region provider]
+  (let [choices
+        (provider-thinking-choices provider (vis/toggle-value "simplified_thinking_modes"))
+
+        picked
+        (:action (dlg/embed-transient! screen
+                                       g
+                                       region
+                                       (str (vis/display-label (:id provider)) " — thinking level")
+                                       (thinking-transient-spec choices)))]
+
+    (when picked
+      (try (vis/set-provider-thinking! (:id provider)
+                                       (:setting choices)
+                                       (when-not (= ::clear picked) picked))
+           true
+           (catch Exception e
+             ((:note! (dlg/band-questions screen g (dlg/host-band-region screen region)))
+               "Thinking level rejected"
+               (or (ex-message e) (str e)))
+             false)))))
+
 (defn- await-provider-operation!
   [q title line f]
   (let [result (future (try {:value (f)} (catch Exception e {:error e})))]
@@ -850,6 +909,9 @@
                                                 default-selection
                                                 fallback-selection)]
             (boolean (and (some? selection) (not= selection ::rejected))))
+
+          :thinking
+          (boolean (choose-thinking-level! screen g region provider))
 
           :clear-fallback
           (try (vis/gateway-set-router-fallback!)

@@ -2900,18 +2900,22 @@
                            {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))
 
 (defdescribe get-setting-handler-serves-hidden-rows-test
-             (it "reasoning_level is readable by id even though the settings list hides it"
+             (it "verbosity is readable by id even though the settings list hides it"
                  (let [response
-                       (#'settings-api/get-setting-handler {:path-params {:id "reasoning_level"}})
+                       (#'settings-api/get-setting-handler {:path-params {:id "verbosity"}})
 
                        row
                        (wire/parse-json (:body response))]
 
                    (expect (= 200 (:status response)))
-                   (expect (= "reasoning_level" (get row "id")))
+                   (expect (= "verbosity" (get row "id")))
                    (expect (= "enum" (get row "type")))
                    (expect (seq (get row "choices")))
                    (expect (string? (get row "value")))))
+             (it "reasoning_level has no global row: only a session sets it, over the provider default"
+                 (expect (= 404
+                            (:status (#'settings-api/get-setting-handler
+                                      {:path-params {:id "reasoning_level"}})))))
              (it "a non-canonical id is a 400 and an unknown one a 404"
                  (expect (= 400
                             (:status (#'settings-api/get-setting-handler
@@ -3351,6 +3355,56 @@
 
             (expect (= 400 (:status resp)))
             (expect (re-find #"DIFFERENT provider" (get err "message")))))))))
+
+(defdescribe
+  router-patch-sets-a-provider-thinking-default
+  (it
+    "PATCH /v1/router role thinking saves the provider default and answers the catalog"
+    (let [saved
+          (atom nil)
+
+          patch!
+          (fn [m]
+            (#'providers-api/router-default-handler
+             {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))}))]
+
+      (with-redefs [providers/picker-fleet
+                    (constantly [{:id :anthropic-coding-plan
+                                  :models [{:name "claude-fable-5"}]
+                                  :reasoning-level "balanced"}])
+
+                    providers/default-selection
+                    (constantly {:provider-id :anthropic-coding-plan :model "claude-fable-5"})
+
+                    providers/fallback-selection
+                    (constantly nil)
+
+                    providers/save-thinking-default!
+                    (fn [provider setting value source]
+                      (reset! saved [provider setting value source])
+                      {:provider-id :anthropic-coding-plan :setting setting :value value})]
+
+        (let [resp
+              (patch! {"role" "thinking"
+                       "provider" "anthropic-coding-plan"
+                       "setting" "reasoning_level"
+                       "value" "balanced"})
+
+              row
+              (first (get (wire/parse-json (:body resp)) "providers"))]
+
+          (expect (= 200 (:status resp)))
+          (expect (= ["anthropic-coding-plan" "reasoning_level" "balanced" :gateway] @saved))
+          (expect (= "balanced" (get row "reasoning_level"))))
+        (expect (= 400 (:status (patch! {"role" "thinking" "setting" "reasoning_level"}))))
+        (with-redefs [providers/save-thinking-default!
+                      (fn [_ _ _ _]
+                        (throw (ex-info "Unknown reasoning_level value: max" {})))]
+          (expect (= 400
+                     (:status (patch! {"role" "thinking"
+                                       "provider" "anthropic-coding-plan"
+                                       "setting" "reasoning_level"
+                                       "value" "max"})))))))))
 
 (defdescribe gateway-prometheus-runtime-metrics-test
              (it "gateway prometheus runtime metrics"

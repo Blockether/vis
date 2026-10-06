@@ -32,6 +32,7 @@ import {
   RefreshIcon,
   SortIcon,
   StarIcon,
+  ThinkingIcon,
   TrashIcon,
 } from './icons';
 import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
@@ -323,6 +324,16 @@ export interface ProviderAuth extends ProviderFleet {
   tagModel: (role: ModelRole, provider: RouterProvider, model: string) => Promise<void>;
   /** Take the fallback rank back off: every turn then lives on the default. */
   clearFallback: (provider: RouterProvider) => Promise<void>;
+  /**
+   * Whether the gateway uses simplified thinking modes. It chooses the list of the
+   * thinking-default menu. `null` means that the gateway has not answered yet.
+   */
+  simplifiedThinking: boolean | null;
+  /**
+   * Set the default thinking of sessions on this provider. A null `value` removes
+   * it. The session footer changes only its own session.
+   */
+  setThinking: (provider: RouterProvider, setting: ThinkingSetting, value: string | null) => Promise<void>;
 }
 
 /**
@@ -746,6 +757,42 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     [client, reload, setErr, setNote, setPending],
   );
 
+  const [simplifiedThinking, setSimplifiedThinking] = useState<boolean | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    client
+      .setting('simplified_thinking_modes', controller.signal)
+      .then((row) => setSimplifiedThinking(row.type === 'boolean' ? (row.enabled ?? null) : null))
+      .catch(() => setSimplifiedThinking(null));
+    return () => controller.abort();
+  }, [client]);
+
+  /**
+   * Save the default thinking of sessions on `provider`. The daemon owns the
+   * value, so the fleet is read again with `force`.
+   */
+  const setThinking = useCallback(
+    async (provider: RouterProvider, setting: ThinkingSetting, value: string | null) => {
+      setPending(`thinking:${provider.id}`);
+      setErr(null);
+      setNote(null);
+      try {
+        await client.setProviderThinking(provider.id, setting, value);
+        await reload(undefined, { force: true });
+        setNote(
+          value
+            ? `Sessions on ${provider.label} think at ${value} unless they choose another level.`
+            : `Sessions on ${provider.label} use the built-in thinking level.`,
+          provider.id,
+        );
+      } catch (e) {
+        setErr((e as Error).message, provider.id);
+      } finally {
+        setPending(null);
+      }
+    },
+    [client, reload, setErr, setNote, setPending],
+  );
   return {
     ...fleet,
     flow,
@@ -767,6 +814,8 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     removeProvider,
     tagModel,
     clearFallback,
+    simplifiedThinking,
+    setThinking,
   };
 }
 
@@ -1183,6 +1232,72 @@ function ProviderModelMenu({
   );
 }
 
+/** The simplified thinking levels, lightest first. */
+export const THINKING_LEVELS = ['quick', 'balanced', 'deep'] as const;
+
+/** The session setting that a provider's thinking default fills. */
+export type ThinkingSetting = 'reasoning_level' | 'reasoning_effort';
+
+/**
+ * What the thinking-default menu of `provider` lists, as the TUI does. Simplified
+ * thinking modes list `reasoning_level`. With them off, a provider whose models
+ * offer exact rungs lists those rungs through `reasoning_effort`.
+ */
+export function providerThinkingChoices(
+  provider: RouterProvider,
+  simplified: boolean | null | undefined,
+): { setting: ThinkingSetting; choices: readonly string[]; current: string | null } {
+  const rungs = [
+    ...new Set((provider.model_details ?? []).flatMap((model) => model.reasoning_effort_options ?? [])),
+  ];
+  if (simplified === false && rungs.length > 0)
+    return { setting: 'reasoning_effort', choices: rungs, current: provider.reasoning_effort ?? null };
+  return { setting: 'reasoning_level', choices: THINKING_LEVELS, current: provider.reasoning_level ?? null };
+}
+
+/**
+ * The DEFAULT THINKING LEVEL of sessions on one provider. The session footer
+ * changes only its own session; this sets the level that every session on the
+ * provider starts with.
+ */
+function ProviderThinkingMenu({
+  provider,
+  simplified,
+  at,
+  onDismiss,
+  onSelect,
+}: {
+  provider: RouterProvider;
+  simplified: boolean | null | undefined;
+  at: MenuPosition;
+  onDismiss: () => void;
+  onSelect: (setting: ThinkingSetting, value: string | null) => void;
+}) {
+  const { setting, choices, current } = providerThinkingChoices(provider, simplified);
+  return (
+    <Menu label={`Thinking on ${provider.label}`} at={at} onDismiss={onDismiss}>
+      <MenuHeading>{`Default thinking on ${provider.label}…`}</MenuHeading>
+      {choices.map((choice) => (
+        <MenuItem
+          key={choice}
+          title={choice}
+          badge={choice === current ? 'in use' : undefined}
+          icon={<ThinkingIcon className="size-4" />}
+          onSelect={() => onSelect(setting, choice)}
+        />
+      ))}
+      {current && (
+        <MenuItem
+          title="Use the built-in level"
+          hint="Sessions on this provider use the gateway's built-in level"
+          tone="danger"
+          onSelect={() => onSelect(setting, null)}
+        />
+      )}
+    </Menu>
+  );
+}
+
 /**
  * THE PROVIDER ACCOUNTS, one pressable disclosure each — the same slab a
  * machine gets, slid the same way.
@@ -1204,22 +1319,24 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
   const [tagging, setTagging] = useState<{ id: string; role: ModelRole; at: MenuPosition } | null>(
     null,
   );
-
+  /** The provider whose thinking-default menu is open, and where it hangs. */
+  const [thinkingAt, setThinkingAt] = useState<{ id: string; at: MenuPosition } | null>(null);
   // Escape unwinds THIS row's own surface first. Settings closes itself on an
   // Escape it hears on the window, so a menu opened inside it would leave with
   // the whole dialog on one keystroke; a capture listener always runs before
   // that one, whatever order the two mounted in.
   useEffect(() => {
-    if (removing === null && tagging === null) return;
+    if (removing === null && tagging === null && thinkingAt === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.stopPropagation();
       setRemoving(null);
       setTagging(null);
+      setThinkingAt(null);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [removing, tagging]);
+  }, [removing, tagging, thinkingAt]);
 
   /** Hang this provider's models under the cell the press came from. */
   function openModels(provider: RouterProvider, role: ModelRole, anchor: HTMLElement) {
@@ -1227,10 +1344,17 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
     if (at) setTagging({ id: provider.id, role, at });
   }
 
+  /** Hang this provider's thinking levels under the cell the press came from. */
+  function openThinking(provider: RouterProvider, anchor: HTMLElement) {
+    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+    if (at) setThinkingAt({ id: provider.id, at });
+  }
+
   const rows = defaultFirstProviders(providers ?? []);
   // The open provider, re-read from the live list: the row it was opened from is
   // replaced whenever a status answers or a rank moves.
   const tagged = tagging ? (rows.find((row) => row.id === tagging.id) ?? null) : null;
+  const thinkingRow = thinkingAt ? (rows.find((row) => row.id === thinkingAt.id) ?? null) : null;
 
   return (
     <div className="divide-y divide-dialog-edge">
@@ -1297,6 +1421,16 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
             name: 'Make fallback',
             icon: <SortIcon className="size-4" />,
             onSelect: (anchor) => openModels(provider, 'fallback', anchor),
+          });
+        // The thinking level that sessions on this provider start with. The session
+        // footer changes only its own session.
+        if (provider.models.length > 0)
+          actions.push({
+            key: 'thinking',
+            label: 'Thinking',
+            name: 'Default thinking',
+            icon: <ThinkingIcon className="size-4" />,
+            onSelect: (anchor) => openThinking(provider, anchor),
           });
         if (!provider.is_managed)
           actions.push({
@@ -1433,6 +1567,18 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
           onClear={() => {
             setTagging(null);
             void auth.clearFallback(tagged);
+          }}
+        />
+      )}
+      {thinkingRow && thinkingAt && (
+        <ProviderThinkingMenu
+          provider={thinkingRow}
+          simplified={auth.simplifiedThinking}
+          at={thinkingAt.at}
+          onDismiss={() => setThinkingAt(null)}
+          onSelect={(setting, value) => {
+            setThinkingAt(null);
+            void auth.setThinking(thinkingRow, setting, value);
           }}
         />
       )}

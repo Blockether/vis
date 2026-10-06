@@ -785,7 +785,7 @@
                  :host :methods :allow :method :text :is-replace :include-gitignored-paths
                  :always-exclude :backend :theme-name :contributors-disabled :servers :transport
                  :command :args :cwd :env :url :headers :python :source-paths :index-url :tls-strict
-                 :titling :mode :provider :gateway :advertise})
+                 :titling :mode :provider :gateway :advertise :reasoning-level :reasoning-effort})
          svar-wire->runtime))
 
 (defn runtime-config

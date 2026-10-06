@@ -2965,6 +2965,25 @@ export class GatewayClient {
   }
 
   /**
+   * Set the default thinking of sessions on `provider`. `setting` is
+   * `reasoning_level` or `reasoning_effort`; a null `value` removes the default.
+   * A session that has its own value keeps it.
+   */
+  async setProviderThinking(
+    provider: string,
+    setting: 'reasoning_level' | 'reasoning_effort',
+    value: string | null,
+  ): Promise<void> {
+    await this.request<{ providers: RouterProvider[] }>('PATCH', '/v1/router', {
+      role: 'thinking',
+      provider,
+      setting,
+      value: value ?? '',
+    });
+    this.invalidateRouter();
+  }
+
+  /**
    * This session's pinned provider/model as last seen — the header chip's first
    * frame. `null` here means BOTH "no pin" and "never read"; either way the
    * fetch below is still issued and reconciles on top.

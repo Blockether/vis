@@ -143,27 +143,27 @@
                       {"is_authenticated" true}
                       {"is_authenticated" false}))]
 
-      (expect (= [:default :fallback :authenticate :status :remove]
+      (expect (= [:default :fallback :thinking :authenticate :status :remove]
                  (mapv :id (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
       ;; Log Out is GONE. Removal is the ONE teardown — the daemon runs the
       ;; provider's own logout AND drops the config entry — so a provider signed
       ;; out here can no longer linger as an authenticated preset nobody can get
       ;; rid of.
-      (expect (= ["Set as Default..." "Set as Fallback..." "Re-authenticate" "Show Status + Limits"
-                  "Remove Provider"]
+      (expect (= ["Set as Default..." "Set as Fallback..." "Set Thinking Level..." "Re-authenticate"
+                  "Show Status + Limits" "Remove Provider"]
                  (mapv :label (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
       ;; Only the row that ALREADY carries the fallback tag can drop it.
-      (expect (= [:default :fallback :clear-fallback :authenticate :status :remove]
+      (expect (= [:default :fallback :clear-fallback :thinking :authenticate :status :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
                                                        true))))
-      (expect (= [:default :fallback :status :remove]
+      (expect (= [:default :fallback :thinking :status :remove]
                  (mapv :id (provider/provider-action-items {:id :ollama}))))
       ;; The PRIMARY's own card never offers the fallback tag: the daemon refuses
       ;; a fallback naming the primary's provider, so the action could only ever
       ;; produce a rejection dialog.
-      (expect (= [:default :authenticate :status :remove]
+      (expect (= [:default :thinking :authenticate :status :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
@@ -171,12 +171,36 @@
                                                        true))))
       ;; A stale config naming ONE provider for both roles still drops `:fallback`
       ;; while keeping the escape hatch that clears the tag.
-      (expect (= [:default :clear-fallback :authenticate :status :remove]
+      (expect (= [:default :clear-fallback :thinking :authenticate :status :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
                                                        true
                                                        true)))))))
+
+(defdescribe
+  provider-thinking-choices-test
+  (it "lists the simplified levels, or the provider's exact rungs when the modes are off"
+      (let [provider {:id :openai
+                      :reasoning-level "deep"
+                      :reasoning-effort "high"
+                      :models [{:name "a" :reasoning-effort-options ["low" "medium" "high"]}
+                               {:name "b" :reasoning-effort-options ["medium" "high" "xhigh"]}]}]
+        (expect (= {:setting "reasoning_level" :choices ["quick" "balanced" "deep"] :current "deep"}
+                   (provider/provider-thinking-choices provider true)))
+        (expect
+          (= {:setting "reasoning_effort" :choices ["low" "medium" "high" "xhigh"] :current "high"}
+             (provider/provider-thinking-choices provider false)))
+        (expect (= "reasoning_level"
+                   (:setting (provider/provider-thinking-choices {:id :ollama :models [{:name "m"}]}
+                                                                 false)))
+                "a provider without rungs keeps the simplified levels")))
+  (it "binds one digit to each level, marks the current one and offers the built-in default"
+      (let [{[levels commands] :groups} (provider/thinking-transient-spec
+                                          {:choices ["quick" "balanced" "deep"] :current "deep"})]
+        (expect (= ["1" "2" "3"] (mapv :key (:items levels))))
+        (expect (= ["quick" "balanced" "deep (current)"] (mapv :label (:items levels))))
+        (expect (= ["x"] (mapv :key (:items commands)))))))
 
 (defdescribe remove-provider-test
              ;; Regression (user report, Settings -> Providers): the TUI offered LOG OUT as a

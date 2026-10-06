@@ -262,6 +262,9 @@
      :default-model (when is-default (:model primary))
      :is-fallback is-fallback
      :fallback-model (when is-fallback (:model fallback))
+     ;; Default thinking settings of the sessions on this provider; nil when unset.
+     :reasoning-level (:reasoning-level provider)
+     :reasoning-effort (:reasoning-effort provider)
      :status
      (if probe? (providers/provider-status provider) (providers/provider-status-cached provider))
      :limits (if probe?
@@ -329,14 +332,18 @@
   (http/json-response (router-fleet-json)))
 
 (defn- router-default-handler
-  "PATCH /v1/router — tag one provider/model pair.
+  "PATCH /v1/router — tag one provider/model pair, or set a provider's thinking default.
 
    `role` selects the tag: `primary` (the default, and what every client written
    before roles sends) or `fallback`, which the daemon REFUSES on the primary's
    own provider. `{\"role\": \"fallback\"}` with no provider and no model clears
-   the fallback. The answer always carries both tags."
+   the fallback. The answer always carries both tags.
+
+   `{\"role\": \"thinking\", \"provider\": …, \"setting\": …, \"value\": …}` sets the
+   provider's default `reasoning_level` or `reasoning_effort`; a null value removes
+   it. Sessions without their own value use it. The answer is the provider catalog."
   [request]
-  (let [{:strs [provider model role]}
+  (let [{:strs [provider model role setting value]}
         (http/body-json request)
 
         role
@@ -350,8 +357,17 @@
         is-blank
         (and (str/blank? (str provider)) (str/blank? (str model)))]
 
-    (cond (not (contains? #{"primary" "fallback"} role))
-          (http/error-response 400 :invalid-request "role must be \"primary\" or \"fallback\"")
+    (cond (not (contains? #{"primary" "fallback" "thinking"} role))
+          (http/error-response 400
+                               :invalid-request
+                               "role must be \"primary\", \"fallback\" or \"thinking\"")
+          (= role "thinking")
+          (if (str/blank? (str provider))
+            (http/error-response 400 :invalid-request "provider must be a non-blank string")
+            (try (providers/save-thinking-default! provider setting value :gateway)
+                 (http/json-response (router-fleet-json false))
+                 (catch clojure.lang.ExceptionInfo e
+                   (http/error-response 400 :invalid-request (ex-message e)))))
           (and (= role "fallback") is-blank) (do (providers/clear-fallback-selection! :gateway)
                                                  (http/json-response (router-selection-json)))
           is-blank

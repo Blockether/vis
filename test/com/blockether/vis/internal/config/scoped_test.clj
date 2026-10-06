@@ -18,6 +18,7 @@
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -417,6 +418,48 @@
                             ["session" sid]]]
           (expect (not-any? retired? (scoped/settings db (scoped/target db scope id)))))
         (expect (not (contains? (scoped/values db sid) "plans")))))))
+
+(defdescribe
+  provider-thinking-defaults
+  (it
+    "takes the session's thinking defaults from its provider and keeps session picks"
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            sid
+            (h/store-session! db {:title "Thinking"})
+
+            pref
+            (atom nil)
+
+            level
+            #(get (scoped/values db sid) "reasoning_level")]
+
+        (with-redefs [config/load-config
+                      (constantly {:default-provider "anthropic"
+                                   :providers [{:id :openai :reasoning-effort "high"}
+                                               {:id :anthropic :reasoning-level "quick"}]})
+
+                      smodel/model-of
+                      (fn [_ _]
+                        @pref)]
+
+          (expect (= "quick" (level)) "the default provider decides")
+          (reset! pref {:provider "openai" :model "gpt-5"})
+          (expect (= "balanced" (level)) "a provider without a level keeps the built-in one")
+          (expect (= "high" (get (scoped/values db sid) "reasoning_effort")))
+          (scoped/set-setting! db (scoped/target db "session" sid) "reasoning_level" "value" "deep")
+          (expect (= "deep" (level)) "the session pick wins")
+          (expect (= 400
+                     (try (scoped/set-setting! db
+                                               (scoped/target db "global" nil)
+                                               "reasoning_level"
+                                               "value"
+                                               "deep")
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:status (ex-data e)))))
+                  "the machine scope does not hold a thinking level"))))))
 
 (defdescribe
   scoped-http-boundary

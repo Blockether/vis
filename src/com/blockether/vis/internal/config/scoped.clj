@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.persistance.core :as store]
+            [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
@@ -310,11 +311,66 @@
             {}
             ancestors)))
 
+(def ^:private provider-thinking-keys
+  "Session thinking settings whose default is a key of the session's provider entry."
+  {"reasoning_level" :reasoning-level "reasoning_effort" :reasoning-effort})
+
+(defn- session-provider
+  "The configured provider entry that session `target-id` routes to. The session's
+   own model choice names it, else the default pair, else the first provider."
+  [db {:keys [target-id root]}]
+  (let [cfg
+        (if root
+          (binding [workspace/*workspace-root* root]
+            (config/load-config))
+          (config/load-config))
+
+        fleet
+        (:providers cfg)
+
+        chosen
+        (some-> (smodel/model-of db target-id)
+                :provider
+                name)
+
+        model-ref
+        (str (:default-model cfg))
+
+        default-id
+        (some-> (if (str/includes? model-ref "/")
+                  (first (str/split model-ref #"/" 2))
+                  (:default-provider cfg))
+                name)
+
+        named
+        (fn [id]
+          (some #(when (= id (name (:id %))) %) fleet))]
+
+    (if chosen
+      (named chosen)
+      (or (some-> default-id
+                  named)
+          (first fleet)))))
+
+(defn- with-provider-defaults
+  "Use the session provider's thinking settings as the defaults of a session target."
+  [db target specs]
+  (if-let [provider (when (= "session" (:scope target)) (session-provider db target))]
+    (mapv (fn [{:keys [id choices] :as spec}]
+            (let [value (some->> (get provider-thinking-keys id)
+                                 (get provider))]
+              (if (and value (contains? (set (map name choices)) value))
+                (assoc spec :default value)
+                spec)))
+          specs)
+    specs))
+
 (defn settings
-  "Effective, own and inherited values, with provenance and eligible scopes."
+  "Effective, own and inherited values, with provenance and eligible scopes. A session
+   target takes its thinking defaults from its provider entry."
   [db target]
   (let [specs
-        (toggles/target-toggles (:root target))
+        (with-provider-defaults db target (toggles/target-toggles (:root target)))
 
         own
         (own-values db target)

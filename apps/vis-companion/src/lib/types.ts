@@ -576,6 +576,10 @@ export interface RouterProvider {
   /** The FALLBACK tag — always a different provider than the default one. */
   is_fallback: boolean;
   fallback_model: string | null;
+  /** The default `reasoning_level` of sessions on this provider; null uses the built-in one. */
+  reasoning_level?: string | null;
+  /** The default `reasoning_effort` rung of sessions on this provider, for exact levels. */
+  reasoning_effort?: string | null;
   status?: ProviderStatus;
   limits?: ProviderLimits;
 }

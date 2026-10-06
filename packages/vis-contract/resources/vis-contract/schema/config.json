@@ -257,6 +257,17 @@
         },
         "is_image_input": {
           "type": "boolean"
+        },
+        "reasoning_level": {
+          "enum": [
+            "quick",
+            "balanced",
+            "deep"
+          ]
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "pattern": ".*\\S.*"
         }
       },
       "additionalProperties": false,

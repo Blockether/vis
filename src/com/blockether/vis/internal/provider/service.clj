@@ -1473,6 +1473,70 @@
    (rebuild-shared-router!)
    nil))
 
+(def thinking-keys
+  "Provider-entry keys that hold the default thinking setting of sessions, by setting id."
+  {"reasoning_level" :reasoning-level "reasoning_effort" :reasoning-effort})
+
+(defn save-thinking-default!
+  "Persist the default thinking setting of `provider-id`. `setting` is
+   `reasoning_level` (quick, balanced or deep) or `reasoning_effort` (a svar rung). A
+   blank `value` removes the default. A session without its own value uses it on
+   its next turn."
+  ([provider-id setting value] (save-thinking-default! provider-id setting value nil))
+  ([provider-id setting value source]
+   (let [provider-id*
+         (some-> provider-id
+                 name
+                 str/trim
+                 not-empty
+                 keyword)
+
+         k
+         (get thinking-keys (str setting))
+
+         value*
+         (some-> value
+                 str
+                 str/trim
+                 not-empty)
+
+         choices
+         (if (= :reasoning-level k)
+           #{"quick" "balanced" "deep"}
+           (set (map name svar/REASONING_EFFORTS)))
+
+         selected
+         (some #(when (= provider-id* (:id %)) %) (picker-fleet))]
+
+     (when-not k
+       (throw (ex-info "Unknown thinking setting; use reasoning_level or reasoning_effort"
+                       {:setting setting})))
+     (when-not selected (throw (ex-info "Unknown provider" {:provider provider-id})))
+     (when (and value* (not (contains? choices value*)))
+       (throw (ex-info (str "Unknown " setting " value: " value*) {:setting setting :value value})))
+     (config/update-machine-config!
+       (fn [raw]
+         (let [current
+               (vec (:providers (config/runtime-config raw)))
+
+               existing
+               (some #(when (= provider-id* (:id %)) %) current)
+
+               entry
+               (cond-> (dissoc (or existing selected) k)
+                 value*
+                 (assoc k value*))]
+
+           (assoc raw
+             "providers" (mapv persisted-provider-config
+                               (if existing
+                                 (mapv #(if (= provider-id* (:id %)) entry %) current)
+                                 (conj current entry))))))
+       source)
+     (try (config/reload-config!) (catch Throwable _ nil))
+     (invalidate-configured-providers!)
+     {:provider-id provider-id* :setting (str setting) :value value*})))
+
 (defn add-config-provider!
   "Append a provider config to the persisted fleet (no-op when its id exists)."
   ([provider-cfg] (add-config-provider! provider-cfg nil))

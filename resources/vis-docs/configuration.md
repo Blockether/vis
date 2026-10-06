@@ -17,6 +17,8 @@ when you want settings shared across projects or checked into a repository.
 - **A provider hits rate limits or fails, or a task should stay within a budget.**
   Set a [fallback model](#default-and-fallback), and set retries and token and cost
   limits under [Router](#router).
+- **New sessions think too much or too little on one provider.** Set its
+  [default thinking level](#default-thinking-level).
 - **Commands that Vis runs need your project's environment variables.** Put them in
   `.env`, as described in [Environment](#environment).
 - **Vis should use tools from an MCP server.** Add the server as described in [MCP
@@ -213,6 +215,28 @@ vis-agent --model zai-coding-plan/glm-5.2 "task"
 vis-agent --model glm-5.2 "task"          # on the active provider
 ```
 
+### Default thinking level
+
+Each provider can have its own default thinking level. Sessions on that provider start
+with it. To set it, open the provider's menu:
+
+- In the app, open **Settings**, then the provider's row actions, and choose **Default thinking**.
+- In the terminal, open the provider list and choose **Set Thinking Level...**.
+
+The menu lists quick, balanced and deep. With **Simplified thinking modes** off, it lists the
+exact levels that the provider's models offer. Choose **Use the built-in level** to remove the
+default. Vis then uses its built-in level. The choice goes to the provider's entry:
+
+```yaml
+providers:
+  - id: anthropic
+    reasoning_level: deep       # quick, balanced or deep
+  - id: openai
+    reasoning_effort: high      # an exact level, used when simplified modes are off
+```
+
+The reasoning control in a session footer changes only that session. Global
+`toggles.reasoning_level` and `toggles.reasoning_effort` keys have no effect.
 ### Environment references
 
 Any string value may use `${NAME}`. `$NAME` is not recognised. Map keys are
@@ -622,6 +646,9 @@ every thinking level that the current model offers. The setting is in the **Appl
 the app's **Settings**, and in the top section of the terminal's **Settings**.
 Vis saves that choice as `reasoning_effort`. After a model change, each turn sends the nearest level
 that the new model offers.
+
+The reasoning control changes only the current session. A new session starts with the
+[default thinking level](#default-thinking-level) of its provider.
 
 Paths and access rows use guided editors. Changes apply on the next turn.
 To edit configuration files directly, use a text editor outside the app or TUI.

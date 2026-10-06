@@ -20,6 +20,7 @@ import {
   isProviderAuthed,
   ProviderNotice,
   ProviderRows,
+  providerThinkingChoices,
   providerStatusMark,
   providerStatusLine,
   unscopedMessage,
@@ -586,6 +587,57 @@ describe('ProviderRows', () => {
     expect(screen.getByText('glm-5.3-air')).toBeVisible();
   });
 
+  it('sets the default thinking level of a provider from its row menu', async () => {
+    const saved: [string, string, string | null][] = [];
+    render(
+      <ProviderRows
+        auth={state({
+          providers: [signedIn({ reasoning_level: 'deep' })],
+          simplifiedThinking: true,
+          setThinking: async (row, setting, value) => {
+            saved.push([row.id, setting, value]);
+          },
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Default thinking' }));
+    const menu = within(await screen.findByRole('dialog', { name: 'Thinking on GITHUB-COPILOT' }));
+    expect(menu.getByText('in use')).toBeVisible();
+    fireEvent.click(menu.getByRole('button', { name: /quick/ }));
+    expect(saved).toEqual([['github-copilot', 'reasoning_level', 'quick']]);
+    fireEvent.click(screen.getByRole('button', { name: 'Default thinking' }));
+    fireEvent.click(
+      within(await screen.findByRole('dialog', { name: 'Thinking on GITHUB-COPILOT' })).getByRole(
+        'button',
+        { name: /Use the built-in level/ },
+      ),
+    );
+    expect(saved[1]).toEqual(['github-copilot', 'reasoning_level', null]);
+  });
+
+  it('lists exact rungs as the thinking default only when simplified modes are off', () => {
+    const row = signedIn({
+      reasoning_effort: 'xhigh',
+      model_details: [
+        {
+          name: 'gpt-5',
+          is_reasoning_effort_configurable: true,
+          verbosity_style: null,
+          reasoning_effort_options: ['low', 'high', 'xhigh'],
+        },
+      ],
+    });
+    expect(providerThinkingChoices(row, false)).toEqual({
+      setting: 'reasoning_effort',
+      choices: ['low', 'high', 'xhigh'],
+      current: 'xhigh',
+    });
+    expect(providerThinkingChoices(row, true)).toEqual({
+      setting: 'reasoning_level',
+      choices: ['quick', 'balanced', 'deep'],
+      current: null,
+    });
+  });
   it('never offers the fallback to the provider that already runs every turn', () => {
     const html = renderToStaticMarkup(
       <ProviderRows
@@ -599,8 +651,12 @@ describe('ProviderRows', () => {
   });
 
   it.each([
-    ['another provider', false, ['Make default', 'Refresh', 'Make fallback', 'Sign out']],
-    ['the default provider', true, ['Make default', 'Refresh', 'Sign out']],
+    [
+      'another provider',
+      false,
+      ['Make default', 'Refresh', 'Make fallback', 'Default thinking', 'Sign out'],
+    ],
+    ['the default provider', true, ['Make default', 'Refresh', 'Default thinking', 'Sign out']],
   ] as const)('puts Make default first in the row menu for %s', async (_, is_default, verbs) => {
     render(<ProviderRows auth={state({ providers: [signedIn({ is_default })] })} />);
     fireEvent.click(screen.getByRole('button', { name: 'Actions for GITHUB-COPILOT' }));

@@ -2816,6 +2816,12 @@
              :default-model (get row "default_model")
              :is-fallback (boolean (get row "is_fallback"))
              :fallback-model (get row "fallback_model")}
+      (get row "reasoning_level")
+      (assoc :reasoning-level (get row "reasoning_level"))
+
+      (get row "reasoning_effort")
+      (assoc :reasoning-effort (get row "reasoning_effort"))
+
       (get row "base_url")
       (assoc :base-url (get row "base_url"))
 
@@ -2970,6 +2976,15 @@
   []
   (let [cached @router-cache*]
     (boolean (and (:at cached) (contains? cached :rows)))))
+
+(defn set-provider-thinking!
+  "PATCH /v1/router role `thinking`: set the default `setting` of `provider-id`, either
+   `reasoning_level` or `reasoning_effort`. Sessions without their own value use it.
+   A nil `value` removes the default."
+  [provider-id setting value]
+  (patch-router! {"role" "thinking" "provider" (name provider-id) "setting" setting "value" value})
+  (invalidate-router-cache!)
+  nil)
 
 (defn rebuild-router! [& _] (invalidate-router-cache!) (get-router))
 

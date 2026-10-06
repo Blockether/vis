@@ -4,6 +4,7 @@
    a warm caller, a stale snapshot must refresh OFF the calling thread, and
    every same-process fleet mutation must invalidate the snapshot."
   (:require [lazytest.core :as lt :refer [defdescribe expect it]]
+            [clojure.java.io :as io]
             [com.blockether.vis.internal.session.cancellation :as cancel]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
@@ -14,7 +15,9 @@
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
-            [com.blockether.vis.internal.workspace.core :as workspace]))
+            [com.blockether.vis.internal.workspace.core :as workspace])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
 
 (defn- rv
   "Resolve a (possibly private) var in the providers namespace."
@@ -1456,3 +1459,46 @@
         (providers/refresh-models! :custom)
         (expect (= {:name "m" :input-limit 80000} (get-in @entry [:model-metadata :models 0])))
         (expect (= [{:name "m" :input-limit 50000}] (:models @entry)))))))
+
+(defdescribe
+  provider-thinking-default-test
+  (it
+    "saves, validates and removes a provider's default thinking level"
+    (let [home
+          (.toFile (Files/createTempDirectory "vis-thinking" (make-array FileAttribute 0)))
+
+          store
+          (io/file home ".vis" "state.yml")
+
+          old-home
+          (System/getProperty "user.home")
+
+          provider
+          #(some (fn [p]
+                   (when (= :openai (:id p)) p))
+                 (providers/configured-providers))
+
+          status
+          #(try (providers/save-thinking-default! :openai %1 %2 :test)
+                nil
+                (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+
+      (try (io/make-parents store)
+           (spit store "providers:\n  - id: openai\n    models:\n      - gpt-5\n")
+           (System/setProperty "user.home" (.getPath home))
+           (config/invalidate-config-cache!)
+           (providers/invalidate-configured-providers!)
+           (expect (= {:provider-id :openai :setting "reasoning_level" :value "deep"}
+                      (providers/save-thinking-default! :openai "reasoning_level" "deep" :test)))
+           (expect (str/includes? (slurp store) "reasoning_level: deep"))
+           (expect (= "deep" (:reasoning-level (provider))))
+           (expect (some? (status "reasoning_level" "max")) "a level is quick, balanced or deep")
+           (expect (some? (status "verbosity" "low")) "only thinking settings are accepted")
+           (expect (nil? (status "reasoning_effort" "high")))
+           (expect (= "high" (:reasoning-effort (provider))))
+           (providers/save-thinking-default! :openai "reasoning_level" nil :test)
+           (expect (nil? (:reasoning-level (provider))) "a blank value removes the default")
+           (expect (= "high" (:reasoning-effort (provider))))
+           (finally (System/setProperty "user.home" old-home)
+                    (config/invalidate-config-cache!)
+                    (providers/invalidate-configured-providers!))))))
