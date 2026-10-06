@@ -18,7 +18,6 @@
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
-            [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -430,24 +429,25 @@
             sid
             (h/store-session! db {:title "Thinking"})
 
-            pref
+            ;; Mirrors `session.model/model-of`, which also sees an unsaved choice.
+            unsaved
             (atom nil)
 
             level
             #(get (scoped/values db sid) "reasoning_level")]
 
-        (with-redefs [config/load-config
-                      (constantly {:default-provider "anthropic"
-                                   :providers [{:id :openai :reasoning-effort "high"}
-                                               {:id :anthropic :reasoning-level "quick"}]})
-
-                      smodel/model-of
-                      (fn [_ _]
-                        @pref)]
-
+        (with-redefs [config/load-config (constantly {:default-provider "anthropic"
+                                                      :providers
+                                                      [{:id :openai :reasoning-effort "high"}
+                                                       {:id :anthropic :reasoning-level "quick"}]})]
           (expect (= "quick" (level)) "the default provider decides")
-          (reset! pref {:provider "openai" :model "gpt-5"})
+          (store/db-set-session-model-pref! db sid "openai" "gpt-5")
           (expect (= "balanced" (level)) "a provider without a level keeps the built-in one")
+          (try (scoped/set-session-model-fn! (fn [_ _]
+                                               @unsaved))
+               (reset! unsaved {:provider "anthropic" :model "claude"})
+               (expect (= "quick" (level)) "the installed reader sees an unsaved choice")
+               (finally (scoped/set-session-model-fn! #'scoped/saved-session-model)))
           (expect (= "high" (get (scoped/values db sid) "reasoning_effort")))
           (scoped/set-setting! db (scoped/target db "session" sid) "reasoning_level" "value" "deep")
           (expect (= "deep" (level)) "the session pick wins")

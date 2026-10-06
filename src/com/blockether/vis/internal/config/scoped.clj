@@ -13,7 +13,6 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.persistance.core :as store]
-            [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
@@ -315,6 +314,20 @@
   "Session thinking settings whose default is a key of the session's provider entry."
   {"reasoning_level" :reasoning-level "reasoning_effort" :reasoning-effort})
 
+(defn- saved-session-model
+  "The saved model choice of session `sid` as `{:provider :model}`, or nil."
+  [db sid]
+  (when (and db sid) (store/db-get-session-model-pref db sid)))
+
+(defonce ^:private session-model-fn (atom saved-session-model))
+
+(defn set-session-model-fn!
+  "Install `(f db sid)`, which returns the model choice of a session. Filled by
+   `gateway.wiring` with `session.model/model-of`, which also sees an unsaved choice."
+  [f]
+  (reset! session-model-fn f)
+  nil)
+
 (defn- session-provider
   "The configured provider entry that session `target-id` routes to. The session's
    own model choice names it, else the default pair, else the first provider."
@@ -329,7 +342,7 @@
         (:providers cfg)
 
         chosen
-        (some-> (smodel/model-of db target-id)
+        (some-> (@session-model-fn db target-id)
                 :provider
                 name)
 

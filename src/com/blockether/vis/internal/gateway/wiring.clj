@@ -9,7 +9,8 @@
 
    Slots receive Vars, so reloading a namespace during development keeps the
    wiring live."
-  (:require [com.blockether.vis.internal.council.core :as council]
+  (:require [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.rooms :as rooms]
             [com.blockether.vis.internal.automation.runner :as automation-runner]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -22,6 +23,7 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.python.test-runner :as test-runner]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.view.core :as view]))
 
 (defonce ^:private installed
@@ -49,6 +51,9 @@
     ;; Provider and default-model changes rebuild the shared router and reseed
     ;; every cached session environment, not only `/reload`.
     (providers/set-router-rebuild-hook! #'loop-env/reload-router!)
+    ;; Session settings take the thinking default of the provider that the session's
+    ;; model choice names, also before the debounced write saves that choice.
+    (scoped/set-session-model-fn! #'smodel/model-of)
     (python-env/install-extension-hooks! {:net-probe-report #'python-extensions/net-probe-report
                                           :close-session-contexts!
                                           #'python-extensions/close-session-contexts!})
