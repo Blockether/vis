@@ -570,7 +570,7 @@
                        :type :boolean
                        :default true
                        :owner :vis
-                       :group :provider
+                       :group :voice
                        :persist? true})
     ;; The transcription model is ~640 MB of weights, and the first recording of
     ;; the day used to pay the whole read while a human watched "transcribing"
@@ -587,7 +587,7 @@
        :type :boolean
        :default true
        :owner :vis
-       :group :provider
+       :group :voice
        :persist? true})
     ;; Automatic fallback is a COST decision the human owns: a rescue on another
     ;; provider answers in a model they did not pick and starts that provider's

@@ -51,7 +51,7 @@ import {
 } from '../../components/ProviderAuth';
 import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
-import { FormLabel, SettingsPanel } from './SettingsLayout';
+import { FormLabel, SettingsPanel, SettingsSection } from './SettingsLayout';
 import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingField } from './SettingField';
 import { CouncilRooms } from './CouncilRooms';
@@ -315,7 +315,7 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: 
         <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_auto] ${head ? 'items-center' : 'items-start'} gap-x-4 gap-y-2 px-3 py-2 sm:px-4`}>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <Text as={head ? (head.level === 4 ? 'h4' : 'h5') : 'p'} id={head?.id} variant="label" className="break-words">{toggle.label}</Text>
+              <Text as={head ? (head.level === 4 ? 'h4' : head.level === 5 ? 'h5' : 'h6') : 'p'} id={head?.id} variant="label" className="break-words">{toggle.label}</Text>
               {toggle.is_experimental && (
                 <span className="bg-thinking-surface px-1 font-mono text-ui text-warn">Experimental</span>
               )}
@@ -473,12 +473,20 @@ export function MachineSettings({
     <SettingRow key={toggle.id} toggle={toggle} head={head} busy={pending === toggle.id}
       onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)} />
   );
-  const settingRows = (group: ToggleGroup) =>
-    group.toggles.length > 0 && (
+  const rowList = (toggles: Toggle[]) =>
+    toggles.length > 0 && (
       <div className="divide-y divide-dialog-edge">
-        {group.toggles.map((toggle) => settingRow(toggle))}
+        {toggles.map((toggle) => settingRow(toggle))}
       </div>
     );
+  const settingRows = (group: ToggleGroup) => rowList(group.toggles);
+  // The gateway names the sections. This machine adds its own panels to the section with the same id.
+  const section = (id: string) => groups?.find((group) => group.id === id);
+  const general = section('general');
+  const providers = section('providers');
+  const voice = section('voice');
+  const tools = section('tools');
+  const sectionIds = ['general', 'providers', 'voice', 'tools'];
 
   return (
     // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
@@ -496,11 +504,34 @@ export function MachineSettings({
 
       {failure === null && (
         <>
-          <ProvidersPanel client={client} isOpen={isProvidersOpen} />
-          <NotificationsPanel client={client} gateway={gateway} />
-          <AutomationsPanel client={client} gatewayUrl={gateway.url} />
-          <McpServersPanel client={client} />
-          <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
+          <SettingsSection title={general?.title ?? 'General'}>
+            {rowList(general?.toggles.filter((toggle) => !toggle.is_experimental) ?? [])}
+            {/* Room membership is part of Council, so it stands under the machine name. */}
+            {general?.toggles.some((toggle) => toggle.id === 'council_machine_name') && (
+              <CouncilRooms
+                client={client}
+                machineName={String(general.toggles.find((toggle) => toggle.id === 'council_machine_name')?.value ?? '')}
+                onChanged={load}
+              />
+            )}
+            <NotificationsPanel client={client} gateway={gateway} />
+            {general?.toggles.some((toggle) => toggle.is_experimental) && (
+              <SettingsPanel title="Experimental">
+                {rowList(general.toggles.filter((toggle) => toggle.is_experimental))}
+              </SettingsPanel>
+            )}
+          </SettingsSection>
+          {/* Only a route from the model picker opens the band; else the bands context decides. */}
+          <SettingsSection title={providers?.title ?? 'Providers'} defaultOpen={isProvidersOpen || undefined}>
+            <ProvidersPanel client={client} />
+            {providers && providers.toggles.length > 0 && (
+              <SettingsPanel title="Options">{settingRows(providers)}</SettingsPanel>
+            )}
+          </SettingsSection>
+          <SettingsSection title={voice?.title ?? 'Voice'}>
+            {voice && settingRows(voice)}
+            <SpeechEnginesPanel client={client} prefs={speechPrefs} onChange={onSpeechChange} />
+          </SettingsSection>
         </>
       )}
 
@@ -575,24 +606,27 @@ export function MachineSettings({
         // A band's meta says what the list itself CANNOT — `unauthorized`, `app
         // logs`, `this device`. A tally of the rows you are already looking at is
         // not that, and it said the same nothing over every group.
-        groups.filter((group) => !isExtensionGroup(group)).map((group) => (
-          <SettingsPanel key={group.id} title={group.title}>
-            {settingRows(group)}
-            {/* Room membership is part of Council, so it stands under the Council switches. */}
-            {group.id === 'council' && (
-              <CouncilRooms
-                client={client}
-                machineName={String(group.toggles.find((toggle) => toggle.id === 'council_machine_name')?.value ?? '')}
-                onChanged={load}
-              />
-            )}
-          </SettingsPanel>
-        ))
+        groups
+          .filter((group) => !isExtensionGroup(group) && !sectionIds.includes(group.id))
+          .map((group) => (
+            <SettingsPanel key={group.id} title={group.title}>
+              {settingRows(group)}
+            </SettingsPanel>
+          ))
       )}
 
-      {failure === null && groups !== null && (
-        <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} onRefresh={load}
-          renderSetting={settingRow} />
+      {failure === null && (
+        <>
+          <SettingsSection title={tools?.title ?? 'Tools'}>
+            {tools && settingRows(tools)}
+            <McpServersPanel client={client} />
+            {groups !== null && (
+              <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} onRefresh={load}
+                renderSetting={settingRow} />
+            )}
+          </SettingsSection>
+          <AutomationsPanel client={client} gatewayUrl={gateway.url} />
+        </>
       )}
     </div>
   );
@@ -1383,7 +1417,7 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
  * and asks for verdicts, but never holds a token, verifier, or device code.
  * The exchange itself is `useProviderAuth`, shared with the router dialog.
  */
-function ProvidersPanel({ client, isOpen }: { client: GatewayClient; isOpen: boolean }) {
+function ProvidersPanel({ client }: { client: GatewayClient }) {
   const auth = useProviderAuth(client);
   const { providers, err, note } = auth;
   const [isAdding, setIsAdding] = useState(false);
@@ -1394,9 +1428,7 @@ function ProvidersPanel({ client, isOpen }: { client: GatewayClient; isOpen: boo
 
   return (
     <SettingsPanel
-      title="Providers"
-      // Only a route from the model picker opens the band; else the bands context decides.
-      defaultOpen={isOpen || undefined}
+      title="Accounts"
       /* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS, and it renders nothing
          until the gateway has said something is addable — so the band asks for it
          unconditionally and `AddProviderButton` answers with its own silence. */

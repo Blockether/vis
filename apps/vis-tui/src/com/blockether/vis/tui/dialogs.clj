@@ -3549,7 +3549,9 @@
   (vec (mapcat (fn [group]
                  (let [rows (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))]
                    (cond (get group "extension") (extension-rows group rows)
-                         (seq rows) (cons {:type :section :label (str (get group "title"))}
+                         (seq rows) (cons {:type :section
+                                           :label (str (get group "title"))
+                                           :section-id (str (get group "id"))}
                                           (map catalog-setting-row rows)))))
                (or groups []))))
 
@@ -3612,7 +3614,7 @@
    every row is a projection of `GET /v1/settings?channel=tui` — the SAME
    groups, order and rows the companion app renders, so a toggle the engine or
    an extension registers shows up here without a mirrored registration in this
-   binary. Extension groups stand under Extensions (`extension-settings-rows`). Until
+   binary. Extension groups stand under Tools (`tools-settings-rows`). Until
    that first answer, and whenever the daemon cannot be reached, the process registry
    renders the pane instead of leaving it blank."
   []
@@ -3816,16 +3818,15 @@
                               vis/model-name))]))))
 
 (defn- provider-settings-rows
-  "The `Providers` settings section: one row per provider — auth state, model,
-   default tag on the same line — opening that provider's own transient
-   INSIDE this frame, plus one row that adds a new provider. Empty until
-   `load-provider-inventory!` has run."
+  "The provider accounts under the Providers header: one row per provider — auth state,
+   model, default tag on the same line — opening that provider's own transient INSIDE this
+   frame, plus one row that adds a new provider. Empty until `load-provider-inventory!` has
+   run."
   []
   (let [{:keys [status providers error]} @provider-inventory]
     (when-not (= :unloaded status)
       (vec
         (concat
-          [{:type :section :label "Providers"}]
           (mapv (fn [{:keys [provider auth] :as entry}]
                   {:type :provider
                    :label (vis/display-label (:id provider))
@@ -3874,15 +3875,14 @@
                                       {:status :error :servers [] :error (ex-message e)}))))
 
 (defn- mcp-settings-rows
-  "The `MCP Servers` settings section: one row per server — its live status
-   riding the same line — opening that server's own transient INSIDE this
-   frame, plus one row that adds a new server. Empty until `load-mcp-inventory!`
-   has run."
+  "The MCP servers subsection of Tools: one row per server — its live status riding the
+   same line — opening that server's own transient INSIDE this frame, plus one row that
+   adds a new server. Empty until `load-mcp-inventory!` has run."
   []
   (let [{:keys [status servers error]} @(mcp-inventory-atom)]
     (when-not (= :unloaded status)
       (vec
-        (concat [{:type :section :label "MCP Servers"}]
+        (concat [{:type :subsection :label "MCP servers"}]
                 (mapv (fn [row]
                         {:type :mcp
                          :label (str (get row "name"))
@@ -3943,11 +3943,12 @@
       nil)))
 
 (defn- extension-action-rows
-  "The Extensions header holds one button. It runs trusted extension code again where
-   Settings applies, then reads the catalog again."
+  "The Tools header holds one button. It runs trusted extension code again where Settings
+   applies, then reads the catalog again."
   []
   [{:type :section
-    :label "Extensions"
+    :label "Tools"
+    :section-id "tools"
     :button {:type :action
              :id :extensions-reload
              :label "Reload"
@@ -3956,31 +3957,53 @@
                                  "Run trusted machine extension code again.")
                                " Then read the settings again. Stored settings stay unchanged.")}}])
 
-(defn- extension-settings-rows
-  "The Extensions section: its actions, then one subsection for each extension in catalog
-   order."
+(defn- tools-settings-rows
+  "The Tools section: its reload button, the MCP servers, then the Extensions subsection
+   with each extension in catalog order."
   []
   (let [groups (filterv extension-group? (:groups @(settings-inventory-atom)))]
-    (into (extension-action-rows) (lock-overridden-rows groups (catalog-toggle-rows groups)))))
+    (vec (concat (extension-action-rows)
+                 (mcp-settings-rows)
+                 (when (seq groups) [{:type :subsection :label "Extensions"}])
+                 (lock-overridden-rows groups (catalog-toggle-rows groups))))))
+
+(defn- put-in-section
+  "Put `extra` rows right under the header of the catalog section `id`. Without that
+   section, they stand under their own `label` header, first or last."
+  [rows id label extra first?]
+  (let [i
+        (first (keep-indexed #(when (= id (:section-id %2)) %1) rows))
+
+        header
+        {:type :section :label label :section-id id}]
+
+    (cond (empty? extra) (vec rows)
+          i (let [at (inc (long i))]
+              (vec (concat (take at rows) extra (drop at rows))))
+          first? (vec (concat [header] extra rows))
+          :else (vec (concat rows [header] extra)))))
 
 (defn- settings-rows
-  "Every setting in one flat grouped list. A failed catalog read keeps the last catalog and
-   says so. The Extensions section holds its actions, then the settings of each extension."
+  "Every setting in one flat list, in the gateway's sections. Machine settings add the agent
+   name to General and the provider accounts to Providers. A failed catalog read keeps the
+   last catalog and says so. Tools ends the list."
   []
-  (vec (concat (when-not *settings-target*
-                 (concat (settings-ui-options)
-                         [{:type :section :label "Agent"}
-                          {:type :agent-name
-                           :label "Agent name"
-                           :description
-                           (or (get @agent-name-setting "error")
-                               "Shared by all gateway clients. Overrides project names.")}]))
-               (or (registry-toggle-rows) [])
+  (vec (concat (when-not *settings-target* (settings-ui-options))
+               (cond-> (or (registry-toggle-rows) [])
+                 (not *settings-target*)
+                 (-> (put-in-section
+                       "general"
+                       "General"
+                       [{:type :agent-name
+                         :label "Agent name"
+                         :description (or
+                                        (get @agent-name-setting "error")
+                                        "Shared by all gateway clients. Overrides project names.")}]
+                       true)
+                     (put-in-section "providers" "Providers" (provider-settings-rows) false)))
                (when-let [error (:error @(settings-inventory-atom))]
                  [{:type :info :tone :bad :label "Settings unavailable" :description error}])
-               (extension-settings-rows)
-               (when-not *settings-target* (or (provider-settings-rows) []))
-               (or (mcp-settings-rows) []))))
+               (tools-settings-rows))))
 
 (defn- settings-option-label
   [{:keys [label type toggle-id experimental? locked is-override?]} _values]
@@ -5372,11 +5395,11 @@
    Enter or a primary pointer click changes a setting. F1 opens its description,
    source and inherited-value action. Search matches the whole catalog, including
    descriptions hidden from the list. A section header can hold one button, such as
-   Reload under Extensions.
+   Reload extensions under Tools.
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
-   section label to park the cursor on, e.g. `MCP Servers` or `Providers`),
+   section label to park the cursor on, e.g. `Tools` or `Providers`),
    `:mcp-add` / `:provider-add` (the add row of each section), `:mcp-action`
    (the verb a server's transient fired) and `:provider-transient` (one
    provider's transient, handed the graphics and the region it paints into).

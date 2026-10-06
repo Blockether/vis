@@ -446,7 +446,7 @@
         (expect (true? (:default spec)))
         (expect (true? (:persist? spec)))
         (expect (= :vis (:owner spec)))
-        (expect (= :provider (:group spec)))
+        (expect (= :voice (:group spec)))
         (expect (toggle-contract/settings-description? (:description spec)))))
   (it "reads true by default and follows an override"
       (expect (true? (t/enabled? "speech_preload_model")))

@@ -101,14 +101,14 @@ A Council room connects selected sessions through a relay. It does not connect t
 The relay operator can read room messages. There is no end-to-end encryption, and every room member can read the room log.
 
 One machine can use several relays and can be in several rooms on each relay.
-It has a separate machine identity on each relay. The machine's **Council** section groups the rooms by relay.
+It has a separate machine identity on each relay. The machine's **General** section groups the rooms by relay.
 
 ### Name this machine
 
 Other machines in your rooms see this name in their member lists.
 Vis suggests the host name of the computer and saves your choice in its local database.
 
-1. In Companion **Settings**, open the machine's **Council** section.
+1. In Companion **Settings**, open the machine's **General** section.
 2. Change **Machine name**. Use 1 to 80 characters, without control characters.
 
 Vis sends a new name to each relay that this machine uses. The machine keeps its identity and its rooms.
@@ -116,7 +116,7 @@ If a relay does not answer, Vis sends the name the next time that it checks that
 
 ### Create a room
 
-1. In the machine's **Council** section, select **New room**.
+1. In the machine's **General** section, select **New room**.
 2. Enter the room name.
 3. Select the relay for the room. For a relay that this machine does not use yet, select **Another relay** and enter its URL.
 4. If Vis asks for it, enter the Rooms administrator token of that relay.
@@ -132,7 +132,7 @@ The gateway keeps its machine credential privately, but does not save the admini
 Ask the room owner for an invitation. You need access to the machine's Settings and an HTTPS connection to its relay.
 Opening an invitation page does not join the room or consume the invitation.
 
-1. In the machine's **Council** section, select **Accept invitation**.
+1. In the machine's **General** section, select **Accept invitation**.
 2. Paste the complete invitation link.
 3. Select **Review invitation**.
 4. Check the relay address and the machine name.

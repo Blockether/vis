@@ -85,12 +85,12 @@ describe('machine settings disclosures', () => {
   it('opens a sole machine automatically and keeps it open when its name is pressed', async () => {
     open([{ url: URL_A, token: 't', label: 'tower' }]);
 
-    expect(await screen.findByText('MCP servers')).toBeVisible();
+    expect(await screen.findByText('Tools')).toBeVisible();
     expect(screen.getByText('Providers')).toBeVisible();
     const name = screen.getByText('tower');
     expect(name.closest('button')).toBeNull();
     fireEvent.click(name);
-    expect(screen.getByText('MCP servers')).toBeVisible();
+    expect(screen.getByText('Tools')).toBeVisible();
   });
 
   it('starts every machine closed and opens one only after its row is pressed', async () => {
@@ -102,13 +102,13 @@ describe('machine settings disclosures', () => {
     const [first, second] = await onlineRows(2);
     expect(first).toHaveAttribute('aria-expanded', 'false');
     expect(second).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('MCP servers')).toBeNull();
+    expect(screen.queryByText('Tools')).toBeNull();
 
     fireEvent.click(first);
 
     expect(first).toHaveAttribute('aria-expanded', 'true');
     expect(second).toHaveAttribute('aria-expanded', 'false');
-    await waitFor(() => expect(screen.getByText('MCP servers')).toBeVisible());
+    await waitFor(() => expect(screen.getByText('Tools')).toBeVisible());
     view.unmount();
   });
 
@@ -149,7 +149,7 @@ describe('machine settings disclosures', () => {
     expect(retry).not.toHaveAttribute('aria-expanded');
     expect(screen.queryByText('Machine unreachable')).toBeNull();
     expect(screen.queryByText(/Can't load settings/)).toBeNull();
-    expect(screen.queryByText('MCP servers')).toBeNull();
+    expect(screen.queryByText('Tools')).toBeNull();
 
     let answer!: (response: Response) => void;
     fetcher.mockImplementationOnce(
@@ -163,11 +163,11 @@ describe('machine settings disclosures', () => {
     expect(checking).toHaveAttribute('aria-busy', 'true');
     fireEvent.click(checking);
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(screen.queryByText('MCP servers')).toBeNull();
+    expect(screen.queryByText('Tools')).toBeNull();
 
     fetcher.mockImplementation(quiet);
     await act(async () => answer(await quiet()));
-    await waitFor(() => expect(screen.getByText('MCP servers')).toBeVisible());
+    await waitFor(() => expect(screen.getByText('Tools')).toBeVisible());
     expect(screen.getByText('laptop').closest('button')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Checking connection to laptop' })).toBeNull();
     view.unmount();

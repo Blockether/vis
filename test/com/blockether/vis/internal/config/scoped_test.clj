@@ -738,7 +738,8 @@
                   (into {} (map (juxt #(get % "id") #(get % "title"))) groups)]
 
               (expect (not (contains? titles "engines")))
-              (expect (= "Response" (get titles "provider")))
+              (expect (= "Response" (get titles "providers")))
+              (expect (= "Voice" (get titles "voice")))
               (expect (not (contains? titles "mcp"))))))))
   (it
     "puts an extension's engine choice, settings and switchable skills in its own section"
@@ -979,5 +980,5 @@
                              :body
                              json/read-json
                              (get "groups"))]
-              (expect (some #(= "access" (get % "id")) groups))
+              (expect (some #(= "permissions" (get % "id")) groups))
               (expect (not-any? #(= "mcp" (get % "id")) groups))))))))

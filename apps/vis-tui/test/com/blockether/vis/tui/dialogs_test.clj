@@ -1440,7 +1440,7 @@
           ;; header, then Theme, as in the app. The Models section was retired (it
           ;; only carried reasoning-effort, which moved to Ctrl+R).
           (expect (= ["Code mode" "Compact mode"] (mapv :label (take 2 rows))))
-          (expect (= ["Theme" "Agent"] (take 2 sections)))
+          (expect (= ["Theme" "General"] (take 2 sections)))
           (expect (not-any? #{"Responses"} sections))
           (expect (= [:show-python-code :summarize-steps :theme-name]
                      (vec (keep :key (take 5 rows)))))
@@ -2417,7 +2417,7 @@
         (expect (nil? (mcp-rows)))
         ;; An empty loaded inventory needs only the section and its add action.
         (reset! inventory {:status :ok :servers [] :error nil})
-        (expect (= [:section :action] (mapv :type (mcp-rows))))
+        (expect (= [:subsection :action] (mapv :type (mcp-rows))))
         (expect (= :mcp-add (:id (last (mcp-rows)))))
         (reset! inventory {:status :loading :servers [] :error nil})
         (expect (= "Loading MCP servers…" (:label (second (mcp-rows)))))
@@ -2433,8 +2433,8 @@
               toggles
               (filterv #(= :mcp (:type %)) rows)]
 
-          (expect (= [:section :mcp :mcp :mcp :action] (mapv :type rows)))
-          (expect (= "MCP Servers" (:label (first rows))))
+          (expect (= [:subsection :mcp :mcp :mcp :action] (mapv :type rows)))
+          (expect (= "MCP servers" (:label (first rows))))
           (expect (= ["fs" "gh" "hand"] (mapv :label toggles)))
           (expect (= "connected · 3 tools" (:description (first toggles))))
           (expect (= :mcp-add (:id (last rows))))
@@ -2443,10 +2443,10 @@
           (expect (every? :inline-description toggles))
           ;; on = enabled AND not killed, so a killed config-file server reads off
           (expect (= [p/STATUS_ON p/STATUS_OFF p/STATUS_OFF] (mapv #(first (mark % {})) toggles)))
-          (expect (every? selectable? (remove #(= :section (:type %)) rows))))
+          (expect (every? selectable? (remove #(#{:section :subsection} (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :servers [] :error "connection refused"})
-        (expect (= [:section :info :action] (mapv :type (mcp-rows))))
+        (expect (= [:subsection :info :action] (mapv :type (mcp-rows))))
         ;; the failure reads AS a failure: bad tone, so the head line paints red
         (expect (= :bad (:tone (second (mcp-rows)))))
         (finally (reset! inventory original)))))
@@ -2468,9 +2468,9 @@
                                 :servers [{"name" "fs" "enabled" true "is_managed" true}]})
              (with-redefs [vis/get-router (constantly nil)]
                (let [rows (settings-rows)
-                     index (initial-index rows "MCP Servers")]
+                     index (initial-index rows "Tools")]
 
-                 (expect (= "MCP Servers" (:label (nth rows (dec index)))))
+                 (expect (= "MCP servers" (:label (nth rows (dec index)))))
                  (expect (= "fs" (:label (nth rows index))))
                  (expect (= :action (:type (nth rows (inc index)))))
                  (expect (< 3 (count rows)))))
@@ -2618,9 +2618,9 @@
               providers
               (filterv #(= :provider (:type %)) rows)]
 
-          (expect (= [:section :provider :provider :provider :provider :provider :provider :action]
+          ;; The Providers header comes from the gateway catalog; these are only the accounts.
+          (expect (= [:provider :provider :provider :provider :provider :provider :action]
                      (mapv :type rows)))
-          (expect (= "Providers" (:label (first rows))))
           (expect (= :provider-add (:id (last rows))))
           ;; the row carries the provider itself, so Enter can open ITS menu
           (expect (= [:anthropic :zai-coding-plan :openai-codex :openrouter :openai :ollama]
@@ -2638,7 +2638,7 @@
           (expect (every? selectable? (remove #(= :section (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :providers [] :error "connection refused"})
-        (expect (= [:section :info :action] (mapv :type (provider-rows))))
+        (expect (= [:info :action] (mapv :type (provider-rows))))
         (finally (reset! inventory original)))))
   (it "settings-rows carries the Providers section and Settings can open focused on it"
       (let [settings-rows

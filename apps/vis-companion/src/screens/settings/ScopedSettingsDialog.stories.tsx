@@ -50,7 +50,7 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Adjacent sections should have one continuous rule, even before MCP servers. */
+/** Adjacent sections should have one continuous rule, also around Tools. */
 export const Catalog: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
@@ -61,7 +61,7 @@ export const Catalog: Story = {
     const sections = panel('Agent')?.parentElement;
     await expect(sections).toHaveClass('divide-y', 'divide-dialog-edge');
     await expect(Array.from(sections?.children ?? [])).toEqual([
-      panel('Agent'), panel('Experimental'), panel('Extensions'), panel('MCP servers'),
+      panel('Agent'), panel('Experimental'), panel('Tools'),
     ]);
   },
 };
@@ -97,9 +97,13 @@ export const Extensions: Story = {
     const page = within(canvasElement.ownerDocument.body);
     const panel = (title: string) => page.getByRole('heading', { name: title }).closest('section');
     const extensions = panel('Extensions');
-    await expect(Array.from(extensions?.parentElement?.children ?? [])).toEqual([
-      panel('Agent'), panel('Experimental'), extensions, panel('MCP servers'),
+    const tools = panel('Tools');
+    await expect(Array.from(tools?.parentElement?.children ?? [])).toEqual([
+      panel('Agent'), panel('Experimental'), tools,
     ]);
+    // MCP servers and extensions stand inside the Tools section.
+    await expect(tools).toContainElement(extensions);
+    await expect(tools).toContainElement(panel('MCP servers'));
     const scope = (name: string) =>
       within(within(extensions!).getByRole('region', { name })).queryByText(/^(global|project)$/)?.textContent ?? null;
     await expect(scope('foundation-mcp')).toBeNull();

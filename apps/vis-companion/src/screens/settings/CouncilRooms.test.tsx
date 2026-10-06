@@ -48,11 +48,11 @@ const LINK = `https://gateway.example.com/rooms/join#invite=${'a'.repeat(43)}`;
 const TRUST_NOTE = 'This machine does not use this relay yet. Join only if you trust its operator.';
 
 describe('Council room Settings', () => {
-  it('stands inside the Council band of machine Settings, under the machine name', async () => {
+  it('stands inside the General band of machine Settings, under the machine name', async () => {
     vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
     vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
       revision: 'council-1',
-      groups: [{ id: 'council', title: 'Council', toggles: [
+      groups: [{ id: 'general', title: 'General', toggles: [
         { id: 'council', label: 'Council', type: 'boolean', enabled: true },
         { id: 'council_machine_name', label: 'Machine name', type: 'string', value: 'Workstation', max_length: 80,
           editor: 'text', scopes: ['global'] },
@@ -66,7 +66,7 @@ describe('Council room Settings', () => {
         onSpeechChange={async () => DEFAULT_SPEECH_PREFS}
       />,
     );
-    const band = (await screen.findByRole('heading', { name: 'Council' })).closest('section')!;
+    const band = (await screen.findByRole('heading', { name: 'General' })).closest('section')!;
     expect(await within(band).findByText('Not connected')).toBeVisible();
     expect(within(band).getByRole('switch', { name: 'Council: on' })).toBeVisible();
     expect(within(band).getByRole('textbox', { name: 'Machine name' })).toHaveValue('Workstation');

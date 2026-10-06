@@ -1,9 +1,9 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useContext, useId, useState, type ReactNode } from 'react';
 import { RefreshIcon } from '../../components/icons';
 import { Banner, IconButton, Text } from '../../components/ui';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import type { SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
-import { SettingsPanel } from './SettingsLayout';
+import { SettingsNested, SettingsPanel } from './SettingsLayout';
 
 /** Extension sections stand under Extensions. Older gateways do not mark them. */
 export function isExtensionGroup(group: ToggleGroup): boolean {
@@ -42,7 +42,7 @@ export function ExtensionNotice({ group }: { group: ToggleGroup }) {
  */
 export interface SettingHead {
   id: string;
-  level: 4 | 5;
+  level: 4 | 5 | 6;
   scope?: 'project' | 'global';
 }
 
@@ -74,7 +74,7 @@ function ExtensionGroup({
   renderSetting,
 }: {
   group: ToggleGroup;
-  headingLevel: 4 | 5;
+  headingLevel: 4 | 5 | 6;
   renderSetting: (toggle: Toggle, head?: SettingHead) => ReactNode;
 }) {
   const headingId = useId();
@@ -91,7 +91,7 @@ function ExtensionGroup({
       ) : (
         <div className="flex min-w-0 items-baseline gap-3 px-3 py-2 sm:px-4">
           <Text
-            as={headingLevel === 4 ? 'h4' : 'h5'}
+            as={headingLevel === 4 ? 'h4' : headingLevel === 5 ? 'h5' : 'h6'}
             id={headingId}
             variant="label"
             className="min-w-0 flex-auto truncate"
@@ -156,6 +156,9 @@ export function ExtensionsPanel({
   const [status, setStatus] = useState<string | null>(null);
   const scoped = Boolean(target && target.scope !== 'global');
   const headingLevel = scoped ? 3 : 4;
+  // Inside a section band the Extensions heading is one level lower, and so are its extensions.
+  const isNested = useContext(SettingsNested);
+  const groupLevel = ((isNested ? headingLevel + 1 : headingLevel) + 1) as 4 | 5 | 6;
   const reload = async () => {
     setBusy(true);
     setStatus('Reloading…');
@@ -198,7 +201,7 @@ export function ExtensionsPanel({
         <ExtensionGroup
           key={group.id}
           group={group}
-          headingLevel={headingLevel === 3 ? 4 : 5}
+          headingLevel={groupLevel}
           renderSetting={renderSetting}
         />
       ))}

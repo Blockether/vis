@@ -86,7 +86,7 @@ it('keeps a failed project extension visible and runs its code only on request',
   renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
   expect(await screen.findByText(/Extension failed to load/)).toHaveTextContent('SyntaxError: invalid syntax');
-  const { band, names, scope } = extensionsBand(4);
+  const { band, names, scope } = extensionsBand(5);
   expect(names).toEqual(['broken.py', 'foundation-mcp', 'notifier']);
   expect(scope('broken.py')).toBe('project');
   expect(scope('foundation-mcp')).toBeNull();
@@ -125,7 +125,7 @@ it('keeps matching extensions under Extensions while a search hides the actions'
   renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
   await user.type(await screen.findByRole('searchbox', { name: 'Search settings' }), 'desktop');
-  const { names, scope } = extensionsBand(4);
+  const { names, scope } = extensionsBand(5);
   expect(names).toEqual(['notifier']);
   expect(scope('notifier')).toBe('project');
   expect(screen.queryByRole('button', { name: 'Reload extensions' })).not.toBeInTheDocument();
@@ -154,7 +154,7 @@ it('reloads machine extensions from machine settings and explains an older gatew
   );
 
   expect(await screen.findByText(/Extension failed to load/)).toBeInTheDocument();
-  const { band, names, scope } = extensionsBand(5);
+  const { band, names, scope } = extensionsBand(6);
   expect(names).toEqual(['broken.py', 'foundation-mcp', 'notifier']);
   expect(scope('broken.py')).toBe('global');
   expect(scope('notifier')).toBe('global');
@@ -213,7 +213,7 @@ it('names each extension once, on the row of its Auto/On/Off choice', async () =
   renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
   await screen.findByRole('heading', { name: 'vis-spel' });
-  const { band, names, scope } = extensionsBand(4);
+  const { band, names, scope } = extensionsBand(5);
   expect(names).toEqual(['vis-optmem', 'vis-spel']);
   expect(within(band).getAllByText('vis-spel')).toHaveLength(1);
   expect(scope('vis-spel')).toBe('global');

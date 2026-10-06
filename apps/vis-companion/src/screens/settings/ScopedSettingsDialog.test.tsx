@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { renderOpenBands } from '../../test-settings';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -171,13 +171,17 @@ it.each(['session', 'group', 'project'] as const)(
     const sections = panel('Agent')?.parentElement;
     expect(sections).toHaveClass('divide-y', 'divide-dialog-edge');
     expect(Array.from(sections?.children ?? [])).toEqual([
-      panel('Agent'), panel('Experimental'), panel('Extensions'), panel('MCP servers'),
+      panel('Agent'), panel('Experimental'), panel('Tools'),
     ]);
+    // MCP servers and extensions stand in the Tools section, one heading level lower.
+    expect(within(panel('Tools')!).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent))
+      .toEqual(['MCP servers', 'Extensions']);
 
     await user.type(screen.getByRole('searchbox', { name: 'Search settings' }), 'draft');
     expect(panel('Experimental')?.parentElement).toHaveClass('divide-y', 'divide-dialog-edge');
     expect(panel('Experimental')?.parentElement?.children).toHaveLength(1);
     expect(screen.queryByRole('heading', { name: 'Agent' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tools' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Extensions' })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'MCP servers' })).toBeNull();
   },

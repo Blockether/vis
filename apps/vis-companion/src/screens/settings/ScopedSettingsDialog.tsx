@@ -5,7 +5,7 @@ import type { SettingValue, SettingsResponse, SettingsTarget, Toggle, ToggleGrou
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow } from './MachineSettings';
 import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
-import { SettingsBandsOpen, SettingsPanel } from './SettingsLayout';
+import { SettingsBandsOpen, SettingsPanel, SettingsSection } from './SettingsLayout';
 
 type ScopedSettingsProps = {
   client: GatewayClient;
@@ -82,6 +82,8 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     );
   const matches = groups.reduce((count, group) => count + group.toggles.length, 0);
   const extensions = groups.filter(isExtensionGroup);
+  // MCP servers and extensions stand in the Tools section, with any Tools rows of the gateway.
+  const tools = groups.find((group) => group.id === 'tools');
   const row = (toggle: Toggle, head?: SettingHead) => <SettingRow key={toggle.id} toggle={toggle} head={head} busy={pending !== null}
     onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />;
   const rows = (group: ToggleGroup) => group.toggles.length > 0 && (
@@ -140,12 +142,17 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
             // A search opens every band again, so a folded band cannot hide a match.
             <SettingsBandsOpen.Provider value={bandsOpen || Boolean(needle)}>
             <div className="divide-y divide-dialog-edge">
-              {groups.filter((group) => !isExtensionGroup(group)).map((group) => <SettingsPanel key={needle ? `${group.id}:search` : group.id} title={group.title} headingLevel={3}>
+              {groups.filter((group) => !isExtensionGroup(group) && group !== tools).map((group) => <SettingsPanel key={needle ? `${group.id}:search` : group.id} title={group.title} headingLevel={3}>
                 {rows(group)}
               </SettingsPanel>)}
-              {(!needle || extensions.length > 0) && <ExtensionsPanel key={needle ? 'extensions:search' : 'extensions'} client={client} target={owner} groups={extensions} hasActions={!needle}
-                onRefresh={reread} renderSetting={row} />}
-              {!needle && <McpServersPanel client={client} target={owner} />}
+              {(!needle || extensions.length > 0 || tools) && (
+                <SettingsSection key={needle ? 'tools:search' : 'tools'} title={tools?.title ?? 'Tools'} headingLevel={3}>
+                  {tools && rows(tools)}
+                  {!needle && <McpServersPanel client={client} target={owner} />}
+                  {(!needle || extensions.length > 0) && <ExtensionsPanel client={client} target={owner} groups={extensions} hasActions={!needle}
+                    onRefresh={reread} renderSetting={row} />}
+                </SettingsSection>
+              )}
             </div>
             </SettingsBandsOpen.Provider>
           )}

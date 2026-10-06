@@ -148,7 +148,7 @@
                        :rows 20
                        :keys keys
                        :paint! (fn [{:keys [screen]}]
-                                 (dialogs/settings-dialog! screen {} {:focus-section "Agent"}))})
+                                 (dialogs/settings-dialog! screen {} {:focus-section "General"}))})
            :saved @saved
            :requests @requests
            :errors @errors})))))

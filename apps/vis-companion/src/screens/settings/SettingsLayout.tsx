@@ -134,6 +134,30 @@ export function SettingsColumn({
  * with every band folded. A search opens them all, so a folded band cannot hide a match.
  */
 export const SettingsBandsOpen = createContext(false);
+/**
+ * Whether a panel stands inside a section band. Such a panel is a subsection: it does not
+ * fold, and its name is one heading level lower.
+ */
+export const SettingsNested = createContext(false);
+/** One section band: every settings panel inside it is a subsection. */
+export function SettingsSection({
+  title,
+  headingLevel,
+  defaultOpen,
+  children,
+}: {
+  title: string;
+  headingLevel?: 3 | 4;
+  /** Opens the band at first, for a route that leads to it. */
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <SettingsPanel title={title} headingLevel={headingLevel} defaultOpen={defaultOpen}>
+      <SettingsNested.Provider value>{children}</SettingsNested.Provider>
+    </SettingsPanel>
+  );
+}
 export function SettingsPanel({
   title,
   headingLevel = 4,
@@ -159,26 +183,30 @@ export function SettingsPanel({
   // of names, and the reader opens only the band they came for. A band with only a
   // header, such as a lone switch, has nothing to hide and shows no chevron.
   const bandsOpen = useContext(SettingsBandsOpen);
+  const isNested = useContext(SettingsNested);
   const [isOwnOpen, setOwnOpen] = useState(defaultOpen ?? bandsOpen);
   const hasBody = Children.toArray(children).length > 0;
-  const fold =
-    disclosure ??
-    (hasBody
-      ? {
-          isOpen: isOwnOpen,
-          onToggle: () => setOwnOpen((open) => !open),
-          label: `${isOwnOpen ? 'Hide' : 'Show'} ${title}`,
-        }
-      : undefined);
+  // A subsection shows its rows under its band, so only the band folds.
+  const fold = isNested
+    ? undefined
+    : disclosure ??
+      (hasBody
+        ? {
+            isOpen: isOwnOpen,
+            onToggle: () => setOwnOpen((open) => !open),
+            label: `${isOwnOpen ? 'Hide' : 'Show'} ${title}`,
+          }
+        : undefined);
+  const level = isNested ? headingLevel + 1 : headingLevel;
   const TitleContainer = fold ? 'span' : 'div';
-  const TitleHeading = fold ? 'span' : headingLevel === 3 ? 'h3' : 'h4';
+  const TitleHeading = fold ? 'span' : level === 3 ? 'h3' : level === 4 ? 'h4' : 'h5';
   const titleBlock = (
     <TitleContainer className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
       <Text
         as={TitleHeading}
-        variant="section"
+        variant={isNested ? 'label' : 'section'}
         role="heading"
-        aria-level={headingLevel}
+        aria-level={level}
         className="min-w-0 flex-auto truncate"
       >
         {title}
@@ -216,7 +244,7 @@ export function SettingsPanel({
               <span
                 className="contents"
                 onClickCapture={() => {
-                  if (disclosure) {
+                  if (disclosure && !isNested) {
                     if (!disclosure.isOpen) disclosure.onToggle();
                   } else setOwnOpen(true);
                 }}

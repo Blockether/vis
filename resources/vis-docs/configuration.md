@@ -50,8 +50,8 @@ Set `agent_name` in the project's `vis.yml`:
 agent_name: Ada
 ```
 
-The default name is `Vis`. You can also change it in **Settings → Agent → Agent
-name** in the TUI, or **Settings → your gateway → Agent** in Companion. Saving in
+The default name is `Vis`. You can also change it in **Settings → General → Agent
+name** in the TUI, or **Settings → your gateway → General** in Companion. Saving in
 Settings writes to the gateway's `~/.vis/state.yml`, not the client's disk. This
 gateway-wide name overrides project names. Remove the key from `state.yml` to
 use project defaults again.
@@ -66,7 +66,7 @@ own identity.
 
 Programs read and save the name like any other setting, with the [Configuration
 API](configuration-api.md#change-one-setting). An invalid name returns 400 without changing the
-saved value. The settings list shows the name as a `string` row in the Agent group. Session details
+saved value. The settings list shows the name as a `string` row in the `general` group. Session details
 include the resolved `agent_name`, so reconnecting clients receive the current value.
 
 ## Configuration files
@@ -606,6 +606,20 @@ toggles:
 
 Run `/reload` after editing.
 
+## Machine settings
+
+Settings for one machine have six sections:
+
+- **General**: the agent name, Council and its rooms, notifications and experimental features.
+- **Providers**: provider accounts and options for model requests, such as automatic fallback.
+- **Voice**: speech engines, the voice model and the transcription of recordings.
+- **Permissions**: files, network, process access and sandbox tools.
+- **Tools**: MCP servers and extensions.
+- **Automations**: prompts that run on a schedule or a webhook.
+
+The TUI shows the same sections. Notifications, speech engines and automations are only in the
+Companion app.
+
 ## Project, group and session settings
 
 In the app, select **Settings** with the cog icon in a session's **…** menu. For a project or a
@@ -696,7 +710,7 @@ and lifecycle commands remain global-only.
 
 ### Extension settings
 
-The **Extensions** section holds the settings of all extensions. Each extension
+The **Extensions** part of the **Tools** section holds the settings of all extensions. Each extension
 with settings has its own group under its name. The `project` tag marks an
 extension of the current project. The `global` tag marks a machine extension.
 Extensions that ship with Vis have no tag.

@@ -24,7 +24,7 @@ Read-only questions and analysis do not need a draft.
 
 ## Enable drafts
 
-Open **Settings → Experimental → Draft backend** in the TUI or Companion app and
+Open **Settings → General → Draft backend** in the TUI or Companion app and
 choose `auto`, `worktree` or `rift`. Choose `off` to disable automatic drafts and
 new draft creation. Vis preserves any choice you have already saved.
 
@@ -252,7 +252,7 @@ require Git history. The `draft_backend` toggle chooses between them:
 | `worktree`, `rift` | Require drafts that use only that backend. `draft_create` refuses when the backend is unavailable. |
 | `off` (default) | No automatic draft workflow or draft creation. `draft_create` explains why. |
 
-Set it in **Settings → Experimental**, or in `~/.vis/config.yml`:
+Set it in **Settings → General**, or in `~/.vis/config.yml`:
 
 ```yaml
 toggles:

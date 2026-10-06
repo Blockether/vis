@@ -72,12 +72,20 @@
       (set (concat (map #(scoped/register-resource! :skills (:name %)) skills)
                    (map #(scoped/register-resource! :mcp (:name %)) servers))))))
 
-(defn- group-title
-  "The heading clients show for a settings group. Outside global settings the
-   provider group holds only response options, because providers are global."
-  [group local?]
-  (cond (and local? (= group :provider)) "Response"
-        :else (str/capitalize (str/replace (name group) #"[-_]+" " "))))
+(def ^:private sections
+  "The sections of settings, in order: id, title and the toggle groups that each gathers.
+   Owners register toggles into groups. Clients add their own controls, such as provider
+   accounts or MCP servers, to the section with the same id."
+  [[:general "General" [:council :experimental]] [:providers "Providers" [:provider]]
+   [:voice "Voice" [:voice]] [:permissions "Permissions" [:sandbox]] [:tools "Tools" [:skills]]])
+
+(defn- section-title
+  "The heading clients show for a section. Outside global settings the providers section
+   holds only response options, because providers are global."
+  [id title local?]
+  (if (and local? (= :providers id)) "Response" title))
+
+(defn- group-title [group] (str/capitalize (str/replace (name group) #"[-_]+" " ")))
 
 (defn- request-target
   [request body]
@@ -285,28 +293,52 @@
 
                 (= "session" (:scope target))
                 (conj {:scope "session" :target-id (:target-id target) :label (:label target)}))
-     :groups (into (cond-> [{:id "access"
-                             :title "Files and permissions"
-                             :toggles (scoped-policy/settings (lp/db-info) target)}]
-                     (not local?)
-                     (conj {:id "agent"
-                            :title "Agent"
-                            :toggles [(assoc (agent-name-setting) :scopes ["global"])]}))
-                   (map (fn [[[kind group] specs]]
-                          (if (= :extension kind)
-                            {:id (str "extension:" group)
-                             :title (str group)
-                             :extension (merge
-                                          {:name (str group) :origin "built_in" :status "loaded"}
-                                          (get states group))
-                             :toggles (mapv toggle-json (sort-by #(second (owners (:id %))) specs))}
-                            {:id (name group)
-                             :title (group-title group local?)
-                             ;; The machine name stands last, above the room actions.
-                             :toggles (cond-> (mapv toggle-json specs)
-                                        (and (= :council group) (not local?))
-                                        (conj (machine-name-setting)))})))
-                   grouped)}))
+     :groups
+     (let [vis
+           (into {}
+                 (keep (fn [[[kind group] specs]]
+                         (when (= :vis kind) [group specs])))
+                 grouped)
+
+           rows
+           #(mapv toggle-json (get vis %))
+
+           section-rows
+           (fn [id groups]
+             (case id
+               ;; The agent name stands first. The machine name follows the Council
+               ;; switches, above the room actions. Experimental switches stand last.
+               :general
+               (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
+                       (rows :council)
+                       (when-not local? [(machine-name-setting)])
+                       (rows :experimental))
+
+               :permissions
+               (concat (scoped-policy/settings (lp/db-info) target) (rows :sandbox))
+
+               (mapcat rows groups)))
+
+           sectioned
+           (set (mapcat last sections))]
+
+       (vec
+         (concat
+           (keep (fn [[id title groups]]
+                   (when-let [toggles (seq (section-rows id groups))]
+                     {:id (name id) :title (section-title id title local?) :toggles (vec toggles)}))
+                 sections)
+           (keep (fn [[[kind group] specs]]
+                   (cond (= :extension kind)
+                         {:id (str "extension:" group)
+                          :title (str group)
+                          :extension (merge {:name (str group) :origin "built_in" :status "loaded"}
+                                            (get states group))
+                          :toggles (mapv toggle-json (sort-by #(second (owners (:id %))) specs))}
+                         (not (sectioned group)) {:id (name group)
+                                                  :title (group-title group)
+                                                  :toggles (mapv toggle-json specs)}))
+                 grouped))))}))
 
 (defn- list-settings-handler
   "GET /v1/settings; typed catalog, provenance and a concurrency revision."

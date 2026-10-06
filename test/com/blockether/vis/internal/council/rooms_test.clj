@@ -376,32 +376,41 @@
 
 (defdescribe
   rooms-settings-group
-  (it "lists Council and its room settings in one Council group"
-      (with-room
-        (fn [{:keys [room-id]}]
-          (let [groups
-                (get (json/read-json (:body (#'settings-api/list-settings-handler {}))) "groups")
+  (it
+    "lists Council and its room settings in the General section"
+    (with-room
+      (fn [{:keys [room-id]}]
+        (let [groups
+              (get (json/read-json (:body (#'settings-api/list-settings-handler {}))) "groups")
 
-                council
-                (first (filter #(= "council" (get % "id")) groups))]
+              general
+              (first (filter #(= "general" (get % "id")) groups))
 
-            (expect (= "Council" (get council "title")))
-            (expect
-              (= {"council" "next_turn"
-                  "council_room" "next_call"
-                  "council_room_wake" "next_call"
-                  (rooms/access-id room-id) "next_call"
-                  rooms/machine-name-id "immediate"}
-                 (into {} (map (juxt #(get % "id") #(get % "applies"))) (get council "toggles"))))
-            (expect (= [rooms/machine-name-id "Laptop"]
-                       ((juxt #(get % "id") #(get % "value")) (last (get council "toggles")))))
-            (expect (= [council]
-                       (filter #(some #{"council"}
-                                      (map (fn [row]
-                                             (get row "id"))
-                                           (get % "toggles")))
-                               groups)))
-            (expect (not-any? #(= "council_rooms" (get % "id")) groups))))))
+              ids
+              ["council" "council_room" "council_room_wake" (rooms/access-id room-id)
+               rooms/machine-name-id]]
+
+          (expect (= "General" (get general "title")))
+          (expect (= {"council" "next_turn"
+                      "council_room" "next_call"
+                      "council_room_wake" "next_call"
+                      (rooms/access-id room-id) "next_call"
+                      rooms/machine-name-id "immediate"}
+                     (select-keys (into {}
+                                        (map (juxt #(get % "id") #(get % "applies")))
+                                        (get general "toggles"))
+                                  ids)))
+          ;; The machine name follows the Council switches; experimental switches stand last.
+          (expect (= [rooms/machine-name-id "Laptop"]
+                     ((juxt #(get % "id") #(get % "value"))
+                       (last (remove #(get % "is_experimental") (get general "toggles"))))))
+          (expect (= [general]
+                     (filter #(some #{"council"}
+                                    (map (fn [row]
+                                           (get row "id"))
+                                         (get % "toggles")))
+                             groups)))
+          (expect (not-any? #(= "council_rooms" (get % "id")) groups))))))
   (it "removes the access setting of a room that leaves the membership"
       (with-room (fn [{:keys [room-id]}]
                    (expect (some? (toggles/toggle-spec (rooms/access-id room-id))))

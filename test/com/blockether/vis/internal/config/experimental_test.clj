@@ -43,10 +43,15 @@
       (let [groups
             (get (json/read-json (:body (#'settings-api/list-settings-handler {}))) "groups")
 
+            general
+            (get (first (filter #(= "general" (get % "id")) groups)) "toggles")
+
             rows
-            (get (first (filter #(= "experimental" (get % "id")) groups)) "toggles")]
+            (filter #(get % "is_experimental") general)]
 
         (expect (= #{"subagents" "improve" "draft_backend"} (set (map #(get % "id") rows))))
+        ;; Experimental switches stand last in the General section.
+        (expect (= rows (take-last (count rows) general)))
         (expect (every? #(true? (get % "is_experimental")) rows))
         (expect (every? #(false? (get % "enabled")) (filter #(= "boolean" (get % "type")) rows)))
         (expect (= "off" (get (first (filter #(= "draft_backend" (get % "id")) rows)) "value"))))

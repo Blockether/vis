@@ -9060,7 +9060,7 @@
                                      ;; kill/start for config-file ones) with the
                                      ;; full manager one row below them.
                                      :mcp
-                                     (with-dialog-lock #(open-settings-modal! screen "MCP Servers"))
+                                     (with-dialog-lock #(open-settings-modal! screen "Tools"))
 
                                      :settings
                                      (do (with-dialog-lock #(open-settings-modal! screen))

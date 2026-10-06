@@ -803,16 +803,17 @@
             (first (filter #(str/includes? % text) lines)))]
 
       (expect (= [[:section "Agents" nil nil] [:registry-toggle "Subagents" nil nil]
-                  [:section "Extensions" nil nil] [:registry-toggle "foundation-mcp" nil nil]
+                  [:section "Tools" nil nil] [:subsection "Extensions" nil nil]
+                  [:registry-toggle "foundation-mcp" nil nil]
                   [:registry-toggle "vis-spel" "global" nil] [:subsection "Skills" nil 1]
                   [:registry-toggle "browser" nil 1]]
                  (mapv (juxt :type :label :tag :depth) rows)))
-      ;; The one action stands inside the Extensions header rule, not on a row of its own.
+      ;; The one action stands inside the Tools header rule, not on a row of its own.
       (expect (= "Reload" (:label (:button (nth rows 2)))))
       ;; The chevron after the name folds the section.
-      (expect (re-find #"── Extensions ▾ ─+  Reload  ──" (str (line "── Extensions"))))
-      ;; The Reload button in the Extensions header is not counted as a setting.
-      (expect (= [["Agents" 1] ["Extensions" 3]]
+      (expect (re-find #"── Tools ▾ ─+  Reload  ──" (str (line "── Tools"))))
+      ;; The Reload button in the Tools header is not counted as a setting.
+      (expect (= [["Agents" 1] ["Tools" 3]]
                  (mapv (juxt :label :count) (#'dlg/settings-toc rows 0))))
       ;; The choice row is the extension's own row, so its name shows once.
       (expect (= 1 (count (filter #(str/includes? % "foundation-mcp") lines))))
@@ -828,7 +829,7 @@
       (expect (= (long (str/index-of (line " browser") "●"))
                  (long (str/index-of (line " Skills ") "Skills"))))
       ;; A search for the whole skill name still finds the shorter row.
-      (expect (= ["Extensions" "vis-spel" "Skills" "browser"]
+      (expect (= ["Tools" "vis-spel" "Skills" "browser"]
                  (mapv :label (#'dlg/filter-settings-rows rows "vis-spel/browser"))))
       ;; A narrow pane drops the scope before it cuts a name.
       (let [narrow (str/split-lines (cap/frame-text (capture-settings rows [:esc] :cols 48)))]
@@ -902,7 +903,7 @@
                               [:down :esc])
 
             [y rule-x reload-x]
-            (text-row (cap/frame-text capture 0) "── Extensions" "Reload")
+            (text-row (cap/frame-text capture 0) "── Tools" "Reload")
 
             bg
             (fn [frame x]
@@ -917,7 +918,7 @@
   (it "runs Reload when you click the button, not the rest of the header"
       (let [[y rule-x reload-x]
             (text-row (cap/frame-text (capture-settings (#'dlg/extension-action-rows) [:esc]))
-                      "── Extensions"
+                      "── Tools"
                       "Reload")
 
             click
@@ -950,16 +951,16 @@
             (cap/frame-text (capture-settings (#'dlg/extension-action-rows) [:esc] :cols 48))
 
             [y]
-            (text-row frame "── Ext…" " Reload  ──")]
+            (text-row frame "── Too…" " Reload  ──")]
 
         (expect (some? y))))
   (it "places the button before two rule characters and cuts the section label first"
       (let [place #(#'dlg/settings-section-layout (first (#'dlg/extension-action-rows)) 0 %)]
-        ;; `── Extensions ─ ` + ` Reload ` + ` ──` takes 27 columns.
-        (expect (= {:label "Extensions" :button {:x 16 :end 24 :label "Reload"}} (place 27)))
-        (expect (= {:label "Ext…" :button {:x 10 :end 18 :label "Reload"}} (place 21)))
+        ;; `── Tools ─ ` + ` Reload ` + ` ──` takes 22 columns.
+        (expect (= {:label "Tools" :button {:x 11 :end 19 :label "Reload"}} (place 22)))
+        (expect (= {:label "To…" :button {:x 9 :end 17 :label "Reload"}} (place 20)))
         (expect (= {:label "…" :button {:x 7 :end 14 :label "Relo…"}} (place 17)))
-        (expect (= {:label "Extensions"} (place 12)))
+        (expect (= {:label "Tools"} (place 12)))
         (expect (= {:label "Planning"}
                    (#'dlg/settings-section-layout {:type :section :label "Planning"} 0 80)))))
   (it "asks for a Vis update when the gateway has no reload route"
