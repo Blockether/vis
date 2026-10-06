@@ -302,9 +302,12 @@
           (into {} (System/getenv))
 
           ;; A real ambient name the default mode must drop: not on the passthrough
-          ;; allowlist, not a pre-exec hijack name.
+          ;; allowlist, not a pre-exec hijack name, not dropped in every mode.
           outsider
-          (first (remove #(or (#'pj/env-passthrough? %) (#'pj/pre-exec-hijack? %)) (keys ambient)))
+          (first (remove #(or (#'pj/env-passthrough? %)
+                              (#'pj/pre-exec-hijack? %)
+                              (contains? @#'pj/ambient-env-drops %))
+                   (keys ambient)))
 
           policy
           {:roots-fn (constantly [])
@@ -330,6 +333,33 @@
                                       :inherit-host-env? true
                                       :env-values {"LD_PRELOAD" "/tmp/x.so" "PERL5OPT" "-Mevil"}})]
         (expect (empty? (filter #'pj/pre-exec-hijack? (keys env)))))))
+
+(defdescribe
+  ambient-node-options-stays-out-of-children
+  ;; Regression for a user report: the gateway inherited NODE_OPTIONS from the terminal
+  ;; that started it. The value named a `--require` preload in a temp folder, and the
+  ;; terminal tool deleted that file. Every Node command in the sandbox then failed.
+  (it "drops the ambient NODE_OPTIONS from unconfined and `inherit` children"
+      (let [drop-ambient
+            @#'pj/ambient-env
+
+            host
+            {"PATH" "/usr/bin" "NODE_OPTIONS" "--require=/gone/preload.cjs"}]
+
+        (with-redefs [pj/ambient-env (fn ([] (drop-ambient host)) ([env] (drop-ambient env)))]
+          (let [unconfined (pj/process-environment {:disabled? true})
+                inherited (pj/jailed-child-env {:roots-fn (constantly [])
+                                                :net-enabled? false
+                                                :inherit-host-env? true})]
+
+            (expect (= "/usr/bin" (get unconfined "PATH")))
+            (expect (not (contains? unconfined "NODE_OPTIONS")))
+            (expect (= "/usr/bin" (get inherited "PATH")))
+            (expect (not (contains? inherited "NODE_OPTIONS")))))))
+  (it "keeps the NODE_OPTIONS that the project declares"
+      (let [env (pj/process-environment {:disabled? true
+                                         :env-values {"NODE_OPTIONS" "--max-old-space-size=2048"}})]
+        (expect (= "--max-old-space-size=2048" (get env "NODE_OPTIONS"))))))
 
 (defdescribe
   keychain-denial-hint-explains-a-denied-lookup

@@ -301,7 +301,8 @@ environment Vis was started from.
 With the jail enabled, the parent process environment is excluded.
 `{env: NAME}` explicitly includes a variable, while `jail.environment: inherit`
 includes the full environment. `LD_*`, `DYLD_*`, `PERL*` and `BASH_ENV` are
-always refused.
+always refused. Child processes never inherit `NODE_OPTIONS` from the environment
+Vis was started from. Declare it under `environment:` if a project needs it.
 
 A shell call can add or override variables. Literal values are recorded
 in the transcript, so use a source reference for secrets:

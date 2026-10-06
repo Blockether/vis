@@ -451,6 +451,20 @@
        (or (contains? env-passthrough-names k)
            (boolean (some #(str/starts-with? k %) env-passthrough-prefixes)))))
 
+(def ^:private ambient-env-drops
+  "Names that no child inherits from the operator's ambient environment.
+   The gateway keeps the environment of the terminal that started it. A terminal
+   tool such as cmux can point `NODE_OPTIONS` at a `--require` preload in a temp
+   file and delete that file later. Every Node child then fails at startup. A
+   project that needs Node options declares `NODE_OPTIONS` under `environment:`
+   or in `.env`, and [[declared-env]] still applies it."
+  #{"NODE_OPTIONS"})
+
+(defn- ambient-env
+  "The operator's ambient environment without [[ambient-env-drops]]."
+  ([] (ambient-env (System/getenv)))
+  ([env] (apply dissoc (into {} env) ambient-env-drops)))
+
 (defn declared-env
   "The policy's RESOLVED project environment, as string pairs: the workspace's
    `.env`/`.env.local` with the operator's `environment:` declarations on top
@@ -482,7 +496,8 @@
    the operator's WHOLE ambient environment, secrets included: filesystem,
    network, exec and Mach confinement are unchanged, but ambient secrecy is
    given up on purpose. The [[pre-exec-hijack?]] scrub still applies — that one
-   is not confinement of the child, it is the jail's own installation.
+   is not confinement of the child, it is the jail's own installation. No mode
+   inherits [[ambient-env-drops]].
 
    Returns nil when the policy is not enforcing — the caller keeps the parent
    environment and merges [[child-env-additions]] instead (unjailed
@@ -495,7 +510,7 @@
                   (map identity)
                   (filter (fn [[k _]]
                             (env-passthrough? k))))
-                (System/getenv))
+                (ambient-env))
 
           ;; A name ONE call asked to unset is simply never built into the map —
           ;; a confined child's environment is assembled here from nothing, so
@@ -522,12 +537,13 @@
 (defn process-environment
   "Build the COMPLETE child environment for `policy`, then overlay trusted
    host-owned `extra`. Confined children start from the scrubbed allowlist;
-   disabled policies preserve the ambient environment and apply removals."
+   disabled policies preserve the ambient environment without
+   [[ambient-env-drops]] and apply removals."
   ([policy] (process-environment policy nil))
   ([policy extra]
    (let [^HashMap environment (if-let [full (jailed-child-env policy)]
                                 (HashMap. ^java.util.Map full)
-                                (doto (HashMap. ^java.util.Map (System/getenv))
+                                (doto (HashMap. ^java.util.Map (ambient-env))
                                   (.putAll ^java.util.Map (child-env-additions policy))))]
      (doseq [k (:env-removals policy)]
        (.remove environment ^String k))

@@ -183,6 +183,11 @@ refused in both modes because they could run before the jail is installed.
 When the jail is disabled, children inherit the host environment. Project
 values override it.
 
+Children never inherit `NODE_OPTIONS` from the environment that started Vis.
+Terminal tools can set it to a preload file that they delete later, and then
+every Node command fails. If your project needs Node options, declare
+`NODE_OPTIONS` under `environment:` or in `.env`.
+
 ## Network egress
 
 Jailed processes use a session-authenticated gateway proxy for HTTP, HTTPS and
