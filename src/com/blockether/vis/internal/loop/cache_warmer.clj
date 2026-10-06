@@ -102,7 +102,7 @@
   ([] (create {}))
   ([{:keys [clock schedule]}]
    (atom {:generation 0
-          :clock (or clock #(System/currentTimeMillis))
+          :clock (or clock util/now-ms)
           :schedule (or schedule schedule-on-executor)
           :pending-costs []})))
 
