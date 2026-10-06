@@ -11,7 +11,7 @@ import {
   type ListenerGroupReport,
   type PerfReport,
 } from '../lib/perf';
-import { MinusIcon } from './icons';
+import { DotIcon, MinusIcon } from './icons';
 import { Banner, Button } from './ui';
 
 const REFRESH_MS = 2_000;
@@ -254,7 +254,7 @@ export function PerfOverlay({
             </span>
           ) : (
             // Closed, the overlay is only a dot: the figures wait behind a click.
-            <span aria-hidden className="block size-2 bg-accent" />
+            <DotIcon className="size-2.5" />
           )}
         </Button>
         {open ? (

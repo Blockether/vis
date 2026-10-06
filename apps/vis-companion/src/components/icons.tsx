@@ -16,6 +16,7 @@ import {
   Check,
   ChevronRight,
   ChevronsUpDown,
+  Circle,
   CircleAlert,
   CircleCheck,
   CircleDashed,
@@ -297,6 +298,14 @@ export function StarIcon({ filled = false, className }: { filled?: boolean; clas
       className={classes(filled ? 'text-accent stroke-accent-edge' : 'stroke-current', className)}
     />
   );
+}
+
+/**
+ * A dot: one filled accent circle. The memory overlay is closed to this dot. The fill is
+ * explicit for native webviews, as on the filled favorite.
+ */
+export function DotIcon({ className }: { className?: string }) {
+  return <Mark icon={Circle} fill="currentColor" className={classes('text-accent', className)} />;
 }
 
 /** Which way a table is sorted, and that it can be sorted at all. */

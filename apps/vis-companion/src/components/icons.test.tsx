@@ -21,6 +21,7 @@ import {
   CopyIcon,
   DrawIcon,
   DownloadIcon,
+  DotIcon,
   DotsIcon,
   ImageIcon,
   MicIcon,
@@ -76,6 +77,7 @@ const ICONS = {
   CloseIcon: <CloseIcon />,
   CopyIcon: <CopyIcon />,
   DrawIcon: <DrawIcon />,
+  DotIcon: <DotIcon />,
   DotsIcon: <DotsIcon />,
   DownloadIcon: <DownloadIcon />,
   ImageIcon: <ImageIcon />,
@@ -279,6 +281,14 @@ describe('the icon set', () => {
   // that attribute, React dropped it, and the SVG painted its own default fill —
   // every outline mark shipped as a filled silhouette. A plain mark must carry
   // `fill="none"` on the element itself, exactly like the un-starred star does.
+  // User request: the memory overlay closes to a round dot, not a square.
+  it('paints the dot as one filled accent circle', () => {
+    const dot = renderToStaticMarkup(<DotIcon className="size-2.5" />);
+    expect(dot).toContain('fill="currentColor"');
+    expect(dot).toContain('text-accent');
+    expect(dot.match(/<circle/g)).toHaveLength(1);
+  });
+
   it('keeps every plain mark an outline: fill="none" on the svg element', () => {
     const plain = [
       <MicIcon key="mic" />,
