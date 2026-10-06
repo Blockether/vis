@@ -8209,8 +8209,8 @@
    {:id :mcp :label "MCP Servers"} {:id :settings :label "Settings"}
    {:id :session-settings :label "Session settings"} {:id :group-settings :label "Group settings"}
    {:id :project-settings :label "Project settings"} {:id :automations :label "Automations"}
-   ;; Only Claude adaptive thinking can show or omit its summary. No C-x letter is
-   ;; free, so the palette is the keyboard entry, and the footer shows the state.
+   ;; Only Claude adaptive thinking can show or omit its summary. C-x x and the
+   ;; footer chip also toggle it, and the chip shows the state.
    {:id :toggle-thinking-summary :label "Thinking Summary" :show-when :thinking-summary}
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}

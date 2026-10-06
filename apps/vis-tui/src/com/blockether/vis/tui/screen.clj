@@ -3881,8 +3881,8 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :header-help :header-agents :footer-goal :footer-reasoning :header-tasks
-    :header-search})
+  #{:copy-id :header-help :header-agents :footer-goal :footer-reasoning :footer-thinking
+    :header-tasks :header-search})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 
@@ -8268,6 +8268,9 @@
                                      :footer-reasoning
                                      (show-reasoning-picker!)
 
+                                     :footer-thinking
+                                     (state/dispatch [:toggle-thinking-summary])
+
                                      ;; "↓ latest" chip → re-arm FOLLOW + repaint
                                      ;; (the click twin of C-l / Ctrl+End).
                                      :jump-bottom
@@ -8578,6 +8581,9 @@
                                  :footer-reasoning
                                  (show-reasoning-picker!)
 
+                                 :footer-thinking
+                                 (state/dispatch [:toggle-thinking-summary])
+
                                  :jump-bottom
                                  (do (state/dispatch [:scroll-to-bottom])
                                      (state/dispatch [:bump-render-version]))
@@ -8742,6 +8748,9 @@
 
                                  :footer-reasoning
                                  (show-reasoning-picker!)
+
+                                 :footer-thinking
+                                 (state/dispatch [:toggle-thinking-summary])
 
                                  ;; "↓ latest" chip → re-arm FOLLOW + repaint. MUST be
                                  ;; here on CLICK_DOWN (the gesture's first event swallows

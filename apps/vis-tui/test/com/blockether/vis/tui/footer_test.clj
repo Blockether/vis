@@ -683,8 +683,9 @@
                                                    (footer/draw-footer! g db 1 cols 0))})]
 
               (expect (nil? (:error capture)))
-              ;; The reasoning chip is a button, so its padding adds a space before the hint.
-              (expect (= (str "reasoning: deep  (C-x r)  /  verbosity: low (C-x l)  /  "
+              ;; The reasoning chip is a button that carries its own shortcut inside;
+              ;; its trailing pad adds one space before the separator.
+              (expect (= (str "reasoning: deep (C-x r)   /  verbosity: low (C-x l)  /  "
                               "speed: fast (C-x q)")
                          (str/trim (nth (str/split-lines (cap/frame-text capture)) 1)))))))))
   (it "shows speed and its shortcut only for an active Codex session"
@@ -784,16 +785,20 @@
                                                     "verbosity_style" nil
                                                     "thinking_display_style" nil}]}])]
         (doseq [[provider model session-settings expected]
-                [["anthropic" "claude-opus-5" nil ["thinking: summarized"]]
-                 ["anthropic" "claude-opus-5" {:thinking-summary false} ["thinking: omitted"]]
-                 ["zai-coding-plan" "glm-5.2" nil []]]]
+                [["anthropic" "claude-opus-5" nil [" thinking: summarized (C-x x) "]]
+                 ["anthropic" "claude-opus-5" {:thinking-summary false}
+                  [" thinking: omitted (C-x x) "]] ["zai-coding-plan" "glm-5.2" nil []]]]
           (let [db {:messages []
                     :session {:id "s1"}
                     :session-settings {"s1" session-settings}
                     :session-model-pref {:provider provider :model model}}
                 texts (mapv :text (#'footer/build-segments db 0))]
 
-            (expect (= expected (filterv #(str/starts-with? % "thinking: ") texts)))))))
+            (expect (= expected (filterv #(str/starts-with? % " thinking: ") texts)))
+            (expect (= (if (seq expected) [:footer-thinking] [])
+                       (->> (#'footer/build-segments db 0)
+                            (filter #(str/starts-with? (str (:text %)) " thinking: "))
+                            (mapv :kind))))))))
   (it "reads capability off the SESSION's model, not the global router default"
       ;; Regression: opening a GitHub Copilot session offered no way to change
       ;; reasoning, because the footer asked the router's DEFAULT model instead
@@ -814,8 +819,8 @@
                                                                    :model "gpt-5.6-sol"}}
                                              0)
                              (mapv :text))]
-              (expect (= [" reasoning: deep " "verbosity: medium"]
-                         (filterv #{" reasoning: deep " "verbosity: medium"} texts))))))))
+              (expect (= [" reasoning: deep (C-x r) " "verbosity: medium"]
+                         (filterv #{" reasoning: deep (C-x r) " "verbosity: medium"} texts))))))))
   (it "resolves the SESSION's model, falling back to the router root without a pick"
       ;; The plumbing under the chips: the same GitHub Copilot provider serves an
       ;; Anthropic wire for Claude and a Responses wire for GPT, so asking the

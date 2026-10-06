@@ -604,18 +604,11 @@
       ;; Response controls read reasoning → verbosity → thinking → fast, matching
       ;; Companion.
       reasoning?
-      (conj {:text (str " reasoning: " reasoning-level " ")
+      ;; The chord sits INSIDE the button, as on the model chip.
+      (conj {:text (str " reasoning: " reasoning-level " (" (keymap/label-for :pick-reasoning) ") ")
              :kind :footer-reasoning
              :region :left
              :priority 3})
-
-      reasoning?
-      (conj {:text (str "(" (keymap/label-for :pick-reasoning) ")")
-             :join-left? true
-             :fg t/footer-fg-muted
-             :bold? false
-             :region :left
-             :priority 5})
 
       verbosity?
       (conj {:text (str "verbosity: " (name verbosity))
@@ -633,9 +626,12 @@
              :priority 5})
 
       thinking-summary?
-      (conj {:text (str "thinking: " (if thinking-summary "summarized" "omitted"))
-             :fg t/footer-fg-muted
-             :bold? false
+      (conj {:text (str " thinking: "
+                        (if thinking-summary "summarized" "omitted")
+                        " ("
+                        (keymap/label-for :toggle-thinking-summary)
+                        ") ")
+             :kind :footer-thinking
              :region :left
              :priority 3})
 

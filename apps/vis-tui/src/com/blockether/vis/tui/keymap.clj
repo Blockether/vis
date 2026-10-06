@@ -94,6 +94,13 @@
    {:action :pick-reasoning :key \r :label "reasoning" :group "Model"}
    {:action :toggle-codex-fast :key \q :label "fast mode" :group "Model"}
    {:action :cycle-verbosity :key \l :label "length" :group "Model" :show-when :never}
+   ;; `x` = show or omit the Claude thinking summary. Palette-only: the Model band
+   ;; keeps four rows, and the footer chip carries the chord.
+   {:action :toggle-thinking-summary
+    :key \x
+    :label "thinking summary"
+    :group "Model"
+    :show-when :never}
    {:action :search-open :key \f :label "search" :group "Buffer" :show-when :never}
    {:action :pick-file :key \a :label "attach file" :group "Tools"}
    {:action :focus-attachments

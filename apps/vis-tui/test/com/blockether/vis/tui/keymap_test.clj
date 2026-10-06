@@ -31,9 +31,11 @@
                  (expect (= :pick-reasoning (keymap/prefix-action-for \r)))
                  (expect (= :toggle-codex-fast (keymap/prefix-action-for \q)))
                  (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
+                 (expect (= :toggle-thinking-summary (keymap/prefix-action-for \x)))
                  ;; `d` files a session under one of its project's groups (BLO-167).
                  (expect (= :session-group (keymap/prefix-action-for \d)))
-                 (expect (nil? (keymap/prefix-action-for \x)))
+                 ;; `p` opens the palette in `input`, so it binds no verb.
+                 (expect (nil? (keymap/prefix-action-for \p)))
                  ;; `e` is the Improve register; it only ACTS when a mode is chosen.
                  (expect (= :improve (keymap/prefix-action-for \e)))
                  (expect (= :pick-model (keymap/prefix-action-for \c)))
@@ -71,6 +73,7 @@
                  (expect (= "C-x r" (keymap/label-for :pick-reasoning)))
                  (expect (= "C-x q" (keymap/label-for :toggle-codex-fast)))
                  (expect (= "C-x l" (keymap/label-for :cycle-verbosity)))
+                 (expect (= "C-x x" (keymap/label-for :toggle-thinking-summary)))
                  (expect (= "C-x f" (keymap/label-for :search-open)))
                  (expect (= "C-x a" (keymap/label-for :pick-file)))
                  (expect (= "C-x v" (keymap/label-for :toggle-voice-recording)))
