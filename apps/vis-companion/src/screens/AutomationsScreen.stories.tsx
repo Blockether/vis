@@ -1,9 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent } from 'storybook/test';
 import { useState } from 'react';
-import { AutomationsWorkspace } from './AutomationsScreen';
-import { DialogFrame } from '../components/ui';
+import { AutomationsPanel } from './settings/AutomationsPanel';
 import { storyAutomationsClient } from '../dev/story-data';
+import { OpenBands } from '../dev/OpenBands';
 
 function Workspace({
   empty = false,
@@ -14,17 +14,26 @@ function Workspace({
 }) {
   const [client] = useState(() => {
     const fixture = storyAutomationsClient({ empty });
-    if (failed)
-      fixture.automations = async () => {
-        throw new Error('Machine unavailable. Retry when it reconnects.');
+    if (failed) {
+      // The band reads the list once to show itself; every later read fails.
+      const list = fixture.automations.bind(fixture);
+      let isShown = false;
+      fixture.automations = async (signal) => {
+        if (isShown) throw new Error('Machine unavailable. Retry when it reconnects.');
+        isShown = true;
+        return list(signal);
       };
+    }
     return fixture;
   });
   return (
-    <div className="flex h-dvh flex-col bg-ink sm:p-4">
-      <DialogFrame title="Automations" subtitle="Prompts that run on a schedule or a webhook">
-        <AutomationsWorkspace client={client} gatewayUrl="https://gateway.example.com" />
-      </DialogFrame>
+    // The shipping Settings band, open as a machine shows it in Settings.
+    <div className="min-h-dvh bg-ink sm:p-4">
+      <div className="max-w-2xl border border-dialog-edge bg-panel">
+        <OpenBands>
+          <AutomationsPanel client={client} gatewayUrl="https://gateway.example.com" />
+        </OpenBands>
+      </div>
     </div>
   );
 }
@@ -39,15 +48,14 @@ type Story = StoryObj<typeof meta>;
 
 export const List: Story = {
   play: async ({ canvas }) => {
-    await expect(await canvas.findByText('2 automations')).toBeVisible();
-    await expect(canvas.getByText('Morning summary')).toBeVisible();
+    await expect(await canvas.findByText('Morning summary')).toBeVisible();
   },
 };
 
 export const Empty: Story = {
   args: { empty: true },
   play: async ({ canvas }) => {
-    await expect(await canvas.findByText('No automations on this machine')).toBeVisible();
+    await expect(await canvas.findByText('No automations on this machine.')).toBeVisible();
   },
 };
 

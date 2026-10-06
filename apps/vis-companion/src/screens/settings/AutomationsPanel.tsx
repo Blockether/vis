@@ -1,6 +1,8 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import type { AutomationsClient } from '../AutomationsScreen';
-import { SettingsPanel } from './SettingsLayout';
+import { lazy, Suspense, useContext, useEffect, useState } from 'react';
+import { IconButton } from '../../components/ui';
+import { MinusIcon, PlusIcon } from '../../components/icons';
+import type { AutomationsClient, AutomationsForm } from '../AutomationsScreen';
+import { SettingsBandsOpen, SettingsPanel } from './SettingsLayout';
 
 const AutomationsWorkspace = lazy(async () => ({
   default: (await import('../AutomationsScreen')).AutomationsWorkspace,
@@ -20,8 +22,12 @@ export function AutomationsPanel({
   /** The address this app uses for the machine; it completes the webhook path. */
   gatewayUrl?: string;
 }) {
+  const bandsOpen = useContext(SettingsBandsOpen);
   const [isAvailable, setIsAvailable] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(bandsOpen);
+  // The band owns the form, so its header + opens it like the + of the other bands.
+  const [form, setForm] = useState<AutomationsForm>(null);
+  const isCreating = form?.id === null;
   useEffect(() => {
     const controller = new AbortController();
     client
@@ -33,6 +39,7 @@ export function AutomationsPanel({
     return () => controller.abort();
   }, [client]);
   if (!isAvailable) return null;
+  const createLabel = isCreating ? 'Close the new automation' : 'New automation';
   return (
     <SettingsPanel
       title="Automations"
@@ -41,9 +48,26 @@ export function AutomationsPanel({
         onToggle: () => setIsOpen((open) => !open),
         label: `${isOpen ? 'Hide' : 'Show'} automations`,
       }}
+      action={
+        <IconButton
+          variant="quiet"
+          align="trailing"
+          label={createLabel}
+          title={createLabel}
+          aria-expanded={isCreating}
+          onClick={() => setForm(isCreating ? null : { id: null })}
+        >
+          {isCreating ? <MinusIcon className="size-4" /> : <PlusIcon className="size-4" />}
+        </IconButton>
+      }
     >
       <Suspense fallback={null}>
-        <AutomationsWorkspace client={client} gatewayUrl={gatewayUrl} />
+        <AutomationsWorkspace
+          client={client}
+          gatewayUrl={gatewayUrl}
+          form={form}
+          onForm={setForm}
+        />
       </Suspense>
     </SettingsPanel>
   );

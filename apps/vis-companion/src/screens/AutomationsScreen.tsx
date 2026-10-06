@@ -18,7 +18,7 @@ import {
   type AutomationSecret,
   type AutomationSecretKind,
 } from '../lib/automations';
-import { Banner, Button, CopyChip, ListRow } from '../components/ui';
+import { Banner, Button, CopyChip, ListRow, Text } from '../components/ui';
 import {
   AutomationsIcon,
   CircleAlertIcon,
@@ -45,16 +45,21 @@ export type AutomationsClient = Pick<
 const message = (error: unknown) =>
   error instanceof Error ? error.message : 'Automations could not complete this request.';
 
-const countLabel = (total: number) => `${total} ${total === 1 ? 'automation' : 'automations'}`;
+/** The open form: a null id creates an automation. The settings band owns it. */
+export type AutomationsForm = { id: string | null } | null;
 
 /** Production workflow; stories and tests replace only the authenticated gateway boundary. */
 export function AutomationsWorkspace({
   client,
   gatewayUrl,
+  form,
+  onForm,
 }: {
   client: AutomationsClient;
   /** The address this app uses for the machine; it completes the webhook path. */
   gatewayUrl?: string;
+  form: AutomationsForm;
+  onForm: (form: AutomationsForm) => void;
 }) {
   const [list, setList] = useState<AutomationList | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -62,8 +67,6 @@ export function AutomationsWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  /** The open form: a null id creates an automation. */
-  const [form, setForm] = useState<{ id: string | null } | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -104,7 +107,7 @@ export function AutomationsWorkspace({
     ? (list?.automations.find((item) => item.id === form.id) ?? null)
     : null;
   const edit = (id: string | null) => {
-    setForm({ id });
+    onForm({ id });
     setError(null);
     setNotice(null);
   };
@@ -124,13 +127,13 @@ export function AutomationsWorkspace({
         const changes = automationPatch(draft, editing);
         const isChanged = Object.keys(changes).length > 0;
         if (isChanged) keep(await client.updateAutomation(editing.id, changes));
-        setForm(null);
+        onForm(null);
         setNotice(isChanged ? 'Automation saved.' : 'No changes to save.');
         if (!isChanged) return;
       } else {
         const created = await client.createAutomation(automationInput(draft));
         keep(created);
-        setForm(null);
+        onForm(null);
         setSelectedId(created.id);
         setNotice(
           created.webhook
@@ -143,22 +146,6 @@ export function AutomationsWorkspace({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-dialog-edge px-3 py-3">
-        <span className="flex min-w-0 items-center gap-2 font-mono text-ui text-dialog-hint">
-          <AutomationsIcon />
-          {list ? countLabel(list.automations.length) : 'Loading automations…'}
-        </span>
-        <span className="flex flex-wrap items-center gap-3">
-          {!form && (
-            <Button disabled={busy} onClick={() => edit(null)}>
-              New automation
-            </Button>
-          )}
-          <Button variant="secondary" disabled={busy} onClick={refresh}>
-            Refresh
-          </Button>
-        </span>
-      </div>
       {error && (
         <div className="px-3 pt-3">
           <Banner kind="err">{error}</Banner>
@@ -175,7 +162,7 @@ export function AutomationsWorkspace({
           automation={editing}
           busy={busy}
           onCancel={() => {
-            setForm(null);
+            onForm(null);
             setError(null);
           }}
           onSave={save}
@@ -202,13 +189,9 @@ export function AutomationsWorkspace({
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto" aria-busy={!list && !error}>
           {list?.automations.length === 0 && (
-            <div className="space-y-2 p-4 font-mono text-body">
-              <p className="font-bold">No automations on this machine</p>
-              <p className="text-dialog-hint">
-                Select New automation, or ask Vis in a chat. For example: “Every weekday at 9:00,
-                summarize the new issues.”
-              </p>
-            </div>
+            <p className="py-4 text-center">
+              <Text variant="description">No automations on this machine.</Text>
+            </p>
           )}
           {list?.automations.map((automation) => (
             <div key={automation.id} className="border-b border-dialog-edge">

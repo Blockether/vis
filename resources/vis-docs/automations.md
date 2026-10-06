@@ -138,8 +138,8 @@ later, ask again, for example `Move the morning review list to 7:30.` The tool i
 while automations are on. A run that an automation started cannot create, change or delete
 automations.
 
-You can also create an automation in the app. Open **Settings**, open the row of the machine and
-open its **Automations** band. Select **New automation**. The app asks one question at a time. It
+You can also create an automation in the app. Open **Settings** and open the row of the machine.
+Select **+** in the header of its **Automations** band. The app asks one question at a time. It
 asks what starts the automation, when it runs, what Vis does, where it runs and how Vis answers.
 Check the summary on the **Review** step, then select **Create automation**.
 
@@ -161,7 +161,7 @@ webhook trigger also shows **Create webhook secret**. An automation with a callb
 In the app, open **Settings**, open the row of the machine and open its **Automations** band. The
 band shows only when the machine answers the automations request. Select an automation. The app
 shows its triggers, next run, target, delivery, webhook address and recent runs. It has buttons for
-the same actions. **New automation** and **Edit** open the steps from [Create an
+the same actions. The **+** of the band and **Edit** open the steps from [Create an
 automation](#create-an-automation).
 
 **Run now** starts a manual run at once. **Pause** stops the triggers until you select **Resume**.

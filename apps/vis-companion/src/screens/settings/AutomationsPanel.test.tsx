@@ -22,6 +22,19 @@ describe('Automations band in machine settings', () => {
     expect(await screen.findByRole('button', { name: 'Show automations' })).toBeVisible();
   });
 
+  // User report: the band repeated its name in a count line with two text buttons.
+  // It now adds an automation with the same header + as the other bands.
+  it('starts a new automation from the + of the closed band', async () => {
+    render(<AutomationsPanel client={storyAutomationsClient({ empty: true })} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'New automation' }));
+    expect(screen.getByRole('heading', { name: 'New automation' })).toBeVisible();
+    expect(screen.queryByText('0 automations')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close the new automation' }));
+    expect(screen.queryByRole('heading', { name: 'New automation' })).toBeNull();
+    expect(await screen.findByText('No automations on this machine.')).toBeVisible();
+  });
+
   it('does not invent the band for an unavailable or older machine', async () => {
     const client = storyAutomationsClient();
     const read = vi.spyOn(client, 'automations').mockRejectedValue(new Error('Not found'));

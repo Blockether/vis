@@ -1,16 +1,20 @@
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { AutomationsWorkspace } from './AutomationsScreen';
+import { AutomationsPanel } from './settings/AutomationsPanel';
 import { storyAutomationsClient } from '../dev/story-data';
+import { renderOpenBands } from '../test-settings';
 
+/** The shipping Settings band, open; its header + starts a new automation. */
+const renderBand = (client = storyAutomationsClient(), gatewayUrl?: string) =>
+  renderOpenBands(<AutomationsPanel client={client} gatewayUrl={gatewayUrl} />);
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
 /** A form field by the start of its label; the label also holds the hint. */
 const field = (name: RegExp) => screen.getByRole('textbox', { name });
 const type = (name: RegExp, value: string) => fireEvent.change(field(name), { target: { value } });
 
 async function openAutomation(name: string, client = storyAutomationsClient()) {
-  render(<AutomationsWorkspace client={client} gatewayUrl="http://gateway.example.com/" />);
+  renderBand(client, 'http://gateway.example.com/');
   fireEvent.click(await screen.findByText(name));
   expect(await screen.findByRole('button', { name: 'Back to automations' })).toBeEnabled();
   return client;
@@ -18,17 +22,15 @@ async function openAutomation(name: string, client = storyAutomationsClient()) {
 
 describe('Automations workspace', () => {
   it('lists automations with their state and last result', async () => {
-    render(<AutomationsWorkspace client={storyAutomationsClient()} />);
-    expect(await screen.findByText('2 automations')).toBeVisible();
-    expect(screen.getByText('Morning summary')).toBeVisible();
+    renderBand();
+    expect(await screen.findByText('Morning summary')).toBeVisible();
     expect(screen.getByText('Paused · Webhook · GitHub · Last failed')).toBeVisible();
     expect(screen.queryByText(/Automations are off/)).toBeNull();
   });
 
   it('shows how to create the first automation without a feature switch', async () => {
-    render(<AutomationsWorkspace client={storyAutomationsClient({ empty: true })} />);
-    expect(await screen.findByText('No automations on this machine')).toBeVisible();
-    expect(screen.getByText('0 automations')).toBeVisible();
+    renderBand(storyAutomationsClient({ empty: true }));
+    expect(await screen.findByText('No automations on this machine.')).toBeVisible();
     expect(screen.queryByText(/Automations are off/)).toBeNull();
     expect(screen.getByRole('button', { name: 'New automation' })).toBeEnabled();
   });
@@ -93,27 +95,30 @@ describe('Automations workspace', () => {
     click('Delete automation');
     expect(await screen.findByText('Automation deleted.')).toBeVisible();
     expect(remove).toHaveBeenCalledWith('auto-standup');
-    expect(await screen.findByText('1 automation')).toBeVisible();
+    expect(await screen.findByText('Review new pull requests')).toBeVisible();
     expect(screen.queryByText('Morning summary')).toBeNull();
   });
 
   it('keeps a failed request visible and loads the list again on retry', async () => {
     const client = storyAutomationsClient();
+    // The band reads the list first to show itself; the workspace read fails.
+    const list = client.automations.bind(client);
     const read = vi
       .spyOn(client, 'automations')
+      .mockImplementationOnce(list)
       .mockRejectedValueOnce(new Error('Machine unavailable.'));
-    render(<AutomationsWorkspace client={client} />);
+    renderBand(client);
     expect(await screen.findByText('Machine unavailable.')).toBeVisible();
     click('Retry');
-    expect(await screen.findByText('2 automations')).toBeVisible();
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText('Morning summary')).toBeVisible();
+    expect(read).toHaveBeenCalledTimes(3);
   });
 
   it('creates an automation step by step and opens it', async () => {
     const client = storyAutomationsClient();
     const create = vi.spyOn(client, 'createAutomation');
-    render(<AutomationsWorkspace client={client} />);
-    expect(await screen.findByText('2 automations')).toBeVisible();
+    renderBand(client);
+    expect(await screen.findByText('Morning summary')).toBeVisible();
     click('New automation');
     expect(screen.getByRole('heading', { name: 'New automation' })).toBeVisible();
     expect(screen.getByText('What starts this automation?')).toBeVisible();
@@ -150,12 +155,14 @@ describe('Automations workspace', () => {
     });
     expect(screen.getByRole('heading', { name: 'Nightly check' })).toBeVisible();
     expect(screen.getByText('Every day')).toBeVisible();
-    expect(screen.getByText('3 automations')).toBeVisible();
+    click('Back to automations');
+    expect(await screen.findByText('Nightly check')).toBeVisible();
+    expect(screen.getByText('Morning summary')).toBeVisible();
   });
 
   it('asks for the webhook signature after a webhook start', async () => {
-    render(<AutomationsWorkspace client={storyAutomationsClient()} />);
-    expect(await screen.findByText('2 automations')).toBeVisible();
+    renderBand();
+    expect(await screen.findByText('Morning summary')).toBeVisible();
     click('New automation');
     fireEvent.click(screen.getByRole('button', { name: /^Run when a service sends an event/ }));
     expect(screen.getByText('Which webhook starts it?')).toBeVisible();
@@ -169,8 +176,8 @@ describe('Automations workspace', () => {
   it('jumps to the step of a problem when you create the automation', async () => {
     const client = storyAutomationsClient();
     const create = vi.spyOn(client, 'createAutomation');
-    render(<AutomationsWorkspace client={client} />);
-    expect(await screen.findByText('2 automations')).toBeVisible();
+    renderBand(client);
+    expect(await screen.findByText('Morning summary')).toBeVisible();
     click('New automation');
     fireEvent.click(screen.getByRole('button', { name: /^Repeat at an interval/ }));
     click('Next');
@@ -194,8 +201,8 @@ describe('Automations workspace', () => {
     vi.spyOn(client, 'createAutomation').mockRejectedValueOnce(
       new Error('An automation store holds at most 256 automations'),
     );
-    render(<AutomationsWorkspace client={client} />);
-    expect(await screen.findByText('2 automations')).toBeVisible();
+    renderBand(client);
+    expect(await screen.findByText('Morning summary')).toBeVisible();
     click('New automation');
     fireEvent.click(screen.getByRole('button', { name: /^Repeat at an interval/ }));
     click('Next');
@@ -213,12 +220,12 @@ describe('Automations workspace', () => {
     click('Cancel');
     expect(screen.queryByRole('heading', { name: 'New automation' })).toBeNull();
     expect(screen.queryByText(/holds at most 256/)).toBeNull();
-    expect(screen.getByText('2 automations')).toBeVisible();
+    expect(screen.getByText('Morning summary')).toBeVisible();
   });
 
   it('adds and removes triggers', async () => {
-    render(<AutomationsWorkspace client={storyAutomationsClient()} />);
-    expect(await screen.findByText('2 automations')).toBeVisible();
+    renderBand();
+    expect(await screen.findByText('Morning summary')).toBeVisible();
     click('New automation');
     fireEvent.click(screen.getByRole('button', { name: /^Run at set times/ }));
     expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();
