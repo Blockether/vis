@@ -162,6 +162,7 @@ it('closes the actual provider UI and refreshes the same remote gateway after a 
     cachedRouter: () => [],
     router: vi.fn().mockResolvedValue([]),
     onProviderLimits: () => () => {},
+    setting: vi.fn().mockResolvedValue({ id: 'simplified_thinking_modes', type: 'boolean', enabled: false }),
     startProviderAuth: vi.fn().mockResolvedValue({ ...flow, provider_id: provider.id }),
     completeProviderAuth: vi.fn().mockResolvedValue({ status: 'ok' }),
     pollProviderAuth: vi.fn().mockResolvedValue({ status: 'pending' }),

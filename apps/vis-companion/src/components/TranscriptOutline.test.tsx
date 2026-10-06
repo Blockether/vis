@@ -144,7 +144,7 @@ describe('TranscriptOutline rail on a narrow screen', () => {
     const rail = screen.getByRole('button', { name: 'Jump to a message' });
     const active = await waitFor(() => {
       const line = rail.querySelector('[data-active]');
-      expect(line).not.toBeNull();
+      expect(line).toBeInstanceOf(HTMLElement);
       return line;
     });
     expect(active).toHaveClass('w-5');

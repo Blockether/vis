@@ -727,7 +727,9 @@
           (expect (true? (get-in head [:meta :collapsed?])))))
     (it "opens to the joined result without listing its calls"
         (let [shown (entries [receipt] :all)]
-          (expect (= ["command"] (map #(get-in % [:meta :item-id]) (heads shown))))
+          ;; The Output section is its own disclosure row; the start and wait calls are not rows.
+          (expect (= ["activity:command" "activity:command:section:0"]
+                     (map #(get-in % [:meta :node-id]) (heads shown))))
           (expect (= 1 (count (re-seq #"Command finished" (text shown)))))
           (expect (= 1 (count (re-seq #"CURRENT_SHELL_RESULT" (text shown)))))
           (doseq [call ["Call history" "Started command" "Waited for command" "Running command"]]

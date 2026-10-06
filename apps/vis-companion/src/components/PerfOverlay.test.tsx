@@ -305,7 +305,7 @@ describe('memory overlay', () => {
     });
     const host = document.getElementById('vis-perf');
     try {
-      expect(host).not.toBeNull();
+      expect(host).toBeInstanceOf(HTMLElement);
       const classes = host!.className.split(' ');
       expect(classes).toEqual(expect.arrayContaining(['fixed', 'inset-0', 'items-center', 'justify-end']));
       expect(host!.className).not.toMatch(/(^| )(top|right)-/);

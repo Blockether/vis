@@ -112,7 +112,7 @@
   ;; Regression for #320: reverse video turned each span's own ink into its background,
   ;; so the selected session showed several shades instead of one block.
   (it
-    "paints one muted background over both lines, text and padding, without a cursor glyph"
+    "paints one muted background over the whole line, text and padding, without a cursor glyph"
     (let [entry
           {:modified "Today"
            :status "Idle"
@@ -131,10 +131,10 @@
           (rgb (#'dlg/navigator-selection-bg))
 
           selected
-          (mapcat #(subvec (nth frame %) 2 62) [4 5])
+          (subvec (nth frame 4) 2 62)
 
           unselected
-          (mapcat #(subvec (nth frame %) 2 62) [7 8])]
+          (subvec (nth frame 7) 2 62)]
 
       (expect (not= (rgb t/dialog-bg) selection))
       (expect (= (map :ch unselected) (map :ch selected)))

@@ -28,6 +28,7 @@ function clientFor(started = flow) {
     cachedRouter: () => [],
     router: vi.fn().mockResolvedValue([]),
     onProviderLimits: () => () => {},
+    setting: vi.fn().mockResolvedValue({ id: 'simplified_thinking_modes', type: 'boolean', enabled: false }),
     startProviderAuth: vi.fn().mockResolvedValue(started),
     pollProviderAuth: vi.fn().mockResolvedValue({ status: 'ok' }),
     completeProviderAuth: vi.fn().mockResolvedValue({ status: 'ok' }),
@@ -51,6 +52,7 @@ it('starts provider sign-in on a paired HTTP gateway without another consent dia
   const client = new GatewayClient({ url: 'http://10.0.0.5:7890', token: 'test-paired-token' });
   vi.spyOn(client, 'cachedRouter').mockReturnValue([]);
   vi.spyOn(client, 'router').mockResolvedValue([]);
+  vi.spyOn(client, 'setting').mockRejectedValue(new Error('No such setting'));
   const { result } = renderHook(() => useProviderAuth(client));
   await act(async () => result.current.signIn(provider));
   expect(confirm).not.toHaveBeenCalled();
