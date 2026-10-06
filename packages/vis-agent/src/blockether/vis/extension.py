@@ -833,6 +833,8 @@ class Setting(Generic[_SettingValue]):
     in its extension's own settings section. `value()` reads the current callback's
     response snapshot. Its type follows `default`: `bool` for a boolean setting, `str`
     for a choice setting. Outside Vis, it returns the declared default.
+    `parent` names another setting of the same section. Settings shows this setting
+    under that setting. Settings can nest at any depth.
     """
 
     id: str
@@ -842,6 +844,7 @@ class Setting(Generic[_SettingValue]):
     choices: Sequence[str] = ()
     scopes: Sequence[str] | None = None
     description: str | None = None
+    parent: str | None = None
 
     def __post_init__(self):
         for name, value in (("scopes", self.scopes), ("choices", self.choices)):
@@ -877,6 +880,8 @@ class Setting(Generic[_SettingValue]):
             spec["choices"] = list(self.choices)
         if self.description is not None:
             spec["description"] = self.description
+        if self.parent is not None:
+            spec["parent"] = self.parent
         return spec
 
     def value(self) -> _SettingValue:

@@ -57,6 +57,17 @@ def test_enum_and_semantics():
         vis.Setting(id="test_mode", label="Test mode", default="on")
 
 
+def test_parent_nests_a_setting():
+    parent = vis.Setting(id="test_feature", label="Test feature", default=True)
+    child = vis.Setting(
+        id="test_detail", label="Test detail", default=False, parent="test_feature"
+    )
+    assert "parent" not in parent._spec()
+    assert child._spec()["parent"] == "test_feature"
+    with pytest.raises(ValueError):
+        vis.Setting(id="test_detail", label="Test detail", default=False, parent=" ")
+
+
 def test_application_bridge_rejects_host_only_settings_before_connecting():
     declaration = vis.Extension(
         name="Settings test",

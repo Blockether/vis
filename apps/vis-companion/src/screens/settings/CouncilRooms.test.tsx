@@ -48,14 +48,15 @@ const LINK = `https://gateway.example.com/rooms/join#invite=${'a'.repeat(43)}`;
 const TRUST_NOTE = 'This machine does not use this relay yet. Join only if you trust its operator.';
 
 describe('Council room Settings', () => {
-  it('stands inside the General band of machine Settings, under the machine name', async () => {
+  it('stands under the Council switch of machine Settings, after the machine name', async () => {
     vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
     vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
       revision: 'council-1',
       groups: [{ id: 'general', title: 'General', toggles: [
-        { id: 'council', label: 'Council', type: 'boolean', enabled: true },
-        { id: 'council_machine_name', label: 'Machine name', type: 'string', value: 'Workstation', max_length: 80,
-          editor: 'text', scopes: ['global'] },
+        { id: 'council', label: 'Council', type: 'boolean', enabled: true, children: [
+          { id: 'council_machine_name', label: 'Machine name', type: 'string', value: 'Workstation', max_length: 80,
+            editor: 'text', scopes: ['global'], parent: 'council' },
+        ] },
       ] }],
     });
     vi.spyOn(GatewayClient.prototype, 'rooms').mockResolvedValue(NOT_CONNECTED);
@@ -71,6 +72,10 @@ describe('Council room Settings', () => {
     expect(within(band).getByRole('switch', { name: 'Council: on' })).toBeVisible();
     expect(within(band).getByRole('textbox', { name: 'Machine name' })).toHaveValue('Workstation');
     expect(screen.queryByRole('heading', { name: 'Council rooms' })).toBeNull();
+    // The rows under Council stand one step in: the machine name, then the Rooms panel.
+    const nested = within(band).getByRole('textbox', { name: 'Machine name' }).closest('.ps-3') as HTMLElement;
+    expect(within(nested).getByText('Not connected')).toBeVisible();
+    expect(within(nested).queryByRole('switch', { name: 'Council: on' })).toBeNull();
     fireEvent.click(within(band).getByRole('button', { name: 'Accept invitation' }));
     fireEvent.change(within(band).getByLabelText('Room invite link'), { target: { value: LINK } });
     fireEvent.click(within(band).getByRole('button', { name: 'Review invitation' }));

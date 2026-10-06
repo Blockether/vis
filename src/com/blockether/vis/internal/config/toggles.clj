@@ -100,8 +100,8 @@
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
-  [{:keys [id label default description owner since persist? group type choices visible-fn channels
-           settings? experimental? scopes inheritance]}]
+  [{:keys [id label default description owner since persist? group parent type choices visible-fn
+           channels settings? experimental? scopes inheritance]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -129,6 +129,11 @@
 
       group
       (assoc :group group)
+
+      ;; `:parent` names the setting that this row belongs under in every
+      ;; settings UI. Rows can nest at any depth.
+      parent
+      (assoc :parent (name parent))
 
       visible-fn
       (assoc :visible-fn visible-fn)

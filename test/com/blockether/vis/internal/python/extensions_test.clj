@@ -402,7 +402,9 @@
                  "vis.register_extension(vis.Extension(name='reload-settings', "
                  "description='Reload settings fixture', "
                  "settings=[vis.Setting(id='reload_setting_fixture', label='Feature', "
-                 "default=False, scopes=['project'])]))\n")
+                 "default=False, scopes=['project']), "
+                 "vis.Setting(id='reload_setting_detail', label='Detail', default=False, "
+                 "scopes=['project'], parent='reload_setting_fixture')]))\n")
 
             row
             (fn []
@@ -414,6 +416,9 @@
                (pyx/ensure-python-extensions-loaded! catalog)
                (scoped/set-setting! nil target "reload_setting_fixture" "value" true)
                (expect (= {:value true :source "project"} (row)))
+               (expect (= "reload_setting_fixture"
+                          (some #(when (= "reload_setting_detail" (:id %)) (:parent %))
+                                (toggles/target-toggles root))))
                (write-ext! dir ".vis/extensions/reload.py" "this is not Python\n")
                (pyx/reload-python-extensions! catalog)
                (expect (= [["reload-settings" true]]

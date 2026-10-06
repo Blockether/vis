@@ -3387,6 +3387,24 @@
     (when (and (some? value) (vis/toggle-spec id))
       (try (vis/toggle-set-value! id value) (catch Throwable _ nil)))))
 
+(defn- setting-tree
+  "Each catalog row and the rows in its `children`, at any depth, as `[row depth]` pairs
+   in display order."
+  ([rows] (setting-tree rows 0))
+  ([rows depth]
+   (mapcat (fn [row]
+             (cons [row depth] (setting-tree (get row "children") (inc (long depth)))))
+           rows)))
+
+(defn- merge-setting-row
+  "Merge `row` into the catalog row with the same id, at any depth. The rows under it stay."
+  [rows row]
+  (mapv (fn [current]
+          (cond-> (if (= (get row "id") (get current "id")) (merge current row) current)
+            (seq (get current "children"))
+            (update "children" merge-setting-row row)))
+        rows))
+
 (defn load-settings-inventory!
   "Refresh the cached settings catalog from the gateway. Never throws: a daemon
    that cannot answer keeps the catalog Settings last read — and, before the
@@ -3401,7 +3419,8 @@
                     (catch Exception e {:status :error :error (ex-message e)}))]
     (if (= :ok (:status answer))
       (do (when-not *settings-target*
-            (run! mirror-setting-value! (mapcat #(get % "toggles") (:groups answer))))
+            (run! mirror-setting-value!
+                  (map first (setting-tree (mapcat #(get % "toggles") (:groups answer))))))
           (reset! (settings-inventory-atom) answer))
       (swap! (settings-inventory-atom) assoc :status :error :error (:error answer)))))
 
@@ -3415,10 +3434,7 @@
       :groups
       (fn [groups]
         (mapv (fn [group]
-                (update group
-                        "toggles"
-                        (fn [rows]
-                          (mapv #(if (= id (get % "id")) (merge % row) %) rows))))
+                (update group "toggles" #(merge-setting-row % row)))
               (or groups []))))))
 
 (defn- extension-group?
@@ -3512,10 +3528,14 @@
               (subs label (count prefix))
               label)))
 
-        member-row
-        #(member (-> (catalog-setting-row %)
-                     (update :label member-label)
-                     (assoc :depth 1)))
+        ;; A member stands one level in. A nested setting stands one level more for each parent.
+        member-rows
+        (fn [row]
+          (map (fn [[setting depth]]
+                 (member (-> (catalog-setting-row setting)
+                             (update :label member-label)
+                             (assoc :depth (inc (long depth))))))
+               (setting-tree [row])))
 
         ;; The gateway gives a packaged skill a `skills_` id.
         skill?
@@ -3536,9 +3556,10 @@
                    scope
                    (assoc :tag scope)))]
               (map member info)
-              (map member-row (remove skill? others))
+              (mapcat member-rows (get engine "children"))
+              (mapcat member-rows (remove skill? others))
               (when (some skill? others) [(member {:type :subsection :label "Skills" :depth 1})])
-              (map member-row (filter skill? others))))))
+              (mapcat member-rows (filter skill? others))))))
 
 (defn- catalog-toggle-rows
   "Project the gateway catalog without repeating metadata or reset actions in the list. An
@@ -3552,7 +3573,11 @@
                          (seq rows) (cons {:type :section
                                            :label (str (get group "title"))
                                            :section-id (str (get group "id"))}
-                                          (map catalog-setting-row rows)))))
+                                          (map (fn [[row depth]]
+                                                 (cond-> (catalog-setting-row row)
+                                                   (pos? (long depth))
+                                                   (assoc :depth depth)))
+                                               (setting-tree rows))))))
                (or groups []))))
 
 (defn- settings-extension-matches
@@ -3600,7 +3625,7 @@
   [groups rows]
   (let [notes (into {}
                     (keep #(when-let [note (override-note %)] [(get % "id") note]))
-                    (mapcat #(get % "toggles") groups))]
+                    (map first (setting-tree (mapcat #(get % "toggles") groups))))]
     (mapv (fn [{:keys [toggle-id] :as row}]
             (if-let [note (get notes toggle-id)]
               (assoc row :locked note)

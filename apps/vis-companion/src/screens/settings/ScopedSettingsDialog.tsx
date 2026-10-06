@@ -2,8 +2,9 @@ import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { SearchIcon } from '../../components/icons';
 import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, SettingsResponse, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
+import { filterSettings, flattenSettings } from '../../lib/setting-tree';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
-import { McpServersPanel, SettingRow } from './MachineSettings';
+import { McpServersPanel, SettingRow, settingTree } from './MachineSettings';
 import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingsBandsOpen, SettingsPanel, SettingsSection } from './SettingsLayout';
 
@@ -72,7 +73,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
       ...group,
       toggles: group.title.toLowerCase().includes(needle)
         ? group.toggles
-        : group.toggles.filter((toggle) =>
+        : filterSettings(group.toggles, (toggle) =>
             `${toggle.label} ${toggle.description ?? ''}`.toLowerCase().includes(needle),
           ),
     }))
@@ -80,12 +81,14 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     .filter((group) =>
       group.toggles.length || (hasExtensionNotice(group) && group.title.toLowerCase().includes(needle)),
     );
-  const matches = groups.reduce((count, group) => count + group.toggles.length, 0);
+  const matches = groups.reduce((count, group) => count + flattenSettings(group.toggles).length, 0);
   const extensions = groups.filter(isExtensionGroup);
   // MCP servers and extensions stand in the Tools section, with any Tools rows of the gateway.
   const tools = groups.find((group) => group.id === 'tools');
-  const row = (toggle: Toggle, head?: SettingHead) => <SettingRow key={toggle.id} toggle={toggle} head={head} busy={pending !== null}
-    onToggle={() => void save(toggle, 'toggle')} onPick={(value) => save(toggle, 'value', value)} onInherit={() => void save(toggle, 'inherit')} />;
+  const row = (toggle: Toggle, head?: SettingHead) => settingTree(toggle, (setting) => (
+    <SettingRow key={setting.id} toggle={setting} head={setting === toggle ? head : undefined} busy={pending !== null}
+      onToggle={() => void save(setting, 'toggle')} onPick={(value) => save(setting, 'value', value)} onInherit={() => void save(setting, 'inherit')} />
+  ));
   const rows = (group: ToggleGroup) => group.toggles.length > 0 && (
     <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => row(toggle))}</div>
   );

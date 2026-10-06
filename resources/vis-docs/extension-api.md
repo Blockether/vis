@@ -149,6 +149,21 @@ vis.register_extension(vis.Extension(
 ))
 ```
 
+To show a setting under another setting, set `parent` to the `id` of that setting. Settings
+shows the nested setting one step in, below its parent. A nested setting can have its own nested
+settings, at any depth. If the parent is not in the same settings section, the setting stays at
+the top level.
+
+```python
+detail_level = vis.Setting(
+    id="report_detail_level",
+    label="Detail level",
+    type="enum",
+    default="short",
+    choices=["short", "full"],
+    parent="report_details",
+)
+```
 `id` is a lower-case snake_case identifier. It must be unique among the settings of Vis and
 of the other loaded extensions. If another owner already uses your `id`, your extension does not
 load. The load error names that owner.

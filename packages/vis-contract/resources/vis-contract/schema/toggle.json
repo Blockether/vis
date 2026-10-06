@@ -76,6 +76,10 @@
         "group": {
           "$ref": "common.json#/$defs/non_blank_string"
         },
+        "parent": {
+          "$ref": "common.json#/$defs/non_blank_string",
+          "description": "Id of the setting that this setting belongs under in settings. Settings can nest at any depth."
+        },
         "type": {
           "enum": [
             "boolean",

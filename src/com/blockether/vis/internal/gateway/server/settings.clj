@@ -21,7 +21,7 @@
 
 (defn- toggle-json
   [{:keys [id label description type choices value experimental? scopes source scope is-override
-           overridden-by inherited-value inherited-source own-value group inheritance]}]
+           overridden-by inherited-value inherited-source own-value group parent inheritance]}]
   (cond-> {:id id
            :label label
            :type (name type)
@@ -36,6 +36,9 @@
            :inherited-source inherited-source
            :applies
            (if (or (#{:skills :mcp :engines} group) (rooms/setting? id)) "next_call" "next_turn")}
+    parent
+    (assoc :parent parent)
+
     (= "restrict" inheritance)
     (assoc :inheritance inheritance)
 
@@ -60,6 +63,49 @@
       (if (= type :boolean)
         {:scope (:scope overridden-by) :enabled (boolean (:value overridden-by))}
         {:scope (:scope overridden-by) :value (:value overridden-by)}))))
+
+(defn- nest-rows
+  "Put each row in `:children` of the row that its `:parent` names, at any depth.
+   A row stays at the top when its parent is not in `rows` or when parents form a cycle.
+   So every row shows once. Rows keep their order."
+  [rows]
+  (let [ids
+        (set (map :id rows))
+
+        by-parent
+        (group-by #(when (ids (:parent %)) (:parent %)) rows)
+
+        build
+        (fn build [seen row]
+          (let [kids
+                (remove #(seen (:id %)) (get by-parent (:id row)))
+
+                [children seen]
+                (reduce (fn [[acc seen] kid]
+                          (let [[tree seen] (build seen kid)]
+                            [(conj acc tree) seen]))
+                        [[] (into seen (map :id) kids)]
+                        kids)]
+
+            [(cond-> row
+               (seq children)
+               (assoc :children children)) seen]))]
+
+    (loop [pending
+           (concat (get by-parent nil) rows)
+
+           seen
+           #{}
+
+           out
+           []]
+
+      (if-let [[row & more] (seq pending)]
+        (if (seen (:id row))
+          (recur more seen out)
+          (let [[tree seen] (build (conj seen (:id row)) row)]
+            (recur more seen (conj out tree))))
+        out))))
 
 (defn- resource-inventory
   [target]
@@ -159,7 +205,8 @@
      :inherited-value default
      :inherited-source "default"
      :applies "immediate"
-     :scopes ["global"]}))
+     :scopes ["global"]
+     :parent "council"}))
 
 (defn- set-machine-name-setting
   "Save the machine name. The inherit action gives the host name again."
@@ -326,7 +373,9 @@
          (concat
            (keep (fn [[id title groups]]
                    (when-let [toggles (seq (section-rows id groups))]
-                     {:id (name id) :title (section-title id title local?) :toggles (vec toggles)}))
+                     {:id (name id)
+                      :title (section-title id title local?)
+                      :toggles (nest-rows toggles)}))
                  sections)
            (keep (fn [[[kind group] specs]]
                    (cond (= :extension kind)
@@ -334,10 +383,11 @@
                           :title (str group)
                           :extension (merge {:name (str group) :origin "built_in" :status "loaded"}
                                             (get states group))
-                          :toggles (mapv toggle-json (sort-by #(second (owners (:id %))) specs))}
+                          :toggles (nest-rows (mapv toggle-json
+                                                    (sort-by #(second (owners (:id %))) specs)))}
                          (not (sectioned group)) {:id (name group)
                                                   :title (group-title group)
-                                                  :toggles (mapv toggle-json specs)}))
+                                                  :toggles (nest-rows (mapv toggle-json specs))}))
                  grouped))))}))
 
 (defn- list-settings-handler

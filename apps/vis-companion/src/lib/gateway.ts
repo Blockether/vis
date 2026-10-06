@@ -25,6 +25,7 @@ import {
   hydrateDraftMessages,
 } from './draft-messages';
 import { approxBytes, registerMemoryOwner, registerMemorySource, type MemoryCell } from './perf';
+import { flattenSettings, replaceSetting } from './setting-tree';
 import { randomUuid } from './uuid';
 import type {
   ArchiveView,
@@ -2488,7 +2489,7 @@ export class GatewayClient {
         ...cached,
         groups: (cached.groups ?? []).map((group) => ({
           ...group,
-          toggles: group.toggles.map((toggle) => (toggle.id === updated.id ? updated : toggle)),
+          toggles: replaceSetting(group.toggles, updated),
         })),
       });
     }
@@ -2525,7 +2526,7 @@ export class GatewayClient {
       );
     writeSnapshot(this.settingsKey('settings', target), saved);
     for (const group of saved.groups) {
-      for (const setting of group.toggles) {
+      for (const setting of flattenSettings(group.toggles)) {
         writeSnapshot(this.settingsKey('setting', target, setting.id), setting);
       }
     }

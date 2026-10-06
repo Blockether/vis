@@ -976,3 +976,48 @@
         (expect (= [["Extensions not reloaded"
                      "This gateway does not support extension reload. Update Vis on that machine."]]
                    @notes)))))
+
+(defdescribe
+  nested-settings-test
+  (it "shows each nested setting one level in from its parent, at any depth"
+      (let [rows (#'dlg/catalog-toggle-rows
+                  [{"id" "general"
+                    "title" "General"
+                    "toggles" [{"id" "council"
+                                "label" "Council"
+                                "type" "boolean"
+                                "enabled" true
+                                "children" [{"id" "council_room"
+                                             "label" "Council room"
+                                             "type" "enum"
+                                             "value" "local"
+                                             "choices" ["local"]
+                                             "children" [{"id" "council_room_a_access"
+                                                          "label" "Allow A"
+                                                          "type" "boolean"
+                                                          "enabled" true}]}]}
+                               {"id" "notifier_enabled"
+                                "label" "Desktop alerts"
+                                "type" "boolean"
+                                "enabled" false}]}])]
+        (expect (= [[nil nil] ["council" nil] ["council_room" 1] ["council_room_a_access" 2]
+                    ["notifier_enabled" nil]]
+                   (mapv (juxt :toggle-id :depth) rows)))))
+  (it "updates a nested row and keeps the rows under it"
+      (let [rows [{"id" "council"
+                   "enabled" true
+                   "children" [{"id" "council_room"
+                                "value" "local"
+                                "children" [{"id" "council_room_a_access" "enabled" true}]}]}]]
+        (expect (= [{"id" "council"
+                     "enabled" true
+                     "children" [{"id" "council_room"
+                                  "value" "room-a"
+                                  "children" [{"id" "council_room_a_access" "enabled" true}]}]}]
+                   (#'dlg/merge-setting-row rows {"id" "council_room" "value" "room-a"})))
+        (expect (= false
+                   (get-in (#'dlg/merge-setting-row rows {"id" "council" "enabled" false})
+                           [0 "enabled"])))
+        (expect (= 1
+                   (count (get-in (#'dlg/merge-setting-row rows {"id" "council" "enabled" false})
+                                  [0 "children"])))))))

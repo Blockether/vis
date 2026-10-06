@@ -2626,7 +2626,11 @@ export function storySettingsFetch(populated = false): typeof fetch {
       body = {
         revision: 'story-settings',
         groups: [
-          { id: 'general', title: 'General', toggles: [agentName, ...council, machineName, ...features] },
+          {
+            id: 'general',
+            title: 'General',
+            toggles: [agentName, { ...council[0], children: [{ ...machineName, parent: 'council' }] }, ...features],
+          },
         ],
       };
     }

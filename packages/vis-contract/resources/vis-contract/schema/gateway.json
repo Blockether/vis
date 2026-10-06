@@ -2144,15 +2144,15 @@
       "properties": {
         "protocol": {
           "type": "integer",
-          "const": 16
+          "const": 17
         },
         "min_client": {
           "type": "integer",
-          "const": 16
+          "const": 17
         },
         "min_gateway": {
           "type": "integer",
-          "const": 16
+          "const": 17
         },
         "version": {
           "type": [
@@ -2730,6 +2730,17 @@
           "type": "object",
           "additionalProperties": {
             "type": "string"
+          }
+        },
+        "parent": {
+          "type": "string",
+          "description": "Id of the setting that this row belongs under."
+        },
+        "children": {
+          "type": "array",
+          "description": "Settings that belong under this row, in display order. Children can have children.",
+          "items": {
+            "$ref": "#/$defs/setting"
           }
         }
       }

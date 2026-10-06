@@ -6707,8 +6707,10 @@
   [sid]
   (when sid
     (let [catalog (vis/gateway-settings :tui {:scope "session" :target-id (str sid)})]
-      (dispatch [:session-settings-loaded sid
-                 (mapcat #(get % "toggles") (get catalog "groups"))]))))
+      ;; Settings nest at any depth in `children`; the lookup by id reads every row.
+      (letfn [(flat [rows] (mapcat #(cons % (flat (get % "children"))) rows))]
+        (dispatch [:session-settings-loaded sid
+                   (flat (mapcat #(get % "toggles") (get catalog "groups")))])))))
 
 (reg-fx :refresh-session-settings
         (fn [sid]

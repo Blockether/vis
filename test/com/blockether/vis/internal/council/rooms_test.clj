@@ -377,7 +377,7 @@
 (defdescribe
   rooms-settings-group
   (it
-    "lists Council and its room settings in the General section"
+    "nests the room settings under the Council switch in the General section"
     (with-room
       (fn [{:keys [room-id]}]
         (let [groups
@@ -385,6 +385,21 @@
 
               general
               (first (filter #(= "general" (get % "id")) groups))
+
+              by-id
+              #(first (filter (fn [row]
+                                (= %2 (get row "id")))
+                              %1))
+
+              flatten-rows
+              (fn flatten-rows [rows]
+                (mapcat #(cons % (flatten-rows (get % "children"))) rows))
+
+              council
+              (by-id (get general "toggles") "council")
+
+              room
+              (by-id (get council "children") "council_room")
 
               ids
               ["council" "council_room" "council_room_wake" (rooms/access-id room-id)
@@ -398,12 +413,20 @@
                       rooms/machine-name-id "immediate"}
                      (select-keys (into {}
                                         (map (juxt #(get % "id") #(get % "applies")))
-                                        (get general "toggles"))
+                                        (flatten-rows (get general "toggles")))
                                   ids)))
-          ;; The machine name follows the Council switches; experimental switches stand last.
+          (expect (= #{"council_room" "council_room_wake" rooms/machine-name-id}
+                     (set (map #(get % "id") (get council "children")))))
+          ;; The machine name follows the Council switches.
           (expect (= [rooms/machine-name-id "Laptop"]
-                     ((juxt #(get % "id") #(get % "value"))
-                       (last (remove #(get % "is_experimental") (get general "toggles"))))))
+                     ((juxt #(get % "id") #(get % "value")) (last (get council "children")))))
+          (expect (= [(rooms/access-id room-id)] (map #(get % "id") (get room "children"))))
+          (expect (= "council" (get room "parent")))
+          (expect (not-any? #(#{"council_room" "council_room_wake" rooms/machine-name-id}
+                               (get % "id"))
+                            (get general "toggles")))
+          (expect (= (count (flatten-rows (get general "toggles")))
+                     (count (set (map #(get % "id") (flatten-rows (get general "toggles")))))))
           (expect (= [general]
                      (filter #(some #{"council"}
                                     (map (fn [row]

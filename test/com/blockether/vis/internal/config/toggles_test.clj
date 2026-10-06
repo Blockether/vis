@@ -43,6 +43,14 @@
                      (expect (= "updated" (:description (t/toggle-spec "test_beta"))))
                      ;; Live override survived the re-register.
                      (expect (true? (t/enabled? "test_beta"))))))
+             (it "keeps the parent of a nested setting"
+                 (with-clean-state
+                   (fn []
+                     (t/register-toggle! {:id "test_parent" :label "Parent" :default true})
+                     (t/register-toggle!
+                       {:id "test_child" :label "Child" :default true :parent "test_parent"})
+                     (expect (= "test_parent" (:parent (t/toggle-spec "test_child"))))
+                     (expect (nil? (:parent (t/toggle-spec "test_parent")))))))
              (it "rejects invalid contributions with :vis.toggles/invalid-contribution"
                  (let [thrown? (try (t/register-toggle! {:label "no-id"})
                                     false

@@ -130,7 +130,8 @@
                              :description "Select a shared room, or keep Council on this machine."
                              :scopes toggle-contract/scopes
                              :persist? true
-                             :group :council})
+                             :group :council
+                             :parent "council"})
   (toggles/register-toggle!
     {:id "council_room_wake"
      :label "Allow room wake"
@@ -140,7 +141,8 @@
      :description
      "Allow room messages to start idle sessions. An ancestor denial cannot be overridden."
      :persist? true
-     :group :council})
+     :group :council
+     :parent "council"})
   (doseq [room rooms]
     (toggles/register-toggle!
       {:id (access-id (:room_id room))
@@ -151,7 +153,8 @@
        :inheritance "restrict"
        :scopes toggle-contract/scopes
        :persist? true
-       :group :council}))
+       :group :council
+       :parent "council_room"}))
   (let [current (set (map (comp access-id :room_id) rooms))]
     (doseq [{:keys [id]} (toggles/registered-toggles)
             :when (and (setting? id) (str/ends-with? id "_access") (not (current id)))]

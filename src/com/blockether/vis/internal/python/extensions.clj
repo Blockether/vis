@@ -1819,6 +1819,9 @@
                                     (get setting "description")
                                     (assoc :description (get setting "description"))
 
+                                    (get setting "parent")
+                                    (assoc :parent (get setting "parent"))
+
                                     (get setting "choices")
                                     (assoc :choices (vec (get setting "choices")))))
                                 (get reg "settings"))

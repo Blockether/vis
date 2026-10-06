@@ -377,6 +377,10 @@ export interface Toggle {
   overridden_by?: SettingOverride;
   editor?: SettingEditor;
   schema?: string;
+  /** Id of the setting that this row belongs under. */
+  parent?: string;
+  /** Settings that belong under this row, in display order. They can have children too. */
+  children?: Toggle[];
 }
 
 /** Where an extension section comes from, and whether its last load worked. */

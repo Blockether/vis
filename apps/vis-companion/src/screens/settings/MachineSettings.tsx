@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { reserveAuthTab, watchAuth, type AuthTab, type AuthWatch } from '../../lib/oauth';
 import { homeifyPath } from '../../lib/path';
 import { SwipeActions, type SwipeAction } from '../../components/SwipeActions';
@@ -9,6 +9,7 @@ import {
   GatewayOAuthError,
   INCOMPATIBLE_STATUS,
 } from '../../lib/gateway';
+import { flattenSettings, replaceSetting } from '../../lib/setting-tree';
 import type {
   GatewayConn,
   McpAuthFlow,
@@ -292,6 +293,30 @@ export function lockNote(toggle: Toggle): string | null {
 }
 
 /**
+ * One setting row and the rows under it, at any depth. Each level stands one step in.
+ * `extra` adds a panel under a row, after the settings under it.
+ */
+export function settingTree(
+  toggle: Toggle,
+  render: (toggle: Toggle) => ReactNode,
+  extra?: (toggle: Toggle) => ReactNode,
+): ReactNode {
+  const children = toggle.children ?? [];
+  const more = extra?.(toggle);
+  return (
+    <Fragment key={toggle.id}>
+      {render(toggle)}
+      {(children.length > 0 || !!more) && (
+        <div className="divide-y divide-dialog-edge ps-3 sm:ps-4">
+          {children.map((child) => settingTree(child, render, extra))}
+          {more}
+        </div>
+      )}
+    </Fragment>
+  );
+}
+
+/**
  * The same value row is used for gateway and scoped settings. Only scoped settings pass
  * `onInherit`: global settings are the root scope, so their rows show no provenance or reset.
  */
@@ -436,7 +461,7 @@ export function MachineSettings({
       (current) =>
         current?.map((group) => ({
           ...group,
-          toggles: group.toggles.map((toggle) => (toggle.id === updated.id ? updated : toggle)),
+          toggles: replaceSetting(group.toggles, updated),
         })) ?? null,
     );
   }
@@ -468,11 +493,23 @@ export function MachineSettings({
     }
   }
 
-  // A Vis band and an extension under Extensions draw and save their rows the same way.
-  const settingRow = (toggle: Toggle, head?: SettingHead) => (
-    <SettingRow key={toggle.id} toggle={toggle} head={head} busy={pending === toggle.id}
-      onToggle={() => void flip(toggle)} onPick={(value) => pick(toggle, value)} />
+  // Room membership is part of Council, so the Rooms panel stands under the Council switch.
+  const machineName = flattenSettings(groups?.find((group) => group.id === 'general')?.toggles ?? []).find(
+    (toggle) => toggle.id === 'council_machine_name',
   );
+  const roomsUnder = (toggle: Toggle) =>
+    toggle.id === 'council' &&
+    machineName && <CouncilRooms client={client} machineName={String(machineName.value ?? '')} onChanged={load} />;
+  // A Vis band and an extension under Extensions draw and save their rows the same way.
+  const settingRow = (toggle: Toggle, head?: SettingHead) =>
+    settingTree(
+      toggle,
+      (row) => (
+        <SettingRow key={row.id} toggle={row} head={row === toggle ? head : undefined} busy={pending === row.id}
+          onToggle={() => void flip(row)} onPick={(value) => pick(row, value)} />
+      ),
+      roomsUnder,
+    );
   const rowList = (toggles: Toggle[]) =>
     toggles.length > 0 && (
       <div className="divide-y divide-dialog-edge">
@@ -506,14 +543,6 @@ export function MachineSettings({
         <>
           <SettingsSection title={general?.title ?? 'General'}>
             {rowList(general?.toggles.filter((toggle) => !toggle.is_experimental) ?? [])}
-            {/* Room membership is part of Council, so it stands under the machine name. */}
-            {general?.toggles.some((toggle) => toggle.id === 'council_machine_name') && (
-              <CouncilRooms
-                client={client}
-                machineName={String(general.toggles.find((toggle) => toggle.id === 'council_machine_name')?.value ?? '')}
-                onChanged={load}
-              />
-            )}
             <NotificationsPanel client={client} gateway={gateway} />
             {general?.toggles.some((toggle) => toggle.is_experimental) && (
               <SettingsPanel title="Experimental">
