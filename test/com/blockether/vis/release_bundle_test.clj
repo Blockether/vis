@@ -345,8 +345,21 @@
       (write-executable!
         (io/file tools "curl")
         (str
-          "#!/usr/bin/env bash\nset -euo pipefail\nurl=''; dest=''\n"
-          "while (( $# )); do case $1 in -o) dest=$2; shift;; https:*) url=$1;; esac; shift; done\n"
+          "#!/usr/bin/env bash\nset -euo pipefail\nurl=''; dest=''; head=0; format=''\n"
+          "while (( $# )); do case $1 in -o|--output) dest=$2; shift;; --head) head=1;;"
+          " --write-out) format=$2; shift;; https:*) url=$1;; esac; shift; done\n"
+          ;; Release checks send HEAD to github.com: 302 means published, 404 missing.
+          ;; The URL log below records downloads only.
+          "if (( head )); then\n"
+          "  code=302; location=''\n"
+          "  case $url in\n"
+          "    */releases/latest) location=https://github.com/example/vis/releases/tag/v9.9.9 ;;\n"
+          "    */vis-agent-linux-x64.tar.gz) code=${VIS_TEST_ENGINE_STATUS:-302} ;;\n"
+          "    */vis-web.tar.gz) [[ -f $VIS_TEST_WEB_ARCHIVE ]] || code=404 ;;\n"
+          "  esac\n"
+          "  if [[ $format == *redirect_url* ]]; then printf '%s' \"$location\"; else printf '%s' \"$code\"; fi\n"
+          "  exit 0\n"
+          "fi\n"
           "printf '%s\\n' \"$url\" >> \"$VIS_TEST_URLS\"\n"
           "case $url in\n"
           (when (= track "beta")
@@ -571,7 +584,7 @@
         (fn [{:keys [exit output bin launcher env urls]}]
           (expect (zero? exit) output)
           (expect (not (str/includes? output "unexpected")) output)
-          (expect (str/includes? urls "/releases/latest") urls)
+          (expect (str/includes? urls "/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz") urls)
           (expect (not (.exists (io/file (get env "VIS_HOME") "install" "src"))))
           (expect (.isDirectory (io/file bin "vis-agent-python/python")))
           (expect (.canExecute (io/file bin "vis-tui")))
@@ -579,10 +592,12 @@
           (let [runtime (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env)]
             (expect (str/includes? (:output runtime) "new-runtime") (:output runtime))))))
   (it "acquires native releases when a standalone wrapper has no runtime yet"
-      (with-native-install-fixture {}
-                                   (fn [{:keys [exit output urls]}]
-                                     (expect (zero? exit) output)
-                                     (expect (str/includes? urls "/releases/latest") urls))))
+      (with-native-install-fixture
+        {}
+        (fn [{:keys [exit output urls]}]
+          (expect (zero? exit) output)
+          (expect (str/includes? urls "/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz")
+                  urls))))
   (it "installs the release web app beside the native runtime and serves it without Node"
       (with-native-install-fixture
         {:installed? true :web? true :stale-web? true}
@@ -1360,7 +1375,7 @@
                                                                         (conj pin)))]
                   (expect (zero? exit) output)
                   (expect (str/includes? output "already up to date") output)
-                  (expect (str/includes? urls "/releases/") urls)
+                  (expect (str/includes? output (str "on the " track " track in " target)) output)
                   (expect (not (str/includes? urls ".tar.gz")) urls)
                   (expect (not (str/includes? output "downloading")) output)
                   (expect (not (str/includes? output "new-runtime")) output)
@@ -1488,6 +1503,35 @@
 
 ;; Update defaults are independent of the last installed track.
 (defdescribe
+  native-update-without-github-api-test
+  ;; #309: an exhausted GitHub REST API quota must not look like a missing runtime.
+  (it "installs release, named and beta builds from release downloads, not the REST API"
+      (doseq [options [{} {:target "v9.9.9"} {:track "beta"}]]
+        (with-native-install-fixture options
+                                     (fn [{:keys [exit output urls]}]
+                                       (expect (zero? exit) output)
+                                       (expect (not (str/includes? urls "api.github.com")) urls)))))
+  (it "installs the stable tag that the latest release redirect names"
+      (with-native-install-fixture
+        {}
+        (fn [{:keys [exit output urls]}]
+          (expect (zero? exit) output)
+          (expect (str/includes? urls "/releases/download/v9.9.9/vis-agent-linux-x64.tar.gz")
+                  urls))))
+  (it "names the real cause when GitHub refuses or cannot be reached"
+      (doseq [[status message]
+              [["404" "no native runtime published for 'vis-agent-linux-x64.tar.gz'"]
+               ["403" "update: GitHub answered HTTP 403"] ["000" "update: could not reach GitHub"]]]
+        (with-native-install-fixture
+          {:installed? true :extra-env {"VIS_TEST_ENGINE_STATUS" status}}
+          (fn [{:keys [exit output native]}]
+            (expect (= 1 exit) output)
+            (expect (str/includes? output message) output)
+            (when-not (= "404" status)
+              (expect (not (str/includes? output "no native runtime published")) output))
+            (expect (str/includes? (slurp native) "old-runtime")))))))
+
+(defdescribe
   distribution-track-test
   (it "replaces an old dev-rejecting launcher through the published bootstrap"
       (with-source-update-fixture {:installer? true}
@@ -1504,7 +1548,10 @@
             (expect (zero? exit) output)
             (expect (str/includes? urls "/releases/download/installer/native-beta") urls)
             (expect (not (str/includes? urls "releases?per_page=")) urls)
-            (expect (str/includes? urls (str "/releases/tags/beta-" (apply str (repeat 40 "a"))))
+            (expect (str/includes? urls
+                                   (str "/releases/download/beta-"
+                                        (apply str (repeat 40 "a"))
+                                        "/vis-agent-linux-x64.tar.gz"))
                     urls)
             (expect (= "beta\n" (slurp (io/file (get env "VIS_HOME") "install" "track"))))
             (let [engine (run-bash ["bash" (.getAbsolutePath launcher) "--version"] env)

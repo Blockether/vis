@@ -815,6 +815,47 @@ vis_beta_tag() {
   printf '%s\n' "$tag"
 }
 
+# Release downloads come from github.com, not the REST API. The API allows 60
+# unauthenticated requests per hour for each address, and clients behind a shared
+# NAT, proxy or CI egress can use them all before an update runs (#309).
+vis_latest_release_tag() {
+  local url="https://github.com/$vis_repo_slug/releases/latest" location
+  location="$(curl --silent --head --output /dev/null --write-out '%{redirect_url}' \
+    --connect-timeout 10 "$url" 2>/dev/null)" || location=""
+  [[ "$location" == */releases/tag/?* ]] || \
+    die "update: could not read the latest release from GitHub" "Checked $url" \
+        "Retry later, or name a version: vis-agent update <version>."
+  printf '%s\n' "${location##*/}"
+}
+
+# Return 0 when the release publishes the asset and 1 when GitHub answers 404.
+# Any other answer stops with its real cause, never as a missing asset.
+vis_release_asset() {
+  local url="$1" context="$2" status
+  status="$(curl --silent --head --output /dev/null --write-out '%{http_code}' \
+    --connect-timeout 10 "$url" 2>/dev/null)" || true
+  case "$status" in
+    2??|3??) return 0 ;;
+    404) return 1 ;;
+    ''|000) die "$context: could not reach GitHub" "Checked $url" "Check the network, then retry." ;;
+    *) die "$context: GitHub answered HTTP $status" "Checked $url" "Retry later." ;;
+  esac
+}
+
+# Explain a failed GitHub REST API call when the hourly limit is the cause.
+# GitHub does not count /rate_limit requests against that limit.
+vis_github_rate_limit_note() {
+  local json remaining reset minutes
+  json="$(curl -fsS --connect-timeout 10 "https://api.github.com/rate_limit" 2>/dev/null)" || return 0
+  json="$(printf '%s' "$json" | tr -d '\n' | grep -o '"rate"[[:space:]]*:[[:space:]]*{[^}]*}')" || return 0
+  remaining="$(printf '%s' "$json" | grep -o '"remaining"[[:space:]]*:[[:space:]]*[0-9]*' | tr -dc '0-9')" || return 0
+  reset="$(printf '%s' "$json" | grep -o '"reset"[[:space:]]*:[[:space:]]*[0-9]*' | tr -dc '0-9')" || return 0
+  [[ "$remaining" == 0 && -n "$reset" ]] || return 0
+  minutes=$(( (reset - $(date +%s) + 59) / 60 ))
+  (( minutes > 0 )) || minutes=1
+  printf 'GitHub API rate limit: no requests left from this network for about %s min.\n' "$minutes"
+}
+
 # Published release tags identify versions; immutable beta tags identify commits.
 # Only a complete installation with matching source can skip bundle acquisition.
 native_install_current() {
@@ -852,7 +893,7 @@ update_native() {
   local target="${1:-latest}" track="${2:-release}" keep_gateway="${3:-0}"
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
-  local asset api dl json archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack web_dl web_archive web_unpack
+  local asset dl release_url archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack web_dl web_archive web_unpack
   local native_version native_commit _native_metadata release_tag tui_library
   asset="$(vis_platform_asset)"
   # A named beta build is installed as named; only an unpinned beta resolves the
@@ -860,30 +901,27 @@ update_native() {
   if [[ "$track" == beta && ( -z "$target" || "$target" == latest ) ]]; then
     target="$(vis_beta_tag)" || exit 1
   fi
-  if [[ "$target" != latest ]]; then
-    api="https://api.github.com/repos/$vis_repo_slug/releases/tags/$target"
-  else
-    api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
+  if [[ "$target" == latest ]]; then
+    say "resolving the latest release from https://github.com/$vis_repo_slug/releases/latest"
+    target="$(vis_latest_release_tag)" || exit 1
   fi
-  say "resolving $asset on the $track track from $api"
-  json="$(curl -fsSL "$api")" || true
-  # `set -o pipefail` + `set -e` would kill this function on a no-match grep,
-  # swallowing the actionable message below. Keep the failure local.
-  dl="$(vis_asset_url "$json" "$asset")"
-  if [[ -z "$dl" ]]; then
+  release_url="https://github.com/$vis_repo_slug/releases/download/$target"
+  say "resolving $asset on the $track track in $target"
+  dl="$release_url/$asset"
+  vis_release_asset "$dl" update || \
     die "update: no native runtime published for '$asset' on the $track track." \
-        "Checked $api" \
+        "Checked $dl" \
         "Native bundles support Linux x64/arm64 and macOS arm64." \
         "No JVM fallback was installed. For source development use vis-agent update --track dev."
-  fi
 
   tui_asset="${asset/vis-agent-/vis-tui-}"
-  tui_dl="$(vis_asset_url "$json" "$tui_asset")"
-  [[ -n "$tui_dl" ]] || die "update: incomplete release: missing $tui_asset" \
+  tui_dl="$release_url/$tui_asset"
+  vis_release_asset "$tui_dl" update || die "update: incomplete release: missing $tui_asset" \
       "The engine and terminal client must come from the same release."
   # One web app build serves every platform. Releases that predate it install
   # without one; `vis-agent web` then explains how to get it.
-  web_dl="$(vis_asset_url "$json" vis-web.tar.gz)"
+  web_dl="$release_url/vis-web.tar.gz"
+  vis_release_asset "$web_dl" update || web_dl=""
   # Where the private runtime belongs: beside an installed launcher, or in Vis
   # state when the launcher is a tracked checkout file we must never overwrite.
   if (( launcher_is_git_owned )); then
@@ -1166,7 +1204,7 @@ vis_release_tags() {
 }
 
 vis_switch_list() {
-  local track build beta tags tag
+  local track build beta tags tag note
   track="$(read_state "$vis_track_file")"
   build="$(vis_installed_build || true)"
   if [[ -n "$build" ]]; then
@@ -1185,6 +1223,8 @@ vis_switch_list() {
   tags="$(vis_release_tags)"
   if [[ -z "$tags" ]]; then
     printf '\nVERSIONS\n  unavailable from GitHub right now; naming a version still works.\n'
+    note="$(vis_github_rate_limit_note)"
+    [[ -z "$note" ]] || printf '  %s\n' "$note"
     return 0
   fi
   printf '\nRELEASES\n'
@@ -1366,7 +1406,7 @@ vis_install_desktop() (
 # launch reads intact.
 vis_fetch_desktop() (
   local track="$1" desktop_dir="$2" platform="$3" extension="$4" executable="$5"
-  local api json url asset version selection release tag=""
+  local api json url asset version selection release note tag=""
   command -v curl >/dev/null 2>&1 || die "desktop: downloading the app needs 'curl' on PATH"
   configure_system_trust native
   if [[ "$track" == beta ]]; then
@@ -1379,8 +1419,11 @@ vis_fetch_desktop() (
     release="the latest release"
     api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
   fi
-  json="$(curl -fsSL "$api")" || die "desktop: could not check $release; cached app unchanged" \
-    "Retry later, or run vis-agent desktop without --update to use a cached app."
+  if ! json="$(curl -fsSL "$api")"; then
+    note="$(vis_github_rate_limit_note)"
+    die "desktop: could not check $release; cached app unchanged" ${note:+"$note"} \
+      "Retry later, or run vis-agent desktop without --update to use a cached app."
+  fi
   url="$(vis_asset_url "$json" "vis-companion-[0-9][0-9.]*-$platform\\.$extension")"
   if [[ -z "$url" && -n "$tag" ]]; then
     die "desktop: $tag has no desktop app for $platform" "Checked $api" \
