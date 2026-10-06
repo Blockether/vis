@@ -5805,7 +5805,7 @@
                 (conj (noun observations "observation"))
 
                 (pos? (long verifications))
-                (conj (str verifications " ver"))
+                (conj (noun verifications "verification"))
 
                 (pos? (long external))
                 (conj (noun external "external action"))))))

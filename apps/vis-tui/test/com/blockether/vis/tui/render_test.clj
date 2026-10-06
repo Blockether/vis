@@ -7646,7 +7646,8 @@ h = 8"
         (expect (= "" (#'render/activity-cost-text activity)))))
   (it "shows only the nonzero activity counter"
       (doseq [[signal expected] [["mutation" "1 mutation"] ["observation" "1 observation"]
-                                 ["verification" "1 ver"] ["external" "1 external action"]]]
+                                 ["verification" "1 verification"]
+                                 ["external" "1 external action"]]]
         (expect (= expected (#'render/activity-cost-text {:rows [{:signal signal}]})))))
   (it "omits empty counters and separators from step summaries"
       (doseq [[state expected] [["succeeded" "▸ RAW EXECUTION"] ["running" "▸ 1 running"]
@@ -7686,10 +7687,10 @@ h = 8"
   (it "counts verifications without adding their verdicts to the summary"
       (let [cost @#'render/activity-cost-text]
         (doseq [verdict [nil "passed" "failed"]]
-          (expect (= "2 ver"
+          (expect (= "2 verifications"
                      (cost {:rows [{:signal "verification" :presentation {:verdict verdict}}
                                    {:signal "verification" :presentation {:verdict verdict}}]}))))
-        (expect (= "1 ver" (cost {:rows [{:signal "verification"}]})))))
+        (expect (= "1 verification" (cost {:rows [{:signal "verification"}]})))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
   (it "keeps combined results between their program and attached Activity"
