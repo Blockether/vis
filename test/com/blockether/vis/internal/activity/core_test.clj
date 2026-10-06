@@ -39,6 +39,11 @@
                               (not= outcome :succeeded)
                               (assoc :error (ex-info (str result) {}))))])))
 
+(defn- section-blocks
+  "Every content block inside a row's presentation sections."
+  [row]
+  (mapcat #(get % "content") (get-in row [:presentation "sections"])))
+
 (defdescribe
   generic-handle-receipts-test
   (it
@@ -557,12 +562,13 @@
           (first (:rows projection))
 
           blocks
-          (get-in group [:presentation "content"])]
+          (mapcat #(get % "content") (get-in group [:presentation "sections"]))]
 
       (expect (= 1 (count (:rows projection))))
       (expect (= "Command finished" (get-in group [:presentation "headline"])))
-      (expect (= "printf result" (get-in group [:presentation "summary"])))
-      (expect (= 1 (count (filter #(= "**Exit code:** 0" (get % "text")) blocks))))
+      (expect (= "printf result · exit 0" (get-in group [:presentation "summary"])))
+      (expect (= ["Output" "Stderr"]
+                 (mapv #(get % "headline") (get-in group [:presentation "sections"]))))
       (expect (= 1 (count (filter #(= "early\nshared\nlate\n" (get % "text")) blocks))))
       (expect (= 1 (count (filter #(= "warning\n" (get % "text")) blocks))))
       (expect (= 3 (count (:children group))))
@@ -603,11 +609,11 @@
           one
           (first rows)]
 
-      (expect (= ["build" "other"] (mapv :summary rows)))
+      (expect (= ["build · exit 0" "other"] (mapv :summary rows)))
       (expect (= "succeeded" (:state one)))
       (expect (= "Command finished" (get-in one [:presentation "headline"])))
-      (expect (some #(= "recovered" (get % "text")) (get-in one [:presentation "content"])))
-      (expect (some #(= "connection lost" (get % "text")) (get-in one [:presentation "content"])))
+      (expect (some #(= "recovered" (get % "text")) (section-blocks one)))
+      (expect (some #(= "connection lost" (get % "text")) (section-blocks one)))
       (expect (= ["shell" "_shell-wait" "_shell-logs"] (mapv :operation (:children one))))
       (expect (= ["succeeded" "failed" "succeeded"] (mapv :state (:children one))))
       (expect (= 1 (get-in (:counts (activity/presentation state)) [:failed])))
@@ -635,7 +641,7 @@
             (first (:rows (activity/presentation (activity/replay (mapcat identity pairs)))))
 
             blocks
-            (get-in group [:presentation "content"])]
+            (section-blocks group)]
 
         (expect (= "failed" (:state group)))
         (expect (= "Command status unavailable" (get-in group [:presentation "headline"])))
@@ -801,7 +807,7 @@
       ;; Regression #212: grouped children retain their complete admitted bodies.
       (expect (every? #(some (fn [block]
                                (= (apply str (repeat 2000 "x")) (get block "text")))
-                             (get-in % [:presentation "content"]))
+                             (section-blocks %))
                       (:children group)))
       (expect (> (activity/byte-size projection) 65536))
       (expect (contract/valid-projection? projection)))))

@@ -80,54 +80,63 @@
         nil
         :else value))
 
-(defn- shell-headline
-  "Name what THIS call did, so a later read or input never reads as a new command."
-  [op running?]
-  (case op
-    "shell"
-    (if running? "Started command" "Command finished")
+(defn counted-label [n singular] (str n " " singular (when (not= n 1) "s")))
 
-    "_shell-logs"
-    "Read command output"
+(defn session-preview
+  [value limit]
+  (let [limit
+        (long limit)
 
-    "_shell-wait"
-    (if running? "Command still running" "Command finished")
+        lines
+        (str/split (str/trim (str value)) #"\R" 2)
 
-    "_shell-type"
-    "Sent command input"
+        ^String text
+        (str/replace (or (first lines) "") #"\s+" " ")
 
-    "_shell-stop"
-    "Stopped command"
+        characters
+        (.codePointCount text 0 (.length text))]
 
-    (if running? "Running command" "Command finished")))
+    (str (subs text 0 (.offsetByCodePoints text 0 (int (min characters limit))))
+         (when (or (> characters limit) (next lines)) "…"))))
+
+(defn summary-line [parts] (str/join " · " (remove str/blank? parts)))
+
+(def ^:private shell-command-chars
+  "The longest command that a shell summary shows before it shortens the command."
+  80)
+
+(defn- shell-section
+  "One closed shell section: its title, a line count and the text in one block."
+  [title language text]
+  {"headline" title
+   "summary" (counted-label (count (str/split-lines text)) "line")
+   "content" [(cond-> {"type" "code" "text" text}
+                language
+                (assoc "language" language))]})
 
 (defn- shell-presentation
-  "Present one shell receipt. A nil `op` names the handle's current outcome."
-  [op value]
+  "One command as one row: a short command and exit code, then its output on request.
+   Every call on a handle uses the same headline, so a wait or a read is never a new command."
+  [value]
   (let [command
-        (field value "command")
+        (str (or (field value "command") ""))
+
+        short-command
+        (session-preview command shell-command-chars)
 
         exit
-        (field value "exit")
+        (field value "exit")]
 
-        running?
-        (= "running" (field value "status"))]
-
-    {"headline" (shell-headline op running?)
-     "summary" (or command "")
-     "content"
-     (vec (concat
-            (when (seq command)
-              [{"type" "heading" "text" "Command"}
-               {"type" "code" "language" "bash" "text" command}])
-            (mapcat (fn [[key title]]
-                      (when-let [text (not-empty (field value key))]
-                        [{"type" "heading" "text" title} {"type" "code" "text" text}]))
-                    [["out" "Output"] ["stdout" "Output"] ["err" "Stderr"] ["stderr" "Stderr"]])
-            (when (or (some? exit) (not running?))
-              [{"type" "markdown"
-                "text"
-                (if (some? exit) (str "**Exit code:** " exit) "**Exit code:** unavailable")}])))}))
+    {"headline" (if (= "running" (field value "status")) "Running command" "Command finished")
+     "summary" (summary-line [short-command (when (integer? exit) (str "exit " exit))])
+     "content" []
+     "sections" (vec (concat (when (not= short-command command)
+                               [(shell-section "Command" "bash" command)])
+                             (keep (fn [[key title]]
+                                     (when-let [text (not-empty (field value key))]
+                                       (shell-section title nil text)))
+                                   [["out" "Output"] ["stdout" "Output"] ["err" "Stderr"]
+                                    ["stderr" "Stderr"]])))}))
 
 (defn- shell-overlap
   "Length of the suffix of `left` that is a prefix of `right`, in linear time."
@@ -185,43 +194,28 @@
                      (subs new overlap)))))
 
 (defn- shell-content-fields
-  "Read the shell presenter's own labeled blocks, never arbitrary tool text."
+  "Read back the shell presenter's own headline, summary and sections, never arbitrary tool text."
   [presentation]
-  (let [blocks
-        (get presentation "content")
+  (let [[_ summary-command exit]
+        (re-matches #"(?s)(.*?)(?: · exit (-?\d+))?" (get presentation "summary" ""))
 
-        fields
-        (reduce (fn [fields [heading body]]
-                  (if (and (= "heading" (get heading "type")) (= "code" (get body "type")))
-                    (case (get heading "text")
-                      "Command"
-                      (assoc fields "command" (get body "text"))
+        section-text
+        (fn [title]
+          (some (fn [section]
+                  (when (= title (get section "headline")) (get-in section ["content" 0 "text"])))
+                (get presentation "sections")))]
 
-                      "Output"
-                      (update fields "out" merge-shell-output (get body "text"))
+    (cond-> {"command" (or (section-text "Command") summary-command)
+             "out" (section-text "Output")
+             "err" (section-text "Stderr")}
+      (= "Running command" (get presentation "headline"))
+      (assoc "status" "running")
 
-                      "Stderr"
-                      (update fields "err" merge-shell-output (get body "text"))
+      (= "Command finished" (get presentation "headline"))
+      (assoc "status" "exited")
 
-                      fields)
-                    fields))
-                {}
-                (partition 2 1 blocks))
-
-        exit-block
-        (some (fn [block]
-                (when (= "markdown" (get block "type"))
-                  (re-matches #"\*\*Exit code:\*\* (-?\d+|unavailable)" (get block "text" ""))))
-              blocks)]
-
-    ;; The exit line is written only once a command settles, so it carries the status.
-    ;; Only the shell presenter's own blocks (its Command block) can set a status.
-    (cond-> fields
-      (or exit-block (contains? fields "command"))
-      (assoc "status" (if exit-block "exited" "running"))
-
-      (and exit-block (not= "unavailable" (second exit-block)))
-      (assoc "exit" (Long/parseLong (second exit-block))))))
+      exit
+      (assoc "exit" (Long/parseLong exit)))))
 
 (defn shell-receipt-presentation
   "One current shell outcome from ordered handle receipts, retaining distinct output and errors."
@@ -243,7 +237,7 @@
                 presentations)
 
         command
-        (or (get fields "command") (:summary (first children)))
+        (or (not-empty (get fields "command")) (:summary (first children)))
 
         current-error
         (:error-summary current)
@@ -252,31 +246,24 @@
         (distinct (keep :error-summary children))]
 
     (when (or (seq presentations) (seq errors))
-      (let [value
-            (cond-> (assoc fields "command" command)
-              (= :failed (:state current))
-              (dissoc "status" "exit")
+      (let [value (cond-> (assoc fields "command" command)
+                    (= :failed (:state current))
+                    (dissoc "status" "exit")
 
-              (= :running (:state current))
-              (assoc "status" "running"))
-
-            view
-            (shell-presentation nil value)]
-
-        (cond-> (assoc view "summary" command)
+                    (= :running (:state current))
+                    (assoc "status" "running"))]
+        (cond-> (shell-presentation value)
           (= :failed (:state current))
-          (assoc "headline"
-            "Command status unavailable" "content"
-            (vec (remove #(= "**Exit code:** unavailable" (get % "text")) (get view "content"))))
+          (assoc "headline" "Command status unavailable")
 
           (seq errors)
-          (update "content"
+          (update "sections"
                   into
-                  (mapcat (fn [error]
-                            [{"type" "heading"
-                              "text" (if (= error current-error) "Error" "Earlier error")}
-                             {"type" "text" "text" error}])
-                          errors)))))))
+                  (map (fn [error]
+                         {"headline" (if (= error current-error) "Error" "Earlier error")
+                          "summary" (session-preview error shell-command-chars)
+                          "content" [{"type" "text" "text" error}]})
+                       errors)))))))
 
 (defn result-blocks
   "Keep metadata in readable text; tables are reserved for comparable records."
@@ -382,27 +369,6 @@
                            fields)
         (sequential? value) (mapv #(select-result fields %) value)
         :else value))
-
-(defn counted-label [n singular] (str n " " singular (when (not= n 1) "s")))
-
-(defn session-preview
-  [value limit]
-  (let [limit
-        (long limit)
-
-        lines
-        (str/split (str/trim (str value)) #"\R" 2)
-
-        ^String text
-        (str/replace (or (first lines) "") #"\s+" " ")
-
-        characters
-        (.codePointCount text 0 (.length text))]
-
-    (str (subs text 0 (.offsetByCodePoints text 0 (int (min characters limit))))
-         (when (or (> characters limit) (next lines)) "…"))))
-
-(defn summary-line [parts] (str/join " · " (remove str/blank? parts)))
 
 (defn- fold-summary
   "The folded key and its removal estimate from a fold receipt, without the gist or budgets."
@@ -921,7 +887,7 @@
       (cond (= op "read_session") (read-session-presentation value)
             (str/starts-with? op "council.") (council-presentation op value)
             (str/starts-with? op "automations.") (automation-presentation op value)
-            (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation op value)
+            (or (= op "shell") (str/starts-with? op "_shell-")) (shell-presentation value)
             :else {"headline" headline "summary" summary "content" content}))))
 
 (defn for-tool

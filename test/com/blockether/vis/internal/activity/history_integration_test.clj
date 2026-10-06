@@ -176,7 +176,7 @@
                 (:children group)
 
                 content
-                (get-in group [:presentation "content"])]
+                (mapcat #(get % "content") (get-in group [:presentation "sections"]))]
 
             (expect (nil? (:error result)))
             (expect (= "firstsecond\n" (:stdout result)))

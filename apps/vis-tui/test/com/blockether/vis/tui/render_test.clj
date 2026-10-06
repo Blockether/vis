@@ -648,8 +648,11 @@
   activity-shell-receipt-history-test
   (let [presentation
         {:headline "Command finished"
-         :summary "printf result"
-         :content [{:type "text" :text "CURRENT_SHELL_RESULT"}]}
+         :summary "printf result · exit 0"
+         :content []
+         :sections [{:headline "Output"
+                     :summary "1 line"
+                     :content [{:type "code" :text "CURRENT_SHELL_RESULT"}]}]}
 
         started
         {:id "start-call"
@@ -659,7 +662,7 @@
          :handle-id "command-handle"
          :state "succeeded"
          :summary "printf result"
-         :presentation (assoc presentation :content [])}
+         :presentation (dissoc presentation :sections)}
 
         waited
         {:id "wait-call"

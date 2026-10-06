@@ -18,16 +18,16 @@ afterEach(cleanup);
 
 // Regression from session 8c5ed98b-851a-4e65-91c1-14fbdc04f1eb: a fast shell
 // finishes before wait; the shared projection reconciles its output into ONE receipt.
-// One handle is one command, so its calls are never listed again as identical rows.
-it('shows one shell command as one row with its reconciled outcome', () => {
+// One handle is one command: its summary carries the exit code, its output opens on request.
+it('shows one shell command as one row with its exit code in the summary', () => {
   const activity = activityProjection();
   const command = 'git status --short --branch';
   const handle = [{ type: 'shell-handle', id: 'git' }];
-  const commandBody = [
-    { type: 'heading' as const, text: 'Command' },
-    { type: 'code' as const, language: 'bash', text: command },
-  ];
-  const exit = { type: 'markdown' as const, text: '**Exit code:** 0' };
+  const outputSection = {
+    headline: 'Output',
+    summary: '1 line',
+    content: [{ type: 'code' as const, text: '## main...origin/main' }],
+  };
   const spawn = {
     ...activity.rows[0],
     id: 'spawn',
@@ -35,53 +35,30 @@ it('shows one shell command as one row with its reconciled outcome', () => {
     operation: 'shell',
     presenter: 'shell' as const,
     state: 'succeeded' as const,
-    summary: command,
+    summary: `${command} · exit 0`,
     resources: handle,
-    presentation: {
-      headline: 'Command finished',
-      summary: command,
-      content: [...commandBody, exit],
-    },
+    presentation: { headline: 'Command finished', summary: `${command} · exit 0`, content: [] },
   };
-  const output = [
-    { type: 'heading' as const, text: 'Output' },
-    { type: 'code' as const, text: '## main...origin/main' },
-  ];
   const wait = {
     ...spawn,
     id: 'wait',
     sequence: 2,
     operation: '_shell-wait',
-    presentation: { ...spawn.presentation, content: [...commandBody, ...output, exit] },
+    presentation: { ...spawn.presentation, sections: [outputSection] },
   };
   activity.rows = [
-    {
-      ...spawn,
-      id: 'group-spawn',
-      handle_id: 'git',
-      children: [spawn, wait],
-      presentation: { ...wait.presentation, content: [...commandBody, ...output, exit] },
-    },
+    { ...wait, id: 'group-spawn', operation: 'shell', handle_id: 'git', children: [spawn, wait] },
   ];
   activity.counts = { running: 0, succeeded: 2, failed: 0, cancelled: 0 };
   paintActivity({ activity });
   expect(screen.queryByText('## main...origin/main')).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status.*exit 0/ }));
   expect(document.querySelector('[data-activity-children]')).toBeNull();
+  expect(screen.queryByText(/Exit code/)).toBeNull();
+  // The output section starts shut: its head line shows, its text waits for a press.
+  expect(screen.queryByText('## main...origin/main')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /^Output/ }));
   expect(screen.getByText('## main...origin/main')).toBeVisible();
-  const exitLabel = screen.getByText('Exit code:', { selector: 'strong' });
-  expect(exitLabel.parentElement?.textContent).toBe('Exit code: 0');
-
-  // Earlier output belongs to the reconciled outcome and remains on the original call.
-  cleanup();
-  spawn.presentation.content.splice(2, 0, { type: 'heading', text: 'Output' });
-  spawn.presentation.content.splice(3, 0, { type: 'code', language: 'text', text: 'earlier-only output' });
-  activity.rows[0].presentation!.content.splice(2, 0, { type: 'heading', text: 'Output' });
-  activity.rows[0].presentation!.content.splice(3, 0, { type: 'code', text: 'earlier-only output' });
-  paintActivity({ activity });
-  fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
-  expect(screen.getByText('earlier-only output')).toBeVisible();
-  expect(screen.getAllByText(/Command finished/)).toHaveLength(1);
 
   // A running spawn stays in the data, but it never shows as a second command.
   cleanup();
@@ -93,6 +70,7 @@ it('shows one shell command as one row with its reconciled outcome', () => {
   fireEvent.click(screen.getByRole('button', { name: /Command finished.*git status/ }));
   expect(document.querySelector('[data-activity-children]')).toBeNull();
   expect(screen.queryByText('Running command')).toBeNull();
+  expect(screen.getAllByText(/Command finished/)).toHaveLength(1);
 });
 
 // A collapsed operation group reports live work in its tally, not in an extra line.

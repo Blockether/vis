@@ -327,69 +327,57 @@
 
         (expect (not (re-find #"258|secret-handle|uuid|Review\"" body)))
         (expect (re-find #"Useful result" body))))
-  (it "shows command, preserved output and actual exit status for shell handles"
-      (let [view
-            (result-view {:operation :_shell-wait :label "internal"}
-                         {:command "printf 'a\nb' && false"
-                          :out "a\nb"
-                          :exit 1
-                          :id "handle-123"
-                          :log_path "/private/log"
-                          :status "exited"})
-
-            blocks
-            (get view "content")]
-
+  (it "shows a short command with its exit code and its output in a closed section"
+      (let [view (result-view {:operation :_shell-wait :label "internal"}
+                              {:command "printf 'a b' && false"
+                               :out "a\nb"
+                               :exit 1
+                               :id "handle-123"
+                               :log_path "/private/log"
+                               :status "exited"})]
         (expect (= "Command finished" (get view "headline")))
-        (expect (some #(= {"type" "code" "language" "bash" "text" "printf 'a\nb' && false"} %)
-                      blocks))
-        (expect (some #(= "a\nb" (get % "text")) blocks))
-        (expect (some #(= {"type" "markdown" "text" "**Exit code:** 1"} %) blocks))
-        (expect (not (re-find #"handle-123|/private/log|internal" (pr-str view))))))
-  (it "shows a running shell command and output without repeating its status"
-      (let [value
-            {:command "npm run storybook" :exit nil :status "running"}
+        (expect (= "printf 'a b' && false · exit 1" (get view "summary")))
+        (expect (= [] (get view "content")))
+        (expect
+          (= [{"headline" "Output" "summary" "2 lines" "content" [{"type" "code" "text" "a\nb"}]}]
+             (get view "sections")))
+        (expect (not (re-find #"handle-123|/private/log|internal|Exit code" (pr-str view))))))
+  (it "shortens a long command and keeps the whole command in its own section"
+      (let [command
+            (str "clojure -M:test --namespace com.blockether.vis.internal.activity.presenter-test"
+                 " --namespace com.blockether.vis.internal.activity.core-test")
 
-            command
-            [{"type" "heading" "text" "Command"}
-             {"type" "code" "language" "bash" "text" "npm run storybook"}]
+            view
+            (result-view {:operation :shell} {:command command :exit 0 :status "exited"})]
 
-            running
-            (result-view {:operation :shell} value)
-
-            with-output
-            (result-view {:operation :_shell-logs} (assoc value :out "Server ready"))]
-
-        (expect (= "Started command" (get running "headline")))
-        (expect (= "Read command output" (get with-output "headline")))
-        (expect (= command (get running "content")))
-        (expect (= (into command
-                         [{"type" "heading" "text" "Output"} {"type" "code" "text" "Server ready"}])
-                   (get with-output "content")))))
-  ;; A later call on the same handle names its own act, so a read, an input or a stop in
-  ;; another block never reads as a second run of the same command.
-  (it "names each handle call by its own act"
+        (expect (re-matches #".{80}… · exit 0" (get view "summary")))
+        (expect (= [{"headline" "Command"
+                     "summary" "1 line"
+                     "content" [{"type" "code" "language" "bash" "text" command}]}]
+                   (get view "sections")))))
+  ;; Every call on one handle reads as the same command, so a wait or a read in a later
+  ;; block never looks like a second run.
+  (it "gives every call on a handle the same command headline"
       (let [running
             {:command "npm test" :exit nil :status "running"}
 
             exited
             {:command "npm test" :exit 0 :status "exited"}
 
-            headline
+            view
             (fn [op value]
-              (get (result-view {:operation op} value) "headline"))]
+              (select-keys (result-view {:operation op} value) ["headline" "summary"]))]
 
-        (expect (= "Started command" (headline :shell running)))
-        (expect (= "Read command output" (headline :_shell-logs running)))
-        (expect (= "Command still running" (headline :_shell-wait running)))
-        (expect (= "Command finished" (headline :_shell-wait exited)))
-        (expect (= "Sent command input" (headline :_shell-type running)))
-        (expect (= "Stopped command" (headline :_shell-stop exited)))))
-  (it "labels an unavailable exit beside its bold label"
+        (doseq [op [:shell :_shell-logs :_shell-wait :_shell-type]]
+          (expect (= {"headline" "Running command" "summary" "npm test"} (view op running))))
+        (doseq [op [:_shell-wait :_shell-logs :_shell-stop]]
+          (expect (= {"headline" "Command finished" "summary" "npm test · exit 0"}
+                     (view op exited))))))
+  (it "does not invent an exit code that the command did not report"
       (let [view (result-view {:operation :_shell-wait}
                               {:command "sleep 10" :exit nil :status "exited"})]
-        (expect (= {"type" "markdown" "text" "**Exit code:** unavailable"}
-                   (last (get view "content"))))))
+        (expect (= "sleep 10" (get view "summary")))
+        (expect (= [] (get view "sections")))))
   (it "does not turn a publish receipt identifier into expandable content"
       (expect (= [] (get (result-view {:operation :council.publish} 279) "content"))))
   (it "retains useful titles within member lists"
