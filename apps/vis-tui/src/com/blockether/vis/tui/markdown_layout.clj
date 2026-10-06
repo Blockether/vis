@@ -584,16 +584,16 @@
 
 (def ^:private ^java.util.Map mermaid-cache
   "Bounded access-order cache for rendered mermaid diagrams. A diagram costs a
-   full rank / order / place pass, which must not repeat on every repaint; an
-   empty result caches the DECISION not to draw one, so an unsupported fence is
-   parsed once."
+   full rank / order / place pass, which must not repeat on every repaint; a
+   `{:reason ...}` result caches the DECISION not to draw one, so an unsupported
+   fence is parsed once."
   (java.util.Collections/synchronizedMap (proxy [java.util.LinkedHashMap] [64 0.75 true]
                                            (removeEldestEntry [_eldest]
                                              (> (.size ^java.util.LinkedHashMap this) 64)))))
 
-(defn- mermaid-lines
-  "Diagram rows for a `mermaid` fence, or nil when the renderer does not own it
-   and the source should be painted verbatim."
+(defn- mermaid-drawing
+  "`{:rows rows}` for a `mermaid` fence, or `{:reason text}` when the renderer
+   does not own it and the source should be painted verbatim."
   [^String content ^long budget]
   (let [key
         [content budget]
@@ -601,11 +601,13 @@
         hit
         (.get ^java.util.Map mermaid-cache key)]
 
-    (if (some? hit)
-      (seq hit)
-      (let [rows (vec (mermaid/diagram content budget))]
-        (.put ^java.util.Map mermaid-cache key rows)
-        (seq rows)))))
+    (or hit
+        (let [drawing (update (mermaid/draw content budget)
+                              :rows
+                              #(some-> %
+                                       vec))]
+          (.put ^java.util.Map mermaid-cache key drawing)
+          drawing))))
 
 (def ^:private diagram-glyphs
   "Box-drawing and arrow glyphs a diagram paints. They carry the SHAPE, so they
@@ -672,16 +674,35 @@
            (some-> lang
                    str/lower-case))
 
+        mermaid?
+        (and (not fold?)
+             (= "mermaid"
+                (some-> lang
+                        str/lower-case)))
+
         ;; A `mermaid` fence is a PICTURE: rank / order / place the flowchart and
-        ;; paint it with box-drawing glyphs. The renderer answers nil for any
-        ;; fence it does not own — another diagram type, a subgraph, a graph too
-        ;; wide for this bubble — and the source is then painted verbatim.
+        ;; paint it with box-drawing glyphs. An open fence is still streaming, so
+        ;; it is not drawn: each chunk would flip between a picture and the
+        ;; source. It holds one constant placeholder row until its closing line.
+        mermaid-open?
+        (and mermaid? (boolean (:open? attrs)))
+
+        ;; The renderer answers a reason for any fence it does not own (another
+        ;; diagram type, a graph too wide for this bubble). The source is then
+        ;; painted verbatim under one dim line with that reason.
+        drawing
+        (when (and mermaid? (not mermaid-open?)) (mermaid-drawing content budget))
+
         mermaid-rows
-        (when (and (not fold?)
-                   (= "mermaid"
-                      (some-> lang
-                              str/lower-case)))
-          (mermaid-lines content budget))
+        (:rows drawing)
+
+        mermaid-note
+        (cond mermaid-open? "Mermaid diagram: waiting for the closing fence"
+              (:reason drawing) (str "Mermaid diagram not drawn: " (:reason drawing)))
+
+        note-rows
+        (when mermaid-note
+          (vec (wrap-runs [{:text mermaid-note :style #{:code :dim} :node node}] budget [])))
 
         ansi?
         (and (not fold?) (not diff?) (str/includes? content "\u001b["))
@@ -765,7 +786,8 @@
 
         body
         (vec
-          (cond mermaid-rows (mapv (fn [row]
+          (cond mermaid-open? note-rows
+                mermaid-rows (mapv (fn [row]
                                      {:runs (diagram-runs row node)})
                                    mermaid-rows)
                 fold? (mapcat fold-line (str/split-lines content))
@@ -784,10 +806,10 @@
                                  ansi-lines)
                 ;; A plain fence has no alignment contract, so CHAR-FOLD any
                 ;; over-wide row too.
-                :else (mapcat fold-line (str/split-lines content))))
+                :else (into (vec note-rows) (mapcat fold-line (str/split-lines content)))))
 
         body
-        (if (str/ends-with? content "\n") (conj body {:runs []}) body)
+        (if (and (not mermaid-open?) (str/ends-with? content "\n")) (conj body {:runs []}) body)
 
         body
         (if (false? code-spacing?) (vec body) (vec (concat [pad] body [pad])))]

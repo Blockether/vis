@@ -263,6 +263,48 @@
 
                    (expect (str/includes? joined "sequenceDiagram") joined))))
 
+;; Regression for https://github.com/Blockether/vis/issues/319: each streamed
+;; chunk flipped the bubble between a diagram and its source.
+(defdescribe
+  mermaid-fence-state-test
+  (it "an open fence holds one placeholder row until its closing line arrives"
+      (let [answer
+            "Plan:\n\n```mermaid\nflowchart TD\n  A[One] --> B[Two]\n  B --> C[Three]\n```\n"
+
+            layout
+            (fn [markdown]
+              (texts (layout/ast->lines (ir/markdown->ast markdown) 60)))
+
+            open-prefixes
+            (for [end (range (inc (str/index-of answer "flowchart"))
+                             (str/last-index-of answer "```"))]
+              (subs answer 0 end))
+
+            drawn
+            (str/join "\n" (layout answer))]
+
+        (expect (= 1 (count (set (map (comp count layout) open-prefixes)))))
+        (expect (every? #(some #{"Mermaid diagram: waiting for the closing fence"} (layout %))
+                        open-prefixes))
+        (expect (not-any? #(str/includes? (str/join (layout %)) "flowchart") open-prefixes))
+        (expect (str/includes? drawn "Three") drawn)
+        (expect (str/includes? drawn "▼") drawn)
+        (expect (not (str/includes? drawn "waiting")) drawn)))
+  (it "a fence that is not drawn keeps its source under one dim line with the reason"
+      (let [lines
+            (layout/ast->lines [:ast
+                                [:code {:lang "mermaid"} "sequenceDiagram\n  Alice->>Bob: hi\n"]]
+                               60)
+
+            note
+            (first (filter #(str/starts-with? (apply str (map :text (:runs %)))
+                                              "Mermaid diagram not drawn")
+                           lines))]
+
+        (expect (some? note) (pr-str (texts lines)))
+        (expect (every? #(contains? (:style %) :dim) (:runs note)))
+        (expect (some #(= "sequenceDiagram" %) (texts lines))))))
+
 ;; tables
 
 (defdescribe repeated-table-header-test

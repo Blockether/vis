@@ -121,11 +121,63 @@
                  (expect (nil? (rows "sequenceDiagram\n  Alice->>Bob: hi\n")))
                  (expect (nil? (rows "classDiagram\n  Animal <|-- Duck\n")))
                  (expect (nil? (rows "stateDiagram-v2\n  [*] --> Idle\n"))))
-             (it "a subgraph is not ours yet"
-                 (expect (nil? (rows
-                                 "flowchart TD\n  subgraph one\n  A[One] --> B[Two]\n  end\n"))))
              (it "an unparsable statement gives the whole fence back"
                  (expect (nil? (rows "flowchart TD\n  A[One] --> \n"))))
              (it "an empty fence answers nil"
                  (expect (nil? (rows "")))
                  (expect (nil? (rows "flowchart TD\n")))))
+
+;; Regression for https://github.com/Blockether/vis/issues/319: a valid
+;; flowchart with a subgraph legend, `:::class` suffixes and `~~~` links fell
+;; back to its source text.
+(def ^:private issue-319-fence
+  (str "graph LR\n"
+       "  E[\"Epic\"] --> S1[\"Story A\"]\n"
+       "  S1 --> T1[\"Task 1\"] --> G1[\"Change 1<br/>V+1\"]\n"
+       "  S1 --> T2[\"Task 2\"] --> G2[\"Change 2<br/>V-1\"]\n"
+       "  G2 -. \"tests code from\" .-> G1\n"
+       "  E --> S2[\"Story B\"] --> D1[\"Done\"]\n" "  subgraph Legend\n"
+       "    direction TB\n" "    L1[\"Merged, task not Done\"]:::warn\n"
+       "    L2[\"Open\"]:::ok\n" "    L1 ~~~ L2\n"
+       "  end\n" "  D1 ~~~~~ Legend\n"
+       "  classDef warn fill:#fff176,stroke:#f57f17;\n"
+       "  classDef ok fill:#c8f7c5,stroke:#2e7d32;\n"))
+
+(defdescribe
+  issue-319-test
+  (it "the flowchart from the report renders as a diagram"
+      (doseq [width [60 100 118]]
+        (let [drawn (picture issue-319-fence width)]
+          (expect (some? drawn) (str "no diagram at width " width))
+          (expect (str/includes? drawn "Story B") drawn)
+          (expect (str/includes? drawn "Merged") drawn)
+          (expect (str/includes? drawn "Open") drawn))))
+  (it "a subgraph is flattened: its nodes stay, its header and id draw no box"
+      (let [drawn (picture "flowchart TD\n  subgraph one [Group]\n  A[One] --> B[Two]\n  end\n")]
+        (expect (str/includes? drawn "One") drawn)
+        (expect (not (str/includes? drawn "Group")) drawn)
+        (expect (not (str/includes? drawn "one")) drawn)))
+  (it "a `:::class` suffix is dropped"
+      (expect (= (rows "flowchart TD\n  A[One] --> B[Two]\n")
+                 (rows "flowchart TD\n  A[One]:::hot --> B[Two]:::cold\n"))))
+  (it "a `~~~` link keeps its nodes and draws no line"
+      (let [drawn (rows "flowchart LR\n  A[One] ~~~ B[Two]\n")]
+        (expect (some #(str/includes? % "Two") drawn) drawn)
+        (expect (not-any? #(re-find #"│[─╌━]|▶" %) drawn) drawn)))
+  (it "a sideways chart too wide for the bubble is stacked top-down"
+      (let [source "flowchart LR\n  A[One] --> B[Two] --> C[Three] --> D[Four] --> E[Five]\n"]
+        (expect (some #(str/includes? % "▼") (rows source 30)) (pr-str (rows source 30))))))
+
+(defdescribe reason-test
+             (it "a fence that is not drawn answers the reason"
+                 (expect (= {:reason "only flowcharts are drawn, not sequenceDiagram"}
+                            (mermaid/draw "sequenceDiagram\n  Alice->>Bob: hi\n" 60)))
+                 (expect (= {:reason "cannot read: A[One] -->"}
+                            (mermaid/draw "flowchart TD\n  A[One] --> \n" 60)))
+                 (expect (= {:reason "empty flowchart"} (mermaid/draw "flowchart TD\n" 60))))
+             (it "a graph too wide at every label limit names the width it needs"
+                 (expect (re-matches #"too wide: \d+ > 8 cols"
+                                     (:reason
+                                       (mermaid/draw
+                                         "flowchart LR\n  A[One] --> B[Two]\n  B --> C[Three]\n"
+                                         8))))))

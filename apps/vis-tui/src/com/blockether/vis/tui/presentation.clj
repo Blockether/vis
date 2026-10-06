@@ -651,10 +651,13 @@
         (instance? Paragraph n) (if-let [lit (lone-code-span-literal n)]
                                   [[:code {} lit]]
                                   [(into [:p {}] (cm->inlines n))])
+        ;; A fence without its closing line is still streaming (or never closed):
+        ;; `:open?` lets a renderer wait for the whole body before it draws.
         (instance? FencedCodeBlock n) [[:code
-                                        {:lang (let [info (.getInfo ^FencedCodeBlock n)]
-                                                 (when (seq info) info))}
-                                        (.getLiteral ^FencedCodeBlock n)]]
+                                        (cond-> {:lang (let [info (.getInfo ^FencedCodeBlock n)]
+                                                         (when (seq info) info))}
+                                          (nil? (.getClosingFenceLength ^FencedCodeBlock n))
+                                          (assoc :open? true)) (.getLiteral ^FencedCodeBlock n)]]
         (instance? IndentedCodeBlock n) [[:code {} (.getLiteral ^IndentedCodeBlock n)]]
         (instance? BulletList n) [(into [:ul {}] (mapv cm-list-item->li (cm-children-seq n)))]
         (instance? OrderedList n) [(into [:ol {:start (.getMarkerStartNumber ^OrderedList n)}]

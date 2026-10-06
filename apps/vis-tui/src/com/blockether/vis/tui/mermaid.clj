@@ -1,10 +1,15 @@
 (ns com.blockether.vis.tui.mermaid
   "Mermaid flowchart fences painted as box-drawing diagrams.
 
-   `diagram` is TOTAL: it answers the rendered rows, or nil when the fence is
-   not a flowchart this renderer understands — another diagram type, a
-   subgraph, a graph too wide for the bubble. The caller then paints the fence
-   source verbatim, so an unsupported diagram never shows a broken picture.
+   `draw` is TOTAL: it answers `{:rows rows}`, or `{:reason text}` when the fence
+   is not a flowchart this renderer understands or the graph cannot fit the
+   bubble. The caller then paints the fence source verbatim with the reason, so
+   an unsupported diagram never shows a broken picture. `diagram` answers only
+   the rows, or nil.
+
+   A `subgraph` is flattened: its nodes stay, its header and `end` go. A `~~~`
+   link is invisible, so it is not drawn. A `:::class` suffix only colours a
+   node, so it is dropped.
 
    Pipeline: parse -> rank -> order -> place -> draw.
 
@@ -26,7 +31,11 @@
 (def ^:private ignored-re
   #"(?i)^(?:classdef|class|style|linkstyle|click|acctitle|accdescr|direction)\b")
 
-(def ^:private unsupported-re #"(?i)^(?:subgraph|end)\b")
+(def ^:private subgraph-re #"(?i)^subgraph\b(.*)$")
+
+(def ^:private end-re #"(?i)^end$")
+
+(def ^:private class-suffix-re #"^:::[A-Za-z0-9_\-]+")
 
 (def ^:private shape-forms
   "Opening / closing delimiters longest first, so `([` wins over `(`."
@@ -78,6 +87,13 @@
       (when-let [end (str/index-of body close)]
         [(subs body 0 end) (subs body (+ (long end) (count close)))]))))
 
+(defn- drop-class-suffix
+  "Drop a `:::className` suffix. It only colours the node, which a terminal ignores."
+  [s]
+  (if-let [suffix (re-find class-suffix-re s)]
+    (subs s (count suffix))
+    s))
+
 (defn- read-node
   [s]
   (when-let [id (re-find id-re s)]
@@ -89,8 +105,8 @@
       (if form
         (let [[open close shape] form]
           (when-let [[label tail'] (read-label tail open close)]
-            [{:id id :label (clean-label label) :shape shape} tail']))
-        [{:id id} tail]))))
+            [{:id id :label (clean-label label) :shape shape} (drop-class-suffix tail')]))
+        [{:id id} (drop-class-suffix tail)]))))
 
 (defn- read-node-list
   "One `A & B` group of node references, answering [nodes rest] or nil."
@@ -108,17 +124,19 @@
         (if (str/starts-with? tail "&") (recur (str/triml (subs tail 1)) acc) [acc tail]))
       nil)))
 
-(def ^:private link-re #"^([-.=<>xo]{2,})(?:\|([^|]*)\|)?")
+(def ^:private link-re #"^(~{3,}|[-.=<>xo]{2,})(?:\|([^|]*)\|)?")
 
 (defn- read-link
   [s]
   (when-let [[whole token label] (re-find link-re s)]
-    [{:style (cond (str/includes? token ".") :dotted
-                   (str/includes? token "=") :thick
-                   :else :solid)
-      :head? (boolean (re-find #"[>ox]$" token))
-      :tail? (boolean (re-find #"^[<xo]" token))
-      :label (clean-label label)} (subs s (count whole))]))
+    [(cond-> {:style (cond (str/includes? token ".") :dotted
+                           (str/includes? token "=") :thick
+                           :else :solid)
+              :head? (boolean (re-find #"[>ox]$" token))
+              :tail? (boolean (re-find #"^[<xo]" token))
+              :label (clean-label label)}
+       (str/starts-with? token "~")
+       (assoc :invisible? true)) (subs s (count whole))]))
 
 (defn- add-node
   [graph node]
@@ -151,20 +169,45 @@
         graph
         (when-let [[link tail'] (read-link s)]
           (when-let [[nodes' tail''] (read-node-list tail')]
-            (recur (-> (reduce add-node graph nodes')
-                       (update :edges
-                               into
-                               (for [a prev
-                                     b nodes']
+            ;; An invisible `~~~` link only spaces the mermaid layout: its
+            ;; nodes stay, the link itself is not drawn.
+            (recur (cond-> (reduce add-node graph nodes')
+                     (not (:invisible? link))
+                     (update :edges
+                             into
+                             (for [a prev
+                                   b nodes']
 
-                                 (assoc link
-                                   :from (:id a)
-                                   :to (:id b)))))
+                               (assoc link
+                                 :from (:id a)
+                                 :to (:id b)))))
                    nodes'
                    (str/triml tail''))))))))
 
+(defn- group-id
+  "Id that a `subgraph` header declares: `subgraph id` or `subgraph id [Title]`.
+   A quoted title alone declares no id that a link can name."
+  [header-rest]
+  (let [header-rest (str/trim header-rest)]
+    (when-not (str/starts-with? header-rest "\"") (re-find id-re header-rest))))
+
+(defn- flatten-groups
+  "Drop the subgraph ids: a link to a group would otherwise draw a box for it."
+  [{:keys [groups] :as graph}]
+  (-> graph
+      (dissoc :groups)
+      (update :order #(filterv (complement groups) %))
+      (update :nodes #(apply dissoc % groups))
+      (update :edges
+              #(filterv (fn [{:keys [from to]}]
+                          (not (or (contains? groups from) (contains? groups to))))
+                 %))))
+
+(defn- cut-reason [s] (if (> (count s) 40) (str (subs s 0 39) "…") s))
+
 (defn- parse
-  "Answer `{:flow :order :nodes :edges}` for a supported flowchart, else nil."
+  "Answer `{:graph {:flow :order :nodes :edges}}` for a supported flowchart,
+   else `{:reason text}` that says why the fence is not drawn."
   [source]
   (let [statements
         (->> (str/split-lines (or source ""))
@@ -174,22 +217,41 @@
              (remove str/blank?))
 
         header
-        (first statements)]
+        (first statements)
 
-    (when-let [[_ dir] (and header (re-find header-re header))]
-      (let [graph (reduce (fn [graph statement]
-                            (cond (re-find ignored-re statement) graph
-                                  (re-find unsupported-re statement) (reduced nil)
-                                  :else (or (parse-statement graph (normalize-links statement))
-                                            (reduced nil))))
-                          {:order [] :nodes {} :edges []}
-                          (rest statements))]
-        (when (seq (:order graph))
-          (assoc graph
-            :flow (get flow-of
-                       (some-> dir
-                               str/upper-case)
-                       :down)))))))
+        [_ dir :as flowchart]
+        (some->> header
+                 (re-find header-re))]
+
+    (cond (nil? header) {:reason "empty diagram"}
+          (nil? flowchart) {:reason (str "only flowcharts are drawn, not "
+                                         (cut-reason (first (str/split header #"\s+"))))}
+          :else (let [graph (reduce
+                              (fn [graph statement]
+                                (if-let [[_ header-rest] (re-find subgraph-re statement)]
+                                  (update graph
+                                          :groups
+                                          into
+                                          (some-> header-rest
+                                                  group-id
+                                                  vector))
+                                  (cond (re-find ignored-re statement) graph
+                                        (re-find end-re statement) graph
+                                        :else
+                                        (or (parse-statement graph (normalize-links statement))
+                                            (reduced {:reason (str "cannot read: "
+                                                                   (cut-reason statement))})))))
+                              {:order [] :nodes {} :edges [] :groups #{}}
+                              (rest statements))]
+                  (cond (:reason graph) graph
+                        :else (let [graph (flatten-groups graph)]
+                                (if (seq (:order graph))
+                                  {:graph (assoc graph
+                                            :flow (get flow-of
+                                                       (some-> dir
+                                                               str/upper-case)
+                                                       :down))}
+                                  {:reason "empty flowchart"})))))))
 
 ;; Graph shape
 
@@ -1182,24 +1244,61 @@
       (draw-segment! canvas layout segment))
     (canvas->rows canvas)))
 
-(def ^:private label-limits [28 20 14])
+(def ^:private label-limits [28 20 14 10])
 
 (def ^:private node-limit 64)
+
+(defn- flows-to-try
+  "The chart's own flow first. A sideways chart that does not fit may still fit
+   top-down, which stacks its ranks instead of laying them side by side."
+  [flow]
+  (if (contains? #{:right :left} flow) [flow :down] [flow]))
+
+(defn- fit
+  "`{:rows rows}` for the first flow and label limit whose drawing fits `width`,
+   else `{:reason text}` with the narrowest width that any attempt needed."
+  [graph ^long width]
+  (loop [attempts
+         (for [flow
+               (flows-to-try (:flow graph))
+
+               limit
+               label-limits]
+
+           [flow limit])
+
+         narrowest
+         Long/MAX_VALUE]
+
+    (if-let [[flow limit] (first attempts)]
+      (let [layout (geometry (layered (assoc graph :flow flow) limit))
+            cols (long (:cols layout))
+            rows (when (<= cols width) (render layout))]
+
+        (if (and (seq rows) (every? #(<= (long (p/display-width %)) width) rows))
+          {:rows rows}
+          (recur (rest attempts) (min narrowest cols))))
+      {:reason (str "too wide: " narrowest " > " width " cols")})))
+
+(defn draw
+  "`{:rows rows}` of `source` painted as a box-drawing flowchart inside `width`
+   columns, else `{:reason text}` that says why this renderer does not draw it."
+  [source width]
+  (let [width (long (or width 0))]
+    (if (pos? width)
+      (let [{:keys [graph reason]} (parse source)
+            nodes (count (:order graph))
+            edges (count (:edges graph))]
+
+        (cond reason {:reason reason}
+              (> nodes (long node-limit)) {:reason (str "too many nodes: " nodes " > " node-limit)}
+              (> edges (* 4 (long node-limit))) {:reason (str "too many links: " edges
+                                                              " > " (* 4 (long node-limit)))}
+              :else (fit graph width)))
+      {:reason "no width"})))
 
 (defn diagram
   "Rows of `source` painted as a box-drawing flowchart inside `width` columns,
    or nil when this renderer does not own the fence or cannot fit it."
   [source width]
-  (let [width (long (or width 0))]
-    (when (pos? width)
-      (when-let [graph (parse source)]
-        (when (and (<= (count (:order graph)) (long node-limit))
-                   (<= (count (:edges graph)) (* 4 (long node-limit))))
-          (first (keep (fn [limit]
-                         (let [layout (geometry (layered graph limit))]
-                           (when (<= (long (:cols layout)) width)
-                             (let [rows (render layout)]
-                               (when (and (seq rows)
-                                          (every? #(<= (long (p/display-width %)) width) rows))
-                                 rows)))))
-                       label-limits)))))))
+  (:rows (draw source width)))
