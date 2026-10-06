@@ -714,7 +714,7 @@
 
           (expect (= (count rows) (count vis)))
           (expect (every? #(= 1 (count (preview-entries (:transcript-match %)))) vis))))
-    (it "the list budgets two lines per session and never scrolls past the end"
+    (it "the list budgets one line per session and never scrolls past the end"
         (let [heights (var-get #'dlg/navigator-block-heights)
               blocks (var-get #'dlg/navigator-visible-blocks)
               scroll-start (var-get #'dlg/navigator-scroll-start)
@@ -723,11 +723,11 @@
               vis [(hit 3) (hit 0) (hit 2)]
               hs (heights vis)]
 
-          (expect (= [2 2 2] hs))
-          (expect (= [0 1] (mapv :idx (blocks vis 0 4))))
-          (expect (= [0 1 2] (mapv :idx (blocks vis 0 6))))
+          (expect (= [1 1 1] hs))
+          (expect (= [0 1] (mapv :idx (blocks vis 0 2))))
+          (expect (= [0 1 2] (mapv :idx (blocks vis 0 3))))
           (expect (= [1 2] (mapv :idx (blocks vis 1 99))))
-          (expect (= 1 (scroll-start hs 2 0 4)))
+          (expect (= 1 (scroll-start hs 2 0 2)))
           (expect (= 2 (scroll-start hs 2 0 1)))
           (expect (= 0 (scroll-start hs 0 0 99)))))
     (it
@@ -753,12 +753,16 @@
                (draw-session g 4 6 70 entry true)
                (draw-session g 4 9 70 entry false)
                (expect (= selection (.getBackgroundColor (.getBackCharacter screen 6 6))))
-               (expect (= selection (.getBackgroundColor (.getBackCharacter screen 70 7))))
+               (expect (= selection (.getBackgroundColor (.getBackCharacter screen 70 6))))
                (expect (= t/dialog-bg (.getBackgroundColor (.getBackCharacter screen 6 9))))
-               (expect (str/includes? (line 6) "now / Idle / First session"))
-               (expect (str/includes? (line 7) "Project: Workbench / Group: Planning"))
-               (expect (= t/dialog-hint (.getForegroundColor (.getBackCharacter screen 4 10))))
+               (expect (str/includes?
+                         (line 6)
+                         "now / Idle / First session | Project: Workbench / Group: Planning"))
+               (expect (= t/dialog-hint
+                          (.getForegroundColor
+                            (.getBackCharacter screen (int (str/index-of (line 9) "Project")) 9))))
                (expect (not (str/includes? (line 6) "abc1234")))
+               (expect (str/blank? (line 7)))
                (expect (str/blank? (line 8))))
              (finally (.stopScreen screen)))))
     (it "highlight segments mark each query word where a word starts, ignoring case and accents"
@@ -1791,7 +1795,7 @@
                        {})]
           (expect (not-any? :group-start? visible))
           (expect (not-any? :group-count visible))
-          (expect (= [2 2 2 2] (#'dlg/navigator-block-heights visible)))))
+          (expect (= [1 1 1 1] (#'dlg/navigator-block-heights visible)))))
     (it "a query still finds a filed session in the same flat list"
         (let [visible (#'dlg/navigator-visible-rows
                        (#'dlg/navigator-all-rows {:sessions sessions :groups groups})
@@ -2050,7 +2054,8 @@
         (expect (< (long border-col) (long ask-col)))
         (expect (some? (column-of lines "You  01-01 00:00")))
         (expect (some? (column-of lines "Vis  01-01 00:01")))
-        (expect (some? (column-of lines "the popup lists the matching messages")))))
+        ;; The preview gives the list most of the width, so a long reply wraps.
+        (expect (some? (column-of lines "the popup lists")))))
   (it "a narrow picker keeps the messages beside the list"
       (let [{:keys [lines capture]}
             (capture-message-pane {:cols 80 :rows 32})

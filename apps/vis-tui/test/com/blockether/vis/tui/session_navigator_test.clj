@@ -141,9 +141,11 @@
                (let [date (.getBackCharacter screen 4 4)
                      status (.getBackCharacter screen 16 4)]
 
-                 (expect (str/includes? (back-line screen 4) "09-30 11:34 / Idle / Session title"))
-                 (expect (str/includes? (back-line screen 5)
-                                        "Project: Workbench / Group: Planning"))
+                 (expect
+                   (str/includes?
+                     (back-line screen 4)
+                     "09-30 11:34 / Idle / Session title | Project: Workbench / Group: Planning"))
+                 (expect (str/blank? (back-line screen 5)))
                  (expect (= t/dialog-hint (.getForegroundColor date)))
                  (expect (contains? (set (.getModifiers date)) SGR/BOLD))
                  (expect (contains? (set (.getModifiers status)) SGR/BOLD))
@@ -151,15 +153,41 @@
                  (expect (not (str/includes? (back-line screen 4) "hidden-id")))
                  (expect (not (str/includes? (back-line screen 4) "*"))))
                (finally (.stopScreen screen)))))
-    (it "fits one session per two terminal rows without group headings or spacer lines"
+    (it "fits one session per terminal row without group headings or spacer lines"
         (let [rows
               (#'dlg/navigator-all-rows {:sessions sessions})
 
               visible
               (#'dlg/navigator-visible-rows rows "" {})]
 
-          (expect (= [2 2 2 2] (#'dlg/navigator-block-heights visible)))
-          (expect (= [0 1 2] (mapv :idx (#'dlg/navigator-visible-blocks visible 0 6)))))))
+          (expect (= [1 1 1 1] (#'dlg/navigator-block-heights visible)))
+          (expect (= [0 1 2] (mapv :idx (#'dlg/navigator-visible-blocks visible 0 3))))))
+    ;; User request: project and group share the title line, after a ` | ` separator.
+    (it "shortens a long title first, so the project and group stay on the line"
+        (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
+          (try (#'dlg/draw-navigator-session!
+                (.newTextGraphics screen)
+                0
+                4
+                78
+                {:modified "09-30 11:34"
+                 :status "Idle"
+                 :title "A very long session title that does not fit beside its location"
+                 :group "Workbench"
+                 :session-group "Planning"}
+                false)
+               (let [line (back-line screen 4)]
+                 (expect (str/includes? line "09-30 11:34 / Idle / A very long"))
+                 (expect (str/includes? line "… | Project: Workbench / Group: Planning"))
+                 (expect (<= (count (str/trimr line)) 78)))
+               (finally (.stopScreen screen)))))
+    (it "gives the list 70% of the width while the preview keeps 32 columns"
+        (let [layout
+              (fn [inner-w]
+                (#'dlg/navigator-pane-layout {:left 0 :right (+ inner-w 2) :inner-w inner-w} 0 30))]
+          (expect (= 110 (:divider (layout 156))))
+          (expect (<= 32 (:preview-w (layout 156))))
+          (expect (= 46 (:divider (layout 76)))))))
   (describe
     "opening and resize"
     (it "always keeps the list beside the preview, including a blank query and narrow terminals"

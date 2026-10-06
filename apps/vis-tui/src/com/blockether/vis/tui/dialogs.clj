@@ -6849,9 +6849,9 @@
                              (:failed? cached) :failed)))))
 
 (defn- navigator-block-heights
-  "Two terminal lines per session: title/status, then explicit location."
+  "One terminal line per session: date, status, title and location."
   [visible-rows]
-  (vec (repeat (count visible-rows) 2)))
+  (vec (repeat (count visible-rows) 1)))
 
 (defn- navigator-scroll-start
   "First visible row index: the smallest scroll that still fits the selected
@@ -6896,13 +6896,13 @@
                    s))))))
 
 (defn- navigator-visible-blocks
-  "Paint complete two-line session rows, clipped to the list budget."
+  "Paint complete one-line session rows, clipped to the list budget."
   [visible-rows start budget]
   (let [start
         (long (max 0 (long start)))
 
         end
-        (min (count visible-rows) (+ start (max 1 (quot (long budget) 2))))]
+        (min (count visible-rows) (+ start (max 1 (long budget))))]
 
     (mapv (fn [idx]
             {:idx idx :entry (nth visible-rows idx)})
@@ -6913,9 +6913,14 @@
    matching messages even when there are only a few sessions."
   24)
 
+(def ^:private navigator-min-preview-cols
+  "Columns the message preview keeps before the session list grows past its 60% share."
+  32)
+
 (defn- navigator-pane-layout
   "Always split the body below the query into a session list on the left and
-   a message preview on the right, including narrow terminals and blank queries."
+   a message preview on the right, including narrow terminals and blank queries.
+   The list takes 70% of the width while the preview keeps its minimum, else 60%."
   [{:keys [left right inner-w]} content-top content-h]
   (let [left
         (long left)
@@ -6933,7 +6938,11 @@
         (max 1 (- (long content-h) 3))
 
         list-inner
-        (long (p/clamp (quot (* 60 inner-w) 100) 4 (max 4 (- inner-w 4))))
+        (long (p/clamp (max (quot (* 60 inner-w) 100)
+                            (min (quot (* 70 inner-w) 100)
+                                 (- inner-w (long navigator-min-preview-cols))))
+                       4
+                       (max 4 (- inner-w 4))))
 
         divider
         (+ left 1 list-inner)]
@@ -7060,9 +7069,18 @@
   []
   (t/mix-color t/dialog-bg t/header-active-tab-accent 0.22))
 
+(def ^:private navigator-location-separator
+  "Separates the session title from its project and group on one line."
+  " | ")
+
+(def ^:private navigator-min-title-cols
+  "Columns the title keeps before the project and group give up theirs."
+  16)
+
 (defn- draw-navigator-session!
-  "Paint one session as two lines. A selected session gets ONE background over both
-   lines, text and padding alike; each span keeps its ink, made legible on it."
+  "Paint one session as one line: date, status and title, then ` | ` and the project
+   and group. The title gives up columns first, so the location stays readable. A
+   selected session gets ONE background; each span keeps its ink, made legible on it."
   [g x row width entry selected?]
   (let [focused?
         (:focused? entry)
@@ -7085,16 +7103,34 @@
         date-color
         t/dialog-hint
 
-        fields
+        location
+        (str "Project: " (:group entry) " / Group: " (:session-group entry))
+
+        lead
         [[(str (:modified entry)) date-color true] [" / " t/dialog-hint false]
-         [(str (:status entry)) status-color true] [" / " t/dialog-hint false]
-         [(str (:title entry)) title-color (or selected? focused?)]]]
+         [(str (:status entry)) status-color true] [" / " t/dialog-hint false]]
+
+        title
+        (str (:title entry))
+
+        title-w
+        (max (min (long (p/display-width title)) navigator-min-title-cols)
+             (- (long width)
+                (long (reduce + 0 (map #(p/display-width (first %)) lead)))
+                (long (p/display-width navigator-location-separator))
+                (long (p/display-width location))))
+
+        fields
+        (conj lead
+              [(p/ellipsize title (max 1 title-w)) title-color (or selected? focused?)]
+              [navigator-location-separator t/dialog-hint false]
+              [location t/dialog-hint false])]
 
     (p/styled
       g
       (if selected? [p/BOLD] [])
       (p/set-colors! g t/dialog-fg bg)
-      (p/fill-rect! g x row width 2)
+      (p/fill-rect! g x row width 1)
       (loop [fields
              fields
 
@@ -7116,13 +7152,7 @@
 
             (p/set-colors! g (ink color) bg)
             (if bold? (p/styled g [p/BOLD] (p/put-str! g cx row text)) (p/put-str! g cx row text))
-            (recur (rest fields) (+ cx used) (- remaining used)))))
-      (p/set-colors! g (ink t/dialog-hint) bg)
-      (p/put-str! g
-                  x
-                  (inc (long row))
-                  (p/ellipsize (str "Project: " (:group entry) " / Group: " (:session-group entry))
-                               width)))))
+            (recur (rest fields) (+ cx used) (- remaining used))))))))
 
 (defn- draw-navigator-segments!
   "Paint `navigator-highlight-segments` from `x`, clipped to `width` columns. A
@@ -7664,7 +7694,7 @@
 
                     (when-let [{:keys [idx entry]} (first remaining)]
                       (draw-navigator-session! g body-x row body-w entry (= idx @selected))
-                      (recur (rest remaining) (+ (long row) 2)))))
+                      (recur (rest remaining) (inc (long row))))))
                 ;; The list and the selected session's messages always stay side by side.
                 (draw-navigator-divider! g divider (inc (long content-top)) (dec (long content-h)))
                 (draw-navigator-preview!
