@@ -4510,8 +4510,10 @@
               (:action (embed-transient! screen g region spec))]
 
           (cond (nil? action) nil
-                (= action ::next-theme-page) (recur (mod (inc (long page)) pages) selected)
-                (= action ::previous-theme-page) (recur (mod (dec (long page)) pages) selected)
+                (= action ::next-theme-page) (recur (long (mod (inc (long page)) (long pages)))
+                                                    selected)
+                (= action ::previous-theme-page) (recur (long (mod (dec (long page)) (long pages)))
+                                                        selected)
                 :else (do (apply! action)
                           (reset! restore (frame-restorer screen))
                           (recur page action))))))))
@@ -5830,10 +5832,10 @@
                                                (- option-w
                                                   p/STATUS_WIDTH
                                                   indent
-                                                  (cond tagged? (+ value-room tag-w 2)
-                                                        (and (some? value) (pos? value-w))
-                                                        value-room
-                                                        :else 0)))
+                                                  (long (cond tagged? (+ value-room tag-w 2)
+                                                              (and (some? value) (pos? value-w))
+                                                              value-room
+                                                              :else 0))))
                                   lbl (ellipsize option-label label-w)]
 
                               (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -7273,7 +7275,7 @@
         (str (:title entry))
 
         title-w
-        (max (min (long (p/display-width title)) navigator-min-title-cols)
+        (max (min (long (p/display-width title)) (long navigator-min-title-cols))
              (- (long width)
                 (long (reduce + 0 (map #(p/display-width (first %)) lead)))
                 (long (p/display-width navigator-location-separator))
