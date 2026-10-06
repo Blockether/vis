@@ -2,14 +2,17 @@ import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   buildHeatmap,
+  PERF_BUILD,
   perfReport,
+  reloadWithStoredPerf,
+  setPerfEnabled,
   type HeatMetric,
   type HeatRow,
   type ListenerGroupReport,
   type PerfReport,
 } from '../lib/perf';
 import { MinusIcon } from './icons';
-import { Button } from './ui';
+import { Banner, Button } from './ui';
 
 const REFRESH_MS = 2_000;
 /** Samples kept for the trend lines: three minutes at the default refresh. */
@@ -123,16 +126,29 @@ function HeatRowView({
 }
 
 /**
+ * Turn the overlay off for the next loads and load the page again. Answers `false` when
+ * this device did not save the choice.
+ */
+function turnOffOverlay(): boolean {
+  if (!setPerfEnabled(false)) return false;
+  reloadWithStoredPerf();
+  return true;
+}
+
+/**
  * The memory overlay behind `?perf=1` and `npm run perf`: live platform counters,
  * a heatmap of what each cache holds per session, and what grew since a baseline.
  */
 export function PerfOverlay({
   read = perfReport,
   refreshMs = REFRESH_MS,
+  turnOff = PERF_BUILD ? null : turnOffOverlay,
 }: {
   read?: () => PerfReport;
   /** Milliseconds between readings; `0` keeps the first reading, as a story needs. */
   refreshMs?: number;
+  /** Turns the overlay off; `null` in the `perf` build, which always shows it. */
+  turnOff?: (() => boolean) | null;
 }) {
   const [report, setReport] = useState<PerfReport>(read);
   const [history, setHistory] = useState<Sample[]>([]);
@@ -140,6 +156,7 @@ export function PerfOverlay({
   const [metric, setMetric] = useState<HeatMetric>('bytes');
   const [open, setOpen] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [turnOffFailed, setTurnOffFailed] = useState(false);
 
   useEffect(() => {
     if (refreshMs <= 0) return undefined;
@@ -229,6 +246,16 @@ export function PerfOverlay({
             >
               {copied ? 'Copied' : 'Copy report'}
             </Button>
+            {turnOff ? (
+              <Button type="button" variant="quiet" density="compact" onClick={() => setTurnOffFailed(!turnOff())}>
+                Turn off
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {open && turnOffFailed ? (
+          <div className="w-full">
+            <Banner kind="err">This device did not save the setting.</Banner>
           </div>
         ) : null}
       </header>
@@ -359,12 +386,16 @@ export function PerfOverlay({
   );
 }
 
-/** Mount the overlay in its own root, outside the app's tree and layout. */
+/**
+ * Mount the overlay in its own root, outside the app's tree and layout. Minimized, it
+ * waits at the middle of the right edge, clear of the app bar and the composer.
+ */
 export function mountPerfOverlay(): void {
   if (document.getElementById('vis-perf')) return;
   const host = document.createElement('div');
   host.id = 'vis-perf';
-  host.className = 'pointer-events-none fixed right-[calc(env(safe-area-inset-right)+0.5rem)] top-[calc(env(safe-area-inset-top)+0.5rem)] z-[2147483000] max-w-[calc(100dvw-env(safe-area-inset-left)-env(safe-area-inset-right)-1rem)]';
+  host.className =
+    'pointer-events-none fixed inset-0 z-[2147483000] flex items-center justify-end pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pl-[calc(env(safe-area-inset-left)+0.5rem)] pr-[calc(env(safe-area-inset-right)+0.5rem)] pt-[calc(env(safe-area-inset-top)+0.5rem)]';
   document.body.append(host);
   createRoot(host).render(<PerfOverlay />);
 }

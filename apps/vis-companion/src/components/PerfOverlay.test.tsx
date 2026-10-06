@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { MemoryCell, PerfReport } from '../lib/perf';
-import { formatBytes, PerfOverlay } from './PerfOverlay';
+import { formatBytes, mountPerfOverlay, PerfOverlay } from './PerfOverlay';
 
 const MB = 1024 * 1024;
 
@@ -226,5 +226,48 @@ describe('memory overlay', () => {
 
     expect(writeText).toHaveBeenCalledWith(JSON.stringify(report(), null, 2));
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+  });
+
+  it('turns itself off from the open overlay', () => {
+    const turnOff = vi.fn(() => true);
+    render(<PerfOverlay read={() => report()} refreshMs={60_000} turnOff={turnOff} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
+
+    expect(turnOff).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('This device did not save the setting.')).not.toBeInTheDocument();
+  });
+
+  it('says when this device did not save turning it off', () => {
+    render(<PerfOverlay read={() => report()} refreshMs={60_000} turnOff={() => false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
+
+    expect(screen.getByText('This device did not save the setting.')).toBeInTheDocument();
+  });
+
+  it('has no Turn off control in the perf build', () => {
+    render(<PerfOverlay read={() => report()} refreshMs={60_000} turnOff={null} />);
+
+    expect(screen.queryByRole('button', { name: 'Turn off' })).not.toBeInTheDocument();
+  });
+
+  // Regression, user report (paraphrased: the minimized memory badge covered the
+  // preferences cog, so the overlay could not be turned off): the host pinned the badge
+  // to the top-right corner, over the app bar's controls.
+  it('mounts clear of the app bar, at the middle of the right edge', async () => {
+    await act(async () => {
+      mountPerfOverlay();
+    });
+    const host = document.getElementById('vis-perf');
+    try {
+      expect(host).not.toBeNull();
+      const classes = host!.className.split(' ');
+      expect(classes).toEqual(expect.arrayContaining(['fixed', 'inset-0', 'items-center', 'justify-end']));
+      expect(host!.className).not.toMatch(/(^| )(top|right)-/);
+      expect(within(host!).getByRole('button', { name: 'Turn off' })).toBeInTheDocument();
+    } finally {
+      host?.remove();
+    }
   });
 });
