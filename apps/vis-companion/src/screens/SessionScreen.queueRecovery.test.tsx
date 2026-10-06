@@ -198,7 +198,7 @@ describe('a queued turn after a failed request', () => {
       await advance(5000);
       expect(readSession).toHaveBeenCalledTimes(2);
     }
-    expect(screen.queryByText('next step') !== null).toBe(!marks);
+    expect(screen.queryByText('next iter') !== null).toBe(!marks);
 
     act(() =>
       events.emit({
@@ -210,12 +210,12 @@ describe('a queued turn after a failed request', () => {
       } as unknown as SseEvent),
     );
     await advance(150);
-    expect(screen.queryByText('next step') !== null).toBe(marks);
+    expect(screen.queryByText('next iter') !== null).toBe(marks);
 
     await act(async () => {
       staleRead.resolve();
     });
-    expect(screen.queryByText('next step') !== null).toBe(marks);
+    expect(screen.queryByText('next iter') !== null).toBe(marks);
     expect(screen.getByText('Next request')).toBeInTheDocument();
   });
 

@@ -207,7 +207,7 @@ describe('send now', () => {
     // Busy, not rewritten: the gateway's `turn.queued.updated` paints the mark.
     expect(screen.getByText('Summarize the failed checks')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Send queued message 1 now' })).toBeEnabled();
-    expect(screen.queryByText('next step')).not.toBeInTheDocument();
+    expect(screen.queryByText('next iter')).not.toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Send queued message 2 now' })).toBeEnabled(),
     );
@@ -226,7 +226,10 @@ describe('send now', () => {
       />,
     );
 
-    expect(screen.getByText('next step')).toBeVisible();
+    expect(screen.getByText('next iter')).toBeVisible();
+    // The number takes the message's size and line height, so both share one baseline.
+    expect(screen.getByText('#2')).toHaveClass('font-mono', 'text-ui');
+    expect(screen.getByText('#2')).not.toHaveClass('leading-none');
     const keep = screen.getByRole('button', { name: 'Keep queued message 2 for the turn end' });
     expect(keep).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(keep);

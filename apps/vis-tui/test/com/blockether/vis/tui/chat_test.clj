@@ -886,7 +886,7 @@
         (expect (= {:phase :queue-sync :op :update :turn-id "q1" :text "hi2"}
                    (g->c {"type" "turn.queued.updated" "turn_id" "q1" "request" "hi2"}))))
     ;; "Send now": the gateway mirrors the whole row, `deliver` included, so a row
-    ;; marked from ANY channel paints as `→ · next step` here too; an unmarked
+    ;; marked from ANY channel paints as `→ · next iter` here too; an unmarked
     ;; row comes back as `turn_end`.
     (it "turn.queued and turn.queued.updated carry the row's delivery mode"
         (expect

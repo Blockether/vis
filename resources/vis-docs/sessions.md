@@ -100,7 +100,7 @@ for the turn end.
 - **Desktop or phone app:** choose **Send all now** in the queue header to send the whole
   queue. To send one message, choose **Send it now** on its row.
 
-A sent message shows **next step** on its row. Choose its **Send it now** again to let it wait
+A sent message shows **next iter** on its row. Choose its **Send it now** again to let it wait
 for the turn end. The running turn reads the sent messages, in queue order, when it
 starts its next step. The conversation then shows them as **You · sent now** inside
 that turn, with the step they reached.

@@ -2566,7 +2566,7 @@
                           ord (subs raw 0 cut)
                           suffix (str (:queue-suffix meta))
                           msg (subs raw cut)
-                          ;; A marked row ends in ` · next step`, painted in accent
+                          ;; A marked row ends in ` · next iter`, painted in accent
                           ;; after the dim preview.
                           body (if (and (seq suffix) (str/ends-with? msg suffix))
                                  (subs msg 0 (- (count msg) (count suffix)))
@@ -9002,8 +9002,8 @@
   "Send it now")
 
 (def ^:private queue-marked-suffix
-  "Trailer of a queue row that is marked to send at the next step."
-  " · next step")
+  "Trailer of a queue row that is marked to send at the next iteration."
+  " · next iter")
 
 (defn- queued-progress-entries
   "Rows of the Queued block. `send-opts` is `{:running? bool :session-id sid}`: while

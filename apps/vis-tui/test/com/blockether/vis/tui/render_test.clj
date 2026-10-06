@@ -11574,7 +11574,7 @@ print(paths)"
   queue-send-now-controls-test
   ;; "Send now": while a turn runs, the Queued block offers ` Send all now ` on its
   ;; header and ` Send it now ` at the right edge of every markable row, with no arrow glyphs. A marked
-  ;; row keeps its place and says `· next step`; a command (`/…`, `!…`) and a local-only
+  ;; row keeps its place and says `· next iter`; a command (`/…`, `!…`) and a local-only
   ;; row show no button;
   ;; a held queue (no running turn) shows no control at all.
   (let [settings
@@ -11645,11 +11645,11 @@ print(paths)"
         (expect (str/includes? local-line "3. ⚠ unsent · local only"))
         (expect (nil? (:queue-send local-meta)))
         ;; The marked row stays in place, says so, and its button undoes the mark.
-        (expect (str/includes? marked-line "4. third queued message · next step"))
+        (expect (str/includes? marked-line "4. third queued message · next iter"))
         (expect
           (= {:session-id "s1" :label "Send it now" :turn-id "t3" :marked? true :deliver "turn_end"}
              (:queue-send marked-meta)))
-        (expect (= " · next step" (:queue-suffix marked-meta)))))
+        (expect (= " · next iter" (:queue-suffix marked-meta)))))
     (it "drops the header control once every markable row is marked"
         (let [d
               (payload {:iterations [{:activity :provider-call}]}

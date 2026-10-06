@@ -131,7 +131,7 @@ export function QueuedTurnsTray({
                     role="listitem"
                     className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-0.5 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${isBusy ? ' opacity-50' : ''}`}
                   >
-                    <span className="shrink-0 self-center font-mono text-meta leading-none font-bold text-accent-ink">
+                    <span className="shrink-0 font-mono text-ui font-bold text-accent-ink">
                       #{index + 1}
                     </span>
                     {isEditing ? (
@@ -181,7 +181,7 @@ export function QueuedTurnsTray({
                       </TextButton>
                     )}
                     {isMarked && (
-                      <span className="shrink-0 font-mono text-meta text-accent-ink">next step</span>
+                      <span className="shrink-0 font-mono text-meta text-accent-ink">next iter</span>
                     )}
                     {/* A command row has no Send now button; × stays at the row end. */}
                     {sendNow && (
