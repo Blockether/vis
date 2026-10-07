@@ -7,8 +7,8 @@
 #     ~13.7 GiB; a free 16 GB hosted runner spends 70-79 % of a ~2 h build in GC.
 #     A 32 GB+ machine never enters that regime and finishes in a fraction of it.
 #   * GitHub has NO macOS runner that fits: free arm64 macOS is 3 cores / 7 GB and
-#     even the paid macos-*-xlarge is 14 GB. CI builds the macOS asset on the
-#     hosted `macos-26` runner with a low-memory fallback. If that build fails,
+#     even the paid macos-*-xlarge is 14 GB. CI builds the macOS asset on
+#     Blacksmith's `blacksmith-6vcpu-macos-26` (24 GiB). If that runner is unavailable,
 #     run this script on an Apple-silicon machine like this one.
 #     The free hosted `macos-26` was tried for two releases and cannot finish
 #     this image at all: v0.1.40 spent 5 h 51 min in native-image there and the

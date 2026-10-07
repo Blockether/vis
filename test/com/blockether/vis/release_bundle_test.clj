@@ -1663,7 +1663,7 @@
                     (map second (re-seq #"(?:&&|\|\|)\s*'([^']+)'" value))
                     [(str/trim value)])]
           (expect (contains? tracks t) (str wf ": " value))))))
-  ;; Hosted macOS needs a heap below physical RAM; dry runs may use quick build.
+  ;; A builder below 16 GiB needs a heap below physical RAM; dry runs may use quick build.
   (it "sizes the low-memory hosted macOS runner without swapping"
       (let [stable
             (slurp ".github/workflows/native-release.yml")
@@ -1680,8 +1680,8 @@
         ;; Quick build produces a slower binary, so it is for dry runs only.
         (expect (str/includes? fallback "-Ob") fallback)
         (expect (str/includes? fallback "steps.target.outputs.publish") fallback)
-        (expect (str/includes? stable "runs-on: macos-26") stable)))
-  (it "builds the macOS asset on GitHub-hosted ARM64 and bounds queue waiting"
+        (expect (str/includes? stable "runs-on: blacksmith-6vcpu-macos-26") stable)))
+  (it "builds the macOS asset on Blacksmith ARM64 and bounds queue waiting"
       (let [stable
             (slurp ".github/workflows/native-release.yml")
 
@@ -1697,7 +1697,7 @@
                  (take 25)
                  (str/join "\n"))]
 
-        (expect (str/includes? macos-job "runs-on: macos-26") macos-job)
+        (expect (str/includes? macos-job "runs-on: blacksmith-6vcpu-macos-26") macos-job)
         ;; A clean macOS image does not include espeak-ng's phoneme tables;
         ;; without this dependency the built binary reaches test-native and fails.
         (expect (str/includes? macos-job "brew install espeak-ng") macos-job)
@@ -1729,10 +1729,11 @@
         (doseq [forbidden ["self-hosted" "vis-macos-arm64" "runner.environment" "inputs.runner"
                            "VIS_MACOS_ARM64_RUNNER" "VIS_IOS_RUNNER"]]
           (expect (not (str/includes? directives forbidden)) (str wf ": " forbidden)))))
-  (it "uses the same hosted macOS class for every macOS job"
+  (it "uses hosted macOS for CI, iOS and desktop, and Blacksmith for the native image"
       (expect (str/includes? (slurp ".github/workflows/ci.yml") "{ name: macos, host: macos-26 }"))
       (doseq [[wf directive] [["mobile-release.yml" "runs-on: macos-26"]
-                              ["native-release.yml" "runs-on: macos-26"]
+                              ["native-release.yml" "runs-on: blacksmith-6vcpu-macos-26"]
+                              ["native-release.yml" "MACOS_RUNNER: blacksmith-6vcpu-macos-26"]
                               ["desktop-companion.yml" "- runner: macos-26"]]]
         (expect (str/includes? (slurp (str ".github/workflows/" wf)) directive) wf)))
   (it "isolates Vis state and cleans up partial iOS signing setup"

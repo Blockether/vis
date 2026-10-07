@@ -2,7 +2,7 @@ name: Native Release
 
 # Companion to release.yml (which cuts the GitHub Release + Clojars deploy). A
 # dispatch can build native engine and terminal-client artifacts per platform.
-# Linux and macOS ARM64 use GitHub-hosted runners.
+# Linux uses GitHub-hosted runners; macOS ARM64 uses Blacksmith's `blacksmith-6vcpu-macos-26`.
 #
 #   vis-agent-<os>-<arch>.tar.gz — engine wrapper, native runtime and CPython
 #   vis-tui-<os>-<arch>.tar.gz              — standalone HTTP/SSE terminal client
@@ -97,7 +97,7 @@ jobs:
           #   (x64). Dropping the swapfile or the -J-Xmx/-J-Xms pair does not make
           #   the build faster, it makes it fail slowly.
           # The only real speed-ups left are a BIGGER BUILDER (a CLOUD
-          # Apple-silicon/32 GB runner: 13 min) or
+          # Apple-silicon runner, like the Blacksmith macos job) or
           # `bin/release-native --tag vX.Y.Z --upload` on a 32 GB+ workstation,
           # where analysis takes 166 s instead of 553 s.
           # DO NOT raise -J-Xmx above runner RAM again: the v0.1.14 attempts at
@@ -121,8 +121,8 @@ jobs:
           - { os: ubuntu-22.04, bin: target/vis, asset: vis-agent-linux-x64.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           - { os: ubuntu-22.04-arm, bin: target/vis, asset: vis-agent-linux-arm64.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # macOS arm64 is NOT in this matrix: it needs its own heap sizing and
-          # its own runner, so it is the SEPARATE `macos` job below, on the
-          # GitHub-hosted `macos-26` runner. Every hosted macOS class GitHub
+          # its own runner, so it is the SEPARATE `macos` job below, on
+          # Blacksmith's `blacksmith-6vcpu-macos-26` (M4, 6 vCPU, 24 GiB). Every hosted macOS class GitHub
           # sells is under the ~13.7 GiB live set (specs re-checked 2026-08):
           #   * free arm64 macOS (macos-latest/14/15/26) is 3 cores / 7 GB with
           #     14 GB of disk, so swap cannot back a bigger heap either;
@@ -403,11 +403,14 @@ jobs:
             --repo "$GITHUB_REPOSITORY" --clobber
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
-  # GitHub-hosted ARM64 macOS participates in the same complete-release gate.
+  # Blacksmith ARM64 macOS participates in the same complete-release gate.
+  # `blacksmith-6vcpu-macos-26` is an M4 with 6 vCPU, 24 GiB RAM and 150 GB disk.
+  # It clears the ~13.7 GiB analysis live set; GitHub's hosted macOS classes do not.
+  # Blacksmith's GitHub App must keep access to this repository, or the job queues.
   macos:
     name: native / vis-agent-macos-arm64.tar.gz
     if: inputs.only != 'linux'
-    runs-on: macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 120
     env:
       VIS_ASSET: vis-agent-macos-arm64.tar.gz
@@ -660,7 +663,7 @@ jobs:
   # A label no machine carries, or a runner that never comes back, leaves the
   # job queued, and GitHub waits up to 24 h before failing it. Watch from an
   # unrelated free Linux runner and report the routing problem while the release
-  # can still be re-dispatched. The hosted macOS pool can queue this build, so a
+  # can still be re-dispatched. The Blacksmith macOS pool can queue this build, so a
   # late pickup is normal: warn at WARN_MINUTES and
   # fail only when no builder takes the job at all. Neither cancels a late build;
   # if the runner frees up, the asset still attaches.
@@ -676,7 +679,7 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
-      MACOS_RUNNER: macos-26
+      MACOS_RUNNER: blacksmith-6vcpu-macos-26
       TARGET_REF: ${{ inputs.tag || github.ref_name }}
       POLL_SECONDS: "15"
       WARN_MINUTES: "25"
