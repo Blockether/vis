@@ -140,6 +140,34 @@ describe('machine settings disclosures', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     view.unmount();
   });
+  // Regression: on a phone the settings sheet is as tall as its content. The sections
+  // painted before the catalog answered, so a refusal shrank the sheet from full height.
+  it('mounts no settings section before the machine answers with its catalog', async () => {
+    let refuse!: () => void;
+    const fetcher = vi.fn((input: RequestInfo | URL) => {
+      if (new URL(String(input), URL_A).pathname !== '/v1/settings') return quiet(input);
+      return new Promise<Response>((resolve) => {
+        refuse = () => void incompatibleSettings(input).then(resolve);
+      });
+    });
+    globalThis.fetch = fetcher as unknown as typeof fetch;
+    // A machine no earlier case has read, so no cached catalog paints first.
+    const view = open([{ url: 'http://10.0.0.7:7890', token: 't', id: 'd41f7a9e03b2c5e8' }]);
+
+    expect(await screen.findByText('Loading', {}, { timeout: 2000 })).toBeVisible();
+    expect(screen.queryByText('Providers')).toBeNull();
+    expect(screen.queryByText('Tools')).toBeNull();
+
+    await act(async () => refuse());
+    await waitFor(() =>
+      expect(screen.getAllByText(/gateway speaks protocol 4/i).length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText('Providers')).toBeNull();
+    const paths = fetcher.mock.calls.map(([input]) => new URL(String(input), URL_A).pathname);
+    expect(paths).not.toContain('/v1/mcp/servers');
+    expect(paths).not.toContain('/v1/automations');
+    view.unmount();
+  });
   it('retries an offline machine without fetching or expanding its settings', async () => {
     const conn = { url: 'http://10.0.0.5:7891', label: 'laptop' };
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Load failed'));

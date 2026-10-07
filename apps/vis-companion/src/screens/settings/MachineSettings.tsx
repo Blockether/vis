@@ -368,6 +368,9 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: 
   );
 }
 
+/** How long a machine may take to answer before its settings show a loading panel. */
+const LOADING_DELAY_MS = 400;
+
 /**
  * ONE MACHINE'S OWN SETTINGS, standing under that machine's own row in `SettingsDialog`.
  *
@@ -411,6 +414,8 @@ export function MachineSettings({
   const [failure, setFailure] = useState<'unreachable' | 'unauthorized' | 'incompatible' | null>(
     null,
   );
+  // A machine that answers within one beat changes the sheet height once, not twice.
+  const [isLoadingShown, setIsLoadingShown] = useState(false);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -453,6 +458,11 @@ export function MachineSettings({
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setIsLoadingShown(true), LOADING_DELAY_MS);
+    return () => window.clearTimeout(id);
+  }, []);
 
   // Escape belongs to the dialog that frames these panels.
 
@@ -524,6 +534,10 @@ export function MachineSettings({
   const voice = section('voice');
   const tools = section('tools');
   const sectionIds = ['general', 'providers', 'voice', 'tools'];
+  // The sections mount only once this machine has answered with its catalog. On a phone the
+  // sheet is as tall as its content, so a full stack of sections that a refusal then replaces
+  // with one banner made the sheet jump to full height and back.
+  const isReady = failure === null && groups !== null;
 
   return (
     // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
@@ -539,7 +553,7 @@ export function MachineSettings({
         </div>
       )}
 
-      {failure === null && (
+      {isReady && (
         <>
           <SettingsSection title={general?.title ?? 'General'}>
             {rowList(general?.toggles.filter((toggle) => !toggle.is_experimental) ?? [])}
@@ -599,32 +613,34 @@ export function MachineSettings({
           </div>
         </SettingsPanel>
       ) : groups === null ? (
-        <SettingsPanel title="Loading">
-          {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
-                  tinted blocks were an invisible skeleton — a blank hole where
-                  the settings should be. Bars are drawn in `--color-muted`. */}
-          <div
-            className="space-y-px bg-dialog-edge"
-            role="status"
-            aria-live="polite"
-            aria-label="Loading settings"
-          >
-            <div className="bg-panel px-4 py-2">
-              <Text as="p" variant="description">
-                Loading settings…
-              </Text>
-            </div>
-            {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
-              <div
-                key={width}
-                className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none"
-              >
-                <span className={`block h-2.5 bg-muted/30 ${width}`} />
-                <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
+        isLoadingShown && (
+          <SettingsPanel title="Loading">
+            {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
+                    tinted blocks were an invisible skeleton — a blank hole where
+                    the settings should be. Bars are drawn in `--color-muted`. */}
+            <div
+              className="space-y-px bg-dialog-edge"
+              role="status"
+              aria-live="polite"
+              aria-label="Loading settings"
+            >
+              <div className="bg-panel px-4 py-2">
+                <Text as="p" variant="description">
+                  Loading settings…
+                </Text>
               </div>
-            ))}
-          </div>
-        </SettingsPanel>
+              {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
+                <div
+                  key={width}
+                  className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none"
+                >
+                  <span className={`block h-2.5 bg-muted/30 ${width}`} />
+                  <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
+                </div>
+              ))}
+            </div>
+          </SettingsPanel>
+        )
       ) : groups.length === 0 ? (
         <SettingsPanel title="Settings">
           <p className="px-4 py-6 text-center">
@@ -644,15 +660,13 @@ export function MachineSettings({
           ))
       )}
 
-      {failure === null && (
+      {isReady && (
         <>
           <SettingsSection title={tools?.title ?? 'Tools'}>
             {tools && settingRows(tools)}
             <McpServersPanel client={client} />
-            {groups !== null && (
-              <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} onRefresh={load}
-                renderSetting={settingRow} />
-            )}
+            <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} onRefresh={load}
+              renderSetting={settingRow} />
           </SettingsSection>
           <AutomationsPanel client={client} gatewayUrl={gateway.url} />
         </>
