@@ -133,7 +133,8 @@
     (if (semantic-contribution? value) [] [(semantic-problem value)])))
 
 (defn contribution-message
-  "One error message for an invalid contribution: `label`, the id when known, then each problem."
+  "One error message for an invalid keyword-map contribution: `label`, the id when known,
+   then each problem."
   [label value]
-  (let [id (or (:id value) (get value "id"))]
+  (let [id (:id value)]
     (str label (when (string? id) (str " " id)) ": " (str/join " " (contribution-problems value)))))
