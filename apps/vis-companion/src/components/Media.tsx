@@ -18,7 +18,7 @@ import {
   mediaFrameClass,
   mediaGridClass,
   mediaTileFrameClass,
-  plateAspectRatio,
+  plateFit,
   type PictureSize,
 } from '../lib/media-frame';
 import { ImageGallery } from '../lib/gallery';
@@ -50,18 +50,19 @@ export function MediaPlate({
   meta?: string;
   /** A control docked at the caption's end, e.g. a clip's `MediaShareButton`. */
   action?: ReactNode;
-  /** The picture's own size when it is known before its bytes decode; see `plateAspectRatio`. */
+  /** The picture's own size when it is known before its bytes decode; see `plateFit`. */
   size?: PictureSize | null;
   children: ReactNode;
 }) {
-  const aspectRatio = plateAspectRatio(size);
+  const fit = plateFit(size);
   return (
     // The gap over a picture is the transcript's own rhythm, spelled ONCE: the
     // block that opens a step takes the stack's gap and adds none of its own,
     // or the whitespace above a gallery and the whitespace below it stop
     // matching.
-    <figure className="mt-2.5 min-w-0 first:mt-0">
-      <div className={mediaFrameClass} style={aspectRatio ? { aspectRatio } : undefined}>
+    // A fitted plate is as wide as its picture, so the caption under it is too.
+    <figure className="mt-2.5 min-w-0 first:mt-0" style={fit ? { width: fit.width } : undefined}>
+      <div className={mediaFrameClass} style={fit ? { aspectRatio: fit.aspectRatio } : undefined}>
         {children}
       </div>
       {name || action ? (

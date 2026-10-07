@@ -33,18 +33,26 @@ export interface PictureSize {
   height: number;
 }
 
-/** The reservation that `mediaFrameClass` spells, as a number. */
-const PLATE_ASPECT = 4 / 3;
+/** The plate's frame and figure styles once the picture's size is known. */
+export interface PlateFit {
+  aspectRatio: string;
+  width: string;
+}
 
 /**
- * The plate's ratio for a picture whose size is known before it decodes. A picture
- * WIDER than the plate takes its own ratio: centred in the 4:3, a wide screenshot
- * stood between two bands of empty mat. A taller picture keeps the 4:3 and its side
- * mats, and `undefined` keeps the reservation of the class.
+ * The plate fitted to a picture whose size is known before it decodes: the frame
+ * takes the picture's own ratio, and the plate is no wider than the column, the
+ * picture's own pixels or the 60svh height cap at that ratio. User report: the 4:3
+ * reservation framed a wide or tall screenshot in bands of empty mat on two sides.
+ * `undefined` keeps the reservation of the class for a picture of unknown size.
  */
-export function plateAspectRatio(size: PictureSize | null | undefined): string | undefined {
-  if (!size || size.width / size.height <= PLATE_ASPECT) return undefined;
-  return `${size.width} / ${size.height}`;
+export function plateFit(size: PictureSize | null | undefined): PlateFit | undefined {
+  if (!size) return undefined;
+  const ratio = `${size.width} / ${size.height}`;
+  return {
+    aspectRatio: ratio,
+    width: `min(100%, ${size.width}px, calc(60svh * ${ratio}))`,
+  };
 }
 
 /**

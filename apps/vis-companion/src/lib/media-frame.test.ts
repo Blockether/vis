@@ -9,7 +9,7 @@ import {
   mediaGroupLayout,
   mediaTileContentClass,
   mediaTileFrameClass,
-  plateAspectRatio,
+  plateFit,
 } from './media-frame';
 
 // Regression, issue: scrolling an iOS transcript full of screenshots jumped.
@@ -107,15 +107,20 @@ describe('the plate frame child', () => {
   });
 });
 
-describe('the plate ratio', () => {
-  it('gives a picture wider than the plate its own ratio', () => {
-    expect(plateAspectRatio({ width: 851, height: 332 })).toBe('851 / 332');
+describe('the plate fit', () => {
+  // User report: a wide or tall screenshot sat in bands of empty mat inside the 4:3 frame.
+  it('gives the frame the picture ratio, wide or tall', () => {
+    expect(plateFit({ width: 851, height: 332 })?.aspectRatio).toBe('851 / 332');
+    expect(plateFit({ width: 390, height: 844 })?.aspectRatio).toBe('390 / 844');
   });
 
-  it('keeps the reserved 4:3 for a 4:3 or taller picture, or an unknown one', () => {
-    expect(plateAspectRatio({ width: 4032, height: 3024 })).toBeUndefined();
-    expect(plateAspectRatio({ width: 390, height: 844 })).toBeUndefined();
-    expect(plateAspectRatio(null)).toBeUndefined();
+  it('keeps the plate inside the column, its own pixels and the height cap', () => {
+    expect(plateFit({ width: 390, height: 844 })?.width).toBe('min(100%, 390px, calc(60svh * 390 / 844))');
+  });
+
+  it('keeps the reserved 4:3 for a picture of unknown size', () => {
+    expect(plateFit(null)).toBeUndefined();
+    expect(plateFit(undefined)).toBeUndefined();
   });
 });
 

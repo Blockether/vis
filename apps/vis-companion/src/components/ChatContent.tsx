@@ -2911,7 +2911,12 @@ function DeliveredMessage({
             </MediaGrid>
           ) : (
             pictures.map((att, at) => (
-              <MediaPlate key={att.id ?? `plate-${at}`} name={att.filename} meta={mediaMeta(att)}>
+              <MediaPlate
+                key={att.id ?? `plate-${at}`}
+                name={att.filename}
+                meta={mediaMeta(att)}
+                size={inlinePictureSize(att.base64)}
+              >
                 {picture(att, at, false)}
               </MediaPlate>
             ))

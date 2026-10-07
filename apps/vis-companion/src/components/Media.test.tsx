@@ -44,10 +44,10 @@ describe('MediaPlate', () => {
     expect(withChild('some-failure-notice')).toBe(mediaFrameClass);
   });
 
-  // A wide screenshot used to stand centred in the 4:3 reservation, between two
-  // bands of empty mat. When its size is known before it decodes, the frame takes
-  // the picture's own ratio and keeps every class of the reservation.
-  it("gives a wide picture's frame the picture's own ratio, and nothing else", () => {
+  // User report: a wide or tall screenshot stood in the 4:3 reservation between two
+  // bands of empty mat. When its size is known before it decodes, the frame takes the
+  // picture's own ratio, the figure its width, and the frame keeps every class.
+  it("fits a known picture's frame and figure to the picture, and nothing else", () => {
     const plate = (size?: { width: number; height: number }) =>
       renderToStaticMarkup(
         <MediaPlate name="shot.png" meta="PNG · 8B" size={size}>
@@ -56,8 +56,10 @@ describe('MediaPlate', () => {
       );
     expect(frame(plate({ width: 851, height: 332 }))).toBe(mediaFrameClass);
     expect(plate({ width: 851, height: 332 })).toContain('style="aspect-ratio:851 / 332"');
-    expect(plate({ width: 390, height: 844 })).not.toContain('aspect-ratio');
-    expect(plate()).not.toContain('aspect-ratio');
+    const tall = plate({ width: 390, height: 844 });
+    expect(tall).toContain('style="aspect-ratio:390 / 844"');
+    expect(tall).toContain('style="width:min(100%, 390px, calc(60svh * 390 / 844))"');
+    expect(plate()).not.toContain('style=');
   });
 
   it('docks the name and the format under the mat', () => {

@@ -96,7 +96,8 @@ describe('a queued message delivered into the turn', () => {
       source: 'user',
       filename: 'shot.png',
       media_type: 'image/png',
-      base64: 'QUJD',
+      // A 390×844 PNG header: a tall phone screenshot.
+      base64: 'iVBORw0KGgoAAAANSUhEUgAAAYYAAANMCAYAAAA=',
     };
     const settle = (ms: number) =>
       act(async () => {
@@ -117,7 +118,10 @@ describe('a queued message delivered into the turn', () => {
       await settle(1000);
       expect(fetchTurnAttachments).toHaveBeenCalledTimes(2);
       expect(fetchTurnAttachments).toHaveBeenCalledWith('s-1', 'q-1', expect.any(AbortSignal));
-      expect(band?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,QUJD');
+      expect(band?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAYYAAANMCAYAAAA=');
+      // User report: the picture sat in empty mat. Its plate takes the picture's own shape.
+      // jsdom drops the `min()` width; `Media.test` checks it in the server markup.
+      expect(band?.querySelector('figure > div')?.getAttribute('style')).toContain('aspect-ratio: 390 / 844');
       expect(band?.textContent).not.toContain('🖼 shot.png');
     });
 
