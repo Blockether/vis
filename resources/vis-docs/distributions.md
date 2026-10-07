@@ -236,12 +236,17 @@ vis-agent web                  # use or start the gateway on 127.0.0.1:7890 and 
 vis-agent web --port 8080      # use or start the gateway on port 8080 instead
 vis-agent web --host 0.0.0.0   # also serve other devices on your network
 vis-agent web --no-open        # print the address without opening a browser
+vis-agent web --pair           # also print a pairing QR for the Companion app on your phone
 ```
 
 The command prints the address it opens. Keep it running while you use the app, and
 press Ctrl-C when you are done. If the gateway stops answering, the command ends and
 tells you. `vis-agent gateway start` serves the web app too, and prints its address when
 the web app is installed.
+
+`--pair` prints the same pairing block as `vis-agent gateway start --pair`: the link, the
+token and a QR code. Without `--host`, it starts the gateway on an address that your phone can
+reach. `--advertise` sets the address in the pairing link, as it does for `vis-agent gateway start`.
 
 ### Choose the gateway address
 

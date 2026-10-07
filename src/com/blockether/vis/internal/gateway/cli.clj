@@ -346,19 +346,41 @@
 
 (defn- web-ready!
   "Print where the web app runs, and open it unless `--no-open` was given. A gateway
-   bound beyond loopback also serves other devices, and requires its token there."
+   bound beyond loopback also serves other devices, and requires its token there.
+   `--pair` adds the companion pairing block of `vis-agent gateway start --pair`."
   [parsed {:keys [url host port remote?]}]
-  (commandline/stdout! (str "Vis web app: " url))
-  (when-not (or remote? (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
-    (when-let [others (->> (pairing/candidate-hosts host)
-                           (remove #{"127.0.0.1" "::1" "localhost"})
-                           (map #(str "http://" % ":" port "/"))
-                           seq)]
-      (commandline/stdout! (str "Other devices: " (str/join ", " others))))
-    (commandline/stdout! "This gateway requires its token: `vis-agent gateway pair` prints it."))
-  (commandline/stdout! "Press Ctrl-C to stop.")
-  (when-not (or (get parsed "no-open") (= :ok (:status (external-opener/open! url))))
-    (commandline/stdout! "Could not open a browser; open the address above.")))
+  (let [pair? (boolean (get parsed "pair"))]
+    (commandline/stdout! (str "Vis web app: " url))
+    (when-not (or remote? (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
+      (when-let [others (->> (pairing/candidate-hosts host)
+                             (remove #{"127.0.0.1" "::1" "localhost"})
+                             (map #(str "http://" % ":" port "/"))
+                             seq)]
+        (commandline/stdout! (str "Other devices: " (str/join ", " others))))
+      (when-not pair?
+        (commandline/stdout!
+          "This gateway requires its token: `vis-agent gateway pair` prints it.")))
+    (when pair?
+      (let [{:keys [token]} (gateway-client/pairing-info)]
+        (pairing/print-pairing! {:host host
+                                 :port port
+                                 :token token
+                                 :require-token? (boolean token)
+                                 :advertise (advertise-option parsed)
+                                 :emit commandline/stdout!})))
+    (commandline/stdout! "Press Ctrl-C to stop.")
+    (when-not (or (get parsed "no-open") (= :ok (:status (external-opener/open! url))))
+      (commandline/stdout! "Could not open a browser; open the address above."))))
+
+(defn- web-host
+  "The gateway host of `vis-agent web`: `--host`, else for `--pair` the
+   phone-reachable bind of `vis-agent gateway start --pair`, else nil. A `--gateway`
+   target keeps its own address, so `--pair` never chooses a bind for it."
+  [parsed remote?]
+  (or (some-> (get parsed "host")
+              str/trim
+              not-empty)
+      (when (and (get parsed "pair") (not remote?)) (pairing/pair-bind-host))))
 
 (defn- cli-web!
   "Open the web app on the gateway at `--host`/`--port`, starting this database's
@@ -368,47 +390,61 @@
   (config/init-cli!)
   (when-let [db (get parsed "db")]
     (System/setProperty "vis.db.path" db))
-  (let [host
-        (some-> (get parsed "host")
-                str/trim
-                not-empty)
+  (let [remote?
+        (boolean (gateway-client/remote-gateway))
 
         port
         (web-port (get parsed "port"))]
 
-    (when (and (or host port) (gateway-client/remote-gateway))
+    (when (and remote?
+               (or port
+                   (some-> (get parsed "host")
+                           str/trim
+                           not-empty)))
       (throw (ex-info (str "--host and --port choose the gateway `vis-agent web` uses or starts;\n"
                            "  --gateway already names one. Pass one or the other.")
                       {:vis/user-error true})))
-    (when-not (or (gateway-client/remote-gateway)
-                  (and host (not (gateway-client/local-host? host)))
-                  (web/configured-root))
-      (throw (ex-info web-app-missing {:vis/user-error true})))
-    (let [exit (try (gateway-client/run-web! #(web-ready! parsed %) {:host host :port port})
-                    (catch clojure.lang.ExceptionInfo e (throw (web-error e))))]
-      (commandline/stdout! "The gateway stopped answering; the web app is closed.")
-      (shutdown-agents)
-      (System/exit (int exit)))))
+    (let [host (web-host parsed remote?)]
+      (when-not (or remote?
+                    (and host (not (gateway-client/local-host? host)))
+                    (web/configured-root))
+        (throw (ex-info web-app-missing {:vis/user-error true})))
+      (let [exit (try (gateway-client/run-web! #(web-ready! parsed %) {:host host :port port})
+                      (catch clojure.lang.ExceptionInfo e (throw (web-error e))))]
+        (commandline/stdout! "The gateway stopped answering; the web app is closed.")
+        (shutdown-agents)
+        (System/exit (int exit))))))
 
 (def web-command
   {:cmd/name "web"
    :cmd/doc
    "Open the Vis web app in a browser from the gateway at --host/--port, starting this database's gateway there when none answers. Keep it running while you use the app; Ctrl-C stops it."
-   :cmd/usage "vis-agent web [--host 127.0.0.1] [--port 7890] [--no-open] [--db PATH]"
+   :cmd/usage
+   "vis-agent web [--host 127.0.0.1] [--port 7890] [--pair] [--advertise URL] [--no-open] [--db PATH]"
    :cmd/args
    [{:name "host"
      :kind :flag
      :type :string
      :doc
-     "Gateway host (default 127.0.0.1). 0.0.0.0 or a LAN address serves other devices too, and requires the gateway token. A host on another machine attaches to the gateway running there, with VIS_GATEWAY_TOKEN as its token."}
+     "Gateway host (default 127.0.0.1, or a phone-reachable host when --pair is given). 0.0.0.0 or a LAN address serves other devices too, and requires the gateway token. A host on another machine attaches to the gateway running there, with VIS_GATEWAY_TOKEN as its token."}
     {:name "port" :kind :flag :type :string :doc "Gateway port (default 7890)."}
+    {:name "pair"
+     :kind :flag
+     :type :boolean
+     :doc
+     "Print a VIS companion pairing QR (URL + bearer token), as `vis-agent gateway start --pair` does. Implies a phone-reachable bind (Tailscale IP, else 0.0.0.0) unless --host says otherwise."}
+    {:name "advertise"
+     :kind :flag
+     :type :string
+     :doc
+     "Address the pairing link should carry instead of the detected one (HOST, HOST:PORT or a full URL). Defaults to VIS_GATEWAY_ADVERTISE, then to `gateway: advertise:` in the Vis config."}
     {:name "no-open" :kind :flag :type :boolean :doc "Print the address without opening a browser."}
     {:name "db"
      :kind :flag
      :type :string
      :doc "SQLite DB path whose gateway serves the app (default ~/.vis/vis.mdb or VIS_DB_PATH)."}]
    :cmd/examples ["vis-agent web" "vis-agent web --port 8080"
-                  "vis-agent web --host 0.0.0.0 --no-open"]
+                  "vis-agent web --host 0.0.0.0 --no-open" "vis-agent web --pair"]
    :cmd/run-fn cli-web!})
 
 (def command

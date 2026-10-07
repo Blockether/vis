@@ -209,4 +209,35 @@
           (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)}
             (fn []
               (#'gateway-cli/web-ready! {"no-open" true} ready)))
-          (expect (= [(str "Vis web app: " (:url ready)) "Press Ctrl-C to stop."] @lines))))))
+          (expect (= [(str "Vis web app: " (:url ready)) "Press Ctrl-C to stop."] @lines)))))
+  (it "binds a phone-reachable host for --pair unless --host or --gateway decides"
+      (with-redefs-fn {#'pairing/pair-bind-host (constantly "0.0.0.0")}
+        (fn []
+          (expect (= "0.0.0.0" (#'gateway-cli/web-host {"pair" true} false)))
+          (expect (= "10.0.0.5" (#'gateway-cli/web-host {"pair" true "host" " 10.0.0.5 "} false)))
+          (expect (nil? (#'gateway-cli/web-host {"pair" true} true)))
+          (expect (nil? (#'gateway-cli/web-host {} false))))))
+  (it "prints the gateway pairing block for --pair"
+      (let [lines
+            (atom [])
+
+            pairs
+            (atom [])]
+
+        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
+                         #'pairing/candidate-hosts (constantly ["10.0.0.5"])
+                         #'gateway-client/pairing-info (constantly {:running? true :token "secret"})
+                         #'pairing/print-pairing! #(swap! pairs conj (dissoc % :emit))}
+          (fn []
+            (#'gateway-cli/web-ready!
+             {"no-open" true "pair" true "advertise" "gateway.example.com"}
+             {:url "http://127.0.0.1:7890/" :host "0.0.0.0" :port 7890 :remote? false})))
+        (expect (= [{:host "0.0.0.0"
+                     :port 7890
+                     :token "secret"
+                     :require-token? true
+                     :advertise "gateway.example.com"}]
+                   @pairs))
+        (expect (= ["Vis web app: http://127.0.0.1:7890/" "Other devices: http://10.0.0.5:7890/"
+                    "Press Ctrl-C to stop."]
+                   @lines)))))
