@@ -191,7 +191,23 @@ function microphoneAccessError(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
 }
 
+/**
+ * Actionable copy for a page that is not a secure context. Browsers hide `navigator.mediaDevices`
+ * on plain HTTP except for localhost, so a gateway opened by its LAN or WSL address cannot record.
+ * The same gateway answers on localhost on its own computer, and WSL forwards that port to Windows.
+ */
+export function insecurePageMessage(page: URL): string {
+  const local = `http://localhost${page.port ? `:${page.port}` : ''}/`;
+  return (
+    'Microphone recording needs a secure page. On the computer that runs Vis, open ' +
+    `${local} instead of ${page.protocol}//${page.host}. On another device, use HTTPS.`
+  );
+}
+
 export async function startWavRecording(options: WavRecordingOptions = {}): Promise<WavRecording> {
+  if (window.isSecureContext === false) {
+    throw new Error(insecurePageMessage(new URL(window.location.href)));
+  }
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('Microphone recording is unavailable on this device');
   }

@@ -4,7 +4,7 @@
 // A refused microphone has to say where the permission can be changed.
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { startWavRecording } from './voice';
+import { insecurePageMessage, startWavRecording } from './voice';
 
 const getUserMedia = vi.fn();
 const desktopHost = window as unknown as { __TAURI__?: unknown };
@@ -16,6 +16,7 @@ beforeEach(() => {
     value: { getUserMedia },
   });
   delete desktopHost.__TAURI__;
+  Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
 });
 
 const denied = () =>
@@ -51,5 +52,22 @@ it('refuses a device that cannot record at all', async () => {
 
   await expect(startWavRecording()).rejects.toThrow(
     'Microphone recording is unavailable on this device',
+  );
+});
+
+// A browser on Windows that opens the WSL address of the gateway (http://172.x.x.x) gets an
+// insecure page: Chrome then hides navigator.mediaDevices, and only localhost or HTTPS records.
+it('names the address that records when the page is not a secure context', async () => {
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+  Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false });
+
+  await expect(startWavRecording()).rejects.toThrow('Microphone recording needs a secure page.');
+  expect(insecurePageMessage(new URL('http://172.20.1.2:7890/sessions/a'))).toBe(
+    'Microphone recording needs a secure page. On the computer that runs Vis, open ' +
+      'http://localhost:7890/ instead of http://172.20.1.2:7890. On another device, use HTTPS.',
+  );
+  expect(insecurePageMessage(new URL('http://10.0.0.5/'))).toBe(
+    'Microphone recording needs a secure page. On the computer that runs Vis, open ' +
+      'http://localhost/ instead of http://10.0.0.5. On another device, use HTTPS.',
   );
 });
