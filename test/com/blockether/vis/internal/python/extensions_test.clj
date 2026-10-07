@@ -384,7 +384,7 @@
            (finally (binding [workspace/*workspace-root* root]
                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "reports which setting field broke which rule at load and in doctor"
-      ;; #322 and #323: 150 characters load; 151 name the setting, field, rule and limit.
+      ;; #322 and #323: 300 characters load; 301 name the setting, field, rule and limit.
       (let [dir
             (temp-dir)
 
@@ -404,14 +404,14 @@
                    (apply str (repeat length "x"))
                    "')]))\n"))]
 
-        (write-ext! dir ".vis/extensions/steering.py" (source 150))
+        (write-ext! dir ".vis/extensions/steering.py" (source 300))
         (try (binding [workspace/*workspace-root* root]
                (pyx/ensure-python-extensions-loaded! catalog)
                (expect (= [] (pyx/load-failures)))
-               (write-ext! dir ".vis/extensions/steering.py" (source 151))
+               (write-ext! dir ".vis/extensions/steering.py" (source 301))
                (pyx/reload-python-extensions! catalog)
-               (let [expected (str "Invalid setting steering_mode: description is 151 characters; "
-                                   "maximum is 150 (maxLength). Shorten the description.")
+               (let [expected (str "Invalid setting steering_mode: description is 301 characters; "
+                                   "maximum is 300 (maxLength). Shorten the description.")
                      [failure] (pyx/load-failures)
                      checks (#'pyx/doctor-fn {:workspace/root root})]
 

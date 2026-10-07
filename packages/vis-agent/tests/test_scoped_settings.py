@@ -68,7 +68,7 @@ def test_parent_nests_a_setting():
         vis.Setting(id="test_detail", label="Test detail", default=False, parent=" ")
 
 
-# Regression for #322 and #323: a 150-character description is valid, and a
+# Regression for #322 and #323: a 300-character description is valid, and a
 # longer one names the setting, the field, the rule and the limit.
 def test_description_limit_and_actionable_error():
     def mode(description):
@@ -81,12 +81,12 @@ def test_description_limit_and_actionable_error():
             description=description,
         )
 
-    assert mode("x" * 150).description == "x" * 150
+    assert mode("x" * 300).description == "x" * 300
     with pytest.raises(ValueError) as error:
-        mode("x" * 151)
+        mode("x" * 301)
     assert str(error.value) == (
-        "Invalid setting steering_mode: description is 151 characters; "
-        "maximum is 150 (maxLength). Shorten the description."
+        "Invalid setting steering_mode: description is 301 characters; "
+        "maximum is 300 (maxLength). Shorten the description."
     )
     with pytest.raises(ValueError, match="one line without line breaks"):
         mode("two\nlines")

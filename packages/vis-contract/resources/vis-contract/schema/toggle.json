@@ -46,7 +46,7 @@
         "description": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 150,
+          "maxLength": 300,
           "pattern": "^[^\\r\\n]+$"
         },
         "default": {},

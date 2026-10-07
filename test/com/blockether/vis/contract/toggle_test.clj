@@ -26,23 +26,23 @@
                               toggle/max-description-length)))))
 
 (defdescribe contribution-problems-name-field-rule-and-limit
-             ;; #322 and #323: a description of up to 150 characters is valid, and each
+             ;; #322 and #323: a description of up to 300 characters is valid, and each
              ;; failure names the field, the rule and the limit.
              (let [mode {:id "steering_mode"
                          :label "Steering mode"
                          :type :enum
                          :choices ["vibe" "control"]
                          :default "vibe"}]
-               (it "accepts 150 characters and explains 151"
-                   (expect (= 150 toggle/max-description-length))
+               (it "accepts 300 characters and explains 301"
+                   (expect (= 300 toggle/max-description-length))
                    (expect (= []
                               (toggle/contribution-problems
-                                (assoc mode :description (apply str (repeat 150 "x"))))))
-                   (expect (= (str "Invalid setting steering_mode: description is 151 characters; "
-                                   "maximum is 150 (maxLength). Shorten the description.")
+                                (assoc mode :description (apply str (repeat 300 "x"))))))
+                   (expect (= (str "Invalid setting steering_mode: description is 301 characters; "
+                                   "maximum is 300 (maxLength). Shorten the description.")
                               (toggle/contribution-message
                                 "Invalid setting"
-                                (assoc mode :description (apply str (repeat 151 "x")))))))
+                                (assoc mode :description (apply str (repeat 301 "x")))))))
                (it "keeps the empty and multi-line rules, with readable lines"
                    (expect (= ["description is 0 characters; minimum is 1 (minLength)."
                                "description must be one line without line breaks (pattern)."]
