@@ -4730,7 +4730,12 @@
       (io/file dir "codesign")
       (str
         "#!/usr/bin/env bash\n" record
-        "case \" $* \" in *' --check-notarization '*) exit \"${VIS_TEST_NOTARY_EXIT:-0}\" ;; esac\n"
+        "case \" $* \" in *' --check-notarization '*)\n"
+        ;; `VIS_TEST_NOTARY_PENDING` checks see no ticket yet, as right after acceptance.
+        "  checks=$(grep -c -- '--check-notarization' " (.getAbsolutePath log) ")\n"
+        "  if (( checks <= ${VIS_TEST_NOTARY_PENDING:-0} )); then exit 1; fi\n"
+        "  exit \"${VIS_TEST_NOTARY_EXIT:-0}\" ;;\n"
+        "esac\n"
         "exit 0\n"))
     (write-executable!
       (io/file dir "spctl")
@@ -4903,7 +4908,9 @@
              (expect (str/includes? calls "leaf[subject.OU] = \"JSZTFUBUBB\"") calls)
              (expect (not (str/includes? calls "notarytool")) calls))
            (.delete log)
-           (let [{:keys [exit output]} (sign! {} "--notarize-only")
+           ;; A fast acceptance can come minutes before the ticket is online, and
+           ;; a background step can wait for it at no cost to the job.
+           (let [{:keys [exit output]} (sign! {"VIS_TEST_NOTARY_PENDING" "6"} "--notarize-only")
                  calls (slurp log)]
              (expect (= 0 exit) output)
              (expect (not (str/includes? calls "--force")) "notarization signs nothing again")
@@ -4911,6 +4918,7 @@
              (expect
                (= 1 (count (filter #(str/includes? % "notarytool submit") (str/split-lines calls))))
                calls)
+             (expect (str/includes? output "no notarization ticket online yet") output)
              (expect (str/includes? calls "--check-notarization") calls))
            (let [{:keys [exit output]} (sign! {} "--sign-only" "--notarize-only")]
              (expect (not= 0 exit) output)

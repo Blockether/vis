@@ -244,16 +244,19 @@ grep -q 'status: Accepted' "$signing_dir/notary.log" || \
     "An unaccepted notarization submission cannot be published."
 
 # Nothing is stapled to a bare executable. Require its notarization ticket
-# online as well as the Developer ID signature; fresh tickets can trail
-# acceptance by a few seconds. An app-bundle assessment cannot verify a CLI.
+# online as well as the Developer ID signature. A fresh ticket can trail
+# acceptance by minutes when the notary service answers fast, so the check
+# retries for up to 10 minutes. An app-bundle assessment cannot verify a CLI.
+ticket_attempts="${VIS_NOTARY_TICKET_ATTEMPTS:-40}"
 for entry in "${entries[@]}"; do
   attempt=1
   until codesign --verify --strict --check-notarization -R="$requirement and notarized" "$entry"; do
-    if (( attempt >= 5 )); then
+    if (( attempt >= ticket_attempts )); then
       die "the notarization ticket could not be verified for $entry"
     fi
+    say "no notarization ticket online yet for $entry (attempt $attempt of $ticket_attempts)"
     attempt=$(( attempt + 1 ))
-    sleep 10
+    sleep 15
   done
 done
 say "signed and notarization-verified: ${entries[*]}"
