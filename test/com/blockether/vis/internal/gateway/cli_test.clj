@@ -193,39 +193,26 @@
   (it "lists other devices and the token for a gateway bound beyond loopback"
       (let [lines (atom [])]
         (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
-                         #'gateway-cli/wsl? (constantly false)
                          #'pairing/candidate-hosts (constantly ["10.0.0.5"])}
           (fn []
             (#'gateway-cli/web-ready!
              {"no-open" true}
              {:url "http://127.0.0.1:7890/" :host "0.0.0.0" :port 7890 :remote? false})))
-        (expect (= ["Vis web app: http://127.0.0.1:7890/" "Other devices: http://10.0.0.5:7890/"
-                    "Voice input needs HTTPS on those addresses. On this computer, use localhost."
-                    "This gateway requires its token: `vis-agent gateway pair` prints it."
-                    "Press Ctrl-C to stop."]
-                   @lines))))
+        (expect
+          (= ["Vis web app: http://127.0.0.1:7890/" "Other devices: http://10.0.0.5:7890/"
+              (str "Voice input needs HTTPS on those addresses. In Chrome, add them in "
+                   "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch Chrome.")
+              "This gateway requires its token: `vis-agent gateway pair` prints it."
+              "Press Ctrl-C to stop."]
+             @lines))))
   (it "prints only the address for a loopback or remote gateway"
       (doseq [ready [{:url "http://127.0.0.1:7890/" :host "127.0.0.1" :port 7890 :remote? false}
                      {:url "http://10.0.0.5:7890/" :host "10.0.0.5" :port 7890 :remote? true}]]
         (let [lines (atom [])]
-          (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
-                           #'gateway-cli/wsl? (constantly false)}
+          (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)}
             (fn []
               (#'gateway-cli/web-ready! {"no-open" true} ready)))
           (expect (= [(str "Vis web app: " (:url ready)) "Press Ctrl-C to stop."] @lines)))))
-  ;; A Windows browser that opens the WSL address of the gateway gets an insecure page,
-  ;; and Chrome then refuses the microphone. Windows forwards localhost to WSL.
-  (it "names the localhost address for a Windows browser under WSL"
-      (let [lines (atom [])]
-        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
-                         #'gateway-cli/wsl? (constantly true)}
-          (fn []
-            (#'gateway-cli/web-ready!
-             {"no-open" true}
-             {:url "http://127.0.0.1:7890/" :host "127.0.0.1" :port 7890 :remote? false})))
-        (expect (= ["Vis web app: http://127.0.0.1:7890/" "From Windows: http://localhost:7890/"
-                    "Press Ctrl-C to stop."]
-                   @lines))))
   (it "binds a phone-reachable host for --pair unless --host or --gateway decides"
       (with-redefs-fn {#'pairing/pair-bind-host (constantly "0.0.0.0")}
         (fn []
@@ -241,7 +228,6 @@
             (atom [])]
 
         (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)
-                         #'gateway-cli/wsl? (constantly false)
                          #'pairing/candidate-hosts (constantly ["10.0.0.5"])
                          #'gateway-client/pairing-info (constantly {:running? true :token "secret"})
                          #'pairing/print-pairing! #(swap! pairs conj (dissoc % :emit))}
@@ -255,7 +241,9 @@
                      :require-token? true
                      :advertise "gateway.example.com"}]
                    @pairs))
-        (expect (= ["Vis web app: http://127.0.0.1:7890/" "Other devices: http://10.0.0.5:7890/"
-                    "Voice input needs HTTPS on those addresses. On this computer, use localhost."
-                    "Press Ctrl-C to stop."]
-                   @lines)))))
+        (expect
+          (= ["Vis web app: http://127.0.0.1:7890/" "Other devices: http://10.0.0.5:7890/"
+              (str "Voice input needs HTTPS on those addresses. In Chrome, add them in "
+                   "chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch Chrome.")
+              "Press Ctrl-C to stop."]
+             @lines)))))

@@ -344,35 +344,31 @@
 
       e)))
 
-(defn- wsl?
-  "True when this Linux runs under WSL, where a Windows browser reaches the gateway
-   on localhost."
-  []
-  (or (some? (System/getenv "WSL_DISTRO_NAME"))
-      (try (str/includes? (str/lower-case (slurp "/proc/sys/kernel/osrelease")) "microsoft")
-           (catch Exception _ false))))
+(def ^:private insecure-origin-flag
+  "The Chrome flag that makes a listed `http://` origin a secure page, so it can record."
+  "chrome://flags/#unsafely-treat-insecure-origin-as-secure")
 
 (defn- web-ready!
   "Print where the web app runs, and open it unless `--no-open` was given. A gateway
    bound beyond loopback also serves other devices, and requires its token there.
    `--pair` adds the companion pairing block of `vis-agent gateway start --pair`.
 
-   A browser records voice only on a secure page: localhost or HTTPS. A Windows
-   browser that opens the WSL address gets a page without a microphone, so under WSL
-   the localhost address that Windows forwards comes first."
+   A browser records voice only on a secure page: HTTPS or this computer's loopback.
+   Another `http://` address, such as the WSL address that a Windows browser opens,
+   needs the Chrome flag that lists it as secure."
   [parsed {:keys [url host port remote?]}]
   (let [pair? (boolean (get parsed "pair"))]
     (commandline/stdout! (str "Vis web app: " url))
-    (when (and (not remote?) (wsl?))
-      (commandline/stdout! (str "From Windows: http://localhost:" port "/")))
     (when-not (or remote? (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
       (when-let [others (->> (pairing/candidate-hosts host)
                              (remove #{"127.0.0.1" "::1" "localhost"})
                              (map #(str "http://" % ":" port "/"))
                              seq)]
         (commandline/stdout! (str "Other devices: " (str/join ", " others)))
-        (commandline/stdout!
-          "Voice input needs HTTPS on those addresses. On this computer, use localhost."))
+        (commandline/stdout! (str
+                               "Voice input needs HTTPS on those addresses. In Chrome, add them in "
+                               insecure-origin-flag
+                               " and relaunch Chrome.")))
       (when-not pair?
         (commandline/stdout!
           "This gateway requires its token: `vis-agent gateway pair` prints it.")))

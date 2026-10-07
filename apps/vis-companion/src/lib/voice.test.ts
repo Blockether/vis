@@ -56,18 +56,15 @@ it('refuses a device that cannot record at all', async () => {
 });
 
 // A browser on Windows that opens the WSL address of the gateway (http://172.x.x.x) gets an
-// insecure page: Chrome then hides navigator.mediaDevices, and only localhost or HTTPS records.
-it('names the address that records when the page is not a secure context', async () => {
+// insecure page: Chrome then hides navigator.mediaDevices. Listing the origin in the Chrome flag,
+// or HTTPS, makes the page secure.
+it('names the Chrome flag for the page origin when the page is not a secure context', async () => {
   Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
   Object.defineProperty(window, 'isSecureContext', { configurable: true, value: false });
 
-  await expect(startWavRecording()).rejects.toThrow('Microphone recording needs a secure page.');
+  await expect(startWavRecording()).rejects.toThrow('Microphone recording needs a secure page');
   expect(insecurePageMessage(new URL('http://172.20.1.2:7890/sessions/a'))).toBe(
-    'Microphone recording needs a secure page. On the computer that runs Vis, open ' +
-      'http://localhost:7890/ instead of http://172.20.1.2:7890. On another device, use HTTPS.',
-  );
-  expect(insecurePageMessage(new URL('http://10.0.0.5/'))).toBe(
-    'Microphone recording needs a secure page. On the computer that runs Vis, open ' +
-      'http://localhost/ instead of http://10.0.0.5. On another device, use HTTPS.',
+    'Microphone recording needs a secure page (HTTPS). In Chrome, add http://172.20.1.2:7890 in ' +
+      'chrome://flags/#unsafely-treat-insecure-origin-as-secure, then relaunch Chrome.',
   );
 });

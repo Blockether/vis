@@ -248,10 +248,13 @@ the web app is installed.
 token and a QR code. Without `--host`, it starts the gateway on an address that your phone can
 reach. `--advertise` sets the address in the pairing link, as it does for `vis-agent gateway start`.
 
-Voice input works only on a secure page: `localhost`, `127.0.0.1` or HTTPS. Browsers block the
-microphone on other `http://` addresses, such as a LAN address. If Vis runs in WSL, open
-`http://localhost:7890/` in your Windows browser, not the WSL address. The command prints this
-address as `From Windows`.
+Voice input works only on a secure page: HTTPS, or `localhost` and `127.0.0.1` on the computer
+that runs Vis. Browsers block the microphone on other `http://` addresses. For example, a Windows
+browser that opens the address of Vis in WSL cannot record. To allow such an address in Chrome:
+
+1. Open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
+2. Add the address of the web app, for example `http://172.20.1.2:7890`.
+3. Set the flag to **Enabled** and relaunch Chrome.
 
 ### Choose the gateway address
 

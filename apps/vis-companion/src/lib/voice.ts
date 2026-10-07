@@ -193,14 +193,13 @@ function microphoneAccessError(cause: unknown): Error {
 
 /**
  * Actionable copy for a page that is not a secure context. Browsers hide `navigator.mediaDevices`
- * on plain HTTP except for localhost, so a gateway opened by its LAN or WSL address cannot record.
- * The same gateway answers on localhost on its own computer, and WSL forwards that port to Windows.
+ * on plain HTTP except for loopback, so a gateway opened by its LAN or WSL address cannot record.
+ * Chrome records there once the origin is listed in its insecure-origin flag.
  */
 export function insecurePageMessage(page: URL): string {
-  const local = `http://localhost${page.port ? `:${page.port}` : ''}/`;
   return (
-    'Microphone recording needs a secure page. On the computer that runs Vis, open ' +
-    `${local} instead of ${page.protocol}//${page.host}. On another device, use HTTPS.`
+    'Microphone recording needs a secure page (HTTPS). In Chrome, add ' +
+    `${page.origin} in chrome://flags/#unsafely-treat-insecure-origin-as-secure, then relaunch Chrome.`
   );
 }
 
