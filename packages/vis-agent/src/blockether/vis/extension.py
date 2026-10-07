@@ -1388,10 +1388,11 @@ def _call_arguments(fn, args, kwargs):
     An argument crosses the host boundary as JSON, so a record arrives as a dict of its
     public fields. A parameter annotated with a dataclass gets that dataclass back,
     built through its constructor. This also works inside a union, list, tuple, set or
-    dict annotation (Blockether/vis#289). Annotations resolve statically, as for tool
-    contracts. A value that does not fit its annotation stays as it arrived. So does
-    every argument of a call that the signature cannot bind: the call itself reports
-    that mistake.
+    dict annotation (Blockether/vis#289). One bare string for a sequence of strings
+    becomes one item, not one item for each character (Blockether/vis#324).
+    Annotations resolve statically, as for tool contracts. A value that does not fit
+    its annotation stays as it arrived. So does every argument of a call that the
+    signature cannot bind: the call itself reports that mistake.
     """
     try:
         # A wrapper around a bound method must not unwrap past the binding.
@@ -1561,9 +1562,10 @@ def _holds_record(shape):
 def _rebuilt_value(shape, value):
     """Return `value` with the records that `shape` expects rebuilt.
 
+    One bare string for a sequence of strings becomes that sequence with one item.
     A value that does not fit stays as is.
     """
-    if not _holds_record(shape):
+    if not (_holds_record(shape) or isinstance(value, str)):
         return value
     result = _fitted_argument(shape, value)
     return value if result is _UNFIT else result
@@ -1588,7 +1590,11 @@ def _fitted_argument(shape, value):
     if kind == "record":
         return _rebuilt_record(shape[1], value, shape[2])
     if kind == "union":
-        for member in shape[1]:
+        members = shape[1]
+        if isinstance(value, str):
+            # A member that takes the string as it is wins over one that wraps it.
+            members = sorted(members, key=lambda member: member[0] == "sequence")
+        for member in members:
             result = _fitted_argument(member, value)
             if result is not _UNFIT:
                 return result
@@ -1599,6 +1605,13 @@ def _fitted_argument(shape, value):
         if not _holds_record(shape):
             return value
         return {key: _rebuilt_value(shape[1], item) for key, item in value.items()}
+    if kind == "sequence" and isinstance(value, str):
+        # A string is a sequence of its characters; the caller named one item. An
+        # item of any type also takes the whole string, so it stays as it is.
+        if shape[2] in (("any",), ("plain", object)):
+            return _UNFIT
+        item = _fitted_argument(shape[2], value)
+        return _UNFIT if item is _UNFIT else shape[1]((item,))
     if not isinstance(value, (list, tuple)):
         return _UNFIT
     if kind == "fixed":

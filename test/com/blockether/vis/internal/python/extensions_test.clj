@@ -6482,6 +6482,46 @@ vis.register_extension(vis.Extension(
               (finally (ep/dispose-python-context! ctx)))))))))
 
 (defdescribe
+  python-string-list-argument-test
+  ;; #324: a bare string for a list of strings reaches the tool as one item, not one
+  ;; item for each character, so `py.lint_code('/src/app.py')` cannot lint `/`.
+  (it
+    "passes a bare string to a list of strings as one item in both sandboxes"
+    (doseq [worker? [false true]]
+      (with-fresh-loaded
+        {"string_lists.py"
+         (str
+           "from __future__ import annotations\n" "from collections.abc import Sequence\n"
+           "from typing import Annotated\n" "import blockether.vis.extension as vis\n"
+           "def render(**_):\n" "    return None\n"
+           "class Tools:\n"
+           "    @vis.method(activity=vis.Activity(label='Lint files', show_start=False, render=render))\n"
+           "    def lint(self, paths: Annotated[Sequence[str], 'Files.'] = (), *, names: list[str] | str = ()) -> str:\n"
+           "        'Name the files to lint.'\n"
+           "        return f'{list(paths)!r} {names!r}'\n"
+           "vis.register_extension(vis.Extension(name='string-lists', description='Take lists of strings', alias='string_lists', symbols=[vis.Symbol(Tools(), name='list_probe')]))\n")}
+        (fn [result _]
+          (expect (= 1 (:loaded result)))
+          (let [made (ep/create-python-context {} nil {:worker? worker?} nil)
+                ctx (:python-context made)
+                env {:python-context ctx :extensions (atom []) :active-extensions (atom [])}
+                ext (registered "string-lists")]
+
+            (try (reset! (:extensions env) [ext])
+                 (if worker?
+                   (loop-env/sync-active-extension-symbols! env [ext])
+                   (loop-env/sync-extension-symbols-into! ctx (dissoc env :python-context) [ext]))
+                 (let [answer (ep/run-python-block
+                                ctx
+                                (str
+                                  "print(await list_probe.lint('/src/app.py'))\n"
+                                  "print(await list_probe.lint(['a.py', 'b.py'], names='n'))\n"))]
+                   (expect (nil? (:error answer)) (str "worker? " worker? " " (pr-str answer)))
+                   (expect (= "['/src/app.py'] ()\n['a.py', 'b.py'] 'n'\n" (:stdout answer))
+                           (str "worker? " worker?)))
+                 (finally (ep/dispose-python-context! ctx)))))))))
+
+(defdescribe
   bounded-symbol-contract-doc-test
   ;; Issue #234: compact docs and the complete schema must survive the real host boundary.
   (it
