@@ -2,7 +2,7 @@ name: Native Release
 
 # Companion to release.yml (which cuts the GitHub Release + Clojars deploy). A
 # dispatch can build native engine and terminal-client artifacts per platform.
-# Linux uses GitHub-hosted runners; macOS ARM64 uses the self-hosted builder.
+# Linux and macOS ARM64 use GitHub-hosted runners.
 #
 #   vis-agent-<os>-<arch>.tar.gz — engine wrapper, native runtime and CPython
 #   vis-tui-<os>-<arch>.tar.gz              — standalone HTTP/SSE terminal client
@@ -97,7 +97,7 @@ jobs:
           #   (x64). Dropping the swapfile or the -J-Xmx/-J-Xms pair does not make
           #   the build faster, it makes it fail slowly.
           # The only real speed-ups left are a BIGGER BUILDER (a CLOUD
-          # Apple-silicon/32 GB runner, like the macos job: 13 min) or
+          # Apple-silicon/32 GB runner: 13 min) or
           # `bin/release-native --tag vX.Y.Z --upload` on a 32 GB+ workstation,
           # where analysis takes 166 s instead of 553 s.
           # DO NOT raise -J-Xmx above runner RAM again: the v0.1.14 attempts at
@@ -121,8 +121,8 @@ jobs:
           - { os: ubuntu-22.04, bin: target/vis, asset: vis-agent-linux-x64.tar.gz, tui_asset: vis-tui-linux-x64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           - { os: ubuntu-22.04-arm, bin: target/vis, asset: vis-agent-linux-arm64.tar.gz, tui_asset: vis-tui-linux-arm64.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # macOS arm64 is NOT in this matrix: it needs its own heap sizing and
-          # its own runner, so it is the SEPARATE `macos` job below, on our own
-          # labelled Apple-silicon builder. Every hosted macOS class GitHub
+          # its own runner, so it is the SEPARATE `macos` job below, on the
+          # GitHub-hosted `macos-26` runner. Every hosted macOS class GitHub
           # sells is under the ~13.7 GiB live set (specs re-checked 2026-08):
           #   * free arm64 macOS (macos-latest/14/15/26) is 3 cores / 7 GB with
           #     14 GB of disk, so swap cannot back a bigger heap either;
@@ -403,11 +403,11 @@ jobs:
             --repo "$GITHUB_REPOSITORY" --clobber
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
-  # Self-hosted ARM64 macOS participates in the same complete-release gate.
+  # GitHub-hosted ARM64 macOS participates in the same complete-release gate.
   macos:
     name: native / vis-agent-macos-arm64.tar.gz
     if: inputs.only != 'linux'
-    runs-on: [self-hosted, macOS, ARM64, vis-macos-arm64]
+    runs-on: macos-26
     timeout-minutes: 120
     env:
       VIS_ASSET: vis-agent-macos-arm64.tar.gz
@@ -472,8 +472,6 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
           # bin/sdk-version numbers the bundled SDK by commit count: full history.
-          # Keep a full clone: this self-hosted workspace is shared, and a later full
-          # checkout cannot unshallow a treeless partial clone.
           fetch-depth: 0
       - uses: ./.github/actions/require-draft-release
         if: steps.target.outputs.publish == 'true'
@@ -662,8 +660,8 @@ jobs:
   # A label no machine carries, or a runner that never comes back, leaves the
   # job queued, and GitHub waits up to 24 h before failing it. Watch from an
   # unrelated free Linux runner and report the routing problem while the release
-  # can still be re-dispatched. One self-hosted mac also queues this build behind
-  # its own sibling jobs, so a late pickup is normal: warn at WARN_MINUTES and
+  # can still be re-dispatched. The hosted macOS pool can queue this build, so a
+  # late pickup is normal: warn at WARN_MINUTES and
   # fail only when no builder takes the job at all. Neither cancels a late build;
   # if the runner frees up, the asset still attaches.
   macos-pickup:
@@ -678,7 +676,7 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
-      MACOS_RUNNER: vis-macos-arm64
+      MACOS_RUNNER: macos-26
       TARGET_REF: ${{ inputs.tag || github.ref_name }}
       POLL_SECONDS: "15"
       WARN_MINUTES: "25"

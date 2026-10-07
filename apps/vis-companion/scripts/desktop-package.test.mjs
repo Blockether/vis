@@ -402,10 +402,10 @@ describe('desktop release platforms', () => {
       'Linux ARM64',
       'Windows x64',
     ]);
-    // Only macOS is self-hosted; other platforms use native hosted runners.
+    // Every platform uses a GitHub-hosted runner.
     expect(workflow).toContain('runs-on: ${{ matrix.runner }}');
     expect([...workflow.matchAll(/^\s+- runner: (.+)$/gm)].map((match) => match[1])).toEqual([
-      '[self-hosted, macOS, ARM64, vis-macos-arm64]',
+      'macos-26',
       'ubuntu-24.04',
       'ubuntu-24.04-arm',
       'windows-2022',
