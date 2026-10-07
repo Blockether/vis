@@ -420,6 +420,53 @@
                                checks))))
              (finally (binding [workspace/*workspace-root* root]
                         (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "reads the session value of a project extension's setting"
+      ;; #326: `Setting.value()` returned the declared default for every setting of a
+      ;; project extension, because the host looked only in the global registry.
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)
+
+            target
+            {:scope "project" :root root}]
+
+        (write-ext!
+          dir
+          ".vis/extensions/sounds.py"
+          (str "import blockether.vis.extension as vis\n"
+               "enabled = vis.Setting(id='project_sound_enabled', label='Sounds', default=True)\n"
+               "sound = vis.Setting(id='project_sound_complete', label='Complete sound', "
+               "type='enum', choices=['default', 'ding.wav'], default='default')\n"
+               "def read_sounds() -> list:\n    \"Read the sound settings.\"\n"
+               "    return [enabled.value(), sound.value()]\n"
+               "vis.register_extension(vis.Extension(name='project-sounds', "
+               "description='Project sounds fixture', alias='project_sounds', "
+               "settings=[enabled, sound], symbols=[vis.Symbol(read_sounds, "
+               "activity=vis.Activity(label='Read sounds', show_start=False))]))\n"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                      :project-root root})
+               (expect (= [] (pyx/load-failures)))
+               (let [read-sounds (symbol-fn (registered "project-sounds") 'read_sounds)
+                     ;; A session call carries its root and admitted settings, as a turn does.
+                     read-in-session (fn [values]
+                                       (binding [extension/*current-environment*
+                                                 {:workspace/root root
+                                                  :config/toggles (atom values)}]
+                                         (:result (read-sounds))))]
+
+                 (expect (= [true "default"] (read-in-session {})))
+                 (expect (= [false "ding.wav"]
+                            (read-in-session {"project_sound_enabled" false
+                                              "project_sound_complete" "ding.wav"})))
+                 (scoped/set-setting! nil target "project_sound_complete" "value" "ding.wav")
+                 (expect (= [true "ding.wav"]
+                            (read-in-session
+                              (into {} (map (juxt :id :value)) (scoped/settings nil target)))))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "keeps a stored value while its extension fails, leaves and returns"
       ;; #302: a reload reports failures and keeps stored overrides.
       (let [dir

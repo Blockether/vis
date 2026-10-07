@@ -587,7 +587,9 @@
     (put! g
           "__vis_host_setting__"
           (fn [id default]
-            (if (toggles/toggle-spec id) (toggles/value-of id) default)))
+            ;; #326: a project extension's setting is known only where its project runs.
+            (let [root (workspace/cwd-root)]
+              (if (toggles/target-toggle-spec root id) (toggles/value-of root id) default))))
     (put! g
           "__vis_host_workspace_root__"
           (fn []

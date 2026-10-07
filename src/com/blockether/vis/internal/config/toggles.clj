@@ -302,12 +302,20 @@
 
    Returns the raw value (boolean for `:boolean` toggles, any value
    from `:choices` for `:enum` toggles). `enabled?` is the
-   boolean-cast convenience for the common boolean path."
-  [id]
-  (let [s @state]
-    (cond (contains? *overrides* id) (get *overrides* id)
-          (contains? s id) (get s id)
-          :else (:default (get @registry id)))))
+   boolean-cast convenience for the common boolean path.
+
+   With `root`, `id` is the setting where `root` runs ([[target-toggle-spec]]). A project
+   extension's own setting is not in `state`, so its declared default comes third."
+  ([id]
+   (let [s @state]
+     (cond (contains? *overrides* id) (get *overrides* id)
+           (contains? s id) (get s id)
+           :else (:default (get @registry id)))))
+  ([root id]
+   (let [spec (target-toggle-spec root id)]
+     (cond (contains? *overrides* id) (get *overrides* id)
+           (identical? spec (toggle-spec id)) (value-of id)
+           :else (:default spec)))))
 
 (defn enabled?
   "Boolean cast of `(value-of id)`. Fail-closed: returns `false` when `id` is not
