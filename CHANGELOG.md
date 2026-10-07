@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.34] - 2026-10-07
+
+### Changed
+- macOS release assets are notarized in the background, so the macOS release job is faster.
+
+### Fixed
+- The TUI uses the balanced reasoning level when the session and the settings do not set one.
+  An old value in the local TUI config no longer shows first.
+- In the TUI and the app, a step that only thinks shows a "THINKING" row. The row becomes the
+  step digest, so the thinking text no longer shows outside the digest for a moment.
+- The app fits a picture plate to the shape of the picture.
+
 ## [v0.2.33] - 2026-10-06
 
 ### Added
