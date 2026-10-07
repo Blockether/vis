@@ -8690,7 +8690,8 @@
   "One summary row for the steps under a note. It names their Activity and counts failures,
    including execution errors without failed Activity. Failures and stops color the row red.
    Running steps color it yellow. The measured time stays on the right.
-   The live control stays when open. It opens the newest running view or recording."
+   The live control stays when open. It opens the newest running view or recording.
+   Steps with thinking and no code yet show THINKING; the row becomes their digest later."
   [{:keys [forms errors node-id open? lives]} content-w session-id]
   (let [activities
         (keep :activity forms)
@@ -8737,7 +8738,10 @@
                   (str (get states state) " " (name state)))))
 
         summary
-        (str (if open? "▾ " "▸ ") (if (seq parts) (str/join " · " parts) "RAW EXECUTION"))
+        (str (if open? "▾ " "▸ ")
+             (cond (seq parts) (str/join " · " parts)
+                   (empty? forms) "THINKING"
+                   :else "RAW EXECUTION"))
 
         max-w
         (max 1 (dec (long content-w)))
@@ -8796,7 +8800,9 @@
   "Summarized steps: each progress note stays, and its steps fold into one digest row.
    An open digest shows the thinking, code, Activity and errors of the steps, without the note.
    A closed digest keeps only files below its row, which also opens the live views.
-   Steps before the first note fold the same way. A note without forms keeps its own rows."
+   Steps before the first note fold the same way. Thinking without forms folds into a
+   THINKING row, so it never shows outside the digest that its code joins later. A note
+   without forms or thinking keeps its own rows."
   [visible-iterations show-silent? show-thinking?
    {:keys [session-id session-turn-id detail-expansions]}]
   (let [segments (reduce (fn [segments [_ entry :as pair]]
@@ -8821,9 +8827,10 @@
                                        error)))
                                  steps)
                     note (step-note head)
-                    pairs (mapv :pair steps)]
+                    pairs (mapv :pair steps)
+                    thinking? (and show-thinking? (some (comp not-empty :thinking :entry) steps))]
 
-                (if (empty? forms)
+                (if (and (empty? forms) (not thinking?))
                   pairs
                   (let [node-id (detail-node-id {:session-turn-id session-turn-id
                                                  :iteration-number (inc (long head-idx))

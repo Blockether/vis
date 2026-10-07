@@ -2690,6 +2690,7 @@ function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
  * including execution errors without failed Activity. Failures and stops color the chevron.
  * The measured time stays on the right. The row keeps its live control when open.
  * Open the row to see thinking, code, Activity and errors. Mirrors `render/step-digest-entries`.
+ * Thinking without code shows THINKING; the same row becomes the digest when code arrives.
  */
 function StepDigest({
   chunks,
@@ -2733,7 +2734,7 @@ function StepDigest({
         : [],
     ),
   ];
-  if (!parts.length) parts.push({ text: 'RAW EXECUTION', tone: '' });
+  if (!parts.length) parts.push({ text: forms.length ? 'RAW EXECUTION' : 'THINKING', tone: '' });
   // Total measured time of the steps, not wall time across concurrent calls.
   const measured = forms.reduce(
     (total, form) => total + (formatDuration(form.duration_ms) == null ? 0 : form.duration_ms!),
@@ -3043,17 +3044,19 @@ const TraceSegment = memo(function TraceSegment({
     [segment],
   );
   // Summarized, the steps under a note fold into one digest row. Opening it shows their
-  // thinking, code and Activity. Mirrors the TUI (`render/render-step-digests`).
-  const digest = summarize && chunks.length > 0;
+  // thinking, code and Activity. Thinking alone already folds, so it never shows outside the
+  // digest that its code joins later. Mirrors the TUI (`render/render-step-digests`).
+  const digest = summarize && (chunks.length > 0 || thinking.length > 0);
   const expanded = !digest || open;
   // The digest keeps one control for its live views and recordings in both disclosure states.
   // Mirrors the TUI (`render/step-digest-lives`).
   const lives = useMemo(() => {
     const forms = chunks.flatMap((chunk) => (chunk.kind === 'code' ? chunk.forms : []));
     // The stray views stay in session order, so the control still opens the newest view.
+    // A THINKING row without code leaves them as runs below it.
     const views = liveViews.filter(
       (view) =>
-        strayViews.includes(view) ||
+        (chunks.length > 0 && strayViews.includes(view)) ||
         forms.some((form) => liveOwnerMatches(view.owner, form.activity)),
     );
     const records = collapseAttachmentVersions(
@@ -3131,8 +3134,10 @@ const TraceSegment = memo(function TraceSegment({
           })}
         </div>
       )}
-      {/* Without a digest, the views that no form owns stay one-line runs. */}
-      {!digest && client && sid && <LiveView views={strayViews} client={client} sid={sid} />}
+      {/* Without a digest or its code, the views that no form owns stay one-line runs. */}
+      {(!digest || chunks.length === 0) && client && sid && (
+        <LiveView views={strayViews} client={client} sid={sid} />
+      )}
       {client && sid && (
         <AttachmentRail
           client={client}

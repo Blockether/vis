@@ -3285,7 +3285,17 @@ therapy line 2"
            :traces [{:thinking first-thinking} {:thinking second-thinking}]}
 
           opts
-          {:session-id "sid" :session-turn-id "turn-1" :detail-expansions {}}
+          {:session-id "sid"
+           :session-turn-id "turn-1"
+           ;; Thinking alone folds under a THINKING digest row; open it to reach the rows.
+           :detail-expansions (into {}
+                                    (for [n (range 1 3)]
+                                      [["sid"
+                                        (#'render/detail-node-id
+                                         {:session-turn-id "turn-1"
+                                          :iteration-number n
+                                          :section :iteration
+                                          :kind :digest})] true]))}
 
           payload
           (render/format-answer-with-thinking-data (:text raw-message)

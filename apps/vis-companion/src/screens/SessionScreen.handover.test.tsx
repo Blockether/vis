@@ -26,6 +26,13 @@ function live(): string {
 // claimed the optimistic bubble because that bubble carries no id until
 // `submitTurn` answers, and a bubble that has stopped running drops every delta
 // that arrives after it.
+// Thinking alone folds under a THINKING row; open it to read the work.
+async function shownWork() {
+  const folded = screen.queryByRole('button', { name: 'Expand steps: THINKING' });
+  if (folded) fireEvent.click(folded);
+  return screen.findByText('PARTIAL AGENT WORK');
+}
+
 describe('the message just sent', () => {
   it("keeps streaming when the previous turn's terminal frame lands first", async () => {
     const events = subscriptionHub();
@@ -191,7 +198,7 @@ describe('a turn cancelled from this screen', () => {
       subscriptions: { subscribeSession: events.subscribeSession },
     });
 
-    expect(await screen.findByText('PARTIAL AGENT WORK')).toBeInTheDocument();
+    expect(await shownWork()).toBeInTheDocument();
     events.emit({
       type: 'turn.cancelled',
       turn_id: 'gw-partial-cancel',
@@ -200,7 +207,7 @@ describe('a turn cancelled from this screen', () => {
     } as unknown as SseEvent);
 
     await waitFor(() => expect(document.querySelector('[data-live="true"]')).toBeNull());
-    expect(screen.getByText('PARTIAL AGENT WORK')).toBeInTheDocument();
+    expect(await shownWork()).toBeInTheDocument();
     expect(screen.getAllByText('inspect the failure')).toHaveLength(1);
   });
   // Regression, BLO-170 follow-up reported from the web app: stopping a turn threw the
@@ -236,7 +243,7 @@ describe('a turn cancelled from this screen', () => {
       subscriptions: { subscribeSession: events.subscribeSession },
     });
 
-    expect(await screen.findByText('PARTIAL AGENT WORK')).toBeInTheDocument();
+    expect(await shownWork()).toBeInTheDocument();
     events.emit({
       type: 'turn.cancelled',
       turn_id: 'gw-hollow-cancel',
@@ -245,7 +252,7 @@ describe('a turn cancelled from this screen', () => {
     } as unknown as SseEvent);
 
     await waitFor(() => expect(document.querySelector('[data-live="true"]')).toBeNull());
-    expect(screen.getByText('PARTIAL AGENT WORK')).toBeInTheDocument();
+    expect(await shownWork()).toBeInTheDocument();
     expect(screen.getAllByText('inspect the failure')).toHaveLength(1);
   });
 });

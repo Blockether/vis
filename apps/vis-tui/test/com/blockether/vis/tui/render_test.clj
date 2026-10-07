@@ -2999,7 +2999,9 @@
                                  {:show-thinking true :show-iterations true}
                                  nil
                                  false
-                                 {:session-id "sid" :session-turn-id "turn" :detail-expansions {}}))
+                                 {:session-id "sid"
+                                  :session-turn-id "turn"
+                                  :detail-expansions (open-digests "sid" "turn")}))
 
                        visible
                        (mapv (comp str/trim strip-sentinels strip-ansi) lines)]
@@ -3036,7 +3038,9 @@
                                   {:show-thinking true :show-iterations true}
                                   nil
                                   false
-                                  {:session-id "sid" :session-turn-id stid :detail-expansions {}}))
+                                  {:session-id "sid"
+                                   :session-turn-id stid
+                                   :detail-expansions (open-digests "sid" stid)}))
                         (mapv (comp str/trimr strip-sentinels strip-ansi body-of)))]
 
                (it "renders the collapsed THINKING peek with a +N more header"
@@ -4572,14 +4576,16 @@
           render*
           (fn [exp]
             (render/invalidate-cache!)
-            (render/format-answer-with-thinking-data
-              "done"
-              [{:thinking thinking}]
-              96
-              {:show-thinking true :show-iterations true}
-              nil
-              false
-              {:session-id cid :session-turn-id turn-id :detail-expansions exp}))
+            (render/format-answer-with-thinking-data "done"
+                                                     [{:thinking thinking}]
+                                                     96
+                                                     {:show-thinking true :show-iterations true}
+                                                     nil
+                                                     false
+                                                     {:session-id cid
+                                                      :session-turn-id turn-id
+                                                      :detail-expansions
+                                                      (open-digests exp cid turn-id)}))
 
           cbody
           (strip-ansi (:text (render* {})))
@@ -4682,14 +4688,16 @@
             render*
             (fn [exp]
               (render/invalidate-cache!)
-              (render/format-answer-with-thinking-data
-                "done"
-                trace
-                120
-                {:show-iterations true :show-thinking true}
-                nil
-                false
-                {:session-id "session" :session-turn-id "turn-1" :detail-expansions exp}))
+              (render/format-answer-with-thinking-data "done"
+                                                       trace
+                                                       120
+                                                       {:show-iterations true :show-thinking true}
+                                                       nil
+                                                       false
+                                                       {:session-id "session"
+                                                        :session-turn-id "turn-1"
+                                                        :detail-expansions
+                                                        (open-digests exp "session" "turn-1")}))
 
             cbody
             (strip-ansi (:text (render* {})))
@@ -11532,6 +11540,51 @@ print(paths)"
             ;; Source and message stay collapsed until the reader opens them.
             (expect (= -1 (at source)))
             (expect (= -1 (at "is not defined")))))))
+    ;; Regression, user report: thinking flashed outside the digest until the step's code
+    ;; arrived. Thinking alone now folds into a THINKING row, which becomes the digest.
+    (it
+      "folds thinking without code into a THINKING row that becomes the digest"
+      (let [thought
+            "Plan the queue change."
+
+            render
+            (fn [steps live? expansions]
+              (#'render/trace-render-entries
+               {:iterations steps
+                :live? live?
+                :content-w 76
+                :session-id "s"
+                :session-turn-id "t"
+                :detail-expansions expansions
+                :settings {:summarize-steps true}}))
+
+            text
+            (fn [entries]
+              (str/join "\n" (map (comp strip-ansi :line) entries)))
+
+            node
+            (fn [entries]
+              (get-in (first (filter digest? entries)) [:meta :node-id]))
+
+            thinking-only
+            [{:iteration-id "i1" :thinking thought}]
+
+            with-code
+            [{:iteration-id "i1"
+              :thinking thought
+              :forms [{:code "print(1)" :success? true :duration-ms 12}]}]]
+
+        (doseq [live? [true false]]
+          (let [closed (render thinking-only live? {})
+                open (render thinking-only live? (open-digests "s" "t"))
+                later (render with-code live? {})]
+
+            (expect (= ["▸ THINKING"] (digests closed)))
+            (expect (not (str/includes? (text closed) thought)))
+            (expect (str/includes? (text open) thought))
+            (expect (= ["▸ RAW EXECUTION"] (mapv #(first (str/split % #"  ")) (digests later))))
+            (expect (not (str/includes? (text later) thought)))
+            (expect (= (node closed) (node later)))))))
     ;; Regression, user screenshot: failures must stay inside the closed digest.
     ;; Files remain visible, and opening the digest restores each error.
     (it

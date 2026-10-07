@@ -30,9 +30,9 @@ describe('a queued message delivered into the turn', () => {
     expect(band?.textContent).toContain('You · sent now · iter 2');
     expect(band?.textContent).toContain('Also check the lint config.');
     const text = container.textContent ?? '';
-    expect(text.indexOf('Also check the lint config.')).toBeLessThan(
-      text.indexOf('Checking the lint config too.'),
-    );
+    // The reasoning folds into the THINKING row of its digest, below the message.
+    expect(text).not.toContain('Checking the lint config too.');
+    expect(text.indexOf('Also check the lint config.')).toBeLessThan(text.lastIndexOf('THINKING'));
     expect(text.indexOf('I read the test.')).toBeLessThan(text.indexOf('Also check the lint'));
   });
 

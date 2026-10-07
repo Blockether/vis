@@ -2587,6 +2587,31 @@ describe('steps between progress notes', () => {
     expect(traces(painted.container)).toHaveLength(1);
   });
 
+  // Regression: thinking flashed outside the digest until the step's code arrived.
+  it.each([false, true])('folds thinking without code into a THINKING row (live: %s)', (live) => {
+    const thought = 'Plan the queue change.';
+    const painted = render(
+      <IterationTrace whole showCode live={live} iterations={[{ id: 'think', thinking: thought, forms: [] }]} />,
+    );
+    const digest = painted.getByRole('button', { name: 'Expand steps: THINKING' });
+    expect(digest.textContent).toBe('THINKING');
+    expect(painted.container.textContent).not.toContain(thought);
+    fireEvent.click(digest);
+    expect(painted.container.textContent).toContain(thought);
+    fireEvent.click(digest);
+    painted.rerender(
+      <IterationTrace
+        whole
+        showCode
+        live={live}
+        iterations={[{ id: 'think', thinking: thought, forms: [{ source: 'print(1)', duration_ms: 12 }] }]}
+      />,
+    );
+    expect(painted.getByRole('button', { name: 'Expand steps: RAW EXECUTION' })).toBeInTheDocument();
+    expect(painted.container.querySelectorAll('[data-step-digest]')).toHaveLength(1);
+    expect(painted.container.textContent).not.toContain(thought);
+  });
+
   it('opens a digest to show the thinking, code and Activity of its steps', () => {
     const observed = iterations.map((step) =>
       step.id === 'step-2'
