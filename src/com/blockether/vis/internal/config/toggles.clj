@@ -150,7 +150,8 @@
   "Normalize one contribution after checking the contract-owned shape."
   [contribution]
   (when-not (toggle-contract/contribution-valid? contribution)
-    (throw (ex-info "Invalid toggle contribution"
+    (throw (ex-info (toggle-contract/contribution-message "Invalid toggle contribution"
+                                                          contribution)
                     {:type :vis.toggles/invalid-contribution
                      :contribution contribution
                      :explain (toggle-contract/explain-contribution contribution)})))

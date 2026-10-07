@@ -74,16 +74,62 @@ def _json_value(item):
     )
 
 
+def _problem(error) -> str:
+    """One readable line for a schema error: field, rule and limit, never the value."""
+    field = ".".join(str(part) for part in error.absolute_path) or "declaration"
+    rule, limit = error.validator, error.validator_value
+    if rule in ("maxLength", "minLength"):
+        bound = "maximum" if rule == "maxLength" else "minimum"
+        fix = f" Shorten the {field}." if rule == "maxLength" else ""
+        return (
+            f"{field} is {len(error.instance)} characters; {bound} is {limit} ({rule})."
+            + fix
+        )
+    if rule == "required":
+        missing = ", ".join(key for key in limit if key not in error.instance)
+        return f"{missing} is missing (required)."
+    if rule == "enum":
+        return f"{field} must be one of: {', '.join(map(str, limit))} (enum)."
+    if rule == "pattern":
+        if (
+            limit
+            == definition("toggle", "contribution")["properties"]["description"][
+                "pattern"
+            ]
+        ):
+            return f"{field} must be one line without line breaks (pattern)."
+        return f"{field} does not match the pattern {limit} (pattern)."
+    return f"{field} breaks the {rule} rule."
+
+
+def problems(name: str, definition: str, value: Any) -> list[str]:
+    """Readable rule failures of `value`, one line for each. Empty when it is valid.
+
+    Each line names the field, the rule and its limit. It never echoes the value.
+    """
+    if not _json_value(value):
+        return ["the value is not JSON data."]
+    errors = _validator(name, definition).iter_errors(value)
+    return [
+        _problem(error)
+        for error in sorted(errors, key=lambda e: list(map(str, e.absolute_path)))
+    ]
+
+
 def validate(name: str, definition: str, value: Any) -> Any:
     """Validate portable JSON data, returning it or raising a payload-free ValueError.
 
-    Schemas resolve only from the installed package. Runtime lifecycle, IO and
+    The error names each failed field, rule and limit, never the value. Schemas
+    resolve only from the installed package. Runtime lifecycle, IO and
     authorization belong to the engine, not JSON Schema.
     """
     try:
-        valid = _json_value(value) and _validator(name, definition).is_valid(value)
+        found = problems(name, definition, value)
     except (RecursionError, TypeError, ValueError):
-        valid = False
-    if not valid:
-        raise ValueError(f"invalid {name}.{definition} contract")
+        found = [""]
+    if found:
+        detail = " ".join(problem for problem in found if problem)
+        raise ValueError(
+            f"invalid {name}.{definition} contract" + (f": {detail}" if detail else "")
+        )
     return value

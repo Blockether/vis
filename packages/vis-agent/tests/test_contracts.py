@@ -178,6 +178,12 @@ def test_payload_free_validation():
         with pytest.raises(ValueError) as error:
             _contracts.validate("activity", "declaration", bad)
         assert "do-not-echo" not in str(error.value)
+    with pytest.raises(
+        ValueError, match=r": label does not match the pattern .* \(pattern\)"
+    ):
+        _contracts.validate(
+            "activity", "declaration", {"presenter": "tests", "label": "one\ntwo"}
+        )
     with pytest.raises(ValueError):
         _contracts.validate("view", "missing-definition", {})
 

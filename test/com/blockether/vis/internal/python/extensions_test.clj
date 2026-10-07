@@ -383,6 +383,43 @@
              (expect (not (listed? {:scope "global"}))))
            (finally (binding [workspace/*workspace-root* root]
                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "reports which setting field broke which rule at load and in doctor"
+      ;; #322 and #323: 150 characters load; 151 name the setting, field, rule and limit.
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)
+
+            catalog
+            {:dirs [(str root "/.vis/extensions")] :project-root root}
+
+            source
+            (fn [length]
+              (str "import blockether.vis.extension as vis\n"
+                   "vis.register_extension(vis.Extension(name='steering', "
+                   "description='Steering fixture', "
+                   "settings=[vis.Setting(id='steering_mode', label='Steering mode', type='enum', "
+                   "choices=['vibe', 'control'], default='vibe', description='"
+                   (apply str (repeat length "x"))
+                   "')]))\n"))]
+
+        (write-ext! dir ".vis/extensions/steering.py" (source 150))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! catalog)
+               (expect (= [] (pyx/load-failures)))
+               (write-ext! dir ".vis/extensions/steering.py" (source 151))
+               (pyx/reload-python-extensions! catalog)
+               (let [expected (str "Invalid setting steering_mode: description is 151 characters; "
+                                   "maximum is 150 (maxLength). Shorten the description.")
+                     [failure] (pyx/load-failures)
+                     checks (#'pyx/doctor-fn {:workspace/root root})]
+
+                 (expect (str/includes? (:error failure) expected) (:error failure))
+                 (expect (some #(and (= :error (:level %)) (str/includes? (:message %) expected))
+                               checks))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "keeps a stored value while its extension fails, leaves and returns"
       ;; #302: a reload reports failures and keeps stored overrides.
       (let [dir

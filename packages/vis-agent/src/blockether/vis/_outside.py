@@ -91,13 +91,20 @@ def workspace_root():
 
 def setting_declaration(spec):
     """Use the package's own JSON Schemas for outside-host declarations."""
-    from ._contracts import definition, validate
+    from ._contracts import definition, problems, validate
 
     spec = dict(spec)
     spec.setdefault(
         "scopes",
         definition("toggle", "contribution")["properties"]["scopes"]["default"],
     )
+    found = problems("toggle", "contribution", spec)
+    if found:
+        name = spec.get("id")
+        label = (
+            f"Invalid setting {name}" if isinstance(name, str) else "Invalid setting"
+        )
+        raise ValueError(f"{label}: {' '.join(found)}")
     return validate("toggle", "contribution", spec)
 
 

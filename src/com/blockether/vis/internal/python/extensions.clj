@@ -581,7 +581,7 @@
                     (update :type keyword))]
 
               (when-not (toggle-contract/contribution-valid? value)
-                (throw (ex-info "Invalid setting declaration"
+                (throw (ex-info (toggle-contract/contribution-message "Invalid setting" value)
                                 {:type :settings/invalid-declaration})))
               spec)))
     (put! g

@@ -25,6 +25,38 @@
                    (expect (= (get-in properties ["description" "maxLength"])
                               toggle/max-description-length)))))
 
+(defdescribe contribution-problems-name-field-rule-and-limit
+             ;; #322 and #323: a description of up to 150 characters is valid, and each
+             ;; failure names the field, the rule and the limit.
+             (let [mode {:id "steering_mode"
+                         :label "Steering mode"
+                         :type :enum
+                         :choices ["vibe" "control"]
+                         :default "vibe"}]
+               (it "accepts 150 characters and explains 151"
+                   (expect (= 150 toggle/max-description-length))
+                   (expect (= []
+                              (toggle/contribution-problems
+                                (assoc mode :description (apply str (repeat 150 "x"))))))
+                   (expect (= (str "Invalid setting steering_mode: description is 151 characters; "
+                                   "maximum is 150 (maxLength). Shorten the description.")
+                              (toggle/contribution-message
+                                "Invalid setting"
+                                (assoc mode :description (apply str (repeat 151 "x")))))))
+               (it "keeps the empty and multi-line rules, with readable lines"
+                   (expect (= ["description is 0 characters; minimum is 1 (minLength)."
+                               "description must be one line without line breaks (pattern)."]
+                              (toggle/contribution-problems (assoc mode :description ""))))
+                   (expect (= ["description must be one line without line breaks (pattern)."]
+                              (toggle/contribution-problems (assoc mode :description "one\ntwo")))))
+               (it "names missing fields, closed values and semantic failures"
+                   (expect (= ["label is missing (required)."]
+                              (toggle/contribution-problems (dissoc mode :label))))
+                   (expect (= ["type must be one of: boolean, enum (enum)."]
+                              (toggle/contribution-problems (assoc mode :type :list))))
+                   (expect (= ["default must be one of the choices."]
+                              (toggle/contribution-problems (assoc mode :default "other")))))))
+
 (defdescribe boolean-wire-is-a-real-token-schema
              (it "boolean wire is a real token schema"
                  (expect (= #{"1" "on" "true" "yes"} toggle/boolean-true-tokens))

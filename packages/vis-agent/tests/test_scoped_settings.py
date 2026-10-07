@@ -68,6 +68,32 @@ def test_parent_nests_a_setting():
         vis.Setting(id="test_detail", label="Test detail", default=False, parent=" ")
 
 
+# Regression for #322 and #323: a 150-character description is valid, and a
+# longer one names the setting, the field, the rule and the limit.
+def test_description_limit_and_actionable_error():
+    def mode(description):
+        return vis.Setting(
+            id="steering_mode",
+            label="Steering mode",
+            type="enum",
+            choices=["vibe", "control"],
+            default="vibe",
+            description=description,
+        )
+
+    assert mode("x" * 150).description == "x" * 150
+    with pytest.raises(ValueError) as error:
+        mode("x" * 151)
+    assert str(error.value) == (
+        "Invalid setting steering_mode: description is 151 characters; "
+        "maximum is 150 (maxLength). Shorten the description."
+    )
+    with pytest.raises(ValueError, match="one line without line breaks"):
+        mode("two\nlines")
+    with pytest.raises(ValueError, match="minimum is 1"):
+        mode("")
+
+
 def test_application_bridge_rejects_host_only_settings_before_connecting():
     declaration = vis.Extension(
         name="Settings test",
