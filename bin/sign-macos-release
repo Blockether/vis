@@ -22,6 +22,11 @@
 # Signing runs BEFORE staging, so the smoke-tested, the bundled and the
 # notarized bytes are the same bytes.
 #
+# `--sign-only` stops after the signature checks. `--notarize-only` then submits
+# those signed files and signs nothing again. CI runs the slow notary wait that
+# way as a background step, beside the smoke tests. Without a mode flag, the
+# script signs and notarizes in one run.
+#
 # A `.tar.gz` cannot carry a stapled ticket: `xcrun stapler` writes only into
 # disk images, installer packages and app bundles. For a bare executable,
 # `codesign` checks the online ticket by cdhash. `spctl` assesses app bundles
@@ -44,11 +49,15 @@ identity="${VIS_MACOS_SIGNING_IDENTITY:-Developer ID Application: BLOCKETHER SP.
 team="${VIS_MACOS_TEAM_ID:-JSZTFUBUBB}"
 entitlements=""
 targets=()
+mode=all
 
 while (( $# )); do
   case "$1" in
     --entitlements) entitlements="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,37p' "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
+    --sign-only|--notarize-only)
+      [[ "$mode" == all ]] || die "use one of --sign-only and --notarize-only"
+      mode="${1#--}"; mode="${mode%-only}"; shift ;;
+    -h|--help) sed -n '2,42p' "${BASH_SOURCE[0]:-$0}"; exit 0 ;;
     -*) die "unknown option $1" ;;
     *) targets+=("$1"); shift ;;
   esac
@@ -64,7 +73,7 @@ for target in "${targets[@]}"; do
 done
 
 for name in VIS_ASC_KEY_ID VIS_ASC_ISSUER_ID VIS_ASC_KEY; do
-  [[ -n "${!name:-}" ]] || die "notarization needs $name" \
+  [[ "$mode" == sign || -n "${!name:-}" ]] || die "notarization needs $name" \
     "A signature alone still leaves Gatekeeper without a ticket (Vis #277)." \
     "Release builds inherit the repository secrets; a local release needs the" \
     "App Store Connect key in the environment."
@@ -86,7 +95,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ -n "${VIS_MACOS_P12:-}" ]]; then
+if [[ "$mode" != notarize && -n "${VIS_MACOS_P12:-}" ]]; then
   # Isolate signing from locked or duplicate identities in the login keychain:
   # the macOS builder is a long-lived machine and its own keychains stay as they
   # were, whatever this build does.
@@ -157,22 +166,38 @@ signable_files() {
   done
 }
 
+# Only Mach-O files travel to the notary service, which checks nothing else. A
+# smoke test can still write `.pyc` files into the interpreter tree while a
+# background notarization copies it, and those files are not in this list.
 signed=0
-while IFS= read -r -d '' file; do
-  if is_mach_o "$file"; then
-    args=(--force --timestamp --options runtime --sign "$identity")
-    if [[ -n "$keychain" ]]; then args+=(--keychain "$keychain"); fi
-    if [[ -n "$entitlements" && "$mach_o_kind" == "executable" ]]; then
-      args+=(--entitlements "$entitlements")
+submission_files=()
+submission_names=()
+for target in "${targets[@]}"; do
+  parent="$(dirname "$target")"
+  while IFS= read -r -d '' file; do
+    if is_mach_o "$file"; then
+      if [[ "$mode" != notarize ]]; then
+        args=(--force --timestamp --options runtime --sign "$identity")
+        if [[ -n "$keychain" ]]; then args+=(--keychain "$keychain"); fi
+        if [[ -n "$entitlements" && "$mach_o_kind" == "executable" ]]; then
+          args+=(--entitlements "$entitlements")
+        fi
+        codesign "${args[@]}" "$file"
+      fi
+      codesign --verify --strict "$file"
+      submission_files+=("$file")
+      submission_names+=("${file#"$parent"/}")
+      signed=$(( signed + 1 ))
     fi
-    codesign "${args[@]}" "$file"
-    codesign --verify --strict "$file"
-    signed=$(( signed + 1 ))
-  fi
-done < <(signable_files "${targets[@]}")
+  done < <(signable_files "$target")
+done
 
 (( signed > 0 )) || die "no Mach-O file below: ${targets[*]}"
-say "signed $signed Mach-O files as '$identity'"
+if [[ "$mode" == notarize ]]; then
+  say "verified the signatures of $signed Mach-O files"
+else
+  say "signed $signed Mach-O files as '$identity'"
+fi
 
 # What the Application Firewall and Gatekeeper resolve is an Apple-chain
 # Developer ID leaf for our team — the ad-hoc signature of Vis #277 satisfies
@@ -189,15 +214,21 @@ done
 (( ${#entries[@]} )) || die "name the executable that ships, not only its sidecar" \
   "Notarization is checked per executable, so at least one path must be a Mach-O file."
 
+if [[ "$mode" == sign ]]; then
+  say "signed, not yet notarized: ${entries[*]}"
+  exit 0
+fi
+
 key_path="$signing_dir/AuthKey_$VIS_ASC_KEY_ID.p8"
 printf '%s\n' "$VIS_ASC_KEY" > "$key_path"
 submission="$signing_dir/submission"
-mkdir -p "$submission"
-for target in "${targets[@]}"; do
-  cp -R "$target" "$submission/"
+for index in "${!submission_files[@]}"; do
+  copy="$submission/${submission_names[$index]}"
+  mkdir -p "$(dirname "$copy")"
+  cp -p "${submission_files[$index]}" "$copy"
 done
 # `ditto` is what the notary service accepts for a plain tree of executables,
-# and it keeps the symlinks and executable bits the interpreter needs.
+# and it keeps the executable bits and the signatures.
 archive="$signing_dir/vis-macos-release.zip"
 ditto -c -k --sequesterRsrc --keepParent "$submission" "$archive"
 say "submitting $(du -h "$archive" | cut -f1 | tr -d ' ') to the notary service"

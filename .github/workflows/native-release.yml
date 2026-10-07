@@ -509,19 +509,29 @@ jobs:
           log_dir="$RUNNER_TEMP/vis-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "$log_dir"
           (clojure -X:deps prep && clojure -T:build native) 2>&1 | tee "$log_dir/engine.log"
-      - name: Sign and notarize the macOS runtime
+      - name: Sign the macOS runtime
         env:
           VIS_MACOS_P12: ${{ secrets.VIS_DESKTOP_P12 }}
           VIS_MACOS_P12_PASSWORD: ${{ secrets.VIS_DESKTOP_P12_PASSWORD }}
-          VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
-          VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
-          VIS_ASC_KEY: ${{ secrets.VIS_ASC_KEY }}
         shell: bash
         # Ahead of staging, so the smoke tests below, `-M:test-native` and the
         # published bundle all exercise the same Developer ID signed bytes.
         run: |
           HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release --entitlements bin/vis-agent-macos.entitlements \
-            target/vis target/vis-agent-python
+            --sign-only target/vis target/vis-agent-python
+      # The notary service needs minutes to answer and no CPU here, so the
+      # smoke tests run meanwhile. `Wait for notarization` gates the release.
+      - name: Notarize the macOS runtime
+        id: notarize-engine
+        background: true
+        env:
+          VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
+          VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
+          VIS_ASC_KEY: ${{ secrets.VIS_ASC_KEY }}
+        shell: bash
+        run: |
+          HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release --entitlements bin/vis-agent-macos.entitlements \
+            --notarize-only target/vis target/vis-agent-python
       - name: Stage wrapper bundle
         shell: bash
         run: bin/stage-release-bundle target/vis "$VIS_ASSET"
@@ -573,9 +583,6 @@ jobs:
         env:
           VIS_MACOS_P12: ${{ secrets.VIS_DESKTOP_P12 }}
           VIS_MACOS_P12_PASSWORD: ${{ secrets.VIS_DESKTOP_P12_PASSWORD }}
-          VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
-          VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
-          VIS_ASC_KEY: ${{ secrets.VIS_ASC_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -586,11 +593,24 @@ jobs:
           # notarized, and microphone capture needs a hardened-runtime entitlement.
           HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release \
             --entitlements bin/vis-tui-macos.entitlements \
-            apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib
+            --sign-only apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib
           bin/stage-tui-release apps/vis-tui/target/vis-tui "$VIS_TUI_ASSET"
           target/tui-release-bundle/vis-tui --version
           target/tui-release-bundle/vis-tui --help >/dev/null
           target/tui-release-bundle/vis-tui --check-audio
+      # The TUI submission waits longest at the notary service, often 20 minutes.
+      - name: Notarize the standalone TUI
+        id: notarize-tui
+        background: true
+        env:
+          VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
+          VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
+          VIS_ASC_KEY: ${{ secrets.VIS_ASC_KEY }}
+        shell: bash
+        run: |
+          HOME="$VIS_MACOS_SIGNING_HOME" bin/sign-macos-release \
+            --entitlements bin/vis-tui-macos.entitlements \
+            --notarize-only apps/vis-tui/target/vis-tui apps/vis-tui/target/libjsound.dylib
       # The native Rooms suite runs the relay Worker in local workerd and D1.
       # Skip install scripts, because this job holds a token that can write releases.
       - uses: actions/setup-node@v4
@@ -619,6 +639,9 @@ jobs:
           path: ${{ runner.temp }}/vis-native-${{ github.run_id }}-${{ github.run_attempt }}/*.log
           if-no-files-found: ignore
           retention-days: 14
+      # An asset without an accepted notarization never reaches a release.
+      - name: Wait for notarization
+        wait: [notarize-engine, notarize-tui]
       - name: Verify draft before attaching
         if: steps.target.outputs.publish == 'true'
         uses: ./.github/actions/require-draft-release
