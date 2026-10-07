@@ -4193,7 +4193,9 @@
                                         (:top live-entry)
                                         render/MESSAGE_MARGIN_LEFT
                                         bubble-w
-                                        {:viewport-top text-top :viewport-h inner-h})))
+                                        {:viewport-top text-top
+                                         :viewport-h inner-h
+                                         :agent-name (get-in db [:workspace "agent_name"])})))
           ;; Chrome refresh - cheap text writes, kept inside the partial
           ;; path so notification banners and footer status update on
           ;; every spinner tick instead of waiting for the next full

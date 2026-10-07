@@ -5,8 +5,14 @@
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.dialogs :as dialogs]
+            [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.screen :as screen]
+            [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.state :as state]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [com.blockether.vis.tui.terminal-image :as timg]
+            [com.blockether.vis.tui.terminals :as term]
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [com.googlecode.lanterna.screen TerminalScreen]))
 
 (defdescribe gateway-name-paints-the-transcript
              (it "gateway name paints the transcript"
@@ -110,6 +116,54 @@
                                        {:agent-name "Ada" :now-ms 1000 :turn-start-ms 0}))]
                      (expect (str/includes? text "Ada is"))
                      (expect (not (str/includes? text "Vis is")))))))
+
+(defdescribe
+  live-ticks-keep-the-gateway-name
+  ;; #325: the cheap live-bubble tick painted the default name between full frames.
+  (it
+    "live ticks keep the gateway name"
+    (let [db
+          {:messages [{:role :user :text "Hello"} {:role :assistant :text ""}]
+           :session {:id "s1"}
+           :workspace {"root" "/remote/project" "agent_name" "Ada"}
+           :input {:lines [""] :crow 0 :ccol 0}
+           :scroll scroll/follow
+           :settings {}
+           :loading? true
+           :progress {:iterations [{:thinking "Checking"}]}}
+
+          transcript
+          (fn [terminal]
+            (subvec (term/grid terminal) 0 20))
+
+          capture
+          (binding [interactions/hit-map (interactions/create-hit-map)]
+            (with-redefs [state/app-db (atom db)
+                          timg/images-protocol (constantly nil)]
+
+              (cap/capture! {:cols 80
+                             :rows 30
+                             :paint! (fn [{:keys [screen terminal]}]
+                                       (let [layout (#'screen/render-frame! screen 80 30 db 1000)
+                                             full (transcript terminal)]
+
+                                         (#'screen/render-live-bubble-frame!
+                                          screen
+                                          80
+                                          30
+                                          (assoc db :layout layout)
+                                          1080
+                                          layout)
+                                         (.refresh ^TerminalScreen screen)
+                                         [full (transcript terminal)]))})))
+
+          heading
+          (fn [rows]
+            (some #(let [line (str/trim %)] (when (re-find #"^(Ada|Vis)\b" line) line)) rows))]
+
+      (expect (nil? (:error capture)) (str (:error capture)))
+      (doseq [rows (:ret capture)]
+        (expect (str/starts-with? (str (heading rows)) "Ada") (pr-str (heading rows)))))))
 
 (defn settings-fixture
   "Production settings dialog; only the gateway boundary is an in-memory fixture."
