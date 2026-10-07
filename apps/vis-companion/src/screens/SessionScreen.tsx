@@ -1309,8 +1309,9 @@ export function SessionScreen({
   const [reasoningEffort, setReasoningEffort] = useState<Toggle | null>(() =>
     client.cachedSetting('reasoning_effort', settingsTarget),
   );
+  // Only the gateway sets simplified thinking modes, so a session reads the global row.
   const [simplifiedThinking, setSimplifiedThinking] = useState<Toggle | null>(() =>
-    client.cachedSetting('simplified_thinking_modes', settingsTarget),
+    client.cachedSetting('simplified_thinking_modes'),
   );
   const [verbosity, setVerbosity] = useState<Toggle | null>(() =>
     client.cachedSetting('verbosity', settingsTarget),
@@ -1344,7 +1345,7 @@ export function SessionScreen({
         ['simplified_thinking_modes', setSimplifiedThinking],
       ] as const) {
         void client
-          .setting(id, signal, settingsTarget)
+          .setting(id, signal, id === 'simplified_thinking_modes' ? undefined : settingsTarget)
           .then((toggle) => {
             if (!signal.aborted) receive(toggle);
           })

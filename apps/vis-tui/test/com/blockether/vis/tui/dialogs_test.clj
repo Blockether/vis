@@ -1462,14 +1462,15 @@
                             (filter #(= :section (:type %)))
                             (mapv :label))]
 
-          ;; flat list, web-shaped: Code mode and Compact mode lead without a section
-          ;; header, then Theme, as in the app. The Models section was retired (it
+          ;; One flat list, web-shaped: Theme leads, then General, as in the app. Code mode
+          ;; and Compact mode end General under View. The Models section was retired (it
           ;; only carried reasoning-effort, which moved to Ctrl+R).
-          (expect (= ["Code mode" "Compact mode"] (mapv :label (take 2 rows))))
+          (expect (= ["Theme" "Theme"] (mapv :label (take 2 rows))))
           (expect (= ["Theme" "General"] (take 2 sections)))
           (expect (not-any? #{"Responses"} sections))
-          (expect (= [:show-python-code :summarize-steps :theme-name]
-                     (vec (keep :key (take 5 rows)))))
+          (expect (= :theme-name (:key (second rows))))
+          (expect (= [:show-python-code :summarize-steps]
+                     (vec (filter #{:show-python-code :summarize-steps} (keep :key rows)))))
           (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
           ;; vis-dark/light are pinned to the TOP; every other built-in follows by id.
@@ -1490,37 +1491,54 @@
           (expect (not-any? #(= "reasoning_level" (:toggle-id %)) rows))
           ;; Settings no longer has a generic feature-toggle bucket.
           (expect (not-any? #{"Feature Toggles"} sections))))))
-  (it "shows the gateway's simplified thinking modes row after Compact mode"
-      (let [settings-rows
-            (var-get #'dlg/settings-rows)
+  (it
+    "ends General with the View rows and the gateway's simplified thinking modes row"
+    (let [settings-rows
+          (var-get #'dlg/settings-rows)
 
-            thinking-modes
-            (var-get #'dlg/thinking-modes-setting)
+          thinking-modes
+          (var-get #'dlg/thinking-modes-setting)
 
-            before
-            @thinking-modes]
+          before
+          @thinking-modes]
 
-        (try (reset! thinking-modes {"id" "simplified_thinking_modes"
-                                     "type" "boolean"
-                                     "enabled" true
-                                     "source" "default"
-                                     "label" "Simplified thinking modes"
-                                     "description" "Step through quick, balanced and deep."})
-             (with-redefs [vis/get-router (constantly nil)]
-               (let [rows (settings-rows)]
-                 (expect (= ["Code mode" "Compact mode" "Simplified thinking modes"]
-                            (mapv :label (take 3 rows))))
-                 (expect (= {:type :registry-toggle
-                             :toggle-id "simplified_thinking_modes"
-                             :toggle-value true}
-                            (select-keys (nth rows 2) [:type :toggle-id :toggle-value])))
-                 (expect
-                   (= 1 (count (filter #(= "simplified_thinking_modes" (:toggle-id %)) rows))))))
-             (reset! thinking-modes nil)
-             (with-redefs [vis/get-router (constantly nil)]
-               ;; Without a good gateway read, the row stays hidden.
-               (expect (not-any? #(= "simplified_thinking_modes" (:toggle-id %)) (settings-rows))))
-             (finally (reset! thinking-modes before)))))
+      (try
+        (reset! thinking-modes {"id" "simplified_thinking_modes"
+                                "type" "boolean"
+                                "enabled" true
+                                "source" "default"
+                                "label" "Simplified thinking modes"
+                                "description" "Step through quick, balanced and deep."})
+        (with-redefs [vis/get-router (constantly nil)]
+          (let [rows (settings-rows)
+                labels (mapv :label rows)
+                view (.indexOf ^java.util.List labels "View")
+                next-section (first (filter #(= :section (:type (nth rows %)))
+                                            (range (inc view) (count rows))))]
+
+            ;; Theme opens the list; no setting stands above the first header.
+            (expect (= {:type :section :label "Theme"} (select-keys (first rows) [:type :label])))
+            (expect (= "General" (:label (last (filter #(= :section (:type %)) (take view rows))))))
+            (expect (= :subsection (:type (nth rows view))))
+            (expect (= ["Code mode" "Compact mode" "Simplified thinking modes"]
+                       (subvec labels (inc view) (+ view 4))))
+            ;; The View rows are the last rows of General.
+            (expect (or (nil? next-section) (= (+ view 4) next-section)))
+            (expect
+              (= {:type :registry-toggle :toggle-id "simplified_thinking_modes" :toggle-value true}
+                 (select-keys (nth rows (+ view 3)) [:type :toggle-id :toggle-value])))
+            (expect (= 1 (count (filter #(= "simplified_thinking_modes" (:toggle-id %)) rows))))))
+        ;; A group, project or session target has no View rows: they are global only.
+        (binding [dlg/*settings-target* {:scope "project" :target-id "p1"}]
+          (with-redefs [vis/get-router (constantly nil)]
+            (let [rows (settings-rows)]
+              (expect (not-any? #{"View" "Code mode" "Compact mode" "Simplified thinking modes"}
+                                (map :label rows))))))
+        (reset! thinking-modes nil)
+        (with-redefs [vis/get-router (constantly nil)]
+          ;; Without a good gateway read, the row stays hidden.
+          (expect (not-any? #(= "simplified_thinking_modes" (:toggle-id %)) (settings-rows))))
+        (finally (reset! thinking-modes before)))))
   (it "registered extension themes appear in the channel Theme setting"
       (let [settings-rows
             (var-get #'dlg/settings-rows)

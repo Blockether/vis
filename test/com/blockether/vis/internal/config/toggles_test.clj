@@ -247,10 +247,12 @@
             effort
             (t/toggle-spec "reasoning_effort")]
 
-        ;; Simplified modes stay on by default and live in the Application section of clients.
+        ;; Simplified modes stay on by default and live in the view settings of clients.
         (expect (= {:type :boolean :default true :group :provider :persist? true}
                    (select-keys simplified [:type :default :group :persist?])))
         (expect (false? (:settings? simplified)))
+        ;; Only the gateway sets it: groups, projects and sessions cannot.
+        (expect (= ["global"] (:scopes simplified)))
         ;; The exact level offers every svar rung on its own control.
         (expect (= {:type :enum :choices svar/REASONING_EFFORTS :default "medium" :settings? false}
                    (select-keys effort [:type :choices :default :settings?]))))))

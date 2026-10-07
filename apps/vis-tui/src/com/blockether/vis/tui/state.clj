@@ -6724,11 +6724,19 @@
 (defn- refresh-session-settings!
   [sid]
   (when sid
-    (let [catalog (vis/gateway-settings :tui {:scope "session" :target-id (str sid)})]
+    (let [catalog
+          (vis/gateway-settings :tui {:scope "session" :target-id (str sid)})
+
+          ;; Only the gateway sets simplified thinking modes, so the session catalog
+          ;; omits it and every session reads the global row. A session row from an
+          ;; older gateway comes later and wins.
+          global
+          (try [(vis/setting "simplified_thinking_modes")] (catch Exception _ nil))]
+
       ;; Settings nest at any depth in `children`; the lookup by id reads every row.
       (letfn [(flat [rows] (mapcat #(cons % (flat (get % "children"))) rows))]
         (dispatch [:session-settings-loaded sid
-                   (flat (mapcat #(get % "toggles") (get catalog "groups")))])))))
+                   (concat global (flat (mapcat #(get % "toggles") (get catalog "groups"))))])))))
 
 (reg-fx :refresh-session-settings
         (fn [sid]

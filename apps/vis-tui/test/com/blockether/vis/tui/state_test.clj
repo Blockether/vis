@@ -781,6 +781,24 @@
                   :reasoning-level-choices ["quick" "balanced" "deep"]
                   :reasoning-level-label "Reasoning effort"}
                  (get-in @state/app-db [:session-settings "s1"]))))
+  (it "reads the global simplified thinking modes row for a session"
+      (reset! state/app-db {:session {:id "s1"} :render-version 0})
+      (let [reads (atom [])]
+        (with-redefs [vis/gateway-settings (fn [_ target]
+                                             (expect (= "session" (:scope target)))
+                                             {"groups" [{"toggles" [{"id" "reasoning_level"
+                                                                     "type" "enum"
+                                                                     "value" "deep"}]}]})
+                      vis/setting
+                      (fn [& args]
+                        (swap! reads conj (vec args))
+                        {"id" "simplified_thinking_modes" "type" "boolean" "enabled" false})]
+
+          ((var-get #'state/refresh-session-settings!) "s1"))
+        ;; Only the gateway sets it: the read names no group, project or session.
+        (expect (= [["simplified_thinking_modes"]] @reads))
+        (expect (= {:simplified-thinking-modes false :reasoning-level :deep}
+                   (get-in @state/app-db [:session-settings "s1"])))))
   (it "offers the simplified modes and selects the current one"
       (with-redefs [vis/get-router
                     (constantly :router)

@@ -3308,8 +3308,8 @@
          [(keyword shared-theme/default-theme-id)])))
 
 (defonce ^:private thinking-modes-setting
-  ;; The gateway row of `simplified_thinking_modes`. Settings shows it with the
-  ;; terminal preferences, like the Application section of the app.
+  ;; The gateway row of `simplified_thinking_modes`. Settings shows it under View at
+  ;; the end of General, like the Application section of the app.
   (atom nil))
 
 (defn- thinking-modes-rows
@@ -3327,14 +3327,15 @@
         :label (str (get row "label"))
         :description (str (get row "description"))}])))
 
-(defn- settings-ui-options
-  "Terminal-local response and theme preferences, grouped like the app's Settings.
-   The simplified thinking modes row is the gateway's, shown here like in the app.
-   Engine settings use the registry."
+(defn- view-settings-rows
+  "The View rows at the end of General: two terminal preferences and the gateway's
+   simplified thinking modes row. Each one has only a global value, so a group,
+   project or session target never shows them."
   []
   (vec
     (concat
-      [{:key :show-python-code
+      [{:type :subsection :label "View"}
+       {:key :show-python-code
         :type :toggle
         :label "Code mode"
         :description
@@ -3344,14 +3345,18 @@
         :label "Compact mode"
         :description
         "Fold the steps between progress notes into one row with their state, live views and time. Open the row to see their thinking, code and Activity. Turn off to show Activity for each step."}]
-      (thinking-modes-rows)
-      [{:type :section :label "Theme"}
-       {:key :theme-name
-        :type :choice
-        :choices (theme-choice-order)
-        :label "Theme"
-        :description
-        "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}])))
+      (thinking-modes-rows))))
+
+(defn- settings-theme-rows
+  "The terminal theme, the first section of global Settings."
+  []
+  [{:type :section :label "Theme"}
+   {:key :theme-name
+    :type :choice
+    :choices (theme-choice-order)
+    :label "Theme"
+    :description
+    "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}])
 
 (declare titleize-label)
 
@@ -4008,27 +4013,40 @@
           first? (vec (concat [header] extra rows))
           :else (vec (concat rows [header] extra)))))
 
+(defn- put-at-section-end
+  "Put `extra` rows at the end of the catalog section `id`, before the next section.
+   Without that section, `rows` stay as they are."
+  [rows id extra]
+  (if-let [i (first (keep-indexed #(when (= id (:section-id %2)) %1) rows))]
+    (let [end (or (first (filter #(= :section (:type (nth rows %)))
+                                 (range (inc (long i)) (count rows))))
+                  (count rows))]
+      (vec (concat (take end rows) extra (drop end rows))))
+    (vec rows)))
+
 (defn- settings-rows
-  "Every setting in one flat list, in the gateway's sections. Machine settings add the agent
-   name to General and the provider accounts to Providers. A failed catalog read keeps the
-   last catalog and says so. Tools ends the list."
+  "Every setting in one flat list, in the gateway's sections. Global Settings start with the
+   theme, add the agent name to General, end General with the View rows and add the provider
+   accounts to Providers. A failed catalog read keeps the last catalog and says so. Tools ends
+   the list."
   []
-  (vec (concat (when-not *settings-target* (settings-ui-options))
-               (cond-> (or (registry-toggle-rows) [])
-                 (not *settings-target*)
-                 (-> (put-in-section
-                       "general"
-                       "General"
-                       [{:type :agent-name
-                         :label "Agent name"
-                         :description (or
-                                        (get @agent-name-setting "error")
+  (vec
+    (concat (when-not *settings-target* (settings-theme-rows))
+            (cond-> (or (registry-toggle-rows) [])
+              (not *settings-target*)
+              (-> (put-in-section "general"
+                                  "General"
+                                  [{:type :agent-name
+                                    :label "Agent name"
+                                    :description
+                                    (or (get @agent-name-setting "error")
                                         "Shared by all gateway clients. Overrides project names.")}]
-                       true)
-                     (put-in-section "providers" "Providers" (provider-settings-rows) false)))
-               (when-let [error (:error @(settings-inventory-atom))]
-                 [{:type :info :tone :bad :label "Settings unavailable" :description error}])
-               (tools-settings-rows))))
+                                  true)
+                  (put-at-section-end "general" (view-settings-rows))
+                  (put-in-section "providers" "Providers" (provider-settings-rows) false)))
+            (when-let [error (:error @(settings-inventory-atom))]
+              [{:type :info :tone :bad :label "Settings unavailable" :description error}])
+            (tools-settings-rows))))
 
 (defn- settings-option-label
   [{:keys [label type toggle-id experimental? locked is-override?]} _values]

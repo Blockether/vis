@@ -612,8 +612,9 @@
     ;; ON keeps the three abstract levels above, and clients cycle them. OFF lets the
     ;; reasoning picker offer the exact rungs that svar stamps on the session's model
     ;; (`:reasoning-effort-options`), and each turn aims at `reasoning_effort`.
-    ;; Clients show it in their Application section, so it stays out of the
-    ;; machine settings list.
+    ;; Clients show it with their view settings, so it stays out of the machine settings
+    ;; list. It is a preference of the whole gateway: groups, projects and sessions
+    ;; cannot set it, and resolution ignores an old value saved there.
     (register-toggle!
       {:id "simplified_thinking_modes"
        :label "Simplified thinking modes"
@@ -621,7 +622,7 @@
        :type :boolean
        :default true
        :settings? false
-       :scopes toggle-contract/scopes
+       :scopes ["global"]
        :owner :vis
        :group :provider
        :persist? true})

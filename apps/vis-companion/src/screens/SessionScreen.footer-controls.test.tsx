@@ -218,6 +218,10 @@ describe('composer response controls', () => {
       ],
     });
 
+    let settingReads = vi.fn((_id: string, _signal?: AbortSignal, _target?: unknown) =>
+      Promise.resolve<unknown>(null),
+    );
+
     function renderWithReasoning(simplifiedEnabled: boolean, setSetting: ReturnType<typeof vi.fn>) {
       const settings = new Map<string, unknown>([
         [
@@ -236,6 +240,7 @@ describe('composer response controls', () => {
         ],
       ]);
       const setting = (id: string) => settings.get(id) ?? null;
+      settingReads = vi.fn((id: string, _signal?: AbortSignal, _target?: unknown) => Promise.resolve(setting(id)));
       const fleet = [exactModel];
       renderSessionScreen({
         client: {
@@ -247,7 +252,7 @@ describe('composer response controls', () => {
           cachedRouter: () => fleet,
           router: () => Promise.resolve(fleet),
           cachedSetting: setting,
-          setting: (id: string) => Promise.resolve(setting(id)),
+          setting: settingReads,
           setSetting,
         },
       });
@@ -281,6 +286,15 @@ describe('composer response controls', () => {
       expect(await screen.findByRole('button', { name: 'Thinking level — xhigh, choose a level' })).toBeVisible();
     });
 
+    it('reads simplified thinking modes from the gateway, not from the session', async () => {
+      renderWithReasoning(true, vi.fn());
+      await screen.findByRole('button', { name: 'Reasoning effort — balanced, tap for the next level' });
+      const reads = settingReads.mock.calls.filter(([id]) => id === 'simplified_thinking_modes');
+      expect(reads.length).toBeGreaterThan(0);
+      for (const [, , target] of reads) expect(target).toBeUndefined();
+      const levels = settingReads.mock.calls.filter(([id]) => id === 'reasoning_level');
+      expect(levels[0]?.[2]).toEqual(expect.objectContaining({ scope: 'session' }));
+    });
     it('steps to the next of quick, balanced and deep while simplified thinking modes are on', async () => {
       const user = userEvent.setup();
       const setSetting = vi.fn((id: string) =>
