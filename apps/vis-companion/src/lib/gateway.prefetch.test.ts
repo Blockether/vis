@@ -23,8 +23,8 @@ const turns = [{
 }];
 const page = () => new Response(JSON.stringify({ turns, total: 1, offset: 0, has_more: false }));
 
-// Each test talks to its own machine: a previous test's module still flushes its
-// snapshots on a timer, and the same base would hand this test its transcripts.
+// Each test talks to its own machine: the same base would hand this test a previous
+// test's transcripts.
 let conn = { url: 'http://gateway.example.com' };
 let machines = 0;
 
@@ -35,7 +35,11 @@ beforeEach(() => {
   conn = { url: `http://gateway.example.com:${7000 + machines}` };
 });
 
-afterEach(() => {
+// A previous test's module still flushes its snapshots on a timer. That write replaces
+// the whole stored blob, so a slow import in the next test could hydrate another test's
+// rows. Flush now: this also clears the timer before the next test starts.
+afterEach(async () => {
+  (await import('./gateway')).persistGatewayCaches();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
