@@ -19,7 +19,7 @@
    and on `set!` the wrapper writes `{:toggles {id value}}` into the
    machine store `~/.vis/state.yml` via `vis.config/save-config!`.
    Hand-authored `vis.yml` / `config.yml` may ALSO declare a `toggles:`
-   block. Ids are plain snake_case strings there (`reasoning_level: deep`),
+   block. Ids are plain snake_case strings there (`verbosity: low`),
    identical to the registered id. `coerce-config-value` maps YAML strings
    onto each toggle's type, so a config-declared toggle behaves exactly like
    a UI flip. Hydration happens at process start (call
@@ -448,13 +448,14 @@
     nil))
 
 (defn hydrate-from-config!
-  "Bulk-apply values from the string-keyed YAML `toggles` map."
+  "Bulk-apply values from the string-keyed YAML `toggles` map. Only persisted toggles
+   load: a gateway session owns `reasoning_level`, so a stale machine copy never wins."
   [config-map]
   (let [persisted (get config-map "toggles")]
     (when (map? persisted)
       (let [reg @registry]
         (doseq [[id v] persisted
-                :when (and (string? id) (contains? reg id))]
+                :when (and (string? id) (:persist? (get reg id)))]
 
           (try (set-value! id (coerce-config-value id v))
                (catch clojure.lang.ExceptionInfo _ nil)))))))
@@ -518,13 +519,14 @@
                        :type :enum
                        :choices ["quick" "balanced" "deep"]
                        ;; Lives on its OWN control (TUI Ctrl+R, footer), not the Settings
-                       ;; dialog — `:settings? false` keeps it registered + persisted but out
-                       ;; of every channel's Settings list.
+                       ;; dialog — `:settings? false` keeps it out of every channel's
+                       ;; Settings list. The gateway keeps it for each session, with the
+                       ;; provider entry as the default, so the TUI keeps no machine copy.
                        :settings? false
                        :default "balanced"
                        :owner :vis
                        :group :provider
-                       :persist? true})
+                       :persist? false})
     ;; Verbosity is a WIRE knob (`text.verbosity` on the OpenAI Responses
     ;; endpoint), not a vendor's: OpenAI Codex and GitHub Copilot's GPT tier
     ;; both accept it, so it is registered once HERE rather than by one
