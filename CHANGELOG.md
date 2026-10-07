@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.35] - 2026-10-07
+
+### Changed
+- The TUI Settings start with Theme. Code mode, Compact mode and Simplified thinking modes are at
+  the end of General, in a View subsection. They are global settings only.
+- Simplified thinking modes is a global setting. Groups, projects and sessions cannot change it.
+
+### Fixed
+- In the app, the settings sheet no longer jumps when you open a machine. The sections show when
+  the machine settings are ready.
 ## [v0.2.34] - 2026-10-07
 
 ### Changed
