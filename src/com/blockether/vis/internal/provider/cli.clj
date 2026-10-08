@@ -9,7 +9,8 @@
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.provider.catalog :as catalog]
-            [com.blockether.vis.internal.provider.service :as providers]))
+            [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.contract.wire :as wire]))
 
 (def ^:private providers-table-cols
   [{:key :id :label "ID" :width 18 :align :left} {:key :label :label "Label" :width 28 :align :left}
@@ -120,34 +121,35 @@
                  (when error* [(str "  Error:          " (:message error*))])))))
 
 (defn- print-provider-status!
-  [provider]
-  (let [status
-        (or (configured-provider-status provider) {"is_authenticated" false})
+  ([provider] (print-provider-status! provider (configured-provider-status provider)))
+  ([provider status]
+   (let [status
+         (or status {"is_authenticated" false})
 
-        provider-id
-        (:provider/id provider)
+         provider-id
+         (:provider/id provider)
 
-        base-url
-        (configured-provider-base-url provider-id)
+         base-url
+         (configured-provider-base-url provider-id)
 
-        rows
-        (->> status
-             (remove (fn [[k _]]
-                       (contains? providers/summary-owned-status-keys k)))
-             (sort-by (comp str key)))]
+         rows
+         (->> status
+              (remove (fn [[k _]]
+                        (contains? providers/summary-owned-status-keys k)))
+              (sort-by (comp str key)))]
 
-    (commandline/stdout! (str "\n  " (:provider/label provider) " Provider Status"))
-    (commandline/stdout! "  ─────────────────────────────────")
-    (when base-url (commandline/stdout! (str "  Base URL:       " base-url)))
-    (commandline/stdout! (str "  Authenticated:  " (providers/auth-summary status false)))
-    (doseq [[k v] rows]
-      (commandline/stdout! (str "  "
-                                (commandline/pad-right (str (providers/status-entry-label k) ":")
-                                                       15)
-                                (providers/format-status-value v))))
-    (doseq [line (provider-limit-lines provider-id)]
-      (commandline/stdout! line))
-    (commandline/stdout! "")))
+     (commandline/stdout! (str "\n  " (:provider/label provider) " Provider Status"))
+     (commandline/stdout! "  ─────────────────────────────────")
+     (when base-url (commandline/stdout! (str "  Base URL:       " base-url)))
+     (commandline/stdout! (str "  Authenticated:  " (providers/auth-summary status false)))
+     (doseq [[k v] rows]
+       (commandline/stdout! (str "  "
+                                 (commandline/pad-right (str (providers/status-entry-label k) ":")
+                                                        15)
+                                 (providers/format-status-value v))))
+     (doseq [line (provider-limit-lines provider-id)]
+       (commandline/stdout! line))
+     (commandline/stdout! ""))))
 
 (defn- print-provider-limits!
   [provider-id]
@@ -211,11 +213,53 @@
           (commandline/stdout! (str "\n  " (count rows) " provider(s)\n")))))
   (shutdown-agents))
 
+(def ^:private status-exit-codes
+  "Exit status of `providers status <provider>` for each reading of its state."
+  {:verified 0 :unknown-provider 2 :not-authenticated 3 :not-verified 4})
+
+(defn- provider-auth-record
+  "The machine-readable auth state of one provider. It never holds a token or a
+   token preview."
+  [provider status]
+  (let [verdict (providers/auth-verdict status)]
+    (cond-> {"provider" (name (:provider/id provider))
+             "label" (:provider/label provider)
+             "authenticated" (or (= :verified verdict)
+                                 (and (true? (get status "is_authenticated"))
+                                      (not= :rejected verdict)))
+             "state" (name verdict)}
+      (some? (get status "source"))
+      (assoc "source" (str (get status "source")))
+
+      (some? (get status "account_type"))
+      (assoc "account_type" (str (get status "account_type")))
+
+      (some? (get status "error"))
+      (assoc "error" (str (get status "error"))))))
+
+(defn- auth-exit-code
+  [{:strs [authenticated state]}]
+  (cond (= "verified" state) (:verified status-exit-codes)
+        authenticated (:not-verified status-exit-codes)
+        :else (:not-authenticated status-exit-codes)))
+
+(defn- finish!
+  "End the command with `code`. A non-zero code ends the process with it."
+  [code]
+  (shutdown-agents)
+  (when-not (zero? (long code)) (System/exit (int code))))
+
 (defn- cli-providers-status!
-  [_parsed residual]
+  [parsed _residual]
   (config/init-cli!)
   (let [provider-name
-        (first residual)
+        (get parsed "provider")
+
+        json?
+        (boolean (get parsed "json"))
+
+        quiet?
+        (boolean (get parsed "quiet"))
 
         provider-id
         (some-> provider-name
@@ -229,14 +273,29 @@
           (if provider [provider] [])
           (sort-by :provider/id (registry/registered-providers)))]
 
-    (cond (and provider-name (nil? provider)) (do (commandline/stdout! (str "Unknown provider: "
-                                                                            provider-name))
-                                                  (commandline/stdout! "")
-                                                  (print-registered-providers!))
-          (empty? providers) (commandline/stdout! "No providers registered.")
-          :else (doseq [p providers]
-                  (print-provider-status! p))))
-  (shutdown-agents))
+    (cond (and provider-name (nil? provider))
+          (do (when-not quiet?
+                (if json?
+                  (commandline/stdout! (wire/json-str {"provider" provider-name
+                                                       "error" "unknown provider"}))
+                  (do (commandline/stdout! (str "Unknown provider: " provider-name))
+                      (commandline/stdout! "")
+                      (print-registered-providers!))))
+              (finish! (:unknown-provider status-exit-codes)))
+          (or json? quiet?)
+          (let [records (mapv #(provider-auth-record % (configured-provider-status %)) providers)]
+            (when (and json? (not quiet?))
+              (commandline/stdout! (wire/json-str (if provider-name (first records) records))))
+            (let [code (if provider-name (auth-exit-code (first records)) 0)]
+              (finish! code)))
+          (empty? providers) (do (commandline/stdout! "No providers registered.") (finish! 0))
+          :else (let [statuses (mapv (juxt identity configured-provider-status) providers)]
+                  (doseq [[p status] statuses]
+                    (print-provider-status! p status))
+                  (let [code (if provider-name
+                               (auth-exit-code (apply provider-auth-record (first statuses)))
+                               0)]
+                    (finish! code))))))
 
 (defn- cli-providers-limits!
   [_parsed residual]
@@ -352,9 +411,33 @@
    {:cmd/name "status"
     :cmd/parent ["providers"]
     :cmd/doc "Show provider authentication status together with static/dynamic limits."
-    :cmd/usage "vis-agent providers status [provider]"
+    :cmd/usage "vis-agent providers status [provider] [--json] [--quiet]"
+    :cmd/args
+    [{:name "provider"
+      :kind :positional
+      :type :string
+      :doc "Registered provider id (for example: github-copilot). Without it, show every provider."}
+     {:name "json"
+      :kind :flag
+      :type :boolean
+      :doc "Print the auth state as JSON, without limits, tokens or token previews."}
+     {:name "quiet" :kind :flag :type :boolean :doc "Print nothing. Read the exit status."}]
+    :cmd/extra-sections
+    [{:title "JSON OUTPUT"
+      :body
+      (str
+        "  One object for a named provider, else an array with one object for each provider.\n"
+        "  Keys: provider, label, authenticated, state, and source, account_type and error when known.\n"
+        "  state is verified, rejected, degraded (usable; live check unavailable) or unverified.")}
+     {:title "EXIT STATUS"
+      :body (str "  With a provider name:\n" "    0  the provider is authenticated and verified\n"
+                 "    2  the provider is not registered\n"
+                 "    3  the provider is not authenticated, or it rejected the credential\n"
+                 "    4  a credential is saved, but no live check verified it\n"
+                 "  Without a provider name, the exit status is 0.")}]
     :cmd/examples ["vis-agent providers status" "vis-agent providers status github-copilot"
-                   "vis-agent providers status openai-codex"]
+                   "vis-agent providers status github-copilot --json"
+                   "vis-agent providers status github-copilot --quiet && echo signed in"]
     :cmd/run-fn cli-providers-status!}
    {:cmd/name "limits"
     :cmd/parent ["providers"]
