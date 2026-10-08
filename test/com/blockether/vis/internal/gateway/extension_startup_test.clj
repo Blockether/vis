@@ -133,7 +133,8 @@
                 (expect (not (str/includes? (str output) "preparing gateway extensions")))
                 (doseq
                   [detail
-                   ["1 loaded, 2 failed" "/extensions/missing.py: not loaded"
+                   ["1 loaded, 2 failed" "Vis remains available." "run /reload to retry"
+                    "/extensions/missing.py: not loaded"
                     "ModuleNotFoundError: No module named 'missing_dependency'"
                     "/extensions/greeter.py (greeter): reload failed; using last-known-good version"
                     "  Traceback (most recent call last):\n"

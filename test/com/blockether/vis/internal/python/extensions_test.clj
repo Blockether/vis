@@ -519,52 +519,128 @@
                         (pyx/reload-python-extensions! {:dirs [] :project-root root})))))))
 
 (defdescribe
-  project-admission-retry-test
+  package-preparation-isolation-test
   (it
-    "reports installation failures, retries admission, then reuses the admitted project"
-    (let [root
-          (.getCanonicalPath (temp-dir))
-
-          home
+    "loads healthy entries, reports package errors and recovers on reload"
+    (let [home
           (temp-dir)
 
-          fingerprint
-          (atom {})
+          global-dir
+          (io/file home "extensions")
 
           fail?
           (atom true)
 
-          calls
-          (atom [])]
+          source
+          (fn [name]
+            (str "import blockether.vis.extension as vis\n"
+                 "vis.register_extension(vis.Extension(name='"
+                 name
+                 "', description='Package isolation fixture'))\n"))]
 
-      (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+      (write-ext! global-dir "healthy.py" (source "healthy-package-fixture"))
+      (write-ext! global-dir "broken/current/extension.py" (source "broken-package-fixture"))
+      (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                       #'pyx/prepared-scopes (atom #{})
+                       #'pyx/failures (atom [])
                        #'pyx/default-extension-dirs (fn []
-                                                      [(io/file home "extensions")
-                                                       (io/file root ".vis/extensions")])
-                       #'pyx/sync-packages! (fn [opts]
-                                              (swap! calls conj opts)
-                                              (if (and (:project opts) @fail?)
-                                                [{"status" "failed"
-                                                  "error" "Fixture install failure"}]
-                                                []))
-                       #'pyx/load-scope!
-                       (fn [opts]
-                         (expect (:sync-projects? opts))
-                         (swap! fingerprint assoc (:project-root opts) [::admitted])
-                         {:loaded 1 :failed 0 :changed? true})}
+                                                      [global-dir global-dir])
+                       #'pyx/sync-packages!
+                       (fn [_]
+                         (if @fail?
+                           [{"name" "broken"
+                             "status" "failed"
+                             "error"
+                             "Existing extension was changed externally; no files replaced"}]
+                           []))}
         (fn []
-          (expect (= :com.blockether.vis.internal.python.extensions/project-setup-failed
-                     (try (pyx/prepare-project! root)
-                          nil
-                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
-          (expect (not (contains? @fingerprint root)))
-          (reset! fail? false)
-          (expect (zero? (:failed (pyx/prepare-project! root))))
-          (expect (contains? @fingerprint root))
-          (expect (false? (:changed? (pyx/prepare-project! root))))
-          (expect (= [{:global true :trust true} {:project true :trust true}
-                      {:project true :trust true}]
-                     @calls))))))
+          (try (let [result (pyx/ensure-python-extensions-loaded! {:global-only? true})]
+                 (expect (= {:loaded 1 :failed 1} (select-keys result [:loaded :failed])))
+                 (expect (= ["broken"] (mapv :extension (pyx/load-failures nil))))
+                 (expect (str/includes? (:error (first (pyx/load-failures nil)))
+                                        "changed externally"))
+                 (expect (false? (:stale? (first (pyx/load-failures nil))))))
+               (reset! fail? false)
+               (expect (= {:loaded 2 :failed 0}
+                          (select-keys (pyx/reload-python-extensions! {:global-only? true})
+                                       [:loaded :failed])))
+               (expect (= [] (pyx/load-failures nil)))
+               (reset! fail? true)
+               (expect (= {:loaded 2 :failed 1}
+                          (select-keys (pyx/reload-python-extensions! {:global-only? true})
+                                       [:loaded :failed])))
+               (expect (:stale? (first (pyx/load-failures nil))))
+               (finally (pyx/reload-python-extensions! {:dirs []}))))))))
+
+(defdescribe
+  project-admission-retry-test
+  (it "keeps project admission usable and retries failed packages on reload"
+      ;; Regression: package preparation aborted startup, doctor and project admission.
+      (let [root
+            (.getCanonicalPath (temp-dir))
+
+            home
+            (temp-dir)
+
+            fail?
+            (atom true)
+
+            calls
+            (atom [])]
+
+        (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                         #'pyx/prepared-scopes (atom #{})
+                         #'pyx/failures (atom [])
+                         #'pyx/default-extension-dirs (fn []
+                                                        [(io/file home "extensions")
+                                                         (io/file root ".vis/extensions")])
+                         #'pyx/sync-packages! (fn [opts]
+                                                (swap! calls conj opts)
+                                                (if (and (:project opts) @fail?)
+                                                  [{"name" "missing-package"
+                                                    "status" "failed"
+                                                    "error" "Fixture install failure"}]
+                                                  []))}
+          (fn []
+            (expect (= 1 (:failed (pyx/prepare-project! root))))
+            (expect (= [["missing-package" "Fixture install failure" false]]
+                       (mapv (juxt :extension :error :stale?) (pyx/load-failures root))))
+            (binding [workspace/*workspace-root* root]
+              (expect (str/includes? (:message (first (#'pyx/doctor-fn {:workspace/root root})))
+                                     "Fixture install failure"))
+              (expect (str/includes? (:message (first (#'pyx/doctor-fn {:workspace/root root})))
+                                     "/reload")))
+            (expect (false? (:changed? (pyx/prepare-project! root))))
+            (expect (= 2 (count @calls)))
+            (reset! fail? false)
+            (binding [workspace/*workspace-root* root]
+              (expect (zero? (:failed (pyx/reload-python-extensions!)))))
+            (expect (= [] (pyx/load-failures root)))
+            (expect (false? (:changed? (pyx/prepare-project! root))))
+            (expect (= [{:global true :trust true} {:project true :trust true}
+                        {:global true :trust true} {:project true :trust true}]
+                       @calls))))))
+  (it "reports a scope preparation exception without blocking project admission"
+      (let [root
+            (.getCanonicalPath (temp-dir))
+
+            home
+            (temp-dir)]
+
+        (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                         #'pyx/prepared-scopes (atom #{})
+                         #'pyx/failures (atom [])
+                         #'pyx/default-extension-dirs (fn []
+                                                        [(io/file home "extensions")
+                                                         (io/file root ".vis/extensions")])
+                         #'pyx/sync-packages! (fn [_]
+                                                (throw (ex-info "Fixture preparation exception"
+                                                                {})))}
+          (fn []
+            (expect (= 2 (:failed (pyx/prepare-project! root))))
+            (expect (= 2 (count (pyx/load-failures root))))
+            (expect (every? #(str/includes? (:error %) "Fixture preparation exception")
+                            (pyx/load-failures root)))))))
   (it "shows only global and current-project load failures"
       (let [a
             (.getCanonicalPath (temp-dir))

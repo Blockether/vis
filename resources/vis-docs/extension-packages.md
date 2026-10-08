@@ -477,6 +477,10 @@ packages and rebuilds extension contexts from the selected source. Unchanged pin
 do not fetch a newer revision. Already running calls may finish with old code. Live
 sessions switch at the next turn boundary.
 
+If a package cannot prepare or load, Vis reports its name, location and error. Other extensions and the core tools remain available.
+You can open the project and use Vis to repair the files or configuration. Run `vis-agent doctor` to inspect the failures.
+After the repair, run `/reload` to retry preparation and loading. A successful retry clears the warning without restarting Vis.
+
 `vis.state` survives reload and restarts. A failed reload keeps the last working code, contracts,
 docs and package skills. It marks them stale with the failure reason and the loaded and requested
 source fingerprints. A successful retry clears the warning. See

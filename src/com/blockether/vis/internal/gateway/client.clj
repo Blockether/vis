@@ -672,23 +672,26 @@
                       "Extension preparation is still running; inspect gateway status and retry."
                       {:type :gateway/extension-preparation-timeout})))
                 (and (= "ready" stage) (zero? (long (or failed 0)))) nil
-                :else (do (println (if (= "ready" stage)
-                                     (str "[vis extensions] " loaded " loaded, " failed " failed")
-                                     "[vis extensions] preparation failed; run vis-agent doctor"))
-                          (when error
-                            (doseq [line (str/split-lines error)]
-                              (println (str "  " line))))
-                          (doseq [{:strs [file extension error stale]} failures]
-                            (println (str "[vis extensions] "
-                                          (or file extension "Unknown extension")
-                                          (when (and file extension) (str " (" extension ")"))
-                                          ": "
-                                          (if stale
-                                            "reload failed; using last-known-good version"
-                                            "not loaded")))
-                            (doseq [line (str/split-lines error)]
-                              (println (str "  " line))))
-                          (flush))))))))))
+                :else
+                (do
+                  (println (if (= "ready" stage)
+                             (str "[vis extensions] " loaded " loaded, " failed " failed")
+                             "[vis extensions] preparation failed; run vis-agent doctor"))
+                  (when error
+                    (doseq [line (str/split-lines error)]
+                      (println (str "  " line))))
+                  (doseq [{:strs [file extension error stale]} failures]
+                    (println
+                      (str "[vis extensions] "
+                           (or file extension "Unknown extension")
+                           (when (and file extension) (str " (" extension ")"))
+                           ": "
+                           (if stale "reload failed; using last-known-good version" "not loaded")))
+                    (doseq [line (str/split-lines error)]
+                      (println (str "  " line))))
+                  (println
+                    "[vis extensions] Vis remains available. Fix the reported problems, then run /reload to retry.")
+                  (flush))))))))))
 
 (defn- ensure-client!
   "Register this JVM as a daemon client exactly once. This is the refcount lease

@@ -1924,8 +1924,10 @@
        ": reload failed; "
        (if stale? "last-known-good tools and docs are stale" "not loaded")
        (when loaded-fingerprint (str "; loaded fingerprint " loaded-fingerprint))
-       "; requested fingerprint " requested-fingerprint
-       ". " error))
+       (when requested-fingerprint (str "; requested fingerprint " requested-fingerprint))
+       ". "
+       error
+       " Fix the extension or its configuration, then run /reload to retry."))
 
 (defn loaded-python-extensions
   "Snapshot of the effective Python extensions in a project, the current one by
@@ -2575,7 +2577,7 @@
 
    Returns `{:loaded n :failed n :changed? bool}`."
   ([] (load-scope! nil))
-  ([{:keys [dirs project-root sync-projects? site-packages]}]
+  ([{:keys [dirs project-root sync-projects? site-packages preparation-failures]}]
    (register-loader-extension!)
    (let [dirs
          (or dirs [])
@@ -2583,11 +2585,16 @@
          files
          (scan dirs)
 
+         blocked
+         (into {} (map (juxt :file identity)) preparation-failures)
+
          plans
          (into {}
                (map (fn [f]
                       [f
-                       (try (assoc (extension-plan f)
+                       (try (when-let [failure (get blocked (.getCanonicalPath ^File f))]
+                              (throw (ex-info (:error failure) {:extension (:extension failure)})))
+                            (assoc (extension-plan f)
                               :sync-projects? sync-projects?
                               :site-packages site-packages
                               :project-root project-root)
@@ -2612,10 +2619,14 @@
 
          fp
          (mapv (fn [^File f]
-                 [(.getCanonicalPath f) (util/sha256-hex (slurp f))
+                 [(.getCanonicalPath f)
+                  (try (util/sha256-hex (slurp f)) (catch Throwable _ ::unreadable-source))
                   (try (per-root :code-sha (get plans f) #(code-sha (:roots %)))
                        (catch Throwable _ ::invalid-sources))])
-               files)]
+               files)
+
+         fp
+         (conj fp [::preparation preparation-failures])]
 
      (if (= fp (get @last-fingerprint project-root))
        {:loaded (count (scope-entries project-root))
@@ -2680,13 +2691,15 @@
                               {:file (str f)
                                :project-root project-root
                                :error (ex-message t)
-                               :extension (:ext-name previous)
+                               :extension (or (:extension (ex-data t)) (:ext-name previous))
                                :stale? (boolean previous)
                                :loaded-fingerprint
                                (when previous
                                  (util/sha256-hex (pr-str (select-keys previous [:sha :code-sha]))))
                                :requested-fingerprint
                                (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))})))))))
+           ;; A package that could not install has no entrypoint to scan.
+           (swap! failures into (remove #(scanned (:file %)) preparation-failures))
            ;; Files that vanished from disk since the last scan (deleted / renamed)
            ;; have no entry to retain — deregister and close so they don't linger.
            (doseq [[opath {:keys [ext-name path] :as e}]
@@ -2741,30 +2754,47 @@
 (defonce ^:private prepared-scopes (atom #{}))
 
 (defn- prepare-scope-packages!
-  "Sync a scope's declared packages before its catalog loads; a failed package aborts
-   the load. Returns the site-packages of each environment the sync checked, keyed by
-   package directory, so the loader does not check an environment twice."
+  "Prepare declared packages independently. Return their environments and failures;
+   a failed package never prevents the rest of the catalog from loading."
   [scope project-root]
-  (let [results
-        (sync-packages! (assoc (select-keys scope [:global :project]) :trust true))
+  (let [directory
+        (first (:dirs scope))
+
+        results
+        (try (sync-packages! (assoc (select-keys scope [:global :project]) :trust true))
+             (catch Exception error
+               ;; A scope failure must also leave doctor and /reload available.
+               (mapv (fn [^File file]
+                       {"file" (.getCanonicalPath file)
+                        "status" "failed"
+                        "error" (str "Could not prepare extension packages: "
+                                     (or (ex-message error) (str error)))})
+                     (or (seq (scan (:dirs scope))) [(io/file directory)]))))
 
         failed
         (filter #(= "failed" (get % "status")) results)]
 
-    (when (seq failed)
-      (throw (ex-info
-               "Could not prepare configured project extensions"
-               {:type ::project-setup-failed :project-root project-root :failures (vec failed)})))
+    ;; Admission is complete even with failures. Only /reload retries preparation.
     (swap! prepared-scopes conj project-root)
-    (into {}
-          (for [result
-                results
+    {:site-packages (into {}
+                          (for [result
+                                results
 
-                :let [packages
-                      (get result "site_packages")]
-                :when packages]
+                                :let [packages
+                                      (get result "site_packages")]
+                                :when (and packages (not= "failed" (get result "status")))]
 
-            [(.getCanonicalPath (io/file (get result "path"))) packages]))))
+                            [(.getCanonicalPath (io/file (get result "path"))) packages]))
+     :preparation-failures
+     (mapv (fn [result]
+             (let [name (get result "name")]
+               {:file (or (get result "file")
+                          (.getCanonicalPath (io/file directory name "current" "extension.py")))
+                :extension name
+                :project-root project-root
+                :stale? false
+                :error (get result "error")}))
+           failed)}))
 
 (defn- load-scopes!
   [opts force?]
@@ -2810,12 +2840,9 @@
                   ;; receipts retain pins; this is not a background update or prune.
                   (let [prepared (when prepare? (prepare-scope-packages! scope project-root))]
                     (when (or (:force? opts) pending?) (swap! last-fingerprint dissoc project-root))
-                    (let [result (load-scope! (cond-> (merge opts scope {:site-packages prepared})
-                                                prepare?
-                                                (assoc :sync-projects? true)))]
-                      (when (and (not initialized?) (pos? (:failed result)))
-                        (swap! last-fingerprint dissoc project-root))
-                      result)))))
+                    (load-scope! (cond-> (merge opts scope prepared)
+                                   prepare?
+                                   (assoc :sync-projects? true)))))))
             scopes)]
 
       {:loaded (reduce + 0 (map :loaded results))
@@ -2844,10 +2871,7 @@
     (when-not (.isDirectory directory)
       (throw (ex-info "Project root must be an existing directory" {:root (str root)})))
     (binding [workspace/*workspace-root* (.getCanonicalPath directory)]
-      (let [result (ensure-python-extensions-loaded!)]
-        (when (pos? (:failed result))
-          (throw (ex-info "Could not load project extensions" (assoc result :root (str root)))))
-        result))))
+      (ensure-python-extensions-loaded!))))
 
 (defn reload-python-extensions!
   "Reload global extensions and the calling project, preserving other project catalogs."
