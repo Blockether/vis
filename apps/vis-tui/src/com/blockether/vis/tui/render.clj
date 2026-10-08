@@ -6215,12 +6215,16 @@
                     (map-indexed vector blocks)))))
 
 (defn- activity-section-entries
-  "Show each section as one closed head line; its body opens only on its own press."
+  "Show each section as one closed head line; its body opens only on its own press.
+   Sections take the body inset, so they read as part of the opened row."
   [sections row-id node-id width col session-id artifacts running? expanded?]
   (vec
     (mapcat
       (fn [[index section]]
-        (let [headline
+        (let [inset
+              (+ (long col) (long code-block-h-pad))
+
+              headline
               (:headline section)
 
               summary-entry
@@ -6245,7 +6249,7 @@
               (when openable? (if open? " ▾" " ▸"))
 
               lead
-              (str (activity-lead col) headline mark (when summary " · "))
+              (str (activity-lead inset) headline mark (when summary " · "))
 
               prefix
               (str lead summary)
@@ -6261,12 +6265,12 @@
                       :links (activity-summary-links summary-entry (p/display-width lead))
                       :node-id (when openable? (str node-id ":" section-key))
                       :collapsed? (not open?)
-                      :operation-col col
+                      :operation-col inset
                       :operation-label headline}}]
 
           (concat [{:line activity-marker :meta nil} head]
                   (when open?
-                    (activity-content-entries content width col session-id artifacts running?)))))
+                    (activity-content-entries content width inset session-id artifacts running?)))))
       (map-indexed vector sections))))
 
 (defn- activity-group-row

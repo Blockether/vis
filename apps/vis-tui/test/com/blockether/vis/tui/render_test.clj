@@ -10368,6 +10368,49 @@ print(paths)"
         (expect (re-find #"Empty details · No retries" (:line (line-with "Empty details"))))
         (expect (= 1 (count (filter #(str/includes? (:line %) "Full requests") entries))))
         (expect (not-any? #(str/includes? (:line %) "Complete request") entries))))
+  ;; Regression for #329: a failing-test section stood at its row's own column, so
+  ;; an opened "Run Python tests" row showed its failures without an inset.
+  (it
+    "sets section head lines and their bodies in by the body inset"
+    (let [row
+          {:id "tests"
+           :state "failed"
+           :operation "run_tests"
+           :presentation {:headline "Run Python tests"
+                          :summary "1 failed in 1.0 s"
+                          :content []
+                          :sections [{:headline "test_one"
+                                      :summary "tests/test_a.py:3 · AssertionError"
+                                      :content [{:type "text" :text "SECTION_BODY"}]}]}}
+
+          entries
+          (#'render/activity-detail-entries
+           {:node-id "tests"
+            :activity-rows [row]
+            :activity-expanded?
+            (fn [key default]
+              (get {"#band" true "tests" true "tests:section:0" true} key default))}
+           90
+           "tests")
+
+          line-with
+          (fn [text]
+            (first (filter #(str/includes? (:line %) text) entries)))
+
+          pad
+          (long @#'render/code-block-h-pad)
+
+          row-col
+          (long (get-in (line-with "Run Python tests") [:meta :operation-col]))
+
+          section
+          (line-with "test_one")]
+
+      (expect (= (+ row-col pad) (get-in section [:meta :operation-col])))
+      (expect (str/includes? (:line section)
+                             (str (apply str (repeat (+ row-col pad) \space)) "test_one")))
+      (expect (= (+ row-col pad pad)
+                 (get-in (line-with "SECTION_BODY") [:meta :activity-content-col])))))
   (it "does not offer an inert chevron for a summary-only presentation"
       (let [entry (nth (#'render/activity-detail-entries
                         {:node-id "summary"
