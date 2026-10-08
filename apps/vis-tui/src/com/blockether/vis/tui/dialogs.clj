@@ -6514,16 +6514,19 @@
 
 (defn- read-navigator-key!
   "Wait for input or a background page, search result or fleet frame. `pending?`
-   reports background updates; while present it also keeps the modal read polling."
+   reports background updates; while present it also keeps the modal read polling.
+   Read the task state before the result: a task that finished has always written
+   its result, so an answer that lands between the checks is never missed."
   [^TerminalScreen screen task result pending?]
   (loop []
 
-    (cond (some? @result) nil
-          (and pending? (pending?)) nil
-          (modal-input-pending? screen) (read-modal-key! screen)
-          (or pending? (and @task (not (future-done? @task))))
-          (do (Thread/sleep (if pending? (long navigator-live-poll-ms) 12)) (recur))
-          :else (read-modal-key! screen))))
+    (let [running? (boolean (and @task (not (future-done? @task))))]
+      (cond (some? @result) nil
+            (and pending? (pending?)) nil
+            (modal-input-pending? screen) (read-modal-key! screen)
+            (or pending? running?) (do (Thread/sleep (if pending? (long navigator-live-poll-ms) 12))
+                                       (recur))
+            :else (read-modal-key! screen)))))
 
 (defn- navigator-stamp
   "Compact `MM-dd HH:mm` timestamp (year dropped — these are recent

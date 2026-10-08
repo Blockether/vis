@@ -15,8 +15,8 @@
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal
-            VirtualTerminalListener]))
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal VirtualTerminalListener]
+           [java.util.concurrent CompletableFuture]))
 
 ;; Most dialog functions require a live TerminalScreen, so direct unit
 ;; testing is narrow. The bracketed-paste fix in text-input-dialog!
@@ -1950,6 +1950,9 @@
         terminal-ref
         (atom nil)
 
+        last-frame
+        (atom nil)
+
         paints
         (atom 0)
 
@@ -1973,6 +1976,7 @@
                 (doseq [k "popup"]
                   (.addInput terminal (cap/key-stroke k))))
               (let [lines (terminal-lines terminal)]
+                (reset! last-frame lines)
                 ;; Wrapped lines are justified, so their gaps can grow: find one word.
                 ;; Keep only a frame whose divider reaches the footer: on macOS CI the first
                 ;; frame with the messages once showed no bottom join.
@@ -1989,7 +1993,7 @@
     (when-not lines
       (some-> ^DefaultVirtualTerminal @terminal-ref
               (.addInput (cap/key-stroke :esc))))
-    {:lines lines :capture (deref task 5000 ::blocked)}))
+    {:lines lines :last-frame @last-frame :capture (deref task 5000 ::blocked)}))
 
 (defn- column-of
   "Column of the first line holding `needle`, as `[row col]`, or nil."
@@ -2082,9 +2086,49 @@
       (expect (nil? (:error (deref task 5000 {:error ::blocked})))))))
 
 (defdescribe
+  navigator-key-read-race-test
+  (it "returns when a search answer lands between its checks"
+      ;; macOS CI (release run 37792061204): the answer came after the result check, the
+      ;; finished task then sent the read into a blocking key wait and no messages showed.
+      (let [terminal
+            (DefaultVirtualTerminal. (TerminalSize. 40 10))
+
+            screen
+            (doto (TerminalScreen. terminal) (.startScreen))
+
+            task
+            (CompletableFuture.)
+
+            answer
+            (atom nil)
+
+            reads
+            (atom 0)
+
+            ;; The first read finds no answer. The search then answers and its task ends.
+            result
+            (reify
+              clojure.lang.IDeref
+                (deref [_]
+                  (let [value @answer]
+                    (when (= 1 (swap! reads inc)) (reset! answer {:token 1}) (.complete task true))
+                    value)))
+
+            read
+            (future (#'dlg/read-navigator-key! screen (atom task) result nil))
+
+            outcome
+            (deref read 2000 ::blocked)]
+
+        (when (= ::blocked outcome) (.addInput terminal (KeyStroke. KeyType/Escape)))
+        (deref read 2000 nil)
+        (.stopScreen screen)
+        (expect (nil? outcome)))))
+
+(defdescribe
   navigator-message-pane-test
   (it "a query splits the picker: sessions left of a border, their matching messages right"
-      (let [{:keys [lines capture]}
+      (let [{:keys [lines last-frame capture]}
             (capture-message-pane {:cols 120 :rows 32})
 
             [_ border-col]
@@ -2099,6 +2143,9 @@
                       (keep #(str/index-of line "Beta notes" %) [0 (inc (long border-col))]))
                     lines)]
 
+        (expect (some? lines)
+                (str "No frame showed the messages and the divider. Last frame:\n"
+                     (str/join "\n" last-frame)))
         (expect (nil? (:error capture)))
         ;; The border runs from the query separator down to the footer separator.
         (expect (some? (column-of lines "┴")))
@@ -2113,7 +2160,7 @@
         ;; The preview gives the list most of the width, so a long reply wraps.
         (expect (some? (column-of lines "…the")))))
   (it "a narrow picker keeps the messages beside the list"
-      (let [{:keys [lines capture]}
+      (let [{:keys [lines last-frame capture]}
             (capture-message-pane {:cols 80 :rows 32})
 
             [_ border-col]
@@ -2125,6 +2172,9 @@
             [ask-row ask-col]
             (column-of lines "…split")]
 
+        (expect (some? lines)
+                (str "No frame showed the messages and the divider. Last frame:\n"
+                     (str/join "\n" last-frame)))
         (expect (nil? (:error capture)))
         (expect (some? border-col))
         (expect (< (long title-row) (long ask-row)))
