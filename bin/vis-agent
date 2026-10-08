@@ -859,6 +859,33 @@ vis_release_asset() {
   esac
 }
 
+# The SHA-256 of a file: sha256sum on Linux, shasum on macOS.
+vis_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    return 1
+  fi
+}
+
+# Stop unless the release's SHA256SUMS lists the asset with the file's hash (#332).
+# An empty sums path means the release publishes none: it predates checksums.
+vis_verify_asset() {
+  local sums="$1" name="$2" file="$3" expected actual
+  [[ -n "$sums" ]] || return 0
+  expected="$(awk -v name="$name" '$2 == name || $2 == "*" name { print $1; exit }' "$sums")"
+  [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || \
+    die "update: the release SHA256SUMS has no entry for $name" "Installation unchanged."
+  actual="$(vis_sha256 "$file")" || \
+    die "update: verifying downloads needs sha256sum or shasum on PATH" "Installation unchanged."
+  [[ "$actual" == "$expected" ]] || \
+    die "update: checksum mismatch for $name" "Expected $expected" "Received $actual" \
+        "Installation unchanged. Retry; report it if the mismatch stays."
+  say "verified $name against SHA256SUMS"
+}
+
 # Explain a failed GitHub REST API call when the hourly limit is the cause.
 # GitHub does not count /rate_limit requests against that limit.
 vis_github_rate_limit_note() {
@@ -913,6 +940,8 @@ update_native() {
   local asset dl release_url archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack web_dl web_archive web_unpack
   local native_version native_commit _native_metadata release_tag tui_library
   asset="$(vis_platform_asset)"
+  local sums sums_dl checked="" named=0
+  if [[ -n "$target" && "$target" != latest ]]; then named=1; fi
   # A named beta build is installed as named; only an unpinned beta resolves the
   # published selection.
   if [[ "$track" == beta && ( -z "$target" || "$target" == latest ) ]]; then
@@ -923,6 +952,13 @@ update_native() {
     target="$(vis_latest_release_tag)" || exit 1
   fi
   release_url="https://github.com/$vis_repo_slug/releases/download/$target"
+  # A named version must exist; a missing tag is not reported as a missing asset.
+  if (( named )); then
+    vis_release_asset "https://github.com/$vis_repo_slug/releases/tag/$target" update || \
+      die "update: $vis_repo_slug has no published release $target" \
+          "Checked https://github.com/$vis_repo_slug/releases/tag/$target" \
+          "No other version was installed. See the versions: vis-agent switch list"
+  fi
   say "resolving $asset on the $track track in $target"
   dl="$release_url/$asset"
   vis_release_asset "$dl" update || \
@@ -978,16 +1014,30 @@ update_native() {
   tui_unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-tui-unpack.XXXXXX")"
   web_archive="$(mktemp "${TMPDIR:-/tmp}/vis-web-bundle.XXXXXX.tar.gz")"
   web_unpack="$(mktemp -d "${TMPDIR:-/tmp}/vis-web-unpack.XXXXXX")"
-  trap 'rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive" "$web_unpack" "$web_archive"' EXIT
+  sums="$(mktemp "${TMPDIR:-/tmp}/vis-agent-sums.XXXXXX")"
+  trap 'rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive" "$web_unpack" "$web_archive" "$sums"' EXIT
+  # Each archive is checked against the SHA256SUMS of the same tag before it is
+  # unpacked. A mismatch or a missing entry stops the update (#332).
+  sums_dl="$release_url/SHA256SUMS"
+  if vis_release_asset "$sums_dl" update; then
+    say "downloading $sums_dl"
+    curl -fsSL "$sums_dl" -o "$sums" || die "update: could not download $sums_dl" "Installation unchanged."
+    checked="$sums"
+  else
+    warn "$target publishes no SHA256SUMS, so its downloads cannot be verified"
+  fi
   say "downloading $dl"
   curl -fSL "$dl" -o "$archive" || exit 1
+  vis_verify_asset "$checked" "$asset" "$archive"
   tar -xzf "$archive" -C "$unpack" || exit 1
   say "downloading $tui_dl"
   curl -fSL "$tui_dl" -o "$tui_archive" || exit 1
+  vis_verify_asset "$checked" "$tui_asset" "$tui_archive"
   tar -xzf "$tui_archive" -C "$tui_unpack" || exit 1
   if [[ -n "$web_dl" ]]; then
     say "downloading $web_dl"
     curl -fSL "$web_dl" -o "$web_archive" || exit 1
+    vis_verify_asset "$checked" vis-web.tar.gz "$web_archive"
     tar -xzf "$web_archive" -C "$web_unpack" || exit 1
   fi
   [[ -x "$unpack/vis-agent" && -x "$unpack/vis-agent-native" && -s "$unpack/vis-agent-native.build" ]] || \
@@ -1042,7 +1092,7 @@ update_native() {
     mv -f "$unpack/vis-agent" "$launcher_path"
     [[ ! -f "$unpack/install-vis-agent" ]] || mv -f "$unpack/install-vis-agent" "$bin_dir/install-vis-agent"
   fi
-  rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive" "$web_unpack" "$web_archive"
+  rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive" "$web_unpack" "$web_archive" "$sums"
   trap - EXIT
   say "installed launcher + native runtime + Python + TUI${web_dl:+ + web app}: $native_version revision $native_commit ($track)"
 }
@@ -1063,6 +1113,7 @@ Usage: vis-agent update|upgrade [vX.Y.Z] [--track release|beta|dev] [--keep-gate
          Every update without --track selects release, even after beta or dev.
          A successful update records the selection for subsequent launches.
          Native updates include the matching Python worker and terminal client.
+         Each download must match the SHA256SUMS of its release before it is unpacked.
          An installed desktop app of that track is refreshed too; none is installed for you.
          Existing managed source is pinned to the native build commit; Git is required.
          Modified managed source is preserved automatically before updating.

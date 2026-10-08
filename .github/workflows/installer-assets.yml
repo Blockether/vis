@@ -63,11 +63,13 @@ jobs:
         run: |
           set -euo pipefail
           notes="Bootstrap scripts from green main CI at $SHA. Installs the latest complete stable native release by default; --track beta selects native betas, --track dev selects JVM source."
+          # Installers verify the downloaded command against this file (#332).
+          (cd bin && sha256sum install-vis-agent vis-agent) > "$RUNNER_TEMP/SHA256SUMS"
           if gh release view installer >/dev/null 2>&1; then
-            gh release upload installer bin/install-vis-agent bin/vis-agent --clobber
+            gh release upload installer bin/install-vis-agent bin/vis-agent "$RUNNER_TEMP/SHA256SUMS" --clobber
             gh release edit installer --prerelease --latest=false --title 'Installer' --notes "$notes"
           else
-            gh release create installer bin/install-vis-agent bin/vis-agent \
+            gh release create installer bin/install-vis-agent bin/vis-agent "$RUNNER_TEMP/SHA256SUMS" \
               --prerelease --latest=false --target "$SHA" \
               --title 'Installer' --notes "$notes"
           fi

@@ -15,6 +15,13 @@
 
 (defn- write-executable! [file body] (spit file body) (.setExecutable ^java.io.File file true) file)
 
+(defn- sha256-hex
+  "The lowercase SHA-256 of a file, as `sha256sum` prints it."
+  [file]
+  (let [digest (java.security.MessageDigest/getInstance "SHA-256")]
+    (apply str
+      (map #(format "%02x" %) (.digest digest (Files/readAllBytes (.toPath ^File file)))))))
+
 (defn- run-bash
   "Runs `args` from the repository root with `env-extra` applied; merges stderr."
   [args env-extra]
@@ -166,6 +173,13 @@
             (write-executable!
               (io/file path-dir "curl")
               (str "#!/usr/bin/env bash\nset -euo pipefail\n"
+                   ;; The bootstrap publishes SHA256SUMS beside the command (#332).
+                   "if [[ \"$*\" == *'/releases/download/installer/SHA256SUMS'* ]]; then\n"
+                   "  while (( $# )); do\n"
+                   "    if [[ \"$1\" == --output ]]; then (cd '"
+                   (.getAbsolutePath (io/file remote-bin))
+                   "' && shasum -a 256 vis-agent) > \"$2\"; fi\n"
+                   "    shift\n  done\n  printf 200; exit 0\nfi\n"
                    "[[ \"$*\" == *'/releases/download/installer/vis-agent'* ]] || exit 77\n"
                    "while (( $# )); do\n" "  if [[ \"$1\" == -o ]]; then cp -- "
                    "'" (.getAbsolutePath (io/file remote-bin "vis-agent"))
@@ -229,7 +243,7 @@
   "Exercise installed commands with local release archives; Git/JVM are denied by default."
   [{:keys [installer? installed? missing-worker? missing-tui? missing-tui-library? web? broken-web?
            stale-web? track previous-track prepare! build-commit extra-env target desktop
-           desktop-fail?]} f]
+           desktop-fail? checksums]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -288,7 +302,8 @@
          "VIS_TEST_ARCHIVE" (.getAbsolutePath archive)
          "VIS_TEST_TUI_ARCHIVE" (.getAbsolutePath tui-archive)
          "VIS_TEST_WEB_ARCHIVE" (.getAbsolutePath web-archive)
-         "VIS_TEST_DESKTOP_FAIL" (if desktop-fail? "1" "0")}
+         "VIS_TEST_DESKTOP_FAIL" (if desktop-fail? "1" "0")
+         "VIS_TEST_SUMS" (.getAbsolutePath (io/file root "SHA256SUMS"))}
 
         env
         (merge env extra-env)]
@@ -335,6 +350,25 @@
                                                (.getAbsolutePath web) "vis-web"]
                                               {})]
           (expect (zero? exit) output)))
+      ;; :valid lists every archive; :mismatch changes the engine hash; :missing-entry
+      ;; omits the engine. Without the option the release publishes no SHA256SUMS.
+      (when checksums
+        (spit (io/file root "SHA256SUMS")
+              (str/join
+                (for [[file asset]
+                      [[archive "vis-agent-linux-x64.tar.gz"]
+                       [tui-archive "vis-tui-linux-x64.tar.gz"] [web-archive "vis-web.tar.gz"]]
+
+                      :when (.exists ^File file)
+                      :when (not (and (= checksums :missing-entry)
+                                      (= asset "vis-agent-linux-x64.tar.gz")))]
+
+                  (str (if (and (= checksums :mismatch) (= asset "vis-agent-linux-x64.tar.gz"))
+                         (apply str (repeat 64 "0"))
+                         (sha256-hex file))
+                       "  "
+                       asset
+                       "\n")))))
       (doseq [tool ["git" "java" "clojure"]]
         (write-executable! (io/file tools tool)
                            (str "#!/usr/bin/env bash\necho 'unexpected " tool "' >&2\nexit 77\n")))
@@ -356,6 +390,8 @@
           "    */releases/latest) location=https://github.com/example/vis/releases/tag/v9.9.9 ;;\n"
           "    */vis-agent-linux-x64.tar.gz) code=${VIS_TEST_ENGINE_STATUS:-302} ;;\n"
           "    */vis-web.tar.gz) [[ -f $VIS_TEST_WEB_ARCHIVE ]] || code=404 ;;\n"
+          "    */SHA256SUMS) [[ -f $VIS_TEST_SUMS ]] || code=404 ;;\n"
+          "    */releases/tag/*) code=${VIS_TEST_TAG_STATUS:-302} ;;\n"
           "  esac\n"
           "  if [[ $format == *redirect_url* ]]; then printf '%s' \"$location\"; else printf '%s' \"$code\"; fi\n"
           "  exit 0\n"
@@ -393,6 +429,7 @@
             "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-web.tar.gz\"},")
           "{\"browser_download_url\":\"https://github.com/example/vis/releases/download/v9.9.9/vis-tui-linux-x64.tar.gz\"}]}' ;;\n"
           "  */vis-agent-linux-x64.tar.gz) cp \"$VIS_TEST_ARCHIVE\" \"$dest\" ;;\n"
+          "  */SHA256SUMS) cp \"$VIS_TEST_SUMS\" \"$dest\" ;;\n"
           "  */vis-tui-linux-x64.tar.gz) cp \"$VIS_TEST_TUI_ARCHIVE\" \"$dest\" ;;\n"
           ;; GitHub answers 404 (curl exit 22) for an asset the release does not publish.
           "  */vis-web.tar.gz) [[ -f $VIS_TEST_WEB_ARCHIVE ]] || exit 22\n"
@@ -1539,6 +1576,157 @@
               (expect (not (str/includes? output "no native runtime published")) output))
             (expect (str/includes? (slurp native) "old-runtime")))))))
 
+(defn- run-installer-download
+  "Run a copied installer, so it downloads the command, against a fake GitHub.
+   The fake command records its arguments instead of installing a runtime."
+  [args {:keys [tag-status sums]} extra-env]
+  (let [root
+        (.toFile (Files/createTempDirectory "vis-installer-" (make-array FileAttribute 0)))
+
+        tools
+        (doto (io/file root "tools") .mkdirs)
+
+        command
+        (io/file root "published-vis-agent")
+
+        sums-file
+        (io/file root "SHA256SUMS")
+
+        calls
+        (io/file root "calls")
+
+        bin
+        (io/file root "bin")]
+
+    (try
+      (io/copy (io/file "bin/install-vis-agent") (io/file root "install-vis-agent"))
+      (write-executable! command "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$TEST_CALLS\"\n")
+      (case sums
+        :valid
+        (spit sums-file (str (sha256-hex command) "  vis-agent\n"))
+
+        :mismatch
+        (spit sums-file (str (apply str (repeat 64 "0")) "  vis-agent\n"))
+
+        :missing-entry
+        (spit sums-file (str (apply str (repeat 64 "0")) "  vis-tui.tar.gz\n"))
+
+        nil)
+      (write-executable!
+        (io/file tools "curl")
+        (str "#!/usr/bin/env bash\nset -euo pipefail\nurl=''; dest=''; head=0; format=''\n"
+             "while (( $# )); do case $1 in -o|--output) dest=$2; shift;; --head) head=1;;"
+             " --write-out) format=$2; shift;; https:*) url=$1;; esac; shift; done\n"
+             "printf 'curl %s\\n' \"$url\" >> \"$TEST_CALLS\"\n"
+             "if (( head )); then printf '%s' \"${TEST_TAG_STATUS:-302}\"; exit 0; fi\n"
+             "case $url in\n"
+             "  */vis-agent) cp \"$TEST_COMMAND\" \"$dest\" ;;\n"
+             "  */SHA256SUMS) if [[ -f $TEST_SUMS ]]; then cp \"$TEST_SUMS\" \"$dest\"; printf 200;"
+             " else printf 404; fi ;;\n" "  *) exit 22 ;;\nesac\n"))
+      (let [result (run-bash
+                     (into ["bash" (.getAbsolutePath (io/file root "install-vis-agent"))] args)
+                     (merge {"HOME" (.getAbsolutePath root)
+                             "SHELL" "/bin/bash"
+                             "VIS_INSTALL_DIR" (.getAbsolutePath bin)
+                             "VIS_HOME" (.getAbsolutePath (io/file root "state"))
+                             "TMPDIR" (.getAbsolutePath root)
+                             "PATH" (str (.getAbsolutePath tools) ":" (System/getenv "PATH"))
+                             "TEST_CALLS" (.getAbsolutePath calls)
+                             "TEST_COMMAND" (.getAbsolutePath command)
+                             "TEST_SUMS" (.getAbsolutePath sums-file)
+                             "TEST_TAG_STATUS" (or tag-status "302")}
+                            extra-env))]
+        (assoc result
+          :calls (if (.exists calls) (slurp calls) "")
+          :installed? (.exists (io/file bin "vis-agent"))
+          :sha256 (sha256-hex command)))
+      (finally (delete-tree! root)))))
+
+;; #332: CI pins an exact release and trusts only verified downloads.
+(defdescribe
+  pinned-verified-install-test
+  (it "verifies every archive against the release SHA256SUMS before unpacking it"
+      (with-native-install-fixture
+        {:checksums :valid :web? true}
+        (fn [{:keys [exit output urls]}]
+          (expect (zero? exit) output)
+          (expect (str/includes? urls "/releases/download/v9.9.9/SHA256SUMS") urls)
+          (doseq [asset ["vis-agent-linux-x64.tar.gz" "vis-tui-linux-x64.tar.gz" "vis-web.tar.gz"]]
+            (expect (str/includes? output (str "verified " asset " against SHA256SUMS")) output))
+          (expect (not (str/includes? output "cannot be verified")) output))))
+  (it "stops on a mismatch or a missing entry and keeps the installation"
+      (doseq [[checksums message] [[:mismatch "checksum mismatch for vis-agent-linux-x64.tar.gz"]
+                                   [:missing-entry
+                                    "SHA256SUMS has no entry for vis-agent-linux-x64.tar.gz"]]]
+        (with-native-install-fixture
+          {:installed? true :checksums checksums}
+          (fn [{:keys [exit output native]}]
+            (expect (= 1 exit) output)
+            (expect (str/includes? output message) output)
+            (expect (str/includes? output "Installation unchanged.") output)
+            (expect (not (str/includes? output "selected native")) output)
+            (expect (str/includes? (slurp native) "old-runtime"))))))
+  (it "warns when a release predates SHA256SUMS"
+      (with-native-install-fixture {}
+                                   (fn [{:keys [exit output]}]
+                                     (expect (zero? exit) output)
+                                     (expect (str/includes? output "v9.9.9 publishes no SHA256SUMS")
+                                             output))))
+  (it "names a missing release tag instead of a missing asset and downloads nothing"
+      (with-native-install-fixture
+        {:installed? true :target "v9.9.8" :extra-env {"VIS_TEST_TAG_STATUS" "404"}}
+        (fn [{:keys [exit output urls native]}]
+          (expect (= 1 exit) output)
+          (expect (str/includes? output "has no published release v9.9.8") output)
+          (expect (not (str/includes? output "no native runtime published")) output)
+          (expect (str/blank? urls) urls)
+          (expect (str/includes? (slurp native) "old-runtime")))))
+  (it "passes an installer version pin to the update as its release tag"
+      (doseq [pin ["--version=9.9.9" "--version=v9.9.9"]]
+        (with-native-install-fixture
+          {:installer? true :target pin}
+          (fn [{:keys [exit output]}]
+            (expect (zero? exit) output)
+            (expect (str/includes?
+                      output
+                      "resolving vis-agent-linux-x64.tar.gz on the release track in v9.9.9")
+                    output)
+            (expect (not (str/includes? output "releases/latest")) output)
+            (expect (str/includes? output "Vis Agent v9.9.9 installed") output)))))
+  (it "downloads the pinned command from its own release and verifies it before it runs"
+      (doseq [[args env] [[["--version" "1.2.3"] {}] [[] {"VIS_AGENT_VERSION" "v1.2.3"}]]]
+        (let [{:keys [exit output calls installed?]}
+              (run-installer-download args {:sums :valid} env)]
+          (expect (zero? exit) output)
+          (expect installed? output)
+          (expect (str/includes? calls "curl https://github.com/Blockether/vis/releases/tag/v1.2.3")
+                  calls)
+          (expect (str/includes? calls "/releases/download/v1.2.3/vis-agent") calls)
+          (expect (str/includes? output "verified the vis-agent command against SHA256SUMS") output)
+          (expect (str/includes? calls "update --track release v1.2.3") calls))))
+  (it "refuses a missing release, a bad checksum or a wrong pinned hash before it runs anything"
+      (doseq [[args options message]
+              [[["--version" "1.2.3"] {:tag-status "404" :sums :valid}
+                "Blockether/vis has no published release v1.2.3"]
+               [["--version" "1.2.3"] {:sums :mismatch} "does not match SHA256SUMS of v1.2.3"]
+               [[] {:sums :missing-entry} "SHA256SUMS of installer has no entry for vis-agent"]
+               [["--sha256" (apply str (repeat 64 "a"))] {:sums :valid} "does not match --sha256"]]]
+        (let [{:keys [exit output calls installed?]} (run-installer-download args options {})]
+          (expect (= 1 exit) output)
+          (expect (str/includes? output message) output)
+          (expect (str/includes? output "nothing was installed") output)
+          (expect (not installed?) output)
+          (expect (not (str/includes? calls "update --track")) calls))))
+  (it "accepts a matching pinned hash in either case and warns for a release without sums"
+      (let [{:keys [sha256]} (run-installer-download ["--help"] {} {})]
+        (doseq [[args env] [[["--sha256" (str/upper-case sha256)] {}]
+                            [[] {"VIS_AGENT_SHA256" sha256}]]]
+          (let [{:keys [exit output calls]} (run-installer-download args {} env)]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "installer publishes no SHA256SUMS") output)
+            (expect (str/includes? output "the vis-agent command matches --sha256") output)
+            (expect (str/includes? calls "update --track release\n") calls))))))
+
 (defdescribe
   distribution-track-test
   (it "replaces an old dev-rejecting launcher through the published bootstrap"
@@ -2212,6 +2400,7 @@
               " 'release create '*|'release edit '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
               " 'workflow run '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\" ;;\n"
               " 'release upload installer '*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; cat \"$RUNNER_TEMP/native-beta\" >> \"$TEST_CALLS\" ;;\n"
+              " 'release upload beta-'*) printf '%s\\n' \"$*\" >> \"$TEST_CALLS\"; cat \"$RUNNER_TEMP/SHA256SUMS\" >> \"$TEST_CALLS\" ;;\n"
               " *) echo 'unexpected GitHub request' >&2; return 77 ;;\nesac\n}\n" script)]
            (merge {"REPO" "example/vis"
                    "EVENT_SHA" sha
@@ -2272,10 +2461,16 @@
           version
           (first (str/split (str/trim (slurp "VIS_VERSION")) #"-"))
 
+          digest
+          (str "sha256:" (apply str (repeat 64 "c")))
+
           installers
           (for [installer ["macos-universal.dmg" "windows-x64.msi" "linux-x64.deb"
                            "linux-x64.AppImage" "linux-arm64.deb" "linux-arm64.AppImage"]]
-            {:name (str "vis-companion-" version "-" installer) :size 123 :state "uploaded"})
+            {:name (str "vis-companion-" version "-" installer)
+             :size 123
+             :state "uploaded"
+             :digest digest})
 
           assets
           (-> (vec (for [name
@@ -2284,8 +2479,11 @@
                          platform
                          ["linux-x64" "linux-arm64" "macos-arm64"]]
 
-                     {:name (str name "-" platform ".tar.gz") :size 123 :state "uploaded"}))
-              (conj {:name "vis-web.tar.gz" :size 123 :state "uploaded"})
+                     {:name (str name "-" platform ".tar.gz")
+                      :size 123
+                      :state "uploaded"
+                      :digest digest}))
+              (conj {:name "vis-web.tar.gz" :size 123 :state "uploaded" :digest digest})
               (into installers))
 
           metadata
@@ -2301,12 +2499,26 @@
                [{} {:assets (filterv #(str/ends-with? (:name %) ".tar.gz") assets)} false false]
                [{} {:assets (mapv #(update % :name str/replace version "0") assets)} false false]
                [{} {:draft false} false false] [{} {:prerelease false} false false]
-               [{} {:tag_name "v9.9.9"} false false]]]
+               [{} {:tag_name "v9.9.9"} false false]
+               ;; A rerun finds the SHA256SUMS of an earlier attempt and replaces it (#332).
+               [{}
+                {:assets (conj assets
+                               {:name "SHA256SUMS" :size 9 :state "uploaded" :digest digest})} true
+                true]
+               ;; An asset without a digest cannot be listed, so nothing is published.
+               [{} {:assets (update assets 0 dissoc :digest)} false false]]]
         (let [{:keys [exit output outputs calls]}
               (run-beta-job "publish" overrides (merge metadata changes))]
           (expect (= exit-ok? (zero? exit)) output)
           (expect (= publish? (str/includes? calls "--draft=false --prerelease --latest=false"))
                   calls)
+          ;; Installers verify downloads against SHA256SUMS, uploaded before publication.
+          (when publish?
+            (expect (str/includes? calls (str (subs digest 7) "  vis-web.tar.gz")) calls)
+            (expect (not (str/includes? calls "  SHA256SUMS")) calls)
+            (expect (< (str/index-of calls "SHA256SUMS --repo")
+                       (str/index-of calls "--draft=false"))
+                    calls))
           ;; The index job acts on this answer alone.
           (expect (= publish? (str/includes? outputs "published=true")) outputs))))))
 

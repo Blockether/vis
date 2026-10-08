@@ -10,11 +10,15 @@ install_dir="${VIS_INSTALL_DIR:-$HOME/.local/bin}"
 vis_home="${VIS_HOME:-$HOME/.vis}"
 
 track=release
+track_named=0
+version="${VIS_AGENT_VERSION:-}"
+launcher_sha256="${VIS_AGENT_SHA256:-}"
 usage() {
   cat <<EOF
 Usage: install-vis-agent [--install-dir PATH] [--track release|beta|dev]
+                         [--version X.Y.Z] [--sha256 HASH]
 
-Installs the latest complete stable release:
+Installs the latest complete stable release, or the version you name:
   $install_dir/vis-agent          command and native engine
   $install_dir/vis-agent-python   bundled Python runtime
   $install_dir/vis-tui            native terminal client
@@ -23,10 +27,19 @@ No JDK or Clojure installation is required.
   --track release  latest complete stable native release (default)
   --track beta     latest complete native beta from green main CI
   --track dev      main source, always JVM (Git and JDK 25+)
+  --version X.Y.Z  exactly that stable release (also vX.Y.Z), never a newer one.
+                   A missing release or platform asset stops the installation.
+  --sha256 HASH    expected SHA-256 of the downloaded vis-agent command. With
+                   --version, the command comes from that release, so the hash
+                   stays valid. Any other command stops the installation.
+The vis-agent command and every release archive must match the SHA256SUMS
+of their release. A release without SHA256SUMS is installed with a warning.
 Environment overrides:
   VIS_INSTALL_DIR    command directory (default: ~/.local/bin)
   VIS_HOME           state directory (default: ~/.vis)
   VIS_REPO_SLUG      GitHub OWNER/REPO (default: Blockether/vis)
+  VIS_AGENT_VERSION  the same as --version
+  VIS_AGENT_SHA256   the same as --sha256
 EOF
 }
 
@@ -40,9 +53,22 @@ while [[ $# -gt 0 ]]; do
     --track)
       [[ $# -ge 2 ]] || { echo "vis-agent install: --track requires a name" >&2; exit 2; }
       track="$2"
+      track_named=1
       shift 2
       ;;
-    --track=*) track="${1#*=}"; shift ;;
+    --track=*) track="${1#*=}"; track_named=1; shift ;;
+    --version)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --version requires a version" >&2; exit 2; }
+      version="$2"
+      shift 2
+      ;;
+    --version=*) version="${1#*=}"; shift ;;
+    --sha256)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --sha256 requires a hash" >&2; exit 2; }
+      launcher_sha256="$2"
+      shift 2
+      ;;
+    --sha256=*) launcher_sha256="${1#*=}"; shift ;;
     -h|--help)
       usage
       exit 0
@@ -59,6 +85,25 @@ case "$track" in
   release|beta|dev) ;;
   *) echo "vis-agent install: unknown track '$track' (release, beta or dev)" >&2; exit 2 ;;
 esac
+
+# A pinned version installs exactly that release tag, never the newest one (#332).
+release_tag=""
+if [[ -n "$version" ]]; then
+  if [[ ! "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "vis-agent install: '$version' is not a release version (X.Y.Z or vX.Y.Z)" >&2
+    exit 2
+  fi
+  if (( track_named )) && [[ "$track" != release ]]; then
+    echo "vis-agent install: --version selects a stable release; it cannot be used with --track $track" >&2
+    exit 2
+  fi
+  release_tag="v${version#v}"
+fi
+launcher_sha256="$(printf '%s' "$launcher_sha256" | tr 'A-F' 'a-f')"
+if [[ -n "$launcher_sha256" && ! "$launcher_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "vis-agent install: --sha256 needs a SHA-256 hash of 64 hexadecimal digits" >&2
+  exit 2
+fi
 
 # Only source development needs Git. Native bundles need curl and tar.
 required=(curl tar)
@@ -85,10 +130,25 @@ if [[ -d "$install_dir/vis-agent" ]]; then
   exit 1
 fi
 
+fail() { echo "vis-agent install: $1" >&2; exit 1; }
+
+# The SHA-256 of a file: sha256sum on Linux, shasum on macOS.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    return 1
+  fi
+}
+
 # ── 1. install the vis-agent command ────────────────────────────────────────
 # The rolling installer asset only bootstraps acquisition. The stable bundle
 # replaces it with the launcher built at the same tag as its engine and TUI.
-# A checkout can supply this bootstrap locally; its tracked files stay untouched.
+# A pinned version takes the launcher from its own immutable tag, so a pinned
+# --sha256 stays valid. A checkout can supply this bootstrap locally; its
+# tracked files stay untouched.
 wrapper=""
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 if [[ -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then
@@ -96,13 +156,51 @@ if [[ -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then
   echo "vis-agent install: using the vis-agent command from this checkout"
 else
   wrapper="$(mktemp "${TMPDIR:-/tmp}/vis-agent.XXXXXX")"
-  trap 'rm -f "$wrapper"' EXIT
-  echo "vis-agent install: downloading the vis-agent command ($repo_slug, installer assets)"
-  if ! curl -fsSL "https://github.com/$repo_slug/releases/download/installer/vis-agent" \
-         -o "$wrapper" 2>/dev/null || ! head -1 "$wrapper" | grep -q '^#!'; then
-    echo "vis-agent install: could not download the vis-agent command from $repo_slug (releases/download/installer/vis-agent)" >&2
+  sums="$(mktemp "${TMPDIR:-/tmp}/vis-agent-sums.XXXXXX")"
+  trap 'rm -f "$wrapper" "$sums"' EXIT
+  asset_tag="${release_tag:-installer}"
+  base="https://github.com/$repo_slug/releases/download/$asset_tag"
+  if [[ -n "$release_tag" ]]; then
+    status="$(curl --silent --head --output /dev/null --write-out '%{http_code}' \
+      --connect-timeout 10 "https://github.com/$repo_slug/releases/tag/$release_tag" 2>/dev/null)" || true
+    case "$status" in
+      2??|3??) ;;
+      404) fail "$repo_slug has no published release $release_tag; nothing was installed" ;;
+      *) fail "could not check release $release_tag on GitHub (HTTP ${status:-000}); nothing was installed" ;;
+    esac
+  fi
+  echo "vis-agent install: downloading the vis-agent command ($repo_slug, $asset_tag assets)"
+  if ! curl -fsSL "$base/vis-agent" -o "$wrapper" 2>/dev/null || ! head -1 "$wrapper" | grep -q '^#!'; then
+    fail "could not download the vis-agent command from $repo_slug (releases/download/$asset_tag/vis-agent)"
+  fi
+  # The command runs next, so it must match the SHA256SUMS of its release first.
+  status="$(curl -sSL --output "$sums" --write-out '%{http_code}' \
+    --connect-timeout 10 "$base/SHA256SUMS" 2>/dev/null)" || status=000
+  case "$status" in
+    200)
+      expected="$(awk '$2 == "vis-agent" || $2 == "*vis-agent" { print $1; exit }' "$sums")"
+      [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || \
+        fail "SHA256SUMS of $asset_tag has no entry for vis-agent; nothing was installed"
+      actual="$(sha256_of "$wrapper")" || fail "verifying the download needs sha256sum or shasum"
+      [[ "$actual" == "$expected" ]] || \
+        fail "the vis-agent command does not match SHA256SUMS of $asset_tag; nothing was installed"
+      echo "vis-agent install: verified the vis-agent command against SHA256SUMS"
+      ;;
+    404) echo "vis-agent install: $asset_tag publishes no SHA256SUMS, so the command is not verified" >&2 ;;
+    *) fail "could not download SHA256SUMS of $asset_tag (HTTP $status); nothing was installed" ;;
+  esac
+fi
+
+# A pinned hash checks the command before it runs, whatever its source.
+if [[ -n "$launcher_sha256" ]]; then
+  actual="$(sha256_of "$wrapper")" || fail "verifying --sha256 needs sha256sum or shasum"
+  if [[ "$actual" != "$launcher_sha256" ]]; then
+    echo "vis-agent install: the vis-agent command does not match --sha256; nothing was installed" >&2
+    echo "  Expected $launcher_sha256" >&2
+    echo "  Received $actual" >&2
     exit 1
   fi
+  echo "vis-agent install: the vis-agent command matches --sha256"
 fi
 
 install -m 0755 "$wrapper" "$install_dir/vis-agent.tmp"
@@ -138,7 +236,10 @@ if (( ! path_configured )); then
 fi
 
 # The launcher owns acquisition and records the selected track after success.
-if ! ( VIS_HOME="$vis_home" "$install_dir/vis-agent" update --track "$track" ); then
+# A pinned version goes to the update command; it never falls back to latest.
+update_args=(update --track "$track")
+[[ -z "$release_tag" ]] || update_args+=("$release_tag")
+if ! ( VIS_HOME="$vis_home" "$install_dir/vis-agent" "${update_args[@]}" ); then
   if (( ! path_configured )); then
     cat >&2 <<EOF
 
@@ -148,12 +249,18 @@ EOF
   exit 1
 fi
 
-echo "Vis Agent $track installed in $install_dir."
+if [[ -n "$release_tag" ]]; then
+  echo "Vis Agent $release_tag installed in $install_dir."
+else
+  echo "Vis Agent $track installed in $install_dir."
+fi
 echo "Run: vis-agent help; vis-agent tui"
 if [[ "$track" == dev ]]; then
   echo "Source: $vis_home/install/src (requires JDK 25+)."
 fi
-echo "Update this track: vis-agent update --track $track"
+if [[ -z "$release_tag" ]]; then
+  echo "Update this track: vis-agent update --track $track"
+fi
 echo "Return to the latest complete stable release: vis-agent update"
 
 if (( ! path_configured )); then

@@ -166,13 +166,17 @@ jobs:
                           for installer in ('macos-universal.dmg', 'windows-x64.msi',
                                             'linux-x64.deb', 'linux-x64.AppImage',
                                             'linux-arm64.deb', 'linux-arm64.AppImage'))
-          assets = release['assets']
+          # A rerun can find the SHA256SUMS of an earlier attempt; it is replaced below.
+          assets = [asset for asset in release['assets'] if asset['name'] != 'SHA256SUMS']
           assert release['draft'] is True and release['tag_name'] == os.environ['TAG']
           assert release['prerelease'] is True
           assert len(assets) == len(expected)
           assert {asset['name'] for asset in assets} == expected
           assert all(asset['size'] > 0 and asset['state'] == 'uploaded' for asset in assets)
           PY
+          # Installers verify every download against this file (#332).
+          python3 bin/release-checksums.py "$METADATA" "$RUNNER_TEMP/SHA256SUMS"
+          gh release upload "$TAG" "$RUNNER_TEMP/SHA256SUMS" --repo "$REPO" --clobber
           gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false
           echo 'published=true' >> "$GITHUB_OUTPUT"
 

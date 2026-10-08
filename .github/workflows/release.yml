@@ -176,5 +176,13 @@ jobs:
             404) clojure -X:deps prep && clojure -T:build deploy ;;
             *) echo "Cannot verify Clojars version (HTTP $STATUS)" >&2; exit 1 ;;
           esac
+      # Installers verify every download against this file (#332).
+      - name: Publish SHA256SUMS of every asset
+        env:
+          RELEASE_METADATA: ${{ steps.release.outputs.metadata }}
+        run: |
+          set -euo pipefail
+          python3 bin/release-checksums.py "$RELEASE_METADATA" "$RUNNER_TEMP/SHA256SUMS"
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/SHA256SUMS" --clobber
       - name: Publish complete stable release
         run: gh release edit "$RELEASE_TAG" --draft=false --latest

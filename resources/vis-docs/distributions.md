@@ -21,6 +21,8 @@ the same gateway from Windows, macOS or Linux.
   running](#how-you-learn-that-a-newer-version-is-running).
 - **You want the desktop app.** [Open the desktop app](#open-the-desktop-app) for
   your platform and release track.
+- **CI or a team must stay on a tested version.** [Pin an exact
+  version](#pin-an-exact-version) and [verify what you download](#verify-what-you-download).
 - **A desktop fix you need is only in a beta.** Open the [beta desktop
   app](#beta-the-newest-published-beta), which stays separate from your stable app.
 - **You want Vis in a browser.** [Open the web app](#open-the-web-app) that your gateway
@@ -68,6 +70,60 @@ The bootstrap scripts refresh after successful `main` CI, independently of stabl
 releases. They are published as GitHub release assets because some networks block
 `raw.githubusercontent.com`. Native installations still use the matching launcher
 from their selected release. Running `bin/install-vis-agent` from a clone also works.
+
+### Pin an exact version
+
+Use `--version` when a CI pipeline or a team must stay on a tested release. The
+installer then installs exactly that release, never a newer one.
+
+```bash
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --version 0.2.36
+# The same with an environment variable:
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | VIS_AGENT_VERSION=0.2.36 bash
+```
+
+You can write `0.2.36` or `v0.2.36`. The installer takes the `vis-agent` command from
+that release and runs `vis-agent update v0.2.36`. If the release does not exist or
+has no bundle for your platform, the installation stops. It never falls back to the
+latest release. A version is always a stable release, so you cannot add `--track beta`
+or `--track dev`.
+
+### Verify what you download
+
+Each release publishes `SHA256SUMS`, with the SHA-256 hash of each of its assets.
+The installer checks the `vis-agent` command against this list before it runs it.
+`vis-agent update` checks each archive before it unpacks it. A changed file or a
+missing entry stops the installation, and the installed version stays. Older releases
+have no `SHA256SUMS`, so Vis installs them with a warning.
+
+`SHA256SUMS` comes from the same place as the assets. In CI, keep the hashes in your
+repository instead, so a replaced asset cannot pass. Pin the installer with
+`sha256sum --check`, and pin the `vis-agent` command with `--sha256` or
+`VIS_AGENT_SHA256`:
+
+```bash
+tag=v0.2.37
+base=https://github.com/Blockether/vis/releases/download/$tag
+curl -fsSLO "$base/install-vis-agent"
+echo "<installer hash>  install-vis-agent" | sha256sum --check
+bash install-vis-agent --version "$tag" --sha256 "<vis-agent hash>"
+```
+
+With `--version`, the command comes from that release, so its hash does not change.
+A different command stops the installation before it runs.
+
+To check release assets by hand, download them and `SHA256SUMS` to one directory:
+
+```bash
+tag=v0.2.37
+base=https://github.com/Blockether/vis/releases/download/$tag
+curl -fsSLO "$base/SHA256SUMS"
+curl -fsSLO "$base/vis-agent"
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+The expected output is `vis-agent: OK`. On macOS, use `shasum -a 256 --check
+--ignore-missing SHA256SUMS`. Use `sha256sum vis-agent` to get the hash to pin.
 
 ## Updating and selecting a track
 
