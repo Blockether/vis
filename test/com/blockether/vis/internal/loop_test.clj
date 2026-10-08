@@ -3542,6 +3542,10 @@
                                                      :user-request "timeout restart"})
             timeout-code "import select\nprint('before native wait')\nselect.select([], [], [], 10)"
             after-code "print('handle' in globals())"
+            ;; The block after a restart enters a sandbox that is new, and the slow macOS
+            ;; runner used to spend the whole 3s limit there. Only the native wait must
+            ;; time out; the next block gets room so that it can show the restart result.
+            limit-for-code rt/eval-timeout-ms-for-code
             calls (atom 0)
             requests (atom [])]
 
@@ -3549,7 +3553,11 @@
                                      environment
                                      "handle = (n for n in range(3))\nprint('ready')"))))
              (let [result (binding [rt/*eval-timeout-ms* 3000]
-                            (with-redefs [svar/ask-code! (fn [_ opts]
+                            (with-redefs [rt/eval-timeout-ms-for-code (fn [base code]
+                                                                        (limit-for-code
+                                                                          (if (= code after-code) 30000 base)
+                                                                          code))
+                                          svar/ask-code! (fn [_ opts]
                                                            (swap! requests conj (:messages opts))
                                                            (if (= 1 (swap! calls inc))
                                                              {:stop-reason :tool-calls
