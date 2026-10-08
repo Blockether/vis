@@ -7003,11 +7003,13 @@
   [^TerminalScreen screen db r]
   (if-not (:prefix (:state r))
     r
-    (if-let [key (with-band-lock
-                   (band-top-row db (keymap/prefix-spec db))
-                   #(dlg/prefix-band! screen (state/band-anchor db) (keymap/prefix-spec db)))]
-      (input/resolve-prefix-key key (:state r))
-      {:action :continue :state (dissoc (:state r) :prefix)})))
+    ;; The band shows Fast mode only for a Codex session (#333).
+    (let [db (assoc db :codex-session? (state/codex-session? db))]
+      (if-let [key (with-band-lock
+                     (band-top-row db (keymap/prefix-spec db))
+                     #(dlg/prefix-band! screen (state/band-anchor db) (keymap/prefix-spec db)))]
+        (input/resolve-prefix-key key (:state r))
+        {:action :continue :state (dissoc (:state r) :prefix)}))))
 
 (defn- terminal-ctrl-c-behaviour
   "Lanterna's 3-arg UnixTerminal constructor defaults to

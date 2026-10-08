@@ -86,13 +86,14 @@
 
    `:group` is the heading the verb sits under in the C-x HYDRA (`prefix-spec`)
    and must be one of `prefix-groups`; order inside a group is declaration order.
-   An optional `:show-when` tag (`:multi-tab`, `:has-turns`) gates the verb's
+   An optional `:show-when` tag (`:multi-tab`, `:has-turns`, `:codex`) gates the verb's
    HYDRA row to the context where it can act; `:never` keeps it palette-only. The
    chord, palette, and help still list every verb."
   [{:action :cycle-model :key \m :label "model" :group "Model"}
    {:action :pick-model :key \c :label "choose model" :group "Model"}
    {:action :pick-reasoning :key \r :label "reasoning" :group "Model"}
-   {:action :toggle-codex-fast :key \q :label "fast mode" :group "Model"}
+   ;; Fast mode acts only on OpenAI Codex, so other sessions do not see it (#333).
+   {:action :toggle-codex-fast :key \q :label "fast mode" :group "Model" :show-when :codex}
    {:action :cycle-verbosity :key \l :label "length" :group "Model" :show-when :never}
    ;; `x` = show or omit the Claude thinking summary. Palette-only: the Model band
    ;; keeps four rows, and the footer chip carries the chord.
@@ -320,8 +321,9 @@
   "Does a prefix-command's `:show-when` tag hold for the current `db`? Untagged
    verbs always apply; the tagged ones surface in the hydra ONLY where they can
    act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
-   fork at, `:improve` needs an Improve mode other than Off, and `:never` is
-   palette-only. Resolving a chord does not bypass its handler's feature gate."
+   fork at, `:improve` needs an Improve mode other than Off, `:codex` needs a
+   session on OpenAI Codex (the screen marks it as `:codex-session?`), and `:never`
+   is palette-only. Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
     :multi-tab
@@ -332,6 +334,9 @@
 
     :improve
     (not= :off (or (get-in db [:improve :mode]) :off))
+
+    :codex
+    (true? (:codex-session? db))
 
     :never
     false

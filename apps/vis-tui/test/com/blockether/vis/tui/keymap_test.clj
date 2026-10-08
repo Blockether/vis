@@ -241,3 +241,14 @@
         (expect (= published listed)
                 (str "undocumented " (sort (set/difference published listed))
                      ", unexpected " (sort (set/difference listed published)))))))
+
+;; Regression for #333: the hydra offered Fast mode in sessions that do not use Codex.
+(defdescribe codex-fast-hydra-test
+             (it "shows Fast mode only in a session on OpenAI Codex"
+                 (let [rows (fn [db]
+                              (set (map :id (mapcat :items (:groups (keymap/prefix-spec db))))))]
+                   (expect (not (contains? (rows {}) :toggle-codex-fast)))
+                   (expect (not (contains? (rows {:codex-session? false}) :toggle-codex-fast)))
+                   (expect (contains? (rows {:codex-session? true}) :toggle-codex-fast))
+                   ;; The chord still resolves; its handler gives the reason.
+                   (expect (= :toggle-codex-fast (keymap/prefix-action-for \q))))))

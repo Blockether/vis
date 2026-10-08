@@ -1279,7 +1279,7 @@
   (boolean (some-> (session-model-info db)
                    vis/thinking-display-configurable?)))
 
-(defn- codex-session?
+(defn codex-session?
   "True only when this session's resolved route uses the Codex OAuth provider."
   [db]
   (= :openai-codex
