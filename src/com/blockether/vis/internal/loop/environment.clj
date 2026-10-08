@@ -503,7 +503,10 @@
                                    live-roots (when ws [(:root ws)])]
 
                                (security-policy/access-view security-config live-roots)))
-            draft-required? (not= :off (workspace/draft-backend-setting))
+            ;; The turn binds the session snapshot (project vis.yml, group and session
+            ;; settings), so the draft policy must come from the same values.
+            draft-required? (binding [toggles/*overrides* @toggle-values]
+                              (not= :off (workspace/draft-backend-setting)))
             draft-home (when draft-required?
                          (let [directory (io/file (workspace/session-drafts-home session-id))]
                            (.mkdirs directory)
@@ -511,7 +514,9 @@
             draft-env {:workspace-atom workspace-atom
                        :security-policy security-config
                        :security/filesystem-roots configured-rw-roots}
-            draft-protected-roots (when draft-required? (process-jail/draft-source-roots draft-env))
+            draft-protected-roots (when draft-required?
+                                    (binding [toggles/*overrides* @toggle-values]
+                                      (process-jail/draft-source-roots draft-env)))
             draft-env (assoc draft-env :workspace/draft-protected-roots draft-protected-roots)
             jail-config (:process-jail security-config)
             filesystem-policy-fn

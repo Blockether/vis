@@ -1,6 +1,10 @@
 (ns com.blockether.vis.internal.sandbox.draft-policy-test
   "Draft prerequisites through the real session Python and process boundaries."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.drafts :as drafts]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
@@ -17,7 +21,8 @@
 (defn- with-project
   ([backend f] (with-project backend nil true f))
   ([backend cache-policy f] (with-project backend cache-policy true f))
-  ([backend cache-policy jail? f]
+  ([backend cache-policy jail? f] (with-project backend cache-policy jail? nil f))
+  ([backend cache-policy jail? setup f]
    (let [dir
          (.toFile (java.nio.file.Files/createTempDirectory
                     "vis-draft-policy"
@@ -66,7 +71,10 @@
                                                 :policy (keyword (get entry "draft"))})
                                              (filter #(get % "draft") entries)))}
             #(binding [workspace/*draft-backend* backend workspace/*drafts-home*
-                       (.getPath (io/file dir "drafts"))] (let [ws
+                       (.getPath (io/file dir "drafts"))] (let [_
+                                                                (when setup (setup root))
+
+                                                                ws
                                                                 (workspace/create-trunk-at! db root)
 
                                                                 environment
@@ -246,6 +254,68 @@
                        (try (#'python-exec/execute-code environment "print('must not execute')")
                             nil
                             (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+
+(defn- turn-run
+  "Run one block under the settings snapshot that `turn!` binds."
+  [environment code]
+  (binding [toggles/*overrides* (merge (scoped/values (:db-info environment)
+                                                      (:session-id environment))
+                                       toggles/*invocation-overrides*)]
+    (try (#'python-exec/execute-code environment code)
+         (catch clojure.lang.ExceptionInfo e {:thrown (:type (ex-data e))}))))
+
+(defn- draft-backend-row
+  [environment]
+  (let [db (:db-info environment)]
+    (-> (filter #(= workspace/draft-backend-toggle-id (:id %))
+                (scoped/settings db (scoped/target db "session" (:session-id environment))))
+        first
+        (select-keys [:value :source]))))
+
+(defdescribe
+  project-vis-yml-draft-backend-stays-a-project-setting
+  (it "a project vis.yml draft backend drives that project's sandbox and no other project"
+      ;; A desktop gateway can start in a home directory whose vis.yml enables drafts. That
+      ;; value is a project setting: its sessions must run blocks without "Draft policy
+      ;; changed", and the global value and other projects must stay off.
+      (with-project
+        nil
+        nil
+        true
+        (fn [root]
+          (spit (io/file root "vis.yml") "toggles:\n  draft_backend: worktree\n")
+          (config/invalidate-config-cache!))
+        (fn [environment root]
+          (let [other
+                (.getCanonicalPath (io/file (.getParentFile (io/file root)) "extra"))
+
+                other-environment
+                (loop-env/create-environment
+                  ::router
+                  {:db (:db-info environment)
+                   :workspace-id (:id (workspace/create-trunk-at! (:db-info environment) other))})]
+
+            (reset! (:extensions other-environment) [foundation/vis-extension])
+            (try (expect (= :off (workspace/draft-backend-setting)))
+                 (expect (= {:value "worktree" :source "project"} (draft-backend-row environment)))
+                 (expect (= "off" (:value (draft-backend-row other-environment))))
+                 (expect (true? (get-in environment [:sandbox-caps :network :draft-required?])))
+                 (expect (false? (get-in other-environment
+                                         [:sandbox-caps :network :draft-required?])))
+                 (let [result (turn-run
+                                environment
+                                (str "from pathlib import Path\ntry:\n    Path("
+                                     (pr-str (str root "/source.txt"))
+                                     ").write_text('changed')\n"
+                                     "except PermissionError:\n    print('draft required')\n"))]
+                   (expect (nil? (:thrown result)) (str result))
+                   (expect (nil? (:error result)) (str result))
+                   (expect (= "draft required" (str/trim (str (:stdout result)))))
+                   (expect (= "original" (slurp (io/file root "source.txt")))))
+                 (let [result (turn-run other-environment "print('shared')")]
+                   (expect (nil? (:thrown result)) (str result))
+                   (expect (= "shared" (str/trim (str (:stdout result))))))
+                 (finally (loop-env/dispose-environment! other-environment))))))))
 
 (defdescribe
   disposed-session-resumes-its-owned-draft

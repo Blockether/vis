@@ -632,6 +632,7 @@
           {:type :draft/policy-expanded})))
     (when (and (contains? opts :draft-required?)
                (not= (:draft-required? opts) (not= :off (workspace/draft-backend-setting))))
+      (swap! policy-reload-epoch inc)
       (throw
         (ex-info
           "Draft policy changed. Start the next turn to rebuild the Python context safely; existing variables are not silently migrated."
