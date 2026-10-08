@@ -5758,8 +5758,16 @@
                     (long (or (first sel-entry-idxs) 0))
 
                     ;; Section guidance can wrap; selectable rows remain single-line.
+                    ;; A selected section header also reveals the guidance below it, so an
+                    ;; empty or loading section shows its state, not only its title.
                     selected-visual-end
-                    (long (or (last sel-entry-idxs) selected-visual))
+                    (let [end (long (or (last sel-entry-idxs) selected-visual))]
+                      (if (= :section (:part (nth entries selected-visual nil)))
+                        (long (loop [i end]
+                                (if (= :info-line (:part (nth entries (inc i) nil)))
+                                  (recur (inc i))
+                                  i)))
+                        end))
 
                     ;; Visual index where the intro rows (section / subsection /
                     ;; info-line) that directly precede the selected option begin.
