@@ -5028,6 +5028,52 @@ vis.register_extension(vis.Extension(
            (expect (false? (toggles/enabled? "shell")))
            (finally (toggles/set-value! "shell" before))))))
 
+(defdescribe
+  reload-diagnostic-report-test
+  (it
+    "shows the file, cause and traceback in the chat body without credentials"
+    (with-redefs [pyx/reload-python-extensions!
+                  (constantly {:loaded 1 :failed 1})
+
+                  pyx/load-failures
+                  (constantly [{:extension "broken-package"
+                                :file "/extensions/broken/extension.py"
+                                :error
+                                (str "Traceback (most recent call last):\n"
+                                     "  File extension.py, line 7\n"
+                                     "ImportError: missing_dependency; api_key=fixture-secret")}])
+
+                  config/current-config
+                  (constantly {})
+
+                  config/reload-config!
+                  (constantly {})
+
+                  config/load-config-raw
+                  (constantly {})
+
+                  extension/run-reload-hooks!
+                  (constantly {})
+
+                  agents/reload!
+                  (constantly nil)
+
+                  prompt-templates/reload!
+                  (constantly [])]
+
+      (let [result
+            (#'pyx/reload-slash {:command/argv []})
+
+            body
+            (:slash/body result)]
+
+        (expect (= :error (:slash/status result)))
+        (doseq [text ["Vis remains available" "broken-package" "/extensions/broken/extension.py"
+                      "Traceback" "line 7" "ImportError: missing_dependency" "[REDACTED]"
+                      "/reload"]]
+          (expect (str/includes? body text)))
+        (expect (not (str/includes? body "fixture-secret")))))))
+
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
 (defn- answer-pending!
   "Wait for an input View titled `title` to show up, then run `answer-fn`

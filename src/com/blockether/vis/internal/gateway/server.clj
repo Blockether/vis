@@ -294,6 +294,11 @@
    health timeout. The gateway has no project of its own: a session prepares its project's
    catalog when it opens it, never the directory the gateway started in."
   []
+  ;; A later successful scan must clear a failed startup, including an empty catalog.
+  (python-extensions/add-change-listener! ::extension-startup
+                                          (fn [{:keys [project-root]}]
+                                            (when-not project-root
+                                              (reset! extension-startup {:stage "ready"}))))
   (try (python-extensions/ensure-python-extensions-loaded! {:global-only? true})
        (reset! extension-startup {:stage "ready"})
        (catch Throwable t

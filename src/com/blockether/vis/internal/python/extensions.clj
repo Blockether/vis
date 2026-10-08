@@ -1919,15 +1919,24 @@
 
 (defn- failure-summary
   [{:keys [file error extension stale? loaded-fingerprint requested-fingerprint]}]
-  (str "Python extension "
-       (or extension (paths/abbreviate-home file))
-       ": reload failed; "
-       (if stale? "last-known-good tools and docs are stale" "not loaded")
-       (when loaded-fingerprint (str "; loaded fingerprint " loaded-fingerprint))
-       (when requested-fingerprint (str "; requested fingerprint " requested-fingerprint))
-       ". "
-       error
-       " Fix the extension or its configuration, then run /reload to retry."))
+  (paths/compact-path-text
+    nil
+    (util/redact-secret-text
+      (-> (str "Python extension "
+               (or extension file)
+               (when (and extension file) (str " (" file ")"))
+               ": reload failed; "
+               (if stale? "last-known-good tools and docs are stale" "not loaded")
+               (when loaded-fingerprint (str "; loaded fingerprint " loaded-fingerprint))
+               (when requested-fingerprint (str "; requested fingerprint " requested-fingerprint))
+               ". "
+               error
+               " Fix the extension or its configuration, then run /reload to retry.")
+          (str/replace #"\u001b\[[0-?]*[ -/]*[@-~]" "")
+          (str/replace #"[\p{Cntrl}&&[^\n\t]]" ""))
+      (keep (fn [[key value]]
+              (when (util/secret-key? key) value))
+            (System/getenv)))))
 
 (defn loaded-python-extensions
   "Snapshot of the effective Python extensions in a project, the current one by
@@ -2954,19 +2963,17 @@
           (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
 
       {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
-       :slash/title (str "Reloaded — configuration" (when cfg-changes (str " (" cfg-changes ")"))
-                         "; Python extensions: " loaded
-                         " loaded" (when (pos? (long failed))
-                                     (str ", "
-                                          failed
-                                          " failed: "
-                                          (str/join "; " (map failure-summary (load-failures)))
-                                          " — see `vis-agent doctor`"))
-                         "; skills/agents, prompt templates" (when template-cnt
-                                                               (str " (" template-cnt ")"))
-                         ", and context files rescanned"
-                         (when (seq failed-hooks)
-                           (str " — hook failures: " (str/join ", " (map str failed-hooks)))))})))
+       :slash/title
+       (str "Reloaded — configuration" (when cfg-changes (str " (" cfg-changes ")"))
+            "; Python extensions: " loaded
+            " loaded" (when (pos? (long failed)) (str ", " failed " failed — see details below"))
+            "; skills/agents, prompt templates" (when template-cnt (str " (" template-cnt ")"))
+            ", and context files rescanned" (when (seq failed-hooks)
+                                              (str " — hook failures: "
+                                                   (str/join ", " (map str failed-hooks)))))
+       :slash/body (when (pos? (long failed))
+                     (str "Vis remains available. Healthy extensions and core tools still work.\n\n"
+                          (str/join "\n\n" (map failure-summary (load-failures)))))})))
 
 (def ^:private http-methods
   #{"GET" "HEAD" "POST" "PUT" "PATCH" "DELETE" "OPTIONS" "TRACE" "CONNECT"})
@@ -3140,7 +3147,7 @@
                      {:level :error
                       :check-id ::load
                       :message (failure-summary failure)
-                      :remediation (:error failure)})
+                      :remediation (util/redact-secret-text (:error failure))})
                    (for [[path {:keys [ext-name]}] (loaded-python-extensions)
                          :when (not-any? #(= path (:file %)) visible-failures)]
 

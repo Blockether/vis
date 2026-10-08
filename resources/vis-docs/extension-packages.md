@@ -362,6 +362,9 @@ with `--version`. Installed versions are reused, including any local edits. A ve
 installed is fetched and validated. A package name and version cannot be reused for a different Git
 commit.
 
+An explicit update or rollback keeps the package's synchronization record consistent with its active version.
+If configuration pins a version or revision, change that declaration to keep a different version after synchronization.
+
 All source changes are explicit and require `--trust`. A failed fetch, compatibility
 check or activation leaves the active installation unchanged. After success, start
 Vis or use `/reload` to prepare dependencies and activate the code in running sessions.
@@ -480,6 +483,9 @@ sessions switch at the next turn boundary.
 If a package cannot prepare or load, Vis reports its name, location and error. Other extensions and the core tools remain available.
 You can open the project and use Vis to repair the files or configuration. Run `vis-agent doctor` to inspect the failures.
 After the repair, run `/reload` to retry preparation and loading. A successful retry clears the warning without restarting Vis.
+
+A failed `/reload` shows the affected files and causes in chat. The report stays in the transcript and enters the next model request.
+The agent can use that report to repair the extension. Current failures also remain in its context until recovery.
 
 `vis.state` survives reload and restarts. A failed reload keeps the last working code, contracts,
 docs and package skills. It marks them stale with the failure reason and the loaded and requested

@@ -167,8 +167,8 @@
       (when (>= (count parts) 2) (str (nth parts 0) "/" (nth parts 1))))))
 
 (defn user-slash-iteration?
-  "True for a synthetic slash-command iteration. These rows stay in local
-   transcript/audit history but must never enter a later provider request."
+  "True for a synthetic slash-command iteration. Ordinary slash turns stay local;
+   failed extension reload reports can enter later provider requests as prose."
   [iteration]
   (boolean (some #(= "user-slash"
                      (some-> (:tag %)
@@ -218,7 +218,9 @@
         local-ids
         (into #{}
               (keep (fn [[id row]]
-                      (when (user-slash-iteration? row) id)))
+                      (when (and (user-slash-iteration? row)
+                                 (not-any? :extension-load-failure? (:forms row)))
+                        id)))
               candidate-rows)]
 
     {:iterations iterations

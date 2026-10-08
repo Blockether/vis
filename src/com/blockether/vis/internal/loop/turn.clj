@@ -165,7 +165,11 @@
           (str "t" turn-pos "/i1/f1")
 
           envelope
-          {:scope scope :tag :user-slash :src user-request}
+          (cond-> {:scope scope :tag :user-slash :src user-request}
+            (and (= "/reload" (str/trim user-request))
+                 (= :error (get-in slash-result [:result :slash/status]))
+                 (seq (get-in slash-result [:result :slash/body])))
+            (assoc :extension-load-failure? true))
 
           answer-md
           (slash-result->answer-markdown slash-result)

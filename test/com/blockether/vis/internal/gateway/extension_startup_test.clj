@@ -9,6 +9,7 @@
 
 (set-ns-context! [(around-each [run]
                                (with-redefs-fn {#'server/extension-startup (atom {:stage "idle"})
+                                                #'pyx/change-listeners (atom {})
                                                 #'pyx/load-failures (constantly [])
                                                 #'pyx/loaded-python-extensions (constantly {})
                                                 #'runtime/preparation-status (constantly [])}
@@ -55,6 +56,22 @@
                    (#'server/prepare-startup-extensions!)
                    (expect (= {:stage "failed" :error "java.lang.IllegalStateException"}
                               @@#'server/extension-startup)))))
+
+(defdescribe startup-status-recovers-after-reload
+             (it "clears a startup error after a later global scan, including an empty catalog"
+                 (with-redefs [pyx/ensure-python-extensions-loaded!
+                               (fn [_]
+                                 (throw (ex-info "Fixture startup failure" {})))]
+                   (#'server/prepare-startup-extensions!))
+                 (expect (= "failed" (:stage (#'server/extension-startup-status))))
+                 (#'pyx/notify-change-listeners!
+                  {:project-root "/other" :extensions [] :removed []})
+                 (expect (= "failed" (:stage (#'server/extension-startup-status))))
+                 (#'pyx/notify-change-listeners! {:project-root nil :extensions [] :removed []})
+                 (let [status (#'server/extension-startup-status)]
+                   (expect (= "ready" (:stage status)))
+                   (expect (zero? (:failed status)))
+                   (expect (nil? (:error status))))))
 
 (defdescribe client-keeps-healthy-cold-preparation-quiet
              (it "client keeps healthy cold preparation quiet"

@@ -1075,6 +1075,107 @@ def test_sync_pins_updates_refresh_and_rollback(releases):
     )
 
 
+def test_explicit_update_and_rollback_keep_sync_ownership(releases):
+    metadata, target, _ = releases
+    newer = metadata.pop(1)
+    configured = {
+        "vis-greeter": {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    }
+    package.sync(configured, target, trust=True)
+    metadata.append(newer)
+    package.update(REPOSITORY, target, trust=True)
+    updated = package.sync(configured, target, trust=True)[0]
+    assert (updated["status"], updated.get("version")) == ("cached", "1.1.0")
+    package.rollback(REPOSITORY, target, trust=True)
+    restored = package.sync(configured, target, trust=True)[0]
+    assert (restored["status"], restored.get("version")) == ("cached", "1.0.0")
+
+
+@pytest.mark.parametrize("operation", ["update", "rollback"])
+def test_managed_activation_restores_ownership_when_sync_receipt_write_fails(
+    releases, monkeypatch, operation
+):
+    metadata, target, _ = releases
+    newer = metadata.pop(1)
+    configured = {
+        "vis-greeter": {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    }
+    package.sync(configured, target, trust=True)
+    metadata.append(newer)
+    if operation == "rollback":
+        package.update(REPOSITORY, target, trust=True)
+    pointer = target / "vis-greeter/current"
+    previous_target = pointer.resolve()
+    previous_records = (target / ".sync.json").read_bytes()
+    receipt_path = target / "vis-greeter/1.0.0/receipt.json"
+    previous_receipt = receipt_path.read_bytes()
+
+    def fail(*_):
+        raise OSError("Fixture receipt write failure")
+
+    monkeypatch.setattr(package, "_save_sync_records", fail)
+    with pytest.raises(OSError, match="Fixture receipt write failure"):
+        getattr(package, operation)(REPOSITORY, target, trust=True)
+    assert pointer.resolve() == previous_target
+    assert (target / ".sync.json").read_bytes() == previous_records
+    assert receipt_path.read_bytes() == previous_receipt
+    assert package._sync_owned(pointer, package._sync_records(target)["vis-greeter"])
+    assert package.sync(configured, target, trust=True)[0]["status"] == "cached"
+
+
+@pytest.mark.parametrize("operation", ["update", "rollback"])
+def test_managed_activation_refuses_an_externally_changed_sync_pointer(
+    releases, operation
+):
+    metadata, target, _ = releases
+    newer = metadata.pop(1)
+    configured = {
+        "vis-greeter": {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    }
+    package.sync(configured, target, trust=True)
+    metadata.append(newer)
+    package.update(REPOSITORY, target, trust=True)
+    pointer = target / "vis-greeter/current"
+    pointer.unlink()
+    pointer.symlink_to("1.0.0")
+    before = (target / ".sync.json").read_bytes()
+    kwargs = {"version": "1.1.0"} if operation == "update" else {}
+    with pytest.raises(ValueError):
+        getattr(package, operation)(REPOSITORY, target, trust=True, **kwargs)
+    assert pointer.resolve().name == "1.0.0"
+    assert (target / ".sync.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("pin", ["version", "revision"])
+def test_explicit_update_does_not_override_a_configuration_pin(releases, pin):
+    metadata, target, _ = releases
+    spec = {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    spec[pin] = metadata[0][pin]
+    configured = {"vis-greeter": spec}
+    package.sync(configured, target, trust=True)
+    package.update(REPOSITORY, target, trust=True)
+    restored = package.sync(configured, target, trust=True)[0]
+    assert (restored["status"], restored.get("version")) == ("updated", "1.0.0")
+
+
+def test_update_validates_sync_spec_before_changing_the_active_version(releases):
+    metadata, target, _ = releases
+    newer = metadata.pop(1)
+    configured = {
+        "vis-greeter": {"source": REPOSITORY, "subdirectory": "plugins/greeting"}
+    }
+    package.sync(configured, target, trust=True)
+    metadata.append(newer)
+    records = package._sync_records(target)
+    records["vis-greeter"]["spec"] = {}
+    package._save_sync_records(target, records)
+    before = (target / ".sync.json").read_bytes()
+    with pytest.raises(ValueError, match="source"):
+        package.update(REPOSITORY, target, trust=True)
+    assert (target / "vis-greeter/current").resolve().name == "1.0.0"
+    assert (target / ".sync.json").read_bytes() == before
+
+
 def test_sync_latest_tracks_approved_stable_releases(releases):
     metadata, target, commands = releases
     newer = metadata.pop(1)

@@ -4072,6 +4072,47 @@
   (str/join "\n" (map :content (:turn/messages (trailer-entry trailer k)))))
 
 (defdescribe
+  extension-reload-diagnostics-transcript-test
+  (it
+    "persists a failed reload and gives its diagnosis to the next model request"
+    (let [environment
+          (loop-env/create-environment ::router {:db :memory})
+
+          report
+          (str "Vis remains available.\n\n"
+               "Python extension broken (/extensions/broken.py): not loaded.\n"
+               "ImportError: missing_dependency. Run /reload to retry.")]
+
+      (try (let [result
+                 (#'turn/run-slash-turn!
+                  environment
+                  "/reload"
+                  {:result {:slash/status :error
+                            :slash/title "Reloaded: 1 loaded, 1 failed"
+                            :slash/body report}}
+                  {})
+
+                 turn-id
+                 (:session-turn-id result)
+
+                 stored
+                 (persistance/db-read-session-turn (:db-info environment)
+                                                   (:session-id environment)
+                                                   turn-id)
+
+                 history
+                 (transcript/provider-history-metadata (:db-info environment) [turn-id])
+
+                 trailer
+                 (transcript/prior-turn-trailer environment "next-turn" 2 [])]
+
+             (expect (str/includes? (content/text-projection (:content stored)) report))
+             (expect (empty? (:local-turn-ids history)))
+             (expect (str/includes? (pr-str trailer) "missing_dependency"))
+             (expect (str/includes? (pr-str trailer) "Vis remains available")))
+           (finally (loop-env/dispose-environment! environment))))))
+
+(defdescribe
   prior-turn-trailer-test
   ;; Blockether/vis#174: an interrupted user message may be dense code, not prose.
   (it "carries a prior request verbatim without counting its tokens"

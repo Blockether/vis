@@ -954,6 +954,59 @@ def install(
     return _admit(source, directory, subdirectory, revision, vis_version, release)
 
 
+def _replace_managed(directory, active, current, release, vis_version):
+    """Activate a managed version and keep its sync ownership in the same operation."""
+    name = current["name"]
+    lock = directory / ".sync-lock"
+    fd = _acquire(lock)
+    try:
+        records = _sync_records(directory)
+        owned = records.get(name)
+        destination = _destination(directory, name)
+        if owned is not None and not _sync_owned(destination, owned):
+            raise ValueError(
+                "Existing extension was changed externally; no files replaced"
+            )
+        spec = _sync_spec(owned["spec"]) if owned is not None else None
+        previous_target = str(active)
+        snapshot = destination.parent / release["version"]
+        receipt_path = snapshot / "receipt.json"
+        previous_receipt = receipt_path.read_bytes() if receipt_path.is_file() else None
+        result = _admit(
+            current["repository_url"],
+            directory,
+            current["subdirectory"],
+            release["revision"],
+            vis_version,
+            release,
+            name,
+            active.name,
+        )
+        if owned is None:
+            return result
+        # Configuration pins remain authoritative on the next reconciliation.
+        if spec["revision"] is not None:
+            spec["revision"] = result["revision"]
+        elif spec["version"] not in (None, LATEST):
+            spec["version"] = result["version"]
+        try:
+            _save_sync_records(
+                directory,
+                {
+                    **records,
+                    name: {"spec": spec, "target": result["path"], "result": result},
+                },
+            )
+        except BaseException:
+            _restore_saved_link(directory, name, result["path"], previous_target)
+            if previous_receipt is not None:
+                receipt_path.write_bytes(previous_receipt)
+            raise
+        return result
+    finally:
+        _release(lock, fd)
+
+
 def update(
     source, directory, trust=False, version=None, vis_version=None, subdirectory=None
 ):
@@ -988,16 +1041,7 @@ def update(
         }
     if Version(release["version"]) == Version(current["version"]):
         raise ValueError("A published version cannot change its approved commit")
-    return _admit(
-        current["repository_url"],
-        directory,
-        current["subdirectory"],
-        release["revision"],
-        vis_version,
-        release,
-        name,
-        active.name,
-    )
+    return _replace_managed(directory, active, current, release, vis_version)
 
 
 def rollback(
@@ -1016,7 +1060,6 @@ def rollback(
         folder = None
     active, current = _installed_repository(directory, repository, folder)
     assert active is not None and current is not None  # A required lookup raises.
-    name = current["name"]
     if version is not None:
         release = _select(
             _releases(current["repository_url"], current["subdirectory"]), version
@@ -1031,24 +1074,15 @@ def rollback(
             raise ValueError(
                 "No previous installation; choose an approved older --version"
             )
-        release = _receipt(active.parent / _version(previous), name)
+        release = _receipt(active.parent / _version(previous), current["name"])
         if (
             release.get("repository_url") != current["repository_url"]
             or release.get("subdirectory") != current["subdirectory"]
-            or release.get("name") != name
+            or release.get("name") != current["name"]
             or not re.fullmatch(r"[0-9a-f]{40}", release.get("revision", ""))
         ):
             raise ValueError("Invalid previous package receipt")
-    return _admit(
-        current["repository_url"],
-        directory,
-        current["subdirectory"],
-        release["revision"],
-        vis_version,
-        release,
-        name,
-        active.name,
-    )
+    return _replace_managed(directory, active, current, release, vis_version)
 
 
 def _sync_spec(spec):
