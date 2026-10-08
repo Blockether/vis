@@ -1364,8 +1364,17 @@
              (merge (scoped/values (:db-info environment) (:session-id environment))
                     toggles/*invocation-overrides*))
 
+         ;; Issue #345: the session environment owns one toggle atom. A cold sandbox
+         ;; that this turn builds takes its globals from that atom, not from a copy, so
+         ;; the turn snapshot (one-shot `--toggles` included) goes into it.
+         toggle-values
+         (or (:config/toggles environment) (atom nil))
+
+         _
+         (reset! toggle-values snapshot)
+
          environment
-         (assoc environment :config/toggles (atom snapshot))
+         (assoc environment :config/toggles toggle-values)
 
          opts
          (with-setting-defaults opts snapshot)

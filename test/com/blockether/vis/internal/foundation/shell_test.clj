@@ -7,6 +7,8 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.python-exec :as python-exec]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis-python-runtime :as runtime]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.gateway.resources :as resources]
@@ -2401,6 +2403,31 @@
              (expect (true? (boolean (py c "'shell' in globals()"))))
              (finally (swap! (deref #'loop-env/cache) dissoc (:id cached))
                       (toggles/set-enabled! "shell" before)))))
+  ;; Regression, issue #345: `--toggles shell=true` with `--session-id` lost the
+  ;; override. The turn worker built the session environment without the CLI
+  ;; overrides, and the cold sandbox took its globals from that environment, not
+  ;; from the turn's settings snapshot.
+  (it "binds shell in a cold sandbox from the turn's settings snapshot"
+      (let [env
+            (loop-env/create-environment {:providers [{:id :lmstudio}]} {:db :memory})
+
+            bound
+            (atom ::not-run)]
+
+        (try (reset! (:config/toggles env) {"shell" false})
+             (with-redefs [turn/run-turn! (fn [environment & _]
+                                            (reset! bound (:stdout (#'python-exec/run-python-code
+                                                                    (ep/python-context environment)
+                                                                    "print('shell' in globals())"
+                                                                    :env
+                                                                    environment)))
+                                            (throw (ex-info "stop after the sandbox check" {})))]
+               (try (turn/turn! env
+                                [{:role "user" :content "probe"}]
+                                {:settings-snapshot {"shell" true}})
+                    (catch clojure.lang.ExceptionInfo _ nil)))
+             (expect (= "True\n" @bound) (pr-str @bound))
+             (finally (loop-env/dispose-environment! env)))))
   (it "routes the lifecycle tools through the native Python bridge"
       ;; Regression: a stale positional wrapper invoked shell-dispatch as
       ;; (env command options), which made these lifecycle calls fail before the
