@@ -163,51 +163,54 @@
    (created with `:path`), data is preserved. For disposable DBs, all
    data is deleted.
 
-   Every env owns its DB connection, so disposing one always closes it."
-  [environment]
-  ;; Drop this session from the SHARED gateway egress proxy's registry. The shared
-  ;; proxy + CA are daemon-lifetime (internal.sandbox.gateway/shutdown!), not
-  ;; per-session, so nothing is stopped here — only this session's policy is removed.
-  ;; EVERY step before the sandbox is best-effort AND cannot skip it. These run
-  ;; first because they need the environment intact, but not one of them is worth
-  ;; the Python worker: a throw here used to abandon that whole process, and a
-  ;; caller that swallowed the exception leaked a worker silently on every
-  ;; recycle. Worker teardown is therefore a `finally`, and a failure is LOGGED
-  ;; rather than dropped, because a leak nothing reports is one nobody can find.
-  (try
-    (doseq [[step run!]
-            [[:egress-proxy
-              #(when-let [tok (:sandbox-token environment)] (gateway-sandbox/unregister-session!
-                                                              tok))]
-             [:prompt-cache-warmer #(cache-warmer/stop! (:prompt-cache-warmer environment))]
-             [:llm-session
-              #(when-let [a (:llm-session-atom environment)] (locking a
-                                                               (transcript/close-llm-session! a)))]
-             ;; BEFORE the context goes: the session's helper-source memo outlives
-             ;; both the context and the engine, and nothing else ever drops it
-             ;; (see `env-python/forget-session-defs!`).
-             [:session-defs
-              #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]]]
-      (try (run!)
-           (catch Throwable t
-             (tel/log! :warn
-                       ["gateway: env teardown step failed" (name step)
-                        (str (:session-id environment)) (ex-message t)]))))
-    (finally
-      ;; The sandbox goes LAST and always. For a gateway session this kills its
-      ;; worker process and releases both the sandbox and trusted extension
-      ;; namespaces without entering a possibly wedged interpreter.
-      ;; A sandbox that was never built has no interpreter to kill, and building
-      ;; one here would start a process for the sole purpose of ending it.
-      (try (env/dispose-sandbox! environment)
-           (catch Throwable t
-             (tel/log! :error
-                       ["gateway: sandbox dispose failed - session LEAKED"
-                        (str (:session-id environment)) (ex-message t)])))
-      (when (:db-info environment)
-        (try (persistance/db-dispose-connection! (:db-info environment))
-             (catch Throwable t
-               (tel/log! :warn ["gateway: env db close failed" (ex-message t)])))))))
+   Every env owns its DB connection, so disposing one always closes it. With a
+   `cause`, it first logs why the sandbox stops (`env/log-sandbox-stop!`)."
+  ([environment] (dispose-environment! environment nil nil))
+  ([environment cause detail]
+   (when cause (env/log-sandbox-stop! (:session-id environment) cause detail))
+   ;; Drop this session from the SHARED gateway egress proxy's registry. The shared
+   ;; proxy + CA are daemon-lifetime (internal.sandbox.gateway/shutdown!), not
+   ;; per-session, so nothing is stopped here — only this session's policy is removed.
+   ;; EVERY step before the sandbox is best-effort AND cannot skip it. These run
+   ;; first because they need the environment intact, but not one of them is worth
+   ;; the Python worker: a throw here used to abandon that whole process, and a
+   ;; caller that swallowed the exception leaked a worker silently on every
+   ;; recycle. Worker teardown is therefore a `finally`, and a failure is LOGGED
+   ;; rather than dropped, because a leak nothing reports is one nobody can find.
+   (try
+     (doseq [[step run!]
+             [[:egress-proxy
+               #(when-let [tok (:sandbox-token environment)] (gateway-sandbox/unregister-session!
+                                                               tok))]
+              [:prompt-cache-warmer #(cache-warmer/stop! (:prompt-cache-warmer environment))]
+              [:llm-session
+               #(when-let [a (:llm-session-atom environment)] (locking a
+                                                                (transcript/close-llm-session! a)))]
+              ;; BEFORE the context goes: the session's helper-source memo outlives
+              ;; both the context and the engine, and nothing else ever drops it
+              ;; (see `env-python/forget-session-defs!`).
+              [:session-defs
+               #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]]]
+       (try (run!)
+            (catch Throwable t
+              (tel/log! :warn
+                        ["gateway: env teardown step failed" (name step)
+                         (str (:session-id environment)) (ex-message t)]))))
+     (finally
+       ;; The sandbox goes LAST and always. For a gateway session this kills its
+       ;; worker process and releases both the sandbox and trusted extension
+       ;; namespaces without entering a possibly wedged interpreter.
+       ;; A sandbox that was never built has no interpreter to kill, and building
+       ;; one here would start a process for the sole purpose of ending it.
+       (try (env/dispose-sandbox! environment)
+            (catch Throwable t
+              (tel/log! :error
+                        ["gateway: sandbox dispose failed - session LEAKED"
+                         (str (:session-id environment)) (ex-message t)])))
+       (when (:db-info environment)
+         (try (persistance/db-dispose-connection! (:db-info environment))
+              (catch Throwable t
+                (tel/log! :warn ["gateway: env db close failed" (ex-message t)]))))))))
 
 (defonce ^:private last-good-security-snapshot
   ;; A failed project reload may retain only that project's last valid policy.
@@ -786,6 +789,10 @@
   (when-let [^java.util.concurrent.atomic.AtomicLong epoch (:policy-epoch entry)]
     (< (.get epoch) (long @python-exec/policy-reload-epoch))))
 
+(def ^:private settings-change-detail
+  "Restart reason of a sandbox that a settings reload replaced."
+  "a settings reload (`/reload` or an access change) gave the session a new security policy")
+
 (defn dispose-reloaded-sandbox!
   "Close an idle, reload-stale sandbox without rebuilding it. The cached env and
    its lock remain until the next turn rebuilds the policy. Recheck ownership
@@ -795,6 +802,9 @@
     (when (and lock (not (.isHeldByCurrentThread lock)) (.tryLock lock))
       (try (let [cur (get @cache k)]
              (when (and (identical? lock (:lock cur)) (policy-stale? cur))
+               (env/log-sandbox-stop! (:session-id (:environment cur))
+                                      :settings-change
+                                      settings-change-detail)
                (env/dispose-sandbox! (:environment cur))))
            (catch Throwable t
              (tel/log! :error ["gateway: reload failed to dispose sandbox" (str k) (ex-message t)]))
@@ -1058,8 +1068,9 @@
   "Dispose + `dissoc` cache entry `k` when its lock is free (no turn running)
    AND it has been idle at least `min-idle-ms` (0 = force). Lock-guarded and
    re-checked under the lock, so it never races a live turn or a concurrent
-   `close!`. Returns true iff it evicted."
-  [k min-idle-ms]
+   `close!`. `cause` and `(detail-fn idle-ms)` say why, for the log. Returns true
+   iff it evicted."
+  [k min-idle-ms cause detail-fn]
   (let [entry
         (get @cache k)
 
@@ -1077,7 +1088,8 @@
                           (if la (- (util/now-ms) (.get la)) 0)]
 
                       (when (and cur (>= (long idle) (long min-idle-ms)))
-                        (try (dispose-environment! (:environment cur)) (catch Throwable _ nil))
+                        (try (dispose-environment! (:environment cur) cause (detail-fn idle))
+                             (catch Throwable _ nil))
                         (swap! cache dissoc k)
                         true))
                     (finally (.unlock lock)))))))
@@ -1106,6 +1118,25 @@
         pressure?
         (memory-pressure? rss-bytes)
 
+        pressure-detail
+        (fn [_]
+          (format (str "the gateway and its Python workers used %d MB of memory, over the %d MB"
+                       " limit (VIS_ENV_RSS_BUDGET_MB), so the gateway stopped every idle sandbox")
+                  (quot (long rss-bytes) 1048576)
+                  (long @env-rss-budget-mb)))
+
+        idle-detail
+        (fn [idle-ms]
+          (format "it was idle for %d s, over the %d s idle limit (VIS_ENV_IDLE_TTL_MS)"
+                  (quot (long idle-ms) 1000)
+                  (quot (long @env-idle-ttl-ms) 1000)))
+
+        limit-detail
+        (fn [_]
+          (format (str "the gateway keeps at most %d live sandboxes (VIS_ENV_CACHE_MAX), and this"
+                       " one was the least recently used idle one")
+                  (long @env-cache-max)))
+
         effective-ttl
         (if pressure? 0 (long @env-idle-ttl-ms))
 
@@ -1115,7 +1146,12 @@
                (filter (fn [[_ entry]]
                          (>= (long (age entry)) (long effective-ttl))))
                (reduce (fn [n [k _]]
-                         (if (evict-if-idle! k effective-ttl) (inc (long n)) n))
+                         (if (evict-if-idle! k
+                                             effective-ttl
+                                             (if pressure? :memory-pressure :idle-timeout)
+                                             (if pressure? pressure-detail idle-detail))
+                           (inc (long n))
+                           n))
                        0))
           0)
 
@@ -1134,7 +1170,7 @@
                             >)
                    (take over)
                    (reduce (fn [n [k _]]
-                             (if (evict-if-idle! k 0) (inc (long n)) n))
+                             (if (evict-if-idle! k 0 :session-limit limit-detail) (inc (long n)) n))
                            0))
               0))
           0)
@@ -1544,6 +1580,7 @@
    session snapshot restores the helpers and variables the old sandbox saved."
   [k]
   (when-let [old (get @cache k)]
+    (env/log-sandbox-stop! (:session-id (:environment old)) :settings-change settings-change-detail)
     (let [fresh-env (open-env! k {})]
       (swap! cache assoc
         k

@@ -366,9 +366,14 @@
       ;; disposed env, which beats blocking close/delete forever behind a
       ;; hung provider stream.
       (if (.tryLock lock 5 java.util.concurrent.TimeUnit/SECONDS)
-        (try (try (loop-env/dispose-environment! environment) (catch Exception _ nil))
+        (try (try (loop-env/dispose-environment! environment
+                                                 :session-closed
+                                                 "a client closed the session")
+                  (catch Exception _ nil))
              (finally (.unlock lock)))
-        (try (loop-env/dispose-environment! environment) (catch Exception _ nil))))
+        (try
+          (loop-env/dispose-environment! environment :session-closed "a client closed the session")
+          (catch Exception _ nil))))
     (swap! loop-env/cache dissoc k)))
 
 (defn delete!
@@ -417,8 +422,11 @@
   ;; shutdown. Bounded 2s wait per session, then force-dispose.
   (doseq [[_ {:keys [environment ^java.util.concurrent.locks.ReentrantLock lock]}] @loop-env/cache]
     (if (.tryLock lock 2 java.util.concurrent.TimeUnit/SECONDS)
-      (try (try (loop-env/dispose-environment! environment) (catch Exception _ nil))
+      (try (try
+             (loop-env/dispose-environment! environment :gateway-shutdown "the gateway shut down")
+             (catch Exception _ nil))
            (finally (.unlock lock)))
-      (try (loop-env/dispose-environment! environment) (catch Exception _ nil))))
+      (try (loop-env/dispose-environment! environment :gateway-shutdown "the gateway shut down")
+           (catch Exception _ nil))))
   (reset! loop-env/cache {})
   (persistance/db-dispose-shared-connection!))

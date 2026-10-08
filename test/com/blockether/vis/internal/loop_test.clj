@@ -9615,8 +9615,22 @@
 
                              (swap! env-cache assoc k entry)
                              (try (backdate-entry! entry 10000)
-                                  (expect (true? (evict-if-idle! k 5000)))
+                                  (expect (true? (evict-if-idle! k 5000 :idle-timeout str)))
                                   (expect (not (contains? @env-cache k)))
+                                   (finally (swap! env-cache dissoc k)))))
+                       (it "logs why it evicts a sandbox"
+                           ;; A sandbox restarted, and the gateway log never said why.
+                           (let [k
+                                 "reaper-test/reason"
+
+                                 logged
+                                 (atom [])]
+
+                             (swap! env-cache assoc k (new-cache-entry {:session-id "s-1"}))
+                             (try (with-redefs [env/log-sandbox-stop! (fn [& args] (swap! logged conj args))]
+                                    (backdate-entry! (get @env-cache k) 10000)
+                                    (expect (true? (evict-if-idle! k 5000 :idle-timeout #(str "idle " (quot (long %) 1000) " s")))))
+                                  (expect (= [["s-1" :idle-timeout "idle 10 s"]] @logged))
                                   (finally (swap! env-cache dissoc k)))))
                        (it
                          "skips an entry whose lock is held (a running turn)"
@@ -9650,7 +9664,7 @@
                              (try (backdate-entry! entry 10000)
                                   (.start holder)
                                   @held
-                                  (expect (false? (evict-if-idle! k 5000)))
+                                  (expect (false? (evict-if-idle! k 5000 :idle-timeout str)))
                                   (expect (contains? @env-cache k))
                                   (finally (deliver release true)
                                            (.join holder 1000)
@@ -9664,7 +9678,7 @@
 
                              (swap! env-cache assoc k entry)
                              (try (touch-entry! entry)
-                                  (expect (false? (evict-if-idle! k 60000)))
+                                  (expect (false? (evict-if-idle! k 60000 :idle-timeout str)))
                                   (expect (contains? @env-cache k))
                                   (finally (swap! env-cache dissoc k)))))))
 

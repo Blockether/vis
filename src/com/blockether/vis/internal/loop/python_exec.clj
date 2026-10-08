@@ -104,6 +104,10 @@
         (if retired (compare-and-set! retired false true) true)]
 
     (when (and python-context first-retirement?)
+      (env/log-sandbox-stop!
+        (:session-id environment)
+        :worker-retired
+        (str "its Python process did not stop (" reason "), so the gateway killed it"))
       (try (env/retire-python-context! python-context) (catch Throwable _ nil))
       (tel/log! {:level :warn
                  :id ::python-worker-retired

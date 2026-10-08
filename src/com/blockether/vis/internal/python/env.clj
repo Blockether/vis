@@ -1392,6 +1392,17 @@
    The NameError hint in [[map-python-error]] reads both."
   (atom {}))
 
+(defn log-sandbox-stop!
+  "Log why the sandbox of `session-id` stops, before it stops: one warning with
+   `cause` and `detail`. A restart is never silent in the gateway log."
+  [session-id cause detail]
+  (when session-id
+    (tel/log! {:level :warn
+               :id ::sandbox-stopped
+               :data {:session-id (str session-id) :cause cause :detail detail}}
+              (str "Python sandbox of session " session-id " stops (" (name cause) "): " detail))
+    nil))
+
 (defn dispose-python-context!
   "Drop `session`: its sandbox, separate trusted extension worker, host bindings
    and the right for this environment to run Python again. Gateway teardown kills
