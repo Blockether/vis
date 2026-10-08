@@ -7,7 +7,7 @@ import type { GatewayClient } from '../lib/gateway';
 import type { TranscriptIteration } from '../lib/types';
 
 // A queued message the human sent with `→` (PLAN-queue-send-now, Task 4) lands at the
-// start of a step. The trace paints it as a `You` band above that step's work, with
+// start of a step. The trace paints it like a `You` request under a `Queued` header (#330),
 // the step it reached, on both the live bubble and the replayed transcript.
 describe('a queued message delivered into the turn', () => {
   const iterations: TranscriptIteration[] = [
@@ -27,7 +27,8 @@ describe('a queued message delivered into the turn', () => {
 
     const [band] = bands(container);
     // User report: the band said `step N`; the transcript counts iterations, so it says `iter N`.
-    expect(band?.textContent).toContain('You · sent now · iter 2');
+    expect(band?.textContent).toContain('Queued · sent now · iter 2');
+    expect(band?.textContent).toContain('You');
     expect(band?.textContent).toContain('Also check the lint config.');
     const text = container.textContent ?? '';
     // The reasoning folds into the THINKING row of its digest, below the message.

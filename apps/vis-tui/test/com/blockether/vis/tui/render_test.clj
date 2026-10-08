@@ -11958,42 +11958,92 @@ print(paths)"
 
 (defdescribe
   delivered-user-input-test
-  ;; A queued message the running turn received through `→ Send now` paints as
-  ;; ONE bracketed "You" block at the top of the step that read it: the queue
-  ;; header glyph with the delivery meta, the words on the rail, the border.
+  ;; Issue #330: a queued message the running turn received through `→ Send now` looks
+  ;; like a normal user message: a "Queued" header, the "You" label, then the words on
+  ;; the user bubble paper. No queue rail or border.
   (let [entry
         (iteration/canonicalize {:iteration 2
                                  :forms []
                                  :user-input [{:request "ship it" :queued-turn-id "q1"}
                                               {:request "/tmp/shot.png\nlook"
-                                               :display-request "\ud83d\uddbc shot.png look"}]})
+                                               :display-request "🖼 shot.png look"}]})
 
         lines
         (format-iteration-entry entry 60 2)
 
         ;; User report: the header said `step K`; it counts iterations, so it says `iter K`.
         hdr
-        (str p/MARKER_QUEUE_HDR "You · sent now · iter 2")]
+        (str p/MARKER_USER_INPUT_HDR "Queued · sent now · iter 2")
 
-    (it "opens with the delivery header, then the words in queue order on the rail"
-        (expect (some #(= hdr %) lines))
-        ;; The display copy (chips, not paths) is what the reader sees; one rail-only
-        ;; row separates two messages.
-        (expect (= [(str p/MARKER_USER_INPUT "ship it") (str p/MARKER_USER_INPUT "")
-                    (str p/MARKER_USER_INPUT "\ud83d\uddbc shot.png look")]
-                   (filterv #(str/starts-with? % p/MARKER_USER_INPUT) lines))))
-    (it "caps the block with the rail border, above the step's own rows"
-        (let [hdr-at
-              (.indexOf ^java.util.List lines hdr)
+        label
+        (str p/MARKER_USER_INPUT_LABEL "You")]
 
-              border-at
-              (.indexOf ^java.util.List lines (str p/MARKER_QUEUE_BORDER ""))]
-
+    (it "opens with the Queued header and the You label, then the words in queue order"
+        (let [hdr-at (.indexOf ^java.util.List lines hdr)]
           (expect (<= 0 hdr-at))
-          (expect (< hdr-at border-at))))
+          (expect (= label (nth lines (inc hdr-at)))))
+        ;; The display copy (chips, not paths) is what the reader sees. One padding row
+        ;; opens and closes the bubble, and one separates two messages.
+        (expect (= [(str p/MARKER_USER_INPUT "") (str p/MARKER_USER_INPUT "ship it")
+                    (str p/MARKER_USER_INPUT "") (str p/MARKER_USER_INPUT "🖼 shot.png look")
+                    (str p/MARKER_USER_INPUT "")]
+                   (filterv #(str/starts-with? % p/MARKER_USER_INPUT) lines))))
+    (it "drops the queue rail and border"
+        (expect (not-any? #(str/starts-with? % p/MARKER_QUEUE_HDR) lines))
+        (expect (not-any? #(str/starts-with? % p/MARKER_QUEUE_BORDER) lines)))
+    (it
+      "paints the words on the user bubble paper and the label in the user role ink"
+      (let [puts
+            (atom [])
+
+            fills
+            (atom [])
+
+            fg
+            (atom nil)
+
+            bg
+            (atom nil)
+
+            g
+            (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+              (clearModifiers [] this)
+              (enableModifiers [_] this)
+              (disableModifiers [_] this)
+              (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+              (setForegroundColor [c] (reset! fg c) this)
+              (setBackgroundColor [c] (reset! bg c) this)
+              (getForegroundColor [] @fg)
+              (getBackgroundColor [] @bg)
+              (putString [_col row text]
+                (swap! puts conj {:row row :text (put-text text) :fg @fg :bg @bg})
+                this)
+              (fillRectangle [pos _size _ch]
+                (swap! fills conj
+                  {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos) :bg @bg})
+                this)
+              (setCharacter [_ _ _] this))
+
+            _
+            (render/draw-chat-bubble! g
+                                      {:role :assistant :text "" :prewrapped-lines lines}
+                                      0 0
+                                      64 {:viewport-top 0 :viewport-h 0})
+
+            put-of
+            (fn [text]
+              (first (filter #(str/includes? (:text %) text) @puts)))
+
+            words
+            (put-of "ship it")]
+
+        (expect (= {:fg t/user-bubble-fg :bg t/user-bubble-bg} (select-keys words [:fg :bg])))
+        (expect (some #(and (= (:row words) (:row %)) (= t/user-bubble-bg (:bg %))) @fills))
+        (expect (= t/user-role-fg (:fg (put-of "You"))))
+        (expect (= t/header-active-tab-accent (:fg (put-of "Queued"))))))
     (it "paints no block for a step that received nothing"
         (let [plain (format-iteration-entry (iteration/canonicalize {:iteration 1 :forms []}) 60 1)]
-          (expect (not-any? #(str/starts-with? % p/MARKER_QUEUE_HDR) plain))
+          (expect (not-any? #(str/starts-with? % p/MARKER_USER_INPUT_HDR) plain))
           (expect (not-any? #(str/starts-with? % p/MARKER_USER_INPUT) plain))))
     (it "invalidates the live render cache when the messages land"
         (let [fingerprint @#'render/iteration-fingerprint]

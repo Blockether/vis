@@ -1350,6 +1350,10 @@
 
 (def ^:private user-input-marker p/MARKER_USER_INPUT)
 
+(def ^:private user-input-hdr-marker p/MARKER_USER_INPUT_HDR)
+
+(def ^:private user-input-label-marker p/MARKER_USER_INPUT_LABEL)
+
 (def ^:private activity-marker p/MARKER_ACTIVITY)
 
 (def ^:private md-h1-marker p/MARKER_MD_H1)
@@ -2645,25 +2649,41 @@
                                            y
                                            iw
                                            viewport-top)))
-                    ;; ── Delivered message row — a queued message the running turn
-                    ;; received at this step (`→ Send now`): the left rail `│` in
-                    ;; accent, then the user's words in the user bubble fg on the
-                    ;; regular bubble bg. The header above it reuses the queue header
-                    ;; painter (`┌ You · sent now · iter K`) and the border below it
-                    ;; the queue border, so the block reads as one bracket.
-                    (str/starts-with? line user-input-marker)
-                    (let [raw (subs line 1)]
+                    ;; ── Delivered message — a queued message the running turn received at
+                    ;; this step (`→ Send now`). It paints like a normal user message: the
+                    ;; "Queued" header, the bold "You" label, then the words on the user
+                    ;; bubble paper with the bubble's 2-column padding.
+                    (str/starts-with? line user-input-hdr-marker)
+                    (let [raw (subs line 1)
+                          [label meta-text] (str/split raw #" · " 2)]
+
                       (p/set-bg! g bg-color)
                       (p/fill-rect! g fbx y fill-iw 1)
                       (p/set-colors! g t/header-active-tab-accent bg-color)
-                      (p/styled g [p/BOLD] (p/put-str! g x y "│"))
-                      (p/set-colors! g t/user-bubble-fg bg-color)
+                      (p/styled g [p/BOLD] (p/put-str! g x y label))
+                      (when meta-text
+                        (p/set-colors! g t/dialog-hint bg-color)
+                        (p/put-str! g
+                                    (+ (long x) (long (p/display-width label)))
+                                    y
+                                    (str " · " meta-text))))
+                    (str/starts-with? line user-input-label-marker)
+                    (let [raw (subs line 1)]
+                      (p/set-bg! g bg-color)
+                      (p/fill-rect! g fbx y fill-iw 1)
+                      (p/set-colors! g t/user-role-fg bg-color)
+                      (p/styled g [p/BOLD] (p/put-str! g x y raw)))
+                    (str/starts-with? line user-input-marker)
+                    (let [raw (subs line 1)]
+                      (p/set-bg! g t/user-bubble-bg)
+                      (p/fill-rect! g fbx y fill-iw 1)
+                      (p/set-colors! g t/user-bubble-fg t/user-bubble-bg)
                       (p/paint-styled-line! g
                                             (+ (long x) 2)
                                             y
                                             raw
                                             t/user-bubble-fg
-                                            bg-color
+                                            t/user-bubble-bg
                                             t/code-block-fg
                                             t/code-block-bg))
                     ;; Activity continues the Code surface, with independent disclosure.
@@ -8159,35 +8179,33 @@
                           (layout/ast->entries (vis/markdown->ast p) fill-w {:mode :channel})))
               (conj (line-entry ""))))
 
-        ;; The queued messages this step received (`→ Send now`): ONE bracketed
-        ;; "You" block above the step's own work, so the reader sees what the model
-        ;; read before it acted. The header carries the delivery meta; the rows
-        ;; reuse the queue rail, the border caps it.
+        ;; The queued messages this step received (`→ Send now`), above the step's own
+        ;; work, so the reader sees what the model read before it acted. Each block looks
+        ;; like a normal user message: a "Queued" header with the delivery meta, the
+        ;; "You" label, then the words on the user bubble paper.
         user-input-body
         (when (seq user-input)
-          (let [text-w
-                (max 1 (- (long fill-w) 2))
-
-                texts
-                (into []
-                      (keep (fn [{:keys [display-request request]}]
-                              (some-> (or (not-empty (str display-request)) request)
-                                      str
-                                      str/trim
-                                      not-empty)))
-                      user-input)]
-
+          (let [texts (into []
+                            (keep (fn [{:keys [display-request request]}]
+                                    (some-> (or (not-empty (str display-request)) request)
+                                            str
+                                            str/trim
+                                            not-empty)))
+                            user-input)]
             (when (seq texts)
               (-> [(line-entry "")
-                   (line-entry (str queue-hdr-marker "You · sent now · iter " iteration-number))]
+                   (line-entry
+                     (str user-input-hdr-marker "Queued · sent now · iter " iteration-number))
+                   (line-entry (str user-input-label-marker "You"))
+                   (line-entry (str user-input-marker ""))]
                   (into (mapcat (fn [i text]
                                   (cond->> (mapv #(line-entry (str user-input-marker %))
-                                                 (wrap-text text text-w))
+                                                 (wrap-text text (max 1 (long fill-w))))
                                     (pos? (long i))
                                     (into [(line-entry (str user-input-marker ""))])))
                                 (range)
                                 texts))
-                  (conj (line-entry (str queue-border-marker "")))
+                  (conj (line-entry (str user-input-marker "")))
                   (conj (line-entry ""))))))
 
         header-lines

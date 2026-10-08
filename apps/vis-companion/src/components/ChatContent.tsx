@@ -2938,8 +2938,8 @@ function DeliveredMessage({
 
 /**
  * Queued messages the human sent with `→` while this turn ran. They landed at the
- * start of `step`, so they paint above that step's reasoning, in the `You` colors of
- * the request bubble, with the step they reached.
+ * start of `step`, so they paint above that step's reasoning. They look like the
+ * request bubble, under one `Queued` header with the step they reached.
  */
 function DeliveredUserInputBand({
   messages,
@@ -2954,9 +2954,10 @@ function DeliveredUserInputBand({
 }) {
   return (
     <div className="mb-2.5 min-w-0" data-transcript-user-input>
-      <div className="mb-1.5 font-mono text-meta font-bold text-you-role">
-        You · sent now · iter {step}
+      <div className="mb-1 font-mono text-meta font-bold text-accent-ink">
+        Queued <span className="font-normal text-dialog-hint">· sent now · iter {step}</span>
       </div>
+      <div className="mb-1.5 font-mono text-meta font-bold text-you-role">You</div>
       <div
         className={`${RAIL_SPINE} border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground mouse:text-title`}
       >
