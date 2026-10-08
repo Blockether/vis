@@ -24,7 +24,7 @@
    - DISPLAY — `:pos`, the eased on-screen row. Present only while an
      animation is in flight (and held at the bottom in `:follow` so the
      NEXT content growth has somewhere to ease FROM instead of
-     teleporting). Absent ⇒ snapped exactly to desired.
+     teleporting). Absent => snapped exactly to desired.
 
    Every transition REPLACES the whole value, so nothing can dangle.
    `ease` is called once per render frame; in `:follow` mode the desired
@@ -82,7 +82,7 @@
     (long (or (:pos sc) (desired sc max-s)))))
 
 (defn animating?
-  "True when an ease is still in flight (displayed ≠ desired). Drives the
+  "True when an ease is still in flight (displayed != desired). Drives the
    render loop's fast tick cadence; settles to false so an idle view
    stops repainting."
   [sc ^long max-s]
@@ -96,7 +96,7 @@
    changes height in one step. Easing across that step is what the reader sees
    as the view reflowing — content scrolling by itself for several frames after
    every turn. So a FOLLOW reader is re-pinned to the CLEAN auto-bottom lock:
-   no `:pos` ⇒ `layout-offset` nil ⇒ the tail is laid out flush against the
+   no `:pos` => `layout-offset` nil => the tail is laid out flush against the
    bottom, with nothing left to ease toward.
 
    A reader PARKED above the bottom is left exactly where they are reading."
@@ -147,7 +147,7 @@
 (defn layout-offset
   "The offset to feed `virtual/layout` and the scrollbar geometry.
 
-   `nil` ⇒ auto-bottom (never anchored, always tracks the latest message
+   `nil` => auto-bottom (never anchored, always tracks the latest message
    — used when FOLLOW is settled at the bottom). A concrete row is
    returned while parked or mid-ease."
   [sc ^long max-s]
@@ -158,8 +158,8 @@
         (:pos sc)]
 
     (case (:mode sc)
-      ;; Settled at (or below) the bottom ⇒ nil exact-bottom lock.
-      ;; Mid-ease (pos above the bottom) ⇒ concrete row.
+      ;; Settled at (or below) the bottom => nil exact-bottom lock.
+      ;; Mid-ease (pos above the bottom) => concrete row.
       :follow
       (when (and pos (< (long pos) max-s)) (long pos))
 
@@ -182,8 +182,8 @@
   "Advance the on-screen `:pos` one step toward `desired`. Called once per
    render frame.
 
-   - Mid-ease ⇒ step `:pos` toward the target.
-   - Settled ⇒ DROP `:pos` (clean snap; no further repaint).
+   - Mid-ease => step `:pos` toward the target.
+   - Settled => DROP `:pos` (clean snap; no further repaint).
 
    FOLLOW never re-pins `:pos` at the bottom. It used to, so that the next
    content growth had \"somewhere to ease FROM\" — which is precisely what made

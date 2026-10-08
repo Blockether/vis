@@ -52,8 +52,8 @@
             MouseAction$WheelMomentum MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
-           [com.googlecode.lanterna.terminal.ansi ANSITerminal UnixLikeTerminal$CtrlCBehaviour
-            UnixTerminal]
+           [com.googlecode.lanterna.terminal.ansi ANSITerminal TerminalCapabilities
+            UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
            [com.googlecode.lanterna.terminal.html HtmlMedia HtmlMedia$Kind HtmlTerminal]
            [java.io PrintWriter StringWriter]
            [java.nio.charset Charset]
@@ -1290,7 +1290,7 @@
          (input/input->text input-state)
 
          ;; `slash/suggestions` returns nil unless the text is a slash query
-         ;; (`slash-query` ⇒ starts with a single `/`). Guard on that FIRST so
+         ;; (`slash-query` => starts with a single `/`). Guard on that FIRST so
          ;; non-slash input — the overwhelmingly common case, every streaming
          ;; tick and every plain keystroke — never pays `(menu-commands screen)`,
          ;; which rebuilds `template-slash-commands` (prompt-template scan +
@@ -3777,7 +3777,7 @@
    scroll position, AND the view is parked ABOVE the live bottom. In that
    state a full frame would repaint header/footer/input to byte-identical
    cells (their inputs didn't change) and hide the input cursor (`scrolled-up?`
-   ⇒ nil) — so a messages-only repaint is pixel-identical to a full frame at a
+   => nil) — so a messages-only repaint is pixel-identical to a full frame at a
    fraction of the cost. Anything that could make the fast path diverge —
    loading (live bubble grows), a mouse selection, an open overlay / find bar /
    jump-label mode, or the settle back to FOLLOW (which must restore the input
@@ -3836,8 +3836,8 @@
 (defn- input-only-change?
   "True when the ONLY thing that changed vs the last painted frame is the input
    TEXT, AND the input box's rendered height is unchanged. The transcript
-   viewport is a function of the input box height (`input-box-h` ⇒ `input-top`
-   ⇒ `echo-row`/`messages-bottom` ⇒ `inner-h`), so as long as the box still
+   viewport is a function of the input box height (`input-box-h` => `input-top`
+   => `echo-row`/`messages-bottom` => `inner-h`), so as long as the box still
    occupies the same number of visual rows, the whole band ABOVE the input —
    transcript, scrollbar, header — is byte-identical to the previous full frame.
    In that state a full frame would repaint every bubble to identical cells and
@@ -3862,7 +3862,7 @@
        (not (get-in db [:search :active?]))
        (not (suggestion-trigger-active? (:input prev-db)))
        (not (suggestion-trigger-active? (:input db)))
-       ;; Box height unchanged ⇒ transcript viewport geometry unchanged. A wrap
+       ;; Box height unchanged => transcript viewport geometry unchanged. A wrap
        ;; that grows/shrinks the box moves `messages-bottom` and MUST take the
        ;; full painter so the transcript re-lays-out against the new `inner-h`.
        (= (input-text-rows (:input prev-db) cols) (input-text-rows (:input db) cols))
@@ -4331,7 +4331,7 @@
 
         ;; Geometry MUST match render-frame! / render-live-bubble-frame!
         ;; EXACTLY — a one-row slip shifts the viewport + scrollbar and reads
-        ;; as a jump on the fast↔full flip (see render-live-bubble-frame!).
+        ;; as a jump on the fast<->full flip (see render-live-bubble-frame!).
         {:keys [^long echo-row]}
         (composer-geometry db cols rows)
 
@@ -4421,7 +4421,7 @@
                         inner-h
                         db)
     (.commitFrame interactions/hit-map)
-    ;; scrolled-up? ⇒ input cursor hidden (matches draw-bottom-chrome!).
+    ;; scrolled-up? => input cursor hidden (matches draw-bottom-chrome!).
     (.setCursorPosition screen nil)
     (let [refresh-start-ns (System/nanoTime)]
       (frame/refresh! screen)
@@ -6276,7 +6276,7 @@
                        {:id (str (get group "id"))
                         :label (str (get group "name") "  (" (get group "session_count" 0) ")")})
                      groups)
-               [{:id ::new-group :label "＋ New group…"}
+               [{:id ::new-group :label "+ New group…"}
                 {:id ::remove-group :label "✗ Remove from group"}])))
 
 (defn- move-project-sessions!
@@ -6435,7 +6435,7 @@
                                                        :ttl-ms copy-success-ttl-ms))))))))))
 
 (defn- sidebar-row-menu!
-  "The rail's ⋮ menu for the row under the cursor, from `projects/row-menu-items`.
+  "The rail's ⋯ menu for the row under the cursor, from `projects/row-menu-items`.
    An `:initial-action` on `entry` runs that item without the menu, which is how
    the sidebar keys act. Every verb that changes the gateway refreshes the rail
    from the gateway's own answer. `start-in-group!` is called with a group id and
@@ -7022,9 +7022,11 @@
    Shift+Enter, which `input/handle-key` treats as a line break. Windows Terminal gets
    win32-input-mode instead of the kitty keyboard protocol: its console host serves it
    to programs in WSL, which receive neither of the other reports, and it keeps AltGr
-   letters (Polish ą, German @) as text, which released builds send as Alt chords under
+   letters (Polish a-ogonek, German @) as text, which released builds send as Alt chords under
    the kitty protocol (microsoft/terminal#19977, fixed after v1.25.1912.0).
-   modifyOtherKeys is ignored by Windows Terminal and still reaches tmux."
+   modifyOtherKeys is ignored by Windows Terminal and still reaches tmux. The terminal
+   also detects its capabilities as opentui does, so wide text gets the width that the
+   terminal draws."
   [terminal env]
   (when (instance? ANSITerminal terminal)
     (let [^ANSITerminal terminal terminal]
@@ -7033,13 +7035,14 @@
            (if (windows-terminal? env)
              (.setWin32InputMode terminal true)
              (.setKittyKeyboardProtocol terminal true))
+           (.setTerminalCapabilities terminal (TerminalCapabilities. ^java.util.Map env))
            (catch Throwable _ nil)))))
 
 (defn- probe-terminal-cell-size!
   "Ask a GRAPHICAL terminal for its REAL cell pixel size and feed it into
-   `timg/set-cell-dimensions!`, so an inline-image box reserves the EXACT rows ×
-   cols the picture occupies. The box sizer otherwise runs on a hardcoded 9×18
-   cell guess; Kitty fits the image into the reserved `c×r` box PRESERVING aspect
+   `timg/set-cell-dimensions!`, so an inline-image box reserves the EXACT rows x
+   cols the picture occupies. The box sizer otherwise runs on a hardcoded 9x18
+   cell guess; Kitty fits the image into the reserved `cxr` box PRESERVING aspect
    ratio, so when that guess is off the picture letterboxes INSIDE the reserved
    rows and reads as \"too small / detached from the card\".
 
@@ -7732,7 +7735,7 @@
                                                                      (get pr "session_count")
                                                                      ")")})
                                                       projects)
-                                                [{:id ::new-project :label "＋ New project…"}
+                                                [{:id ::new-project :label "+ New project…"}
                                                  {:id ::remove-project
                                                   :label "✗ Remove from project"}]))
                              pick (with-dialog-lock #(dlg/searchable-select!
@@ -9523,7 +9526,7 @@
                              (recur))
 
                          ;; C-x TAB / C-x S-TAB — Emacs global fold cycle: toggle
-                         ;; every disclosure collapsed↔expanded in one keystroke.
+                         ;; every disclosure collapsed<->expanded in one keystroke.
                          :toggle-all-details
                          (do (state/dispatch [:toggle-all-details]) (recur))
 

@@ -1781,7 +1781,7 @@
   "The WHOLE provider dialog in ONE gateway call.
 
    `GET /v1/router` already carries every provider's `status` and `limits`, so a
-   client that wants both for N providers reads it once instead of firing 2×N
+   client that wants both for N providers reads it once instead of firing 2xN
    per-provider probes. Keyed by provider-id keyword:
    `{:openai {:status {\"is_authenticated\" …} :limits {…}}}` — `:status` stays
    VERBATIM snake_case strings (same shape `provider-status` returns) and
@@ -1875,7 +1875,7 @@
    the parked read with an IOException, which `read-events-until!` / `mux-run!`
    already treat as a drop and RECONNECT from the last cursor: a recovered
    daemon resumes losslessly, a truly dead one fails fast and surfaces a real
-   disconnect once the reconnect budget is spent. 4× the heartbeat so a couple
+   disconnect once the reconnect budget is spent. 4x the heartbeat so a couple
    of missed heartbeats don't trip it."
   60000)
 

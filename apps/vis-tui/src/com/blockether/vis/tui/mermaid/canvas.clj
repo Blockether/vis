@@ -329,9 +329,9 @@
   {1 \│ 2 \│ 3 \│ 4 \─ 8 \─ 12 \─ 5 \┘ 9 \└ 6 \┐ 10 \┌ 7 \┤ 11 \├ 13 \┴ 14 \┬ 15 \┼})
 
 (def ^:private heavy-glyphs
-  {1 \┃ 2 \┃ 3 \┃ 4 \━ 8 \━ 12 \━ 5 \┛ 9 \┗ 6 \┓ 10 \┏ 7 \┫ 11 \┣ 13 \┻ 14 \┳ 15 \╋})
+  {1 \┃ 2 \┃ 3 \┃ 4 \─ 8 \─ 12 \─ 5 \┘ 9 \└ 6 \┐ 10 \┌ 7 \┤ 11 \├ 13 \┴ 14 \┬ 15 \┼})
 
-(def ^:private dotted-glyphs (merge light-glyphs {1 \╎ 2 \╎ 3 \╎ 4 \╌ 8 \╌ 12 \╌}))
+(def ^:private dotted-glyphs (merge light-glyphs {1 \· 2 \· 3 \· 4 \· 8 \· 12 \·}))
 
 (def ^:private style-glyphs {:solid light-glyphs :thick heavy-glyphs :dotted dotted-glyphs})
 
@@ -342,7 +342,7 @@
 (def chrome-glyphs
   "Glyphs that draw the SHAPE of a diagram. They take the muted chrome tone
    unless a node or an edge gives them its own colour."
-  (set "─│┌┐└┘├┤┬┴┼━┃┏┓┗┛┣┫┳┻╋╭╮╯╰╱╲╌╎▼▲▶◀═║╔╗╚╝╠╣╦╩╬┄┆"))
+  (set "─│┃┌┐└┘├┤┬┴┼╭╮╯╰/\\·▶▼←↑"))
 
 (defn make-canvas
   [^long rows ^long cols]

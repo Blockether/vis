@@ -109,7 +109,7 @@
                     (str/replace #"\s*<<[^>]*>>" "")
                     (str/replace #"@\{[^}]*\}" "")
                     (str/replace #"^(\S+)\s*(\.\.>|-->|--)\s*:\s*(\S+)\s+(\S+)$"
-                                 "$1 $2|«$3»| $4")))))
+                                 "$1 $2|<<$3>>| $4")))))
 
 (defn- note-statements
   "[lines notes] where `note for X \"text\"` statements move into `notes`."
@@ -236,7 +236,7 @@
   [graph id member]
   (let [member (generic (str/trim member))]
     (if-let [[_ annotation] (re-matches #"<<(.+)>>" member)]
-      (update-node graph id update :label #(str "«" annotation "»\n" %))
+      (update-node graph id update :label #(str "<<" annotation ">>\n" %))
       (update-node graph id update :members (fnil conj []) member))))
 
 (defn- member-sections
@@ -598,7 +598,7 @@
                                  (ensure-node name {})
                                  (update-node name
                                               assoc
-                                              :label (str "«" label "»\n" name)
+                                              :label (str "<<" label ">>\n" name)
                                               :text-tone (if element? :cyan :purple)
                                               :shape (if element? :round :rect)))
                        class-name
@@ -614,7 +614,7 @@
                        (-> graph
                            (ensure-node a {})
                            (ensure-node b {})
-                           (add-edge (edge a b :label (str "«" kind "»") :style :dotted)))
+                           (add-edge (edge a b :label (str "<<" kind ">>") :style :dotted)))
                        nil))
               (if-let [[_ b kind a]
                        (re-matches #"(\"[^\"]+\"|\S+)\s+<-\s*(\w+)\s*-\s+(\"[^\"]+\"|\S+)" line)]
@@ -625,7 +625,7 @@
                          (-> graph
                              (ensure-node a {})
                              (ensure-node b {})
-                             (add-edge (edge a b :label (str "«" kind "»") :style :dotted)))
+                             (add-edge (edge a b :label (str "<<" kind ">>") :style :dotted)))
                          nil))
                 (recur (rest lines) (or (read-style graph line) graph) nil))))
       (finish graph (flow-in args lines) width))))
@@ -681,7 +681,7 @@
                             (ensure-node id {})
                             (update-node id
                                          assoc
-                                         :label (str "«" kind "»\n" (or label id))
+                                         :label (str "<<" kind ">>\n" (or label id))
                                          :shape shape
                                          :tone (if ext? :chrome tone)
                                          :text-tone (if ext? nil tone)
@@ -806,7 +806,7 @@
               (recur (inc at) depth quote? (inc at) (conj out (subs line start at)))
               :else (recur (inc at) depth quote? start out))))))
 
-(def ^:private arrow-glyph {"right" "──▶" "left" "◀──" "up" "▲" "down" "▼" "x" "◀─▶" "y" "▲▼"})
+(def ^:private arrow-glyph {"right" "──▶" "left" "←──" "up" "↑" "down" "↓" "x" "←─▶" "y" "↑↓"})
 
 (defn- block-item
   [token]
@@ -946,7 +946,7 @@
               ["╭" "╮" "╰" "╯"]
 
               (:diamond :hexagon)
-              ["╱" "╲" "╲" "╱"]
+              ["/" "\\" "\\" "/"]
 
               ["┌" "┐" "└" "┘"])
 

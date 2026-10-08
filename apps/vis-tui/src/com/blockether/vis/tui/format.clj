@@ -388,10 +388,10 @@
 
 (defn meta-fallback-note
   "Faint routing note when a turn fell back or retried a provider:
-     ↳ from <selected-model> — <reason>, retried N×, prompt cache lost, session now on <model>
+     ↳ from <selected-model> — <reason>, retried Nx, prompt cache lost, session now on <model>
    `reason` prefers the HTTP status (429) on a fallback event, then the reason
    keyword, then the free-form error. Retry-only traces use their final retry
-   event, so a provider failure is never rendered as merely `retried N×`.
+   event, so a provider failure is never rendered as merely `retried Nx`.
 
    A `:scope :session-pick` event means the rescue also MOVED the session's pick, so
    the model chip in every surface now names a provider the human never chose: the
@@ -400,7 +400,7 @@
 
    A route that CHANGED provider or model also lost prompt-cache continuity: the peer
    never saw the cache the pinned route built, so every following request re-sends the
-   whole context. That silent 4× cost step is the reported half of issue #154 the
+   whole context. That silent 4x cost step is the reported half of issue #154 the
    numbers never showed, so the note says it in words on the turn it happens.
 
    A `:llm.routing/model-fallback` moved the MODEL inside one provider — Anthropic's
@@ -435,7 +435,7 @@
             moved-to (when pick-move
                        (model-pair-label {:provider (:to-provider pick-move)
                                           :model (:to-model pick-move)}))
-            tail (->> [why (when (pos? retries) (str "retried " retries "×"))
+            tail (->> [why (when (pos? retries) (str "retried " retries "x"))
                        (when cache-lost? "prompt cache lost")
                        (when moved-to (str "session now on " moved-to))]
                       (remove (fn [s]

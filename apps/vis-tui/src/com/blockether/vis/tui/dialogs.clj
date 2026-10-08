@@ -243,7 +243,7 @@
 
 (def ^:private min-adaptive-content-h
   "Content-height floor for adaptive dialogs — the box never shrinks below
-   this many content rows (≈ this + chrome tall), so a tiny popup still reads
+   this many content rows (~ this + chrome tall), so a tiny popup still reads
    as a comfortable card instead of a cramped sliver."
   3)
 
@@ -713,7 +713,7 @@
 (defn- draw-row-surface!
   "The shared geometry of EVERY focusable form row, typed or toggled. A form has
    ONE text column: the label, the prose, an option, a checkbox and an input box
-   all land on it, and focus costs the text no indent — the accent ring `▎` a
+   all land on it, and focus costs the text no indent — the accent ring `┃` a
    focused row wears lives in the GUTTER beside that column.
 
    The row owns the frame's INNER columns and nothing else. `left` is the frame's
@@ -763,7 +763,7 @@
     (when focused?
       ;; the ring rides the row's OWN paper — on a typed row that IS its surface
       (p/set-colors! g t/header-active-tab-accent bg)
-      (p/put-str! g ring-col row "▎"))
+      (p/put-str! g ring-col row "┃"))
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     text-left))
 
@@ -776,7 +776,7 @@
    edge, directly under its label.
 
    Focus is the other half, and it is said three ways at once: the focused field
-   wears the accent ring `▎` down its left edge, keeps the full field surface, and
+   wears the accent ring `┃` down its left edge, keeps the full field surface, and
    takes the ink (`box-fg`, bold). A field the keyboard is NOT in loses the ring,
    recedes to `theme/field-resting-bg` and dims to `dialog-hint`. That contrast IS
    the cursor in a form — there is no `•` gutter, because a marker in front of
@@ -805,7 +805,7 @@
    no input surface to fill. Paper that says \"type here\" under a row that cannot
    take a character is a lie about what the keyboard will do.
 
-   Focus is then the accent ring `▎` and the bold ink alone, and the status glyph
+   Focus is then the accent ring `┃` and the bold ink alone, and the status glyph
    ([[choice-mark]]) says what the toggle currently IS.
 
    It also carries NO field padding: the pad keeps typed text off a coloured
@@ -852,15 +852,15 @@
     (p/cursor-pos (+ (long text-left) (- cursor h-off)) row)))
 
 (defn draw-text-input-field!
-  "Borderless `› text` input row with an optional dim `placeholder`. Returns the
+  "Borderless `> text` input row with an optional dim `placeholder`. Returns the
    `TerminalPosition` the caller should park the terminal cursor at."
   ;; BORDERLESS query field (opencode-style dialog input): a single prompt line,
-  ;; no box. A dim "›" leads it; `placeholder` fills it while the text is empty.
+  ;; no box. A dim ">" leads it; `placeholder` fills it while the text is empty.
   ;; Drawn on `row`; the caller reserves the surrounding rows as margin.
   ([g left row inner-w text cursor] (draw-text-input-field! g left row inner-w text cursor nil))
   ([g left row inner-w text cursor placeholder]
    (let [prompt
-         "› "
+         "> "
 
          pw
          (count prompt)
@@ -941,8 +941,8 @@
               :else (max 1 (- last-row box-h -1)))))))
 
 (defn- dialog-rect
-  "Golden box `[left top box-w box-h]` for `content-w`×`content-h` content in a
-   `cols`×`rows` layout area. The terminal centers the box with a generous inset,
+  "Golden box `[left top box-w box-h]` for `content-w`x`content-h` content in a
+   `cols`x`rows` layout area. The terminal centers the box with a generous inset,
    nudged up and left. A `*dialog-region*` band keeps a compact inset, leaves room
    for the drop shadow and anchors the box to the region's row."
   [^long cols ^long rows ^long content-w ^long content-h]
@@ -961,7 +961,7 @@
 
 (defn- wrap-width
   "Columns that dialog text wraps at before its box is sized: the shared estimate,
-   capped by the text area of the narrowest default box in `cols`×`rows`. A
+   capped by the text area of the narrowest default box in `cols`x`rows`. A
    `*dialog-region*` band draws a narrower box than the terminal, and text measured
    wider than the box would push the rows below it out of the frame."
   ^long [^long cols ^long rows]
@@ -1146,7 +1146,7 @@
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
 (defn dialog-bounds
   "Pure geometry twin of `draw-dialog-chrome!` (explicit width+height arity):
-   the box rectangle a `content-w`×`content-h` dialog occupies, computed WITHOUT
+   the box rectangle a `content-w`x`content-h` dialog occupies, computed WITHOUT
    painting. Lets a component measure its full layout — and reconcile a scroll
    window — before any drawing happens. Returns the SAME shape the chrome does
    ({:left :top :right :bottom :inner-w :inner-h}), from the same golden math."
@@ -1233,13 +1233,11 @@
                                 (object-array [(long difference)]))
           percent (get health "estimate_difference_percent")]
 
-      (str/replace (str tokens
-                        (when (number? percent)
-                          (String/format Locale/US
-                                         (if signed? " (%+.1f%%)" " (%.1f%%)")
-                                         (object-array [(double percent)]))))
-                   "-"
-                   "−"))))
+      (str tokens
+           (when (number? percent)
+             (String/format Locale/US
+                            (if signed? " (%+.1f%%)" " (%.1f%%)")
+                            (object-array [(double percent)])))))))
 
 (defn- session-metric-rows
   [session {:keys [phase usage parts? roots?]}]
@@ -1382,11 +1380,11 @@
                                       (concat
                                         [(stat "Local estimate" (metric-tokens estimate))
                                          (stat "Provider-reported input" (metric-tokens input))
-                                         (stat "Estimate − reported"
+                                         (stat "Estimate - reported"
                                                (or (metric-token-difference health) "—")) (row "")]
                                         (mapcat (fn [part]
                                                   (cond-> [(stat (get part "label")
-                                                                 (str "≈"
+                                                                 (str "~"
                                                                       (metric-count
                                                                         (get part "tokens"))))]
                                                     (get part "path")
@@ -1413,7 +1411,7 @@
                                          (hint (case (get guidance "status")
                                                  "available"
                                                  (str (get guidance "path")
-                                                      " · ≈"
+                                                      " · ~"
                                                       (metric-count (get guidance "tokens"))
                                                       " tokens on disk")
 
@@ -1447,7 +1445,7 @@
              (stat "Reuse coverage"
                    (str (when (and estimated?
                                    (number? (get usage "reusable_prefix_coverage_percent")))
-                          "≈")
+                          "~")
                         (metric-percent (get usage "reusable_prefix_coverage_percent"))))
              (hint (str (if estimated? "Estimated share" "Share")
                         " of reusable prior input recovered from cache"
@@ -1490,7 +1488,7 @@
                  (let [w (long (max 1 (- (long text-w) (long (or indent 0)))))]
                    (cond (some? meter)
                          [(assoc row
-                            :text (str (apply str (repeat (long (* (double meter) w)) "━"))
+                            :text (str (apply str (repeat (long (* (double meter) w)) "─"))
                                        (apply str (repeat (- w (long (* (double meter) w))) "─"))))]
                          (and label (<= (+ (p/display-width label) 2 (p/display-width value)) w))
                          [(assoc row
@@ -1673,7 +1671,7 @@
         ;; re-flows the grid — the marks always have room already.
         sizing-grid
         (into [(mapv (fn [h]
-                       (str "▸" h " ▲"))
+                       (str "▸" h " ↑"))
                      header)]
               data)]
 
@@ -1731,7 +1729,7 @@
              (mapv (fn [i]
                      (str (when (= (long i) (long col)) "▸")
                           (nth header i "")
-                          (when (= sort-idx i) (if (= :desc sort-dir) " ▼" " ▲"))))
+                          (when (= sort-idx i) (if (= :desc sort-dir) " ↓" " ↑"))))
                    (range (count widths)))]
 
          {:cols cols
@@ -1741,7 +1739,7 @@
                       total
                       " row"
                       (when-not (= 1 total) "s")
-                      " × "
+                      " x "
                       ncols
                       " col"
                       (when-not (= 1 ncols) "s")
@@ -2785,7 +2783,7 @@
    filled ` label ` pill and only the COLOUR differs. `Yes` is the PRIMARY cap (ink
    fill, cream bold label) and `No` the muted secondary — and whichever one the
    choice sits on takes the ACCENT fill, the same colour the active tab wears. No
-   `▏`/`▕` rails and no marker glyph: a button here is a solid pill and focus is a
+   `│`/`│` rails and no marker glyph: a button here is a solid pill and focus is a
    colour. Same width in every state, so the row stays put as the choice moves.
    Returns the consumed width."
   [g col row label {:keys [variant is-focused]}]
@@ -6584,7 +6582,7 @@
         (true? (get session "is_awaiting_input"))
 
         ;; HOW MANY requests it is parked on, so answering one of two visibly
-        ;; drops the row from ×2 to ×1 instead of leaving the same badge lit.
+        ;; drops the row from x2 to x1 instead of leaving the same badge lit.
         awaiting-count
         (long (or (get session "awaiting_input_count") (if awaiting-input? 1 0)))
 
@@ -6629,10 +6627,10 @@
      :favorite? (some? (get session "favorite_rank"))
      :dir work-dir
      :work-dir work-dir
-     :status (cond awaiting-input? (if (> awaiting-count 1) (str "HITL ×" awaiting-count) "HITL")
+     :status (cond awaiting-input? (if (> awaiting-count 1) (str "HITL x" awaiting-count) "HITL")
                    live? "Live"
                    stopped? "Stopped"
-                   (pos? unread) (if (> unread 1) (str "New ×" unread) "New")
+                   (pos? unread) (if (> unread 1) (str "New x" unread) "New")
                    :else "Idle")
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (or (get session "modified_at") (get session "created_at")))

@@ -304,7 +304,7 @@
   (let [out (-> (or s "")
                 ;; Drop terminal styling/control sequences. Whole-bubble copy
                 ;; can carry actual ESC bytes; pasting those through Lanterna
-                ;; may turn them into the visible control-picture glyph `␛`,
+                ;; may turn them into the visible control-picture glyph U+241B,
                 ;; so strip both forms.
                 (str/replace
                   #"(?:\u001B|\u241B)\][^\u0007\u001B\u241B]*(?:\u0007|(?:\u001B|\u241B)\\)"

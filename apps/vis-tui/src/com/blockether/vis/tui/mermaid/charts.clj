@@ -37,21 +37,13 @@
           :else (format "%.2f" v))))
 
 (defn- bar
-  "Bar of `value` on a scale where `top` fills `cells` columns, with a
-   one-eighth-step end."
+  "Bar of `value` on a scale where `top` fills `cells` columns, rounded to
+   whole cells."
   [value top ^long cells]
-  (let [eighths
-        (if (pos? (double top))
-          (long (Math/round (* 8.0 cells (/ (max 0.0 (double value)) (double top)))))
-          0)
-
-        full
-        (quot eighths 8)
-
-        part
-        (rem eighths 8)]
-
-    (str (apply str (repeat full \█)) (if (pos? part) (nth "▏▎▍▌▋▊▉" (dec part)) ""))))
+  (let [full (if (pos? (double top))
+               (long (Math/round (* (double cells) (/ (max 0.0 (double value)) (double top)))))
+               0)]
+    (apply str (repeat full \█))))
 
 (defn- bar-rows
   "Rows of labelled bars: `items` are `{:label :value :tone :note}`."
@@ -326,7 +318,7 @@
                               ["│" :chrome] [(apply str (repeat a \space)) :none]
                               [(if mile?
                                  "◆"
-                                 (apply str (repeat (- b a) (if (contains? tags "done") \▒ \█))))
+                                 (apply str (repeat (- b a) (if (contains? tags "done") \▄ \█))))
                                (if mile? :yellow tone)]]))))
                (partition-by :section tasks))))}))))
 
@@ -457,9 +449,9 @@
             quadrants]
 
         (dotimes [r height]
-          (c/put-char! canvas r mid-c \┆ :chrome))
+          (c/put-char! canvas r mid-c \· :chrome))
         (dotimes [i cols]
-          (c/put-char! canvas mid-r (+ 1 i) \┄ :chrome))
+          (c/put-char! canvas mid-r (+ 1 i) \· :chrome))
         (doseq [[text r col tone]
                 [[q2 0 2 :blue] [q1 0 (+ mid-c 2) :green] [q3 (dec height) 2 :orange]
                  [q4 (dec height) (+ mid-c 2) :purple]]
@@ -604,7 +596,7 @@
     (if (and (empty? points) (not-any? #(re-find #"^(?:x-axis|y-axis|quadrant-\d)" %) lines))
       {:reason "empty quadrant chart"}
       {:title (title-of lines)
-       :rows (vec (concat (when y-hi [(c/seg-row [[(str "▲ " y-hi) :chrome]])])
+       :rows (vec (concat (when y-hi [(c/seg-row [[(str "↑ " y-hi) :chrome]])])
                           (plot-rows {:points points
                                       :quadrants [(quadrant 1) (quadrant 2) (quadrant 3)
                                                   (quadrant 4)]
@@ -676,7 +668,7 @@
     (if (and (empty? points) (empty? lines))
       {:reason "empty Wardley map"}
       {:title (title-of lines)
-       :rows (vec (concat [(c/seg-row [["▲ visible" :chrome]])]
+       :rows (vec (concat [(c/seg-row [["↑ visible" :chrome]])]
                           (plot-rows
                             {:points (concat points evolved)
                              :links (concat links
@@ -874,7 +866,7 @@
                                       [(c/pad-right (c/clip (c/clean-label task) label-w) label-w)
                                        :text] [" " :none]
                                       [(apply str (repeat score \■)) (score-tone score :chrome)]
-                                      [(apply str (repeat (- 5 score) \□)) :chrome]
+                                      [(apply str (repeat (- 5 score) \⬝)) :chrome]
                                       [(str " " score "  " (str/trim (or actors ""))) :chrome]]
                                      width)))))})))
 
@@ -1023,7 +1015,7 @@
                                                  (mapcat (fn [id]
                                                            [["●" (tones id)]])
                                                          ids)
-                                                 [[(str " " (str/join " ∩ " (map #(names % %) ids)))
+                                                 [[(str " " (str/join " & " (map #(names % %) ids)))
                                                    :text]]
                                                  (when label [[(str "  " label) :yellow]]))))]
                                (cons (c/seg-clip head width)
@@ -1181,9 +1173,9 @@
       {:rows (mapv c/seg-row
                    (mapcat (fn [{:keys [n kind name ref reset?]}]
                              (let [[label tone] (get event-kinds kind [kind :text])]
-                               (cons (c/seg-clip [[(str n " ") :chrome] ["▌" tone]
+                               (cons (c/seg-clip [[(str n " ") :chrome] ["┃" tone]
                                                   [(str " " (c/pad-right label kind-w) "  ") tone]
-                                                  [name :text] [(if reset? "  ↺" "") :chrome]]
+                                                  [name :text] [(if reset? "  ⟳" "") :chrome]]
                                                  width)
                                      (for [row (get data ref)]
                                        (c/seg-clip [[(apply str

@@ -494,7 +494,7 @@
 
         (expect (= 3 (:total m)))
         (expect (str/includes? (:title m) "fleet.csv"))
-        (expect (str/includes? (:title m) "3 rows × 3 cols"))
+        (expect (str/includes? (:title m) "3 rows x 3 cols"))
         (expect (= 3 (count (:widths m))))
         (expect (= [:left :right :left] (:aligns m)))))
   (it "a sheet that fits on one page carries no page counter"
@@ -585,7 +585,7 @@
         (expect (= ["ada" "yak" "zed"] (mapv first (:visible (measure c asc)))))
         (expect (= :desc (:sort-dir desc)))
         (expect (= ["zed" "yak" "ada"] (mapv first (:visible (measure c desc)))))
-        (expect (str/includes? (nth (:head-cells (measure c desc)) 0) "▼"))))
+        (expect (str/includes? (nth (:head-cells (measure c desc)) 0) "↓"))))
   (it "sorting a numeric column is numeric — 9, 10, 120"
       (let [c
             (component)
@@ -725,7 +725,7 @@
         ;; the transcript previews 10 rows; the sheet behind it has all 15
         (expect (= "fleet.csv" name))
         (expect (= 15 (:total m)))
-        (expect (str/includes? (:title m) "15 rows × 3 cols"))))
+        (expect (str/includes? (:title m) "15 rows x 3 cols"))))
   (it "a grid keeps its click meta even when the mid-scroll window asks for one"
       ;; The windowed fast path emits no line meta at all, so a grid painted
       ;; through it would look right and do nothing on click.

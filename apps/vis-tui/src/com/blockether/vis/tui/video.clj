@@ -22,7 +22,7 @@
    the lower level for a frame-stepping Kitty player.
 
    Frames arrive in DISPLAY order (B-frames reordered), display-cropped (H.264
-   pads to whole macroblocks, so 1080p codes as 1920×1088) and as straight RGBA8,
+   pads to whole macroblocks, so 1080p codes as 1920x1088) and as straight RGBA8,
    because the decoder resolves all three before the bytes cross the FFI.
 
    H.264 is the supported codec. HEVC/H.265 — what a modern iPhone records by
@@ -39,7 +39,7 @@
 
 (def default-max-frames
   "Frames [[decode-frames]] will hold in memory before it stops. Every frame is a
-   full uncompressed RGBA canvas, so a 1280×720 clip costs ~3.7 MB per frame —
+   full uncompressed RGBA canvas, so a 1280x720 clip costs ~3.7 MB per frame —
    240 of them is already ~880 MB unscaled. Callers that want a long clip pass
    `:max-dimension` (and usually `:stride`) rather than raising this."
   240)

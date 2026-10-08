@@ -849,7 +849,7 @@
 
           (expect (str/includes? shut "ACTIVITY"))
           (expect (str/includes? shut "4 mutations · 2 observations"))
-          (doseq [label ["Read ×2" "Patch ×2" "Shell ×2"]]
+          (doseq [label ["Read x2" "Patch x2" "Shell x2"]]
             (expect (not (str/includes? shut label)))
             (expect (str/includes? shown label)))))
     (it "keeps failure context visible when its group is shut"
@@ -878,7 +878,7 @@
 
     (it "keeps operation and argument identities behind readable group headings"
         (expect (= ["search-1#group" "status-1#group" "lookup-1#group"] (mapv :id grouped)))
-        (expect (= ["Search reviews ×3" "Check review deployment ×2" "Search reviews ×2"]
+        (expect (= ["Search reviews x3" "Check review deployment x2" "Search reviews x2"]
                    (mapv #(get-in % [:presentation :headline]) grouped)))
         (expect (= ["failed" "running" "succeeded"] (mapv :state grouped)))
         (expect (= ["search-1#arguments" "search-2"] (mapv :id (:children (first grouped)))))
@@ -911,12 +911,12 @@
               text (cap/frame-text capture)]
 
           (expect (nil? (:error capture)))
-          (expect (str/includes? text "Search reviews ×3"))
-          (expect (str/includes? text "Search reviews ×2"))
+          (expect (str/includes? text "Search reviews x3"))
+          (expect (str/includes? text "Search reviews x2"))
           (expect (str/includes? text "failed"))
           (expect (str/includes? text "running"))
           (expect (not (str/includes? text "reviews.search")))
-          (when (= 80 cols) (expect (str/includes? text "Check review deployment ×2"))))))))
+          (when (= 80 cols) (expect (str/includes? text "Check review deployment x2"))))))))
 
 (defdescribe
   merged-read-activity-test
@@ -941,7 +941,7 @@
               merged
               (first (:children group))]
 
-          (expect (= "Read ×2" (get-in group [:presentation :headline])))
+          (expect (= "Read x2" (get-in group [:presentation :headline])))
           (expect (= 1 (count (:children group))))
           (expect (= "read-1" (:id merged)))
           (expect (= 3 (:duration-ms merged)))
@@ -1172,7 +1172,7 @@
               diff
               (first (filter #(= "diff" (:kind %)) (:evidence merged)))]
 
-          (expect (= "Patch ×2" (get-in group [:presentation :headline])))
+          (expect (= "Patch x2" (get-in group [:presentation :headline])))
           (expect (= 1 (count (:children group))))
           (expect (= "patch-1" (:id merged)))
           (expect (nil? (:argument-key merged)))
@@ -1262,7 +1262,7 @@
           (expect (= ["search-1#group" "search-1#arguments" "search-1" "search-3" "search-4"
                       "search-2" "unknown-1" "unknown-2" "read-1"]
                      (row-ids result)))
-          (expect (some #(str/includes? (:line %) "×3") result))
+          (expect (some #(str/includes? (:line %) "x3") result))
           (expect (some #(str/includes? (:line %) "1 failed") result))))
     (it "keeps every result and live replacement behind the repeated-argument disclosure"
         (let [choices
@@ -1303,7 +1303,7 @@
               (some #(when (= "search-1#arguments" (get-in % [:meta :item-id])) %)
                     (entries long-rows opened 36))]
 
-          (expect (str/includes? (str (:line repeated-row)) "×3"))))))
+          (expect (str/includes? (str (:line repeated-row)) "x3"))))))
 
 (defn- step-expansions
   "Control step details while keeping the independent Activity band open."
@@ -6042,8 +6042,8 @@
                     body)]
 
           ;; The whole utterance sits inside ONE pair of curly quotes.
-          (expect (str/includes? (first plain) "“transcription"))
-          (expect (str/includes? (last plain) "here”"))
+          (expect (str/includes? (first plain) "'transcription"))
+          (expect (str/includes? (last plain) "here'"))
           ;; ... every row of it slanted ...
           (expect (every? (fn [l]
                             (str/includes? l p/INLINE_ITALIC_ON))
@@ -6114,7 +6114,7 @@
                      links (filter :doc line-meta)]
 
                  (expect (str/includes? text "[Image #1: shot.png 1200×800, 245KB]"))
-                 (expect (str/includes? text "↗ click to open in the system viewer"))
+                 (expect (str/includes? text "→ click to open in the system viewer"))
                  (expect (not (str/includes? text "▸ [Image #1")))
                  ;; The caption shows once, inside the link card.
                  (expect (= 1 (count (re-seq #"\[Image #1" text))))
@@ -8065,11 +8065,11 @@ h = 8"
             removed
             (str (line-with text "removed-line"))]
 
-        (expect (str/includes? head "+2 −1")
+        (expect (str/includes? head "+2 -1")
                 "the head sums what every patch under it added and removed")
         (expect (str/includes? patched-path "\u25be") "a path that opens a patch wears a chevron")
-        (expect (str/includes? read-path "\u203a")
-                "a path that only names a file wears the quiet guillemet")
+        (expect (str/includes? read-path "\u00b7")
+                "a path that only names a file wears the quiet dot")
         (expect (= 0 (long (.indexOf patched-path "▾")))
                 "the file disclosure starts at the step edge; its path follows one inset")
         (expect (str/includes? added "+ (def added-line 1)")
@@ -8251,13 +8251,13 @@ h = 8"
               (line-with open "_shell-wait")
 
               outcome-line
-              (line-with open "› git")]
+              (line-with open "· git")]
 
           (expect (re-find #"^  _shell-wait.*▾" wait))
           (expect (not-any? #(str/includes? % "\"keys\"") open)
                   "raw result summaries never become Activity content")
           (expect (some? outcome-line) "observed resources remain available")
-          (expect (str/includes? (line-with open "› git") "› git") "with the handle it touched")
+          (expect (str/includes? (line-with open "· git") "· git") "with the handle it touched")
           (expect (str/blank? (second open)) "the header stays separated from the operations")))
     ;; Every step opens shut, running and failed work too: a closed row is its head line
     ;; alone, and its tone carries the state until the reader presses it.
@@ -9475,7 +9475,7 @@ h = 8"
           (fn [opened]
             (str/join "\n" (map :line (entries opened))))]
 
-      (expect (str/includes? (text #{"#band"}) "List ×2"))
+      (expect (str/includes? (text #{"#band"}) "List x2"))
       (expect (not (str/includes? (text #{"#band"}) "Listed directory")))
       (expect (str/includes? (text #{"#band" "one#group"}) "Listed directory"))
       (expect (not (str/includes? (text #{"#band" "one#group"}) "one-file")))
@@ -9538,7 +9538,7 @@ h = 8"
 
         (expect (= [:activity-header nil :activity-row nil]
                    (mapv #(get-in % [:meta :kind]) entries)))
-        (expect (str/includes? (:line (nth entries 2)) "List ×2")))))
+        (expect (str/includes? (:line (nth entries 2)) "List x2")))))
 
 (defdescribe
   activity-inline-disclosure-spacing-test
@@ -11729,7 +11729,7 @@ print(paths)"
                    (:queue-send first-meta)))
         (expect (str/includes? cmd-line "2. /help"))
         (expect (nil? (:queue-send cmd-meta)))
-        (expect (str/includes? local-line "3. ⚠ unsent · local only"))
+        (expect (str/includes? local-line "3. △ unsent · local only"))
         (expect (nil? (:queue-send local-meta)))
         ;; The marked row stays in place, says so, and its button undoes the mark.
         ;; User report: the marked row still said Send it now, so the undo was unclear.

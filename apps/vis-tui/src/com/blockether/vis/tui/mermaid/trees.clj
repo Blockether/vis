@@ -287,7 +287,7 @@
         (max 2 (- width (c/width head) 1))]
 
     {:rows (mapv c/seg-row
-                 (concat [[[(apply str (repeat spine \━)) :chrome] ["▶" :chrome] [head :red]]]
+                 (concat [[[(apply str (repeat spine \─)) :chrome] ["▶" :chrome] [head :red]]]
                          (branch-rows causes
                                       ""
                                       width
@@ -428,7 +428,7 @@
                   (fn [at column]
                     (let [tone (c/series-tone at)]
                       (into [[[(c/pad-right (c/clip (:label (kanban-item (:text column))) col-w)
-                                            col-w) tone]] [[(apply str (repeat col-w \━)) tone]]]
+                                            col-w) tone]] [[(apply str (repeat col-w \─)) tone]]]
                             (mapcat #(card-rows % col-w) (:children column)))))
                   columns)
 

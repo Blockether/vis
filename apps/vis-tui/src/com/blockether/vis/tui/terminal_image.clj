@@ -123,7 +123,7 @@
 ;; Cell-box sizing
 
 (defn cell-size
-  "Fit an image of `{:w :h}` px into `max-cols` × `max-rows` cells,
+  "Fit an image of `{:w :h}` px into `max-cols` x `max-rows` cells,
    aspect-preserving. Returns `{:cols :rows}` (>= 1)."
   [{:keys [w h]} max-cols max-rows]
   (let [r (TerminalImage/cellSize (int (or w 1))
@@ -133,7 +133,7 @@
     {:cols (aget ^ints r 0) :rows (aget ^ints r 1)}))
 
 (defn box-pixels
-  "Long-edge PIXEL ceiling of a `cols`×`rows` cell box — what to ask a decoder
+  "Long-edge PIXEL ceiling of a `cols`x`rows` cell box — what to ask a decoder
    for when the result will be drawn into that box.
 
    Decoding 1080p for an 80-column window produces about six times the pixels
@@ -148,10 +148,10 @@
 
 (defn encode-kitty
   "Kitty graphics `\\x1b_G` transmit+display sequence for `data`, sized to
-   `cols`×`rows` cells. `C=1` keeps the cursor put after placement. When
+   `cols`x`rows` cells. `C=1` keeps the cursor put after placement. When
    `crop-top`/`crop-bottom` (cell rows scrolled past the band's top/bottom edge)
    are positive, only the visible vertical slice is shown at native scale via the
-   Kitty source rectangle, sized from the transmitted image's `img-w`×`img-h`
+   Kitty source rectangle, sized from the transmitted image's `img-w`x`img-h`
    pixel dimensions.
 
    `data` is a base64 String OR the RAW PNG bytes. Raw bytes are base64'd one
@@ -262,7 +262,7 @@
 
 (defn transcode->png-base64
   "Decode `path` (any format `com.blockether.imaging` reads) and re-encode it as a
-   PNG base64 string, downscaled so it fits the `cols`×`rows` cell box in pixels.
+   PNG base64 string, downscaled so it fits the `cols`x`rows` cell box in pixels.
    The Kitty protocol's `f=100` only accepts PNG, so a JPEG/GIF/BMP drop must
    pass through here first. Pure FFM (no java.desktop, works in the native
    image); returns nil on any failure so callers fall back to a text card.
@@ -275,7 +275,7 @@
 
 (defn kitty-png
   "PNG payload + transmitted pixel dims `{:data :w :h}` for the Kitty wire. A PNG
-   file rides through verbatim — transmitted at its intrinsic `width`×`height`
+   file rides through verbatim — transmitted at its intrinsic `width`x`height`
    (and works in the native image too); anything else is decoded and re-encoded
    as a box-fitted PNG via `com.blockether.imaging`, and a VIDEO becomes its
    poster frame.
@@ -290,7 +290,7 @@
 
 (defn render-sequence
   "Full escape sequence that draws the image at `path` (`mime`) into a
-   `cols`×`rows` cell box for the current terminal, or nil when the terminal
+   `cols`x`rows` cell box for the current terminal, or nil when the terminal
    can't render inline images / the file can't be decoded. `box` may carry
    `:crop-top`/`:crop-bottom` (cell rows scrolled past the band edge) plus the
    image's intrinsic `:width`/`:height`, so a partly-scrolled Kitty image renders
@@ -333,8 +333,8 @@
 
 (defn kitty-place
   "Kitty `a=p` placement sequence for an ALREADY-transmitted image `id` at the
-   cursor: draw it into a `cols`×`rows` cell box, optionally cropped to the visible
-   vertical slice (`crop-top`/`crop-bottom` cell rows over an `img-w`×`img-h` px
+   cursor: draw it into a `cols`x`rows` cell box, optionally cropped to the visible
+   vertical slice (`crop-top`/`crop-bottom` cell rows over an `img-w`x`img-h` px
    image) via the protocol's source rectangle — the SAME `x/y/w/h` math the fork's
    crop `encodeKitty` uses. The image id and explicit `placement-id` identify one
    placement. Reusing that pair moves only that region, without re-uploading."

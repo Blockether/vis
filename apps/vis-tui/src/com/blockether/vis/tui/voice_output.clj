@@ -68,7 +68,7 @@
        (vis/worker-future
          "vis-speech-speak"
          (fn []
-           (try (speaking-status! "♪ Speaking")
+           (try (speaking-status! "◉ Speaking")
                 (let [audio-file (vis/gateway-synthesize-speech! sid
                                                                  prose
                                                                  {:engine-id engine-id

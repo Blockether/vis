@@ -57,7 +57,7 @@
          "  "
          (or (not-empty filename) "unnamed attachment")
          "  ·  "
-         (if (and width height) (str width "×" height "  ·  " size-label) size-label)
+         (if (and width height) (str width "x" height "  ·  " size-label) size-label)
          (when note (str "  ·  " note)))))
 
 (defn draw!
@@ -87,9 +87,9 @@
           (+ left inset)
 
           ;; Remove is the standard primary action button: an ink cap with a light label.
-          ;; A narrow rail keeps a `×` cap, and a rail under one cap keeps only the target.
+          ;; A narrow rail keeps a `✕` cap, and a rail under one cap keeps only the target.
           remove-label
-          (if (>= inner-w 18) "Remove" "×")
+          (if (>= inner-w 18) "Remove" "✕")
 
           cap-w
           (+ 2 (long (p/display-width remove-label)))

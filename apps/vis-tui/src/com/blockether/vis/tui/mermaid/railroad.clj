@@ -130,10 +130,10 @@
                star?
                (str/starts-with? high "*")]
 
-           (cond (not star?) (if (= 1 low) tree [:seq [[:mark (str low "×")] tree]])
+           (cond (not star?) (if (= 1 low) tree [:seq [[:mark (str low "x")] tree]])
                  (zero? (long low)) [:opt [:some tree]]
                  (= 1 low) [:some tree]
-                 :else [:seq [[:mark (str low "×")] [:some tree]]])))
+                 :else [:seq [[:mark (str low "x")] [:some tree]]])))
        (call [name]
          (take!)
          (expect! "(")
@@ -306,7 +306,7 @@
   [{:keys [rows y w]}]
   (let [loop-row (concat [[\space nil] [\╰ :chrome]]
                          (rail (quot (+ 2 (long w)) 2))
-                         [[\◂ :chrome]]
+                         [[\← :chrome]]
                          (rail (- (+ 2 (long w)) 1 (quot (+ 2 (long w)) 2)))
                          [[\╯ :chrome] [\space nil]])]
     {:y y
@@ -368,7 +368,7 @@
     [[arg :yellow]]
 
     :skip
-    [["ε" :chrome]]
+    [["·" :chrome]]
 
     :seq
     (let [inner (vec (apply concat (interpose [[" " nil]] (map #(grammar-text % true) arg))))]

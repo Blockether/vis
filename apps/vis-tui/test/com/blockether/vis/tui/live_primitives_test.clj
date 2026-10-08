@@ -391,7 +391,7 @@
                 (nth lines (.getRow cursor))
 
                 prompt-col
-                (str/index-of line "› ")]
+                (str/index-of line "> ")]
 
             (expect (= heading-col prompt-col)
                     "the prompt uses the same left padding as the heading")

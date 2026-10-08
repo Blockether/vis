@@ -1763,10 +1763,10 @@
         :else (let [open (remove settled? others)]
                 (if-let [note (stopping pane)]
                   (if (str/blank? note)
-                    [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
-                    [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
+                    [["Esc / Enter" "interrupt"] ["Backspace" "keep watching"]]
+                    [["Esc / Enter" "interrupt with the note"] ["Backspace" "erase"]])
                   (if (minimized? pane)
-                    [["click ▴" "restore live view"]
+                    [["click ↑" "restore live view"]
                      ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
                     (cond-> [["F3" "controls"]]
                       (and (some? pane) (not (settled? pane)))
@@ -1806,7 +1806,7 @@
   (p/styled g styles (put! g left row inner-w text)))
 
 (defn- progress-text
-  "`▰▰▰▰▰▰▱▱▱▱▱▱▱▱  62%  ·  18/29 done` — the bar, the number it stands for, and
+  "`■■■■■■⬝⬝⬝⬝⬝⬝⬝⬝  62%  ·  18/29 done` — the bar, the number it stands for, and
    what the number counts. A bar alone never says how much is left in units the
    human cares about; an indeterminate node has no bar at all and says the one
    true thing instead.
@@ -1829,7 +1829,7 @@
             (clamp (long (Math/round (* (double bar-w) (double value)))) 0 (long bar-w))
 
             bar
-            (str (apply str (repeat filled "▰")) (apply str (repeat (- (long bar-w) filled) "▱")))]
+            (str (apply str (repeat filled "■")) (apply str (repeat (- (long bar-w) filled) "⬝")))]
 
         (str/join "  ·  " (remove str/blank? [(str bar "  " pct "%") counted]))))))
 
@@ -2204,7 +2204,7 @@
 
           label
           (cond close? " ✕ "
-                (minimized? pane) " ▴ "
+                (minimized? pane) " ↑ "
                 :else " ▾ ")
 
           width
@@ -2494,7 +2494,7 @@
                                 body-w
                                 [{:text (:label stop) :fg t/dialog-hint}
                                  {:text (:note stop) :fg t/dialog-fg :styles [p/BOLD]}
-                                 {:text "▏" :fg t/dialog-hint-key}])))
+                                 {:text "│" :fg t/dialog-hint-key}])))
            (dialogs/draw-hint-bar! g left hint-at inner-w (hint front others))
            ;; With an open log the bar is the log's own: it starts on the log's row,
            ;; beside Search, and measures the log alone.

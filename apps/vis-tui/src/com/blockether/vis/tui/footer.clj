@@ -20,7 +20,7 @@
    block. Putting it in the footer too was a duplicate - same
    `\u280b 11.2s` showing twice on screen. The footer keeps slow-changing
    identity + budget bits; the bubble keeps the live activity story
-   («Vis is thinking (iter 3)... 4.1s / Esc to cancel»).
+   (<<Vis is thinking (iter 3)... 4.1s / Esc to cancel>>).
 
    The first footer row carries repository context on the right:
    repo/branch, one compact changed-file count, and ahead/behind counts
@@ -165,9 +165,9 @@
 
 (defn- git-status-bits
   "Status fragment shown *inside* the `(branch …)` parens, codex/git-prompt
-   style: changed-file counts then `⇡ahead ⇣behind`; a branch with NO
-   upstream configured (`is_upstream` explicitly false) shows `∅` — no
-   remote to compare against, so ahead/behind are meaningless. `∅` (not a
+   style: changed-file counts then `↑ahead ↓behind`; a branch with NO
+   upstream configured (`is_upstream` explicitly false) shows `—` — no
+   remote to compare against, so ahead/behind are meaningless. `—` (not a
    warning glyph: nothing is wrong) is a bare NARROW char, safe for the
    lanterna cell grid (VS-16 emoji are wide and desync the paint). Clean
    *and* synced yields nil so the branch name stands alone — no glyph."
@@ -184,10 +184,10 @@
         sync
         (cond-> []
           (pos? ahead)
-          (conj (str "⇡" ahead))
+          (conj (str "↑" ahead))
 
           (pos? behind)
-          (conj (str "⇣" behind)))
+          (conj (str "↓" behind)))
 
         parts
         (cond-> []
@@ -198,13 +198,13 @@
           (conj (str/join " " sync))
 
           (false? is_upstream)
-          (conj "∅"))]
+          (conj "—"))]
 
     (when (seq parts) (str/join " " parts))))
 
 (defn- git-repo-label
   "`~/repo (branch)` when clean+synced, otherwise the status bits ride inside
-   the parens, e.g. `~/vis (main ~2 +3 -1 ⇡4)`."
+   the parens, e.g. `~/vis (main ~2 +3 -1 ↑4)`."
   [{:strs [repo branch] :as status}]
   (str "~/"
        (or repo "?")
@@ -378,10 +378,10 @@
         absolute
         (format-absolute-reset now-ms reset-ms)]
 
-    (cond (and relative absolute) (str "↺" relative " @ " absolute)
-          relative (str "↺" relative)
-          absolute (str "↺" absolute)
-          :else "↺--")))
+    (cond (and relative absolute) (str "⟳" relative " @ " absolute)
+          relative (str "⟳" relative)
+          absolute (str "⟳" absolute)
+          :else "⟳--")))
 
 (defn- report-for-current-provider
   "Report belonging to `provider`.
@@ -656,7 +656,7 @@
 )
 
 (defn- build-usage-segments
-  "Right-side cumulative session usage. Cache reads `↺ 4.1k`, matching the
+  "Right-side cumulative session usage. Cache reads `⟳ 4.1k`, matching the
    Companion footer; token and cost math remains canonical."
   [{:keys [messages]}]
   (let [{:keys [tokens cost]}
@@ -667,7 +667,7 @@
 
         tok-text
         (some-> (when toks (fmt/meta-tokens toks))
-                (str/replace #"\s+\(cached\s+([^)]+)\)" " ↺ $1"))
+                (str/replace #"\s+\(cached\s+([^)]+)\)" " ⟳ $1"))
 
         cost-text
         (fmt/meta-cost cost)]
@@ -728,7 +728,7 @@
                               "/"
                               (if-let [budget (get-in db [:session :goal "iteration_budget"])]
                                 (goal-count budget)
-                                "∞")
+                                "—")
                               " iter ")
                    :kind :footer-goal
                    :region :left

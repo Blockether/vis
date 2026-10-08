@@ -18,7 +18,7 @@
         clickable chip that opens the fuzzy model picker. The `n/N` shows the
         current model's position in the C-x m cycle (omitted when the model
         isn't a cycle entry).
-     2. optional `⚠ … overloaded` breaker notice (priority 3, warn).
+     2. optional `△ … overloaded` breaker notice (priority 3, warn).
 
    Returns nil when no model is configured (no router / no resolver)."
   [_db _now-ms]
@@ -103,7 +103,7 @@
           (conj {:ast [:ast {}
                        [:p {}
                         [:span {}
-                         (str "⚠ " (:overloaded-model overload)
+                         (str "△ " (:overloaded-model overload)
                               " overloaded → " (or (:serving-model overload)
                                                    "no provider available"))]]]
                  :region :left

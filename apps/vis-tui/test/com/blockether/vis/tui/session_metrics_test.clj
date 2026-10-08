@@ -95,7 +95,12 @@
         (expect (str/includes? text (get expected "pressure")) name)
         (expect (= (get expected "estimate") (get values "Local estimate")) name)
         (expect (= (get expected "reported") (get values "Provider-reported input")) name)
-        (expect (= (get expected "difference") (get values "Estimate − reported")) name)
+        ;; The TUI draws only the opencode glyph set, so its ASCII hyphen stands in
+        ;; for the shared fixture's typographic minus.
+        (expect (= (some-> (get expected "difference")
+                           (str/replace "−" "-"))
+                   (get values "Estimate - reported"))
+                name)
         (expect (= "2100000" (get values "Total input")) name)
         (if-let [percent (get expected "percent")]
           (do (expect (str/ends-with? (get values "Context / working budget") (str percent "%"))
@@ -149,7 +154,7 @@
   supplied-cache-metrics-are-not-reclassified
   (it "supplied cache metrics are not reclassified"
       ;; #186: deliberately conflicting counts must not override the supplied metric.
-      (doseq [[estimated? samples expected] [[false 3 "91%"] [true 0 "≈91%"]]]
+      (doseq [[estimated? samples expected] [[false 3 "91%"] [true 0 "~91%"]]]
         (let [usage (assoc measured-usage
                       "reusable_prefix_estimated" estimated?
                       "prompt_cache_estimated_sample_count" samples)
@@ -184,7 +189,7 @@
                      "No AGENTS.md or CLAUDE.md" "Could not read guidance"
                      "Guidance estimate unavailable" "Disk estimates" "Session totals"
                      "repeated context" "Total input" "842190" "Total output" "12842" "$1.2749"
-                     "Folds" "Turns" "Calls" "Tools" "72%" "≈91%" "20 of 24 calls" "example-model"
+                     "Folds" "Turns" "Calls" "Tools" "72%" "~91%" "20 of 24 calls" "example-model"
                      "example-provider" "Active"]]
         (expect (str/includes? text label) label))
       (expect (not (str/includes? (lines component initial 100 45) "Tool definitions")))

@@ -1138,7 +1138,7 @@
                 (expect (some #(str/includes? % "Search Output") lines))
                 (expect (some #(str/includes? % "3: ERROR retained") lines))
                 (expect (some? cursor))
-                (expect (str/includes? (nth lines (.getRow cursor)) "› ERROR"))
+                (expect (str/includes? (nth lines (.getRow cursor)) "> ERROR"))
                 (expect (= 1 (:direction hit)))
                 (expect (some #(= :live-viewer-close (:kind %)) (.current interactions/hit-map))))
               (expect (not= ::timeout (deref (#'screen/page-live-log! @db 1) 2000 ::timeout)))

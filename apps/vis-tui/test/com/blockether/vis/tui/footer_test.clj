@@ -68,7 +68,7 @@
   inline-goal-iterations-test
   (it "shows used iterations and the budget inline, including unlimited goals"
       (doseq [[used budget label] [[0 20 "0/20"] [7 20 "7/20"] [20 20 "20/20"] [21 20 "21/20"]
-                                   [7 nil "7/∞"]]]
+                                   [7 nil "7/—"]]]
         (let [db {:messages []
                   :settings {}
                   :session {:goal
@@ -113,7 +113,7 @@
             ;; Issue #204: quota information must not register a clickable chip.
             (expect (nil? (:kind segment)))
             (expect (str/includes? (:text segment) "51730/100000"))
-            (expect (str/includes? (:text segment) "↺1h0m")))
+            (expect (str/includes? (:text segment) "⟳1h0m")))
           (doseq [cols [40 80 120]
                   goal [nil {"status" "active"}]]
 
@@ -135,7 +135,7 @@
               (when goal (expect (str/includes? row "Goal:")))
               (when (>= cols 80)
                 (expect (str/includes? row "51730/100000"))
-                (expect (str/includes? row "↺1h0m"))))))))))
+                (expect (str/includes? row "⟳1h0m"))))))))))
 
 (defdescribe
   passive-limits-test
@@ -308,13 +308,13 @@
                                                  now-ms)
                           first
                           :text)]
-            (expect (re-find #"Codex 5h 76% ↺1h55m@.* / 7d 85%" text))
+            (expect (re-find #"Codex 5h 76% ⟳1h55m@.* / 7d 85%" text))
             (expect (not (str/includes? text "Codex 7d")))
             ;; ONE reset stamp, on the leading window: a stamp per cell is what
             ;; pushed a three-window plan past the footer width.
-            (expect (= 1 (count (re-seq #"↺" text))))
+            (expect (= 1 (count (re-seq #"⟳" text))))
             ;; the absolute half keeps its "EEE h:mm a" shape
-            (expect (re-find #"↺1h55m@[A-Z][a-z]{2} [0-9]{1,2}:[0-9]{2} [AP]M" text))
+            (expect (re-find #"⟳1h55m@[A-Z][a-z]{2} [0-9]{1,2}:[0-9]{2} [AP]M" text))
             (expect (not (re-find #"[0-9]:[0-5][0-9][ap]" text))))))))
   (it
     "keeps a visible Codex 5h window even when the provider omits its data"
@@ -384,7 +384,7 @@
                             now-ms)
                           first
                           :text)]
-            (expect (re-find #"Claude 5h 0% ↺5h0m@.* / 7d 75%" text))
+            (expect (re-find #"Claude 5h 0% ⟳5h0m@.* / 7d 75%" text))
             ;; the 7d window's own stamp is noise beside the window being spent
             (expect (not (str/includes? text "↺6d0h")))
             (expect (not (str/includes? text "Claude 7d"))))))))
@@ -463,7 +463,7 @@
                                                  now-ms)
                           first
                           :text)]
-            (expect (re-find #"Z\.ai 5h 75% ↺1h30m.* / 7d 50%" text))
+            (expect (re-find #"Z\.ai 5h 75% ⟳1h30m.* / 7d 50%" text))
             (expect (not (str/includes? text "Z.ai 7d"))))))))
   (it
     "shows GitHub Copilot premium interaction utilization in the limits row"
@@ -503,7 +503,7 @@
                                                  now-ms)
                           first
                           :text)]
-            (expect (re-find #"Premium 60/300 \(240\) ↺2d0h" text)))))))
+            (expect (re-find #"Premium 60/300 \(240\) ⟳2d0h" text)))))))
   (it "renders the gateway :git fact for the active workspace"
       ;; Git status is a GATEWAY SESSION FACT — resolved server-side by
       ;; `git/workspace-status` and carried on the workspace record as `:git`. The
@@ -527,7 +527,7 @@
                                          "is_upstream" true
                                          "ahead" 4
                                          "behind" 0}}}]
-              (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4)"]
+              (expect (= [" git ~/vis (main ~2 +3 -1 ↑4)"]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
@@ -555,7 +555,7 @@
                                (filter #(= :right (:region %)))
                                (remove fixture-seg?)
                                (mapv :text))]
-                (expect (= [(str " DRAFT (" expected) "~2 +3 -1 ⇡4)"] texts))))))))
+                (expect (= [(str " DRAFT (" expected) "~2 +3 -1 ↑4)"] texts))))))))
   (it "renders the gateway :git fact even when the top-level root was lost"
       ;; A stale tab snapshot can null the denormalized `:workspace/root`, but the
       ;; git fact still rides on the session's `:workspace` record — the footer
@@ -624,7 +624,7 @@
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
             (expect
-              (= [" git ~/vis (main ∅)"]
+              (= [" git ~/vis (main —)"]
                  (->> (build-segments {:messages []
                                        :settings {}
                                        :workspace {"root" "/tmp/vis"
@@ -651,7 +651,7 @@
                            {:name "gpt-4o" :provider :openai :reasoning? false})}
           (fn []
             ;; Right region: cache uses the compact shared mark instead of prose.
-            (expect (= ["100→20 ↺ 60" "~$0.0042"]
+            (expect (= ["100→20 ⟳ 60" "~$0.0042"]
                        (->> (build-limits-segments {:messages
                                                     [{:tokens {"input" 100 "output" 20 "cached" 60}
                                                       :cost {"total_cost" 0.0042}}]
@@ -959,7 +959,7 @@
   ;; #247: use live Git-style counts, not the immutable task-review snapshot.
   (it "shows only nonzero live counts and preserves unavailable and recovery states"
       (doseq [[fields expected] [[{"working_changes" {"modified" 2 "created" 3 "deleted" 1}
-                                   "ahead" 4} [" DRAFT (multi" "~2 +3 -1 ⇡4)"]]
+                                   "ahead" 4} [" DRAFT (multi" "~2 +3 -1 ↑4)"]]
                                  [{"working_changes" {"modified" 0 "created" 0 "deleted" 0}
                                    "ahead" 0} [" DRAFT (multi)"]]
                                  [{"working_changes" {"modified" 0 "created" 2 "deleted" 0}
@@ -997,7 +997,7 @@
 
               (expect (nil? (:error capture)))
               (expect (str/includes? (cap/frame-text capture)
-                                     "DRAFT (finish-dev-env-live-view ~2 +3 -1 ⇡4)")))))))
+                                     "DRAFT (finish-dev-env-live-view ~2 +3 -1 ↑4)")))))))
   (it "keeps the change state visible when a long draft name is shortened"
       (let [segments
             (#'footer/draft-footer-spans
@@ -1009,7 +1009,7 @@
             (#'footer/shrink-to-fit segments 40)]
 
         (expect (str/starts-with? (:text (first fitted)) " DRAFT ("))
-        (expect (= "~2 +3 -1 ⇡4)" (:text (last fitted))))))
+        (expect (= "~2 +3 -1 ↑4)" (:text (last fitted))))))
   (it "uses canonical draft identity rather than treating the fork timestamp as a UI flag"
       (with-redefs-fn {#'footer/session-model-info (constantly {:reasoning-effort? false})}
         (fn []
@@ -1036,7 +1036,7 @@
                 [[{"working_changes" {"modified" 1 "created" 0 "deleted" 0} "pending" 1 "ahead" 0}
                   [" DRAFT (feature" "~1)"]]
                  [{"working_changes" {"modified" 0 "created" 0 "deleted" 0} "pending" 0 "ahead" 1}
-                  [" DRAFT (feature" "⇡1)"]]
+                  [" DRAFT (feature" "↑1)"]]
                  [{"working_changes" {"modified" 0 "created" 0 "deleted" 0} "pending" 0 "ahead" 0}
                   [" DRAFT (feature)"]]]]
           (expect (= expected (mapv :text (#'footer/draft-footer-spans (merge draft facts))))))))
@@ -1063,7 +1063,7 @@
                 [80 120]
 
                 [modified ahead expected]
-                [[2 1 "DRAFT (finish-dev-env-live-view ~2 ⇡1)"]
+                [[2 1 "DRAFT (finish-dev-env-live-view ~2 ↑1)"]
                  [0 0 "DRAFT (finish-dev-env-live-view)"]]]
 
           (let [db

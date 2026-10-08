@@ -87,7 +87,7 @@
    the caps it is not on still says which of them matters. Rank never follows the
    cursor, so walking onto Cancel cannot demote Submit.
 
-   No `▏`/`▕` side rails and no `[ … ]` ASCII — a button in this product is a
+   No `│`/`│` side rails and no `[ … ]` ASCII — a button in this product is a
    solid pill, and an outline that only appears on the quiet action read like a
    different widget instead of a quieter one.
 
@@ -120,9 +120,9 @@
 
 (def ^:private find-bar-buttons
   "Trailing buttons of the find bar: [click-kind glyph-label]. Padded GLYPHS —
-   ◀ ▶ (narrow geometric) and ✕ (1-cell, as `close-button!` uses it). Spaced
+   ← ▶ (narrow geometric) and ✕ (1-cell, as `close-button!` uses it). Spaced
    apart by `:gap` ops in `find-bar!`."
-  [[:search-prev " ◀ "] [:search-next " ▶ "] [:search-close " ✕ "]])
+  [[:search-prev " ← "] [:search-next " ▶ "] [:search-close " ✕ "]])
 
 (def ^:private find-input-width
   "Cells reserved for the white query field, so the box doesn't jitter as you
@@ -217,7 +217,7 @@
     [(+ (long box-l) (long cursor-dx)) (inc (long text-top))]))
 
 (defn find-bar!
-  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/◀/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as C-p / C-n). `search` is app-db's `:search` map; no-op when inactive.
+  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/←/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as C-p / C-n). `search` is app-db's `:search` map; no-op when inactive.
 
    Returns the cursor cell [col row] from `find-bar-cursor` (nil when
    inactive) so callers can park the terminal cursor in the query field."
@@ -533,7 +533,7 @@
                       t/dialog-bg))
     (when (and hint-row sb?)
       (let [pos
-            (str (inc (long eff)) "–" (+ (long eff) (long shown-n)) " / " n)
+            (str (inc (long eff)) "-" (+ (long eff) (long shown-n)) " / " n)
 
             pw
             (p/display-width pos)]
@@ -639,19 +639,19 @@
   [status]
   (case status
     :candidate
-    "◇"
+    "⬩"
 
     :done
     "✓"
 
     :doing
-    "◐"
+    "◉"
 
     :cancelled
     "✗"
 
     :rejected
-    "⊘"
+    "✕"
 
     "○"))
 
@@ -857,7 +857,7 @@
 
             verify-seg
             (cond (:verified? t) ["  ✓ verified" t/status-ok false]
-                  (:acceptance t) ["  ⚠ unverified" t/warning-fg false]
+                  (:acceptance t) ["  △ unverified" t/warning-fg false]
                   :else nil)
 
             meta-row
@@ -888,19 +888,19 @@
                               false)))
 
             rationale-rows
-            (labelled "≡" (:rationale t))
+            (labelled "•" (:rationale t))
 
             accept-rows
             (labelled "▸" (:acceptance t))
 
             files-rows
-            (joined "▢" (:files t) "  ·  ")
+            (joined "▣" (:files t) "  ·  ")
 
             avoid-rows
-            (joined "⊘" (:avoid t) "  ·  ")
+            (joined "✕" (:avoid t) "  ·  ")
 
             evidence-rows
-            (labelled "⚑" (:evidence t))
+            (labelled "✱" (:evidence t))
 
             dep-rows
             (when (seq (:depends_on t))
@@ -912,7 +912,7 @@
                             false))
 
             fact-rows
-            (joined "⛁ facts" (:facts t) ", ")]
+            (joined "◈ facts" (:facts t) ", ")]
 
         (->
           (vec
@@ -932,7 +932,7 @@
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} task-overlay-lines
   "TASKS section body with progressive disclosure: a progress header
-   (▰▰▱▱ bar + `N of M done`), then one `task-entry-rows`
+   (■■⬝⬝ bar + `N of M done`), then one `task-entry-rows`
    entry per task, status-sorted (candidate → doing → todo →
    done → cancelled). Settled tasks collapse to one dim line; open
    tasks show their full card. Empty state is a single hint row.
@@ -962,7 +962,7 @@
            (long (Math/round (* bar-w (/ done-n (double total)))))
 
            bar
-           (str (apply str (repeat filled "▰")) (apply str (repeat (- bar-w filled) "▱")))
+           (str (apply str (repeat filled "■")) (apply str (repeat (- bar-w filled) "⬝")))
 
            header
            [[(str bar "  ") (if (= done-n total) t/status-ok t/header-active-tab-accent) false]
@@ -1008,7 +1008,7 @@
         (and expandable? (contains? expanded kstr))
 
         glyph-seg
-        [(if super? "⊘ " "• ") (if super? t/footer-fg-muted t/status-ok) true]
+        [(if super? "✕ " "• ") (if super? t/footer-fg-muted t/status-ok) true]
 
         ;; `turn_<N>` → `Turn <N>` for display (canonical via fmt); stored key
         ;; (kstr) stays snake so recall/fold + the click region still match.
@@ -1029,7 +1029,7 @@
                            false))
 
         files-label
-        (when expandable? (str (if expanded? "▾ " "▸ ") "⛁ " file-count " files"))
+        (when expandable? (str (if expanded? "▾ " "▸ ") "◈ " file-count " files"))
 
         meta-parts
         (cond-> []
@@ -1040,7 +1040,7 @@
           (conj (str "↳ depends " (str/join ", " (map pr-str (:depends_on f)))))
 
           (seq (:contradicts f))
-          (conj (str "⚡ contradicts " (str/join ", " (map pr-str (sort (:contradicts f)))))))
+          (conj (str "△ contradicts " (str/join ", " (map pr-str (sort (:contradicts f)))))))
 
         meta-rows
         (when (seq meta-parts)

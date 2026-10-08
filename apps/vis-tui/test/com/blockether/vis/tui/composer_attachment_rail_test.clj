@@ -41,7 +41,7 @@
                        (cap/frame-text capture)]
 
                    (expect (= 5 (rail/rail-height attachments)))
-                   (expect (str/includes? text "IMAGE #1  diagram.png  ·  1280×720  ·  150 KB"))
+                   (expect (str/includes? text "IMAGE #1  diagram.png  ·  1280x720  ·  150 KB"))
                    (expect (str/includes? text "PDF  requirements.pdf  ·  2.0 KB"))
                    (expect (str/includes? text "AUDIO  notes.wav  ·  441 B"))))
              (it "preserves each remove target and a focused row on a narrow terminal"

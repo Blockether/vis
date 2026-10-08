@@ -292,7 +292,7 @@
           ;; Every group opens shut; one press shows its runs.
           (click! "#group")
           ;; The group counts its runs; each run says which one it is and how it ended.
-          (expect (re-find #"Linted ×2" (text)))
+          (expect (re-find #"Linted x2" (text)))
           (expect (re-find #"1: Linted" (text)))
           (expect (re-find #"2: Linted" (text)))
           (expect (empty? (bodies)))
@@ -501,12 +501,12 @@
                   (expect (= (and code-open? result-open?) (str/includes? text "Read 3 files.")))
                   (expect (= code-open? (some? (row-of "RESULT"))))
                   (expect (= code-open? (str/includes? text "inspect_files()")))
-                  (expect (= activity-open? (str/includes? text "Read ×3")))
+                  (expect (= activity-open? (str/includes? text "Read x3")))
                   (when activity-open?
                     (let [header-row (row-of "ACTIVITY")]
                       (expect (str/blank? (nth lines (inc header-row))))
                       (expect (= (mapv #(+ header-row %) [2 3 4])
-                                 (mapv row-of ["Read ×3" "Patch ×2" "Shell ×2"])))))
+                                 (mapv row-of ["Read x3" "Patch x2" "Shell x2"])))))
                   (let [y (row-of "ACTIVITY")
                         x (str/index-of (nth lines y) "ACTIVITY")]
 
@@ -784,8 +784,8 @@
                 (expect (= (+ 2 (column "Vis")) (column "Inspect files")))
                 (doseq [label (if code-expanded? ["CODE" "RESULT" "ACTIVITY"] ["CODE" "ACTIVITY"])]
                   (expect (= (+ 2 (column "Vis")) (column label))))
-                (expect (= (column "ACTIVITY") (column "Read ×3")))
-                (expect (some #(re-find #"Shell ×2 ▸ · 1 failed" %) lines))
+                (expect (= (column "ACTIVITY") (column "Read x3")))
+                (expect (some #(re-find #"Shell x2 ▸ · 1 failed" %) lines))
                 (expect (not-any? #(str/includes? % "│") lines))
                 (if code-expanded?
                   (do (expect (= (column "CODE") (column "inspect_files()")))

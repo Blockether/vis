@@ -160,7 +160,7 @@
                        ts
                        (texts lines)]
 
-                   (expect (= ["☑️  Completed item" "⬜ Pending item" "☑️  Also completed"] ts))))
+                   (expect (= ["[✓] Completed item" "[ ] Pending item" "[✓] Also completed"] ts))))
              (it "task-list continuations indent by display width, not char count"
                  (let [lines
                        (layout/ast->lines [:ast [:ul [:li "[ ] Pending item wraps here"]]] 14)
@@ -168,7 +168,7 @@
                        ts
                        (texts lines)]
 
-                   (expect (= ["⬜ Pending" "   item wraps" "   here"] ts))
+                   (expect (= ["[ ] Pending" "    item wraps" "    here"] ts))
                    (expect (every? #(<= (p/display-width %) 14) ts))))
              (it "does not crash when a list item starts with a non-text inline node"
                  (let [lines

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.tui.provider
   "The TUI's provider surface: the model picker, and every provider verb offered
-   as a transient INSIDE the frame it was fired from (Settings › Providers).
+   as a transient INSIDE the frame it was fired from (Settings > Providers).
    There is no second provider manager — one surface, one set of verbs.
    Config I/O and data helpers live in tui/config.clj.
 

@@ -64,7 +64,7 @@
   20)
 
 (defn- range-text
-  "`━━━━●─────────  42  (0–100)` — track, knob, the value, and the bounds. A bar
+  "`────●─────────  42  (0-100)` — track, knob, the value, and the bounds. A bar
    alone never says WHAT is about to be submitted, and a number alone never says
    how much room is left."
   [{:keys [lo hi]} v]
@@ -80,14 +80,14 @@
         knob
         (max 0 (min (dec w) (long (Math/round (* frac (dec w))))))]
 
-    (str (apply str (repeat knob \━))
+    (str (apply str (repeat knob \─))
          "●"
          (apply str (repeat (- (dec w) knob) \─))
          "  "
          v
          "  ("
          lo
-         "–"
+         "-"
          hi
          ")")))
 
@@ -124,7 +124,7 @@
                    (map (fn [i]
                           (str "[" (if (< (long i) (count digits)) mask-char \space) "]"))
                         (range hi)))
-         (when (not= (long lo) (long hi)) (str "  (" lo "–" hi " digits)")))))
+         (when (not= (long lo) (long hi)) (str "  (" lo "-" hi " digits)")))))
 
 ;; Form model
 
@@ -957,7 +957,7 @@
       (conj ["Space" "pick"])
 
       otp?
-      (conj ["0–9" "fill"])
+      (conj ["0-9" "fill"])
 
       (= :range (:kind stop))
       (conj ["←/→" "adjust"])
@@ -1293,7 +1293,7 @@
    which is what decides where the band's floor is.
 
    The body starts ONE column inside the rails and the row painters carve the
-   ring's gutter out of the column after that, so the accent ring `▎` a focused
+   ring's gutter out of the column after that, so the accent ring `┃` a focused
    row wears is fenced off the rail by a clear column instead of painting against
    it — and the form's text column lands exactly where a transient's items do.
 

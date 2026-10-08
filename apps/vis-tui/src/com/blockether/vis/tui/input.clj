@@ -144,7 +144,7 @@
       only ran AFTER EOF, so a helper that never exits (osascript stuck on
       a macOS automation prompt, xclip without an X server, a wedged
       pngpaste) blocked the CALLING thread — the TUI input loop — forever:
-      one ⌘V froze the whole session. A watchdog now `destroyForcibly`s the
+      one Cmd+V froze the whole session. A watchdog now `destroyForcibly`s the
       process at the deadline, which closes its stdout pipe and unblocks
       the drain, so the caller always returns in ~timeout-ms.
    3. EOF itself is not trusted: it only arrives once EVERY write-end of
@@ -226,7 +226,7 @@
 
 (def ^:private cached-copy-strategy
   "Memoized clipboard-WRITE strategy, resolved once per session by the first
-   real copy so we don't re-spawn doomed helper processes on every ⌘C:
+   real copy so we don't re-spawn doomed helper processes on every Cmd+C:
      `nil`   — not probed yet
      `:none` — every helper in `copy-helpers` was missing/failed, so callers
                skip the shell entirely and go straight to OSC 52 next time
@@ -400,9 +400,9 @@
 
 ;;; ── Clipboard IMAGE read ─────────────────────────────────────────────────────
 ;;
-;; Copying an image (a screenshot, a browser "Copy Image", ⌘⇧4-to-clipboard)
+;; Copying an image (a screenshot, a browser "Copy Image", Cmd+Shift+4-to-clipboard)
 ;; puts PIXELS on the pasteboard with NO text representation. When the user
-;; then hits ⌘V, the terminal fires a bracketed paste whose payload is EMPTY -
+;; then hits Cmd+V, the terminal fires a bracketed paste whose payload is EMPTY -
 ;; the text-only paste path drops it and nothing shows in the input. The web
 ;; channel accepts pasted image blobs directly; here we reach for the same
 ;; pixels via OS helpers, drop them into a temp PNG, and hand the path back so
@@ -467,7 +467,7 @@
 (defn read-clipboard-image!
   "Best-effort read of an IMAGE sitting on the system clipboard. Writes it to a
    temp PNG file and returns `{:path :mime}` (mime always `\"image/png\"`), or
-   nil when the clipboard holds no image / no helper is available. Lets ⌘V of a
+   nil when the clipboard holds no image / no helper is available. Lets Cmd+V of a
    screenshot or a copied image attach the pixels.
    Never throws."
   []
@@ -675,7 +675,7 @@
           image
 
           dims
-          (when (and width height (pos? (long width)) (pos? (long height))) (str width "×" height))]
+          (when (and width height (pos? (long width)) (pos? (long height))) (str width "x" height))]
 
       (str "[Image #"
            id

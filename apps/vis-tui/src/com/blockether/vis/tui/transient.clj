@@ -391,7 +391,7 @@
    The width the panes ACTUALLY measure ([[pane-natural]]) is the last word: if
    the dealt panes do not stand side by side, one column is dropped and the deal
    is retried. Framed hosts opt into this layout with `:grid? true`, independently
-   of border and background styling. No region ⇒ one column."
+   of border and background styling. No region => one column."
   ^long [spec region]
   (if (or (nil? region) (not (or (:is-sideless region) (:grid? region))))
     1
@@ -488,7 +488,7 @@
    heading already wrapped to the width its OWN pane got ([[wrap-headings]]).
 
    The widths are measured on the DEALT panes, before wrapping: a heading that
-   wraps must not then shrink the column it was wrapped to. No region ⇒ no width
+   wraps must not then shrink the column it was wrapped to. No region => no width
    is known, so nothing wraps and the deal is the single column."
   [spec region]
   (let [dealt
@@ -610,7 +610,7 @@
   3)
 
 (defn band-region
-  "PURE: the rectangle an in-session BAND paints into on a `cols`×`rows`
+  "PURE: the rectangle an in-session BAND paints into on a `cols`x`rows`
    terminal whose content starts at `content-top` and whose prompt box is
    `prompt-h` rows tall.
 

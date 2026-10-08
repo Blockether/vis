@@ -394,7 +394,7 @@
         min-h
         (+ content-h (long dialog-chrome-h))
 
-        ;; Only widen to approach φ - never heighten
+        ;; Only widen to approach phi - never heighten
         golden-w
         (long (* min-h (double phi)))
 
@@ -1599,13 +1599,13 @@
   ;; `TextCharacter/fromString`), tracking BOTH the char-index in
   ;; the source string AND the screen-column offset relative to x.
   ;;
-  ;; The two diverge whenever a wide grapheme appears (📄 = 2 chars
-  ;; / 2 cols, 🏿️ = 3 chars / 2 cols, 日 = 1 char / 2 cols, etc.).
+  ;; The two diverge whenever a wide grapheme appears (U+1F4C4 = 2 chars
+  ;; / 2 cols, U+1F3FF U+FE0F = 3 chars / 2 cols, U+65E5 = 1 char / 2 cols, etc.).
   ;; The PRE-FIX version used (+ x i) for the screen-col of every
   ;; segment overdraw; that worked for ASCII but drifted by 1 col
   ;; per VS-16 / 2 cols per flag etc., shifting the body text past
   ;; the chrome `┃` separators and overwriting them with cell
-  ;; content. THAT was the visible “🏿️ row eats its separators” bug.
+  ;; content. THAT was the visible 'skin-tone emoji row eats its separators' bug.
   (let [cells
         (com.googlecode.lanterna.TextCharacter/fromString line)
 
@@ -1998,9 +1998,9 @@
 
    Extra params:
      `viewport-top` and `viewport-h` describe the absolute screen
-     window the messages-area paints into. They’re consulted by the
+     window the messages-area paints into. They're consulted by the
      per-row click-region painters to decide whether to register a
-     click region for an off-screen row (they don’t).
+     click region for an off-screen row (they don't).
      Callers that paint outside `draw-messages-area!` (tests, REPL
      exploration) can pass `0 / 0` to disable click registration."
   [^TextGraphics g {:keys [role text timestamp status] :as message} start-row left max-w &
@@ -2488,7 +2488,7 @@
                                                             t/code-block-bg)))
                         ;; Tagged head row — paint gutter + badge + body.
                         (let [gutter-x (inc (long x))       ; col after leading pad
-                              badge-x (+ (long gutter-x) 2) ; ▎ + space
+                              badge-x (+ (long gutter-x) 2) ; ┃ + space
                               body-x (+ (long badge-x) (count badge-token) 2)]
 
                           ;; Leading pad space first — keeps the band
@@ -2497,7 +2497,7 @@
                           (p/put-str! g x y " ")
                           ;; Gutter glyph in kind color.
                           (p/set-colors! g kind-fg t/terminal-bg)
-                          (p/styled g [p/BOLD] (p/put-str! g gutter-x y "▎"))
+                          (p/styled g [p/BOLD] (p/put-str! g gutter-x y "┃"))
                           (p/put-str! g (inc (long gutter-x)) y " ")
                           ;; Badge token — kind-fg, BOLD.
                           (p/set-colors! g kind-fg t/terminal-bg)
@@ -3215,7 +3215,7 @@
                                             t/code-block-fg
                                             t/code-block-bg))
                     ;; Blockquote: italic + dim base, inline spans honoured
-                    ;; on top. Was the user-visible bug - `> **Lącznie:**`
+                    ;; on top. Was the user-visible bug - `> **Lacznie:**`
                     ;; rendered with literal asterisks because the previous
                     ;; quote painter used raw put-str! and the quote branch
                     ;; in markdown->lines didn't run markdown->inline. Both
@@ -3872,7 +3872,7 @@
 
 (def ^:private reasoning-auto-collapse-line-threshold
   "Reasoning PREVIEW height. Up to this many rows of reasoning are
-   ALWAYS shown — short reasoning (≤ this many rows) renders inline with
+   ALWAYS shown — short reasoning (<= this many rows) renders inline with
    no disclosure; longer reasoning shows these first rows as a peek and
    collapses only the REMAINDER behind a THINKING `+N more` toggle
    (same affordance as tool op rows). The opening of the reasoning
@@ -4470,7 +4470,7 @@
    `THINKING` label that lives in the SAME band (not a detached op-row),
    so the label + reasoning read as one cohesive thinking bubble.
 
-   Short reasoning (≤ `reasoning-auto-collapse-line-threshold` rows)
+   Short reasoning (<= `reasoning-auto-collapse-line-threshold` rows)
    paints in full with no disclosure. Longer reasoning shows the
    clickable header `THINKING ▸  +N more` as the band's TOP line and
    PEEKS the first N rows below it; clicking expands in place to the
@@ -4592,7 +4592,7 @@
 
                   ;; A row is visually blank once its leading structural
                   ;; paint marker is stripped: thinking rows are prefixed
-                  ;; with the zero-width thinking marker (`​`), which
+                  ;; with the zero-width thinking marker (`\u200b`), which
                   ;; `str/blank?` does NOT count as whitespace, so the raw
                   ;; line always reads non-blank. Strip the marker first.
                   blank-row?
@@ -4816,7 +4816,7 @@
           ;; TRIMMED before it is quoted: the fence payload ends in a newline, and a
           ;; trailing break inside a paragraph pushes the closing quote onto a line of
           ;; its own with a gap in front of it.
-          [:ast {} [:quote {} [:p {} [:em {} [:span {} (str "“" (str/trim payload) "”")]]]]]
+          [:ast {} [:quote {} [:p {} [:em {} [:span {} (str "'" (str/trim payload) "'")]]]]]
           [:ast {} [:code {:wrap? true} payload]])
 
         body
@@ -4883,7 +4883,7 @@
   "Render one `vis-image` block with its box PRE-ALLOCATED — NOT collapsible.
 
    The `[Image #N: ...]` token paints as a plain caption row; on a graphical
-   terminal the image's cell box (width × height) is reserved IMMEDIATELY
+   terminal the image's cell box (width x height) is reserved IMMEDIATELY
    below it, so the virtual layout always accounts for the picture's true
    size — no expand/collapse state, no height pop-in, no image painted at a
    stale position. The FIRST reserved row carries `:kind :image` meta so the
@@ -4959,7 +4959,7 @@
 
             (mapv #(assoc-in % [:meta :doc] doc)
                   (layout/ast->entries
-                    [:ast {} [:code {} (str title "\n↗ click to open in the system viewer")]]
+                    [:ast {} [:code {} (str title "\n→ click to open in the system viewer")]]
                     content-w
                     {}))))]
 
@@ -5121,7 +5121,7 @@
         (doc-block-parts node)
 
         lines
-        [(if (str/blank? summary) "[Document]" summary) "↗ click to open in the system viewer"]
+        [(if (str/blank? summary) "[Document]" summary) "→ click to open in the system viewer"]
 
         doc
         {:path path :mime mime :name name :size-label size-label :title (or name summary)}]
@@ -5236,7 +5236,7 @@
     stdout))
 
 (defn- strip-produced-artifact-transport
-  "Remove attach’s pending descriptor once the canonical iteration attachment owns
+  "Remove attach's pending descriptor once the canonical iteration attachment owns
    presentation and durable opening."
   [stdout]
   (some-> stdout
@@ -5288,7 +5288,7 @@
                         (when view-id (some #(when (= view-id (:view-id %)) %) runs))
                         nested?)
                       [{:line (str result-marker filename " · " media-type) :meta meta}
-                       {:line (str result-marker "↗ click to open in the system viewer")
+                       {:line (str result-marker "→ click to open in the system viewer")
                         :meta meta}]))))
         artifacts))
 
@@ -5719,7 +5719,7 @@
 (defn- activity-row-tail
   "Keep repetition counts visible at the right edge; otherwise show duration or live state."
   [{:keys [duration-ms activity-repeat-count] :as row}]
-  (cond activity-repeat-count (str "×" activity-repeat-count)
+  (cond activity-repeat-count (str "x" activity-repeat-count)
         (pos? (long (or duration-ms 0))) (vis/format-duration duration-ms)
         (= :running (activity-row-state row)) "…"))
 
@@ -6179,7 +6179,7 @@
                   (str (:label block)
                        " · "
                        (if artifact
-                         "↗ click to open in the system viewer"
+                         "→ click to open in the system viewer"
                          "Attachment unavailable"))]])
 
               ;; Code rows set their words in by `code-block-h-pad` inside the band, and a
@@ -6302,7 +6302,7 @@
                          (str (count files)
                               (if complete? " " " known ")
                               (if (= 1 (count files)) "file" "files")))
-                       (when (pos? (+ additions deletions)) (str "+" additions " −" deletions))
+                       (when (pos? (+ additions deletions)) (str "+" additions " -" deletions))
                        (not-empty (str/join " · "
                                             (for [state
                                                   [:running :failed :cancelled]
@@ -6318,7 +6318,7 @@
        :activity-group? true
        :activity-list? (every? #(= "ls" (:operation %)) rows)
        :state (name (or (some #(when (get states %) %) [:failed :running :cancelled]) :succeeded))
-       :presentation {:headline (str label " ×" (count rows)) :summary facts}
+       :presentation {:headline (str label " x" (count rows)) :summary facts}
        :children children
        :resources []
        :evidence []})))
@@ -6450,7 +6450,7 @@
                    (sort-by :sequence rows)))))
 
 (defn- numbered-run-rows
-  "Number the steps a repeated operation discloses. A bare `Lint ×2` block hides
+  "Number the steps a repeated operation discloses. A bare `Lint x2` block hides
    whether the second run repeated the first or checked it, so every run wears its
    place in the sequence beside its own outcome (issue #270)."
   [children]
@@ -6579,7 +6579,7 @@
                           (boolean (and diff (expanded? file-key false)))
 
                           mark
-                          (cond (nil? diff) "›"
+                          (cond (nil? diff) "·"
                                 open? "▾"
                                 :else "▸")
 
@@ -6736,7 +6736,7 @@
                                                              text
                                                              (when (pos? (+ (long additions)
                                                                             (long deletions)))
-                                                               (str " +" additions " −" deletions))
+                                                               (str " +" additions " -" deletions))
 
                                                              filename
                                                              (when (and (= "patch" (:operation row))
@@ -7114,9 +7114,9 @@
                                shown
                                " operation"
                                (when (not= 1 shown) "s")
-                               " matching “"
+                               " matching '"
                                query
-                               "”")
+                               "'")
                     (< (long shown) (long retained)) (str shown " of " retained " operations")
                     :else (activity-cost-text {:rows activity-rows})))
 
@@ -7414,7 +7414,7 @@
         ;; text, so Recap breathes the way thinking and code blocks do.
         ;; The RECAP rail is retired entirely (per user directive). It
         ;; duplicated state already visible in the ctx block and
-        ;; accumulated one stale row per iteration (`RECAP Task — ×
+        ;; accumulated one stale row per iteration (`RECAP Task — x
         ;; :K :cancelled`, SPEC, FACT, TITLE, plus provider / consult
         ;; notices). Provider errors still surface via `error-lines`
         ;; below; these destructured fields are intentionally unused.
@@ -7496,7 +7496,7 @@
                   (:data error)
 
                   ;; A provider failure is one the shared classifier recognizes
-                  ;; (`perr/provider-error-kind` ≠ :generic) OR one that carries HTTP
+                  ;; (`perr/provider-error-kind` != :generic) OR one that carries HTTP
                   ;; facts. The kind check is what catches a TRANSPORT blip: it has NO
                   ;; :status/:body/:request-id (nothing answered), so the field probe
                   ;; alone would miss it and dump it as one plain generic line instead
@@ -8207,7 +8207,7 @@
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
 
-;;; ── Spinner glyph (used by the in-bubble “working...” row) ──────────────────
+;;; ── Spinner glyph (used by the in-bubble 'working...' row) ──────────────────
 (def ^:private spinner-frames
   "Braille-dot spinner frames; one frame advances every ~100ms."
   ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
@@ -9139,7 +9139,7 @@
                     (ellipsize-cols (cond->> (queued-preview (or (:preview-text entry)
                                                                  (:text entry)))
                                       (:unsent? entry)
-                                      (str "⚠ unsent · "))
+                                      (str "△ unsent · "))
                                     avail)]
 
                 {:line (str queue-item-marker ord preview suffix)
@@ -9181,7 +9181,7 @@
             (when paused-info
               {:line (str
                        hint-marker
-                       "⚠ held — "
+                       "△ held — "
                        (str/replace (str (or (:reason paused-info) "provider unhealthy")) #"_" " ")
                        ;; A breaker-open hold (provider unhealthy) DOES resume on
                        ;; its own when the provider recovers. A turn-failure hold
@@ -9303,7 +9303,7 @@
            ;; pause — `submit-turn!` starts it immediately when idle — and its
            ;; success auto-resumes the queue, draining anything still held. So the
            ;; honest, actionable hint is "send a message", never "retry".
-           (str "⏸  Paused — the previous turn failed; nothing is running"
+           (str "■  Paused — the previous turn failed; nothing is running"
                 (let [held (:held queue-paused)]
                   (if (and (number? held) (pos? (long held))) (str " (" held " held).") "."))
                 "  Send a message to continue.")

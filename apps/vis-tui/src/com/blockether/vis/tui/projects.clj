@@ -175,12 +175,12 @@
     (cond (or (get session "archived_at") group-archived?) "Archived"
           (true? (get session "is_awaiting_input"))
           (let [n (long (or (get session "awaiting_input_count") 1))]
-            (if (> n 1) (str "HITL ×" n) "HITL"))
+            (if (> n 1) (str "HITL x" n) "HITL"))
           live? "Live"
           (and (or (true? (get session "was_interrupted")) (true? (get session "was_failed")))
                (pos? unread))
           "Stopped"
-          (pos? unread) (if (> unread 1) (str "New ×" unread) "New")
+          (pos? unread) (if (> unread 1) (str "New x" unread) "New")
           (= "suspended" (get session "status")) "Waiting"
           dirty? "Dirty"
           :else "Idle")))
@@ -1152,7 +1152,7 @@
             g
             (+ (long left) 2)
             (- (long rows) (if (get-in db [:project-sidebar :error]) 5 4))
-            (if (get-in db [:project-sidebar :saving?]) "Creating folder…" "＋ New folder  Ctrl+N")
+            (if (get-in db [:project-sidebar :saving?]) "Creating folder…" "+ New folder  Ctrl+N")
             :project-new-folder)
           cursor)))))
 
@@ -1383,7 +1383,7 @@
                                    (< width 48)))
             (when (= :project-group kind)
               (p/set-colors! g (or selected-ink (t/group-ink (:color entry))) t/dialog-bg)
-              (p/put-str! g (inc left) row "▏")))
+              (p/put-str! g (inc left) row "│")))
           (.register
             interactions/hit-map
             (assoc entry
@@ -1401,14 +1401,14 @@
               (components/button! g
                                   (- (+ left width) 5)
                                   row
-                                  " ⋮ "
+                                  " ⋯ "
                                   :project-set-menu
                                   {:extra {:project-id pid :set (:set entry)}})))
           (when (= :project-session kind)
             (components/button! g
                                 (- (+ left width) 5)
                                 row
-                                " ⋮ "
+                                " ⋯ "
                                 :project-details
                                 {:extra {:session (:session entry)
                                          :action [:details
@@ -1456,7 +1456,7 @@
         (keymap/sidebar-key-label {:key k})))))
 
 (defn row-menu-items
-  "The ⋮ menu of a sidebar `entry`, each verb with the key that runs it. The keys
+  "The ⋯ menu of a sidebar `entry`, each verb with the key that runs it. The keys
    work on the row without the menu: a key acts exactly where the menu lists it."
   [db entry]
   (let [project
@@ -1515,14 +1515,14 @@
         (conj (menu-item :delete-session "Delete session…" :delete)))
       group (cond-> []
               (not archived-group?)
-              (conj (menu-item :new-session "＋ New session here" :new-session))
+              (conj (menu-item :new-session "+ New session here" :new-session))
 
               (and (not archived-group?) (seq selected))
               (conj
                 (menu-item :move-selected (str "Move " (count selected) " selected here") :move))
 
               true
-              (into [(menu-item :new "＋ New group…" :new-group)
+              (into [(menu-item :new "+ New group…" :new-group)
                      (menu-item :rename "Rename group…" :rename)
                      (menu-item :recolour "Change group colour…" :recolour)
                      (menu-item :settings "Group settings…" :settings)
@@ -1533,8 +1533,8 @@
       (= :sessions (:set entry))
       (cond-> [(menu-item :toggle-session-archive
                           (if (:archived? entry) "Hide archived sessions" "Show archived sessions")
-                          :show-archived) (menu-item :new-session "＋ New session here" :new-session)
-               (menu-item :new "＋ New group…" :new-group)]
+                          :show-archived) (menu-item :new-session "+ New session here" :new-session)
+               (menu-item :new "+ New group…" :new-group)]
         (seq selected)
         (conj (menu-item :ungroup-selected
                          (str "Ungroup " (count selected) " selected sessions")
@@ -1543,13 +1543,13 @@
         true
         (conj (menu-item :settings "Project settings…" :settings)))
       (= :groups (:set entry))
-      [(menu-item :new "＋ New group…" :new-group)
+      [(menu-item :new "+ New group…" :new-group)
        (menu-item :toggle-group-archive
                   (if (:archived? entry) "Hide archived groups" "Show archived groups")
                   :show-archived) (menu-item :settings "Project settings…" :settings)]
       :else [(menu-item :use-project "Use project" nil)
-             (menu-item :new-session "＋ New session" :new-session)
-             (menu-item :new "＋ New group…" :new-group)
+             (menu-item :new-session "+ New session" :new-session)
+             (menu-item :new "+ New group…" :new-group)
              (menu-item :rename-project "Rename project…" :rename)
              (menu-item :move-project "Change folder…" nil)
              (menu-item :settings "Project settings…" :settings)
@@ -1557,7 +1557,7 @@
              (menu-item :delete-project "✗ Remove project and sessions…" :delete)])))
 
 (def ^:private menu-kinds
-  "Row kinds that own a ⋮ menu."
+  "Row kinds that own a ⋯ menu."
   #{:project-select :project-group :project-set :project-session})
 
 (defn- focused-entry

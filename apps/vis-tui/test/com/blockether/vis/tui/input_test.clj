@@ -432,7 +432,7 @@
                     {:id 3
                      :content "/tmp/shot.png"
                      :image {:filename "shot.png" :width 1200 :height 800 :size-label "245KB"}})]
-        (expect (= "[Image #3: shot.png 1200×800, 245KB]" token))))
+        (expect (= "[Image #3: shot.png 1200x800, 245KB]" token))))
   (it "an image with unknown dims omits the WxH clause"
       (let [token (input/format-paste-placeholder
                     {:id 4 :content "/tmp/x.gif" :image {:filename "x.gif" :size-label "12KB"}})]
@@ -530,7 +530,7 @@
             out
             (input/collapse-paste-placeholders "see [Image #1: shot.png 1200×800, 245KB]" pastes)]
 
-        (expect (str/includes? out "````vis-image\n[Image #1: shot.png 1200×800, 245KB]\n"))
+        (expect (str/includes? out "````vis-image\n[Image #1: shot.png 1200x800, 245KB]\n"))
         (expect (str/includes? out "/tmp/shot.png\nimage/png\n1200x800\n245KB\n"))
         (expect (str/ends-with? out "````\n"))))
   (it

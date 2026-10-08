@@ -4262,6 +4262,15 @@ therapy line 2"
         (expect (not (str/includes? entered "\u001b[?9001h")))
         (expect (< (or (str/index-of exited "\u001b[<u") Long/MAX_VALUE) main-screen))
         (expect (< (or (str/index-of exited "\u001b[>4m") Long/MAX_VALUE) main-screen))))
+  (it "detects terminal capabilities as opentui does before it enters the alternate screen"
+      (let [{:keys [entered]}
+            (ansi-terminal-output {})
+
+            alternate-screen
+            (str/index-of entered "\u001b[?1049h")]
+
+        (doseq [query ["\u001b[>0q" "\u001b[?2027$p" "\u001b[c"]]
+          (expect (< (or (str/index-of entered query) Long/MAX_VALUE) alternate-screen) query))))
   (it
     "uses win32-input-mode in Windows Terminal, so Shift+Enter reaches WSL and AltGr letters stay text"
     (let [{:keys [entered exited]}

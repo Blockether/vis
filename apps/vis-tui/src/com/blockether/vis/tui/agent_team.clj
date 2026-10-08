@@ -246,7 +246,7 @@
                 (do (when (= :stop
                              (:action (dlg/select-dialog!
                                         screen
-                                        (str "Stop “" (get row "task") "” and descendants?")
+                                        (str "Stop '" (get row "task") "' and descendants?")
                                         [{:label "Keep working" :action :keep}
                                          {:label "Stop agent and descendants" :action :stop}])))
                       (stop! sid id))

@@ -79,7 +79,7 @@
 ;; only appends; see render.clj), so the STABLE prefix keeps object identity
 ;; across live ticks — only the growing live/last bubble churns its identity.
 ;; Memoize the fingerprint under the message OBJECT (IdentityHashMap == key
-;; equality). Identity ⟹ identical content ⟹ identical fingerprint, so a hit is
+;; equality). Identity => identical content => identical fingerprint, so a hit is
 ;; always correct; a miss (churned/rebuilt object) recomputes exactly today's
 ;; value. This never becomes the CACHE KEY (that stays the content fingerprint),
 ;; so it can't reintroduce the identityHashCode scroll-jump the doc below warns of.
@@ -247,7 +247,7 @@
 ;;; ── Estimated-height heuristic ─────────────────────────────────────────────
 
 (defn- wrapped-rows-est
-  "Rows string `s` occupies when hard-folded at width `w`: Σ per input
+  "Rows string `s` occupies when hard-folded at width `w`: sum of per input
    line of `ceil(len/w)`, blank interior lines counting 1. Single indexed
    pass — no regex, no split allocation — because this runs once per COLD
    message per layout frame. Slightly OVER-counts trailing newlines
@@ -436,7 +436,7 @@
                     ~5 band-chrome rows; full height when expanded.
      * answer     — folded at min(60, fill-w): markdown chrome (headings,
                     fences, list gaps) makes /60 the safe historical
-                    ballpark at any width ≥ 60, and narrower terminals
+                    ballpark at any width >= 60, and narrower terminals
                     fold at their own width.
      * digest     — a closed step digest paints its note, its row, the
                     failures and the shown files. Steps with files keep
@@ -495,7 +495,7 @@
        (let [n-iter
              (long (count trace))
 
-             ;; The painter folds code/results at `fill-w` (≈ bubble-w - 6);
+             ;; The painter folds code/results at `fill-w` (~ bubble-w - 6);
              ;; estimate against a slightly narrower width so rounding lands
              ;; on the overshoot side.
              fold-w
@@ -513,7 +513,7 @@
              peek
              (long ast/reasoning-preview-line-limit)
 
-             ;; A collapse only fires when it hides ≥ reasoning-collapse-min-hidden
+             ;; A collapse only fires when it hides >= reasoning-collapse-min-hidden
              ;; rows; below that the section renders in full. Cap at the
              ;; largest height a collapsed-or-inline section can paint.
              cap
@@ -1234,7 +1234,7 @@
         ;; `scroll` by however much the content ABOVE it changed height
         ;; between frames (`est-off[anchor] - prev-off[anchor]`). The
         ;; anchor message then stays visually put regardless of how the
-        ;; off-screen estimate ↔ real corrections move `total-h`.
+        ;; off-screen estimate <-> real corrections move `total-h`.
         ;;
         ;; nil scroll = auto-bottom: never anchored (always tracks the
         ;; latest message). Guarded on offsets-vec shape so an append
@@ -1351,7 +1351,7 @@
           ;; painted `:top`s are differences of real tail heights — the
           ;; estimate terms for everything above cancel out — so the tail
           ;; sits rock-still frame-to-frame even while a fast-growing live
-          ;; bubble's cheap estimate undershoots by 10–100×. That kills the
+          ;; bubble's cheap estimate undershoots by 10-100x. That kills the
           ;; eff lurch (the old eff-1→eff-2 two-phase correction) that made
           ;; the view flicker right as a running op flips to success/error.
           ;; `total-h'` still folds in estimates for the off-screen messages
@@ -1483,7 +1483,7 @@
                 (long
                   (if-let [[^long lo _] vis-window]
                     (cond
-                      ;; Top message flush with the viewport top ⇒ it IS the anchor.
+                      ;; Top message flush with the viewport top => it IS the anchor.
                       (>= (long (nth est-off lo)) eff-1) lo
                       ;; Clipped top message whose height CHANGED against the last
                       ;; frame's MEASURED offsets — a disclosure toggle busted its

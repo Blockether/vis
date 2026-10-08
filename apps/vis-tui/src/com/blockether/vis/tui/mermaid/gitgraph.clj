@@ -154,7 +154,7 @@
 (defn- glyph
   [{:keys [kind type]}]
   (cond (= :merge kind) \◉
-        (= :pick kind) \◎
+        (= :pick kind) \⊙
         (= "HIGHLIGHT" type) \■
         (= "REVERSE" type) \✕
         :else \●))

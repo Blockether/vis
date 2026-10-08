@@ -925,7 +925,7 @@
             (str/join (map #(char-at screen % y) (range (inc left) right))))
 
           ring-y
-          (at #(str/includes? % "▎"))
+          (at #(str/includes? % "┃"))
 
           caps-y
           (at #(str/includes? % " Submit "))]
@@ -934,7 +934,7 @@
       ;; wears — the ring is the LAST of the lead, never painted on the box.
       (expect (= "│" (char-at screen left ring-y)))
       (expect (= " " (char-at screen (inc left) ring-y)))
-      (expect (= "▎" (char-at screen (+ left 2) ring-y)))
+      (expect (= "┃" (char-at screen (+ left 2) ring-y)))
       ;; The same lead answers on the right: the column against the rail is the
       ;; scrollbar's own gutter, so it holds the shared bar or nothing at all —
       ;; never a row's surface.
@@ -1489,7 +1489,7 @@
       (let [texts (map #(str (:text %)) (hi/form-rows (hi/init-form (slider-request))))]
         (expect (some #(str/includes? % "●") texts))
         (expect (some #(str/includes? % "25") texts))
-        (expect (some #(str/includes? % "(0–100)") texts))))
+        (expect (some #(str/includes? % "(0-100)") texts))))
   (it "offers ←/→ in the hint bar while the slider has focus"
       (let [form (assoc (hi/init-form (slider-request)) :focus 1)]
         (expect (some #{["←/→" "adjust"]} (hi/hint form))))))
@@ -1659,13 +1659,13 @@
             (hi/paint! g 80 30 (otp-form))
 
             ringed
-            (filterv #(str/includes? % "▎") (map #(screen-row screen %) (range 30)))]
+            (filterv #(str/includes? % "┃") (map #(screen-row screen %) (range 30)))]
 
         (expect (= 1 (count ringed)))
         ;; The ring is on the CODE boxes, the field being filled, not on the
         ;; address above them.
         (expect (str/includes? (first ringed) "[ ]"))
-        (expect (= t/header-active-tab-accent (:fg (cell-under (otp-form) "▎"))))))
+        (expect (= t/header-active-tab-accent (:fg (cell-under (otp-form) "┃"))))))
   (it "keeps every field label bold while focus still controls its ink"
       (let [form
             (assoc (hi/init-form (request)) :focus 0)
@@ -1736,7 +1736,7 @@
                    (:bg (cell-under (assoc (hi/init-form (request)) :focus 0) "who"))))))
   (it "still says which toggle the keyboard is on: the ring and the bold ink"
       (let [form (assoc (hi/init-form (request)) :focus 2)]
-        (expect (str/includes? (:text (painted-row-cells form "Dev")) "▎"))
+        (expect (str/includes? (:text (painted-row-cells form "Dev")) "┃"))
         (expect (:is-bold (cell-under form "Dev")))
         (expect (not (:is-bold (cell-under form "Prod")))))))
 
@@ -1772,11 +1772,11 @@
                            [:values "code"])))))
   (it "says so when it accepts a RANGE of lengths"
       ;; Eight empty boxes cannot show that four of them are already enough.
-      (expect (= "[ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ]  (4–8 digits)" (:text (otp-row (otp-form 4 8)))))
-      (expect (= "[•] [•] [•] [•] [ ] [ ] [ ] [ ]  (4–8 digits)"
+      (expect (= "[ ] [ ] [ ] [ ] [ ] [ ] [ ] [ ]  (4-8 digits)" (:text (otp-row (otp-form 4 8)))))
+      (expect (= "[•] [•] [•] [•] [ ] [ ] [ ] [ ]  (4-8 digits)"
                  (:text (otp-row (feed (otp-form 4 8) (map ch "1234")))))))
   (it "offers the digits in the hint bar"
-      (expect (some #{["0–9" "fill"]} (hi/hint (otp-form))))
+      (expect (some #{["0-9" "fill"]} (hi/hint (otp-form))))
       (expect (nil? (some #{["0–9" "fill"]} (hi/hint (hi/init-form (otp-request))))))))
 
 (defdescribe
@@ -2145,19 +2145,19 @@
             (mapv #(screen-row screen %) (range 30))
 
             ring-row
-            (first (filter #(str/includes? % "▎") rows))
+            (first (filter #(str/includes? % "┃") rows))
 
             label-row
             (first (filter #(str/includes? % "User") rows))]
 
         ;; the ring is the field's own left edge, and the text it fences starts in
         ;; the very column the label above it does
-        (expect (str/includes? ring-row "▎who"))
+        (expect (str/includes? ring-row "┃who"))
         (expect (= (str/index-of label-row "User") (str/index-of ring-row "who")))
         ;; the band's rails are the first and the last ink on that row — the ring
         ;; never reaches either of them
-        (expect (< (long (str/index-of ring-row "│")) (long (str/index-of ring-row "▎"))))
-        (expect (< (long (str/index-of ring-row "▎")) (long (str/last-index-of ring-row "│")))))))
+        (expect (< (long (str/index-of ring-row "│")) (long (str/index-of ring-row "┃"))))
+        (expect (< (long (str/index-of ring-row "┃")) (long (str/last-index-of ring-row "│")))))))
 
 (defdescribe
   band-queue-hint-test

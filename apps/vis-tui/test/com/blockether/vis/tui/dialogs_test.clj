@@ -3107,7 +3107,7 @@
                    _ (doseq [k (concat (map term/keystroke "hi") [(KeyStroke. KeyType/Enter)])]
                        (.addInput terminal k))
                    answer ((:read! (dlg/band-questions screen g region)) "Name:")
-                   field-row (first (filter #(str/includes? % "▎") (term/grid terminal)))]
+                   field-row (first (filter #(str/includes? % "┃") (term/grid terminal)))]
 
                (expect (= "hi" answer))
                ;; the typed line is on that row …
@@ -3116,8 +3116,8 @@
                (expect (= \│ (nth field-row left)))
                (expect (= \│ (nth field-row (+ left inner-w 1))))
                ;; … and the ring sits INSIDE them, on the field's own left edge
-               (expect (< left (long (str/index-of field-row "▎")) (+ left inner-w 1)))
-               (expect (str/includes? field-row "▎hi")))
+               (expect (< left (long (str/index-of field-row "┃")) (+ left inner-w 1)))
+               (expect (str/includes? field-row "┃hi")))
              (finally (.stopScreen screen))))))
 
 ;; Regression, issue #160: the navigator received and stored each gateway `live`
@@ -3222,7 +3222,7 @@
                          (row nil {"id" "s-parked" "title" "Deploy" "is_awaiting_input" true}))))
         ;; TWO open requests used to read exactly like one, so answering the
         ;; first left the very same badge standing, naming nothing.
-        (expect (= "HITL ×2"
+        (expect (= "HITL x2"
                    (:status (row nil
                                  {"id" "s-parked"
                                   "title" "Deploy"
@@ -3251,7 +3251,7 @@
                                   "turn_count" 3
                                   "is_unread" true
                                   "unread_answers" 1}))))
-        (expect (= "New ×2"
+        (expect (= "New x2"
                    (:status (row {"id" "s-new"
                                   "title" "Deploy"
                                   "turn_count" 3

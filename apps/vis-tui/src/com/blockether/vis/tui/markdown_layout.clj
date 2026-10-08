@@ -821,7 +821,7 @@
 
    CommonMark keeps `- [x] item` / `- [ ] item` as ordinary list item
    paragraph text in our canonical IR, so the TUI walker renders the task
-   marker here: checked items become `☑️`, unchecked items become `⬜`, and
+   marker here: checked items become `[✓]`, unchecked items become `[ ]`, and
    the literal `[x]` / `[ ]` prefix is stripped from the first run."
   [ordered? runs]
   (when-not ordered?
@@ -830,8 +830,8 @@
                                  :text
                                  str)
                          "")]
-      (cond (re-find #"^\[[xX]\]\s+" first-text) {:marker "☑️  " :prefix #"^\[[xX]\]\s+"}
-            (re-find #"^\[ \]\s+" first-text) {:marker "⬜ " :prefix #"^\[ \]\s+"}))))
+      (cond (re-find #"^\[[xX]\]\s+" first-text) {:marker "[✓] " :prefix #"^\[[xX]\]\s+"}
+            (re-find #"^\[ \]\s+" first-text) {:marker "[ ] " :prefix #"^\[ \]\s+"}))))
 
 (defn- strip-task-list-marker
   [runs prefix]
@@ -1612,7 +1612,7 @@
 
    Walks the top-level blocks BACKWARD, accumulating a cheap
    per-block line estimate (text-chars / content-width), until
-   accumulated estimate ≥ `tail-n * 2` (slack covers blank-collapse
+   accumulated estimate >= `tail-n * 2` (slack covers blank-collapse
    + per-block trailing blanks). Then renders ONLY those tail blocks
    via the normal `ast->lines` and `(take-last tail-n)`.
 
@@ -1832,7 +1832,7 @@
    demand. Bold / italic / code / link each get an ON…OFF pair.
 
    One `StringBuilder` pass (not a `cond->` `str` chain, which reallocated the
-   whole growing body up to 8× for a bold+code+link run — projection-miss hot
+   whole growing body up to 8x for a bold+code+link run — projection-miss hot
    path). Plain runs still return `text` by identity, so the gain is bounded to
    styled runs and scales with markup density. Nesting order is preserved
    byte-identical: outer→inner link, bold, italic, code."

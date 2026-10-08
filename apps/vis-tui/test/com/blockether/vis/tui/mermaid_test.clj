@@ -33,7 +33,7 @@
                  (expect (= ["┌──────┐" "│ Only │" "└──────┘"] (rows "flowchart TD\n  A[Only]\n"))))
              (it "round and diamond shapes keep their own chrome"
                  (expect (= ["╭───────╮" "│ Round │" "╰───────╯" "    │" "    │" "    ▼"
-                             "╱────────╲" "│ Choice │" "╲────────╱"]
+                             "/────────\\" "│ Choice │" "\\────────/"]
                             (rows "flowchart TD\n  A([Round]) --> B{Choice}\n"))))
              (it "a quoted label keeps the characters mermaid would escape"
                  (expect (str/includes? (picture "flowchart TD\n  A[\"a --> b\"]\n") "a --> b")))
@@ -63,7 +63,7 @@
 
 (defdescribe link-test
              (it "a dotted link is drawn dotted and a thick link heavy"
-                 (expect (= ["┌─────┐     ┌─────┐     ┌───────┐" "│ One │╌╌╌╌▶│ Two │━━━━▶│ Three │"
+                 (expect (= ["┌─────┐     ┌─────┐     ┌───────┐" "│ One │····▶│ Two │────▶│ Three │"
                              "└─────┘     └─────┘     └───────┘"]
                             (rows "flowchart LR\n  A[One] -.-> B[Two]\n  B ==> C[Three]\n"))))
              (it "an edge label rides next to its edge"

@@ -573,11 +573,12 @@
       (expect (str/includes? armed "why? wrong subnet") "the words are on screen as they are typed")
       (expect (str/includes? armed "interrupt CI · fix(loop): move the session pick")
               "and the line says WHICH view they will stop")
-      (expect (str/includes? empty-armed "⌫ keep watching")
+      (expect (str/includes? empty-armed "Backspace keep watching")
               "with nothing typed the bar offers the way back")
-      (expect (str/includes? armed "Esc / ⏎ interrupt with the note")
+      (expect (str/includes? armed "Esc / Enter interrupt with the note")
               "once there are words the bar says they will travel with the stop")
-      (expect (str/includes? armed "⌫ erase") "and Backspace is the key that takes them away again")
+      (expect (str/includes? armed "Backspace erase")
+              "and Backspace is the key that takes them away again")
       (let [lines
             (str/split-lines armed)
 
@@ -782,7 +783,7 @@
       (expect (= full (lv/restored compact)) "restoring preserves the exact viewport")
       (expect (not (lv/minimized? (lv/armed compact)))
               "arming an interrupt restores the note field before it takes the keyboard")
-      (expect (some #{["click ▴" "restore live view"]} (lv/hint compact [])))
+      (expect (some #{["click ↑" "restore live view"]} (lv/hint compact [])))
       (.reset interactions/hit-map)
       (try (let [{:keys [frames]}
                  (paint-frames [advanced] 96 26)
@@ -1144,7 +1145,7 @@
                                20)]
         (expect (str/includes? text "83%"))
         (expect (str/includes? text "15/18 done"))
-        (expect (str/includes? text "▰") "15 of 18 is a measured fraction, not indeterminate work")
+        (expect (str/includes? text "■") "15 of 18 is a measured fraction, not indeterminate work")
         (expect (not (str/includes? text "working")))))
   (it "a progress nobody can size still says the one true thing"
       (let [text (painted-text [(lv/opened (mounted {}

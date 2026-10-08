@@ -463,7 +463,7 @@
               lines (str/split-lines (cap/frame-text capture))]
 
           (expect (nil? (:error capture)))
-          (expect (str/includes? (nth lines 3) "› /work/new"))
+          (expect (str/includes? (nth lines 3) "> /work/new"))
           (expect (str/includes? (nth lines 16) "Esc cancel"))
           (expect (= 12 (.getColumn ^TerminalPosition @caret)))
           (expect (= 3 (.getRow ^TerminalPosition @caret)))))
@@ -2047,7 +2047,7 @@
           entries
           (filterv #(= :project-session (:kind %)) (projects/sidebar-entries db))]
 
-      (expect (= ["HITL ×2" "Live" "Stopped" "New ×2" "Waiting" "Dirty" "Archived" "Idle" "Stopped"]
+      (expect (= ["HITL x2" "Live" "Stopped" "New x2" "Waiting" "Dirty" "Archived" "Idle" "Stopped"]
                  (mapv :status entries)))
       (expect (= "Keep this draft" (:label (nth entries 5))))
       (expect (true? (:favorite? (nth entries 3))))
@@ -2357,7 +2357,7 @@
                   :let [{:keys [col row width]} bounds]]
 
             (expect (= 3 width))
-            (expect (= " ⋮ " (subs (nth lines row) col (+ col width)))))))))
+            (expect (= " ⋯ " (subs (nth lines row) col (+ col width)))))))))
 
 (defdescribe
   set-buttons-use-web-bands-and-direct-actions-test
@@ -2903,13 +2903,13 @@
             "modified_at" (java.time.Instant/ofEpochMilli (- now 60000))}]
 
           labels
-          ["* Live" "HITL ×12" "Stopped" "New ×3" "Waiting" "Archived" "Idle"]
+          ["* Live" "HITL x12" "Stopped" "New x3" "Waiting" "Archived" "Idle"]
 
           narrow-details
           ["* Live · 3 hours ago · 12 turns"
-           (str "HITL ×12 · " (projects/session-time-label hitl-at))
+           (str "HITL x12 · " (projects/session-time-label hitl-at))
            (str "Stopped · " (projects/session-time-label stopped-at) " · 1 turn")
-           "New ×3 · 9 turns" "Waiting" "Archived · 2 turns" "Idle · 1 min ago · 7 turns"]
+           "New x3 · 9 turns" "Waiting" "Archived · 2 turns" "Idle · 1 min ago · 7 turns"]
 
           wide-details
           ["3 hours ago · 12 turns" (str (projects/session-time-label hitl-at) " · 3 turns")

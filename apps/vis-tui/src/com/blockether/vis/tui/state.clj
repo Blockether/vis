@@ -3502,7 +3502,7 @@
                   (assoc db :ctx-scroll (max 0 (min maxs (+ cur (long delta))))))))
 
 (reg-event-db :toggle-fact-files
-              ;; Fold/unfold the file list under a fact's `⛁ N files` meta row in
+              ;; Fold/unfold the file list under a fact's `◈ N files` meta row in
               ;; the F2 context panel. `:expanded-facts` is a set of fact keys
               ;; (as strings); clicking the glyph flips membership. Callers bump
               ;; :render-version separately so the otherwise-still overlay repaints.
@@ -5055,7 +5055,7 @@
                     ;; The user took this submission back while the enqueue POST was still open, and
                     ;; the POST then FAILED. Nothing was ever registered server-side, so there is
                     ;; nothing to keep: the text is already back in the editor (or deliberately
-                    ;; dropped). Staging it here resurrected a cancelled message as an `⚠ unsent`
+                    ;; dropped). Staging it here resurrected a cancelled message as an `△ unsent`
                     ;; row that the local drain went on to SEND.
                     db
                     (update-tab db

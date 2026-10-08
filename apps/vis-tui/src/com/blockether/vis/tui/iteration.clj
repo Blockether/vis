@@ -37,7 +37,7 @@
 
 (def status-glyph
   "Glyph for each status, matching the REVAMP target UX header."
-  {:ok "✓" :error "✗" :running "↻" :cancelled "⊘" :timeout "⏱"})
+  {:ok "✓" :error "✗" :running "⟳" :cancelled "✕" :timeout "△"})
 
 ;; Block-level scope: strip the per-form `/fK` (or `/bK`) tail so the BLOCK
 ;; header reports `tN/iM`, never `tN/iM/fK`.

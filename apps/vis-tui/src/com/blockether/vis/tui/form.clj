@@ -62,7 +62,7 @@
    many chars in the tool result — a universal backstop for a runaway print()
    that tool-level caps don't catch (the model can `print(open-ended
    composition)`). The block's values still live in the sandbox (persistent REPL
-   vars the model can re-slice and print less of). ~64KB ≈ 16k tokens: generous
+   vars the model can re-slice and print less of). ~64KB ~ 16k tokens: generous
    for an intentional full-file read, tight enough that one runaway print can't
    blow the request."
   65536)

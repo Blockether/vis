@@ -259,7 +259,7 @@
                        (update
                          :events
                          conj
-                         {:kind :message :from caller :to callee :text "«create»" :end :arrow}))
+                         {:kind :message :from caller :to callee :text "<<create>>" :end :arrow}))
                    (if opens? (conj closers :none) closers)))
           (re-matches #"[\w\"]+(?:\s+as\s+.*)?" body)
           (let [[_ id label] (re-matches #"(\S+)(?:\s+as\s+(.*))?" body)]
@@ -396,10 +396,10 @@
                              (+ 4 (min limit (c/width text)))))})))
 
 (def ^:private end-glyph
-  {:arrow {:right \▶ :left \◀}
-   :open {:right \▷ :left \◁}
+  {:arrow {:right \▶ :left \←}
+   :open {:right \> :left \<}
    :cross {:right \✕ :left \✕}
-   :async {:right \❯ :left \❮}})
+   :async {:right \→ :left \←}})
 
 (defn- paint
   [{:keys [participants events autonumber?]} ^long width ^long limit]
@@ -474,7 +474,7 @@
                     b (x-of to)
                     text (if autonumber? (str number ". " text) text)
                     lines (c/wrap-words text limit)
-                    line-ch (if dotted? \╌ \─)
+                    line-ch (if dotted? \· \─)
                     tone (if dotted? :chrome :text)]
 
                 (if (= a b)
@@ -485,7 +485,7 @@
                         (c/put-text! canvas
                                      (inc r)
                                      a
-                                     (str "│" (get-in end-glyph [end :left] \◀) line-ch "┘")
+                                     (str "│" (get-in end-glyph [end :left] \←) line-ch "┘")
                                      :chrome)
                         (recur (rest events) (+ r 2) (inc number) depth)))
                   (let [[lo hi] [(min a b) (max a b)]
@@ -508,7 +508,7 @@
                       (c/put-char! canvas
                                    r
                                    (if (< a b) (inc a) (dec a))
-                                   (get-in end-glyph [end (if (< a b) :left :right)] \◀)
+                                   (get-in end-glyph [end (if (< a b) :left :right)] \←)
                                    :text))
                     (recur (rest events) (inc r) (inc number) depth))))
 
@@ -542,14 +542,14 @@
                     label (if (str/blank? label) "" (str " " label " "))]
 
                 (doseq [x (range depth (- cols depth))]
-                  (when (= \space (c/char-at canvas row x)) (c/put-char! canvas row x \┄ :purple)))
+                  (when (= \space (c/char-at canvas row x)) (c/put-char! canvas row x \· :purple)))
                 (c/put-text! canvas row (+ depth 1) (c/clip label (- cols depth 2)) :purple)
                 (recur (rest events) (inc row) number (if (= :block kind) (inc depth) depth)))
 
               :end
               (do (doseq [x (range (max 0 (dec depth)) (- cols (max 0 (dec depth))))]
                     (when (= \space (c/char-at canvas row x))
-                      (c/put-char! canvas row x \┄ :purple)))
+                      (c/put-char! canvas row x \· :purple)))
                   (recur (rest events) (inc row) number (max 0 (dec depth))))
 
               (recur (rest events) row number depth))))
@@ -564,7 +564,7 @@
               (case kind
                 :message
                 (c/seg-row (c/seg-clip [[(label-of from from) :cyan]
-                                        [(if dotted? " ╌╌▶ " " ──▶ ") :chrome]
+                                        [(if dotted? " ··▶ " " ──▶ ") :chrome]
                                         [(label-of to to) :cyan] [(str ": " text) :text]]
                                        width))
 

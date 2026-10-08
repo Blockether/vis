@@ -523,9 +523,9 @@
    :stadium {:tl \╭ :tr \╮ :bl \╰ :br \╯}
    :circle {:tl \╭ :tr \╮ :bl \╰ :br \╯}
    :flag {:tl \╭ :tr \╮ :bl \╰ :br \╯}
-   :hexagon {:tl \╱ :tr \╲ :bl \╲ :br \╱}
-   :diamond {:tl \╱ :tr \╲ :bl \╲ :br \╱}
-   :double {:tl \╔ :tr \╗ :bl \╚ :br \╝}})
+   :hexagon {:tl \/ :tr \\ :bl \\ :br \/}
+   :diamond {:tl \/ :tr \\ :bl \\ :br \/}
+   :double {:tl \┌ :tr \┐ :bl \└ :br \┘}})
 
 (defn- node-lines
   "Box rows of a node: its wrapped label, then each section after a `:rule`.
@@ -576,7 +576,7 @@
         (box-chrome shape (box-chrome :rect))
 
         [horizontal vertical]
-        (if (= :double shape) [\═ \║] [\─ \│])
+        (if (= :double shape) [\─ \│] [\─ \│])
 
         inner
         (- width 2)]
@@ -1365,7 +1365,7 @@
           (recur (rest attempts) (min narrowest cols))))
       {:reason (str "too wide: " narrowest " > " width " cols")})))
 
-(def ^:private link-glyphs {:solid "──" :dotted "╌╌" :thick "━━"})
+(def ^:private link-glyphs {:solid "──" :dotted "··" :thick "──"})
 
 (defn- stacked
   "Rows of `graph` as boxes stacked in rank order, each followed by its
@@ -1424,7 +1424,7 @@
 
                      (c/seg-clip
                        [["  " nil]
-                        [(str (if tail? "◀" "") (link-glyphs style "──") (if head? "▶" "─") " ")
+                        [(str (if tail? "←" "") (link-glyphs style "──") (if head? "▶" "─") " ")
                          (:tone (nodes to))] [(label-of to) (:text-tone (nodes to))]
                         [(if (seq label) (str "  " (str/replace label #"\s*\n\s*" " ")) "")
                          :chrome]]
