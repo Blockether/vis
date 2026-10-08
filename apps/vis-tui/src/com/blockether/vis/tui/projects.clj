@@ -738,7 +738,7 @@
 (defn- session-status-label
   "The status that a session row shows, after a star for a favorite."
   [entry]
-  (str (when (:favorite? entry) "* ") (:status entry)))
+  (str (when (:favorite? entry) "* ") (dlg/session-status-text (:status entry))))
 
 (defn- paint-session-status!
   "Paint the session status in bold, in the companion app's colour for it."
@@ -800,7 +800,7 @@
     [["HITL" "HITL"]]
 
     :project-unread
-    [["New" "New"]]
+    [["NEW" "New"]]
 
     (:project-session :project-set :project-page :project-group-page :project-state)
     []

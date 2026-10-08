@@ -1412,11 +1412,11 @@
 
             (expect (nil? (:error capture)))
             (expect (str/includes? text "3 tabs | 1 HITL · 1 LIVE · 1 NEW"))
-            (expect (re-find #"Keyboard navigation +New" text))
+            (expect (re-find #"Keyboard navigation +NEW" text))
             (expect (= 11 row))
             (let [cell (get-in capture
                                [:frames 0 row
-                                (str/index-of (nth (str/split-lines text) row) "New")])]
+                                (str/index-of (nth (str/split-lines text) row) "NEW")])]
               (expect (= "N" (str (:ch cell))))
               (expect (true? (:bold cell)))
               (expect (= (#'theme-test/rgb-tuple
@@ -1464,7 +1464,7 @@
 
 (defdescribe
   project-alert-status-test
-  (it "shows project alerts as bold Title case statuses that stay legible"
+  (it "shows project alerts as bold uppercase statuses that stay legible"
       (let [before @theme/active-theme-id]
         (try (doseq [id (shared-theme/available-theme-ids)
                      cols [40 44 80 144]]
@@ -1489,8 +1489,8 @@
                    (expect (str/includes? text "3 tabs|1 HITL·1 LIVE·1 NEW")))
                  (doseq [row rows]
                    (let [line (cell-text capture row 0 width)]
-                     (expect (not (str/includes? line "NEW")))
-                     (expect (re-find #"(HITL|New) │$" line))
+                     (expect (not (str/includes? line "1 NEW")))
+                     (expect (re-find #"(HITL|NEW) │$" line))
                      (expect (not (re-find #"[!●]" line))))
                    (doseq [col (range (- width 5) (- width 2))
                            :let [cell (get-in capture [:frames 0 row col])]]
@@ -1687,7 +1687,7 @@
 
                     [label status]
                     [["1 HITL" "HITL"] ["1 LIVE" "Live"] ["1 NEW" "New"] ["HITL" "HITL"]
-                     ["Live" "Live"] ["New" "New"]]
+                     ["LIVE" "Live"] ["NEW" "New"]]
 
                     :let [col
                           (str/index-of line label)]
@@ -2777,8 +2777,8 @@
       (expect (= 2 (get-in live [:bounds :height])))
       (expect (= (+ live-row 2) idle-row))
       (expect (str/includes? (nth lines live-row) "Writing the tests"))
-      (expect (str/includes? (nth lines live-row) "* Live"))
-      (expect (str/includes? (nth lines idle-row) "Idle"))
+      (expect (str/includes? (nth lines live-row) "* LIVE"))
+      (expect (str/includes? (nth lines idle-row) "IDLE"))
       (expect (not (str/includes? (nth lines (inc live-row)) "live-sess")))
       (expect (str/includes? (nth lines (inc live-row)) "12 turns"))
       (expect (str/includes? (nth lines (inc idle-row)) "7 turns"))
@@ -2820,11 +2820,11 @@
         (expect (nil? (:error capture)))
         (expect (str/includes? (nth lines row)
                                (if (= cols 32) "Writing the te" "Writing the tests")))
-        (expect (not (str/includes? (nth lines row) "Live")))
-        (expect (str/includes? (nth lines (inc row)) "* Live"))
+        (expect (not (str/includes? (nth lines row) "LIVE")))
+        (expect (str/includes? (nth lines (inc row)) "* LIVE"))
         (expect (= (str/index-of (nth lines row) "Writing")
-                   (str/index-of (nth lines (inc row)) "* Live")))
-        (expect (str/includes? (nth lines (inc row)) "* Live · 12 turns"))
+                   (str/index-of (nth lines (inc row)) "* LIVE")))
+        (expect (str/includes? (nth lines (inc row)) "* LIVE · 12 turns"))
         (expect (true? (:bold status-cell)))
         (expect (= (#'theme-test/rgb-tuple
                     (theme/legible-ink theme/status-ok (tuple-rgb (:bg status-cell))))
@@ -2903,13 +2903,13 @@
             "modified_at" (java.time.Instant/ofEpochMilli (- now 60000))}]
 
           labels
-          ["* Live" "HITL x12" "Stopped" "New x3" "Waiting" "Archived" "Idle"]
+          ["* LIVE" "HITL x12" "STOPPED" "NEW x3" "WAITING" "ARCHIVED" "IDLE"]
 
           narrow-details
-          ["* Live · 3 hours ago · 12 turns"
+          ["* LIVE · 3 hours ago · 12 turns"
            (str "HITL x12 · " (projects/session-time-label hitl-at))
-           (str "Stopped · " (projects/session-time-label stopped-at) " · 1 turn")
-           "New x3 · 9 turns" "Waiting" "Archived · 2 turns" "Idle · 1 min ago · 7 turns"]
+           (str "STOPPED · " (projects/session-time-label stopped-at) " · 1 turn")
+           "NEW x3 · 9 turns" "WAITING" "ARCHIVED · 2 turns" "IDLE · 1 min ago · 7 turns"]
 
           wide-details
           ["3 hours ago · 12 turns" (str (projects/session-time-label hitl-at) " · 3 turns")

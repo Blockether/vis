@@ -6584,6 +6584,12 @@
                     t/dialog-hint)
                   bg)))
 
+(defn session-status-text
+  "The status of a session as the switcher and the sidebar show it: always uppercase,
+   whatever case the source gives. A count keeps its lowercase `x`, as in `HITL x2`."
+  [status]
+  (str/replace (str/upper-case (str status)) #" X(\d+)$" " x$1"))
+
 (defn- navigator-session-row
   "Normalize a session row with explicit project and group names.
    Group metadata never determines the status or timestamp ink."
@@ -7342,7 +7348,7 @@
 
         lead
         [[(str (:modified entry)) date-color true] [" / " t/dialog-hint false]
-         [(str (:status entry)) status-color true] [" / " t/dialog-hint false]]
+         [(session-status-text (:status entry)) status-color true] [" / " t/dialog-hint false]]
 
         title
         (str (:title entry))

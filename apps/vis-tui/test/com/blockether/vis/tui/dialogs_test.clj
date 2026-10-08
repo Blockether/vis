@@ -757,7 +757,7 @@
                (expect (= t/dialog-bg (.getBackgroundColor (.getBackCharacter screen 6 9))))
                (expect (str/includes?
                          (line 6)
-                         "now / Idle / First session | Project: Workbench / Group: Planning"))
+                         "now / IDLE / First session | Project: Workbench / Group: Planning"))
                (expect (= t/dialog-hint
                           (.getForegroundColor
                             (.getBackCharacter screen (int (str/index-of (line 9) "Project")) 9))))
@@ -3230,8 +3230,8 @@
                                :favorite-rank 1)
                              false)
                (draw-session g 0 4 40 entry false)
-               (expect (str/includes? (line 0) "now / idle / Deploy"))
-               (expect (str/includes? (line 4) "now / idle / Deploy"))
+               (expect (str/includes? (line 0) "now / IDLE / Deploy"))
+               (expect (str/includes? (line 4) "now / IDLE / Deploy"))
                (expect (not (str/includes? (line 0) "*"))))
              (finally (.stopScreen screen))))))
 
@@ -4271,3 +4271,12 @@
                          ["" {}]]
                         @asked)))
            (finally (future-cancel task))))))
+
+(defdescribe session-status-text-test
+             ;; #331: the C-x s and C-x w views show every status in uppercase.
+             (it "uppercases each status and keeps the count marker"
+                 (expect (= ["LIVE" "IDLE" "STOPPED" "WAITING" "DIRTY" "ARCHIVED" "HITL" "NEW x2"
+                             "HITL x12" ""]
+                            (mapv dlg/session-status-text
+                                  ["Live" "Idle" "Stopped" "Waiting" "Dirty" "Archived" "HITL"
+                                   "New x2" "HITL x12" nil])))))

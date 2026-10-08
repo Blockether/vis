@@ -123,7 +123,7 @@
           (expect (= ["newest" "star"] (mapv (comp :id :target) visible))))))
   (describe
     "compact rows"
-    (it "paints a neutral date, a bold Title case status, title and explicit location on two lines"
+    (it "paints a neutral date, a bold uppercase status, title and explicit location on two lines"
         (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
           (try (#'dlg/draw-navigator-session!
                 (.newTextGraphics screen)
@@ -144,7 +144,7 @@
                  (expect
                    (str/includes?
                      (back-line screen 4)
-                     "09-30 11:34 / Idle / Session title | Project: Workbench / Group: Planning"))
+                     "09-30 11:34 / IDLE / Session title | Project: Workbench / Group: Planning"))
                  (expect (str/blank? (back-line screen 5)))
                  (expect (= t/dialog-hint (.getForegroundColor date)))
                  (expect (contains? (set (.getModifiers date)) SGR/BOLD))
@@ -177,7 +177,7 @@
                  :session-group "Planning"}
                 false)
                (let [line (back-line screen 4)]
-                 (expect (str/includes? line "09-30 11:34 / Idle / A very long"))
+                 (expect (str/includes? line "09-30 11:34 / IDLE / A very long"))
                  (expect (str/includes? line "… | Project: Workbench / Group: Planning"))
                  (expect (<= (count (str/trimr line)) 78)))
                (finally (.stopScreen screen)))))
