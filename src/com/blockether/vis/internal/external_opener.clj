@@ -11,11 +11,13 @@
         anchored at the current working directory and re-checked for
         `..` traversal. Returns nil when the path escapes.
 
-     3. Build the OS-appropriate command vector
-        (`open` / `xdg-open` / `cmd /c start`) for `ProcessBuilder`.
+     3. Build the ordered OS-appropriate command candidates (`open`, or
+        `xdg-open` and its fallbacks, with `wslview` / `explorer.exe`
+        first on WSL).
 
-     4. Spawn it with stdio redirected to /dev/null so a chatty opener
-        cannot corrupt terminal output.
+     4. Spawn each candidate with stdio redirected to /dev/null so a chatty
+        opener cannot corrupt terminal output. A candidate that fails to
+        start or exits non-zero soon after the start passes to the next.
 
    Pure-ish: every step except `open!` itself is a function of its
    args plus `os.name` and the current working directory. `open!`
@@ -24,7 +26,8 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import (java.io File)
-           (java.nio.file Path Paths)))
+           (java.nio.file Path Paths)
+           (java.util.concurrent TimeUnit)))
 
 ;; Scheme classification
 
@@ -165,25 +168,41 @@
   ^String []
   (str/lower-case (or (System/getProperty "os.name") "")))
 
-(defn open-command
-  "Vec of process args for the host OS. Pure modulo `os-name`.
-   Returns nil for unsupported platforms.
+(def ^:private wsl-host?
+  (delay (boolean (or (System/getenv "WSL_DISTRO_NAME")
+                      (System/getenv "WSL_INTEROP")
+                      (try (str/includes? (str/lower-case (slurp "/proc/version")) "microsoft")
+                           (catch Throwable _ false))))))
 
-   The Linux branch starts with `xdg-open`; the caller is responsible
-   for falling back through the chain (`gio open`, `kde-open`,
-   `gnome-open`) when spawn fails."
-  [^String target]
-  (let [os (os-name)]
-    (cond (str/includes? os "mac") ["open" target]
-          (str/includes? os "darwin") ["open" target]
-          (or (str/includes? os "linux")
-              (str/includes? os "bsd")
-              (str/includes? os "sunos")
-              (str/includes? os "aix"))
-          ["xdg-open" target]
-          :else nil)))
+(defn wsl?
+  "True when the JVM runs inside Windows Subsystem for Linux. There the Linux
+   openers usually find no browser, so the Windows host must open URLs.
+   Indirected so tests can `with-redefs` it."
+  []
+  @wsl-host?)
 
 (def ^:private linux-fallbacks [["gio" "open"] ["kde-open5"] ["kde-open"] ["gnome-open"]])
+
+(defn open-commands
+  "Ordered candidate argv vectors for `target` on the host OS. Pure modulo
+   `os-name` and `wsl?`. Returns nil for unsupported platforms.
+
+   The caller tries each candidate until one starts and does not fail early.
+   Unix hosts try `xdg-open`, then `gio open`, `kde-open` and `gnome-open`.
+   On WSL, `wslview` and `explorer.exe` come first. `explorer.exe` gets only
+   URLs, because it cannot read a Linux file path."
+  [^String target]
+  (let [os (os-name)]
+    (cond (or (str/includes? os "mac") (str/includes? os "darwin")) [["open" target]]
+          (some #(str/includes? os %) ["linux" "bsd" "sunos" "aix"])
+          (let [unix (into [["xdg-open" target]] (map #(conj % target)) linux-fallbacks)]
+            (if (wsl?)
+              (into (cond-> [["wslview" target]]
+                      (#{:http :https} (classify-scheme target))
+                      (conj ["explorer.exe" target]))
+                    unix)
+              unix))
+          :else nil)))
 
 (defn- editor-target
   "Format a local file target for editor CLIs that accept optional
@@ -202,20 +221,73 @@
 
 ;; Side-effecting spawn
 
+(def ^:private early-exit-ms
+  "How long `spawn!` waits for an opener to fail. An opener that hands the
+   target off exits fast; one that still runs counts as started."
+  1500)
+
+(def ^:private exit-code-ignored
+  "Openers whose exit code says nothing about the result. `explorer.exe`
+   exits with 1 also after it opens the URL."
+  #{"explorer.exe"})
+
+(defn- early-failure
+  "An ex-info when `child` exits non-zero within `early-exit-ms`, else nil.
+   `xdg-open` exits with 3 when it finds no browser, and the spawn itself
+   succeeds, so only the exit code shows that failure."
+  [argv ^Process child]
+  (when (and (.waitFor child early-exit-ms TimeUnit/MILLISECONDS)
+             (not (zero? (.exitValue child)))
+             (not (contains? exit-code-ignored (first argv))))
+    (ex-info (str (first argv) " exited with code " (.exitValue child))
+             {:command argv :exit (.exitValue child)})))
+
 (defn- spawn!
-  "Spawn `argv` with stdio redirected to /dev/null. Returns nil on
-   success, otherwise the Throwable for the caller to inspect."
+  "Spawn `argv` with stdio redirected to /dev/null, then wait briefly for an
+   early failure. Returns nil on success, otherwise the Throwable for the
+   caller to inspect: the spawn error or an ex-info for a non-zero exit."
   [argv]
-  (try (process/process {:cmd argv :out :discard :err :discard}) nil (catch Throwable t t)))
+  (try (let [^Process child (:proc (process/process {:cmd argv :out :discard :err :discard}))]
+         ;; No input belongs to a detached opener; close the pipe.
+         (.close (.getOutputStream child))
+         (early-failure argv child))
+       (catch Throwable t t)))
 
 (defn- spawn-first!
-  "Try argv candidates in order. Returns the winning argv, or nil if
-   every candidate failed to spawn."
+  "Try argv candidates in order. Returns `{:command argv}` for the first
+   candidate that starts without an early failure, else `{:errors [msg ...]}`
+   with one message for each failed candidate."
   [commands]
-  (loop [[argv & more] commands]
-    (when argv
-      (let [err (spawn! argv)]
-        (if (nil? err) argv (recur more))))))
+  (loop [[argv & more]
+         commands
+
+         errors
+         []]
+
+    (if-not argv
+      {:errors errors}
+      (if-let [err (spawn! argv)]
+        (recur more (conj errors (str (first argv) ": " (or (ex-message err) (str (class err))))))
+        {:command argv}))))
+
+(defn- launch!
+  "Open the resolved `target` with the first working OS opener. Returns the
+   result map of `open!`. Never throws."
+  [scheme target]
+  (if-let [commands (open-commands target)]
+    (let [{:keys [command errors]} (spawn-first! commands)]
+      (if command
+        {:status :ok :command command :scheme scheme :target target :error nil}
+        {:status :spawn-failed
+         :command (first commands)
+         :scheme scheme
+         :target target
+         :error (str "No working opener for " target ": " (str/join "; " errors))}))
+    {:status :no-opener
+     :command nil
+     :scheme scheme
+     :target target
+     :error (str "No opener available for OS: " (System/getProperty "os.name"))}))
 
 (defn open!
   "Open `s` via the host OS opener. Never throws.
@@ -228,48 +300,14 @@
       :error   nil | error-string}"
   [s]
   (let [scheme (classify-scheme s)]
-    (cond
-      (= scheme :rejected) {:status :rejected-scheme
-                            :command nil
-                            :scheme nil
-                            :target nil
-                            :error (str "Rejected scheme for: " (pr-str s))}
-      :else
+    (if (= scheme :rejected)
+      {:status :rejected-scheme
+       :command nil
+       :scheme nil
+       :target nil
+       :error (str "Rejected scheme for: " (pr-str s))}
       (if-let [{:keys [target] :as resolved} (safe-target s)]
-        (if-let [argv (open-command target)]
-          (let [err (spawn! argv)]
-            (cond
-              (nil? err)
-              {:status :ok :command argv :scheme (:scheme resolved) :target target :error nil}
-              (and (= "xdg-open" (first argv)) (instance? java.io.IOException err))
-              (loop [chain linux-fallbacks]
-                (if-let [head (first chain)]
-                  (let [argv* (conj (vec head) target)
-                        err* (spawn! argv*)]
-
-                    (if (nil? err*)
-                      {:status :ok
-                       :command argv*
-                       :scheme (:scheme resolved)
-                       :target target
-                       :error nil}
-                      (recur (next chain))))
-                  {:status :spawn-failed
-                   :command argv
-                   :scheme (:scheme resolved)
-                   :target target
-                   :error
-                   "No working opener found on PATH: xdg-open / gio / kde-open / gnome-open all failed."}))
-              :else {:status :spawn-failed
-                     :command argv
-                     :scheme (:scheme resolved)
-                     :target target
-                     :error (.getMessage ^Throwable err)}))
-          {:status :no-opener
-           :command nil
-           :scheme (:scheme resolved)
-           :target target
-           :error (str "No opener available for OS: " (System/getProperty "os.name"))})
+        (launch! (:scheme resolved) target)
         {:status :path-escape
          :command nil
          :scheme scheme
@@ -287,30 +325,7 @@
   [path]
   (let [f (File. (str path))]
     (if (.isFile f)
-      (let [target (.getAbsolutePath f)]
-        (if-let [argv (open-command target)]
-          (let [err (spawn! argv)]
-            (cond
-              (nil? err) {:status :ok :command argv :scheme :file :target target :error nil}
-              (and (= "xdg-open" (first argv)) (instance? java.io.IOException err))
-              (if-let [argv* (spawn-first! (mapv #(conj (vec %) target) linux-fallbacks))]
-                {:status :ok :command argv* :scheme :file :target target :error nil}
-                {:status :spawn-failed
-                 :command argv
-                 :scheme :file
-                 :target target
-                 :error
-                 "No working opener found on PATH: xdg-open / gio / kde-open / gnome-open all failed."})
-              :else {:status :spawn-failed
-                     :command argv
-                     :scheme :file
-                     :target target
-                     :error (.getMessage ^Throwable err)}))
-          {:status :no-opener
-           :command nil
-           :scheme :file
-           :target target
-           :error (str "No opener available for OS: " (System/getProperty "os.name"))}))
+      (launch! :file (.getAbsolutePath f))
       {:status :rejected-scheme
        :command nil
        :scheme nil
@@ -325,7 +340,7 @@
   [s]
   (if-let [{:keys [scheme target line]} (safe-target s)]
     (if (#{:file :rel} scheme)
-      (if-let [argv (spawn-first! (file-editor-commands target line))]
+      (if-let [argv (:command (spawn-first! (file-editor-commands target line)))]
         {:status :ok :command argv :scheme scheme :target target :line line :error nil}
         (open! s))
       (open! s))

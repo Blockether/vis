@@ -2584,6 +2584,13 @@
     (state/dispatch [:set-detail-labels false])
     (state/dispatch [:bump-render-version])))
 
+(defn- report-open-result!
+  "Say when the OS opener refused a clicked target. The notice names the
+   target, so the person can copy it when no browser opens."
+  [{:keys [status error]}]
+  (when-not (= :ok status)
+    (vis/notify! (or error "Link could not be opened") :level :warn :ttl-ms status-error-ttl-ms)))
+
 (defn- open-click-target!
   ([{:keys [kind url session-id]}]
    (if (and (= :url kind) (re-find #"(?i)^attachment:" (str url)))
@@ -2600,16 +2607,16 @@
                                 ;; cwd-confined `open!` would reject it — use the
                                 ;; local-file opener (OS previewer).
                                 :image
-                                (opener/open-local! url)
+                                (report-open-result! (opener/open-local! url))
 
                                 ;; A `vis-doc` card: the PDF/HTML the sandbox
                                 ;; produced lives in the display cache outside the
                                 ;; workspace, so it takes the same local-file
                                 ;; opener the inline images use.
                                 :doc
-                                (opener/open-local! url)
+                                (report-open-result! (opener/open-local! url))
 
-                                (opener/open! url))
+                                (report-open-result! (opener/open! url)))
                               (catch Throwable _ nil)))))
   ([^TerminalScreen _screen ref] (open-click-target! ref)))
 

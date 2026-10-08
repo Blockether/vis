@@ -9,6 +9,22 @@
   detached-opener-test
   (it "reports an absent executable without throwing"
       (expect (instance? java.io.IOException (#'opener/spawn! ["/vis-missing-opener/executable"]))))
+  (it "reports an early non-zero exit as a failure"
+      ;; Regression for #327: `xdg-open` starts on WSL, then exits 3 because it
+      ;; finds no browser. Only the exit code shows that nothing opened.
+      (expect (= 3 (:exit (ex-data (#'opener/spawn! ["sh" "-c" "exit 3"]))))))
+  (it "passes to the next opener and keeps the Windows host first on WSL"
+      (with-redefs [opener/open-commands (constantly [["sh" "-c" "exit 3"] ["sh" "-c" "exit 0"]])]
+        (expect (= {:status :ok :command ["sh" "-c" "exit 0"]}
+                   (select-keys (opener/open! "https://example.com") [:status :command]))))
+      (with-redefs [opener/os-name
+                    (constantly "linux")
+
+                    opener/wsl?
+                    (constantly true)]
+
+        (expect (= [["wslview" "https://example.com"] ["explorer.exe" "https://example.com"]]
+                   (take 2 (opener/open-commands "https://example.com"))))))
   (it "closes stdin and discards both output streams"
       (let [path
             (Files/createTempFile "vis-opener-" ".done" (make-array FileAttribute 0))

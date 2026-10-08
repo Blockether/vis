@@ -2367,7 +2367,23 @@ therapy line 2"
                                           {:status :ok})}
           (fn []
             (open-click-target! {:kind :url :url "https://example.com"})
-            (expect (= "https://example.com" (deref url-opened 1000 ::timeout))))))))
+            (expect (= "https://example.com" (deref url-opened 1000 ::timeout)))))))
+  ;; Regression for #327: on WSL the opener found no browser, and the click did
+  ;; nothing. A refusal now shows a notice that names the URL.
+  (it "reports a URL that no opener could open, with the URL"
+      (let [notified (promise)]
+        (with-redefs-fn
+          {#'opener/open!
+           (fn [_]
+             {:status :spawn-failed
+              :error "No working opener for https://example.com: xdg-open exited with code 3"})
+           #'vis/notify! (fn [text & kvs]
+                           (deliver notified [text (apply hash-map kvs)]))}
+          (fn []
+            (open-click-target! {:kind :url :url "https://example.com"})
+            (let [[text options] (deref notified 1000 ::timeout)]
+              (expect (str/includes? (str text) "https://example.com"))
+              (expect (= :warn (:level options)))))))))
 
 (def ^:private linked-artifact-id "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 

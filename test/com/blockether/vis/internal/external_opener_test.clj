@@ -45,18 +45,59 @@
              (it "refuses a rejected scheme and blank input"
                  (expect (= [nil nil nil] (mapv eo/safe-target ["javascript:alert(1)" "" nil])))))
 
-(defdescribe open-command-test
-             (it "picks the platform opener from os-name alone"
+(defdescribe open-commands-test
+             (it "picks the platform opener chain from os-name alone"
                  ;; `os-name` exists as a fn so this table can be checked from any host.
-                 (expect (= ["open" "https://example.com"]
+                 (expect (= [["open" "https://example.com"]]
                             (with-redefs [eo/os-name (constantly "mac os x")]
-                              (eo/open-command "https://example.com"))))
-                 (expect (= ["xdg-open" "https://example.com"]
-                            (with-redefs [eo/os-name (constantly "linux")]
-                              (eo/open-command "https://example.com")))))
+                              (eo/open-commands "https://example.com"))))
+                 (expect (= [["xdg-open" "https://example.com"] ["gio" "open" "https://example.com"]
+                             ["kde-open5" "https://example.com"] ["kde-open" "https://example.com"]
+                             ["gnome-open" "https://example.com"]]
+                            (with-redefs [eo/os-name
+                                          (constantly "linux")
+
+                                          eo/wsl?
+                                          (constantly false)]
+
+                              (eo/open-commands "https://example.com")))))
+             (it "puts the Windows host openers first on WSL"
+                 ;; Regression for #327: inside WSL `xdg-open` finds no Linux browser and
+                 ;; exits 3, so the Windows host must open the URL.
+                 (with-redefs [eo/os-name
+                               (constantly "linux")
+
+                               eo/wsl?
+                               (constantly true)]
+
+                   (expect (= [["wslview" "https://example.com"]
+                               ["explorer.exe" "https://example.com"]
+                               ["xdg-open" "https://example.com"]]
+                              (take 3 (eo/open-commands "https://example.com"))))
+                   ;; `explorer.exe` cannot read a Linux path, so a local file skips it.
+                   (expect (= [["wslview" "/tmp/a.png"] ["xdg-open" "/tmp/a.png"]]
+                              (take 2 (eo/open-commands "/tmp/a.png"))))))
              (it "returns nil on a platform it has no opener for"
                  ;; nil means \"do not spawn\" — callers must not fall back to a shell.
                  (expect (nil? (with-redefs [eo/os-name (constantly "windows 11")]
-                                 (eo/open-command "https://example.com"))))
+                                 (eo/open-commands "https://example.com"))))
                  (expect (nil? (with-redefs [eo/os-name (constantly "plan 9")]
-                                 (eo/open-command "https://example.com"))))))
+                                 (eo/open-commands "https://example.com"))))))
+
+(defdescribe open-fallback-test
+             (it "passes to the next opener when one exits non-zero"
+                 ;; Regression for #327: the spawn of `xdg-open` succeeds, and only its exit
+                 ;; code shows that it opened nothing.
+                 (with-redefs [eo/open-commands (constantly [["sh" "-c" "exit 3"]
+                                                             ["sh" "-c" "exit 0"]])]
+                   (let [{:keys [status command]} (eo/open! "https://example.com")]
+                     (expect (= :ok status))
+                     (expect (= ["sh" "-c" "exit 0"] command)))))
+             (it "reports every failed opener with the target"
+                 (with-redefs [eo/open-commands (constantly [["sh" "-c" "exit 3"]
+                                                             ["/vis-missing-opener/executable"]])]
+                   (let [{:keys [status error]} (eo/open! "https://example.com")]
+                     (expect (= :spawn-failed status))
+                     (expect (str/includes? error "https://example.com"))
+                     (expect (str/includes? error "sh exited with code 3"))
+                     (expect (str/includes? error "/vis-missing-opener/executable"))))))
