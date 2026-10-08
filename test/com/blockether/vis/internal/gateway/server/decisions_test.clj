@@ -29,3 +29,18 @@
                                "max_input_tokens" 512}}
                      body))
           (expect (document/valid-json? "gateway" "error_response" body))))))
+
+(defdescribe openai-provider-unavailable-response
+             (it "returns HTTP 409 when an OpenAI decision model has no usable API key"
+                 (with-redefs [decisions/infer!
+                               (fn [_]
+                                 (throw (ex-info "OpenAI decision models need an OpenAI API key."
+                                                 {:type :decisions/provider-unavailable})))]
+                   (let [response ((get api/handlers [:post "/v1/systemone"])
+                                    {:body (ByteArrayInputStream.
+                                             (.getBytes "{}" StandardCharsets/UTF_8))})
+                         body (wire/parse-json (:body response))]
+
+                     (expect (= 409 (:status response)))
+                     (expect (= "provider-unavailable" (get-in body ["error" "reason"])))
+                     (expect (document/valid-json? "gateway" "error_response" body))))))

@@ -6,6 +6,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.decisions.assets :as assets]
             [com.blockether.vis.internal.decisions.cache :as cache]
+            [com.blockether.vis.internal.decisions.openai :as openai]
             [com.blockether.vis.internal.decisions.registry :as registry]
             [com.blockether.vis.internal.inference.runtime :as runtime]
             [com.blockether.vis.internal.util :as util])
@@ -1115,27 +1116,41 @@
   [(:id model) (:revision model) (:sha256 artifact) (.getCanonicalPath dir) session-threads])
 
 (defn models-status
-  "Report installed files separately from the in-memory session state."
+  "Report installed files separately from the in-memory session state. OpenAI rows are remote."
   []
-  (into (mapv (fn [model]
-                (let [artifact
-                      (assets/artifact model :inference)
+  (-> (into (mapv (fn [model]
+                    (let [artifact
+                          (assets/artifact model :inference)
 
-                      dir
-                      (io/file (assets/install-dir model :inference))]
+                          dir
+                          (io/file (assets/install-dir model :inference))]
 
-                  {"model_ref" (:id model)
-                   "revision" (:revision model)
-                   "installed" (assets/installed? artifact (.getPath dir))
-                   "residency" (name (cache/status (model-key model artifact dir)))}))
-              (assets/manifest))
-        (map (fn [{model-ref "model_ref" :as row}]
-               (let [{:keys [model artifact dir]} (registry/resolve-model model-ref)]
-                 (assoc row "residency" (name (cache/status (model-key model artifact dir))))))
-             (registry/versions))))
+                      {"model_ref" (:id model)
+                       "revision" (:revision model)
+                       "installed" (assets/installed? artifact (.getPath dir))
+                       "residency" (name (cache/status (model-key model artifact dir)))}))
+                  (assets/manifest))
+            (map (fn [{model-ref "model_ref" :as row}]
+                   (let [{:keys [model artifact dir]} (registry/resolve-model model-ref)]
+                     (assoc row "residency" (name (cache/status (model-key model artifact dir))))))
+                 (registry/versions)))
+      (into (openai/models-status))))
+
+(defn- validated-items
+  "Validate the shared request limits, then parse questions in wire order."
+  [state questions]
+  (when-not (and (or (string? state) (instance? java.util.Map state) (sequential? state))
+                 (<= (count (text state)) 65536)
+                 (instance? java.util.Map questions)
+                 (<= (count questions) 16))
+    (invalid! "State or questions have an invalid shape or exceed request limits"))
+  (mapv (fn [[id definition]]
+          (question id definition))
+        questions))
 
 (defn infer!
-  "Evaluate typed questions against one explicitly installed, immutable model."
+  "Evaluate typed questions against one explicitly installed, immutable model, or an
+   `openai/<id>` model through the OpenAI Decisions API."
   [request]
   (let [name
         (get request "model")
@@ -1148,54 +1163,49 @@
 
     (when-not (util/non-blank-string? name)
       (throw (ex-info "Decision model is required" {:type :decisions/model-required})))
-    (let [{:keys [model artifact dir model-ref]} (selected-model name)]
-      (when-not (assets/installed? artifact (.getPath ^File dir))
-        (throw (ex-info "Decision model is not installed"
-                        {:type :decisions/model-not-installed :model name})))
-      (when-not (and (or (string? state) (instance? java.util.Map state) (sequential? state))
-                     (<= (count (text state)) 65536)
-                     (instance? java.util.Map questions)
-                     (<= (count questions) 16))
-        (invalid! "State or questions have an invalid shape or exceed request limits"))
-      (let [items (mapv (fn [[id definition]]
-                          (question id definition))
-                        questions)
-            routing {"model" name "model_ref" model-ref "revision" (:revision model)}
-            engine (if (= "laya-typed-decisions" (:id model)) "laya-rl-agent" (:id model))]
+    (if (openai/model? name)
+      (openai/infer! name (text state) (validated-items state questions))
+      (let [{:keys [model artifact dir model-ref]} (selected-model name)]
+        (when-not (assets/installed? artifact (.getPath ^File dir))
+          (throw (ex-info "Decision model is not installed"
+                          {:type :decisions/model-not-installed :model name})))
+        (let [items (validated-items state questions)
+              routing {"model" name "model_ref" model-ref "revision" (:revision model)}
+              engine (if (= "laya-typed-decisions" (:id model)) "laya-rl-agent" (:id model))]
 
-        (if (empty? items)
-          {"model" engine
-           "routing" routing
-           "answers" {}
-           "usage" {"input_tokens" 0 "output_tokens" 0}}
-          (cache/with-resident!
-            (model-key model artifact dir)
-            (weight-bytes dir)
-            #(open-model! model dir)
-            (fn [{:keys [family environment session tokenizer special config score-bias]}]
-              (let [items (mapv (case family
-                                  :gliner
-                                  #(gliner-sequence-item tokenizer config state %)
+          (if (empty? items)
+            {"model" engine
+             "routing" routing
+             "answers" {}
+             "usage" {"input_tokens" 0 "output_tokens" 0}}
+            (cache/with-resident!
+              (model-key model artifact dir)
+              (weight-bytes dir)
+              #(open-model! model dir)
+              (fn [{:keys [family environment session tokenizer special config score-bias]}]
+                (let [items (mapv (case family
+                                    :gliner
+                                    #(gliner-sequence-item tokenizer config state %)
 
-                                  :decision2
-                                  #(decision2-sequence-item tokenizer config state %)
+                                    :decision2
+                                    #(decision2-sequence-item tokenizer config state %)
 
-                                  #(sequence-item tokenizer special config state %))
-                                items)
-                    answers (case family
-                              :gliner
-                              (:answers (run-gliner-batch environment session items special))
+                                    #(sequence-item tokenizer special config state %))
+                                  items)
+                      answers (case family
+                                :gliner
+                                (:answers (run-gliner-batch environment session items special))
 
-                              :decision2
-                              (run-decision2 environment session score-bias items)
+                                :decision2
+                                (run-decision2 environment session score-bias items)
 
-                              (run-batch environment session items special config))]
+                                (run-batch environment session items special config))]
 
-                {"model" engine
-                 "routing" routing
-                 "answers" answers
-                 "usage" {"input_tokens" (reduce + (map (comp count :ids) items))
-                          "output_tokens" 0}}))))))))
+                  {"model" engine
+                   "routing" routing
+                   "answers" answers
+                   "usage" {"input_tokens" (reduce + (map (comp count :ids) items))
+                            "output_tokens" 0}})))))))))
 
 (defn warm!
   "Run one synthetic question against an installed model or alias, without downloading."

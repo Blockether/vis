@@ -218,7 +218,7 @@
       (http/error-response 404 :decisions/unknown-job "Decision training job does not exist"))))
 
 (defn- decisions-handler
-  "POST /v1/systemone — explicit installed model, typed questions and action head."
+  "POST /v1/systemone — an installed model or an `openai/<id>` model; one typed contract."
   [request]
   (let [bytes (when-let [^InputStream body (:body request)]
                 (.readNBytes body 131073))]
@@ -226,44 +226,47 @@
       (http/error-response 413
                            :invalid-request "Decision request exceeds 128 KiB"
                            :reason "request-too-large")
-      (try (http/json-response (decisions/infer! (decisions/parse-body
-                                                   (String. ^bytes bytes StandardCharsets/UTF_8))))
-           (catch clojure.lang.ExceptionInfo e
-             (let [type (:type (ex-data e))
-                   status (case type
-                            :decisions/model-required
-                            400
+      (try
+        (http/json-response (decisions/infer! (decisions/parse-body
+                                                (String. ^bytes bytes StandardCharsets/UTF_8))))
+        (catch clojure.lang.ExceptionInfo e
+          (let [type (:type (ex-data e))
+                status (case type
+                         :decisions/model-required
+                         400
 
-                            :decisions/invalid-request
-                            400
+                         :decisions/invalid-request
+                         400
 
-                            :decisions/unknown-model
-                            404
+                         :decisions/unknown-model
+                         404
 
-                            :decisions/model-not-installed
-                            409
+                         :decisions/model-not-installed
+                         409
 
-                            :decisions/invalid-bundle
-                            422
+                         :decisions/provider-unavailable
+                         409
 
-                            :decisions/capacity-exceeded
-                            503
+                         :decisions/invalid-bundle
+                         422
 
-                            :decisions/unavailable
-                            503
+                         :decisions/capacity-exceeded
+                         503
 
-                            nil)]
+                         :decisions/unavailable
+                         503
 
-               (cond (= :decisions/input-too-long type)
-                     (http/error-response 400
-                                          type
-                                          (.getMessage e)
-                                          :input-tokens (:input-tokens (ex-data e))
-                                          :max-input-tokens (:max-input-tokens (ex-data e)))
-                     status (http/error-response status
-                                                 :decisions/error (.getMessage e)
-                                                 :reason (name type))
-                     :else (throw e))))))))
+                         nil)]
+
+            (cond (= :decisions/input-too-long type)
+                  (http/error-response 400
+                                       type
+                                       (.getMessage e)
+                                       :input-tokens (:input-tokens (ex-data e))
+                                       :max-input-tokens (:max-input-tokens (ex-data e)))
+                  status
+                  (http/error-response status :decisions/error (.getMessage e) :reason (name type))
+                  :else (throw e))))))))
 
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."

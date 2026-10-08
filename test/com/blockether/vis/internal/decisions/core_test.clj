@@ -6,6 +6,7 @@
             [com.blockether.vis.internal.decisions.assets :as assets]
             [com.blockether.vis.internal.decisions.cache :as cache]
             [com.blockether.vis.internal.decisions.core :as decisions]
+            [com.blockether.vis.internal.decisions.openai :as openai]
             [com.blockether.vis.internal.decisions.registry :as registry]
             [com.blockether.vis.internal.speech.files :as files]
             [com.blockether.vis.internal.util :as util])
@@ -312,7 +313,9 @@
     "catalog distinguishes installed files from resident sessions"
     (let [missing (str (System/getProperty "java.io.tmpdir") "/missing-laya-" (random-uuid))]
       (with-redefs [assets/install-dir (fn [& _]
-                                         missing)]
+                                         missing)
+                    openai/credentials (constantly nil)]
+
         (expect
           (= [{"model_ref" "laya-typed-decisions"
                "revision" "dd079950600224fb459af2a0cb1d74e1e57ee9cf"
@@ -349,7 +352,11 @@
               {"model_ref" "decision2.0-kai-0.6b"
                "revision" "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764"
                "installed" false
-               "residency" "cold"}]
+               "residency" "cold"}
+              {"model_ref" "openai/gpt-6-luna"
+               "provider" "openai"
+               "residency" "remote"
+               "available" false}]
              (decisions/models-status)))))))
 
 (defdescribe tokenizer-ids-match-djl-without-encoding-metadata

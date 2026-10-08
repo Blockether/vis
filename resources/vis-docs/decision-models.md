@@ -34,6 +34,8 @@ heads. Then decide when a human must review a result before you rely on it.
   shows how to continue a trained version on new labels.
 - **A long input fails or loses late context.** Check the
   [token budget and truncation policy](#handle-long-inputs).
+- **You have no local bundle, or you want a second opinion from OpenAI.** Ask an
+  [OpenAI decision model](#ask-openai-decision-models) with the same questions.
 
 For open-ended work that needs files or tools, run an agent task with the [Python
 SDK](python-sdk.md) instead.
@@ -144,6 +146,32 @@ The Laya baseline has a different policy. It uses `max_len` from the installed `
 with a default of 512 tokens per question. It truncates instructions and option text to fit
 the question head. It then keeps only the leading state tokens that fit the remaining space.
 Late state context can therefore be omitted. Keep important context early when you use Laya.
+
+### Ask OpenAI decision models
+
+You can also send the same questions to an OpenAI classifier model, such as GPT-6 Luna.
+Use this when you have no local bundle or when you want to compare answers. Each request
+is a paid OpenAI call, and the state goes to OpenAI. Images are not supported.
+
+The gateway needs an OpenAI API key. Add the `openai` provider with an API key as
+[Configuration](configuration.md) describes, or set `OPENAI_API_KEY` for the gateway. A
+ChatGPT (Codex) sign-in does not work with the OpenAI Decisions API.
+
+Name the model as `openai/<id>`. The questions and answer shapes stay the same:
+
+```python
+answer = decisions.infer(
+    model="openai/gpt-6-luna",
+    state="A damaged item needs a refund",
+    questions={"intent": {"type": "choice", "instructions": "Choose a request", "criteria": ["refund", "repair"]}},
+)
+print(answer["answers"]["intent"]["choice"], answer["routing"]["provider"])  # refund openai
+```
+
+`decisions.list_models()` lists OpenAI models with `"residency": "remote"`. Their
+`available` field is `true` when the gateway has a key. OpenAI answers have no `action`
+score. If OpenAI declines one question, that answer is `{"type": "refusal"}`. Without a
+usable key, `Decisions.infer` raises `GatewayError` with `status == 409`.
 
 ## Train locally with the Python SDK
 
