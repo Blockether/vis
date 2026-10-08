@@ -1,12 +1,15 @@
 (ns com.blockether.vis.internal.main-test
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.decisions.assets :as decisions-assets]
             [com.blockether.vis.internal.gateway.cli :as gateway-cli]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.router :as loop-router]
+            [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -890,3 +893,337 @@
                      (expect (str/includes? text "stdout"))
                      (expect (str/includes? text "hello"))
                      (expect (not (str/includes? text "nil")))))))
+
+(def ^:private city-schema
+  {"type" "object"
+   "required" ["city" "population_millions"]
+   "properties" {"city" {"type" "string"} "population_millions" {"type" "number"}}
+   "additionalProperties" false})
+
+(defn- temp-json-file
+  [text]
+  (let [f (java.io.File/createTempFile "vis-json-schema" ".json")]
+    (.deleteOnExit f)
+    (spit f text)
+    (.getPath f)))
+
+;; Issue #344: one-shot runs need a schema-checked JSON answer for scripts.
+(defdescribe
+  json-schema-flag-parse-test
+  (it "reads --json-schema as a value flag"
+      (expect (= {:json-schema "{}" :json? true :prompt "task"}
+                 (#'main/parse-run-args ["--json-schema" "{}" "--json" "task"])))
+      (expect (= {:json-schema "@s.json" :prompt "task"}
+                 (#'main/parse-run-args ["--json-schema" "@s.json" "task"]))))
+  (it "refuses a missing schema value"
+      (expect (= ["--json-schema needs a value (got --json)"]
+                 (:flag-errors (#'main/parse-run-args ["--json-schema" "--json" "task"])))))
+  (it "refuses --json-schema with --code"
+      (expect (= ["--json-schema does not work with --code; use --json"]
+                 (:flag-errors (#'main/check-run-conflicts
+                                (#'main/parse-run-args ["--json-schema" "{}" "--code" "hi"])))))))
+
+(defdescribe
+  json-schema-arg-test
+  (it "reads an inline schema and a schema file"
+      (expect (= city-schema
+                 (:schema (#'main/read-json-schema-arg (json/write-json-str city-schema)))))
+      (expect (= city-schema
+                 (:schema (#'main/read-json-schema-arg
+                           (str "@" (temp-json-file (json/write-json-str city-schema)))))))
+      (expect (some? (:compiled (#'main/read-json-schema-arg "{}")))))
+  (it "names a missing file, a directory and an empty path"
+      (expect (= "--json-schema file /nonexistent-vis/s.json does not exist"
+                 (:error (#'main/read-json-schema-arg "@/nonexistent-vis/s.json"))))
+      (expect (str/ends-with? (:error (#'main/read-json-schema-arg
+                                       (str "@" (System/getProperty "java.io.tmpdir"))))
+                              "is a directory"))
+      (expect (= "--json-schema @ needs a file path, as in @schema.json"
+                 (:error (#'main/read-json-schema-arg "@")))))
+  (it "refuses text that is not exactly one JSON document"
+      (doseq [text ["{" "" "nul" "{} {}" "{} trailing" "null 1"]]
+        (expect (str/starts-with? (str (:error (#'main/read-json-schema-arg text)))
+                                  "--json-schema is not valid JSON: ")
+                text)))
+  (it "refuses a schema that breaks the 2020-12 meta-schema"
+      (let [{:keys [error schema-errors]} (#'main/read-json-schema-arg "{\"type\": 5}")]
+        (expect (= "--json-schema is not a usable JSON Schema" error))
+        (expect (some #(str/starts-with? % "/type: ") schema-errors)))
+      (expect (= ["/: expected object or boolean, got array"]
+                 (:schema-errors (#'main/read-json-schema-arg "[]"))))
+      (expect (= ["/maxProperties: -1 is less than the minimum 0"]
+                 (:schema-errors (#'main/read-json-schema-arg "{\"maxProperties\": -1}")))))
+  (it "refuses the false schema, a bad pattern and a reference that cannot resolve"
+      (expect (= ["/: the schema false accepts no answer"]
+                 (:schema-errors (#'main/read-json-schema-arg "false"))))
+      (expect (str/starts-with? (first (:schema-errors (#'main/read-json-schema-arg
+                                                        "{\"pattern\": \"([\"}")))
+                                "invalid regular expression"))
+      (expect (= ["cannot resolve $ref \"#/$defs/x\" (only references inside the schema resolve)"]
+                 (:schema-errors (#'main/read-json-schema-arg "{\"$ref\": \"#/$defs/x\"}"))))
+      (expect (= 1
+                 (count (:schema-errors (#'main/read-json-schema-arg
+                                         "{\"$ref\": \"https://example.com/s.json\"}"))))))
+  (it "resolves local references and ignores $ref text inside data"
+      (expect (some? (:compiled
+                       (#'main/read-json-schema-arg
+                        "{\"$defs\": {\"x\": {\"type\": \"string\"}}, \"$ref\": \"#/$defs/x\"}"))))
+      (expect (some? (:compiled
+                       (#'main/read-json-schema-arg
+                        (str "{\"$id\": \"https://x.test/root.json\","
+                             " \"$defs\": {\"a\": {\"$id\": \"a.json\", \"type\": \"string\"}},"
+                             " \"properties\": {\"p\": {\"$ref\": \"a.json\"}}}")))))
+      (expect (some? (:compiled (#'main/read-json-schema-arg
+                                 "{\"enum\": [{\"$ref\": \"#/nope\"}]}"))))))
+
+(defdescribe
+  structured-answer-test
+  (let [compiled (:compiled (main/compile-json-schema city-schema))]
+    (it "finds the JSON document in bare, fenced and surrounded answers"
+        (doseq [text
+                ["{\"city\":\"Warsaw\",\"population_millions\":1.86}"
+                 "Here:\n```json\n{\"city\":\"Warsaw\",\"population_millions\":1.86}\n```\nDone."
+                 "Sure: {\"city\":\"Warsaw\",\"population_millions\":1.86} - done"]]
+          (expect (= {:value {"city" "Warsaw" "population_millions" 1.86}}
+                     (main/structured-answer compiled text))
+                  text)))
+    (it
+      "takes the first document that validates"
+      (expect
+        (=
+          {:value {"city" "Warsaw" "population_millions" 2}}
+          (main/structured-answer
+            compiled
+            "Example: {\"city\":1}\n```json\n{\"city\":\"Warsaw\",\"population_millions\":2}\n```"))))
+    (it "names the validation errors of an answer that does not validate"
+        (expect (= {:errors ["/: additional property \"x\" is not allowed"
+                             "/population_millions: expected number, got string"]}
+                   (main/structured-answer
+                     compiled
+                     "{\"city\":\"Warsaw\",\"population_millions\":\"1.86\",\"x\":1}"))))
+    (it "reports an answer without JSON"
+        (doseq [text ["no json here" "" "{\"city\":\"W\",\"population_millions\":NaN}"]]
+          (expect (= {:errors ["the answer holds no JSON document"]}
+                     (main/structured-answer compiled text))
+                  text))))
+  (it "accepts null and false as answer documents"
+      (expect (= {:value nil}
+                 (main/structured-answer (:compiled (main/compile-json-schema {"type" "null"}))
+                                         "null")))
+      (expect (= {:value false}
+                 (main/structured-answer (:compiled (main/compile-json-schema {"type" "boolean"}))
+                                         "false"))))
+  (it "asserts format"
+      (let [compiled (:compiled (main/compile-json-schema {"type" "string" "format" "date"}))]
+        (expect (= {:value "2024-01-31"} (main/structured-answer compiled "\"2024-01-31\"")))
+        (expect (= {:errors ["/: the string is not a valid date"]}
+                   (main/structured-answer compiled "\"31.01.2024\""))))))
+
+(defn- run-with-answers!
+  "Run `main/run!` on a stubbed ephemeral engine. Each turn answers the next
+   text of `answers`; returns the result and the messages of each turn."
+  [answers opts]
+  (let [turns
+        (atom [])
+
+        remaining
+        (atom answers)]
+
+    (with-redefs [loop-router/build-router
+                  identity
+
+                  loop-env/create-environment
+                  (constantly {:stub true})
+
+                  loop-env/dispose-environment!
+                  (constantly nil)
+
+                  turn/turn!
+                  (fn [_env messages _opts]
+                    (swap! turns conj messages)
+                    (let [answer (first @remaining)]
+                      (swap! remaining rest)
+                      (if (map? answer)
+                        answer
+                        {:answer answer
+                         :iteration-count 1
+                         :duration-ms 10
+                         :tokens {:input 100 :output 5}
+                         :cost {"total_cost" 0.5 "model" "m"}
+                         :trace [{:turn (count @turns)}]})))]
+
+      {:result (main/run! {} "Name the capital of Poland." (merge {:config {:providers []}} opts))
+       :turns @turns})))
+
+(defdescribe
+  json-schema-run-test
+  (it "puts the schema into the one request message and returns the validated value"
+      (let [{:keys [result turns]}
+            (run-with-answers! ["{\"city\":\"Warsaw\",\"population_millions\":1.86}"]
+                               {:json-schema city-schema})
+
+            request
+            (:content (last (first turns)))]
+
+        (expect (= 1 (count turns)))
+        (expect (= 1 (count (first turns))))
+        (expect (str/starts-with? request "Name the capital of Poland."))
+        (expect (str/includes? request (json/write-json-str city-schema)))
+        (expect (= {"city" "Warsaw" "population_millions" 1.86} (:structured result)))
+        (expect (= 1 (:structured-attempts result)))
+        (expect (= 0 (#'main/cli-result-exit-code result)))))
+  (it "asks again with the validation errors and adds up the spend"
+      (let [{:keys [result turns]}
+            (run-with-answers! ["The capital is Warsaw."
+                                "{\"city\":\"Warsaw\",\"population_millions\":1.86}"]
+                               {:json-schema city-schema})
+
+            correction
+            (:content (first (second turns)))]
+
+        (expect (= 2 (count turns)))
+        (expect (str/includes? correction "the answer holds no JSON document"))
+        (expect (str/includes? correction (json/write-json-str city-schema)))
+        (expect (= {"city" "Warsaw" "population_millions" 1.86} (:structured result)))
+        (expect (= 2 (:structured-attempts result)))
+        (expect (= 2 (:iteration-count result)))
+        (expect (= {:input 200 :output 10} (:tokens result)))
+        (expect (= {"total_cost" 1.0 "model" "m"} (:cost result)))
+        (expect (= [{:turn 1} {:turn 2}] (:trace result)))))
+  (it "fails with the schema errors after the last attempt"
+      (let [{:keys [result turns]} (run-with-answers! ["{\"city\":1}" "{\"city\":2}" "{\"city\":3}"]
+                                                      {:json-schema city-schema})]
+        (expect (= 3 (count turns)))
+        (expect (= "The answer does not match --json-schema after 3 attempts." (:error result)))
+        (expect (= :error (:status result)))
+        (expect (= ["/city: expected string, got integer"
+                    "/: missing required property \"population_millions\""]
+                   (:schema-errors result)))
+        (expect (not (contains? result :structured)))
+        (expect (= 1 (#'main/cli-result-exit-code result)))
+        (let [envelope (json/read-json (main/result->json result))]
+          (expect (= ["/city: expected string, got integer"
+                      "/: missing required property \"population_millions\""]
+                     (get envelope "schema-errors")))
+          (expect (= 3 (get envelope "structured-attempts"))))))
+  (it "stops without a retry when the turn itself fails"
+      (let [{:keys [result turns]} (run-with-answers! [{:answer "Cancelled." :status :cancelled}]
+                                                      {:json-schema city-schema})]
+        (expect (= 1 (count turns)))
+        (expect (= :cancelled (:status result)))
+        (expect (not (contains? result :schema-errors)))))
+  (it "keeps a valid null answer in the envelope"
+      (let [{:keys [result]} (run-with-answers! ["null"] {:json-schema {"type" "null"}})]
+        (expect (contains? result :structured))
+        (expect (= {"structured" nil}
+                   (select-keys (json/read-json (main/result->json result)) ["structured"])))))
+  (it "refuses an unusable schema before any turn"
+      (let [turns (atom 0)]
+        (with-redefs [turn/turn! (fn [& _]
+                                   (swap! turns inc)
+                                   {:answer "x"})]
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(main/run! {} "hi" {:config {:providers []} :json-schema {"type" 5}}))))
+        (expect (= 0 @turns))))
+  (it "leaves runs without a schema unchanged"
+      (let [{:keys [result turns]} (run-with-answers! ["plain answer"] {})]
+        (expect (= "Name the capital of Poland." (:content (first (first turns)))))
+        (expect (not (contains? result :structured))))))
+
+(defdescribe
+  json-schema-persistent-run-test
+  (it
+    "sends the schema request first and the correction as the next request"
+    (let [requests
+          (atom [])
+
+          answers
+          (atom [[{"type" "prose" "markdown" "Warsaw"}]
+                 [{"type" "prose"
+                   "markdown" "{\"city\":\"Warsaw\",\"population_millions\":1.86}"}]])]
+
+      (with-redefs [loop-router/rebuild-router!
+                    (constantly nil)
+
+                    gateway-state/create-session!
+                    (constantly {"id" "wire-session"})
+
+                    gateway-state/submit-turn-sync!
+                    (fn [_ request]
+                      (swap! requests conj request)
+                      (let [content (first @answers)]
+                        (swap! answers rest)
+                        {"content" content "status" "success"}))]
+
+        (let [result (main/run! {}
+                                "Name the capital of Poland."
+                                {:config {:providers []} :persist? true :json-schema city-schema})]
+          (expect (= {"city" "Warsaw" "population_millions" 1.86} (:structured result)))
+          (expect (= "wire-session" (:session-id result)))
+          (expect (= 2 (count @requests)))
+          (expect (str/includes? (:request (first @requests)) (json/write-json-str city-schema)))
+          (expect (str/starts-with? (:request (second @requests))
+                                    "Your final answer does not validate"))
+          (expect (= (:request (second @requests))
+                     (:content (first (:messages (second @requests)))))))))))
+
+(defdescribe
+  json-schema-output-test
+  (it "prints only the validated JSON document on stdout"
+      (let [out
+            (atom [])
+
+            err
+            (atom [])]
+
+        (with-redefs [commandline/stdout!
+                      #(swap! out conj %)
+
+                      commandline/stderr!
+                      #(swap! err conj %)]
+
+          (#'main/print-structured-result! {:structured {"city" "Warsaw"} :content []}))
+        (expect (= ["{\"city\":\"Warsaw\"}"] @out))
+        (expect (= [] @err))))
+  (it "sends a failed run to stderr and leaves stdout empty"
+      (let [out
+            (atom [])
+
+            err
+            (atom [])]
+
+        (with-redefs [commandline/stdout!
+                      #(swap! out conj %)
+
+                      commandline/stderr!
+                      #(swap! err conj %)]
+
+          (#'main/print-structured-result!
+           {:error "The answer does not match --json-schema after 3 attempts."
+            :schema-errors ["/city: expected string, got integer"]}))
+        (expect (= [] @out))
+        (expect (= "  /city: expected string, got integer" (last @err)))))
+  (it "reports an unusable schema as a JSON envelope with --json"
+      (let [out (atom [])]
+        (with-redefs [commandline/stdout! #(swap! out conj %)]
+          (#'main/print-json-schema-error! true (#'main/read-json-schema-arg "{\"type\": 5}")))
+        (let [envelope (json/read-json (first @out))]
+          (expect (= "error" (get envelope "status")))
+          (expect (= "--json-schema is not a usable JSON Schema" (get envelope "error")))
+          (expect (seq (get envelope "schema-errors"))))))
+  (it "reports an unusable schema on stderr without --json"
+      (let [out
+            (atom [])
+
+            err
+            (atom [])]
+
+        (with-redefs [commandline/stdout!
+                      #(swap! out conj %)
+
+                      commandline/stderr!
+                      #(swap! err conj %)]
+
+          (#'main/print-json-schema-error! false (#'main/read-json-schema-arg "{")))
+        (expect (= [] @out))
+        (expect (str/starts-with? (first @err) "vis-agent: --json-schema is not valid JSON")))))

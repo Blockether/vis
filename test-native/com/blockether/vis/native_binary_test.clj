@@ -446,6 +446,77 @@
                   "the keyless provider authenticated with a credential of its own"))
         (finally (.stop server 0) (delete-tree! dir))))))
 
+(defdescribe
+  native-binary-validates-json-schema-answers-test
+  ;; Issue #344: `--json-schema` compiles the schema with Skjema and checks the
+  ;; model answer inside the LINKED image. A missing reachability entry in the
+  ;; validator would pass every JVM test and fail only here.
+  (let
+    [schema
+     "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"additionalProperties\":false}"
+
+     run-schema!
+     (fn [dir & args]
+       (run-binary dir
+                   (into [(.getAbsolutePath (require-binary))
+                          (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                          (.getAbsolutePath (io/file dir "sessions"))]
+                         args)
+                   180))]
+
+    (it "prints only the validated JSON document"
+        (let [dir
+              (temp-dir "vis-native-json-schema")
+
+              {:keys [server asked port]}
+              (start-stub-provider! "{\"city\":\"Warsaw\"}")]
+
+          (try (overlay! dir port)
+               (let [{:keys [exit output]}
+                     (run-schema! dir "--json-schema" schema "Name the capital of Poland")
+
+                     last-line
+                     (last (remove str/blank? (str/split-lines output)))]
+
+                 (expect (= 0 exit) output)
+                 (expect (= {"city" "Warsaw"} (json/read-json last-line)) output)
+                 (expect (= 1 (count @asked)) (pr-str (map :path @asked)))
+                 (expect (str/includes? (:body (first @asked)) "Required final answer format")
+                         "the request did not carry the schema instruction"))
+               (finally (.stop server 0) (delete-tree! dir)))))
+    (it "asks again with the errors and fails after the last attempt"
+        (let [dir
+              (temp-dir "vis-native-json-schema-retry")
+
+              {:keys [server asked port]}
+              (start-stub-provider! "Warsaw")]
+
+          (try (overlay! dir port)
+               (let [{:keys [exit output]}
+                     (run-schema! dir "--json-schema" schema "Name the capital of Poland")
+
+                     corrections
+                     (filter #(str/includes? (:body %) "Your final answer does not validate")
+                             @asked)]
+
+                 (expect (= 1 exit) output)
+                 (expect (str/includes? output "after 3 attempts") output)
+                 (expect (= 2 (count corrections)) (pr-str (map :path @asked))))
+               (finally (.stop server 0) (delete-tree! dir)))))
+    (it "rejects an unusable schema before any model call"
+        (let [dir
+              (temp-dir "vis-native-json-schema-invalid")
+
+              {:keys [server asked port]}
+              (start-stub-provider! "{\"city\":\"Warsaw\"}")]
+
+          (try (overlay! dir port)
+               (let [{:keys [exit output]}
+                     (run-schema! dir "--json-schema" "{\"type\":\"nope\"}" "Name the capital")]
+                 (expect (= 2 exit) output)
+                 (expect (empty? @asked) "the binary called the model with an unusable schema"))
+               (finally (.stop server 0) (delete-tree! dir)))))))
+
 (defn- python-call-body
   [stream? call-id code]
   (let [call {:id call-id

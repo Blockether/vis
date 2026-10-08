@@ -35,6 +35,7 @@
     [charred.api :as json]
     [clojure.java.io :as io]
     [clojure.string :as str]
+    [com.blockether.skjema.core :as skjema]
     [com.blockether.svar.core :as svar]
     [com.blockether.vis.internal.commandline :as commandline]
     [com.blockether.vis.internal.config.core :as config]
@@ -75,7 +76,8 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.system-trust :as system-trust]
     [com.blockether.vis.internal.config.toggles :as toggles]
-    [taoensso.telemere :as tel]))
+    [taoensso.telemere :as tel])
+  (:import [com.blockether.skjema Uri]))
 
 ;; Persistence-backed Telemere :db handler
 
@@ -408,6 +410,278 @@
                             :supported (vec (:supported data))}]
          :reasoning-effort {:requested (:requested data) :iterations []}}))))
 
+;;; ── Structured output (`--json-schema`) ─────────────────────────────────
+
+(def ^:private structured-output-attempts
+  "Turns that one `--json-schema` run can use: the first answer, then one
+   correction turn for each answer that does not validate."
+  3)
+
+(def ^:private json-schema-meta
+  "The JSON Schema 2020-12 meta-schema, compiled once. Skjema bundles it, so
+   checking a caller's schema needs no network."
+  (delay (skjema/compile-schema {"$ref" "https://json-schema.org/draft/2020-12/schema"})))
+
+(def ^:private skjema-lookup
+  "Skjema's own reference lookup. Skjema resolves a `$ref` only when an instance
+   reaches it, so an unresolvable reference would otherwise fail after the paid
+   run, or never, if no answer reaches it."
+  @#'skjema/lookup)
+
+(def ^:private schema-data-keywords
+  "Keywords whose values are JSON data, not subschemas. A `$ref` inside an
+   `enum` value or an example is text, not a reference."
+  #{"const" "default" "enum" "examples"})
+
+(defn- read-json-document
+  "Parse `text` as exactly one JSON document. Charred alone stops after the
+   first value, so `{\"a\":1} trailing` used to read as `{\"a\":1}`. Throws on
+   invalid JSON, on empty text and on text after the value."
+  [^String text]
+  (let [^java.util.function.Supplier supplier
+        (json/read-json-supplier (java.io.StringReader. text) {:eof-error? false :eof-value ::eof})
+
+        value
+        (.get supplier)]
+
+    (when (= ::eof value) (throw (ex-info "no JSON value" {:type :vis.cli/json-empty})))
+    ;; After a top-level `false` or `null`, charred's supplier answers nil instead of
+    ;; the end marker, so those two documents are checked by their text.
+    (when-not (if (or (nil? value) (false? value))
+                (contains? #{"null" "false"} (str/trim text))
+                (= ::eof (.get supplier)))
+      (throw (ex-info "unexpected text after the JSON value" {:type :vis.cli/json-trailing})))
+    value))
+
+(defn- schema-error-lines
+  "Readable lines from a Skjema `explain` report: `/location: message`, once each."
+  [report]
+  (->> (:errors report)
+       (map (fn [{:keys [instanceLocation error]}]
+              (str (if (str/blank? instanceLocation) "/" instanceLocation) ": " error)))
+       distinct
+       vec))
+
+(defn- unresolved-schema-refs
+  "Every `$ref` of `schema` that the compiled schema cannot resolve. References
+   resolve against the nearest `$id`, as in Skjema's own index."
+  [compiled schema]
+  (letfn
+    [(walk [node ^String base]
+       (cond (map? node)
+             (let [id
+                   (get node "$id")
+
+                   base
+                   (if (string? id) (Uri/stripFragment (Uri/resolveRef base ^String id)) base)
+
+                   ref
+                   (get node "$ref")
+
+                   own
+                   (when (and (string? ref)
+                              (nil? (skjema-lookup compiled (Uri/resolveRef base ^String ref))))
+                     [ref])]
+
+               (into (vec own)
+                     (mapcat (fn [[k v]]
+                               (when-not (schema-data-keywords k) (walk v base))))
+                     node))
+             (sequential? node) (into [] (mapcat #(walk % base)) node)
+             :else []))]
+    (vec (distinct (walk schema "")))))
+
+(defn compile-json-schema
+  "Check a parsed JSON Schema and compile it. Returns `{:compiled c}`, or
+   `{:errors [line ...]}` when the schema is not a valid 2020-12 schema, is
+   `false`, has an invalid pattern or has a `$ref` that cannot resolve. `format`
+   asserts."
+  [schema]
+  (if-let [report (skjema/explain @json-schema-meta schema)]
+    {:errors (schema-error-lines report)}
+    (if (false? schema)
+      {:errors ["/: the schema false accepts no answer"]}
+      (try (let [compiled (skjema/compile-schema schema {:format-assertion true})
+                 missing (unresolved-schema-refs compiled schema)]
+
+             (if (seq missing)
+               {:errors (mapv #(str "cannot resolve $ref "
+                                    (pr-str %)
+                                    " (only references inside the schema resolve)")
+                              missing)}
+               {:compiled compiled}))
+           (catch Exception e {:errors [(ex-message e)]})))))
+
+(defn- read-json-schema-arg
+  "Read the `--json-schema` value: inline JSON, or `@PATH` for a JSON file.
+   Returns `{:schema s :compiled c}`, or `{:error msg :schema-errors [...]}`."
+  [^String value]
+  (let [file?
+        (str/starts-with? value "@")
+
+        raw-path
+        (when file? (str/trim (subs value 1)))
+
+        path
+        (when raw-path
+          (if (str/starts-with? raw-path "~/")
+            (str (System/getProperty "user.home") (subs raw-path 1))
+            raw-path))
+
+        label
+        (if file? (str "--json-schema file " raw-path) "--json-schema")
+
+        ^java.io.File f
+        (when path (io/file path))]
+
+    (cond (and file? (str/blank? path)) {:error
+                                         "--json-schema @ needs a file path, as in @schema.json"}
+          (and f (not (.isFile f)))
+          {:error (str label (if (.isDirectory f) " is a directory" " does not exist"))}
+          (and f (not (.canRead f))) {:error (str label " is not readable")}
+          :else (let [parsed (try {:schema (read-json-document (if f (slurp f) value))}
+                                  (catch Exception e
+                                    {:error (str label
+                                                 " is not valid JSON: "
+                                                 (or (not-empty (ex-message e))
+                                                     "the text is not JSON"))}))]
+                  (if (:error parsed)
+                    parsed
+                    (let [{:keys [compiled errors]} (compile-json-schema (:schema parsed))]
+                      (if errors
+                        {:error (str label " is not a usable JSON Schema") :schema-errors errors}
+                        (assoc parsed :compiled compiled))))))))
+
+(defn- json-candidates
+  "Texts that can hold the answer's JSON document, best first: the whole answer,
+   each fenced block, then the text from the first `{` or `[` to the last `}` or `]`."
+  [^String text]
+  (let [text
+        (str/trim (str text))
+
+        fenced
+        (map second (re-seq #"(?s)```[^\n]*\n(.*?)\n?[ \t]*```" text))
+
+        opens
+        (remove nil? [(str/index-of text "{") (str/index-of text "[")])
+
+        start
+        (when (seq opens) (apply min opens))
+
+        end
+        (max (long (or (str/last-index-of text "}") -1))
+             (long (or (str/last-index-of text "]") -1)))]
+
+    (->>
+      (concat [text] fenced (when (and start (< (long start) end)) [(subs text start (inc end))]))
+      (map str/trim)
+      (remove str/blank?)
+      distinct)))
+
+(defn structured-answer
+  "Find the JSON document in an answer and validate it. Returns `{:value v}`
+   for the first candidate that validates. Otherwise returns `{:errors [...]}`
+   for the first candidate that parses, or that no JSON was found. A schema
+   that throws during validation adds `:fatal? true`: a retry cannot fix it."
+  [compiled text]
+  (let [parsed (keep (fn [candidate]
+                       (try [(read-json-document candidate)] (catch Exception _ nil)))
+                     (json-candidates text))]
+    (if (empty? parsed)
+      {:errors ["the answer holds no JSON document"]}
+      (try (let [checked (map (fn [[v]]
+                                {:value v :report (skjema/explain compiled v)})
+                              parsed)]
+             (or (some #(when (nil? (:report %)) (select-keys % [:value])) checked)
+                 {:errors (schema-error-lines (:report (first checked)))}))
+           (catch Exception e
+             {:errors [(str "the schema cannot validate the answer: " (ex-message e))]
+              :fatal? true})))))
+
+(defn- structured-instruction
+  "The prompt text that asks for a schema-shaped final answer."
+  [schema]
+  (str
+    "Required final answer format: a program reads your final answer. "
+    "When the task is done, give a final answer that is exactly one JSON document and nothing else: "
+    "no prose and no Markdown fence. The document must validate against this JSON Schema (draft 2020-12):\n"
+    (json/write-json-str schema)))
+
+(defn- structured-correction
+  "The follow-up request after an answer that does not validate."
+  [schema errors]
+  (str "Your final answer does not validate against the required JSON Schema:\n- "
+       (str/join "\n- " errors)
+       "\nDo not repeat the task work. Give the final answer again as exactly one JSON document "
+       "and nothing else. It must validate against this JSON Schema (draft 2020-12):\n"
+       (json/write-json-str schema)))
+
+(defn- add-up
+  "Merge two spend values of one run: numbers add up, other values keep the latest."
+  [a b]
+  (cond (and (integer? a) (integer? b)) (+ (long a) (long b))
+        (and (number? a) (number? b)) (+ (double a) (double b))
+        (and (map? a) (map? b)) (merge-with add-up a b)
+        (nil? b) a
+        :else b))
+
+(defn- merge-turn-results
+  "One CLI result for the turns of one structured run. Counts, time and spend
+   add up, traces join, and the latest answer and status win."
+  [earlier later]
+  (merge earlier
+         later
+         {:iteration-count (add-up (:iteration-count earlier) (:iteration-count later))
+          :duration-ms (add-up (:duration-ms earlier) (:duration-ms later))
+          :tokens (add-up (:tokens earlier) (:tokens later))
+          :cost (add-up (:cost earlier) (:cost later))
+          :trace (if (and (sequential? (:trace earlier)) (sequential? (:trace later)))
+                   (into (vec (:trace earlier)) (:trace later))
+                   (or (:trace later) (:trace earlier)))}))
+
+(defn- run-structured
+  "Run turns until the answer validates against `schema`, at most
+   `structured-output-attempts` turns. `(submit! request messages)` runs one
+   turn and returns a CLI result; `request` is nil for the first turn. A correction turn names the validation
+   errors. The result gets `:structured` and `:structured-attempts`, or an
+   `:error` with `:schema-errors`."
+  [submit! messages schema compiled]
+  (loop [attempt
+         1
+
+         request
+         nil
+
+         turn-messages
+         messages
+
+         earlier
+         nil]
+
+    (let [result
+          (submit! request turn-messages)
+
+          combined
+          (if earlier (merge-turn-results earlier result) result)]
+
+      (if (or (:error result) (contains? #{:error :cancelled :needs-input} (:status result)))
+        (assoc combined :structured-attempts attempt)
+        (let [{:keys [errors fatal?] :as checked}
+              (structured-answer compiled (content/text-projection (:content result)))]
+          (cond (contains? checked :value) (assoc combined
+                                             :structured (:value checked)
+                                             :structured-attempts attempt)
+                (or fatal? (<= (long structured-output-attempts) attempt))
+                (assoc combined
+                  :status :error
+                  :error (str "The answer does not match --json-schema after "
+                              attempt
+                              (if (= 1 attempt) " attempt." " attempts."))
+                  :schema-errors errors
+                  :structured-attempts attempt)
+                :else (let [correction (structured-correction schema errors)]
+                        (recur (inc attempt) correction [(svar/user correction)] combined))))))))
+
 (defn run!
   "Execute a one-shot agent turn.
 
@@ -452,9 +726,26 @@
    `(sessions/by-channel :cli)`."
   [agent-def prompt &
    [{:keys [spec model provider reasoning-effort on-chunk debug? config db persist? no-persist?
-            session-id]
+            session-id json-schema]
      :as _opts}]]
-  (let [mdl
+  (let [json-compiled
+        ;; The CLI checked its schema already. A direct caller gets the same
+        ;; check here, before any provider spend.
+        (when (some? json-schema)
+          (let [{:keys [compiled errors]} (compile-json-schema json-schema)]
+            (when errors
+              (throw
+                (ex-info
+                  (str "json-schema is not a usable JSON Schema: " (str/join "; " errors))
+                  {:type :vis.cli/invalid-json-schema :vis/user-error true :schema-errors errors})))
+            compiled))
+
+        prompt
+        (if (and json-compiled (string? prompt))
+          (str prompt "\n\n" (structured-instruction json-schema))
+          prompt)
+
+        mdl
         (or model (:model agent-def))
 
         cfg-base
@@ -513,7 +804,10 @@
           (assoc :debug? true))
 
         messages
-        (if (string? prompt) [(svar/user prompt)] prompt)
+        (cond-> (if (string? prompt) [(svar/user prompt)] prompt)
+          ;; The turn reads only the LAST user message as its request.
+          (and json-compiled (not (string? prompt)))
+          (conj (svar/user (structured-instruction json-schema))))
 
         persistent?
         (and (or persist? session-id) (not no-persist?))]
@@ -533,22 +827,26 @@
       ;; there is no human here to approve, so a candidate plan would stall.
       (let [env (loop-env/create-environment (router-for-run cfg local-router?)
                                              {:db (or db :memory) :channel :cli})]
-        (try (let [result (turn/turn! env messages q-opts)]
-               (cond-> {:session-id nil
-                        :content (content/answer-content (:answer result))
-                        :iteration-count (:iteration-count result)
-                        :duration-ms (:duration-ms result)
-                        :tokens (:tokens result)
-                        :cost (:cost result)
-                        :trace (:trace result)}
-                 (:status result)
-                 (assoc :status (:status result))
+        (try (let [submit! (fn [_request turn-messages]
+                             (let [result (turn/turn! env turn-messages q-opts)]
+                               (cond-> {:session-id nil
+                                        :content (content/answer-content (:answer result))
+                                        :iteration-count (:iteration-count result)
+                                        :duration-ms (:duration-ms result)
+                                        :tokens (:tokens result)
+                                        :cost (:cost result)
+                                        :trace (:trace result)}
+                                 (:status result)
+                                 (assoc :status (:status result))
 
-                 (:confidence result)
-                 (assoc :confidence (:confidence result))
+                                 (:confidence result)
+                                 (assoc :confidence (:confidence result))
 
-                 (:eval result)
-                 (assoc :eval (:eval result))))
+                                 (:eval result)
+                                 (assoc :eval (:eval result)))))]
+               (if json-compiled
+                 (run-structured submit! messages json-schema json-compiled)
+                 (submit! nil messages)))
              (catch Exception e (run-error-result nil e))
              (finally (try (loop-env/dispose-environment! env) (catch Exception _ nil)))))
       ;; Persistent path: route through the canonical in-process gateway so
@@ -599,37 +897,44 @@
             session-id
             (or resolved-session-id (get created-session "id"))]
 
-        (try (let [result (gateway-state/submit-turn-sync!
-                            session-id
-                            (cond-> {:request prompt-s :messages messages :engine-opts q-opts}
-                              requested-provider
-                              (assoc :provider requested-provider)
+        (try
+          (let [submit! (fn [request turn-messages]
+                          (let [result (gateway-state/submit-turn-sync!
+                                         session-id
+                                         (cond-> {:request (or request prompt-s)
+                                                  :messages turn-messages
+                                                  :engine-opts q-opts}
+                                           requested-provider
+                                           (assoc :provider requested-provider)
 
-                              requested-model
-                              (assoc :model requested-model)))]
-               ;; The gateway result is canonical string-keyed; pick the
-               ;; fields into the CLI envelope explicitly.
-               (cond-> {:session-id session-id
-                        :content (vec (or (get result "content") []))
-                        :iteration-count (get result "iteration_count")
-                        :duration-ms (get result "duration_ms")
-                        :tokens (get result "tokens")
-                        :cost (get result "cost")
-                        :trace (get result "trace")}
-                 (get result "status")
-                 (assoc :status
-                   (case (get result "status")
-                     "needs_input"
-                     :needs-input
+                                           requested-model
+                                           (assoc :model requested-model)))]
+                            ;; The gateway result is canonical string-keyed; pick the
+                            ;; fields into the CLI envelope explicitly.
+                            (cond-> {:session-id session-id
+                                     :content (vec (or (get result "content") []))
+                                     :iteration-count (get result "iteration_count")
+                                     :duration-ms (get result "duration_ms")
+                                     :tokens (get result "tokens")
+                                     :cost (get result "cost")
+                                     :trace (get result "trace")}
+                              (get result "status")
+                              (assoc :status
+                                (case (get result "status")
+                                  "needs_input"
+                                  :needs-input
 
-                     (keyword (get result "status"))))
+                                  (keyword (get result "status"))))
 
-                 (get result "confidence")
-                 (assoc :confidence (get result "confidence"))
+                              (get result "confidence")
+                              (assoc :confidence (get result "confidence"))
 
-                 (get result "eval")
-                 (assoc :eval (get result "eval"))))
-             (catch Exception e (run-error-result session-id e)))))))
+                              (get result "eval")
+                              (assoc :eval (get result "eval")))))]
+            (if json-compiled
+              (run-structured submit! messages json-schema json-compiled)
+              (submit! nil messages)))
+          (catch Exception e (run-error-result session-id e)))))))
 
 ;;; ── Output Formatting ───────────────────────────────────────────────────
 
@@ -1169,7 +1474,8 @@
    "--reasoning-effort" :reasoning-effort
    "--name" :agent-name
    "--db" :db
-   "--session-id" :session-id})
+   "--session-id" :session-id
+   "--json-schema" :json-schema})
 
 (defn- option-token?
   "True for a bare token SHAPED like a flag (`-v`, `--json`, `--full-trace-stream`).
@@ -1201,7 +1507,11 @@
       (< 1 (count named))
       (update :flag-errors
               (fnil conj [])
-              (str "name one output mode, not " (str/join " and " named))))))
+              (str "name one output mode, not " (str/join " and " named)))
+
+      ;; `--code` prints code blocks, `--json-schema` prints one JSON document.
+      (and (:code? opts) (:json-schema opts))
+      (update :flag-errors (fnil conj []) "--json-schema does not work with --code; use --json"))))
 
 (defn- check-db-target
   "`--db PATH` used to reach SQLite as a raw `[SQLITE_CANTOPEN] Failed to
@@ -1299,6 +1609,15 @@
   (commandline/stdout! "                    no fences, no language tags. Pipes cleanly")
   (commandline/stdout! "                    into editors / interpreters. Errors when")
   (commandline/stdout! "                    the answer contains no [:code] blocks.")
+  (commandline/stdout! "  --json-schema JSON|@FILE")
+  (commandline/stdout! "                    Make the final answer one JSON document that")
+  (commandline/stdout! "                    validates against this JSON Schema (2020-12).")
+  (commandline/stdout! "                    Give the schema inline or as @path/to/file.json.")
+  (commandline/stdout! "                    Vis checks the schema before the run, then asks")
+  (commandline/stdout! "                    the model again for an invalid answer (3 tries).")
+  (commandline/stdout! "                    Stdout gets only the JSON; with --json, the")
+  (commandline/stdout! "                    envelope's structured field holds it. Exit 2:")
+  (commandline/stdout! "                    unusable schema. Exit 1: no valid answer.")
   (commandline/stdout! "  --raw             Render the answer as raw text (no markdown")
   (commandline/stdout! "                    bold/italics/heading bars). This is also the")
   (commandline/stdout! "                    auto-default when stdout is not a TTY (piped")
@@ -1333,6 +1652,7 @@
     "  vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"Task\"")
   (commandline/stdout! "  vis-agent \"Throwaway one-shot probe\"")
   (commandline/stdout! "  vis-agent --json --model gpt-4o \"Explain auth flow\"")
+  (commandline/stdout! "  vis-agent --json-schema @city.json \"Name the capital of Poland\"")
   (commandline/stdout!
     "  vis-agent --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
   (commandline/stdout! "  vis-agent --toggles reasoning_level=balanced \"Refactor carefully\"")
@@ -1433,6 +1753,28 @@
           (false? (get-in result [:eval :valid?])) 2
           :else 0)))
 
+(defn- print-json-schema-error!
+  "Report an unusable `--json-schema` value. With `--json`, the report is the
+   envelope on stdout; otherwise it goes to stderr, so stdout stays empty."
+  [json? {:keys [error schema-errors]}]
+  (if json?
+    (commandline/stdout! (result->json (cond-> {:status :error :error error}
+                                         schema-errors
+                                         (assoc :schema-errors schema-errors))))
+    (do (commandline/stderr! (str "vis-agent: " error))
+        (doseq [line schema-errors]
+          (commandline/stderr! (str "  " line))))))
+
+(defn- print-structured-result!
+  "Print a `--json-schema` run without `--json`: stdout gets only the validated
+   JSON document. Errors and validation details go to stderr."
+  [result]
+  (if (:error result)
+    (do (commandline/stderr! (error/format-error (:error result)))
+        (doseq [line (:schema-errors result)]
+          (commandline/stderr! (str "  " line))))
+    (commandline/stdout! (json/write-json-str (:structured result)))))
+
 (defn- cli-run!
   "Root one-shot run handler. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
@@ -1442,7 +1784,7 @@
   ;; constructing the one-shot environment; explicit --toggles still wins below.
   (toggles/hydrate-from-config! (config/load-config-raw))
   (let [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name
-                db toggles]
+                db toggles json-schema]
          :as opts}
         (-> residual
             parse-run-args
@@ -1464,7 +1806,10 @@
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
     ;; explicit --raw stays raw. The trace-stream flags own their own
     ;; output path and are unaffected.
-    (let [structured-output? (or json? code? full-trace-stream? full-trace-json-stream?)
+    (let [;; Check the schema before any provider spend: a broken schema is a usage error.
+          schema-arg (when json-schema (read-json-schema-arg json-schema))
+          _ (when (:error schema-arg) (print-json-schema-error! json? schema-arg) (System/exit 2))
+          structured-output? (or json? code? full-trace-stream? full-trace-json-stream?)
           effective-raw? (or raw? (and (not structured-output?) (not (trace-terminal?))))
           agent-def (agent {:name (or agent-name "cli")})
           trace-on-chunk (cond full-trace-json-stream? #(print-full-trace-json-frame! :trace-chunk
@@ -1484,6 +1829,9 @@
                      trace-on-chunk
                      (assoc :on-chunk trace-on-chunk)
 
+                     schema-arg
+                     (assoc :json-schema (:schema schema-arg))
+
                      db
                      (assoc :db
                        (config/resolve-db-spec
@@ -1493,7 +1841,8 @@
           exit-code (cli-result-exit-code result)
           trace-result (select-keys result
                                     [:session-id :content :trace :iteration-count :duration-ms
-                                     :tokens :cost :confidence :status :error :type :eval])]
+                                     :tokens :cost :confidence :status :error :type :eval
+                                     :structured :schema-errors :structured-attempts])]
 
       (cond full-trace-json-stream? (print-full-trace-json-frame! :result trace-result)
             full-trace-stream?
@@ -1523,6 +1872,7 @@
                         (shutdown-agents)
                         (System/exit 1))
                     :else (commandline/stdout! (str/join "\n\n" blocks))))
+            json-schema (print-structured-result! result)
             (:error result) (commandline/stdout! (error/format-error (:error result)))
             :else (do (commandline/stdout! (content/text-projection (result-content result)))
                       (when (and (:duration-ms result) (not effective-raw?))
@@ -2435,6 +2785,7 @@
      (help-row "vis-agent [--help|--version]" "Show this help, or the version.") "" "ONE-SHOT FLAGS"
      (help-row "--json" "Print result as JSON.")
      (help-row "--code" "Print only final answer code blocks.")
+     (help-row "--json-schema JSON|@FILE" "Return answer JSON that matches a schema.")
      (help-row "--raw" "Print plain text, no markdown styling.")
      (help-row "--toggles NAME=VAL[,..]" "Set registered toggles for this run only.")
      (help-row "--full-trace-stream" "Stream pretty human trace.")
