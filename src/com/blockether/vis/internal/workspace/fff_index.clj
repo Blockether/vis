@@ -172,7 +172,7 @@
    (open! root respect-ignore-files? overlay nil))
   (^java.io.Closeable [^File root respect-ignore-files? overlay event-data]
    (when-not (.isDirectory root)
-     (throw (ex-info "rg fff index root must be a directory"
+     (throw (ex-info (str "File index root must be a directory: " (.getPath root))
                      {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
    (let [requested-at (System/nanoTime)]
      (with-scan-permit*
@@ -211,10 +211,9 @@
                                               :queued-ms queued-ms
                                               :scan-ms (quot (- (System/nanoTime) scan-started-at)
                                                              1000000)}))
-                       (throw (ex-info
-                                (str "rg requires fff for directory search, but fff failed for " k)
-                                {:type :ext.foundation.editing/fff-unavailable :path k}
-                                t))))]
+                       (throw (ex-info (str "Cannot build the file index for " k)
+                                       {:type :ext.foundation.editing/fff-unavailable :path k}
+                                       t))))]
 
            (try (when-not (fff/wait-for-scan idx scan-timeout-ms)
                   (let [scan-ms (quot (- (System/nanoTime) scan-started-at) 1000000)
@@ -223,7 +222,7 @@
                                                               scan-semaphore)))]
 
                     (throw
-                      (ex-info (str "rg fff scan did not complete in time for "
+                      (ex-info (str "File index scan did not complete in time for "
                                     k
                                     " — queued "
                                     queued-ms
@@ -231,7 +230,7 @@
                                     scan-max-concurrency
                                     " scan permits, then "
                                     scan-ms
-                                    "ms inside fff with "
+                                    "ms scanning with "
                                     in-flight
                                     " scan(s) in flight")
                                {:type :ext.foundation.editing/fff-scan-timeout
@@ -497,7 +496,7 @@
                                :queued-ms (quot (- started-at requested-at) 1000000))]
 
                     (try (when-not (fff/rescan! idx scan-timeout-ms)
-                           (throw (ex-info "FFF read-your-writes rescan timed out"
+                           (throw (ex-info "File index rescan after a write timed out"
                                            {:type :ext.foundation.editing/fff-scan-timeout
                                             :path (first (:key entry))
                                             :timeout-ms scan-timeout-ms})))

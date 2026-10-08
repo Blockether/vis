@@ -152,10 +152,17 @@
           ;; removed aliases don't set :paths/:include; canonical defaults win
           (expect (= ["."] (:paths spec)))
           (expect (= [] (:include spec)))))
-    (it "missing query throws `rg needs query`"
+    (it "missing query throws `grep needs query`"
         (let [err (try (coerce {"paths" ["."]}) nil (catch clojure.lang.ExceptionInfo e e))]
           (expect (some? err))
-          (expect (clojure.string/includes? (ex-message err) "rg needs"))))
+          (expect (clojure.string/includes? (ex-message err) "grep needs"))))
+    ;; Regression, session 42f1f324-3b0e-4f4d-abb5-4e93343c44ac: spec errors named the
+    ;; internal `rg` engine, not the `grep` tool that the agent called.
+    (it "spec errors name the grep tool, never rg"
+        (doseq [spec [[] {"query" [42]} {"query" [" "]} {"query" ["x"] "context" -1}]]
+          (let [message (try (coerce spec) nil (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+            (expect (clojure.string/starts-with? message "grep "))
+            (expect (not (re-find #"\brg\b" message))))))
     (it ":context must be a non-negative integer (the map form is gone)"
         (expect (= 2 (:context (coerce {"query" ["x"] "context" 2}))))
         (expect (throws? clojure.lang.ExceptionInfo

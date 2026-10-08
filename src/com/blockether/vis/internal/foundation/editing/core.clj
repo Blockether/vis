@@ -2744,7 +2744,7 @@
    Unknown keys are ignored so a stray annotation never hard-fails the call."
   [spec]
   (when-not (map? spec)
-    (throw (ex-info "rg takes one spec map: {\"query\": [...], \"paths\": [...]}."
+    (throw (ex-info "grep takes one spec map: {\"query\": [...], \"paths\": [...]}."
                     {:type :ext.foundation.editing/invalid-rg-spec :got (type spec)})))
   (let [vector-of-strings
         (fn [k raw]
@@ -2757,10 +2757,10 @@
 
             ;; scalar-tolerant
             (when-not (and (vector? v) (seq v) (every? string? v))
-              (throw (ex-info "rg field must be a string or non-empty vector of strings."
+              (throw (ex-info "grep field must be a string or non-empty vector of strings."
                               {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
             (when-not (every? #(not (str/blank? %)) v)
-              (throw (ex-info "rg string values must be non-blank."
+              (throw (ex-info "grep string values must be non-blank."
                               {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
             v))
 
@@ -2770,7 +2770,7 @@
 
         _
         (when-not query-key
-          (throw (ex-info "rg needs `query`: a term or a list of terms."
+          (throw (ex-info "grep needs `query`: a term or a list of terms."
                           {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))
 
         ;; REGEX mode is decided BEFORE the needles: it turns the comma-splitting
@@ -2799,7 +2799,7 @@
                      vec))]
 
           (when (empty? ns)
-            (throw (ex-info "rg query has no non-blank terms."
+            (throw (ex-info "grep query has no non-blank terms."
                             {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
           ns)
 
@@ -2848,7 +2848,7 @@
         nonneg-int!
         (fn [label v]
           (when (and (some? v) (not (and (integer? v) (not (neg? (long v))))))
-            (throw (ex-info (str "rg " label " must be a non-negative integer")
+            (throw (ex-info (str "grep " label " must be a non-negative integer")
                             {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
 
         _
