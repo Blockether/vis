@@ -488,7 +488,7 @@
 
 (defn- resolve-search-roots
   "Resolve grep `paths` into
-   `{:roots [File …] :searched-paths [model-path …] :resolutions [{…} …]}`.
+   `{:roots [File …] :searched-paths [model-path …]}`.
 
    `:roots` are the canonical Files actually searched — a FILE root is searched as
    that ONE file, a DIRECTORY root is walked as a tree (ripgrep / Claude-Code /
@@ -498,14 +498,10 @@
    addresses returned for search hits; it never leaves a default multi-root sweep
    disguised as `[\".\"]`.
 
-   A path that DOES NOT EXIST is NOT silently dropped: it CLIMBS to its nearest
-   existing ANCESTOR directory (parent, then parent-of-parent, …) via
-   `nearest-existing-dir`, so a stale path still searches the closest real place
-   instead of finding nothing. The climb is NOT silent — each requested path is
-   recorded in `:resolutions` as `{:requested :resolved :root :existed :climbed}`,
-   so the caller reports `missing_paths` (what you named that was gone + where it
-   searched instead). Honest middle ground: still productive (climbs like the
-   original), never misleading (reports what it couldn't find).
+   An explicit path that DOES NOT EXIST fails the call, as in `ls`: the error names
+   the nearest existing directory to list first. A search never widens a missing
+   scope to a parent (session 42f1f324-3b0e-4f4d-abb5-4e93343c44ac: `/root/lanterna`
+   widened to `/root` and then failed to index it).
 
    The DEFAULT/unscoped `[\".\"]` (or a BLANK/nil entry, which the model routinely
    tacks on, e.g. `[\".github\" \"\"]`) expands to the FULL allowed-roots set — the
@@ -514,10 +510,10 @@
    language/dependency caches), which are pruned from the default sweep as search
    noise. The primary cwd is ALWAYS kept (so a session sitting in a draft or in
    `~/.vis` still searches its own tree), and explicit paths still reach a pruned
-   root. NO `:resolutions` (a default sweep names nothing, so nothing is reportable).
+   root.
 
    Explicit paths resolve through `safe-path` (confinement + trunk↔clone remap); a
-   confinement violation still propagates — that is not a miss."
+   confinement violation propagates as is."
   [paths]
   (let [paths (mapv #(let [s (str/trim (str %))] (if (str/blank? s) "." s)) paths)]
     (if (some #{"."} paths)
@@ -530,38 +526,29 @@
                               (map io/file))
                         allowed)]
 
-        {:roots roots :searched-paths (mapv rel-path roots) :resolutions []})
-      (let [resolutions
-            (mapv (fn [p]
-                    (let [^File f (safe-path p)]
-                      (if (.exists f)
-                        {:requested p :resolved (rel-path f) :root f :existed true :climbed false}
-                        (let [anc (nearest-existing-dir f)]
-                          {:requested p
-                           :resolved (when anc (rel-path anc))
-                           :root anc
-                           :existed false
-                           :climbed (boolean anc)}))))
-                  paths)
-            roots (into [] (comp (keep :root) (distinct)) resolutions)]
-
-        {:roots roots :searched-paths (mapv rel-path roots) :resolutions resolutions}))))
-
-(defn- missing-search-paths
-  "From `resolve-search-roots` `:resolutions`, the requested paths that did NOT
-   exist — each `{\"requested\" p \"searched\" ancestor-dir}` (`searched` = the
-   nearest existing directory the search climbed to, omitted when nothing in the
-   chain existed). Empty when every named path was real (and always empty for the
-   default `.` sweep). Surfaced identically on the `grep` name and content sides as
-   `missing_paths` so a stale/typo'd path is reported, never silently absorbed."
-  [resolutions]
-  (into []
-        (comp (remove :existed)
-              (map (fn [{:keys [requested resolved]}]
-                     (cond-> {"requested" requested}
-                       resolved
-                       (assoc "searched" resolved)))))
-        resolutions))
+        {:roots roots :searched-paths (mapv rel-path roots)})
+      (let [roots (into []
+                        (comp (map
+                                (fn [p]
+                                  (let [^File f (safe-path p)]
+                                    (when-not (.exists f)
+                                      (let [near (some-> (nearest-existing-dir f)
+                                                         rel-path)]
+                                        (throw (ex-info
+                                                 (str "grep: no such path `"
+                                                      (rel-path f)
+                                                      "`"
+                                                      (when near (str "; list `" near "` first"))
+                                                      ".")
+                                                 (cond-> {:type
+                                                          :ext.foundation.editing/grep-missing-path
+                                                          :path p}
+                                                   near
+                                                   (assoc :nearest near))))))
+                                    f)))
+                              (distinct))
+                        paths)]
+        {:roots roots :searched-paths (mapv rel-path roots)}))))
 
 (defn- path->target
   [requested kind]
@@ -701,15 +688,10 @@
               (sequential? paths) paths
               :else [paths])]
 
-    ;; Gate-check the same file or directory scopes used by the search.
-    ;; Missing paths are still resolved to their nearest existing ancestor.
+    ;; Gate-check the same file or directory scopes used by the search. A missing
+    ;; path is checked as named; the search then fails with `no such path`.
     (mapv (fn [p]
-            (let [^File f (safe-path p)]
-              (if (.exists f)
-                (rel-path f)
-                (if-let [dir (nearest-existing-dir f)]
-                  (rel-path dir)
-                  p))))
+            (rel-path (safe-path p)))
           paths)))
 
 (defn- gate-refusal-failure
@@ -1634,7 +1616,7 @@
   (let [{:keys [query paths limit offset is_hidden is_ls is_regex]}
         (coerce-find-spec args)
 
-        {roots :roots find-resolutions :resolutions searched-paths :searched-paths}
+        {roots :roots searched-paths :searched-paths}
         (resolve-search-roots paths)
 
         ;; fff ranks genuine hits first but pads the page with loose subsequence
@@ -1783,8 +1765,7 @@
      "offset" offset
      "truncated_by" (if (>= (count items) (long limit)) "limit" "end_of_results")
      "fuzzy" (boolean fuzzy?)
-     "matched_terms" (vec matched-terms)
-     "missing_paths" (missing-search-paths find-resolutions)}))
+     "matched_terms" (vec matched-terms)}))
 
 (declare ^:private rg-search ^:private coerce-rg-spec)
 
@@ -2110,28 +2091,13 @@
              (remove content-paths)
              (mapv #(str "~ " %)))
 
-        missing
-        (seq (get result "missing_paths"))
-
-        scope-row
-        (when missing
-          (str "missing: "
-               (str/join ", " (map str missing))
-               "  (searched: "
-               (str/join ", " (map str (get result "searched_paths")))
-               ")"))
-
         hint-row
         (when-let [h (some-> (get result "hint")
                              str
                              not-empty)]
           (str "hint: " h))]
 
-    (->> (concat [(grep-summary-line result)]
-                 (when scope-row [scope-row])
-                 blocks
-                 name-rows
-                 (when hint-row [hint-row]))
+    (->> (concat [(grep-summary-line result)] blocks name-rows (when hint-row [hint-row]))
          (remove nil?)
          (str/join "\n"))))
 
@@ -2284,8 +2250,7 @@
    — each key the hit's 1-based line, `context` N adding the surrounding lines.
    Alongside it: `hit_count`, `file_count`, `file_counts`, `first_hit`, the
    ranked NAME matches in `paths`, `searched_paths` naming every physical root
-   actually scanned (including the default `.` expansion), and `missing_paths`
-   for a scope that does not exist (never silently absorbed) — every one of them
+   actually scanned (including the default `.` expansion) — every one of them
    TOTAL: present on every result, `[]`/`null` when there is nothing to report.
    `is_files_only: True` answers the other question: WHICH files match and HOW
    MANY times each, as one `path  N` row per file for the whole scope, with no
@@ -2314,8 +2279,8 @@
 
    NAME and CONTENT matching share the caller's exact file or directory scope.
    An existing file is never widened to its parent, including on zero hits.
-   Missing scopes are searched at their nearest existing confined directory
-   and reported. NAME matching is fuzzy subsequence over the fff file index."
+   A missing explicit scope fails the call with `no such path` and names the nearest
+   existing directory. NAME matching is fuzzy subsequence over the fff file index."
   [& args]
   (let
     [{:strs [query offset item_count truncated_by] :as name-out}
@@ -3113,9 +3078,6 @@
         search-roots
         (resolve-search-roots paths)
 
-        rg-missing-paths
-        (missing-search-paths (:resolutions search-roots))
-
         roots
         (->> (:roots search-roots)
              (sort-by (fn [^File f]
@@ -3237,7 +3199,6 @@
                                 (when (>= (count @out) (long limit)) (reset! capped? true)))))))
                       {:files (vec @out)
                        :file-counts @counts
-                       :missing rg-missing-paths
                        :prefilter-degraded? prefilter-degraded?
                        :truncated-by (cond @capped? :limit
                                            @time-capped? :time
@@ -3306,7 +3267,6 @@
                               (>= (long @bytes-used) (long max-rg-result-bytes)) (reset! cap-reason
                                                                                    :bytes)))))))))
         {:hits (vec @out)
-         :missing rg-missing-paths
          :prefilter-degraded? prefilter-degraded?
          :truncated-by (or @cap-reason (when @time-capped? :time) :end-of-results)
          :total-file-count @total-files

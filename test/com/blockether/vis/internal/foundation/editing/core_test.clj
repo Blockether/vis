@@ -934,7 +934,7 @@
             out
             (grep {"all" ["needle"] "paths" [(temp-dir-path "rg")]})]
 
-        (expect (= #{:hits :truncated-by :total-file-count :total-file-count-exact? :missing
+        (expect (= #{:hits :truncated-by :total-file-count :total-file-count-exact?
                      :prefilter-degraded?}
                    (set (keys out))))
         ;; both files match — breadth == displayed file count, fully counted.
@@ -1154,7 +1154,7 @@
             (grep {"all" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true})]
 
         (expect (= #{:files :file-counts :truncated-by :total-file-count :total-file-count-exact?
-                     :missing :prefilter-degraded?}
+                     :prefilter-degraded?}
                    (set (keys out))))
         (expect (= 2 (:total-file-count out)))
         (expect (true? (:total-file-count-exact? out)))
@@ -1172,7 +1172,7 @@
               {"any" ["alpha"] "paths" [(temp-dir-path "rgfo")] "is_files_only" true "context" 2})]
 
         (expect (= #{:files :file-counts :truncated-by :total-file-count :total-file-count-exact?
-                     :missing :prefilter-degraded?}
+                     :prefilter-degraded?}
                    (set (keys out))))
         (expect (every? string? (:files out)))))
   (it "keeps a long hit line FULL in the result value (no per-line mutilation)"
@@ -2804,31 +2804,26 @@
           (spit (fs/file f) "Keymap here\nkeystroke too\nnope\n")
           (let [r (rg {"query" "key" "paths" [d]})]
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; Keymap + keystroke
-    (it
-      "a MISSING path CLIMBS to its nearest existing ancestor dir and is REPORTED in missing_paths (never a hard error)"
-      (let [d
-            (temp-dir-path "rgp")
+    ;; Regression, session 42f1f324-3b0e-4f4d-abb5-4e93343c44ac: a missing scope climbed
+    ;; to its parent; `/root/lanterna` became `/root`, and the index failed there.
+    (it "a MISSING path fails with `no such path` and names the nearest directory to list"
+        (let [d
+              (temp-dir-path "rgp")
 
-            f
-            (str (temp-root) "/rgp/a.clj")
+              ghost
+              (str (temp-root) "/rgp/nope.edn")
 
-            ghost
-            (str (temp-root) "/rgp/nope.edn")]
+              err
+              (try (rg {"query" "needle" "paths" [d ghost]})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
 
-        (spit (fs/file f) "needle here\n")
-        ;; one real dir + one path that does not exist. The ghost climbs to its
-        ;; parent (the real dir), so the search still runs — and the ghost is
-        ;; REPORTED, not silently absorbed.
-        (let [r
-              (rg {"query" "needle" "paths" [d ghost]})
-
-              missing
-              (get-in r [:result "missing_paths"])]
-
-          (expect (:success? r))
-          (expect (= 1 (get-in r [:result "hit_count"])))
-          (expect (= [ghost] (mapv #(get % "requested") missing)))
-          (expect (contains? (first missing) "searched")))))
+          (expect (some? err))
+          (expect (= :ext.foundation.editing/grep-missing-path (:type (ex-data err))))
+          (expect (clojure.string/starts-with? (ex-message err) "grep: no such path `"))
+          (expect (clojure.string/includes? (ex-message err) "nope.edn"))
+          (expect (clojure.string/includes? (ex-message err) "rgp` first."))
+          (expect (not (re-find #"(?i)\b(rg|fff)\b" (ex-message err))))))
     (it
       "a BLANK/nil paths entry means \"everything\" — widens like \".\", never throws (`[\".github\" \"\"]` case)"
       (let [rsr
@@ -2935,7 +2930,7 @@
             (expect (= 1 (get out "hit_count")))
             (expect (= 1 (get out "file_count")))))))
     (it
-      "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path CLIMBS to its nearest existing dir and is REPORTED in missing_paths"
+      "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path fails"
       (let [dir
             (str (temp-root) "/rgd-precise")
 
@@ -2965,21 +2960,13 @@
         (let [r (rg {"query" needle "paths" [a]})]
           (expect (:success? r))
           (expect (= 1 (get-in r [:result "file_count"])))
-          (expect (= 1 (get-in r [:result "hit_count"])))
-          ;; an existing path is never reported missing — but the key still ships
-          (expect (= [] (get-in r [:result "missing_paths"]))))
-        ;; a path that does NOT exist CLIMBS to its nearest existing ancestor dir
-        ;; (here `dir`, holding a.clj + b.clj) so the search still runs — and the
-        ;; ghost is REPORTED in missing_paths, never a hard error, never silent
-        (let [ghost
-              (str dir "/gone.clj")
-
-              r
-              (rg {"query" needle "paths" [ghost]})]
-
-          (expect (:success? r))
-          (expect (= 2 (get-in r [:result "file_count"])))
-          (expect (= [ghost] (mapv #(get % "requested") (get-in r [:result "missing_paths"])))))))))
+          (expect (= 1 (get-in r [:result "hit_count"]))))
+        ;; a path that does NOT exist is NOT widened to `dir`: the call fails
+        (let [err (try (rg {"query" needle "paths" [(str dir "/gone.clj")]})
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= :ext.foundation.editing/grep-missing-path (:type (ex-data err))))
+          (expect (clojure.string/includes? (ex-message err) "rgd-precise` first.")))))))
 
 (defdescribe atomic-write-test
              "Patch replacements preserve permissions and leave the original intact on failure."
@@ -3303,8 +3290,7 @@
 
                      (expect (= 0 (get result "hit_count")))
                      (expect (= {} (get result "matches")))
-                     (expect (nil? (get result "first_hit")))
-                     (expect (= [] (get result "missing_paths")))))
+                     (expect (nil? (get result "first_hit")))))
                (it "uses an empty query as grep's ls mode without attempting content search"
                    (let [_ (write-temp! "grep-ls/one.clj" ";; a\n")
                          _ (write-temp! "grep-ls/two.md" "# b\n")
@@ -3889,25 +3875,23 @@
           (expect (true? (get out "fuzzy")))
           (expect (= 50 (get out "limit")))
           (expect (= 30 (get out "item_count")))))
-    (it "EVERY grep result carries the SAME TOTAL key set — hit, miss, ls, stale scope"
+    (it "EVERY grep result carries the SAME TOTAL key set — hit, miss and ls"
         (let [gt (grep-data-fn)
               _ (write-temp! "greptotal/one.clj" ";; needle-total\n")
               dir (temp-dir-path "greptotal")
               ks #(set (keys (:result %)))
               hit (gt {"query" "needle-total" "paths" [dir]})
               miss (gt {"query" "zzz-nothing-here-xyz" "paths" [dir]})
-              ls (gt {"query" "" "paths" [dir]})
-              stale (gt {"query" "needle-total" "paths" [(str dir "/gone/deeper.clj")]})]
+              ls (gt {"query" "" "paths" [dir]})]
 
           ;; One shape for every outcome: caller code indexes a field instead of
           ;; probing for it, so a nil-valued signal can never read as a tool bug.
-          (expect (= (ks hit) (ks miss) (ks ls) (ks stale)))
+          (expect (= (ks hit) (ks miss) (ks ls)))
+          (expect (not (contains? (ks hit) "missing_paths")))
           (expect (every? (ks hit)
-                          ["missing_paths" "hits_truncated_by" "file_counts" "total_file_count"
+                          ["hits_truncated_by" "file_counts" "total_file_count"
                            "total_file_count_is_exact" "first_hit"]))
-          (expect (nil? (get-in hit [:result "hits_truncated_by"])))
-          (expect (= [] (get-in hit [:result "missing_paths"])))
-          (expect (seq (get-in stale [:result "missing_paths"])))))
+          (expect (nil? (get-in hit [:result "hits_truncated_by"])))))
     (it "a genuinely-unmatchable query still returns nothing (fuzzy can't invent hits)"
         (let [_ (write-temp! "findnone/alpha.clj" ";; x\n")
               dir (temp-dir-path "findnone")
