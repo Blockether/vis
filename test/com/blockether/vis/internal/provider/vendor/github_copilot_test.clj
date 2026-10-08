@@ -160,9 +160,9 @@
                    (get-in copilot [:provider/preset :base-url])))
         (expect (= "/responses" (get-in copilot [:provider/preset :responses-path])))
         ;; A configured default is selectable; account access depends on Copilot policy.
-        (expect (= #{"claude-opus-5.5" "claude-sonnet-5.5" "claude-opus-5" "claude-fable-5"
-                     "claude-sonnet-5" "gpt-6.1-sol" "gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
-                     "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra"}
+        (expect (= #{"claude-opus-5.5" "claude-sonnet-5.5" "claude-haiku-5.5" "claude-opus-5"
+                     "claude-fable-5" "claude-sonnet-5" "gpt-6.1-sol" "gpt-6-astra" "gpt-6-sol"
+                     "gpt-6-luna" "gpt-5.6-luna" "gpt-5.6-sol" "gpt-5.6-terra"}
                    models))
         (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
         (expect (ifn? (:provider/status-fn copilot)))
@@ -178,7 +178,8 @@
                                                        true)}
           (fn []
             (#'sut/enable-known-copilot-models! "token" "https://api.githubcopilot.com")
-            (doseq [model ["claude-opus-5.5" "claude-sonnet-5.5" "claude-fable-5.1"]]
+            (doseq [model ["claude-opus-5.5" "claude-sonnet-5.5" "claude-haiku-5.5"
+                           "claude-fable-5.1"]]
               (expect (contains? @requested model)))))))
   (describe "credential-detect"
             (it "detects the one Copilot credential whatever tier minted it"
