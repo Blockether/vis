@@ -222,7 +222,8 @@
 (defn- extension-rows
   "Row id -> `[extension position]` for each extension loaded where `target` runs.
    An extension's own section holds its engine choice, its settings and each packaged skill
-   that has its own switch."
+   that has its own switch. A foundation extension is part of Vis and always registered,
+   so it gets no section and no engine row (#337)."
   [target]
   (into {}
         (mapcat (fn [{ext-name :ext/name :as ext}]
@@ -232,7 +233,7 @@
                                        (map :id (:ext/toggles ext))
                                        (map #(scoped/resource-id :skills (:name %))
                                             (filter harness/own-setting? (:ext/skills ext)))))))
-        (extension/registered-extensions (:root target))))
+        (remove #(= "foundation" (:ext/kind %)) (extension/registered-extensions (:root target)))))
 
 (defn- extension-path
   "Name an extension file for its reader: inside the project, or under `~`."

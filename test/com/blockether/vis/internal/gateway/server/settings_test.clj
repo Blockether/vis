@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.gateway.server.settings-test
-  (:require [com.blockether.vis.internal.gateway.server.settings :as api]
+  (:require [com.blockether.vis.internal.config.scoped :as scoped]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.gateway.server.settings :as api]
             [lazytest.core :refer [defdescribe describe it expect]]))
 
 (def ^:private nest-rows #'api/nest-rows)
@@ -28,3 +30,20 @@
                                                        {:id "c" :parent "c"}])))))
                        (it "keeps a flat list flat"
                            (expect (= [{:id "a"} {:id "b"}] (nest-rows [{:id "a"} {:id "b"}]))))))
+
+(def ^:private extension-rows #'api/extension-rows)
+
+;; Regression for #337: the built-in foundation-mcp showed as its own extension section.
+(defdescribe extension-rows-test
+             (describe "extension sections"
+                       (it "gives foundation extensions no section and no engine row"
+                           (with-redefs [extension/registered-extensions
+                                         (fn [_]
+                                           [{:ext/name "foundation-mcp" :ext/kind "foundation"}
+                                            {:ext/name "language-clojure"
+                                             :ext/kind "language"
+                                             :ext/toggles [{:id "clojure_repl"}]}])]
+                             (expect (= {(scoped/resource-id :engines "language-clojure")
+                                         ["language-clojure" 0]
+                                         "clojure_repl" ["language-clojure" 1]}
+                                        (extension-rows {:root "/tmp/project"})))))))

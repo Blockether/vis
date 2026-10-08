@@ -78,8 +78,8 @@ export const Extensions: Story = {
       ...settings,
       groups: [
         ...settings.groups,
-        { id: 'extension:foundation-mcp', title: 'foundation-mcp',
-          extension: { name: 'foundation-mcp', origin: 'built_in', status: 'loaded' }, toggles: [engine('foundation-mcp')] },
+        { id: 'extension:language-clojure', title: 'language-clojure',
+          extension: { name: 'language-clojure', origin: 'built_in', status: 'loaded' }, toggles: [engine('language-clojure')] },
         { id: 'extension:vis-optmem', title: 'vis-optmem',
           extension: { name: 'vis-optmem', origin: 'global', path: '~/.vis/extensions/vis-optmem/0.1.0/extension.py', status: 'loaded' },
           toggles: [engine('vis-optmem')] },
@@ -106,7 +106,7 @@ export const Extensions: Story = {
     await expect(tools).toContainElement(panel('MCP servers'));
     const scope = (name: string) =>
       within(within(extensions!).getByRole('region', { name })).queryByText(/^(global|project)$/)?.textContent ?? null;
-    await expect(scope('foundation-mcp')).toBeNull();
+    await expect(scope('language-clojure')).toBeNull();
     await expect(scope('vis-optmem')).toBe('global');
     await expect(scope('vis-spel')).toBe('global');
     await expect(scope('review.py')).toBe('project');

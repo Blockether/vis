@@ -27,9 +27,9 @@ const catalog = (origin: 'global' | 'project', path: string): SettingsResponse =
       toggles: [],
     },
     {
-      id: 'extension:foundation-mcp',
-      title: 'foundation-mcp',
-      extension: { name: 'foundation-mcp', origin: 'built_in', status: 'loaded' },
+      id: 'extension:language-clojure',
+      title: 'language-clojure',
+      extension: { name: 'language-clojure', origin: 'built_in', status: 'loaded' },
       toggles: [{ id: 'mcp_tools', label: 'MCP tools', type: 'boolean', enabled: true, source: 'default' }],
     },
     {
@@ -87,9 +87,9 @@ it('keeps a failed project extension visible and runs its code only on request',
 
   expect(await screen.findByText(/Extension failed to load/)).toHaveTextContent('SyntaxError: invalid syntax');
   const { band, names, scope } = extensionsBand(5);
-  expect(names).toEqual(['broken.py', 'foundation-mcp', 'notifier']);
+  expect(names).toEqual(['broken.py', 'language-clojure', 'notifier']);
   expect(scope('broken.py')).toBe('project');
-  expect(scope('foundation-mcp')).toBeNull();
+  expect(scope('language-clojure')).toBeNull();
   expect(band).not.toHaveTextContent('.vis/extensions');
   expect(band).not.toContainElement(screen.getByRole('heading', { name: 'Agent' }));
   const notifier = within(band).getByRole('region', { name: 'notifier' });
@@ -155,10 +155,10 @@ it('reloads machine extensions from machine settings and explains an older gatew
 
   expect(await screen.findByText(/Extension failed to load/)).toBeInTheDocument();
   const { band, names, scope } = extensionsBand(6);
-  expect(names).toEqual(['broken.py', 'foundation-mcp', 'notifier']);
+  expect(names).toEqual(['broken.py', 'language-clojure', 'notifier']);
   expect(scope('broken.py')).toBe('global');
   expect(scope('notifier')).toBe('global');
-  expect(scope('foundation-mcp')).toBeNull();
+  expect(scope('language-clojure')).toBeNull();
   expect(band).not.toHaveTextContent('Machine extension');
   expect(band).not.toContainElement(screen.getByRole('heading', { name: 'Agent' }));
   const header = band.querySelector('header')!;

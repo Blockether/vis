@@ -9,7 +9,7 @@
            [com.googlecode.lanterna.input MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]))
 
-(def ^:private engine-names ["vis-lang-python" "einmal" "foundation-mcp" "vis-lang-clojure"])
+(def ^:private engine-names ["vis-lang-python" "einmal" "language-clojure" "vis-lang-clojure"])
 
 (def ^:private settings-rows
   (vec (concat [{:type :section :label "Extension engines"}]
@@ -809,9 +809,9 @@
           groups
           [{"title" "Agents"
             "toggles" [{"id" "subagents" "label" "Subagents" "type" "boolean" "enabled" true}]}
-           {"title" "foundation-mcp"
-            "extension" {"name" "foundation-mcp" "origin" "built_in" "status" "loaded"}
-            "toggles" [(engine "engines_1" "foundation-mcp")]}
+           {"title" "language-clojure"
+            "extension" {"name" "language-clojure" "origin" "built_in" "status" "loaded"}
+            "toggles" [(engine "engines_1" "language-clojure")]}
            {"title" "vis-spel"
             "extension" {"name" "vis-spel" "origin" "global" "status" "loaded"}
             "toggles"
@@ -839,7 +839,7 @@
 
       (expect (= [[:section "Agents" nil nil] [:registry-toggle "Subagents" nil nil]
                   [:section "Tools" nil nil] [:subsection "Extensions" nil nil]
-                  [:registry-toggle "foundation-mcp" nil nil]
+                  [:registry-toggle "language-clojure" nil nil]
                   [:registry-toggle "vis-spel" "global" nil] [:subsection "Skills" nil 1]
                   [:registry-toggle "browser" nil 1]]
                  (mapv (juxt :type :label :tag :depth) rows)))
@@ -851,7 +851,7 @@
       (expect (= [["Agents" 1] ["Tools" 3]]
                  (mapv (juxt :label :count) (#'dlg/settings-toc rows 0))))
       ;; The choice row is the extension's own row, so its name shows once.
-      (expect (= 1 (count (filter #(str/includes? % "foundation-mcp") lines))))
+      (expect (= 1 (count (filter #(str/includes? % "language-clojure") lines))))
       (expect (= 1 (count (filter #(str/includes? % "vis-spel") lines))))
       (expect (re-find #"vis-spel\s+global\s+Auto" (str (line "vis-spel "))))
       ;; A packaged skill stands one level in from its extension, without its name again.
