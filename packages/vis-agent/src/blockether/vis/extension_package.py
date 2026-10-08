@@ -982,7 +982,7 @@ def _replace_managed(directory, active, current, release, vis_version):
             name,
             active.name,
         )
-        if owned is None:
+        if spec is None:
             return result
         # Configuration pins remain authoritative on the next reconciliation.
         if spec["revision"] is not None:
