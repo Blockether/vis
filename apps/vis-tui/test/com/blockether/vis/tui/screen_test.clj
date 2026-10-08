@@ -1500,6 +1500,34 @@
                  (@sink {"type" "session.title_updated"})
                  (expect (= ["a" "b" "b"] (wait-for ["a" "b" "b"])))
                  (finally (swap! db assoc :shutdown? true) (stop))))))))
+  ;; REGRESSION: the stop function interrupted only the 1s sleep, and the loop ran on.
+  ;; On macOS CI it then sent a picker read into the stubs of a later test.
+  (it "stops the loop when its stop function runs"
+      (let [warms
+            (atom [])
+
+            db
+            (atom {:session {:id "a"}})]
+
+        (with-redefs-fn {#'state/app-db db
+                         #'vis/gateway-fleet-subscribe! (fn [_]
+                                                          (fn []
+                                                            nil))
+                         #'screen/refresh-projects! (fn [_]
+                                                      nil)
+                         #'screen/picker-rewarm-ms 0
+                         #'screen/warm-picker-cache! (fn [id]
+                                                       (swap! warms conj id)
+                                                       true)}
+          (fn []
+            (let [stop (#'screen/start-projects-refresh!)]
+              (loop [attempt 0]
+                (when (and (empty? @warms) (< attempt 60)) (Thread/sleep 50) (recur (inc attempt))))
+              (expect (= ["a"] @warms))
+              (stop)
+              (swap! db assoc-in [:session :id] "b")
+              (Thread/sleep 1500)
+              (expect (= ["a"] @warms)))))))
   ;; A search answers its hits WITH their rows, so a hit the picker's window does not
   ;; hold yet is painted without a second read.
   (it

@@ -6073,6 +6073,10 @@
         picker-stale?
         (atom false)
 
+        ;; The interrupt below only ends the 1s sleep, so the loop also reads this flag.
+        stopped?
+        (atom false)
+
         stop
         (try (vis/gateway-fleet-subscribe! (fn [event]
                                              (when (#{"session.status" "session.title_updated"}
@@ -6098,7 +6102,7 @@
                    last-picker-read
                    0]
 
-              (when-not (:shutdown? @state/app-db)
+              (when-not (or @stopped? (:shutdown? @state/app-db))
                 (let [db
                       @state/app-db
 
@@ -6149,6 +6153,7 @@
     (.setDaemon thread true)
     (.start thread)
     (fn []
+      (reset! stopped? true)
       (stop)
       (.interrupt thread)
       (try (.join thread 500) (catch InterruptedException _ nil)))))
