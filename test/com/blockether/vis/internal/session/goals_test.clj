@@ -36,6 +36,23 @@
             (expect (= 2 (get done "revision")))
             (expect (= 2 (get done "version"))))))))
 
+(defdescribe
+  goal-objective-length-test
+  (it "accepts objectives up to 44000 characters and rejects longer ones"
+      (let [{:keys [db-info session-id]}
+            (environment)
+
+            goal
+            (goals/set-goal! db-info session-id (str/join (repeat 44000 "x")) nil)]
+
+        (expect (= 44000 (count (get goal "objective"))))
+        (expect (document/valid-json? "gateway" "session_goal" goal))
+        (expect (rejected? #(goals/set-goal! db-info session-id (str/join (repeat 44001 "x")) nil)))
+        (expect (not (document/valid-json? "gateway"
+                                           "session_goal"
+                                           (assoc goal
+                                             "objective" (str/join (repeat 44001 "x")))))))))
+
 (defdescribe goal-blocker-audit-policy-test
              (it "goal blocker audit policy"
                  (let [{:keys [db-info session-id] :as env} (environment)]

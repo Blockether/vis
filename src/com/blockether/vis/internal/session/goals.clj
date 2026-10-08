@@ -60,8 +60,8 @@
 (defn set-goal!
   "Explicit user mutation. Replacing a goal creates a new identity and resets usage."
   [db sid objective iteration-budget]
-  (when-not (and (string? objective) (<= 1 (count (str/trim objective)) 8192))
-    (fail! "Goal objective must contain 1–8192 characters."))
+  (when-not (and (string? objective) (<= 1 (count (str/trim objective)) 44000))
+    (fail! "Goal objective must contain 1–44000 characters."))
   (when-not (or (nil? iteration-budget)
                 (and (integer? iteration-budget) (<= 1 iteration-budget 9007199254740991)))
     (fail! "Goal iteration budget must be an integer from 1 to 9007199254740991."))

@@ -1779,7 +1779,7 @@
         "objective": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 8192,
+          "maxLength": 44000,
           "pattern": "\\S"
         },
         "status": {

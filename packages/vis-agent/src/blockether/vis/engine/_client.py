@@ -3251,8 +3251,8 @@ class Session:
         replies. The last iteration can run its tools, and then the limit blocks
         the next model request. Token usage is recorded only as a statistic.
         """
-        if not isinstance(objective, str) or not 1 <= len(objective.strip()) <= 8192:
-            raise ValueError("objective must contain 1–8192 characters")
+        if not isinstance(objective, str) or not 1 <= len(objective.strip()) <= 44000:
+            raise ValueError("objective must contain 1–44000 characters")
         if iteration_budget is not None and (
             type(iteration_budget) is not int
             or not 1 <= iteration_budget <= 9007199254740991

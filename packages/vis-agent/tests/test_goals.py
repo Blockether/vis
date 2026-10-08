@@ -40,7 +40,7 @@ def test_goal_uses_slash_turn(budget):
     [
         ("", None),
         (" ", None),
-        ("x" * 8193, None),
+        ("x" * 44001, None),
         (None, None),
         ("work", 0),
         ("work", -1),
