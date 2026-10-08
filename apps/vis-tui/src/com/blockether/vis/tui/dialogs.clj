@@ -5848,8 +5848,12 @@
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
                             ;; REVERSE swaps the two colors, so a selected row passes them
                             ;; swapped: each mark keeps its own color on the selection bar.
+                            ;; The bar is `dialog-fg`, so each ink is made legible on it: a
+                            ;; light theme's dark value ink would vanish on the dark bar (#339).
                             (let [colors (fn [fg]
-                                           (if selected? [t/dialog-fg fg] [fg t/dialog-bg]))
+                                           (if selected?
+                                             [t/dialog-fg (t/legible-ink fg t/dialog-fg)]
+                                             [fg t/dialog-bg]))
                                   [mark-fg mark-bg] (colors mark-color)
                                   indent (* 2 (long (or depth 0)))
                                   ;; The leading status glyph reports the current setting value.

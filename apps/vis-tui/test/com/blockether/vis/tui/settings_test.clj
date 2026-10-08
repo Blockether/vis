@@ -5,7 +5,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.theme :as t])
-  (:import [com.googlecode.lanterna TerminalPosition TextColor]
+  (:import [com.googlecode.lanterna TerminalPosition TextColor TextColor$RGB]
            [com.googlecode.lanterna.input MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]))
 
@@ -221,6 +221,28 @@
         (expect (not= (:bg label) (:bg plain-label)) "the first engine row is selected")
         (expect (= (:bg label) (:bg mark)) "the mark stands on the selection bar")
         (expect (= (:fg plain-mark) (:fg mark)) "the mark keeps its own color")))
+  (it "keeps every value on the selected row legible on light and dark themes"
+      ;; #339: on a light theme the value column kept its dark ink on the dark bar.
+      (let [before @t/active-theme-id]
+        (try (doseq [theme-id ["blockether-light" "vis-light" "vis-dark"]]
+               (t/apply-theme! theme-id)
+               (let [row (some (fn [row]
+                                 (when (str/includes? (apply str (map #(str (:ch %)) row))
+                                                      "vis-lang-python")
+                                   row))
+                               (last (:frames (capture-settings settings-rows [:esc]))))
+                     rgb (fn [[r g b]]
+                           (TextColor$RGB. (int r) (int g) (int b)))]
+
+                 (expect (some #(= "a" (str (:ch %))) row) "the row shows its value")
+                 (doseq [:let [bar (:bg (first (filter #(= "v" (str (:ch %))) row)))]
+                         cell row
+                         :when (and (= bar (:bg cell)) (not (str/blank? (str (:ch cell)))))]
+
+                   (expect (<= t/legible-contrast
+                               (t/contrast-ratio (rgb (:fg cell)) (rgb (:bg cell))))
+                           (str theme-id " cell " (:ch cell))))))
+             (finally (t/apply-theme! before)))))
   (it "pages through the full catalog in either direction without a category switch"
       (doseq [cols
               [40 100]
