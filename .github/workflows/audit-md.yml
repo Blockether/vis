@@ -3,7 +3,7 @@ name: Audit doc (audit/README.md)
 # Keeps audit/README.md — the dependency / license / footprint inventory — generated
 # straight from the deps.edn graph, so it can never drift from the code.
 #
-# scripts/gen-audit.bb walks every deps.edn, resolves each Maven or git dependency
+# scripts/gen_audit.clj walks every deps.edn, resolves each Maven or git dependency
 # license and distributable size from its declared source, and renders the whole
 # document.
 #
@@ -17,13 +17,13 @@ on:
     branches: [main]
     paths:
       - '**/deps.edn'
-      - 'scripts/gen-audit.bb'
+      - 'scripts/gen_audit.clj'
       - '.github/workflows/audit-md.yml'
   pull_request:
     branches: [main]
     paths:
       - '**/deps.edn'
-      - 'scripts/gen-audit.bb'
+      - 'scripts/gen_audit.clj'
       - '.github/workflows/audit-md.yml'
   # Licenses/sizes rarely change, but a released version can be re-published —
   # refresh weekly so the doc stays honest even with no repo change.
@@ -47,17 +47,17 @@ jobs:
 
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
-          bb: latest # babashka runs scripts/gen-audit.bb
+          cli: latest # `clojure -M:audit` runs scripts/gen_audit.clj
 
       - name: Regenerate audit/README.md
-        run: bb scripts/gen-audit.bb
+        run: clojure -M:audit
 
       # Fail-only: never push. If the committed doc drifted from what the
       # generator produces, fail and point the author at the one fix command.
       - name: Fail if audit/README.md drifted
         run: |
           if ! git diff --quiet -- audit/README.md; then
-            echo '::error::audit/README.md is out of date. Run `bb scripts/gen-audit.bb` and commit the result.'
+            echo '::error::audit/README.md is out of date. Run `clojure -M:audit` and commit the result.'
             git --no-pager diff -- audit/README.md
             exit 1
           fi

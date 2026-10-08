@@ -83,6 +83,12 @@
         tools.jackson.core/jackson-databind {:mvn/version "3.2.2"}}
  :aliases
  {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}} :main-opts ["-m" "antq.core"]}
+   ;; Regenerates audit/README.md (network required); `--check` only compares. Clojure CLI only.
+   ;; :replace-deps keeps the engine classpath out; keep these pins equal to the :deps above.
+   :audit {:main-opts ["scripts/gen_audit.clj"]
+           :replace-deps {babashka/fs {:mvn/version "0.5.34"}
+                          org.babashka/http-client {:mvn/version "0.4.25"}
+                          org.clojure/clojure {:mvn/version "1.12.6"}}}
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
                  org.apache.commons/commons-compress {:mvn/version "1.28.0"}
                  slipset/deps-deploy {:mvn/version "0.2.5"}}

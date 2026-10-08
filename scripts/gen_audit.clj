@@ -1,4 +1,3 @@
-#!/usr/bin/env bb
 ;; Regenerate audit/README.md from the deps.edn graph.
 ;;
 ;; Walks the root deps.edn + every sibling deps.edn (skipping e2e test
@@ -10,9 +9,9 @@
 ;; license distribution, the resource footprint, and a copyleft warning that
 ;; appears automatically whenever an (L)GPL license is detected.
 ;;
-;; Usage:
-;;   bb scripts/gen-audit.bb            # rewrite audit/README.md in place
-;;   bb scripts/gen-audit.bb --check    # exit 1 if audit/README.md is out of date
+;; Usage (Clojure CLI only, no Babashka; the `:audit` alias in deps.edn):
+;;   clojure -M:audit            # rewrite audit/README.md in place
+;;   clojure -M:audit --check    # exit 1 if audit/README.md is out of date
 ;;
 ;; Deterministic + offline-friendly: network failures degrade a single cell to
 ;; "UNKNOWN"/"—" rather than aborting. Run after any dependency bump; CI keeps
@@ -739,7 +738,7 @@ private and send them to <security@blockether.com>.
       (if (= current md)
         (do (println "audit/README.md is up to date.") (System/exit 0))
         (do (binding [*out* *err*]
-              (println "audit/README.md is STALE — run `bb scripts/gen-audit.bb`."))
+              (println "audit/README.md is STALE — run `clojure -M:audit`."))
             (System/exit 1))))
     (do (fs/create-dirs (fs/parent target))
         (spit target md)

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.audit-inventory-test
   "`audit/README.md` is the licensing record reviewers rely on, and it is
-   GENERATED from the network (`bb scripts/gen-audit.bb`). A CDN that has not
+   GENERATED from the network (`clojure -M:audit`). A CDN that has not
    yet published a freshly released artifact degrades one cell to `UNKNOWN`/`—`,
    and once that is committed the document states the wrong license for
    something we ship — exactly what happened to `com.blockether/imaging 0.1.7`.
@@ -61,7 +61,7 @@
               str/trim))))
 
 (defn- normalize
-  "The same POM-name -> short id mapping `scripts/gen-audit.bb` renders with,
+  "The same POM-name -> short id mapping `scripts/gen_audit.clj` renders with,
    so a row can be compared against the artifact's own declaration."
   [raw]
   (let [s (str/lower-case (str raw))]
@@ -75,15 +75,15 @@
 (def ^:private generator-namespace
   (delay
     (let [source
-          (slurp (io/file "scripts" "gen-audit.bb"))
+          (slurp (io/file "scripts" "gen_audit.clj"))
 
           runner-offset
           (str/index-of
             source
             ";; --------------------------------------------------------------------- runner")
 
-          source-without-shebang
-          (second (str/split (subs source 0 runner-offset) #"\n" 2))
+          generator-source
+          (subs source 0 runner-offset)
 
           namespace-symbol
           (gensym "audit-generator-test-")
@@ -93,7 +93,7 @@
 
       (binding [*ns* target-namespace]
         (clojure.core/refer 'clojure.core)
-        (load-string source-without-shebang))
+        (load-string generator-source))
       target-namespace)))
 
 (defn- generator-var
@@ -168,10 +168,10 @@
   ;; `.github/workflows/audit-md.yml` regenerates this document and fails on ANY
   ;; diff. A wall-clock stamp therefore reddened the pipeline on every dependency
   ;; bump made on a later day than the last regeneration, with the date line as
-  ;; the only diff. `scripts/gen-audit.bb` renders a placeholder and `stamp-date`
+  ;; the only diff. `scripts/gen_audit.clj` renders a placeholder and `stamp-date`
   ;; keeps the committed date while the rest of the document is byte-identical.
   (it "the generator resolves its date against the committed doc, not the clock"
-      (let [src (slurp (io/file "scripts" "gen-audit.bb"))]
+      (let [src (slurp (io/file "scripts" "gen_audit.clj"))]
         (expect (re-find #"> Generated \"\s*today\s*\"\." src))
         (expect (re-find #"today\s+date-placeholder\]" src))
         (expect (str/includes? src "(defn- stamp-date"))
@@ -180,3 +180,18 @@
         (expect (str/includes? (second (str/split src #"\(defn- stamp-date")) "LocalDate/now"))))
   (it "the committed document states one resolved ISO date"
       (expect (= 1 (count (re-seq #"(?m)^> Generated \d{4}-\d{2}-\d{2}\.$" (slurp audit-file)))))))
+
+(defdescribe
+  audit-alias-test
+  ;; `clojure -M:audit` runs the generator without Babashka on a slim classpath.
+  (it "pins the same generator libraries as the core deps, so the inventory stays unchanged"
+      (let [deps
+            (edn/read-string (slurp "deps.edn"))
+
+            alias
+            (get-in deps [:aliases :audit])]
+
+        (expect (= ["scripts/gen_audit.clj"] (:main-opts alias)))
+        (doseq [[coord version] (:replace-deps alias)]
+          (expect (= (get-in deps [:deps coord]) version)
+                  (str coord " differs from the core :deps"))))))
