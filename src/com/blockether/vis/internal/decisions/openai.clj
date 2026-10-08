@@ -9,7 +9,8 @@
             [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.provider.service :as provider-service]))
+            [com.blockether.vis.internal.provider.service :as provider-service]
+            [com.blockether.vis.internal.util :as util]))
 
 (def ^:private prefix "openai/")
 
@@ -26,8 +27,6 @@
   [name]
   (and (string? name) (str/starts-with? name prefix) (< (count prefix) (count name))))
 
-(defn- non-blank [value] (when (and (string? value) (not (str/blank? value))) value))
-
 (defn credentials
   "The OpenAI API key and base URL, or nil. Never the Codex sign-in token.
 
@@ -39,15 +38,16 @@
              (catch Throwable _ nil))
 
         api-key
-        (or (non-blank (try (config/command-token :openai) (catch Throwable _ nil)))
+        (or (util/non-blank (try (config/command-token :openai) (catch Throwable _ nil)))
             (when-not (some-> (:api-key entry)
                               (str/includes? "${"))
-              (non-blank (:api-key entry)))
-            (non-blank (System/getenv "OPENAI_API_KEY")))]
+              (util/non-blank (:api-key entry)))
+            (util/non-blank (System/getenv "OPENAI_API_KEY")))]
 
     (when api-key
       {:api-key api-key
-       :base-url (str/replace (or (non-blank (:base-url entry)) default-base-url) #"/+$" "")})))
+       :base-url
+       (str/replace (or (util/non-blank (:base-url entry)) default-base-url) #"/+$" "")})))
 
 (defn models-status
   "Catalog rows for the known OpenAI models. Remote rows have no `installed` key."
@@ -66,7 +66,7 @@
 
 (defn- described
   [base description]
-  (if-let [text (non-blank description)]
+  (if-let [text (util/non-blank description)]
     (assoc base "description" text)
     base))
 
@@ -100,7 +100,7 @@
           (fn [label]
             (some-> (get criteria label)
                     level-text
-                    non-blank))
+                    util/non-blank))
 
           lines
           (remove nil?
@@ -165,7 +165,7 @@
     (when-not (and (sequential? answers) (= (count answers) (count items)))
       (fail! :decisions/unavailable "OpenAI returned a different number of answers"))
     (let [usage (get body "usage")]
-      {"model" (or (non-blank (get body "model")) (subs name (count prefix)))
+      {"model" (or (util/non-blank (get body "model")) (subs name (count prefix)))
        "routing" {"model" name "model_ref" name "provider" "openai"}
        "answers" (into {}
                        (map (fn [item answer]
@@ -179,7 +179,8 @@
 
 (defn- upstream-message
   [body]
-  (or (try (non-blank (get-in (json/read-json body) ["error" "message"])) (catch Exception _ nil))
+  (or (try (util/non-blank (get-in (json/read-json body) ["error" "message"]))
+           (catch Exception _ nil))
       "no error message"))
 
 (defn- post!
