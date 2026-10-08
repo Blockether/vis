@@ -10,6 +10,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.mermaid :as mermaid]
+            [com.blockether.vis.tui.mermaid.charts :as charts]
             [com.blockether.vis.tui.mermaid.canvas :as c]
             [com.blockether.vis.tui.primitives :as p]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -247,3 +248,12 @@
                                        (mermaid/draw
                                          "flowchart LR\n  A[One] --> B[Two]\n  B --> C[Three]\n"
                                          8))))))
+
+(defdescribe chart-bar-test
+             (it "rounds a bar to whole cells, because the opencode glyph set has no partial blocks"
+                 (expect (= "█████" (#'charts/bar 50 100 10)))
+                 (expect (= "███" (#'charts/bar 26 100 10)))
+                 (expect (= "██" (#'charts/bar 24 100 10)))
+                 (expect (= "██████████" (#'charts/bar 100 100 10)))
+                 (expect (= "" (#'charts/bar 5 0 10)))
+                 (expect (= "" (#'charts/bar -3 100 10)))))
