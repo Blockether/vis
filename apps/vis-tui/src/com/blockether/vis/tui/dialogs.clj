@@ -4281,8 +4281,8 @@
 
 (defn- settings-fold-rows
   "Mark each section header that has rows below it with `:fold` `:open` or `:closed`.
-   A section not named in `opened` keeps only its header, with `:folded-count` settings hidden."
-  [rows opened]
+   A section named in `folded` keeps only its header, with `:folded-count` settings hidden."
+  [rows folded]
   (let [rows
         (vec rows)
 
@@ -4309,7 +4309,7 @@
               (if (= :section (:type row)) (long (section-end i)) (inc i))]
 
           (cond (= (inc i) end) (recur (inc i) (conj! out row))
-                (not (contains? opened (:label row)))
+                (contains? folded (:label row))
                 (recur end
                        (conj! out
                               (assoc row
@@ -5479,15 +5479,15 @@
              inventories-pending
              (volatile! true)
 
-             ;; Every section opens folded to its header line. Only a section that the
-             ;; caller asks to focus opens at once.
-             opened
-             (atom (into #{} (keep identity) [(:focus-section callbacks)]))
+             ;; Every section opens unfolded. A section that the person folds keeps
+             ;; only its header line.
+             folded
+             (atom #{})
 
-             ;; The first selectable row of the folded list.
+             ;; The first selectable row of the list.
              initial-index
              (fn []
-               (settings-initial-index (settings-fold-rows (settings-rows) @opened)
+               (settings-initial-index (settings-fold-rows (settings-rows) @folded)
                                        (:focus-section callbacks)))
 
              selected
@@ -5523,7 +5523,7 @@
               (let [;; A search shows every match, so folds apply only to the full list.
                     filtered
                     (let [found (filter-settings-rows (settings-rows) @query)]
-                      (if (str/blank? @query) (settings-fold-rows found @opened) found))
+                      (if (str/blank? @query) (settings-fold-rows found @folded) found))
 
                     rows
                     (if (and (empty? filtered) (not (str/blank? @query)))
@@ -5825,14 +5825,15 @@
                             (p/selection-styles selected?)
                             (p/set-colors! g t/dialog-fg t/dialog-bg)
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                            ;; The leading status glyph reports the current setting value.
-                            (let [indent (* 2 (long (or depth 0)))
-                                  label-x (p/status-mark! g
-                                                          (+ option-x indent)
-                                                          row-y
-                                                          mark
-                                                          mark-color
-                                                          t/dialog-bg)
+                            ;; REVERSE swaps the two colors, so a selected row passes them
+                            ;; swapped: each mark keeps its own color on the selection bar.
+                            (let [colors (fn [fg]
+                                           (if selected? [t/dialog-fg fg] [fg t/dialog-bg]))
+                                  [mark-fg mark-bg] (colors mark-color)
+                                  indent (* 2 (long (or depth 0)))
+                                  ;; The leading status glyph reports the current setting value.
+                                  label-x
+                                  (p/status-mark! g (+ option-x indent) row-y mark mark-fg mark-bg)
                                   value (nth option-values row-idx)
                                   value-room (if (pos? value-w) (+ value-w 2) 0)
                                   ;; An extension's install scope stands left of the value column,
@@ -5857,7 +5858,7 @@
                               (p/set-colors! g t/dialog-fg t/dialog-bg)
                               (p/put-str! g label-x row-y lbl)
                               (when tagged?
-                                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                                (apply p/set-colors! g (colors t/dialog-hint))
                                 (p/put-str! g
                                             (- (+ lleft paint-w) value-room tag-w)
                                             row-y
@@ -5866,7 +5867,7 @@
                                 (let [text (ellipsize value value-w)
                                       dx (- (+ lleft paint-w) (p/display-width text))]
 
-                                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                                  (apply p/set-colors! g (colors t/dialog-hint-key))
                                   (p/put-str! g dx row-y text)))))))
                       (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                           (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
@@ -5956,9 +5957,9 @@
                           ;; Fold or open one section, then select its header or first setting.
                           fold-section!
                           (fn [label fold?]
-                            (swap! opened (if fold? disj conj) label)
+                            (swap! folded (if fold? conj disj) label)
                             (reset! selected (settings-initial-index
-                                               (settings-fold-rows (settings-rows) @opened)
+                                               (settings-fold-rows (settings-rows) @folded)
                                                label)))]
 
                       (when key
@@ -6037,7 +6038,7 @@
                                             (fold-section! label (= :open fold))
 
                                             :toc
-                                            (when-not (contains? @opened (:section pressed))
+                                            (when (contains? @folded (:section pressed))
                                               (fold-section! (:section pressed) false))
 
                                             nil)))

@@ -36,31 +36,19 @@
                (range 24))))
 
 (defn- capture-settings
-  "Capture the production settings loop with a deterministic catalog and no gateway.
-   Settings opens with every section folded. Only a test about the folds passes
-   `:folded? true`; other tests see every section open."
+  "Capture the production settings loop with a deterministic catalog and no gateway."
   [rows keys &
-   {:keys [cols callbacks values load! folded?]
-    :or {cols 100 callbacks {} values {} load! (constantly nil) folded? false}}]
-  (let [fold
-        @#'dlg/settings-fold-rows
-
-        result
-        (cap/capture! {:cols cols
-                       :rows 30
-                       :keys keys
-                       :paint! (fn [{:keys [screen]}]
-                                 (try (with-redefs-fn
-                                        {#'dlg/settings-rows (if (fn? rows) rows (constantly rows))
-                                         #'dlg/load-inventories! load!
-                                         #'dlg/settings-fold-rows
-                                         (if folded?
-                                           fold
-                                           (fn [rows opened]
-                                             (fold rows (into (set opened) (keep :label) rows))))}
-                                        #(dlg/settings-dialog! screen values callbacks))
-                                      (finally (.stopScreen ^TerminalScreen screen))))})]
-
+   {:keys [cols callbacks values load!]
+    :or {cols 100 callbacks {} values {} load! (constantly nil)}}]
+  (let [result (cap/capture! {:cols cols
+                              :rows 30
+                              :keys keys
+                              :paint! (fn [{:keys [screen]}]
+                                        (try (with-redefs-fn {#'dlg/settings-rows
+                                                              (if (fn? rows) rows (constantly rows))
+                                                              #'dlg/load-inventories! load!}
+                                               #(dlg/settings-dialog! screen values callbacks))
+                                             (finally (.stopScreen ^TerminalScreen screen))))})]
     (when-let [error (:error result)]
       (throw error))
     result))
@@ -132,20 +120,16 @@
                                         :values {:read-files false :thinking false}
                                         :callbacks {:focus-section section})]
           (expect (= (assoc {:read-files false :thinking false} expected true) (:ret capture))))))
-  (it "opens with every section folded except the one it focuses"
-      (let [frame (cap/frame-text (capture-settings settings-rows [:esc] :folded? true))]
+  (it "opens with every section unfolded"
+      (let [frame (cap/frame-text (capture-settings settings-rows [:esc]))]
         (expect (every? #(str/includes? frame %)
-                        ["Extension engines ▸" "Paths and access ▸" "Response ▸"]))
-        (expect (not (str/includes? frame "Read filesystem")))
-        ;; Enter on the first folded header opens it.
-        (expect (str/includes? (cap/frame-text
-                                 (capture-settings settings-rows [:enter :esc] :folded? true))
-                               "Extension engines ▾"))))
+                        ["Extension engines ▾" "Paths and access ▾" "Response ▾" "Read filesystem"
+                         "Show reasoning"]))
+        (expect (not (str/includes? frame "▸")))))
   (it "folds a section with Left and opens it with Right or Enter"
       (let [run
             #(capture-settings settings-rows
                                %
-                               :folded? true
                                :values {:read-files false :thinking false}
                                :callbacks {:focus-section "Paths and access"})
 
@@ -157,7 +141,7 @@
 
         (expect (str/includes? focused "Paths and access ▾"))
         (expect (str/includes? focused "Read filesystem"))
-        (expect (str/includes? focused "Response ▸"))
+        (expect (str/includes? focused "Response ▾"))
         (expect (str/includes? folded "Paths and access ▸"))
         (expect (not (str/includes? folded "Read filesystem")))
         ;; The sidebar still counts the hidden settings.
@@ -168,46 +152,75 @@
         (doseq [open-key [:right :enter]]
           (expect (= {:read-files true :thinking false}
                      (:ret (run [:left open-key :enter :esc])))))))
-  (it "folds and opens a section with a press on its header"
-      (let [[y x]
-            (first (keep-indexed (fn [y ^String line]
-                                   (let [x (.indexOf line "── Response")]
-                                     (when (<= 0 x) [y x])))
-                                 (str/split-lines
-                                   (cap/frame-text
-                                     (capture-settings settings-rows [:esc] :folded? true)))))
+  (it
+    "folds and opens a section with a press on its header"
+    (let [[y x]
+          (first (keep-indexed (fn [y ^String line]
+                                 (let [x (.indexOf line "── Response")]
+                                   (when (<= 0 x) [y x])))
+                               (str/split-lines (cap/frame-text (capture-settings settings-rows
+                                                                                  [:esc])))))
 
-            press
-            (fn [x y]
-              [(MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. x y))
-               (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. x y))])
+          press
+          (fn [x y]
+            [(MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. x y))
+             (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. x y))])
 
-            opened
-            (cap/frame-text
-              (capture-settings settings-rows (conj (press (+ x 4) y) :esc) :folded? true))
+          folded
+          (cap/frame-text (capture-settings settings-rows (conj (press (+ x 4) y) :esc)))
 
-            folded
-            (cap/frame-text (capture-settings settings-rows
-                                              (concat (press (+ x 4) y) (press (+ x 4) y) [:esc])
-                                              :folded?
-                                              true))]
+          opened
+          (cap/frame-text (capture-settings settings-rows
+                                            (concat (press (+ x 4) y) (press (+ x 4) y) [:esc])))]
 
-        (expect (str/includes? opened "Response ▾"))
-        (expect (str/includes? opened "Show reasoning"))
-        (expect (str/includes? folded "Response ▸"))
-        (expect (not (str/includes? folded "Show reasoning")))))
+      (expect (str/includes? folded "Response ▸"))
+      (expect (not (str/includes? folded "Show reasoning")))
+      (expect (str/includes? opened "Response ▾"))
+      (expect (str/includes? opened "Show reasoning"))))
   (it "shows every match while a search runs"
       (let [capture
-            (capture-settings settings-rows (concat "show" [:esc :esc]) :folded? true)
+            (capture-settings settings-rows (concat "show" [:esc :esc]))
 
             ;; The frame before the first Esc shows the search result.
             searched
             (cap/frame-text capture (- (count (:frames capture)) 2))]
 
         (expect (str/includes? searched "Show reasoning"))
-        (expect (not (str/includes? searched "▸")))
-        ;; Clearing the search shows the fold again.
-        (expect (str/includes? (cap/frame-text capture) "Response ▸"))))
+        (expect (not (str/includes? searched "▾")))
+        ;; Clearing the search shows the fold chevrons again.
+        (expect (str/includes? (cap/frame-text capture) "Response ▾"))))
+  (it "keeps the status mark on the selection bar of the selected row"
+      ;; REVERSE once turned the selected mark into an accent block inside the bar.
+      (let [frame
+            (last (:frames (capture-settings settings-rows [:esc])))
+
+            cells-of
+            (fn [label]
+              (some (fn [row]
+                      (when (str/includes? (apply str (map #(str (:ch %)) row)) label) row))
+                    frame))
+
+            mark-and-label
+            (fn [label]
+              (let [row
+                    (cells-of label)
+
+                    mark-x
+                    (first (keep-indexed (fn [x cell]
+                                           (when (= "◆" (str (:ch cell))) x))
+                                         row))]
+
+                [(nth row mark-x) (nth row (+ (long mark-x) 2))]))
+
+            [mark label]
+            (mark-and-label "vis-lang-python")
+
+            [plain-mark plain-label]
+            (mark-and-label "einmal")]
+
+        (expect (not= (:bg label) (:bg plain-label)) "the first engine row is selected")
+        (expect (= (:bg label) (:bg mark)) "the mark stands on the selection bar")
+        (expect (= (:fg plain-mark) (:fg mark)) "the mark keeps its own color")))
   (it "pages through the full catalog in either direction without a category switch"
       (doseq [cols
               [40 100]
