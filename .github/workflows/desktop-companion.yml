@@ -39,7 +39,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-26
+          - runner: [self-hosted, macOS, ARM64, vis-macos-arm64]
             label: macOS universal
             asset: macos-universal
           - runner: ubuntu-24.04

@@ -20,7 +20,7 @@ jobs:
   # native binary is built with. JVM users may use any JDK 25+ distribution.
   # fail-fast false so each OS reports independently. Windows is not supported.
   #
-  # Trusted pushes and all pull requests use GitHub-hosted runners.
+  # Only main pushes use the local Mac; all pull requests stay on hosted runners.
   tests:
     name: tests / ${{ matrix.name }}
     runs-on: ${{ matrix.host }}
@@ -30,15 +30,25 @@ jobs:
       matrix:
         include:
           - { name: linux, host: ubuntu-latest }
-          - { name: macos, host: macos-26 }
+          - name: macos
+            host: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","ARM64","vis-macos-arm64"]') || 'macos-26' }}
     steps:
-      # Keep CI fixtures in a scratch home, apart from the runner's own state.
+      # CI fixtures must never overwrite the self-hosted user's Vis state.
       - name: Create isolated CI home
         run: |
           mkdir -p "$RUNNER_TEMP/vis-ci-home"
           echo "HOME=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
           # The classpath resolver and execution JVM must use the same home.
           echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-ci-home" >> "$GITHUB_ENV"
+      # Every workflow shares the self-hosted workspace. Git cannot unshallow a
+      # treeless partial clone there, so start that workspace from a fresh clone.
+      - name: Drop a partial clone from the shared workspace
+        if: runner.environment == 'self-hosted'
+        run: |
+          config="$GITHUB_WORKSPACE/.git/config"
+          if [ -f "$config" ] && git config --file "$config" --get remote.origin.promisor >/dev/null; then
+            rm -rf "$GITHUB_WORKSPACE/.git"
+          fi
       - uses: actions/checkout@v7
       # Oracle GraalVM's 25.1 feature train is GDS-token gated (not on the free
       # download channel) and setup-graalvm's CE resolver predates the 25.1
@@ -142,7 +152,8 @@ jobs:
           VIS_REQUIRE_LINUX_SANDBOX_E2E: ${{ runner.os == 'Linux' && '1' || '0' }}
           # Every runner needs an explicit heap: GitHub's hosted macOS image has
           # less memory than Linux, whose default quarter-RAM heap also exhausted.
-          JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }} ${{ runner.os == 'macOS' && '-Xmx5g' || '-Xmx10g' }}
+          # Our own Apple-silicon runner has 36 GiB, so it takes the Linux size.
+          JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }} ${{ (runner.os == 'macOS' && runner.environment == 'github-hosted') && '-Xmx5g' || '-Xmx10g' }}
         run: clojure -M:test
       - name: Run standalone TUI suite
         working-directory: apps/vis-tui
