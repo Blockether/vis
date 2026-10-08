@@ -3869,8 +3869,8 @@
 (defn- provider-settings-rows
   "The provider accounts under the Providers header: one row per provider — auth state,
    model, default tag on the same line — opening that provider's own transient INSIDE this
-   frame, plus one row that adds a new provider. Empty until `load-provider-inventory!` has
-   run."
+   frame. The header's Add provider button adds one. Empty until `load-provider-inventory!`
+   has run."
   []
   (let [{:keys [status providers error]} @provider-inventory]
     (when-not (= :unloaded status)
@@ -3893,11 +3893,47 @@
                 :description "Reading the fleet from the gateway"}]
               [{:type :info
                 :label "No providers yet"
-                :description "Add one below, or declare them under providers: in vis.yml."}]))
-          [{:type :action
-            :id :provider-add
-            :label "Add provider…"
-            :description "Sign in and configure a new one"}])))))
+                :description
+                "Add one with Add provider above, or declare them under providers: in vis.yml."}])))))))
+
+(def ^:private provider-add-button
+  {:type :action
+   :id :provider-add
+   :label "Add provider"
+   :description "Sign in and configure a new one"})
+
+(defn- put-provider-rows
+  "Put the provider `accounts` under the Providers header, apart from the provider settings of
+   the catalog, and give the header its Add provider button (#335). Without accounts, `rows`
+   stay as they are."
+  [rows accounts]
+  (let [rows
+        (vec rows)
+
+        i
+        (first (keep-indexed #(when (= "providers" (:section-id %2)) %1) rows))
+
+        end
+        (when i
+          (or (first (filter #(= :section (:type (nth rows %)))
+                             (range (inc (long i)) (count rows))))
+              (count rows)))
+
+        header
+        (assoc (if i (nth rows i) {:type :section :label "Providers" :section-id "providers"})
+          :button provider-add-button)
+
+        settings
+        (when i (subvec rows (inc (long i)) end))
+
+        block
+        (concat [header {:type :subsection :label "Configured providers"}]
+                accounts
+                (when (seq settings) (cons {:type :subsection :label "Configuration"} settings)))]
+
+    (cond (empty? accounts) rows
+          i (vec (concat (subvec rows 0 i) block (subvec rows end)))
+          :else (vec (concat rows block)))))
 
 (def ^:private mcp-inventory
   "Cached gateway MCP inventory rendered INSIDE Settings.
@@ -3924,14 +3960,20 @@
                                       {:status :error :servers [] :error (ex-message e)}))))
 
 (defn- mcp-settings-rows
-  "The MCP servers subsection of Tools: one row per server — its live status riding the
-   same line — opening that server's own transient INSIDE this frame, plus one row that
-   adds a new server. Empty until `load-mcp-inventory!` has run."
+  "The MCP servers section: one row per server — its live status riding the same line —
+   opening that server's own transient INSIDE this frame. The header's Add button adds a
+   server (#338). Empty until `load-mcp-inventory!` has run."
   []
   (let [{:keys [status servers error]} @(mcp-inventory-atom)]
     (when-not (= :unloaded status)
       (vec
-        (concat [{:type :subsection :label "MCP servers"}]
+        (concat [{:type :section
+                  :label "MCP servers"
+                  :section-id "mcp"
+                  :button {:type :action
+                           :id :mcp-add
+                           :label "Add"
+                           :description "Register a new MCP server with the gateway."}}]
                 (mapv (fn [row]
                         {:type :mcp
                          :label (str (get row "name"))
@@ -3943,14 +3985,14 @@
                       servers)
                 (when (seq (str error))
                   [{:type :info :tone :bad :label "MCP unavailable" :description (str error)}])
-                (when (and (= :loading status) (empty? servers) (empty? (str error)))
-                  [{:type :info
-                    :label "Loading MCP servers…"
-                    :description "Reading them from the gateway"}])
-                [{:type :action
-                  :id :mcp-add
-                  :label "Add MCP server…"
-                  :description "Register a new one with the gateway"}])))))
+                (when (and (empty? servers) (empty? (str error)))
+                  (if (= :loading status)
+                    [{:type :info
+                      :label "Loading MCP servers…"
+                      :description "Reading them from the gateway"}]
+                    [{:type :info
+                      :label "No MCP servers yet"
+                      :description "Add one with the Add button above."}])))))))
 
 (defonce ^:private agent-name-setting (atom nil))
 
@@ -4007,14 +4049,14 @@
                                " Then read the settings again. Stored settings stay unchanged.")}}])
 
 (defn- tools-settings-rows
-  "The Tools section: its reload button, the MCP servers, then the Extensions subsection
-   with each extension in catalog order."
+  "The Tools section: its reload button and the Extensions subsection with each extension in
+   catalog order. The MCP servers section follows it."
   []
   (let [groups (filterv extension-group? (:groups @(settings-inventory-atom)))]
     (vec (concat (extension-action-rows)
-                 (mcp-settings-rows)
                  (when (seq groups) [{:type :subsection :label "Extensions"}])
-                 (lock-overridden-rows groups (catalog-toggle-rows groups))))))
+                 (lock-overridden-rows groups (catalog-toggle-rows groups))
+                 (mcp-settings-rows)))))
 
 (defn- put-in-section
   "Put `extra` rows right under the header of the catalog section `id`. Without that
@@ -4062,7 +4104,7 @@
                                         "Shared by all gateway clients. Overrides project names.")}]
                                   true)
                   (put-at-section-end "general" (view-settings-rows))
-                  (put-in-section "providers" "Providers" (provider-settings-rows) false)))
+                  (put-provider-rows (provider-settings-rows))))
             (when-let [error (:error @(settings-inventory-atom))]
               [{:type :info :tone :bad :label "Settings unavailable" :description error}])
             (tools-settings-rows))))
@@ -5464,7 +5506,7 @@
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
    section label to park the cursor on, e.g. `Tools` or `Providers`),
-   `:mcp-add` / `:provider-add` (the add row of each section), `:mcp-action`
+   `:mcp-add` / `:provider-add` (the Add button of each section header), `:mcp-action`
    (the verb a server's transient fired) and `:provider-transient` (one
    provider's transient, handed the graphics and the region it paints into).
    `:context-session-id` names the session whose more specific settings lock the

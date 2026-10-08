@@ -620,6 +620,10 @@ Settings for one machine have six sections:
 The TUI shows the same sections. Notifications, speech engines and automations are only in the
 Companion app.
 
+In the TUI, the **Providers** header has an **Add provider** button. Below it, **Configured
+providers** lists your accounts and **Configuration** holds the provider options. MCP servers have
+their own **MCP servers** section after **Tools**, with an **Add** button in its header.
+
 ## Project, group and session settings
 
 In the app, select **Settings** with the cog icon in a session's **…** menu. For a project or a

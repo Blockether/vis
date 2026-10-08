@@ -1234,7 +1234,7 @@
 ;; whichever popup painted last. Adding a provider is now bands in the caller's
 ;; own frame, exactly like every other provider action. ──────────────────────
 (defn- settings-add-provider-frames
-  "Drive Settings → `Add provider…` → `keystrokes` off ONE fixed preset, and
+  "Drive Settings → the Providers header's `Add provider` button → `keystrokes` off ONE fixed preset, and
    capture the config that WOULD have been written instead of touching the
    machine's own."
   [keystrokes]
@@ -1245,7 +1245,7 @@
                                                         (reset! saved config)
                                                         true)}
       (fn []
-        {:frames (settings-provider-band-frames 100 30 (into [:down :enter] keystrokes))
+        {:frames (settings-provider-band-frames 100 30 (into [:up :enter] keystrokes))
          :saved @saved}))))
 
 (defdescribe

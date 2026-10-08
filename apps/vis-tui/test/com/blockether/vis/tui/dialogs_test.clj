@@ -2505,10 +2505,11 @@
         ;; No gateway read yet → Settings stays MCP-free.
         (reset! inventory {:status :unloaded :servers [] :error nil})
         (expect (nil? (mcp-rows)))
-        ;; An empty loaded inventory needs only the section and its add action.
+        ;; An empty loaded inventory shows the section, its Add button and a hint (#338).
         (reset! inventory {:status :ok :servers [] :error nil})
-        (expect (= [:subsection :action] (mapv :type (mcp-rows))))
-        (expect (= :mcp-add (:id (last (mcp-rows)))))
+        (expect (= [:section :info] (mapv :type (mcp-rows))))
+        (expect (= :mcp-add (get-in (first (mcp-rows)) [:button :id])))
+        (expect (= "No MCP servers yet" (:label (second (mcp-rows)))))
         (reset! inventory {:status :loading :servers [] :error nil})
         (expect (= "Loading MCP servers…" (:label (second (mcp-rows)))))
         (reset! inventory
@@ -2523,11 +2524,11 @@
               toggles
               (filterv #(= :mcp (:type %)) rows)]
 
-          (expect (= [:subsection :mcp :mcp :mcp :action] (mapv :type rows)))
+          (expect (= [:section :mcp :mcp :mcp] (mapv :type rows)))
           (expect (= "MCP servers" (:label (first rows))))
           (expect (= ["fs" "gh" "hand"] (mapv :label toggles)))
           (expect (= "connected · 3 tools" (:description (first toggles))))
-          (expect (= :mcp-add (:id (last rows))))
+          (expect (= :mcp-add (get-in (first rows) [:button :id])))
           ;; a server's live status rides its own row, so the section reads as a
           ;; table instead of costing a wrapped description row per server
           (expect (every? :inline-description toggles))
@@ -2536,7 +2537,9 @@
           (expect (every? selectable? (remove #(#{:section :subsection} (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :servers [] :error "connection refused"})
-        (expect (= [:subsection :info :action] (mapv :type (mcp-rows))))
+        (expect (= [:section :info] (mapv :type (mcp-rows))))
+        ;; The header keeps its Add button while the list is loading or failed.
+        (expect (= :mcp-add (get-in (first (mcp-rows)) [:button :id])))
         ;; the failure reads AS a failure: bad tone, so the head line paints red
         (expect (= :bad (:tone (second (mcp-rows)))))
         (finally (reset! inventory original)))))
@@ -2558,11 +2561,11 @@
                                 :servers [{"name" "fs" "enabled" true "is_managed" true}]})
              (with-redefs [vis/get-router (constantly nil)]
                (let [rows (settings-rows)
-                     index (initial-index rows "Tools")]
+                     index (initial-index rows "MCP servers")]
 
                  (expect (= "MCP servers" (:label (nth rows (dec index)))))
                  (expect (= "fs" (:label (nth rows index))))
-                 (expect (= :action (:type (nth rows (inc index)))))
+                 (expect (= :mcp-add (get-in (nth rows (dec index)) [:button :id])))
                  (expect (< 3 (count rows)))))
              (finally (reset! inventory original)))))
   (it
@@ -2709,9 +2712,9 @@
               (filterv #(= :provider (:type %)) rows)]
 
           ;; The Providers header comes from the gateway catalog; these are only the accounts.
-          (expect (= [:provider :provider :provider :provider :provider :provider :action]
+          ;; Its Add provider button adds one, so no row does (#335).
+          (expect (= [:provider :provider :provider :provider :provider :provider]
                      (mapv :type rows)))
-          (expect (= :provider-add (:id (last rows))))
           ;; the row carries the provider itself, so Enter can open ITS menu
           (expect (= [:anthropic :zai-coding-plan :openai-codex :openrouter :openai :ollama]
                      (mapv #(:id (:provider %)) providers)))
@@ -2728,7 +2731,7 @@
           (expect (every? selectable? (remove #(= :section (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :providers [] :error "connection refused"})
-        (expect (= [:info :action] (mapv :type (provider-rows))))
+        (expect (= [:info] (mapv :type (provider-rows))))
         (finally (reset! inventory original)))))
   (it "settings-rows carries the Providers section and Settings can open focused on it"
       (let [settings-rows
@@ -2751,11 +2754,49 @@
                (let [rows (settings-rows)
                      index (initial-index rows "Providers")]
 
-                 (expect (= "Providers" (:label (nth rows (dec index)))))
+                 ;; The header holds the Add provider button, and the accounts stand in
+                 ;; their own subsection (#335).
+                 (expect (= "Providers" (:label (nth rows (- index 2)))))
+                 (expect (= :provider-add (get-in (nth rows (- index 2)) [:button :id])))
+                 (expect (= "Configured providers" (:label (nth rows (dec index)))))
                  (expect (= :anthropic (:id (:provider (nth rows index)))))
-                 (expect (= :action (:type (nth rows (inc index)))))
                  (expect (< 3 (count rows)))))
              (finally (reset! inventory original)))))
+  ;; Regression for #335: accounts and provider settings stood in one list with an add row.
+  (it
+    "splits the accounts from the provider settings under a header Add provider button"
+    (let [put
+          (var-get #'dlg/put-provider-rows)
+
+          catalog
+          [{:type :section :label "General" :section-id "general"}
+           {:type :registry-toggle :label "Theme"}
+           {:type :section :label "Providers" :section-id "providers"}
+           {:type :registry-toggle :label "Reasoning"}
+           {:type :section :label "Agents" :section-id "agents"}]
+
+          account
+          {:type :provider :label "Anthropic"}
+
+          shape
+          #(mapv (juxt :type :label (comp :id :button)) %)]
+
+      (expect (= [[:section "General" nil] [:registry-toggle "Theme" nil]
+                  [:section "Providers" :provider-add] [:subsection "Configured providers" nil]
+                  [:provider "Anthropic" nil] [:subsection "Configuration" nil]
+                  [:registry-toggle "Reasoning" nil] [:section "Agents" nil]]
+                 (shape (put catalog [account]))))
+      ;; Without provider settings there is no Configuration subsection.
+      (expect (= [[:section "Providers" :provider-add] [:subsection "Configured providers" nil]
+                  [:provider "Anthropic" nil]]
+                 (shape (put [{:type :section :label "Providers" :section-id "providers"}]
+                             [account]))))
+      ;; A catalog without the section gets it at the end.
+      (expect (= [[:section "General" nil] [:section "Providers" :provider-add]
+                  [:subsection "Configured providers" nil] [:provider "Anthropic" nil]]
+                 (shape (put [{:type :section :label "General" :section-id "general"}] [account]))))
+      ;; Before the first gateway read, the catalog stays as it is.
+      (expect (= catalog (put catalog nil)))))
   (it
     "the fleet is config first, then authenticated presets, each with the gateway's verdict"
     (let [inventory

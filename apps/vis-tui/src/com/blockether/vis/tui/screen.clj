@@ -3642,9 +3642,9 @@
    shows immediately.
 
    `focus-section` parks the cursor on one section label: the palette's MCP
-   entry opens Settings on `MCP Servers` and its Providers entry on
+   entry opens Settings on `MCP servers` and its Providers entry on
    `Providers`, where every provider row runs its OWN transient inside the
-   settings frame and `:mcp-add` / `:provider-add` add a new entry. Returns nil."
+   settings frame and the `:mcp-add` / `:provider-add` header buttons add a new entry. Returns nil."
   ([^TerminalScreen screen] (open-settings-modal! screen nil))
   ([^TerminalScreen screen focus-section]
    (when-let [s (dlg/settings-dialog!
@@ -9103,7 +9103,7 @@
                                      ;; kill/start for config-file ones) with the
                                      ;; full manager one row below them.
                                      :mcp
-                                     (with-dialog-lock #(open-settings-modal! screen "Tools"))
+                                     (with-dialog-lock #(open-settings-modal! screen "MCP servers"))
 
                                      :settings
                                      (do (with-dialog-lock #(open-settings-modal! screen))
