@@ -106,7 +106,10 @@
    :box-bg [255 255 255]
    :box-fg [30 30 30]
    :border-fg [80 80 80]
-   :dialog-bg [248 248 248]
+   ;; A dialog paints the screen background, so a large dialog does not dim
+   ;; the screen when it opens (#341). Web panels keep their own shade.
+   :dialog-bg [255 255 255]
+   :panel-bg [248 248 248]
    :dialog-fg [30 30 30]
    :dialog-title-fg [255 255 255]
    :dialog-title-bg [60 60 60]
@@ -214,7 +217,8 @@
    :box-bg [18 22 28]
    :box-fg [226 232 240]
    :border-fg [100 116 139]
-   :dialog-bg [24 28 36]
+   :dialog-bg [12 14 18]
+   :panel-bg [24 28 36]
    :dialog-fg [226 232 240]
    :dialog-title-fg [255 255 255]
    :dialog-title-bg [51 65 85]
@@ -312,6 +316,7 @@
      :box-fg [38 38 38]
      :border-fg [140 133 122]
      :dialog-bg [250 243 235]
+     :panel-bg [250 243 235]
      :dialog-fg [38 38 38]
      ;; Cream-on-ink title header — the Blockether dialog signature: the dark
      ;; frame ink carried across the header row with the warm cream ground as text.
@@ -398,7 +403,8 @@
      :box-bg [22 24 32]
      :box-fg [243 244 246]
      :border-fg [70 74 84]
-     :dialog-bg [22 24 32]
+     :dialog-bg [15 17 23]
+     :panel-bg [22 24 32]
      :dialog-fg [243 244 246]
      ;; Amber accent title stripe with dark ink — brand signature on dark.
      :dialog-title-fg [15 17 23]
@@ -483,7 +489,8 @@
    :box-bg [253 246 227]
    :box-fg [62 76 81]
    :border-fg [147 161 161]
-   :dialog-bg [238 232 213]
+   :dialog-bg [253 246 227]
+   :panel-bg [238 232 213]
    :dialog-fg [62 76 81]
    :dialog-title-fg [253 246 227]
    :dialog-title-bg [88 110 117]
@@ -579,7 +586,8 @@
    :box-bg [0 43 54]
    :box-fg [207 214 214]
    :border-fg [88 110 117]
-   :dialog-bg [7 54 66]
+   :dialog-bg [0 43 54]
+   :panel-bg [7 54 66]
    :dialog-fg [207 214 214]
    :dialog-title-fg [253 246 227]
    :dialog-title-bg [88 110 117]
@@ -792,7 +800,8 @@
        :box-bg bg
        :box-fg fg
        :border-fg border
-       :dialog-bg surface
+       :dialog-bg bg
+       :panel-bg surface
        :dialog-fg fg
        :dialog-title-fg active-fg
        :dialog-title-bg active-bg
@@ -1174,8 +1183,8 @@
    "--fg" :text-fg
    "--box-bg" :box-bg
    "--box-fg" :box-fg
-   "--surface" :dialog-bg
-   "--panel2" :dialog-bg
+   "--surface" :panel-bg
+   "--panel2" :panel-bg
    "--dialog-fg" :dialog-fg
    "--dialog-title-bg" :dialog-title-bg
    "--dialog-title-fg" :dialog-title-fg

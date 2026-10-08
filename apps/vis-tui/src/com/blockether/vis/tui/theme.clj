@@ -63,6 +63,10 @@
    argument each."
   (rgb :dialog-bg))
 
+(def panel-bg
+  "The web panel shade. Terminal dialogs use `dialog-bg`, the screen background."
+  (rgb :panel-bg))
+
 (def dialog-fg (rgb :dialog-fg))
 
 (def dialog-title-fg (rgb :dialog-title-fg))
@@ -417,6 +421,7 @@
    :box-fg #'box-fg
    :border-fg #'border-fg
    :dialog-bg #'dialog-bg
+   :panel-bg #'panel-bg
    :dialog-fg #'dialog-fg
    :dialog-title-fg #'dialog-title-fg
    :dialog-title-bg #'dialog-title-bg

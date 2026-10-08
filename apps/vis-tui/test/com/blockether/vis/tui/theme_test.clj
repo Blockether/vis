@@ -153,3 +153,10 @@
                          ink (TextColor$RGB. 80 160 240)]
 
                      (expect (>= (contrast-ratio (t/legible-ink ink paper) paper) 4.5))))))
+
+(defdescribe dialog-background-test
+             ;; Regression for #341: a dialog with another background than the screen
+             ;; dimmed the whole terminal when it opened.
+             (it "every registered theme paints dialogs with the screen background"
+                 (doseq [[id {:keys [palette]}] @shared-theme/themes]
+                   (expect (= [id (:terminal-bg palette)] [id (:dialog-bg palette)])))))
