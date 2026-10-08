@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.36] - 2026-10-08
+
+### Added
+- Claude Haiku 5.5 is available as a model.
+- Decision models with an `openai/<id>` name use the OpenAI Decisions API with an API key.
+- `vis-agent web` accepts `--pair` and `--advertise`, as `vis-agent gateway start --pair` does.
+
+### Changed
+- The TUI draws only the glyphs that opencode draws, so more terminals show it correctly.
+- The project uses vis-lang-interface 2.11.0 and vis-lang-clojure 1.15.0. A Clojure REPL and its
+  bridge process stay alive when the Python sandbox restarts.
+
+### Fixed
+- The session snapshot saves `re.Match` values, so they come back after a sandbox restart.
+- The gateway logs why it stops a session sandbox.
+- `grep` fails on a missing path instead of a search in its parent. Its errors name the grep
+  tool and the file index.
+- On an insecure web page, the app explains why the microphone is blocked and names the Chrome
+  origin flag.
+- Settings read each setting id in one key spelling and read project extension settings. Setting
+  descriptions can have up to 300 characters (#322, #323, #326).
+- An extension setting reads a bare string as a list with one item (#324).
+- The TUI keeps the agent name on live bubble updates (#325).
+
 ## [v0.2.35] - 2026-10-07
 
 ### Changed
