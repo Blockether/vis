@@ -273,6 +273,18 @@
             loaded
             (python-extensions/load-failures root))))
 
+(defn- one-thinking-control
+  "Keep one thinking control: the three levels while simplified thinking modes are on,
+   else the exact provider levels. Both are session settings, so both showed (#334)."
+  [rows]
+  (let [simplified?
+        (not (false? (:value (first (filter #(= "simplified_thinking_modes" (:id %)) rows)))))
+
+        other
+        (if simplified? "reasoning_effort" "reasoning_level")]
+
+    (remove #(= other (:id %)) rows)))
+
 (defn- settings-catalog
   [request target]
   (let [local?
@@ -306,7 +318,7 @@
                      true)
                    (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
                    (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
-                (scoped/settings (lp/db-info) target))
+                (one-thinking-control (scoped/settings (lp/db-info) target)))
 
         ;; Everything an extension contributes is configured in that extension's section.
         section

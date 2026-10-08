@@ -47,3 +47,26 @@
                                          ["language-clojure" 0]
                                          "clojure_repl" ["language-clojure" 1]}
                                         (extension-rows {:root "/tmp/project"})))))))
+
+(def ^:private one-thinking-control #'api/one-thinking-control)
+
+;; Regression for #334: session settings showed the simplified and the full thinking control.
+(defdescribe
+  one-thinking-control-test
+  (describe
+    "thinking controls"
+    (let [rows (fn [simplified]
+                 (mapv :id
+                       (one-thinking-control [{:id "simplified_thinking_modes" :value simplified}
+                                              {:id "reasoning_level" :value "balanced"}
+                                              {:id "reasoning_effort" :value "medium"}
+                                              {:id "verbosity" :value "low"}])))]
+      (it "keeps the three levels while simplified thinking modes are on"
+          (expect (= ["simplified_thinking_modes" "reasoning_level" "verbosity"] (rows true))))
+      (it "keeps the exact provider levels while simplified thinking modes are off"
+          (expect (= ["simplified_thinking_modes" "reasoning_effort" "verbosity"] (rows false))))
+      (it "treats a missing value as the default, which is on"
+          (expect (= ["reasoning_level"]
+                     (mapv :id
+                           (one-thinking-control [{:id "reasoning_level"}
+                                                  {:id "reasoning_effort"}]))))))))
