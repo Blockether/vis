@@ -1974,7 +1974,11 @@
                   (.addInput terminal (cap/key-stroke k))))
               (let [lines (terminal-lines terminal)]
                 ;; Wrapped lines are justified, so their gaps can grow: find one word.
-                (when (and (not (realized? seen)) (some #(str/includes? % "…split") lines))
+                ;; Keep only a frame whose divider reaches the footer: on macOS CI the first
+                ;; frame with the messages once showed no bottom join.
+                (when (and (not (realized? seen))
+                           (some #(str/includes? % "…split") lines)
+                           (some #(str/includes? % "┴") lines))
                   (deliver seen lines)
                   (.addInput terminal (cap/key-stroke :esc)))))
             size))
