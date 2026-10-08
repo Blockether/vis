@@ -616,7 +616,9 @@ export interface ModelPref {
 
 /**
  * A live auth flow the daemon is holding open. `kind` decides the UX:
- * `device` shows `user_code` + `verification_uri` and finishes by polling;
+ * `device` shows `user_code` + `verification_uri` and finishes by polling. A
+ * device flow with neither is a provider's own sign-in on the gateway: its polls
+ * return the lines that sign-in prints as `instructions`;
  * `pkce` opens `url` and polls for browser completion (manual URL fallback);
  * `api-key` shows `instructions` and needs the key typed in.
  * PKCE, device polling capabilities and provider tokens stay on the gateway; a typed API key is sent there directly.
@@ -641,6 +643,8 @@ export interface AuthFlow extends SignInFlow {
 export interface AuthVerdict {
   status: 'ok' | 'pending' | 'error' | 'cancelled' | 'logged-out';
   message?: string;
+  /** Poll only: the lines a provider's own sign-in printed so far, such as a fallback URL. */
+  instructions?: string[];
 }
 
 /** App-local appearance choice: the id of one shipped palette (`themes.generated.ts`). */

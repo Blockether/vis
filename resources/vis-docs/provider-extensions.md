@@ -174,6 +174,12 @@ Status probes, startup and opening the model picker never run `auth_fn`. Test
 the explicit path with `vis-agent providers auth <id>`, then make a request
 while signed out to verify first-use login.
 
+You can also start this login from the provider's row: **Sign in** in the
+Companion or **Authenticate** in the TUI. Vis runs `auth_fn` on the gateway
+machine, and the client shows each line that `auth_fn` passes to `printer`.
+Print a fallback sign-in URL, so that a person can finish sign-in when no
+browser opens on that machine.
+
 ## See also
 
 - [Configuration](configuration.md) — providers declared in `vis.yml` and the router.

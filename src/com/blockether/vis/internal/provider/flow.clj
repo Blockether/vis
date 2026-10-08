@@ -4,6 +4,8 @@
    `start!` takes an owner `[domain id]` and protocol legs `:start` (0-arg),
    `:complete` (private flow, input), `:await` (private flow), `:settle` (0-arg).
    Start returns `:kind`, private `:flow`, and allowlisted presentation fields.
+   `:instructions` can be an atom of lines that grows while a background leg runs;
+   each view reads its current value.
    An adapter doing dynamic registration can allocate `callback-transport!`
    before constructing its authorization URL; all other adapters let us do it.
 
@@ -77,11 +79,13 @@
 
 (defn- view
   [{:keys [id owner kind public expires-at result]}]
-  (merge (select-keys public
-                      [:url :redirect-uri :callback-mode :user-code :verification-uri :interval-ms
-                       :instructions])
-         {:flow-id id :subject (second owner) :kind (name kind) :expires-at expires-at}
-         (update @result :status #(if (= :exchanging %) "pending" (name %)))))
+  (let [lines (:instructions public)]
+    (merge (select-keys public
+                        [:url :redirect-uri :callback-mode :user-code :verification-uri :interval-ms
+                         :instructions])
+           (when (instance? clojure.lang.IDeref lines) {:instructions (vec @lines)})
+           {:flow-id id :subject (second owner) :kind (name kind) :expires-at expires-at}
+           (update @result :status #(if (= :exchanging %) "pending" (name %))))))
 
 (defn- verdict
   [entry]

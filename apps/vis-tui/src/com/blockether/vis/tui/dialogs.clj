@@ -3092,10 +3092,25 @@
                                :items [{:key "q" :type :action :id :dismiss :label "Dismiss"}]}]})
   nil)
 
+(def ^:private mini-wait-max-rows
+  "The most body rows a wait band grows to. Older lines scroll out first."
+  8)
+
+(defn- mini-wait-lines
+  "The body rows of one wait tick. A string is ONE status line, cut to `text-w`. A
+   vector is several lines, each folded to `text-w` so a long URL stays whole."
+  [shown text-w]
+  (let [width (max 1 (long text-w))]
+    (if (sequential? shown)
+      (let [rows (vec (mapcat #(p/fold-cols (str %) width) shown))]
+        (subvec rows (max 0 (- (count rows) (long mini-wait-max-rows)))))
+      [(ellipsize (str shown) width)])))
+
 (defn- mini-wait!
   "HOLD the band while something else finishes — a browser round-trip the daemon
-   is polling for. `line-fn` renders the ONE status line on every tick (elapsed
-   seconds), `done?` says the wait is over, and Esc gives up: a flow that has to
+   is polling for. `line-fn` renders the status on every tick (elapsed seconds):
+   ONE line as a string, or several lines as a vector. `done?` says the wait is over,
+   and Esc gives up: a flow that has to
    wait must not blank the list it was fired from either, so the wait paints in
    the same frame as the question that started it. Returns true when `done?` won,
    nil when the user pressed Esc."
@@ -3104,9 +3119,15 @@
 
     (if (done?)
       true
-      (let [row (band-question-frame! g region title [["Esc" "cancel"]])]
+      (let [lines
+            (mini-wait-lines (line-fn) text-w)
+
+            row
+            (band-question-frame! g region title [["Esc" "cancel"]] (max 1 (count lines)))]
+
         (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/put-str! g (+ (long left) 2) row (ellipsize (str (line-fn)) text-w))
+        (doseq [[i line] (map-indexed vector lines)]
+          (p/put-str! g (+ (long left) 2) (+ (long row) (long i)) line))
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (frame/refresh! screen)
         (if (some-> (.pollInput screen)

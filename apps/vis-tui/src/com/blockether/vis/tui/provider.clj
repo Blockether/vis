@@ -92,7 +92,10 @@
              flow-id
              (get flow "flow_id")]
 
-         (if-not (and flow-id (or (get flow "url") (get flow "verification_uri")))
+         (if-not (and flow-id
+                      (or (get flow "url")
+                          (get flow "verification_uri")
+                          (= "device" (get flow "kind"))))
            (do ((:note! q) label "No authorization URL came back from vis.") nil)
            (let [verdict (oauth/login! q
                                        label
@@ -237,12 +240,20 @@
                                 (str (vis/display-label (:id provider)) " Status & Limits")
                                 (vis/provider-status-md provider status limits))))
 
+(defn- interactive-managed?
+  "A MANAGED row whose extension signs in through its own `auth-fn`: the gateway
+   reports its `auth_kind` as `oauth`, and its sign-in runs as a device flow."
+  [provider]
+  (boolean (and (:is-managed provider) (= :oauth (:auth-kind provider)))))
+
 (defn- provider-supports-auth?
   "A row whose credential a HUMAN can actually supply. A local runtime needs
    none, and a MANAGED provider's credential is issued by the runtime — offering
-   `Authenticate` on either only advertises a verb that has to refuse."
+   `Authenticate` on either only advertises a verb that has to refuse. A managed
+   provider with its own interactive sign-in is the exception."
   [provider]
-  (and (not (contains? local-no-auth-provider-ids (:id provider))) (not (:is-managed provider))))
+  (and (not (contains? local-no-auth-provider-ids (:id provider)))
+       (or (not (:is-managed provider)) (interactive-managed? provider))))
 
 (defn provider-action-items
   "Actions for one provider row.
@@ -592,6 +603,10 @@
                       " mints its own credential — its api_key_command helper runs for every"
                       " request, so change that instead of typing a key."))
                nil)
+           (interactive-managed? provider)
+           ;; MANAGED with its own `auth-fn`: the daemon runs that sign-in as a
+           ;; device flow and reports the lines it prints, such as a sign-in URL.
+           (when (gateway-device-login! q pid label force?) provider)
            (:is-managed provider)
            ;; MANAGED: the runtime issues the credential. There is no key to
            ;; type and none to change, so SAY it — painting a field whose

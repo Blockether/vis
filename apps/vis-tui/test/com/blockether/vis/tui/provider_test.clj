@@ -1418,4 +1418,50 @@
                                      (throw (ex-info "a managed provider asked for a key" {})))})]
 
         (expect (nil? (provider/authenticate-provider! nil nil nil {:id :corp :is-managed true})))
-        (expect (str/includes? (str @note) "managed"))))))
+        (expect (str/includes? (str @note) "managed")))))
+  ;; Regression, issue #328: a managed provider with its own `auth-fn` sign-in had no
+  ;; Authenticate verb, so no client could start that sign-in.
+  (it
+    "starts a managed provider's own sign-in through the gateway"
+    (let [ids
+          (fn [provider]
+            (into #{} (map :id) (provider/provider-action-items provider {})))
+
+          provider-config
+          {:id :corp :is-managed true :auth-kind :oauth}
+
+          started
+          (atom nil)]
+
+      (expect (contains? (ids provider-config) :authenticate))
+      (with-redefs [dlg/host-band-region
+                    (fn [_screen region]
+                      region)
+
+                    dlg/band-questions
+                    (fn [& _]
+                      {:wait! (fn [_ _ done?]
+                                (loop [tries 200]
+                                  (cond (done?) true
+                                        (zero? tries) false
+                                        :else (do (Thread/sleep 10) (recur (dec tries))))))
+                       :note! (fn [& _]
+                                (throw (ex-info "a managed sign-in was refused" {})))})
+
+                    vis/gateway-provider-status
+                    (constantly {"is_authenticated" false})
+
+                    vis/gateway-provider-auth-start!
+                    (fn [provider-id]
+                      (reset! started provider-id)
+                      {"flow_id" "flow-1" "kind" "device" "interval_ms" 1})
+
+                    vis/gateway-provider-auth-poll!
+                    (constantly {"status" "ok"})
+
+                    opener/open!
+                    (fn [& _]
+                      (throw (ex-info "opened a browser for a flow with no URL" {})))]
+
+        (expect (= provider-config (provider/authenticate-provider! nil nil nil provider-config)))
+        (expect (= :corp @started))))))

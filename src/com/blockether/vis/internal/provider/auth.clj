@@ -5,6 +5,7 @@
    This adapter handles provider eligibility, API-key storage and fleet invalidation.
    No browser, relay, token or PKCE verifier crosses the public flow view."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.provider.flow :as auth-flow]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.service :as providers]
@@ -58,13 +59,22 @@
   [provider-id]
   (try (providers/command-minted? (configured-provider provider-id)) (catch Throwable _ false)))
 
+(defn- interactive?
+  "True when `provider-id` is managed and signs in only through its own
+   `:provider/auth-fn`, with no headless leg."
+  [provider-id]
+  (boolean (and (nil? (:start (auth-kinds provider-id)))
+                (auth-health/managed? (provider-descriptor provider-id)))))
+
 (defn supported?
   "True when `provider-id` can be authenticated over the wire — OAuth (PKCE or
-   device) or a plain API key — as opposed to only through the interactive
-   terminal `:provider/auth-fn`."
+   device), a plain API key, or the background `:provider/auth-fn` of a managed
+   provider."
   [provider-id]
   (boolean (and (not (self-minted? provider-id))
-                (or (:start (auth-kinds provider-id)) (api-key-leg? provider-id)))))
+                (or (:start (auth-kinds provider-id))
+                    (interactive? provider-id)
+                    (api-key-leg? provider-id)))))
 
 (defn- refresh-fleet!
   "Auth changed the credential file, so every cached status/limits view is stale —
@@ -95,6 +105,19 @@
   (providers/refresh-models-async! provider-id :provider-auth)
   nil)
 
+(defn- interactive-legs
+  "Flow legs that run a managed provider's own `auth-fn` as a background `device`
+   flow. Each line that `auth-fn` prints shows as `:instructions`, so a client can
+   show a fallback sign-in URL. A first-use sign-in already in flight is joined,
+   so the two never run at the same time."
+  [provider-id]
+  {:start (fn []
+            (let [lines (atom [])]
+              {:kind :device :interval-ms 1000 :instructions lines :flow {:lines lines}}))
+   :await (fn [{:keys [lines]}]
+            (auth-health/reauthenticate! provider-id (provider-descriptor provider-id) nil lines))
+   :settle #(signed-in! provider-id)})
+
 (defn- provider-view
   [result]
   (if-let [flow (:flow result)]
@@ -112,17 +135,23 @@
    `pkce` uses the adapter's registered callback transport and accepts `complete-auth!`;
    `device` starts its background await; `api-key` asks the client to collect a
    key and hand it back to `complete-auth!`. Even plain key providers
-   are persisted BY THE DAEMON, never by the calling process."
+   are persisted BY THE DAEMON, never by the calling process. A managed provider
+   with only `:provider/auth-fn` runs it as a `device` flow (`interactive-legs`)."
   [provider-id]
   (auth-flow/cancel-owner! [:provider provider-id])
-  (let [{:keys [start await complete]} (auth-kinds provider-id)]
+  (let [{:keys [start await complete]}
+        (auth-kinds provider-id)
+
+        interactive
+        (interactive? provider-id)]
+
     (cond (self-minted? provider-id)
           {:ok? false
            :error :auth-self-minted
            :message (str
                       (name provider-id)
                       " mints its own credential with api_key_command — there is no key to enter")}
-          (= :managed (providers/auth-kind provider-id))
+          (and (not interactive) (= :managed (providers/auth-kind provider-id)))
           {:ok? false
            :error :auth-managed
            :message (str (name provider-id)
@@ -130,23 +159,25 @@
                          " to enter or change")}
           (nil? (provider-descriptor provider-id))
           {:ok? false :error :unknown-provider :message (str "no registered provider " provider-id)}
-          (and (nil? start) (not (api-key-leg? provider-id)))
+          (and (nil? start) (not interactive) (not (api-key-leg? provider-id)))
           {:ok? false
            :error :auth-unsupported
            :message (str (name provider-id) " has no headless auth flow")}
           :else (try (provider-view
                        (auth-flow/start!
                          [:provider provider-id]
-                         {:start (or start
-                                     (fn []
-                                       {:kind :api-key
-                                        :instructions (api-key-instructions provider-id)}))
-                          :complete (if start
-                                      complete
-                                      (fn [_ value]
-                                        (providers/save-provider-api-key! provider-id value)))
-                          :await await
-                          :settle #(signed-in! provider-id)}))
+                         (if interactive
+                           (interactive-legs provider-id)
+                           {:start (or start
+                                       (fn []
+                                         {:kind :api-key
+                                          :instructions (api-key-instructions provider-id)}))
+                            :complete (if start
+                                        complete
+                                        (fn [_ value]
+                                          (providers/save-provider-api-key! provider-id value)))
+                            :await await
+                            :settle #(signed-in! provider-id)})))
                      (catch Throwable _
                        {:ok? false
                         :error :auth-start-failed
@@ -158,9 +189,12 @@
   (dissoc (auth-flow/complete! :provider flow-id input) :flow))
 
 (defn poll-auth!
-  "Read a retained browser/device verdict without blocking."
+  "Read a retained browser/device verdict without blocking. The verdict keeps the
+   flow's current `:instructions`, so an interactive sign-in can show the lines that
+   its `auth-fn` prints while it runs."
   [flow-id]
-  (dissoc (auth-flow/poll! :provider flow-id) :flow))
+  (let [v (auth-flow/poll! :provider flow-id)]
+    (merge (dissoc v :flow) (select-keys (:flow v) [:instructions]))))
 
 (defn cancel-auth!
   "Forget a provider flow and stop its callback/device worker. Idempotent."

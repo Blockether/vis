@@ -39,6 +39,7 @@
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
     [com.blockether.vis.internal.persistance.core]
+    [com.blockether.vis.internal.provider.auth :as provider-auth]
     [com.blockether.vis.internal.provider.catalog :as catalog]
     [com.blockether.vis.internal.provider.limits :as provider-limits]
     [com.blockether.vis.internal.provider.service :as providers]
@@ -4026,6 +4027,35 @@
 
                          (expect (= 200 (:status response)))
                          (expect (= [true false] (mapv #(get % "is_managed") rows)))))))))
+
+;; Regression, issue #328: clients could not tell a managed provider with its own
+;; `auth_fn` sign-in from one with no sign-in, and polls dropped its printed lines.
+(defdescribe provider-sign-in-reaches-clients
+             (it "reports each router row's auth kind"
+                 (with-redefs [providers/managed?
+                               #(= :extension-owned %)
+
+                               providers/auth-kind
+                               (fn [pid & _]
+                                 (if (= :extension-owned pid) :oauth :api-key))]
+
+                   (with-stub-fleet!
+                     [{:id :extension-owned :models []} {:id :own-key :models []}]
+                     (fn []
+                       (let [rows (get (wire/parse-json (:body (#'providers-api/router-handler {})))
+                                       "providers")]
+                         (expect (= ["oauth" "api-key"] (mapv #(get % "auth_kind") rows))))))))
+             (it "answers a poll with the lines that the sign-in printed"
+                 (with-redefs-fn {#'provider-auth/poll-auth!
+                                  (constantly {:ok? true
+                                               :status "pending"
+                                               :instructions ["Visit https://auth.example/x"]})}
+                   (fn []
+                     (let [response (#'providers-api/provider-auth-poll-handler
+                                     {:query-params {"flow_id" "f1"}})]
+                       (expect (= {"status" "pending"
+                                   "instructions" ["Visit https://auth.example/x"]}
+                                  (wire/parse-json (:body response)))))))))
 
 (defdescribe
   remove-provider-handler-refuses-extension-owned-providers

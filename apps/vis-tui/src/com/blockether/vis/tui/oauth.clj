@@ -124,7 +124,9 @@
   "Open a browser and hold `q`'s band until completion or Escape. `complete!`
    takes the matched URL; `poll!` and `cancel!` take no arguments. Each closure
    pins the original gateway and flow. Returns the wire verdict or nil on cancel.
-   Browser flows without a loopback destination retain explicit manual input."
+   Browser flows without a loopback destination retain explicit manual input.
+   A device flow without a URL is a provider's own sign-in on the gateway: the
+   band shows the `instructions` lines that its polls return."
   [q label flow complete! poll! cancel!]
   (let [target
         (destination flow)
@@ -147,47 +149,58 @@
         (atom nil)
 
         completed?
-        (atom false)]
+        (atom false)
 
-    (try (opener/open! (or (get flow "url") (get flow "verification_uri")))
-         (let [verdict
-               (if (or target (= "device" (get flow "kind")))
-                 (let [result (future
-                                (loop []
+        url
+        (or (get flow "url") (get flow "verification_uri"))
 
-                                  (if (>= (System/currentTimeMillis) deadline)
-                                    {"status" "error"
-                                     "message" "Authorization timed out. Start again."}
-                                    (if-let [input (some-> (:result receiver)
-                                                           (deref 0 nil))]
-                                      (complete! input)
-                                      (let [v (poll!)]
-                                        (if (= "pending" (get v "status"))
-                                          (do (Thread/sleep
-                                                (max 500 (long (or (get flow "interval_ms") 500))))
-                                              (recur))
-                                          v))))))]
-                   (reset! worker result)
-                   (when ((:wait! q)
-                           (str label " — waiting for authorization")
-                           (constantly
-                             (if-let [code (get flow "user_code")]
-                               (str "Enter "
-                                    code
-                                    " at "
-                                    (or (get flow "verification_uri") (get flow "url"))
-                                    " · Waiting for approval. Esc cancels.")
-                               "Finish sign-in in the browser. Vis will finish automatically."))
-                           #(realized? result))
-                     @result))
-                 (when-let [input ((:read! q)
-                                    (str label " — paste the final browser URL:")
-                                    {:placeholder (get flow "url")})]
-                   (when-not (str/blank? input) (complete! (str/trim input)))))]
-           (reset! completed? (= "ok" (get verdict "status")))
-           verdict)
-         (finally (when-let [f @worker]
-                    (future-cancel f))
-                  (when-let [stop! (:stop! receiver)]
-                    (stop!))
-                  (when-not @completed? (cancel!))))))
+        ;; A flow with no URL is a provider's own sign-in on the gateway. The lines
+        ;; it prints, such as a fallback sign-in URL, come back with each poll.
+        printed
+        (atom [])]
+
+    (try
+      (when url (opener/open! url))
+      (let [verdict
+            (if (or target (= "device" (get flow "kind")))
+              (let [result
+                    (future (loop []
+
+                              (if (>= (System/currentTimeMillis) deadline)
+                                {"status" "error" "message" "Authorization timed out. Start again."}
+                                (if-let [input (some-> (:result receiver)
+                                                       (deref 0 nil))]
+                                  (complete! input)
+                                  (let [v (poll!)]
+                                    (when-let [lines (and (nil? url) (seq (get v "instructions")))]
+                                      (reset! printed (vec lines)))
+                                    (if (= "pending" (get v "status"))
+                                      (do (Thread/sleep
+                                            (max 500 (long (or (get flow "interval_ms") 500))))
+                                          (recur))
+                                      v))))))]
+                (reset! worker result)
+                (when ((:wait! q)
+                        (str label " — waiting for authorization")
+                        (fn []
+                          (cond (get flow "user_code") (str "Enter "
+                                                            (get flow "user_code")
+                                                            " at "
+                                                            url
+                                                            " · Waiting for approval. Esc cancels.")
+                                (seq @printed) (conj @printed "Waiting for sign-in. Esc cancels.")
+                                :else
+                                "Finish sign-in in the browser. Vis will finish automatically."))
+                        #(realized? result))
+                  @result))
+              (when-let [input ((:read! q)
+                                 (str label " — paste the final browser URL:")
+                                 {:placeholder (get flow "url")})]
+                (when-not (str/blank? input) (complete! (str/trim input)))))]
+        (reset! completed? (= "ok" (get verdict "status")))
+        verdict)
+      (finally (when-let [f @worker]
+                 (future-cancel f))
+               (when-let [stop! (:stop! receiver)]
+                 (stop!))
+               (when-not @completed? (cancel!))))))

@@ -138,6 +138,45 @@
         (expect (= "https://gateway.example.com/device" @opened))
         (expect (= 1 @polls))
         (expect (clojure.string/includes? (first @lines) "ABCD-EFGH")))))
+  ;; Regression, issue #328: a managed provider's own sign-in has no URL. The band
+  ;; showed nothing, so a fallback sign-in URL that it printed was lost.
+  (it
+    "shows the lines a provider's own sign-in prints, without opening a browser"
+    (let [opened
+          (atom 0)
+
+          shown
+          (atom [])
+
+          polls
+          (atom 0)
+
+          printed
+          ["If it does not open, visit: https://auth.example/x"]]
+
+      (with-redefs [opener/open! (fn [& _]
+                                   (swap! opened inc))]
+        (expect
+          (= "ok"
+             (get (oauth/login! {:wait! (fn [_ line done?]
+                                          (loop [tries 200]
+                                            (swap! shown conj (line))
+                                            (cond (done?) true
+                                                  (zero? tries) false
+                                                  :else (do (Thread/sleep 10)
+                                                            (recur (dec tries))))))}
+                                "Managed"
+                                {"kind" "device" "flow_id" "managed-flow" "interval_ms" 1}
+                                (fn [_]
+                                  (throw (ex-info "Interactive flow exchanged on the client" {})))
+                                #(if (< (swap! polls inc) 3)
+                                   {"status" "pending" "instructions" printed}
+                                   {"status" "ok" "instructions" printed})
+                                (fn []
+                                  (throw (ex-info "Successful flow was cancelled" {}))))
+                  "status")))
+        (expect (= 0 @opened))
+        (expect (some #(and (vector? %) (= (first printed) (first %))) @shown)))))
   (it "bounds device waiting by the gateway expiry and cancels on timeout"
       (let [cancelled (atom 0)]
         (with-redefs [opener/open! (constantly nil)]

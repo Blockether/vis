@@ -172,7 +172,8 @@
   "POST /v1/providers/:provider-id/auth/poll {flow_id} — read a device flow's
    verdict WITHOUT blocking: `pending`, `ok`, or `error`. The blocking wait
    runs on a daemon thread from the moment `auth/start` returned, so a phone
-   can poll this on any cadence it likes."
+   can poll this on any cadence it likes. `instructions` carries the lines that an
+   interactive `auth-fn` sign-in printed so far."
   [request]
   (let [body
         (try (http/body-json request) (catch Throwable _ nil))
@@ -184,7 +185,7 @@
         (provider-auth/poll-auth! flow-id)]
 
     (if (:ok? result)
-      (http/json-response (select-keys result [:status :message]))
+      (http/json-response (select-keys result [:status :message :instructions]))
       (auth-error-response result))))
 
 (defn- provider-auth-cancel-handler
@@ -247,6 +248,8 @@
     {:id (name id)
      :label (config/display-label id)
      :is-managed (providers/managed? id)
+     ;; How a client signs in: a managed provider with `auth-fn` reads `oauth`.
+     :auth-kind (name (providers/auth-kind id provider))
      :base-url (or (config/provider-base-url provider) (:base-url provider))
      :models (into [] (keep :name) (:models provider))
      :model-details (mapv (fn [model]

@@ -487,7 +487,16 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
             started.kind === 'api-key'
               ? client.submitProviderKey(started.provider_id, started.flow_id, input)
               : client.completeProviderAuth(started.provider_id, started.flow_id, input),
-          poll: () => client.pollProviderAuth(started.provider_id, started.flow_id),
+          poll: async () => {
+            const verdict = await client.pollProviderAuth(started.provider_id, started.flow_id);
+            const lines = verdict.instructions;
+            // A provider's own sign-in prints its lines while it runs; show the latest.
+            if (verdict.status === 'pending' && lines?.length)
+              setFlow((current) =>
+                current?.flow_id === started.flow_id ? { ...current, instructions: lines } : current,
+              );
+            return verdict;
+          },
           cancel: () => client.cancelProviderAuth(started.provider_id, started.flow_id),
         },
         (verdict) => {
@@ -833,6 +842,33 @@ function apiKeyHintLine(instructions: readonly string[] | null | undefined): str
   return lines.find((line) => line.includes('http')) ?? null;
 }
 
+/** One instruction line, with each URL in it as a link that opens outside the app. */
+function InstructionLine({ line }: { line: string }) {
+  return (
+    <Text variant="description" className="break-words">
+      {line.split(/(https?:\/\/\S+)/).map((part, i) =>
+        i % 2 === 1 ? (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="break-all text-accent-ink underline"
+            onClick={(event) => {
+              event.preventDefault();
+              openExternalUrl(part);
+            }}
+          >
+            {part}
+          </a>
+        ) : (
+          part
+        ),
+      )}
+    </Text>
+  );
+}
+
 /**
  * The live sign-in step: browser return, device consent, or an API key.
  * Manual redirect input remains available as a fallback. Only rendered by
@@ -870,7 +906,7 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
         <ol className="list-inside list-decimal space-y-1">
           {flow.instructions.map((line) => (
             <li key={line}>
-              <Text variant="description">{line}</Text>
+              <InstructionLine line={line} />
             </li>
           ))}
         </ol>

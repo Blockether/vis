@@ -572,7 +572,55 @@
             (expect (= true (:ok? result)))
             (expect (= "pkce" (:kind flow)))
             (expect (= "https://auth.example/start" (:url flow)))
-            (pauth/cancel-auth! (:flow-id flow)))))))
+            (pauth/cancel-auth! (:flow-id flow))))))
+  ;; Regression, issue #328: a managed provider that signs in only through its own
+  ;; `auth-fn` could not start sign-in from a client, and its printed URL was lost.
+  (it
+    "runs a managed provider's own auth-fn as a device flow and polls its printed lines"
+    (let [token
+          (atom nil)
+
+          release
+          (promise)
+
+          descriptor
+          {:provider/id :corp
+           :provider/label "Corp"
+           :provider/is-managed true
+           :provider/get-token-fn (fn []
+                                    @token)
+           :provider/auth-fn (fn [printer]
+                               (printer "If it does not open, visit: https://auth.example/x")
+                               @release
+                               (reset! token {:token "fresh"}))}]
+
+      (with-redefs [providers/configured-providers-cached
+                    (constantly [])
+
+                    registry/provider-by-id
+                    (constantly descriptor)
+
+                    providers/rebuild-shared-router!
+                    (constantly nil)
+
+                    providers/refresh-models-async!
+                    (constantly nil)]
+
+        (expect (= true (pauth/supported? :corp)))
+        (let [result
+              (pauth/start-auth! :corp)
+
+              flow-id
+              (get-in result [:flow :flow-id])]
+
+          (expect (= true (:ok? result)))
+          (expect (= "device" (get-in result [:flow :kind])))
+          (expect (eventually #(= ["If it does not open, visit: https://auth.example/x"]
+                                  (:instructions (pauth/poll-auth! flow-id)))))
+          (expect (= "pending" (:status (pauth/poll-auth! flow-id))))
+          (deliver release true)
+          (expect (eventually #(= "ok" (:status (pauth/poll-auth! flow-id)))))
+          (pauth/cancel-auth! flow-id))))))
 
 (defdescribe
   provider-auth-browser-return-test

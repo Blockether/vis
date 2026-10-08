@@ -84,6 +84,29 @@ describe('browser-flow lifecycle in the shared Companion UI', () => {
     expect(client.router).toHaveBeenCalledWith(undefined, { force: true });
     expect(client.completeProviderAuth).not.toHaveBeenCalled();
   });
+  // Regression, issue #328: a managed provider's own sign-in has no URL; its polls
+  // carry the lines it prints, such as a fallback sign-in URL.
+  it('shows the lines a provider\'s own sign-in prints while it polls', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    const managed: AuthFlow = { flow_id: 'managed-flow', provider_id: 'corp', kind: 'device' };
+    const client = clientFor(managed);
+    const printed = ['If it does not open, visit: https://auth.example/x'];
+    client.pollProviderAuth.mockResolvedValueOnce({ status: 'pending', instructions: printed });
+    client.pollProviderAuth.mockResolvedValue({ status: 'pending' });
+    const { result } = renderHook(() => useProviderAuth(client as unknown as GatewayClient));
+    await act(async () => result.current.signIn({ id: 'corp', is_managed: true } as RouterProvider));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(client.pollProviderAuth).toHaveBeenCalledWith('corp', 'managed-flow');
+    expect(result.current.flow?.instructions).toEqual(printed);
+    expect(window.open).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(result.current.flow?.instructions).toEqual(printed);
+  });
   it('cancels an active gateway flow on unmount', async () => {
     vi.useFakeTimers();
     vi.spyOn(window, 'open').mockReturnValue(null);

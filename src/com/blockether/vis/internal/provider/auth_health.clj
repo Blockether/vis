@@ -10,9 +10,11 @@
    The state is process-wide on purpose: router builds, every session's turns and
    the gateway `/metrics` endpoint share one breaker and one cooldown, and
    concurrent turns share one interactive authentication per provider."
-  (:require [com.blockether.vis.internal.extension.registry :as registry]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
-            [com.blockether.vis.internal.util :as util]))
+            [com.blockether.vis.internal.util :as util]
+            [taoensso.telemere :as tel]))
 
 (def AUTH_REFRESH_WINDOW_MS
   "Rolling window (ms) for the forced-OAuth-refresh circuit breaker."
@@ -252,9 +254,22 @@
                 (:provider/get-token-fn provider))))
 
 (defonce ^:private auth-flights
-  ;; provider-id -> promise carrying one first-use authentication result. The map only
-  ;; contains live attempts; the leader removes its own promise after delivery.
+  ;; provider-id -> {:result promise :lines atom} for one live authentication. `:lines`
+  ;; holds what `auth-fn` printed. The map only contains live attempts; the leader
+  ;; removes its own entry after delivery.
   (atom {}))
+
+(defn- flight-printer
+  "The printer that `auth-fn` gets. Each non-blank line goes to the flight `lines`,
+   which an explicit sign-in shows its client, and to the log. So a first-use
+   sign-in URL stays visible when no browser opens."
+  [pid lines]
+  (fn [& parts]
+    (let [line (str/trim (apply str parts))]
+      (when-not (str/blank? line)
+        (swap! lines conj line)
+        (tel/log! {:level :info :id ::auth-line :data {:provider pid :line line}})))
+    nil))
 
 (defn usable-token?
   "True when `envelope` carries a non-blank token other than the `rejected` one."
@@ -270,59 +285,77 @@
 (defn reauthenticate!
   "Run at most one interactive authentication for `pid`; concurrent turns await the
    same result. Re-read storage inside the flight to adopt a peer credential, but
-   never accept the token rejected by the request that triggered recovery."
-  [pid provider rejected]
-  (let [candidate
-        (promise)
+   never accept the token rejected by the request that triggered recovery.
 
-        [_ flights]
-        (swap-vals! auth-flights
-                    (fn [current]
-                      (if (contains? current pid) current (assoc current pid candidate))))
+   `lines`, when given, is an atom that gets every line `auth-fn` printed, also when
+   this call joins a flight that another caller leads. An explicit sign-in shows
+   these lines, such as a fallback sign-in URL, to its client."
+  ([pid provider rejected] (reauthenticate! pid provider rejected nil))
+  ([pid provider rejected lines]
+   (let [candidate
+         {:result (promise) :lines (or lines (atom []))}
 
-        flight
-        (get flights pid)
+         [_ flights]
+         (swap-vals! auth-flights
+                     (fn [current]
+                       (if (contains? current pid) current (assoc current pid candidate))))
 
-        leader?
-        (identical? candidate flight)]
+         flight
+         (get flights pid)
 
-    (when leader?
-      (let [get-token-fn
-            (:provider/get-token-fn provider)
+         leader?
+         (identical? candidate flight)
 
-            auth-fn
-            (:provider/auth-fn provider)
+         follow?
+         (and lines (not leader?))
 
-            outcome
-            (try (let [before
-                       (try (get-token-fn) (catch Throwable _ nil))
+         watch-key
+         (Object.)]
 
-                       envelope
-                       (if (usable-token? before rejected)
-                         before
-                         (do (auth-fn (constantly nil)) (get-token-fn)))]
+     (when follow?
+       (add-watch (:lines flight)
+                  watch-key
+                  (fn [_ _ _ printed]
+                    (reset! lines printed)))
+       (reset! lines @(:lines flight)))
+     (when leader?
+       (let [get-token-fn
+             (:provider/get-token-fn provider)
 
-                   (if (usable-token? envelope rejected)
-                     (do (provider-limits/auth-changed! pid) {:value envelope})
-                     {:error (managed-auth-failure
-                               pid
-                               "was cancelled or did not produce a usable credential."
-                               nil)}))
-                 (catch Throwable t
-                   {:error (if (= :provider/authentication-failed (:type (ex-data t)))
-                             t
-                             (managed-auth-failure
-                               pid
-                               (str "failed: " (or (ex-message t) "unknown authentication error"))
-                               t))}))]
+             auth-fn
+             (:provider/auth-fn provider)
 
-        (deliver candidate outcome)
-        (swap! auth-flights (fn [current]
-                              (if (identical? candidate (get current pid))
-                                (dissoc current pid)
-                                current)))))
-    (let [{:keys [value error]} @flight]
-      (if error (throw error) value))))
+             outcome
+             (try (let [before
+                        (try (get-token-fn) (catch Throwable _ nil))
+
+                        envelope
+                        (if (usable-token? before rejected)
+                          before
+                          (do (auth-fn (flight-printer pid (:lines candidate))) (get-token-fn)))]
+
+                    (if (usable-token? envelope rejected)
+                      (do (provider-limits/auth-changed! pid) {:value envelope})
+                      {:error (managed-auth-failure
+                                pid
+                                "was cancelled or did not produce a usable credential."
+                                nil)}))
+                  (catch Throwable t
+                    {:error (if (= :provider/authentication-failed (:type (ex-data t)))
+                              t
+                              (managed-auth-failure
+                                pid
+                                (str "failed: " (or (ex-message t) "unknown authentication error"))
+                                t))}))]
+
+         (deliver (:result candidate) outcome)
+         (swap! auth-flights (fn [current]
+                               (if (identical? candidate (get current pid))
+                                 (dissoc current pid)
+                                 current)))))
+     (try (let [{:keys [value error]} @(:result flight)]
+            (if error (throw error) value))
+          (finally (when follow? (remove-watch (:lines flight) watch-key)))))))
 
 (defn ensure-authenticated!
   "Resolve `pid` immediately before a real provider request. A managed provider with
