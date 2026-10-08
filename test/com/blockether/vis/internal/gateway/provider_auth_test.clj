@@ -109,7 +109,12 @@
                     (auth-request "openai-codex" "start" {})
 
                     fid
-                    (get json "flow_id")]
+                    (get json "flow_id")
+
+                    ;; Each poll repeats the sign-in lines of the flow (#328).
+                    verdict
+                    (fn [s]
+                      {:status 200 :json {"status" s "instructions" (get json "instructions")}})]
 
                 (try (expect (= 200 status))
                      (expect (= "device" (get json "kind")))
@@ -118,14 +123,13 @@
                      (expect (string? fid))
                      (expect (not-any? #(str/includes? (pr-str json) %)
                                        ["test-device-private" "test-verifier" "test-refresh"]))
-                     (expect (= {:status 200 :json {"status" "pending"}}
+                     (expect (seq (get json "instructions")))
+                     (expect (= (verdict "pending")
                                 (auth-request "openai-codex" "poll" {:flow_id fid})))
                      (deliver release true)
-                     (expect (= {:status 200 :json {"status" "ok"}}
-                                (await-verdict "openai-codex" fid)))
+                     (expect (= (verdict "ok") (await-verdict "openai-codex" fid)))
                      ;; A lost success response is safe to retry; it cannot exchange twice.
-                     (expect (= {:status 200 :json {"status" "ok"}}
-                                (auth-request "openai-codex" "poll" {:flow_id fid})))
+                     (expect (= (verdict "ok") (auth-request "openai-codex" "poll" {:flow_id fid})))
                      (expect (= ["test-account"] (mapv :account-id @saved)))
                      (expect (= 3 (count @requests)))
                      (finally (deliver release false)
