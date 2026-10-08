@@ -403,13 +403,14 @@
       (expect (= {:selection [["--locked"] ["--group" "dev"] ["--all-extras"]
                               ["--no-emit-package" "excluded"]]
                   :common [["--offline"]]
-                  :location [["--project" "path with spaces"]]}
+                  :location [["--project" "path with spaces"]]
+                  :mode [["--check"]]}
                  (#'python-runtime/shared-sync-args
                   ["--locked" "--group=dev" "--all-extras" "--no-install-package" "excluded"
-                   "--offline" "--project=path with spaces"])))
+                   "--offline" "--project=path with spaces" "--check"])))
       (doseq [args [["--group"] ["--group="] ["--group" "--offline"] ["--locked=yes"]
                     ["--target" "/elsewhere"] ["--python" "other"] ["--active"] ["--exact"]
-                    ["--check"] ["--dry-run"] ["--script" "tool.py"] ["--output-file" "other"]]]
+                    ["--check=yes"] ["--script" "tool.py"] ["--output-file" "other"]]]
         (expect (some? (failure #(#'python-runtime/shared-sync-args args))) (pr-str args)))))
 
 (defdescribe

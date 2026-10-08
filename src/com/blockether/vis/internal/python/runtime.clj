@@ -608,22 +608,26 @@
 
 (def ^:private shared-sync-location-options {"--project" 1 "--directory" 1})
 
+;; `uv sync --check` compares a whole environment exactly. Shared packages always hold
+;; packages of other projects, so these modes ask uv for the install plan instead.
+(def ^:private shared-sync-mode-options {"--check" 0 "--dry-run" 0})
+
 (defn- shared-sync-args
   [args]
   (loop [args
          (seq args)
 
          options
-         {:selection [] :common [] :location []}]
+         {:selection [] :common [] :location [] :mode []}]
 
     (if-let [arg (first args)]
       (let [[flag inline] (str/split arg #"=" 2)
-            [kind arity] (some (fn [[kind supported]]
-                                 (when-let [arity (get supported flag)]
-                                   [kind arity]))
-                               [[:selection shared-sync-selection-options]
-                                [:common shared-sync-common-options]
-                                [:location shared-sync-location-options]])]
+            [kind arity]
+            (some (fn [[kind supported]]
+                    (when-let [arity (get supported flag)]
+                      [kind arity]))
+                  [[:selection shared-sync-selection-options] [:common shared-sync-common-options]
+                   [:location shared-sync-location-options] [:mode shared-sync-mode-options]])]
 
         (when-not kind
           (throw
@@ -655,16 +659,19 @@
       "Usage: vis-agent python --shared uv sync [OPTIONS]\n\n"
       "Install a uv project's locked dependencies and editable project into Vis shared packages.\n"
       "Uses embedded Python; leaves .venv and unrelated shared packages alone.\n"
-      "Existing versions can change. Run /reload after installing.\n\n"
+      "Existing versions can change. Run /reload after installing.\n"
+      "--dry-run lists the planned installs. --check exits 1 when a locked package is missing\n"
+      "or has another version; it ignores unrelated shared packages.\n\n"
       "Supported options (VALUE marks an argument):\n"
       (str/join "\n"
                 (for [[flag arity] (sort (merge shared-sync-selection-options
                                                 shared-sync-common-options
-                                                shared-sync-location-options))]
+                                                shared-sync-location-options
+                                                shared-sync-mode-options))]
                   (str "  " flag (when (= 1 arity) " VALUE"))))
       "\n  --help\n\n"
       "Configure indices with python.index_url, uv project configuration, or UV_* environment variables.\n"
-      "Shared sync always retains unrelated packages; --check, --dry-run, --active and interpreter overrides are not supported."))
+      "Shared sync always retains unrelated packages; --active, --exact and interpreter overrides are not supported."))
   0)
 
 (defn- shared-sync-process!
@@ -677,6 +684,33 @@
     (when discard-stdout? (.redirectOutput builder ProcessBuilder$Redirect/DISCARD))
     (.waitFor (.start builder))))
 
+(defn- shared-sync-check!
+  "Run the `--dry-run` install `args`; answer 0 when uv plans no change, else 1.
+   uv plans only the locked packages, so unrelated shared packages never fail the check.
+   An unknown plan text fails the check, which costs one extra sync at most."
+  [^File cwd args]
+  (let [process
+        (.start (doto (ProcessBuilder. ^java.util.List args)
+                  (.directory cwd)
+                  uv-index!
+                  bytecode-cache!
+                  (.redirectErrorStream true)))
+
+        output
+        (slurp (.getInputStream process))
+
+        exit
+        (.waitFor process)]
+
+    (cond (not (zero? exit)) (do (.print config/original-stderr output) exit)
+          (str/includes? output "Would make no changes") 0
+          :else (do
+                  (.print config/original-stderr output)
+                  (.println
+                    config/original-stderr
+                    "Shared packages differ from the lock; run vis-agent python --shared uv sync.")
+                  1))))
+
 (defn- shared-uv-sync!
   [args]
   (when-not (= "sync" (first args))
@@ -684,7 +718,7 @@
                     {})))
   (if (some #{"--help" "-h"} (rest args))
     (shared-sync-help!)
-    (let [{:keys [selection common location]}
+    (let [{:keys [selection common location mode]}
           (shared-sync-args (rest args))
 
           uv
@@ -750,15 +784,16 @@
                (if-not (zero? exit)
                  exit
                  (let [packages (runtime/packages-dir)
-                       exit (shared-sync-process! cwd
-                                                  (into [uv "pip" "install" "--target" packages
-                                                         "--requirements" (str lock-file)
-                                                         "--no-deps" "--directory"
-                                                         (.getCanonicalPath project)]
-                                                        (concat common interpreter))
-                                                  false)]
+                       modes (set (map first mode))
+                       install (into [uv "pip" "install" "--target" packages "--requirements"
+                                      (str lock-file) "--no-deps" "--directory"
+                                      (.getCanonicalPath project)]
+                                     (concat common interpreter (when (seq modes) ["--dry-run"])))
+                       exit (if (modes "--check")
+                              (shared-sync-check! cwd install)
+                              (shared-sync-process! cwd install false))]
 
-                   (when (zero? exit)
+                   (when (and (zero? exit) (empty? modes))
                      (.println
                        config/original-stderr
                        (str "Shared packages: " packages "\nRun /reload to refresh Vis workers.")))

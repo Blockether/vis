@@ -321,6 +321,22 @@
                      "shared_dev.VALUE, unrelated.VALUE)"))]
           (expect (= 0 (:exit result)) (:output result))
           (expect (str/includes? (:output result) "SHARED_SYNC 7 42 42 kept") (:output result)))
+        ;; Issue #340: `--check` passes while the locked packages are installed, also
+        ;; with unrelated shared packages. It fails when a locked package is missing.
+        (let [result (sync! "--check")]
+          (expect (= 0 (:exit result)) (:output result)))
+        (delete-tree! (io/file shared "shared_base-1.0.0.dist-info"))
+        (let [result (sync! "--dry-run")]
+          (expect (= 0 (:exit result)) (:output result))
+          (expect (str/includes? (:output result) "shared-base") (:output result))
+          (expect (not (.exists (io/file shared "shared_base-1.0.0.dist-info")))))
+        (let [result (sync! "--check")]
+          (expect (= 1 (:exit result)) (:output result))
+          (expect (str/includes? (:output result) "shared-base") (:output result)))
+        (let [result (sync!)]
+          (expect (= 0 (:exit result)) (:output result)))
+        (let [result (sync! "--check")]
+          (expect (= 0 (:exit result)) (:output result)))
         (let [lock
               (slurp (io/file project "uv.lock"))
 

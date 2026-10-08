@@ -308,8 +308,17 @@ Use `--group`, `--extra`, `--no-dev` and related selection flags to choose depen
 the project itself. Configure private indices through uv project configuration,
 `UV_*` environment variables, or Vis's `python.index_url`.
 
+To decide if a setup script must sync, use `--check`. It exits with 0 when every locked
+package and the editable project are installed at the locked version. Otherwise it lists the
+planned installs and exits with 1. The check ignores unrelated shared packages. Add
+`--offline` to keep it local. `--dry-run` lists the planned installs and changes nothing.
+
+```bash
+vis-agent python --shared uv sync --project . --check --offline || vis-agent python --shared uv sync --project .
+```
+
 `vis-agent python --shared uv sync --help` lists supported options. Shared sync does
-not support `--check`, `--dry-run`, `--active`, or choosing another interpreter.
+not support `--exact`, `--active`, or choosing another interpreter.
 Without `--shared`, `vis-agent python uv ...` remains ordinary upstream uv.
 
 ## See also
