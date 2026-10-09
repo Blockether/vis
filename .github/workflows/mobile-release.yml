@@ -101,9 +101,8 @@ jobs:
   ios:
     # A tag ships to TestFlight; a manual run only when iOS was asked for.
     if: ${{ github.event_name == 'push' || inputs.platforms != 'android' }}
-    # App Store Connect requires Xcode 26 (iOS 26 SDK) for uploads after April
-    # 2026. Pin the GitHub-hosted macOS 26 image.
-    runs-on: macos-26
+    # The self-hosted Apple-silicon builder must have Xcode 26+ (iOS 26 SDK).
+    runs-on: [self-hosted, macOS, ARM64, vis-macos-arm64]
     timeout-minutes: 90
     steps:
       # Version code is `git rev-list --count HEAD`, so a shallow clone would produce a
@@ -243,7 +242,7 @@ jobs:
           asset="build/release/vis-companion-$VERSION-ios.ipa"
           cp "${packages[0]}" "$asset"
           gh release upload "$RELEASE_TAG" "$asset" --clobber
-      # Restore the keychain state even when certificate import fails midway.
+      # Restore persistent runner state even when certificate import fails midway.
       - name: Restore the runner keychain state
         if: always()
         run: |
