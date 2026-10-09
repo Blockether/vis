@@ -869,6 +869,8 @@
       ;; message, which is tool output during a loop, and its fallback counted the model's own
       ;; notes. §7 now lets only the user's requests set the reply language, and the core prompt
       ;; names no natural language. It lands at 12 070.
+      ;; #349: the shell handle line says that `sh.type` adds Enter and how to omit it.
+      ;; It lands at 12 138.
       (expect (< (count text) 12150))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
@@ -929,7 +931,10 @@
                ;; status accessors, so following it verbatim raised a TypeError —
                ;; `type` SENDS keystrokes and its text argument is required.
                "returns a handle" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
-               "make it a small named helper and call it" "Keep results in"
+               ;; Regression, issue #349: `sh.type` appends Enter, so an agent that added
+               ;; "\n" itself sent an extra empty line that answered the next prompt.
+               "(adds Enter; `is_enter=False` omits it)" "make it a small named helper and call it"
+               "Keep results in"
                ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
                ;; "print only what the answer needs" a contract instead of cost advice.
                "`print()` is the one channel back" "you get only what you print"
