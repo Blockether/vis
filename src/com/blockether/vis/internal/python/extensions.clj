@@ -1660,19 +1660,48 @@
                       :data {:extension ext-name :error (ex-message t)}})
            nil))))
 
+(defn- as-pricing
+  "A model row's DECLARED `pricing`: rates in USD per 1M tokens, keyed like svar's
+   price table (`input_over_100k` -> `:input-over-100k`). The nested keys take the same
+   `wire/engine-key` inverse as the row, because `decode` walks one level only and
+   svar's `tier-rate` reads keyword keys. A rate that is not a non-negative number is
+   REFUSED: a price that silently reads as zero hides the real cost of every turn."
+  [v]
+  (when (some? v)
+    (when-not (map? v)
+      (throw (ex-info (str "provider model pricing must be a dict of rates, got " (pr-str v))
+                      {:type ::invalid-pricing :pricing v})))
+    (not-empty (reduce-kv (fn [acc k rate]
+                            (if (and (number? rate) (not (neg? (double rate))))
+                              (assoc acc (wire/engine-key k) (double rate))
+                              (throw (ex-info (str "provider model pricing rate " (pr-str k)
+                                                   " must be a non-negative number, got " (pr-str
+                                                                                            rate))
+                                              {:type ::invalid-pricing :key k :rate rate}))))
+                          {}
+                          v))))
+
 (defn- ->svar-model
   "One enriched model row from Python -> the shape svar's router reads. Keys take
    the mechanical `wire/engine-key` inverse; the handful svar itself spells with a
    trailing `?` then move through `config/svar-wire->runtime`, svar's OWN named
    table (`is_tool_call` -> `:tool-call?`). A foreign contract gets an explicit
-   table at one seam — it never gets a convention applied to every other key."
+   table at one seam — it never gets a convention applied to every other key.
+
+   A declared `pricing` is also kept as `:declared-pricing`. svar's catalog gives
+   every row a `:pricing`, so only this key tells the cost path that the provider
+   itself set the price."
   [row]
-  (reduce-kv
-    (fn [m wire-k runtime-k]
-      (let [mechanical (wire/engine-key wire-k)]
-        (if (contains? m mechanical) (assoc (dissoc m mechanical) runtime-k (get m mechanical)) m)))
-    (decode {} row)
-    config/svar-wire->runtime))
+  (let [m (reduce-kv (fn [m wire-k runtime-k]
+                       (let [mechanical (wire/engine-key wire-k)]
+                         (if (contains? m mechanical)
+                           (assoc (dissoc m mechanical) runtime-k (get m mechanical))
+                           m)))
+                     (decode {:pricing as-pricing} row)
+                     config/svar-wire->runtime)]
+    (if-let [pricing (:pricing m)]
+      (assoc m :declared-pricing pricing)
+      (dissoc m :pricing))))
 
 (defn- enrich-models-fn-adapter
   "Wrap a Python `enrich_models(provider, router_opts)` callable as

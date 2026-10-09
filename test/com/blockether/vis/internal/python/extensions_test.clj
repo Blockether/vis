@@ -3573,6 +3573,79 @@ vis.register_extension(vis.Extension(
             (expect (false? (get body "store")))
             (expect (= 128 (get body "max_output_tokens")))))))))
 
+(defn- usd-close?
+  "Equal within float rounding."
+  [a b]
+  (< (Math/abs (- (double a) (double b))) 1.0E-9))
+
+(defn- pricing-provider
+  "Enrich the `priced` fixture provider through the loaded Python extension."
+  []
+  (#'loop-router/enrich-provider-models
+   (config/->svar-provider
+     (with-redefs [config/load-config-raw
+                   (constantly {"providers" [{"id" "priced" "models" [{"name" "gw-haiku"}]}]})]
+       (first (:providers (config/load-config)))))
+   {}))
+
+(defn- pricing-py
+  "A managed provider fixture whose model declares `pricing`."
+  [pricing]
+  (str "import blockether.vis.extension as vis\n"
+       "def credential():\n"
+       "    return vis.ProviderCredential('fixture')\n"
+       "def enrich(provider, router_opts):\n"
+       "    return [vis.ProviderModel('gw-haiku', context=1000000, is_tool_call=True,\n"
+       "        extra={'output_limit': 128000, 'pricing': "
+       pricing
+       "})]\n"
+       "vis.register_extension(vis.Extension(name='priced', description='d',\n"
+       "    providers=[vis.Provider(id='priced', label='Priced',\n"
+       "        preset=vis.ProviderPreset(base_url='https://gateway.example.com/v1'),\n"
+       "        get_token_fn=credential, enrich_models_fn=enrich)]))\n"))
+
+(defdescribe
+  provider-model-pricing-test
+  ;; #356: a Python provider's model `pricing` had no effect on the turn cost.
+  ;; The nested keys kept their JSON strings, and the cost path read only svar's
+  ;; flattened MODEL_PRICING by model name.
+  (it
+    "decodes the declared rates and prices the served response with them"
+    (with-loaded
+      {"priced.py" (pricing-py (str "{'input': 0.11, 'output': 0.55,"
+                                    " 'input_over_100k': 0.55, 'output_over_100k': 2.75}"))}
+      (fn [loaded _]
+        (expect (= 1 (:loaded loaded)))
+        (let [provider
+              (pricing-provider)
+
+              declared
+              {:input 0.11 :output 0.55 :input-over-100k 0.55 :output-over-100k 2.75}]
+
+          (expect (= declared (:declared-pricing (first (:models provider)))))
+          (with-redefs-fn {#'loop-router/router-atom (atom {:fixture (svar/make-router
+                                                                       [provider])})}
+            (fn []
+              (expect (= declared (loop-router/declared-model-pricing :priced "gw-haiku")))
+              (expect (usd-close? (+ (* 1000 0.11) (* 1000 0.55))
+                                  (* 1.0E6
+                                     (get (loop-router/estimate-token-cost "gw-haiku" 1000
+                                                                           1000 {:provider :priced})
+                                          "total_cost"))))
+              (expect (usd-close? (+ (* 200000 0.55) (* 1000 2.75))
+                                  (* 1.0E6
+                                     (get (loop-router/estimate-token-cost "gw-haiku" 200000
+                                                                           1000 {:provider :priced})
+                                          "total_cost"))))
+              (expect (nil? (loop-router/declared-model-pricing :openai "gw-haiku")))))))))
+  (it "refuses a rate that is not a number"
+      (with-loaded {"priced.py" (pricing-py "{'input': 'cheap', 'output': 0.55}")}
+                   (fn [loaded _]
+                     (expect (= 1 (:loaded loaded)))
+                     (let [models (:models (pricing-provider))]
+                       (expect (= ["gw-haiku"] (mapv :name models)))
+                       (expect (not-any? :declared-pricing models)))))))
+
 ;; Reload + project-over-global precedence
 (defdescribe
   reload-test

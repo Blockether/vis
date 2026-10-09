@@ -224,8 +224,17 @@
   (when model (get svar/MODEL_PRICING (str model))))
 
 (defn estimate-cost
-  "Estimated USD cost of a request from its input and output token counts,
-   priced from svar's model pricing table. `opts` carries the cached-input and
-   cache-creation token counts."
+  "Estimated USD cost of a request from its input and output token counts.
+   `opts` carries the cached-input and cache-creation token counts. A `:pricing`
+   entry in `opts` (the rates that the serving provider declared for `model`)
+   wins; without it, svar's model pricing table prices the request."
   [model input-tokens output-tokens opts]
-  (svar/estimate-cost model input-tokens output-tokens svar/MODEL_PRICING opts))
+  (let [declared
+        (:pricing opts)
+
+        opts
+        (dissoc opts :pricing)]
+
+    (if (map? declared)
+      (svar/estimate-cost model input-tokens output-tokens {model declared} opts)
+      (svar/estimate-cost model input-tokens output-tokens svar/MODEL_PRICING opts))))

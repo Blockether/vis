@@ -94,6 +94,29 @@ Token and header fields are excluded from a record's `repr`. Never log
 credentials or put them in status metadata. A missing credential is `None`,
 not a record with an empty token.
 
+### Model prices
+
+Set the price of a model when your provider bills other rates than the public list
+prices. Put a `pricing` map in the `extra` of `ProviderModel`:
+
+```python
+vis.ProviderModel(
+    name="claude-haiku-5-5",
+    context=1000000,
+    is_tool_call=True,
+    extra={"pricing": {"input": 0.11, "output": 0.55,
+                       "input_over_100k": 0.55, "output_over_100k": 2.75}},
+)
+```
+
+- Give each rate in USD for 1 million tokens.
+- Use the keys `input`, `output`, `cached_input`, `cache_write`, `cache_write_5m` and `cache_write_1h`.
+- Add `_over_100k`, `_over_200k` or `_over_272k` to a key for the rate above that prompt size.
+
+Vis prices each response with the rates of the provider that served it. Without a
+`pricing` map, Vis uses the built-in price list. A rate that is not a non-negative number
+stops the model list of the provider, and Vis logs a warning.
+
 ## Callbacks
 
 | Callback | Signature | Purpose |

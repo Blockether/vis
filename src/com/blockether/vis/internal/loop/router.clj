@@ -1689,10 +1689,40 @@
   (let [fm (fast-mode provider)]
     (if (fast-mode-requested? fm extra-body turn-features) (double (:cost-multiplier fm)) 1.0)))
 
+(defn declared-model-pricing
+  "Rates that `provider-id` itself declared for `model` (a Python provider's
+   `ProviderModel` `pricing`), or nil. Reads the bound project's router first, then
+   any other built router. svar's own catalog rows carry `:pricing` too, so only
+   `:declared-pricing` counts here; a nil answer means the svar catalog prices it."
+  [provider-id model]
+  (when (and (or (keyword? provider-id) (string? provider-id)) model)
+    (let [pid
+          (keyword (name provider-id))
+
+          model
+          (str model)
+
+          routers
+          @router-atom
+
+          lookup
+          (fn [router]
+            (some (fn [provider]
+                    (when (= pid (:id provider))
+                      (some (fn [m]
+                              (when (and (map? m) (= model (str (:name m)))) (:declared-pricing m)))
+                            (:models provider))))
+                  (:providers router)))]
+
+      (or (some-> (get routers (router-key))
+                  lookup)
+          (some lookup (vals routers))))))
+
 (defn estimate-token-cost
   "Estimate cost from provider usage while preserving cached/non-cached input split.
      `:cost-multiplier` scales every monetary component after svar prices the
-     canonical usage; token counts remain untouched."
+     canonical usage; token counts remain untouched. `:provider` names the provider
+     that served the response: its declared rates win over the svar catalog."
   ([model input-tokens output-tokens] (estimate-token-cost model input-tokens output-tokens {}))
   ([model input-tokens output-tokens opts]
    (try (let [opts
@@ -1701,11 +1731,17 @@
               multiplier
               (double (or (:cost-multiplier opts) 1.0))
 
+              declared
+              (declared-model-pricing (:provider opts) model)
+
               cost-map
-              (wire/canonical (catalog/estimate-cost model
-                                                     input-tokens
-                                                     output-tokens
-                                                     (dissoc opts :cost-multiplier)))]
+              (wire/canonical (catalog/estimate-cost
+                                model
+                                input-tokens
+                                output-tokens
+                                (cond-> (dissoc opts :cost-multiplier :provider)
+                                  declared
+                                  (assoc :pricing declared))))]
 
           (if (and (map? cost-map) (not= 1.0 multiplier))
             (reduce (fn [m k]

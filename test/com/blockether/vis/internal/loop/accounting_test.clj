@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop.accounting-test
   (:require [com.blockether.vis.internal.loop.accounting :as accounting]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.test-provider-policies :as policies]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
@@ -105,7 +106,46 @@
       (expect (nil? (accounting/response-cost (accounting/pricing priced-model :openai nil nil)
                                               nil
                                               nil
-                                              nil)))))
+                                              nil))))
+  ;; #356: declared provider rates must price the response of the provider that
+  ;; served it; svar's catalog stays the fallback.
+  (it
+    "prices a response at the rates its serving provider declared"
+    (let [declared
+          {:input 0.11 :output 0.55 :input-over-100k 0.55 :output-over-100k 2.75}
+
+          router
+          {:providers [{:id :gateway :models [{:name priced-model :declared-pricing declared}]}]}
+
+          pricing
+          (accounting/pricing priced-model :gateway nil nil)
+
+          usage
+          {:input-tokens 1000 :output-tokens 1000}
+
+          big-usage
+          {:input-tokens 200000 :output-tokens 1000}]
+
+      (with-redefs-fn {#'loop-router/router-atom (atom {:fixture router})}
+        (fn []
+          (expect (close? (/ (+ (* 1000 0.11) (* 1000 0.55)) 1.0E6)
+                          (:cost-usd
+                            (accounting/response-cost pricing usage priced-model :gateway))))
+          (expect (close? (/ (+ (* 200000 0.55) (* 1000 2.75)) 1.0E6)
+                          (:cost-usd
+                            (accounting/response-cost pricing big-usage priced-model :gateway))))
+          (expect (= (:cost-usd (accounting/response-cost
+                                  (accounting/pricing priced-model :openai nil nil)
+                                  usage
+                                  priced-model
+                                  :openai))
+                     (:cost-usd (accounting/response-cost pricing usage priced-model :openai))))
+          (expect (close? (/ (+ (* 1000 0.11) (* 1000 0.55)) 1.0E6)
+                          (get-in (accounting/turn-cost (assoc (accounting/initial-usage nil)
+                                                          :input-tokens 1000
+                                                          :output-tokens 1000)
+                                                        pricing)
+                                  [:cost "total_cost"]))))))))
 
 (defdescribe
   add-cost-test

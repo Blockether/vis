@@ -108,6 +108,7 @@
                                            in
                                            out
                                            {:api-usage api-usage
+                                            :provider provider
                                             :cost-multiplier (loop-router/fast-mode-cost-multiplier
                                                                (:extra-body pricing)
                                                                (:turn-features pricing)
@@ -166,6 +167,7 @@
                          input-tokens
                          output-tokens
                          {:cached-tokens cached-tokens
+                          :provider (:provider pricing)
                           :cache-creation-tokens cache-creation-tokens
                           :cost-multiplier (loop-router/fast-mode-cost-multiplier
                                              (:extra-body pricing)
