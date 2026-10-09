@@ -1526,7 +1526,8 @@ vis.register_extension(vis.Extension(
              (it "loads a file and keeps each flat function's exact declared public name"
                  (with-loaded {"counter.py" counter-py}
                               (fn [result _]
-                                (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                                (expect (= {:loaded 1 :failed 0 :changed? true}
+                                           (select-keys result [:loaded :failed :changed?])))
                                 (let [ext (registered "counter")]
                                   (expect (some? ext))
                                   (expect (= 'counter (get-in ext [:ext/engine :ext.engine/alias])))
@@ -1578,7 +1579,8 @@ import blockether.vis.extension as vis
          "symbols=[vis.Symbol(entry_metadata)]))
 ")}
       (fn [result {:keys [ext-dir]}]
-        (expect (= {:loaded 1 :failed 0 :changed? true} result))
+        (expect (= {:loaded 1 :failed 0 :changed? true}
+                   (select-keys result [:loaded :failed :changed?])))
         (let [metadata (:result ((symbol-fn (registered "entry-globals") 'entry_metadata)))]
           (expect (= (.getCanonicalPath (io/file ext-dir "entry_globals.py"))
                      (get metadata "file")))
@@ -1647,7 +1649,8 @@ vis.register_extension(vis.Extension(
                  (with-loaded
                    {"object_namespace.py" object-namespace-py}
                    (fn [result _]
-                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                     (expect (= {:loaded 1 :failed 0 :changed? true}
+                                (select-keys result [:loaded :failed :changed?])))
                      (let [ext
                            (registered "glms")
 
@@ -1715,7 +1718,8 @@ vis.register_extension(vis.Extension(
     (with-loaded
       {"recursive_object_namespace.py" recursive-object-namespace-py}
       (fn [result _]
-        (expect (= {:loaded 1 :failed 0 :changed? true} result))
+        (expect (= {:loaded 1 :failed 0 :changed? true}
+                   (select-keys result [:loaded :failed :changed?])))
         (let [ext
               (registered "uberworkspace")
 
@@ -1773,7 +1777,9 @@ vis.register_extension(vis.Extension(
       (with-fresh-loaded
         {"sequence_fixture.py" (slurp (io/file "test/resources/sequence_extension.py"))}
         (fn [loaded _]
-          (expect (= {:loaded 1 :failed 0 :changed? true} loaded) (pr-str (pyx/load-failures)))
+          (expect (= {:loaded 1 :failed 0 :changed? true}
+                     (select-keys loaded [:loaded :failed :changed?]))
+                  (pr-str (pyx/load-failures)))
           (let [ext
                 (registered "sequence-probe")
 
@@ -2343,7 +2349,8 @@ vis.register_extension(vis.Extension(name=\"env-bad\", description=\"bad env fix
   (it "accepts env=, injects declared vars, and registers :ext/env"
       (with-loaded {"env_allowlist.py" env-py}
                    (fn [result _]
-                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                     (expect (= {:loaded 1 :failed 0 :changed? true}
+                                (select-keys result [:loaded :failed :changed?])))
                      (let [ext (registered "env-allowlist")]
                        (expect (some? ext))
                        (expect (= [{:name "PATH" :required? true}
@@ -3670,7 +3677,8 @@ vis.register_extension(vis.Extension(
                    (fn [result _]
                      ;; only the top-level pkgext.py is scanned as an extension;
                      ;; the package files under mypkg/ are NOT loaded as extensions
-                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                     (expect (= {:loaded 1 :failed 0 :changed? true}
+                                (select-keys result [:loaded :failed :changed?])))
                      (let [ext (registered "pkgext")]
                        (expect (some? ext))
                        (let [add (symbol-fn ext 'pkg_add)
@@ -3719,7 +3727,8 @@ vis.register_extension(vis.Extension(
                   (when (< generation 2)
                     (write-ext! ext-dir entry (str source "# Reload " generation "\n"))
                     (expect (= {:loaded 1 :failed 0 :changed? true}
-                               (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})))))))))))))
+                               (select-keys (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+                                            [:loaded :failed :changed?])))))))))))))
 
 ;; Characterization of the split implementation/dependency layout, before adding
   ;; a declaration format. These assertions describe today's missing bootstrap steps,
@@ -3754,7 +3763,8 @@ vis.register_extension(vis.Extension(
           ;; CLI source_paths are not extension import roots.
           (with-redefs [config/load-config-raw
                         (constantly {"python" {"source_paths" [(str (io/file ext-dir "einmal"))]}})]
-            (expect (= {:loaded 0 :failed 1 :changed? true} (reload!)))
+            (expect (= {:loaded 0 :failed 1 :changed? true}
+                       (select-keys (reload!) [:loaded :failed :changed?])))
             (expect (nil? (registered "einmal-fixture")))
             (expect (str/includes? (:error (first (pyx/load-failures)))
                                    "No module named 'vis_einmal_fixture'")))
@@ -3763,7 +3773,8 @@ vis.register_extension(vis.Extension(
           (Files/createSymbolicLink (.toPath (io/file entries "vis_einmal_fixture"))
                                     (.toPath (io/file ext-dir "einmal/vis_einmal_fixture"))
                                     (make-array FileAttribute 0))
-          (expect (= {:loaded 0 :failed 1 :changed? true} (reload!)))
+          (expect (= {:loaded 0 :failed 1 :changed? true}
+                     (select-keys (reload!) [:loaded :failed :changed?])))
           (expect (nil? (registered "einmal-fixture")))
           (expect (str/includes? (:error (first (pyx/load-failures)))
                                  "No module named 'vis_einmal_dependency_fixture'"))
@@ -3773,7 +3784,8 @@ vis.register_extension(vis.Extension(
                                     (.toPath (io/file ext-dir
                                                       "dependency/vis_einmal_dependency_fixture"))
                                     (make-array FileAttribute 0))
-          (expect (= {:loaded 1 :failed 0 :changed? true} (reload!)))
+          (expect (= {:loaded 1 :failed 0 :changed? true}
+                     (select-keys (reload!) [:loaded :failed :changed?])))
           (expect (empty? (pyx/load-failures)))
           (let [ext
                 (registered "einmal-fixture")
@@ -3819,7 +3831,8 @@ vis.register_extension(vis.Extension(
                       invoke #(:result ((symbol-fn (registered "einmal-declared") 'einmal_answer)))]
 
                   (expect (= {:loaded 1 :failed 0 :changed? true}
-                             (pyx/reload-python-extensions! opts)))
+                             (select-keys (pyx/reload-python-extensions! opts)
+                                          [:loaded :failed :changed?])))
                   (expect (= [["vis-einmal-dependency-fixture==0.0.1"]] @installs))
                   (expect (= 42 (invoke)))
                   (expect (false? (:changed? (pyx/load-python-extensions! opts))))
@@ -3832,7 +3845,8 @@ vis.register_extension(vis.Extension(
                   (expect (= 43 (invoke)))
                   (reset! fail? true)
                   (expect (= {:loaded 1 :failed 1 :changed? true}
-                             (pyx/reload-python-extensions! opts)))
+                             (select-keys (pyx/reload-python-extensions! opts)
+                                          [:loaded :failed :changed?])))
                   (expect (= 43 (invoke)))
                   ;; #183: retain useful installer errors, redact only the credential.
                   (let [error (:error (first (pyx/load-failures)))]
@@ -4060,19 +4074,23 @@ vis.register_extension(vis.Extension(
                           (expect (= 0 (.waitFor p)) output)))
                       (when uv?
                         (expect (= {:loaded 0 :failed 1 :changed? true}
-                                   (pyx/reload-python-extensions!
-                                     {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
+                                   (select-keys (pyx/reload-python-extensions!
+                                                  {:dirs [(str (io/file ext-dir
+                                                                        ".vis/extensions"))]})
+                                                [:loaded :failed :changed?])))
                         (expect (zero?
                                   (python-runtime/uv-command!
                                     ["sync" "--project" (str (io/file ext-dir "einmal")) "--locked"
                                      "--python"
                                      (com.blockether.vispython.Interpreter/pythonExecutable)]))))
                       (expect (= {:loaded 1 :failed 0 :changed? true}
-                                 (with-redefs [python-runtime/ensure-project!
-                                               (fn [& _]
-                                                 (throw (ex-info "Loader must not sync" {})))]
-                                   (pyx/reload-python-extensions!
-                                     {:dirs [(str (io/file ext-dir ".vis/extensions"))]}))))
+                                 (select-keys
+                                   (with-redefs [python-runtime/ensure-project!
+                                                 (fn [& _]
+                                                   (throw (ex-info "Loader must not sync" {})))]
+                                     (pyx/reload-python-extensions!
+                                       {:dirs [(str (io/file ext-dir ".vis/extensions"))]}))
+                                   [:loaded :failed :changed?])))
                       (when-not local?
                         (expect (some #{"/simple/vis-einmal-dependency-fixture/"} @requests))
                         (expect (some #{(str "/files/" wheel-name)} @requests)))
@@ -4130,8 +4148,10 @@ vis.register_extension(vis.Extension(
                                 :append
                                 true)
                               (expect (= {:loaded 1 :failed 1 :changed? true}
-                                         (pyx/reload-python-extensions!
-                                           {:dirs [(str (io/file ext-dir ".vis/extensions"))]})))
+                                         (select-keys (pyx/reload-python-extensions!
+                                                        {:dirs [(str (io/file ext-dir
+                                                                              ".vis/extensions"))]})
+                                                      [:loaded :failed :changed?])))
                               (expect (= lock-before (slurp lock-file)))
                               (expect (identical? ext (registered "einmal-declared")))
                               (expect (= 42
@@ -4161,7 +4181,8 @@ vis.register_extension(vis.Extension(
       (fn [result _]
         ;; the package dir contributes exactly ONE extension; the
         ;; modules under mypkg/ and the test file are NOT loaded
-        (expect (= {:loaded 1 :failed 0 :changed? true} result))
+        (expect (= {:loaded 1 :failed 0 :changed? true}
+                   (select-keys result [:loaded :failed :changed?])))
         (let [ext (registered "myext")]
           (expect (some? ext))
           (let [add (symbol-fn ext 'mx_add)]

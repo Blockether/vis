@@ -81,7 +81,8 @@
            "vis.register_extension(vis.Extension(name='editable-sdk', alias='sdk', description='Editable SDK fixture', "
            "symbols=[vis.Symbol(sdk_count, activity=vis.Activity(label='Count calls', show_start=False))]))\n")}
         (fn [result {:keys [ext-dir store]}]
-          (expect (= {:loaded 1 :failed 0 :changed? true} result)
+          (expect (= {:loaded 1 :failed 0 :changed? true}
+                     (select-keys result [:loaded :failed :changed?]))
                   (pr-str (extensions/load-failures)))
           (expect (empty? (extensions/load-failures)))
           (when-let [ext (#'fixtures/registered "editable-sdk")]
@@ -101,7 +102,8 @@
                      (expect (= "2\n" (:stdout answer))))
                    (finally (env/dispose-python-context! ctx)))))
           (expect (= {:loaded 1 :failed 0 :changed? true}
-                     (extensions/reload-python-extensions! {:dirs [(str ext-dir)]})))
+                     (select-keys (extensions/reload-python-extensions! {:dirs [(str ext-dir)]})
+                                  [:loaded :failed :changed?])))
           (when-let [ext (#'fixtures/registered "editable-sdk")]
             (expect (= 3 (:result ((#'fixtures/symbol-fn ext 'sdk_count))))))))))))
 
@@ -173,7 +175,8 @@
                 (expect (some #(str/ends-with? (.getName ^java.io.File %) ".pth")
                               (.listFiles ^java.io.File (prepared))))
                 (expect (not (.exists (io/file packages "vis_editable_fixture"))))
-                (expect (= {:loaded 1 :failed 0 :changed? true} (reload! false)))
+                (expect (= {:loaded 1 :failed 0 :changed? true}
+                           (select-keys (reload! false) [:loaded :failed :changed?])))
                 (let [first-context (make-context)
                       id (java.util.UUID/randomUUID)
                       original (probe first-context false "Original help.")
@@ -197,7 +200,8 @@
                                 python-exec/policy-reload-epoch (atom
                                                                   @python-exec/policy-reload-epoch)]
 
-                    (expect (= {:loaded 1 :failed 0 :changed? true} (reload! false)))
+                    (expect (= {:loaded 1 :failed 0 :changed? true}
+                               (select-keys (reload! false) [:loaded :failed :changed?])))
                     ((get @@#'extension/reload-hooks
                           :com.blockether.vis.internal.loop.environment/security-policy-reload))
                     (expect (not (worker/worker-live? first-context)))
@@ -225,7 +229,8 @@
                   (expect (str/includes? (prompt {}) "tools and docs are stale")))
                 ;; Explicit host preparation does not depend on the assistant's shell toggle.
                 (with-redefs [toggles/enabled? (constantly false)]
-                  (expect (= {:loaded 1 :failed 0 :changed? true} (reload! true))))
+                  (expect (= {:loaded 1 :failed 0 :changed? true}
+                             (select-keys (reload! true) [:loaded :failed :changed?]))))
                 (expect (empty? (extensions/load-failures)))
                 (expect (nil? ((:ext/prompt-fn (#'fixtures/registered "python-extensions")) {})))
                 (let [fresh (probe (make-context) true "Retried help.")]
