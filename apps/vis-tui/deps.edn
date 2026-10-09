@@ -12,7 +12,8 @@
            :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}
                                org.jcodec/jcodec {:mvn/version "0.2.5"}}
                   :extra-paths ["test"]
-                  :main-opts ["-m" "lazytest.main" "test"]}}
+                  :main-opts ["-m" "lazytest.main" "--hook"
+                              "com.blockether.vis.tui.test-environment/no-live-gateway" "test"]}}
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis-contract {:local/root "../../packages/vis-contract"}
         com.blockether/vis-python-presentation {:local/root "../../packages/vis-python-presentation"}
