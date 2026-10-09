@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.37] - 2026-10-09
+
+### Added
+- `bin/install-vis-agent` installs an exact release with `--version`, and `--sha256` pins the
+  hash of the `vis-agent` command. Installs and updates check every download against the
+  `SHA256SUMS` of its release (#332).
+- `vis-agent --json-schema` validates the output of a one-shot run against a JSON Schema (#344).
+- `vis-agent providers status` accepts `--json` and exits with an authentication status (#342).
+- `vis-agent python uv sync` accepts `--check` and `--dry-run` (#340).
+- A goal objective can have up to 44000 characters.
+
+### Changed
+- The Add actions of the TUI Settings are buttons in their section headers (#335, #338).
+- The TUI session settings show one thinking control (#334).
+- Foundation extensions are not in the settings list (#337).
+- The TUI shows fast mode only in Codex sessions (#333).
+- The TUI shows session status labels in uppercase (#331).
+- The project uses vis-lang-python 1.10.0.
+
+### Fixed
+- Dialogs use the screen background of the theme (#336, #341).
+- A focused empty or loading Settings section shows its state below its header.
+- Selected settings values stay legible (#339).
+- The TUI shows delivered queued messages as user messages (#330).
+- A continued one-shot session keeps its `--toggles` (#345).
+- Clients can sign in to managed providers that use `auth_fn` (#328).
+- Presentation sections are inset under their row (#329).
+- Links open on the Windows host under WSL (#327).
+- Vis stays usable when extension package preparation fails, and extension sync keeps its
+  ownership records.
+- Sandbox draft policy comes from the project settings.
+- The picker shows a late search answer, and Settings keep selected marks on the bar.
+
 ## [v0.2.36] - 2026-10-08
 
 ### Added
