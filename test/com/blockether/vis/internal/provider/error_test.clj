@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.provider.error-test
   "Provider-error presentation and canonical typed error content."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.content :as content-contract]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.provider.error :as perr]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -718,6 +720,21 @@
   (it "names why the provider bowed out in the attempts summary"
       (expect (str/includes? (perr/provider-error-attempts-summary bedrock-timeout-throwable)
                              "claude-opus-4-8"))))
+
+;; Issue #351: svar's attempts hold keywords, so the error block failed the content
+;; contract. A one-shot run then printed "Final answer must be canonical content or
+;; Markdown prose" and lost the provider failure.
+(defdescribe
+  provider-error-content-contract-test
+  (it "keeps keyword attempts as canonical wire data"
+      (let [blocks (perr/provider-error-content bedrock-timeout-throwable)]
+        (expect (every? content-contract/block-valid? blocks))
+        (expect (= [{"provider" "bedrock" "model" "claude-opus-4-8" "reason" "transient-error"}]
+                   (mapv #(select-keys % ["provider" "model" "reason"])
+                         (get (first blocks) "attempts"))))))
+  (it "passes as a final answer, so the provider failure reaches the caller"
+      (let [blocks (perr/provider-error-content bedrock-timeout-throwable)]
+        (expect (= blocks (content/answer-content blocks))))))
 
 (defdescribe resource-mismatch-classification-test
              "A conversation pinned to another backend resource is TERMINAL, not an outage."

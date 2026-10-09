@@ -18,6 +18,7 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.util :as util]))
 
@@ -1281,8 +1282,10 @@
        provider-id
        (assoc "provider" (name provider-id))
 
+       ;; Svar's attempts hold keywords. The wire form keeps the block canonical, so a
+       ;; one-shot run does not replace the provider failure with a content error (#351).
        attempts
-       (assoc "attempts" attempts)
+       (assoc "attempts" (wire/->wire attempts))
 
        body
        (assoc "body" body))]))
