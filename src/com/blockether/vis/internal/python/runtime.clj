@@ -711,6 +711,50 @@
                     "Shared packages differ from the lock; run vis-agent python --shared uv sync.")
                   1))))
 
+(defn- editable-installs
+  "Map each editable distribution in shared `packages` to its canonical source directory.
+   uv records the source in PEP 610 `direct_url.json`; other installs are skipped."
+  [packages]
+  (into {}
+        (keep (fn [^File info]
+                (let [record (io/file info "direct_url.json")]
+                  (when (and (str/ends-with? (.getName info) ".dist-info") (.isFile record))
+                    (try (let [{:strs [url dir_info]} (json/read-json (slurp record))]
+                           (when (and (map? dir_info)
+                                      (true? (get dir_info "editable"))
+                                      (str/starts-with? (str url) "file:"))
+                             [(str/lower-case (first (str/split (.getName info) #"-" 2)))
+                              (.getCanonicalPath (File. (java.net.URI. ^String url)))]))
+                         (catch Exception _ nil))))))
+        (.listFiles (io/file packages))))
+
+(defn- warn-repointed-editables!
+  "Name each shared editable package that this sync moved from an earlier directory (#353).
+   Shared packages serve every session, so the earlier checkout now imports this code."
+  [before after]
+  (doseq [[package previous]
+          (sort before)
+
+          :let [current
+                (get after package)]
+          :when (and current (not= previous current))]
+
+    (.println config/original-stderr
+              (str "Warning: shared editable package "
+                   package
+                   " now uses "
+                   current
+                   "; it used "
+                   previous
+                   " before.\n"
+                   "Vis sessions of "
+                   previous
+                   " now import the code of "
+                   current
+                   ".\n"
+                   "To restore it, run: vis-agent python --shared uv sync --project "
+                   previous))))
+
 (defn- shared-uv-sync!
   [args]
   (when-not (= "sync" (first args))
@@ -785,6 +829,7 @@
                  exit
                  (let [packages (runtime/packages-dir)
                        modes (set (map first mode))
+                       before (when (empty? modes) (editable-installs packages))
                        install (into [uv "pip" "install" "--target" packages "--requirements"
                                       (str lock-file) "--no-deps" "--directory"
                                       (.getCanonicalPath project)]
@@ -794,6 +839,7 @@
                               (shared-sync-process! cwd install false))]
 
                    (when (and (zero? exit) (empty? modes))
+                     (warn-repointed-editables! before (editable-installs packages))
                      (.println
                        config/original-stderr
                        (str "Shared packages: " packages "\nRun /reload to refresh Vis workers.")))

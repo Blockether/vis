@@ -490,6 +490,54 @@
                     (expect (= packages (second (drop-while #(not= "--target" %) install))))
                     (expect (not-any? #{"--exact" "sync" "--group" "--locked"} install))))))))))))
 
+(defdescribe
+  shared-sync-warns-when-editable-moves-test
+  (it
+    "names the previous directory when shared sync re-points an editable project"
+    ;; #353: a second checkout must not silently replace the editable install of the first.
+    (python-runtime/ensure-library!)
+    (with-uv-fixture
+      (str
+        "case \"$1\" in\n"
+        "  workspace) dirname \"$0\";;\n"
+        "  pip) printf '{\"url\": \"file://%s\", \"dir_info\": {\"editable\": true}}' "
+        "\"$(dirname \"$0\")\" > \"$(dirname \"$0\")/shared/einmal-0.1.0.dist-info/direct_url.json\";;\n"
+        "esac\n")
+      (fn [dir uv]
+        (let [packages
+              (io/file dir "shared")
+
+              previous
+              (doto (io/file dir "original checkout") .mkdirs)
+
+              editable
+              (fn [package path]
+                (let [info (doto (io/file packages (str package "-0.1.0.dist-info")) .mkdirs)]
+                  (spit (io/file info "direct_url.json")
+                        (str "{\"url\": \""
+                             (.toURI (io/file path))
+                             "\", \"dir_info\": {\"editable\": true}}"))))
+
+              stderr
+              (java.io.ByteArrayOutputStream.)]
+
+          (editable "einmal" previous)
+          (editable "other" previous)
+          (with-redefs-fn {#'python-runtime/bundled-uv! (constantly uv)
+                           #'runtime/packages-dir (constantly (str packages))
+                           #'config/original-stderr (java.io.PrintStream. stderr true "UTF-8")}
+            (fn []
+              (expect (= 0 (python-runtime/uv-command! ["sync"] {:shared? true})))
+              (let [output (.toString stderr "UTF-8")]
+                (expect (str/includes? output "einmal") output)
+                (expect (str/includes? output (.getCanonicalPath previous)) output)
+                (expect (str/includes? output (.getCanonicalPath dir)) output)
+                (expect (str/includes? output
+                                       (str "vis-agent python --shared uv sync --project "
+                                            (.getCanonicalPath previous)))
+                        output)
+                (expect (not (str/includes? output "other")) output)))))))))
+
 (defdescribe shared-sync-refuses-empty-workspace-path-test
              (it "shared sync refuses empty workspace path"
                  (python-runtime/ensure-library!)

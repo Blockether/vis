@@ -303,6 +303,15 @@ Source-only projects without dependencies beyond Vis also use them. Other projec
 **Shared sync keeps unrelated packages**, including packages that you installed from groups that you
 no longer select. All shared consumers use the same installed versions.
 
+**Shared packages hold one editable install for each project name.** A shared sync of a second
+checkout, such as a test copy, replaces it. Vis sessions of the first checkout then import the code
+of the second checkout. Shared sync prints a warning that names the previous directory. To restore
+the first checkout, sync it again:
+
+```bash
+vis-agent python --shared uv sync --project ./einmal
+```
+
 Use `--group`, `--extra`, `--no-dev` and related selection flags to choose dependencies.
 `--frozen` skips lock updates, and `--no-install-project` installs dependencies without
 the project itself. Configure private indices through uv project configuration,
