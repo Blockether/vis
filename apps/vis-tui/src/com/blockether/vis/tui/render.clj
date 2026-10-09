@@ -2652,7 +2652,7 @@
                     ;; ── Delivered message — a queued message the running turn received at
                     ;; this step (`→ Send now`). It paints like a normal user message: the
                     ;; "Queued" header, the bold "You" label, then the words on the user
-                    ;; bubble paper with the bubble's 2-column padding.
+                    ;; bubble paper with the bubble's 2-column padding and its left rail.
                     (str/starts-with? line user-input-hdr-marker)
                     (let [raw (subs line 1)
                           [label meta-text] (str/split raw #" · " 2)]
@@ -2677,6 +2677,11 @@
                     (let [raw (subs line 1)]
                       (p/set-bg! g t/user-bubble-bg)
                       (p/fill-rect! g fbx y fill-iw 1)
+                      ;; Issue #354: the user bubble's left rail, on every row but the
+                      ;; top and bottom padding, like `draw-chat-bubble!` paints it.
+                      (when-not (:user-input-pad? meta)
+                        (p/set-colors! g t/user-role-fg t/user-bubble-bg)
+                        (p/put-str! g x y "│"))
                       (p/set-colors! g t/user-bubble-fg t/user-bubble-bg)
                       (p/paint-styled-line! g
                                             (+ (long x) 2)
@@ -8197,7 +8202,7 @@
                    (line-entry
                      (str user-input-hdr-marker "Queued · sent now · iter " iteration-number))
                    (line-entry (str user-input-label-marker "You"))
-                   (line-entry (str user-input-marker ""))]
+                   {:line (str user-input-marker "") :meta {:user-input-pad? true}}]
                   (into (mapcat (fn [i text]
                                   (cond->> (mapv #(line-entry (str user-input-marker %))
                                                  (wrap-text text (max 1 (long fill-w))))
@@ -8205,7 +8210,7 @@
                                     (into [(line-entry (str user-input-marker ""))])))
                                 (range)
                                 texts))
-                  (conj (line-entry (str user-input-marker "")))
+                  (conj {:line (str user-input-marker "") :meta {:user-input-pad? true}})
                   (conj (line-entry ""))))))
 
         header-lines

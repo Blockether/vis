@@ -6,6 +6,7 @@
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.progress :as progress]
             [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
@@ -12048,3 +12049,103 @@ print(paths)"
     (it "invalidates the live render cache when the messages land"
         (let [fingerprint @#'render/iteration-fingerprint]
           (expect (not= (fingerprint entry) (fingerprint (dissoc entry :user-input))))))))
+
+(defdescribe
+  queued-message-rail-test
+  ;; Issue #354: a message sent from the queue had no left rail, so it did not look like a
+  ;; user message. Every delivery path paints the rail of a normal user bubble: `│` in the
+  ;; user role ink on the user paper at the bubble's left column, on each row from the first
+  ;; to the last word row, and not on the top and bottom padding rows.
+  (let [rgb
+        (fn [^com.googlecode.lanterna.TextColor$RGB c]
+          [(.getRed c) (.getGreen c) (.getBlue c)])
+
+        bx
+        2
+
+        grid-of
+        (fn [message]
+          (first
+            (:frames
+              (cap/capture!
+                {:cols 60
+                 :rows 24
+                 :paint!
+                 (fn [{:keys [screen]}]
+                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                     (render/draw-chat-bubble! (.newTextGraphics s) message 0 bx 56 {:viewport-h 0})
+                     (.refresh s)))}))))
+
+        rail-rows
+        (fn [grid]
+          (into []
+                (keep-indexed (fn [r row]
+                                (when (= "│" (:ch (nth row bx))) r)))
+                grid))
+
+        rail-ink
+        (fn [grid]
+          (into #{}
+                (comp (map #(nth % bx)) (filter #(= "│" (:ch %))) (map #(select-keys % [:fg :bg])))
+                grid))
+
+        word-span
+        (fn [grid words]
+          (let [rows (into []
+                           (keep-indexed (fn [r row]
+                                           (let [text (apply str (map :ch row))]
+                                             (when (some #(str/includes? text %) words) r))))
+                           grid)]
+            (vec (range (first rows) (inc (long (peek rows)))))))
+
+        user-ink
+        #{{:fg (rgb t/user-role-fg) :bg (rgb t/user-bubble-bg)}}
+
+        delivered
+        (fn [requests]
+          (let [entries (format-iteration-entry-entries (iteration/canonicalize
+                                                          {:iteration 2
+                                                           :forms []
+                                                           :user-input (mapv (fn [r]
+                                                                               {:request r})
+                                                                             requests)})
+                                                        52
+                                                        2)]
+            {:role :assistant
+             :text ""
+             :prewrapped-lines (mapv :line entries)
+             :line-meta (mapv :meta entries)}))
+
+        normal
+        (grid-of (chat/user-message "ship it"))]
+
+    (it "paints the rail of a normal user bubble on its word rows"
+        (expect (= (word-span normal ["ship it"]) (rail-rows normal)))
+        (expect (= user-ink (rail-ink normal))))
+    (it "paints the same rail for a message that starts the next turn from the queue"
+        (let [drain-fn
+              (-> #'state/event-registry
+                  deref
+                  deref
+                  (get :drain-pending)
+                  :fn)
+
+              {:keys [db]}
+              (drain-fn {:active-tab-id :main
+                         :session {:id "s1"}
+                         :pending-sends [{:text "ship it" :turn-id "t2"}]}
+                        [:drain-pending :main])
+
+              grid
+              (grid-of (first (filter #(= :user (:role %)) (:messages db))))]
+
+          (expect (= (word-span grid ["ship it"]) (rail-rows grid)))
+          (expect (= user-ink (rail-ink grid)))))
+    (it "paints the rail for a message delivered with `Send it now`"
+        (let [grid (grid-of (delivered ["ship it"]))]
+          (expect (= (word-span grid ["ship it"]) (rail-rows grid)))
+          (expect (= user-ink (rail-ink grid)))))
+    (it "paints one rail through every message delivered with `Send all now`"
+        (let [grid (grid-of (delivered ["ship it" "and lint"]))]
+          (expect (= (word-span grid ["ship it" "and lint"]) (rail-rows grid)))
+          (expect (= user-ink (rail-ink grid)))))))
