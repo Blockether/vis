@@ -85,7 +85,8 @@ After each block, Vis saves a snapshot of the session:
 - Each variable that Python can pickle. One value can use up to 1 MiB, and all
   values together up to 4 MiB.
 - Each `bytes` or `str` value that is larger than these limits, up to 32 MiB.
-  Vis keeps these values in separate files beside the snapshot.
+  All these values together can use up to 128 MiB. Vis keeps them in separate
+  files beside the snapshot, and deletes the files when you delete the session.
 
 The next sandbox restores this snapshot before it runs your next block. The
 output of that block starts with a `[Sandbox restarted]` notice. The notice names

@@ -2308,6 +2308,19 @@
   [session-id]
   (when session-id (swap! last-session-defs dissoc session-id) nil))
 
+(defn delete-session-defs!
+  "Delete `session-id`'s snapshot file and spill files when the session is deleted.
+   Nothing restores a deleted session, and its spill files can hold up to
+   [[spill-max-bytes]], so they must not stay on disk (#347)."
+  [session-id]
+  (when session-id
+    (let [spill (io/file (paths/sandbox-spill-dir (str session-id)))]
+      (forget-session-defs! session-id)
+      (io/delete-file (io/file (paths/sandbox-defs-file (str session-id))) true)
+      (doseq [^java.io.File f (reverse (file-seq spill))]
+        (io/delete-file f true))))
+  nil)
+
 (defn- restore-spilled!
   "Load `session-id`'s spill files back for the names in `lost`, answering the
    names that came back."

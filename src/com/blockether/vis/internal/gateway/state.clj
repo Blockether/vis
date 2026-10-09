@@ -48,6 +48,7 @@
             [com.blockether.vis.internal.provider.error :as provider-error]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.util :as util]
@@ -7371,16 +7372,18 @@
 
 (defn- teardown-session-async!
   "Stop `sid`'s background resources and dispose its live environment off the
-   calling thread. Returns a Future callers/tests can await; the session is
-   already gone from the DB and the registry by the time this is submitted, so
-   nothing a client can observe waits on it. Best-effort: a failed teardown is
-   swallowed rather than resurrecting the deleted session."
+   calling thread, then delete its sandbox snapshot. Returns a Future callers/tests
+   can await; the session is already gone from the DB and the registry by the time
+   this is submitted, so nothing a client can observe waits on it. Best-effort: a
+   failed teardown is swallowed rather than resurrecting the deleted session."
   [sid]
   (.submit ^java.util.concurrent.ExecutorService @teardown-executor
            ^Callable
            (fn []
              (try (resources/stop-all! sid) (catch Throwable _ nil))
              (try (lp/close! sid) (catch Throwable _ nil))
+             ;; After `lp/close!`: no block can write a new snapshot of a deleted session.
+             (try (python-env/delete-session-defs! sid) (catch Throwable _ nil))
              nil)))
 
 (defn close-session!

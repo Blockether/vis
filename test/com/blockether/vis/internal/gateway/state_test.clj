@@ -18,6 +18,7 @@
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.loop.transcript :as transcript]
@@ -6367,7 +6368,28 @@
                    (.get ^java.util.concurrent.Future fut))
                  (expect (true? (deref stopped 5000 false)))
                  (expect (true? (deref closed 5000 false))))))
-           (finally (deliver release true) (swap! registry dissoc sid))))))
+           (finally (deliver release true) (swap! registry dissoc sid)))))
+  ;; #347: spill files of a deleted session can hold 128 MiB, so the delete removes them.
+  (it "deletes the sandbox snapshot after the live runtime is closed"
+      (let [sid
+            (str "delete-defs-" (java.util.UUID/randomUUID))
+
+            closed
+            (promise)
+
+            deleted
+            (promise)]
+
+        (with-redefs-fn
+          {(requiring-resolve 'com.blockether.vis.internal.gateway.resources/stop-all!) (fn [_sid]
+                                                                                          nil)
+           #'lp/close! (fn [_sid]
+                         (deliver closed true))
+           #'python-env/delete-session-defs! (fn [id]
+                                               (deliver deleted [id (realized? closed)]))}
+          #(.get ^java.util.concurrent.Future (#'state/teardown-session-async! sid)))
+        ;; After `lp/close!`, no block can write a new snapshot of the deleted session.
+        (expect (= [sid true] (deref deleted 5000 nil))))))
 
 (defdescribe
   failed-session-deletion-test

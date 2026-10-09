@@ -426,10 +426,11 @@
             (expect (nil? (:error (ep/run-python-block ctx "del blob"))))
             (ep/persist-session-defs! ctx sid)
             (expect (= 2 (spilled))))
-          (finally (ep/forget-session-defs! sid)
-                   (io/delete-file file true)
-                   (doseq [f (reverse (file-seq spill))]
-                     (io/delete-file f true))))))))
+          ;; A deleted session leaves no snapshot or spill file behind.
+          (ep/delete-session-defs! sid)
+          (expect (not (.exists file)))
+          (expect (not (.exists spill)))
+          (finally (ep/delete-session-defs! sid)))))))
 
 ;; #317: an extension result is a record whose class exists for that result alone.
 ;; It comes back after a restart, with the runtime types inside it. A small result
