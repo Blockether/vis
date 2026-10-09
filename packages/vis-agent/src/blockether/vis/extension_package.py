@@ -1171,6 +1171,48 @@ def _sync_owned(destination, record):
     )
 
 
+def _relocated(destination, record):
+    """Return the record of an unchanged GitHub snapshot that moved with its project.
+
+    A copied project keeps the relative `current` link and the snapshot receipt, but the
+    record still names the old absolute path. Anything else stays unowned (#352).
+    """
+    if (
+        record is None
+        or not destination.is_symlink()
+        or _sync_owned(destination, record)
+    ):
+        return None
+    result, recorded, link = (
+        record["result"],
+        Path(record["target"]),
+        os.readlink(destination),
+    )
+    if (
+        result.get("mode") != "github"
+        or link != recorded.name
+        or recorded.parent.name != destination.parent.name
+    ):
+        return None
+    try:
+        snapshot, receipt = _managed(destination.parent.parent, destination.parent.name)
+    except (OSError, ValueError):
+        return None
+    if (
+        receipt["revision"] != result.get("revision")
+        or receipt["version"] != result.get("version")
+        or receipt.get("subdirectory") != result.get("subdirectory")
+        or receipt.get("repository_url", "").removeprefix("https://github.com/")
+        != result.get("repository")
+    ):
+        return None
+    return {
+        **record,
+        "target": str(destination.resolve()),
+        "result": {**result, "path": str(snapshot)},
+    }
+
+
 def _restore_saved_link(directory, name, expected, target):
     destination = _destination(directory, name)
     lock = directory / ("." + name + ".install-lock")
@@ -1309,7 +1351,8 @@ def _sync_one(name, spec, directory, current, refresh, vis_version):
     tracking = _tracks_latest(spec)
     if exists and not _sync_owned(destination, current):
         raise ValueError(
-            "Existing extension is not owned by sync or was changed externally; no files replaced"
+            "Existing extension is not owned by sync or was changed externally; no files replaced. "
+            f"Keep any local edits, remove {destination.parent} and run sync again"
         )
     if exists and current["spec"] == spec and not refresh and not tracking:
         metadata = inspect_source(
@@ -1403,6 +1446,9 @@ def sync(
             spec, current = specs.get(name), records.get(name)
             try:
                 destination = _destination(directory, name)
+                relocated = _relocated(destination, current)
+                if relocated is not None:
+                    current = relocated
                 if spec is None:
                     result = {"name": name, "status": "orphaned"}
                     if prune:

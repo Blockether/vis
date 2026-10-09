@@ -5,6 +5,7 @@ import fcntl
 import io
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -1238,6 +1239,50 @@ def test_sync_does_not_claim_manual_or_replaced_links(tmp_path):
     assert package.sync({}, target, trust=True, prune=True)[0]["status"] == "failed"
     assert (target / "vis-greeter/current").resolve() == alternate
     assert original.exists()
+
+
+# Issue #352: a copied or moved project reuses its unchanged synced packages.
+def test_sync_reuses_unchanged_packages_in_a_copied_project(releases, tmp_path):
+    _, target, commands = releases
+    spec = {
+        "source": REPOSITORY,
+        "subdirectory": "plugins/greeting",
+        "version": "1.0.0",
+    }
+    package.sync({"vis-greeter": spec}, target, trust=True)
+    copy = tmp_path / "copy" / "extensions"
+    shutil.copytree(target, copy, symlinks=True)
+    fetched = list(commands)
+    result = package.sync({"vis-greeter": spec}, copy, trust=True)[0]
+    assert result["status"] == "cached"
+    assert result["path"] == str(copy / "vis-greeter/1.0.0")
+    assert commands == fetched
+    record = json.loads((copy / ".sync.json").read_text())["vis-greeter"]
+    assert record["target"] == str(copy / "vis-greeter/1.0.0")
+    assert record["result"]["path"] == str(copy / "vis-greeter/1.0.0")
+    assert package.sync({}, copy, trust=True, prune=True)[0]["status"] == "removed"
+    assert (target / "vis-greeter/current").is_symlink()
+
+
+# Issue #352: a refusal names the directory to remove before the next sync.
+def test_sync_refusal_names_the_recovery_step(releases, tmp_path):
+    _, target, _ = releases
+    spec = {
+        "source": REPOSITORY,
+        "subdirectory": "plugins/greeting",
+        "version": "1.0.0",
+    }
+    package.sync({"vis-greeter": spec}, target, trust=True)
+    copy = tmp_path / "copy" / "extensions"
+    shutil.copytree(target, copy, symlinks=True)
+    receipt = copy / "vis-greeter/1.0.0/receipt.json"
+    receipt.write_text(
+        json.dumps({**json.loads(receipt.read_text()), "revision": "0" * 40})
+    )
+    result = package.sync({"vis-greeter": spec}, copy, trust=True)[0]
+    assert result["status"] == "failed"
+    assert str(copy / "vis-greeter") in result["error"]
+    assert "remove" in result["error"] and "sync again" in result["error"]
 
 
 def test_sync_changed_local_and_remote_sources_preserve_source(releases, tmp_path):

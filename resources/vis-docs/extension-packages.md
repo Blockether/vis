@@ -175,6 +175,10 @@ them and resolve the conflict before you sync. Do not edit the private `.sync.js
 run a manual update or rollback on sync-owned packages. Change their declarations instead. A dry run
 writes nothing and does not fetch sources, install dependencies or run extension code.
 
+When you copy or move a project, sync reuses the unchanged GitHub versions in its `.vis/extensions`
+directory. If sync refuses a package, the error names the package directory. Keep any local edits
+from that directory, remove it and run sync again.
+
 ## Install a package
 
 **Prerequisites:** an installed Vis, and source and dependencies that you reviewed. Vis supplies
