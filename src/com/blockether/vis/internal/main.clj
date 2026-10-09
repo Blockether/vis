@@ -1735,6 +1735,11 @@
            (finally (doseq [[id v] previous]
                       (toggles/set-value! id v)))))))
 
+(defn- exit-process!
+  "End the process with `code`. Tests redefine this var to observe the exit."
+  [code]
+  (System/exit (int code)))
+
 (defn- result-content
   "Return one CLI result's canonical typed content blocks."
   [result]
@@ -1765,15 +1770,35 @@
         (doseq [line schema-errors]
           (commandline/stderr! (str "  " line))))))
 
+(defn- structured-failure-lines
+  "The reason that a `--json-schema` run has no structured answer: the run
+   error, else the messages of its error blocks, else its answer text."
+  [result]
+  (let [error-messages
+        (->> (result-content result)
+             (keep #(when (= "error" (get % "type")) (get % "message")))
+             (remove str/blank?))
+
+        text
+        (content/text-projection (result-content result))]
+
+    (cond (:error result) [(error/format-error (:error result))]
+          (seq error-messages) (mapv error/format-error error-messages)
+          (not (str/blank? text)) [text]
+          :else [(str "ERROR: the run ended with status "
+                      (name (or (:status result) :unknown))
+                      " and no answer for --json-schema.")])))
+
 (defn- print-structured-result!
   "Print a `--json-schema` run without `--json`: stdout gets only the validated
    JSON document. Errors and validation details go to stderr."
   [result]
-  (if (:error result)
-    (do (commandline/stderr! (error/format-error (:error result)))
+  (if (and (contains? result :structured) (not (:error result)))
+    (commandline/stdout! (json/write-json-str (:structured result)))
+    (do (doseq [line (structured-failure-lines result)]
+          (commandline/stderr! line))
         (doseq [line (:schema-errors result)]
-          (commandline/stderr! (str "  " line))))
-    (commandline/stdout! (json/write-json-str (:structured result)))))
+          (commandline/stderr! (str "  " line))))))
 
 (defn- cli-run!
   "Root one-shot run handler. `_parsed` is unused - we re-parse the residual
@@ -1795,12 +1820,12 @@
     ;; escape hatch for prompts that really do start with dashes.
     (when-let [errors (seq (:flag-errors opts))]
       (doseq [e errors]
-        (commandline/stdout! (str "vis-agent: " e)))
-      (commandline/stdout! "  See the flag list:            vis-agent --help")
+        (commandline/stderr! (str "vis-agent: " e)))
+      (commandline/stderr! "  See the flag list:            vis-agent --help")
       (when (some #(str/starts-with? % "unknown flag") errors)
-        (commandline/stdout! "  Or make it the prompt text:   vis-agent -- <text>"))
-      (System/exit 2))
-    (when (or help? (str/blank? prompt)) (print-run-usage!) (System/exit 0))
+        (commandline/stderr! "  Or make it the prompt text:   vis-agent -- <text>"))
+      (exit-process! 2))
+    (when (or help? (str/blank? prompt)) (print-run-usage!) (exit-process! 0))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
     ;; Otherwise `vis-agent ... > out.txt` leaves bold/italic ANSI markers in
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
@@ -1808,7 +1833,7 @@
     ;; output path and are unaffected.
     (let [;; Check the schema before any provider spend: a broken schema is a usage error.
           schema-arg (when json-schema (read-json-schema-arg json-schema))
-          _ (when (:error schema-arg) (print-json-schema-error! json? schema-arg) (System/exit 2))
+          _ (when (:error schema-arg) (print-json-schema-error! json? schema-arg) (exit-process! 2))
           structured-output? (or json? code? full-trace-stream? full-trace-json-stream?)
           effective-raw? (or raw? (and (not structured-output?) (not (trace-terminal?))))
           agent-def (agent {:name (or agent-name "cli")})
@@ -1838,7 +1863,10 @@
                          (if (= db ":memory") :memory {:backend :sqlite :path db}))))
           result (call-with-toggle-overrides (parse-toggle-overrides toggles)
                                              #(run! agent-def prompt run-opts))
-          exit-code (cli-result-exit-code result)
+          exit-code (cond-> (cli-result-exit-code result)
+                      ;; A `--json-schema` run without a structured answer failed.
+                      (and json-schema (not (contains? result :structured)))
+                      (max 1))
           trace-result (select-keys result
                                     [:session-id :content :trace :iteration-count :duration-ms
                                      :tokens :cost :confidence :status :error :type :eval
@@ -1865,12 +1893,12 @@
             (let [blocks (->> (result-content result)
                               (keep #(when (= "code" (get % "type")) (get % "text")))
                               vec)]
-              (cond (:error result) (commandline/stdout! (error/format-error (:error result)))
+              (cond (:error result) (commandline/stderr! (error/format-error (:error result)))
                     (empty? blocks)
-                    (do (commandline/stdout!
+                    (do (commandline/stderr!
                           "Error: --code expects at least one code content block; got prose only.")
                         (shutdown-agents)
-                        (System/exit 1))
+                        (exit-process! 1))
                     :else (commandline/stdout! (str/join "\n\n" blocks))))
             json-schema (print-structured-result! result)
             (:error result) (commandline/stdout! (error/format-error (:error result)))
@@ -1878,7 +1906,7 @@
                       (when (and (:duration-ms result) (not effective-raw?))
                         (commandline/stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents)
-      (when (pos? (long exit-code)) (System/exit exit-code)))))
+      (when (pos? (long exit-code)) (exit-process! exit-code)))))
 
 ;;; ── `vis-agent doctor` ────────────────────────────────────────────────────────
 
@@ -2989,10 +3017,10 @@
   ;; mismatch). Print that instead of flattening it into one line.
   (if-let [panel (seq (:vis/panel (ex-data t)))]
     (doseq [line panel]
-      (commandline/stdout! (str line)))
-    (commandline/stdout! (str "vis-agent: " (or (ex-message t) "error"))))
+      (commandline/stderr! (str line)))
+    (commandline/stderr! (str "vis-agent: " (or (ex-message t) "error"))))
   (shutdown-agents)
-  (System/exit 2))
+  (exit-process! 2))
 
 (defn- root-cause
   ^Throwable [^Throwable t]
@@ -3019,11 +3047,11 @@
         same?
         (identical? rc t)]
 
-    (commandline/stdout! (str "vis-agent: fatal error - " (or (ex-message t) (.getName (class t)))))
+    (commandline/stderr! (str "vis-agent: fatal error - " (or (ex-message t) (.getName (class t)))))
     ;; ExceptionInInitializerError etc. carry no message; surface the root cause
     ;; so failures (incl. native-image runtime class-init) are diagnosable.
     (when-not same?
-      (commandline/stdout! (str "  caused by: "
+      (commandline/stderr! (str "  caused by: "
                                 (.getName (class rc))
                                 (when-let [m (ex-message rc)]
                                   (str ": " m)))))
@@ -3031,24 +3059,24 @@
     (when (some-> (System/getenv "VIS_DEBUG")
                   (.equalsIgnoreCase "1"))
       (.printStackTrace t))
-    (commandline/stdout! (str "See " (config/log-path) " for details.")))
+    (commandline/stderr! (str "See " (config/log-path) " for details.")))
   (shutdown-agents)
-  (System/exit 1))
+  (exit-process! 1))
 
 (defn- exit-no-provider!
   "Calm, guided message when no AI provider is configured — never a stacktrace.
    Points at the interactive welcome (the curated, zero-friction path)."
   []
-  (commandline/stdout! "")
-  (commandline/stdout! "  vis-agent needs an AI provider to get started.")
-  (commandline/stdout! "")
-  (commandline/stdout! "  ▸ Run  vis-agent  with no arguments to open the welcome screen and")
-  (commandline/stdout! "    connect one (Sign in with GitHub / OpenAI / Anthropic, paste an")
-  (commandline/stdout! "    API key, or run a local model).")
-  (commandline/stdout! "  ▸ Or hand-write ~/.vis/config.yml.")
-  (commandline/stdout! "")
+  (commandline/stderr! "")
+  (commandline/stderr! "  vis-agent needs an AI provider to get started.")
+  (commandline/stderr! "")
+  (commandline/stderr! "  ▸ Run  vis-agent  with no arguments to open the welcome screen and")
+  (commandline/stderr! "    connect one (Sign in with GitHub / OpenAI / Anthropic, paste an")
+  (commandline/stderr! "    API key, or run a local model).")
+  (commandline/stderr! "  ▸ Or hand-write ~/.vis/config.yml.")
+  (commandline/stderr! "")
   (shutdown-agents)
-  (System/exit 2))
+  (exit-process! 2))
 
 (defn- truthy-value? [v] (contains? #{"1" "true" "yes" "on"} (str/lower-case (str v))))
 

@@ -1226,4 +1226,144 @@
 
           (#'main/print-json-schema-error! false (#'main/read-json-schema-arg "{")))
         (expect (= [] @out))
-        (expect (str/starts-with? (first @err) "vis-agent: --json-schema is not valid JSON")))))
+        (expect (str/starts-with? (first @err) "vis-agent: --json-schema is not valid JSON"))))
+  ;; Issue #351: a failed turn has `:status :error` and error blocks, but no
+  ;; `:error`. Stdout got only `null` and the reason was lost.
+  (it "sends the error blocks of a failed turn to stderr, not null to stdout"
+      (let [out
+            (atom [])
+
+            err
+            (atom [])]
+
+        (with-redefs [commandline/stdout!
+                      #(swap! out conj %)
+
+                      commandline/stderr!
+                      #(swap! err conj %)]
+
+          (#'main/print-structured-result!
+           {:status :error
+            :content [{"id" "block_1"
+                       "type" "error"
+                       "code" "model_not_found"
+                       "message" "Model no-such-model-x is not available."
+                       "retryable" false}]
+            :structured-attempts 1}))
+        (expect (= [] @out))
+        (expect (= ["ERROR: Model no-such-model-x is not available."] @err))))
+  (it "prints a valid JSON null answer on stdout"
+      (let [out (atom [])]
+        (with-redefs [commandline/stdout! #(swap! out conj %)]
+          (#'main/print-structured-result! {:structured nil :content []}))
+        (expect (= ["null"] @out)))))
+
+(defn- run-cli
+  "Run the one-shot CLI on `args`, with `result` as the turn result. Returns the
+   stdout lines, the stderr lines and the exit code (nil for exit 0)."
+  [args result]
+  (let [out
+        (atom [])
+
+        err
+        (atom [])
+
+        exit
+        (atom nil)]
+
+    (with-redefs-fn {#'config/init-cli! (fn []
+                                          nil)
+                     #'config/load-config-raw (fn []
+                                                {})
+                     #'commandline/stdout! #(swap! out conj %)
+                     #'commandline/stderr! #(swap! err conj %)
+                     #'clojure.core/shutdown-agents (fn []
+                                                      nil)
+                     #'main/run! (fn [& _]
+                                   result)
+                     #'main/exit-process! (fn [code]
+                                            (throw (ex-info "exit" {::exit code})))}
+      #(try (#'main/cli-run! {} args)
+            (catch clojure.lang.ExceptionInfo e
+              (if (contains? (ex-data e) ::exit) (reset! exit (::exit (ex-data e))) (throw e)))))
+    {:out @out :err @err :exit @exit}))
+
+(def ^:private answer-schema
+  "{\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}},\"required\":[\"answer\"]}")
+
+(defdescribe
+  one-shot-error-stream-test
+  ;; Issue #355: output-mode conflicts printed the usage error on stdout.
+  (it "writes every output-mode conflict to stderr with exit 2"
+      (doseq [args [["--code" "--json-schema" answer-schema "--" "Say hi."] ["--code" "--json" "hi"]
+                    ["--json" "--full-trace-stream" "hi"] ["--json" "--full-trace-json-stream" "hi"]
+                    ["--code" "--trace" "hi"]
+                    ["--full-trace-stream" "--full-trace-json-stream-raw" "hi"]
+                    ["--modle" "x" "hi"]]]
+        (let [{:keys [out err exit]} (run-cli args {:content []})]
+          (expect (= [] out) (pr-str args))
+          (expect (= 2 exit) (pr-str args))
+          (expect (str/starts-with? (first err) "vis-agent: ") (pr-str args)))))
+  ;; Issue #351: `--json-schema` alone printed `null` and exit 1 for a failed turn.
+  (it "sends a failed --json-schema turn to stderr with exit 1"
+      (let [{:keys [out err exit]}
+            (run-cli ["--json-schema" answer-schema "--model" "no-such-model-x" "--" "hi"]
+                     {:status :error
+                      :content [{"id" "block_1"
+                                 "type" "error"
+                                 "code" "model_not_found"
+                                 "message" "Model no-such-model-x is not available."
+                                 "retryable" false}]})]
+        (expect (= [] out))
+        (expect (= 1 exit))
+        (expect (= ["ERROR: Model no-such-model-x is not available."] err))))
+  (it "fails a --json-schema turn that ends without a structured answer"
+      (let [{:keys [out err exit]}
+            (run-cli ["--json-schema" answer-schema "hi"]
+                     {:status :needs-input
+                      :content [{"id" "block_1" "type" "prose" "markdown" "Which city?"}]})]
+        (expect (= [] out))
+        (expect (= 1 exit))
+        (expect (= ["Which city?"] err))))
+  (it "keeps stdout for the structured answer only"
+      (let [{:keys [out err exit]} (run-cli ["--json-schema" answer-schema "hi"]
+                                            {:structured {"answer" "hi"} :content []})]
+        (expect (= ["{\"answer\":\"hi\"}"] out))
+        (expect (= [] err))
+        (expect (nil? exit))))
+  (it "sends a --code run without code blocks to stderr"
+      (let [{:keys [out err exit]}
+            (run-cli ["--code" "hi"]
+                     {:content [{"id" "block_1" "type" "prose" "markdown" "No code."}]})]
+        (expect (= [] out))
+        (expect (= 1 exit))
+        (expect (str/starts-with? (first err) "Error: --code expects"))))
+  (it "sends a user error to stderr with exit 2"
+      (let [err
+            (atom [])
+
+            out
+            (atom [])
+
+            exit
+            (atom nil)]
+
+        (with-redefs [commandline/stdout!
+                      #(swap! out conj %)
+
+                      commandline/stderr!
+                      #(swap! err conj %)
+
+                      shutdown-agents
+                      (fn []
+                        nil)
+
+                      main/exit-process!
+                      (fn [code]
+                        (reset! exit code))]
+
+          (#'main/exit-with-user-error!
+           (ex-info "Invalid value for --toggles draft_backend: x" {:vis/user-error true})))
+        (expect (= [] @out))
+        (expect (= 2 @exit))
+        (expect (= ["vis-agent: Invalid value for --toggles draft_backend: x"] @err)))))
