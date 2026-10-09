@@ -580,13 +580,14 @@
                               sources)]
             (if (some :failed exports)
               (do (vreset! failure (if (some :stale exports) :stale :unavailable)) nil)
-              (str/join "\n\n" (map :text exports)))))
+              (str/join "\n\n" (map #(force (:text %)) exports)))))
         "✓ Copied Activity history"
         (fn []
           (if (= :stale @failure)
             "Activity changed while copying — show it again from the first operation, then copy"
             "Could not copy the whole Activity history — press copy again to retry"))))
-    (copy-bubble! (:text hit))))
+    (let [text (force (:text hit))]
+      (when-not (str/blank? text) (copy-bubble! text)))))
 
 (defn- copy-bubble-hit!
   "Copy a whole-bubble copy-region hit. The region's `:text` is a DELAY
@@ -1923,7 +1924,7 @@
                     (if header? (:copy-text m) (:text m))]
               :when (and (map? m)
                          (or header? (= :copy-block-body (:kind m)))
-                         (not (str/blank? (str text)))
+                         (or header? (not (str/blank? (str text))))
                          (>= abs-row top-limit)
                          (< abs-row bottom-limit))]
 

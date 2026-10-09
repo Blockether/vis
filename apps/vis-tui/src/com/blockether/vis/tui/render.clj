@@ -18,7 +18,7 @@
            [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
-           [java.util LinkedHashMap]
+           [java.util IdentityHashMap LinkedHashMap]
            [java.util.concurrent.atomic AtomicLong]))
 
 ;;; Render caches
@@ -5921,6 +5921,12 @@
    File lists start fully expanded."
   4)
 
+(def ^:private activity-members-shown
+  "Number of members that an open operation group paints before the reader asks for
+   the earlier ones. A bulk turn can put thousands of calls in one group, and each
+   frame of a live bubble paints the band again (#357)."
+  50)
+
 (defn- activity-counts-visible-files?
   "True when a step's own summary only counts the paths already listed under it: `4 files`
    printed over four visible paths counts a list the eye is already on."
@@ -6500,6 +6506,24 @@
                                (str (inc (long index)) ": " headline))))))
           children)))
 
+(defn- identity-memo
+  "`(f)`, cached under the identity of `k` in `memo`. Activity rows in app-db keep their
+   identity until an event changes them, but each frame of a live bubble projects its
+   band again. A bulk turn holds thousands of rows (#357), so a frame reuses the work
+   of the frame before. Bounded by clear-on-overflow, like `message-fp-memo`."
+  [^IdentityHashMap memo k f]
+  (locking memo
+    (if (.containsKey memo k)
+      (.get memo k)
+      (let [v (f)]
+        (when (> (.size memo) 256) (.clear memo))
+        (.put memo k v)
+        v))))
+
+(defonce ^:private ^IdentityHashMap scoped-rows-memo (IdentityHashMap. 64))
+
+(defonce ^:private ^IdentityHashMap operation-rows-memo (IdentityHashMap. 64))
+
 (defn- activity-operation-rows
   "Shared operation and argument groups as local disclosures; receipts remain unchanged."
   [rows]
@@ -6526,7 +6550,7 @@
   [{:keys [node-id activity-rows activity-expanded? activity-artifacts activity-histories
            activity-sources activity-fetch]} max-w session-id]
   (let [rows
-        (activity-operation-rows activity-rows)
+        (identity-memo operation-rows-memo activity-rows #(activity-operation-rows activity-rows))
 
         slot?
         true
@@ -6966,8 +6990,60 @@
                                                      (into (error-entries id error col))
 
                                                      (and open? (seq nested))
-                                                     (into (mapcat #(row-entry % (inc (long depth)))
-                                                                   nested))))))
+                                                     (into
+                                                       (let [members-key
+                                                             (str id "#members")
+
+                                                             hidden
+                                                             (max 0
+                                                                  (- (count nested)
+                                                                     activity-members-shown))
+
+                                                             show-all?
+                                                             (or (zero? hidden)
+                                                                 (expanded? members-key false))
+
+                                                             lead
+                                                             (activity-lead (activity-text-col
+                                                                              (inc (long depth))
+                                                                              slot?))
+
+                                                             label
+                                                             (more-rule (if show-all?
+                                                                          "show fewer operations"
+                                                                          (str "show "
+                                                                               (more-count
+                                                                                 hidden
+                                                                                 "operation")))
+                                                                        (max 1
+                                                                             (- width
+                                                                                (activity-text-col
+                                                                                  (inc (long depth))
+                                                                                  slot?))))]
+
+                                                         (concat
+                                                           (when (pos? hidden)
+                                                             [{:line (str activity-marker
+                                                                          (ellipsize-cols
+                                                                            (str lead label)
+                                                                            width))
+                                                               :meta
+                                                               (merge
+                                                                 meta-base
+                                                                 {:kind :activity-more
+                                                                  :item-id id
+                                                                  :mark ""
+                                                                  :label label
+                                                                  :mark-col (activity-text-col
+                                                                              (inc (long depth))
+                                                                              slot?)
+                                                                  :node-id
+                                                                  (str node-id ":" members-key)
+                                                                  :collapsed? (not show-all?)})}])
+                                                           (mapcat #(row-entry % (inc (long depth)))
+                                                                   (if show-all?
+                                                                     nested
+                                                                     (subvec nested hidden))))))))))
 
         ;; A PAGE IS NOT A LIMIT. Rows outside the window are still on the record,
         ;; so the rule under the band can be PRESSED and says what the next press
@@ -7173,7 +7249,9 @@
                            :right-inset 2
                            :node-id (str node-id ":#band")
                            :item-id "#band"
-                           :copy-text (activity-contract/copy-text {:rows activity-rows})
+                           ;; A DELAY: the copy text of a bulk turn walks every row, and the
+                           ;; band is painted on each frame of a live bubble (#357).
+                           :copy-text (delay (activity-contract/copy-text {:rows activity-rows}))
                            ;; Copy every source in order, including receipts without
                            ;; retained history between the gateway-backed records.
                            :copy-history (when (seq histories)
@@ -7182,7 +7260,8 @@
                                                      {:id (str (:id history))
                                                       :revision (:revision history)
                                                       :total (long (or (:total history) 0))}
-                                                     {:text (activity-contract/copy-text source)}))
+                                                     {:text (delay (activity-contract/copy-text
+                                                                     source))}))
                                                  sources))
                            :copy-width (when copy? (p/display-width code-copy-label))
                            :collapsed? (not band-open?)
@@ -7288,7 +7367,10 @@
         (:activity form)
         (update :activity
                 #(assoc %
-                   :rows (mapv (partial scoped-activity-row 0) (:rows %))
+                   :rows (identity-memo scoped-rows-memo
+                                        (:rows %)
+                                        (fn []
+                                          (mapv (partial scoped-activity-row 0) (:rows %))))
                    :sources [%]))))
     (let [states
           (map (fn [form]

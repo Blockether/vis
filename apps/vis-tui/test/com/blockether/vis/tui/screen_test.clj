@@ -3775,9 +3775,10 @@ therapy line 2"
 
         (expect (some? copy))
         (expect (= 6 (:width copy)))
-        (expect (str/includes? (:text copy) result))
-        (expect (not (str/includes? (:text copy) "omitted")))
-        (expect (not (str/includes? (:text copy) "search()")))
+        ;; The text is a delay that the copy action forces (#357).
+        (expect (str/includes? (force (:text copy)) result))
+        (expect (not (str/includes? (force (:text copy)) "omitted")))
+        (expect (not (str/includes? (force (:text copy)) "search()")))
         (doseq [x (range col (+ col 6))]
           (expect (= (:text copy) (:text (bubble-copy-hit {:row row :col x} regions))))
           (expect (not= (:node-id copy) (:node-id (.lookup interactions/hit-map x row)))))

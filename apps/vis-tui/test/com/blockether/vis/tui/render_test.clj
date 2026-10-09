@@ -242,6 +242,110 @@
         (expect (= 0 (get-in (first pages) [:meta :after])))
         (expect (str/includes? (get-in (first pages) [:meta :label]) "earliest")))))
 
+(defn- bulk-activity-rows
+  "`n` calls of one extension tool, as a bulk block records them."
+  [n]
+  (mapv (fn [index]
+          {:id (str "call-" index)
+           :sequence (inc index)
+           :operation "gerrit.comments"
+           :state "succeeded"
+           :summary (str "change " index)
+           :arguments {:change (str index)}
+           :resources []
+           :evidence []})
+        (range n)))
+
+(defn- bulk-entries
+  "Band entries with every disclosure open except the ones `closed` names."
+  [rows closed]
+  (#'render/activity-detail-entries
+   {:node-id "activity"
+    :activity-rows rows
+    :activity-expanded? (fn [key _]
+                          (not (contains? closed key)))}
+   120
+   "fixture"))
+
+(defdescribe activity-bulk-group-test
+             ;; #357: a block with thousands of calls of one tool painted every call on every
+             ;; frame of the live bubble, and built the copy text of the whole band each time.
+             (it "paints the latest members of a large open group and offers the earlier ones"
+                 (let [rows
+                       (bulk-activity-rows 120)
+
+                       group-key
+                       (str (:id (first (#'render/activity-operation-rows rows))) "#members")
+
+                       entries
+                       (bulk-entries rows #{group-key})
+
+                       text
+                       (str/join "\n" (map :line entries))
+
+                       more
+                       (first (filter #(= :activity-more (get-in % [:meta :kind])) entries))]
+
+                   (expect (some? more))
+                   (expect (str/includes? (get-in more [:meta :label]) "show 70 more operations"))
+                   (expect (= (str "activity:" group-key) (get-in more [:meta :node-id])))
+                   (expect (true? (get-in more [:meta :collapsed?])))
+                   (expect (str/includes? text "change 119"))
+                   (expect (str/includes? text "change 70"))
+                   (expect (not (str/includes? text "change 69")))))
+             (it "paints every member once the reader opens the earlier ones"
+                 (let [entries
+                       (bulk-entries (bulk-activity-rows 120) #{})
+
+                       text
+                       (str/join "\n" (map :line entries))
+
+                       more
+                       (first (filter #(= :activity-more (get-in % [:meta :kind])) entries))]
+
+                   (expect (str/includes? text "change 0"))
+                   (expect (str/includes? (get-in more [:meta :label]) "show fewer operations"))
+                   (expect (false? (get-in more [:meta :collapsed?])))))
+             (it "keeps a small group whole without a rule"
+                 (let [entries (bulk-entries (bulk-activity-rows 12) #{})]
+                   (expect (empty? (filter #(= :activity-more (get-in % [:meta :kind])) entries)))
+                   (expect (str/includes? (str/join "\n" (map :line entries)) "change 0"))))
+             (it "builds the copy text only when it is read"
+                 (let [calls
+                       (atom 0)
+
+                       header
+                       (with-redefs [activity-contract/copy-text (fn [_]
+                                                                   (swap! calls inc)
+                                                                   "copied")]
+                         (let [header (first (filter #(= :activity-header (get-in % [:meta :kind]))
+                                                     (bulk-entries (bulk-activity-rows 3) #{})))]
+                           (expect (= 0 @calls))
+                           (expect (= "copied" (force (get-in header [:meta :copy-text]))))
+                           header))]
+
+                   (expect (= 1 @calls))
+                   (expect (some? header))))
+             (it "groups the rows of an unchanged band once across frames"
+                 (let [rows
+                       (bulk-activity-rows 40)
+
+                       calls
+                       (atom 0)
+
+                       grouped
+                       (var-get #'render/activity-operation-rows)]
+
+                   (with-redefs-fn {#'render/activity-operation-rows (fn [rows]
+                                                                       (swap! calls inc)
+                                                                       (grouped rows))}
+                     (fn []
+                       (bulk-entries rows #{})
+                       (bulk-entries rows #{})
+                       (expect (= 1 @calls))
+                       (bulk-entries (bulk-activity-rows 40) #{})
+                       (expect (= 2 @calls)))))))
+
 (defdescribe
   activity-history-fetch-state-test
   (it "says a window is loading without offering a second press"
@@ -6565,10 +6669,10 @@
         (doseq [header headers]
           (expect (str/includes? (:line header) "COPY"))
           (expect (= 6 (get-in header [:meta :copy-width])))
-          (expect (str/includes? (str (get-in header [:meta :copy-text]))
+          (expect (str/includes? (force (get-in header [:meta :copy-text]))
                                  "one match beyond the folded row"))
-          (expect (not (str/includes? (str (get-in header [:meta :copy-text])) "answer ="))))
-        (expect (apply = (map #(get-in % [:meta :copy-text]) headers))))))
+          (expect (not (str/includes? (force (get-in header [:meta :copy-text])) "answer ="))))
+        (expect (apply = (map #(force (get-in % [:meta :copy-text])) headers))))))
 
 (defdescribe
   python-code-disclosure-is-a-header-test
@@ -9153,9 +9257,14 @@ h = 8"
             #(str/join "\n" (map :line %))
 
             activity-entries
-            #(filter (fn [entry]
-                       (str/starts-with? (:line entry) p/MARKER_ACTIVITY))
-                     %)]
+            ;; The copy text is a delay: compare what it copies, not the delay object.
+            #(map (fn [entry]
+                    (cond-> entry
+                      (get-in entry [:meta :copy-text])
+                      (update-in [:meta :copy-text] force)))
+                  (filter (fn [entry]
+                            (str/starts-with? (:line entry) p/MARKER_ACTIVITY))
+                          %))]
 
         (expect (str/includes? (text-of shown) "PRIVATE_SOURCE"))
         (expect (str/includes? (text-of shown) "PRIVATE_RESULT"))
