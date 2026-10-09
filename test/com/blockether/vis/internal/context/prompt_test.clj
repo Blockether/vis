@@ -571,7 +571,7 @@
             "When no question is open, stop reading"
             "For a missing fact, use the first row that matches. Then decide again"
             "Symbol name | Use one narrow `apropos(pattern)` in the known namespace. Widen it only when it finds nothing useful"
-            "Arguments | `import inspect; print(inspect.signature(fn))`."
+            "Arguments | `print(inspect.signature(fn))`."
             "Semantics | Name the missing precondition, effect, unit, retry or limit"
             "Result shape | `doc(name)` lists return-model fields under Model schemas"
             "`apropos(pattern)` filters symbol names" "`doc(name)` returns"
@@ -653,12 +653,13 @@
   ;; #259: a record's fields come from its model and its errors, never from guessed synonyms.
   (it "reads extension records through their public fields and error-listed names"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
-        ;; User report: a block called `dataclasses.asdict` without the import, after a restart.
-        ;; The sandbox does not pre-import `dataclasses`, so the rule names the import.
+        ;; #358: the sandbox pre-imports `dataclasses` and `inspect`, so no rule asks for an import.
+        (expect (not (str/includes? text "Import `dataclasses` first.")))
+        (expect (not (str/includes? text "import inspect;")))
         (doseq [rule ["An extension result is a frozen record of its public fields"
                       "without methods. Its declared sequences iterate"
                       "For a plain dict, use `dataclasses.asdict(r)`, not `dict(r)`."
-                      "Import `dataclasses` first."
+                      "Arguments | `print(inspect.signature(fn))`."
                       "A wrong name raises an error that lists the real fields"]]
           (expect (str/includes? text rule) rule))))
   (it

@@ -586,22 +586,47 @@
         (expect (str/starts-with? rendered "{\n \"first\": "))
         (expect (str/includes? rendered "\n \"second\": [1, 2]\n}")))))
 
-(defdescribe auto-imported-python-names-test
-             (it "makes every advertised Python name available without an import"
-                 (let [ctx
-                       (tpc/shared)
+(defdescribe
+  auto-imported-python-names-test
+  (it "makes every advertised Python name available without an import"
+      (let [ctx
+            (tpc/shared)
 
-                       names
-                       (ep/ctx->python-str ep/AUTO_IMPORTED_PYTHON_NAMES)
+            names
+            (ep/ctx->python-str ep/AUTO_IMPORTED_PYTHON_NAMES)
 
-                       result
-                       (ep/run-python-block
-                         ctx
-                         (str "names = " names
-                              "\n"
-                              "print([name for name in names if not hasattr(builtins, name)])"))]
+            result
+            (ep/run-python-block
+              ctx
+              (str "names = " names
+                   "\n" "print([name for name in names if not hasattr(builtins, name)])"))]
 
-                   (expect (= "[]\n" (:stdout result))))))
+        (expect (= "[]\n" (:stdout result)))))
+  ;; #358: `dataclasses` and `inspect` are there in a new process and after a
+  ;; snapshot restore, so a restored helper that uses them runs without an import.
+  (it "keeps dataclasses and inspect after a snapshot restore in a new sandbox"
+      (doseq [worker? [false true]]
+        (let [sid (str "vis-test-auto-imports-" (random-uuid))
+              file (io/file (paths/sandbox-defs-file sid))]
+
+          (try (tpc/with-own [ctx {} nil {:worker? worker?}]
+                             (expect (nil? (:error (ep/run-python-block
+                                                     ctx
+                                                     (str "def shape(fn):\n"
+                                                          "    return str(inspect.signature(fn))\n"
+                                                          "def as_dict(r):\n"
+                                                          "    return dataclasses.asdict(r)\n")))))
+                             (expect (some? (ep/persist-session-defs! ctx sid))))
+               (ep/forget-session-defs! sid)
+               (tpc/with-own
+                 [ctx {} nil {:worker? worker?}]
+                 (expect (= 2 (ep/restore-session-defs! ctx sid)))
+                 (let [result (ep/run-python-block
+                                ctx
+                                (str "R = dataclasses.make_dataclass('R', ['a'], frozen=True)\n"
+                                     "print(shape(lambda a, b=2: a), as_dict(R(1)))"))]
+                   (expect (= "(a, b=2) {'a': 1}\n" (:stdout result)) (str (:error result)))))
+               (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
 (defdescribe
   host-owned-python-globals-test

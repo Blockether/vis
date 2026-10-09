@@ -525,7 +525,7 @@
    This is the model-facing inventory; keep it synchronized with
    `auto-imports-python` and its real-context regression test."
   ["json" "shlex" "re" "hashlib" "glob" "os" "sys" "collections" "Counter" "pathlib" "Path"
-   "textwrap" "base64" "math" "socket" "builtins" "time" "datetime"])
+   "textwrap" "base64" "math" "socket" "builtins" "time" "datetime" "dataclasses" "inspect"])
 
 ;; =============================================================================
 ;; Sandbox bindings

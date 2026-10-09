@@ -640,7 +640,7 @@ A short semantic docstring is enough. Do not repeat the signature, defaults or f
 it.
 
 When you know the callable but need its arguments, start with
-`import inspect; print(inspect.signature(tool))`. Read `doc("tool")` when you need
+`print(inspect.signature(tool))`. Read `doc("tool")` when you need
 preconditions, side effects, safety constraints, units, retry behavior or non-obvious
 limits. For nested types, select the relevant fields from `tool.contract`.
 `Catalog.spec(name)` exposes the same metadata as an SDK `ToolSpec`. A mutation tag
