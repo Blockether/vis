@@ -276,6 +276,38 @@
   (reset! runtime-waker {:eligible? eligible? :wake! wake!})
   nil)
 
+(defn- recipient!
+  "Refuse a ping target outside group `gid`. The error names the target's group and a recovery (#350)."
+  [db fleet gid session-id self-wake? id]
+  (when (and (= id session-id) (not self-wake?))
+    (fail! :invalid-recipient
+           "A ping cannot name its own session. Ping another session in this group."))
+  (let [row
+        (ps/db-get-session db id)
+
+        target
+        (or (get-in fleet [id :group-id]) (session-group db row))]
+
+    (cond
+      (= gid target) nil
+      (and (nil? row) (nil? target))
+      (fail! :invalid-recipient
+             (str "Ping recipient " id
+                  " is not a known session. "
+                  "Use council.members() to get the session ids of this group."))
+      :else
+      (fail!
+        :invalid-recipient
+        (str "Ping recipient "
+             id
+             " is in Council group "
+             (or target "none")
+             ", not in this group "
+             gid
+             ". "
+             "Move it into the project or session group of this session, or select the same room, "
+             "then ping it again. To read its history without an answer, use read_session(id).")))))
+
 (defn- wake-recipient!
   [db sid entry]
   (when-let [{:keys [eligible? wake!]} (when (enabled?) @runtime-waker)]
@@ -382,12 +414,7 @@
         (when (> (count targets) (long max-recipients))
           (fail! :invalid-recipient "Too many Council ping recipients"))
         (doseq [id targets]
-          (when (or (and (= id session-id) (not self-wake?))
-                    (not= gid
-                          (or (get-in fleet [id :group-id])
-                              (session-group db (ps/db-get-session db id)))))
-            (fail! :invalid-recipient
-                   "Every ping recipient must be another session in this group")))
+          (recipient! db fleet gid session-id self-wake? id))
         (root! db gid thread)
         (let [inserted
               (ps/db-council-insert!

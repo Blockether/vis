@@ -4,6 +4,7 @@
    The companion's slide offers both, so both must be answerable from the daemon
    without a terminal: fork the whole session, or fork THROUGH one turn."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.loop :as lp]
@@ -136,4 +137,20 @@
                      (expect (= (str (:id group)) (get forked "group_id")))
                      (expect (= (str (:id project)) (get forked "project_id"))))))
                (expect (= 3 (count (ps/db-session-group-session-ids store (:id group))))))
+             (finally (ps/db-close! store)))))
+  (it "keeps forks of an ungrouped project session in its project and Council group"
+      ;; Regression for #350: a fork lost the project, so Council refused to ping it.
+      (let [store (ps/db-open! :memory)]
+        (try (let [{:keys [sid]} (seeded-session! store ["first ask"])
+                   project (ps/db-create-project! store {:name "Fork project"})]
+
+               (ps/db-set-session-project! store sid (:id project))
+               (with-redefs [lp/db-info (constantly store)]
+                 (let [fork-id (get (state/fork-session! sid nil) "id")
+                       saved (ps/db-get-session store fork-id)]
+
+                   (expect (= (str (:id project)) (str (:project-id saved))))
+                   (expect (nil? (:group-id saved)))
+                   (expect (= (council/default-group store sid)
+                              (council/default-group store fork-id))))))
              (finally (ps/db-close! store))))))

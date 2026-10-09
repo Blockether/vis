@@ -361,7 +361,20 @@
                                   db
                                   snapshot
                                   actor
-                                  {:kind "coordination" :content "Wrong group" :ping [other]}))))
+                                  {:kind "coordination" :content "Wrong group" :ping [other]})))
+            ;; Regression for #350: the error names both groups and a recovery step.
+            (let [message (try (council 'publish!
+                                        db
+                                        snapshot
+                                        actor
+                                        {:kind "coordination" :content "Wrong group" :ping [other]})
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+              (expect (str/includes?
+                        message
+                        (str other " is in Council group " (council 'default-group db other))))
+              (expect (str/includes? message (str "not in this group " gid)))
+              (expect (str/includes? message "Move it into the project or session group"))))
           (finally (run! drop! [a b other])))))))
 
 (defdescribe council-toggle-contract-test
