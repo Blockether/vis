@@ -101,8 +101,7 @@ jobs:
       tag: ${{ needs.pick.outputs.tag }}
     secrets: inherit
 
-  # Installers for every desktop platform, attached to the same draft. The one
-  # self-hosted Mac builds this package and the native macOS runtime in turn.
+  # Installers for every desktop platform, attached to the same draft.
   desktop:
     concurrency:
       group: beta-desktop-builds
