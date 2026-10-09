@@ -106,9 +106,20 @@ it('keeps a failed project extension visible and runs its code only on request',
   // The result stands as plain text in the header band, not in a box below it.
   const header = band.querySelector('header')!;
   expect(within(header).getByRole('status')).toHaveTextContent('Reloading…');
-  finishReload({ loaded: 1, failed: 1 });
+  // #348: the report names each scanned scope and its directory, not only the counts.
+  finishReload({
+    loaded: 1,
+    failed: 1,
+    scopes: [
+      { scope: 'global', dirs: ['~/.vis/extensions'], loaded: 0, failed: 0, extensions: [] },
+      { scope: 'project', dirs: ['/work/app/.vis/extensions'], loaded: 1, failed: 1, extensions: ['notifier'] },
+    ],
+  });
   expect(
-    await within(header).findByText('1 loaded, 1 failed. Each failed extension shows its error.'),
+    await within(header).findByText(
+      'No machine extensions found in ~/.vis/extensions. Project extensions (/work/app/.vis/extensions): ' +
+        '1 loaded (notifier), 1 failed. Each failed extension shows its error.',
+    ),
   ).toHaveAttribute('role', 'status');
   expect(reload).toHaveBeenCalledWith({ scope: 'project', target_id: 'p1' });
   expect(read.mock.calls.length).toBeGreaterThan(reads);
@@ -141,7 +152,11 @@ it('reloads machine extensions from machine settings and explains an older gatew
   vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue(catalog('global', '~/.vis/extensions'));
   const reload = vi
     .spyOn(GatewayClient.prototype, 'reloadExtensions')
-    .mockResolvedValueOnce({ loaded: 3, failed: 0 })
+    .mockResolvedValueOnce({
+      loaded: 0,
+      failed: 0,
+      scopes: [{ scope: 'global', dirs: ['~/.vis/extensions'], loaded: 0, failed: 0, extensions: [] }],
+    })
     .mockRejectedValueOnce(
       new GatewayError(404, 'no such route', { error: { type: 'not-found', message: 'no such route' } }),
     );
@@ -163,7 +178,13 @@ it('reloads machine extensions from machine settings and explains an older gatew
   expect(band).not.toContainElement(screen.getByRole('heading', { name: 'Agent' }));
   const header = band.querySelector('header')!;
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
-  expect(await within(header).findByText('3 loaded, 0 failed.')).toBeInTheDocument();
+  // #348: an empty machine reload says where it looked and points to the project reload.
+  expect(
+    await within(header).findByText(
+      'No machine extensions found in ~/.vis/extensions. ' +
+        'Project extensions were not reloaded. Use Project settings → Reload or /reload.',
+    ),
+  ).toBeInTheDocument();
   expect(reload).toHaveBeenLastCalledWith(undefined);
 
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));

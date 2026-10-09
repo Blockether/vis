@@ -2,7 +2,7 @@ import { useContext, useId, useState, type ReactNode } from 'react';
 import { RefreshIcon } from '../../components/icons';
 import { Banner, IconButton, Text } from '../../components/ui';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
-import type { SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
+import type { ExtensionReload, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
 import { SettingsNested, SettingsPanel } from './SettingsLayout';
 
 /** Extension sections stand under Extensions. Older gateways do not mark them. */
@@ -19,6 +19,29 @@ export function extensionScope(group: ToggleGroup): 'project' | 'global' | undef
 /** A failed load keeps its section visible, even when it has no settings. */
 export function hasExtensionNotice(group: ToggleGroup): boolean {
   return Boolean(group.extension && group.extension.status !== 'loaded');
+}
+
+/**
+ * The reload report: each scanned scope names its directory and what it loaded. A machine
+ * reload says that project extensions need their own reload. Issue #348.
+ */
+export function extensionReloadStatus(result: ExtensionReload, global: boolean): string {
+  const scopes = result.scopes ?? [];
+  const lines = scopes.length
+    ? scopes.map((entry) => {
+        const label = entry.scope === 'project' ? 'project extensions' : 'machine extensions';
+        const dir = entry.dirs.join(', ');
+        if (entry.loaded + entry.failed === 0) return `No ${label} found in ${dir}.`;
+        const shown = entry.extensions.slice(0, 8);
+        const more = entry.extensions.length - shown.length;
+        const names = shown.length ? ` (${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''})` : '';
+        const title = label.charAt(0).toUpperCase() + label.slice(1);
+        return `${title} (${dir}): ${entry.loaded} loaded${names}, ${entry.failed} failed.`;
+      })
+    : [`${result.loaded} loaded, ${result.failed} failed.`];
+  if (global) lines.push('Project extensions were not reloaded. Use Project settings → Reload or /reload.');
+  if (result.failed > 0) lines.push('Each failed extension shows its error.');
+  return lines.join(' ');
 }
 
 /** The load error of one extension section, or nothing while it loads normally. */
@@ -163,13 +186,9 @@ export function ExtensionsPanel({
     setBusy(true);
     setStatus('Reloading…');
     try {
-      const counts = await client.reloadExtensions(target);
+      const result = await client.reloadExtensions(target);
       await onRefresh();
-      setStatus(
-        `${counts.loaded} loaded, ${counts.failed} failed.${
-          counts.failed > 0 ? ' Each failed extension shows its error.' : ''
-        }`,
-      );
+      setStatus(extensionReloadStatus(result, !scoped));
     } catch (error) {
       setStatus(actionError(error));
     } finally {

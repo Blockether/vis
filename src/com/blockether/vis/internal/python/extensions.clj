@@ -2856,7 +2856,18 @@
 
       {:loaded (reduce + 0 (map :loaded results))
        :failed (reduce + 0 (map :failed results))
-       :changed? (boolean (some :changed? results))})))
+       :changed? (boolean (some :changed? results))
+       ;; Each scanned scope with its directories and loaded names, so a reload report
+       ;; can say WHERE it looked. Issue #348: a bare "0 loaded" hid the scope.
+       :scopes (mapv (fn [{:keys [dirs project-root] :as scope} {:keys [loaded failed]}]
+                       {:scope (if (or (:project scope) (some? project-root)) :project :global)
+                        :dirs (mapv #(.getAbsolutePath (io/file %)) dirs)
+                        :loaded loaded
+                        :failed failed
+                        :extensions (vec (sort (keep :ext-name
+                                                     (vals (scope-entries project-root)))))})
+                     scopes
+                     results)})))
 
 (defn load-python-extensions!
   "Load global extensions and the bound project's independent catalog. Declared

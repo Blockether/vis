@@ -228,7 +228,8 @@ work as in a read. The answer is the full catalog with its new `revision`.
 
 ```python
 result = client.post_extensions_reload(body={"scope": "project", "target_id": project_id})
-print(result["loaded"], result["failed"])
+for scope in result["scopes"]:
+    print(scope["scope"], scope["dirs"], scope["loaded"], scope["failed"], scope["extensions"])
 ```
 
 </div>
@@ -244,6 +245,11 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/extensions/reload" -H 'content-type: applic
 
 Vis runs the extension files of the target again. A global target reloads machine extensions only.
 Reading the catalog never runs extension code. An older gateway without this route answers 404.
+
+The answer has the totals `loaded` and `failed`. Its `scopes` list has one entry for each scanned
+scope. An entry has `scope` (`global` or `project`), the scanned `dirs`, and `loaded` and `failed`
+for that scope. Its `extensions` list names the loaded extensions. A scope with no loaded or failed
+extensions found nothing in its directories.
 
 ## See also
 

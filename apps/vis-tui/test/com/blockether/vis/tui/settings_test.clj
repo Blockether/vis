@@ -931,6 +931,58 @@
         (expect (= [["Extensions reloaded"
                      "2 loaded, 1 failed. Each failed extension shows its error."]]
                    @notes))))
+  ;; Regression, issue #348: a machine reload with no machine extensions said
+  ;; "Extensions reloaded — 0 loaded, 0 failed." and named no scope or directory.
+  (it
+    "names each reloaded scope, its directory and what it found"
+    (let [note
+          #'dlg/extension-reload-note
+
+          machine
+          (fn [loaded failed extensions]
+            {"scope" "global"
+             "dirs" ["/home/user/.vis/extensions"]
+             "loaded" loaded
+             "failed" failed
+             "extensions" extensions})]
+
+      (expect (= ["No machine extensions found"
+                  (str "No machine extensions found in /home/user/.vis/extensions."
+                       " Project extensions were not reloaded."
+                       " Use Project settings → Reload or /reload.")]
+                 (note {"loaded" 0 "failed" 0 "scopes" [(machine 0 0 [])]} true nil)))
+      (expect (= ["Extensions reloaded"
+                  (str
+                    "Machine extensions (/home/user/.vis/extensions): 1 loaded (memo), 0 failed."
+                    " Project extensions (/work/app/.vis/extensions): 2 loaded (clj, py), 1 failed."
+                    " Each failed extension shows its error.")]
+                 (note {"loaded" 3
+                        "failed" 1
+                        "scopes" [(machine 1 0 ["memo"])
+                                  {"scope" "project"
+                                   "dirs" ["/work/app/.vis/extensions"]
+                                   "loaded" 2
+                                   "failed" 1
+                                   "extensions" ["clj" "py"]}]}
+                       false
+                       nil)))
+      (expect
+        (=
+          ["No extensions found"
+           "No machine extensions found in /home/user/.vis/extensions. No project extensions found in /p."]
+          (note {"loaded" 0
+                 "failed" 0
+                 "scopes" [(machine 0 0 [])
+                           {"scope" "project" "dirs" ["/p"] "loaded" 0 "failed" 0 "extensions" []}]}
+                false
+                nil)))
+      (expect
+        (str/ends-with?
+          (second (note
+                    {"loaded" 9 "failed" 0 "scopes" [(machine 9 0 (mapv #(str "e" %) (range 9)))]}
+                    true
+                    "offline"))
+          "e7 and 1 more), 0 failed. Project extensions were not reloaded. Use Project settings → Reload or /reload. Settings unavailable: offline"))))
   (it "fills the Reload button with the accent only while it is selected"
       (let [capture
             (capture-settings (conj (#'dlg/extension-action-rows)

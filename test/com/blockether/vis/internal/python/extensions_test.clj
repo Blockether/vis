@@ -561,9 +561,15 @@
                                         "changed externally"))
                  (expect (false? (:stale? (first (pyx/load-failures nil))))))
                (reset! fail? false)
-               (expect (= {:loaded 2 :failed 0}
-                          (select-keys (pyx/reload-python-extensions! {:global-only? true})
-                                       [:loaded :failed])))
+               (let [result (pyx/reload-python-extensions! {:global-only? true})]
+                 (expect (= {:loaded 2 :failed 0} (select-keys result [:loaded :failed])))
+                 ;; Issue #348: the report names the scope, its directory and what loaded.
+                 (expect (= [{:scope :global
+                              :dirs [(.getAbsolutePath ^java.io.File global-dir)]
+                              :loaded 2
+                              :failed 0
+                              :extensions ["broken-package-fixture" "healthy-package-fixture"]}]
+                            (:scopes result))))
                (expect (= [] (pyx/load-failures nil)))
                (reset! fail? true)
                (expect (= {:loaded 2 :failed 1}

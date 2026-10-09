@@ -960,11 +960,26 @@
                       python-extensions/reload-python-extensions!
                       (fn [opts]
                         (swap! calls conj [workspace/*workspace-root* opts])
-                        {:loaded 2 :failed 1 :changed? true})]
+                        {:loaded 2
+                         :failed 1
+                         :changed? true
+                         :scopes [{:scope :global
+                                   :dirs ["/home/user/.vis/extensions"]
+                                   :loaded 2
+                                   :failed 1
+                                   :extensions ["memo" "spel"]}]})]
 
-          (expect (= [200 {"loaded" 2 "failed" 1}]
+          ;; Issue #348: the response names each scanned scope and its directory.
+          (expect (= [200
+                      {"loaded" 2
+                       "failed" 1
+                       "scopes" [{"scope" "global"
+                                  "dirs" ["/home/user/.vis/extensions"]
+                                  "loaded" 2
+                                  "failed" 1
+                                  "extensions" ["memo" "spel"]}]}]
                      (reload {"scope" "project" "target_id" (str (:id project))})))
-          (expect (= [200 {"loaded" 2 "failed" 1}] (reload {"scope" "global"})))
+          (expect (= 200 (first (reload {"scope" "global"}))))
           (expect (= 400 (first (reload {"scope" "project"}))))
           (#'settings-api/list-settings-handler {:query-params {}})
           (expect (= [[root nil] [nil {:global-only? true}]] @calls))))))

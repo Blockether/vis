@@ -5012,6 +5012,68 @@
         (when-let [number (parse-double text)]
           (when (Double/isFinite (double number)) number)))))
 
+(defn- extension-reload-note
+  "The title and body that report one extension reload. Each scope names its directory;
+   an empty scope says that it found nothing there. A machine reload says that project
+   extensions need their own reload. Issue #348: a bare `0 loaded` hid all of this."
+  [{:strs [loaded failed scopes]} global? settings-error]
+  (let [failed
+        (long (or failed 0))
+
+        found?
+        (fn [{:strs [loaded failed]}]
+          (pos? (+ (long (or loaded 0)) (long (or failed 0)))))
+
+        names
+        (fn [extensions]
+          (let [shown
+                (take 8 extensions)
+
+                more
+                (- (count extensions) (count shown))]
+
+            (when (seq shown)
+              (str " (" (str/join ", " shown) (when (pos? more) (str " and " more " more")) ")"))))
+
+        scope-line
+        (fn [{:strs [scope dirs loaded failed extensions] :as entry}]
+          (let [label
+                (if (= "project" scope) "project extensions" "machine extensions")
+
+                dir
+                (str/join ", " dirs)]
+
+            (if (found? entry)
+              (str (str/capitalize label)
+                   " ("
+                   dir
+                   "): "
+                   (or loaded 0)
+                   " loaded"
+                   (names extensions)
+                   ", "
+                   (or failed 0)
+                   " failed.")
+              (str "No " label " found in " dir "."))))
+
+        body
+        (if (seq scopes)
+          (str/join " " (map scope-line scopes))
+          (str (or loaded 0) " loaded, " failed " failed."))]
+
+    [(cond (not (and (seq scopes) (not-any? found? scopes))) "Extensions reloaded"
+           global? "No machine extensions found"
+           :else "No extensions found")
+     (cond-> body
+       global?
+       (str " Project extensions were not reloaded. Use Project settings → Reload or /reload.")
+
+       settings-error
+       (str " Settings unavailable: " settings-error)
+
+       (and (not settings-error) (pos? failed))
+       (str " Each failed extension shows its error."))]))
+
 (defn- settings-extension-action!
   "Run trusted extension code again, then read the settings catalog again, and report the
    result."
@@ -5019,28 +5081,24 @@
   (let [region (host-band-region screen region)]
     (band-question-frame! g region "Reloading extensions…" [])
     (frame/refresh! screen)
-    (try (let [{:strs [loaded failed]} (vis/gateway-reload-extensions! *settings-target*)
-               {:keys [status error]} (load-settings-inventory!)
-               failed (long (or failed 0))
-               counts (str (or loaded 0) " loaded, " failed " failed.")]
+    (try
+      (let [result (vis/gateway-reload-extensions! *settings-target*)
+            {:keys [status error]} (load-settings-inventory!)
+            [title body] (extension-reload-note result
+                                                (or (nil? *settings-target*)
+                                                    (= "global" (name (:scope *settings-target*))))
+                                                (when (= :error status) error))]
 
-           (mini-note! screen
-                       g
-                       region
-                       "Extensions reloaded"
-                       (cond (= :error status) (str counts " Settings unavailable: " error)
-                             (pos? failed) (str counts " Each failed extension shows its error.")
-                             :else counts)))
-         (catch Exception e
-           (mini-note!
-             screen
-             g
-             region
-             "Extensions not reloaded"
-             (if (and (= 404 (:http-status (ex-data e)))
-                      (= "not-found" (get-in (ex-data e) ["error" "type"])))
-               "This gateway does not support extension reload. Update Vis on that machine."
-               (ex-message e)))))))
+        (mini-note! screen g region title body))
+      (catch Exception e
+        (mini-note! screen
+                    g
+                    region
+                    "Extensions not reloaded"
+                    (if (and (= 404 (:http-status (ex-data e)))
+                             (= "not-found" (get-in (ex-data e) ["error" "type"])))
+                      "This gateway does not support extension reload. Update Vis on that machine."
+                      (ex-message e)))))))
 
 (defn- activate-unlocked-row!
   [^TerminalScreen screen g region values callbacks row]

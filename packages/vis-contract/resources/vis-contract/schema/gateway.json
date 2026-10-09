@@ -2844,7 +2844,8 @@
       "type": "object",
       "required": [
         "loaded",
-        "failed"
+        "failed",
+        "scopes"
       ],
       "properties": {
         "loaded": {
@@ -2854,6 +2855,47 @@
         "failed": {
           "type": "integer",
           "minimum": 0
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "scope",
+              "dirs",
+              "loaded",
+              "failed",
+              "extensions"
+            ],
+            "properties": {
+              "scope": {
+                "enum": [
+                  "global",
+                  "project"
+                ]
+              },
+              "dirs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "loaded": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "extensions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },

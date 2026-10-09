@@ -729,7 +729,10 @@ Vis runs the extension files again, then reads the settings list again.
 
 In global settings, the reload covers machine extensions. In project, group or
 session settings, it also covers the extensions of that project. Vis then shows
-how many extensions loaded and how many failed.
+each scope with its directory and how many extensions loaded and failed there. If
+a directory has no extensions, Vis says that it found none there. A reload from
+global settings also tells you to use project settings or `/reload` for project
+extensions.
 
 If an extension fails to load, its group stays in the list and shows the
 error. If a reload fails after an earlier load, Vis keeps using the earlier

@@ -413,22 +413,31 @@
    This runs their code; reading the catalog never does. A machine target reloads global
    extensions alone."
   [request]
-  (settings-response (fn []
-                       (let [body
-                             (http/body-json request)
+  (settings-response
+    (fn []
+      (let [body
+            (http/body-json request)
 
-                             _
-                             (when-not (document/valid-json? "gateway" "settings_target" body)
-                               (throw (ex-info "Supply a valid settings target" {:status 400})))
+            _
+            (when-not (document/valid-json? "gateway" "settings_target" body)
+              (throw (ex-info "Supply a valid settings target" {:status 400})))
 
-                             root
-                             (:root (request-target request body))]
+            root
+            (:root (request-target request body))]
 
-                         (http/json-response (select-keys
-                                               (binding [workspace/*workspace-root* root]
-                                                 (python-extensions/reload-python-extensions!
-                                                   (when-not root {:global-only? true})))
-                                               [:loaded :failed]))))))
+        (http/json-response (let [{:keys [loaded failed scopes]}
+                                  (binding [workspace/*workspace-root* root]
+                                    (python-extensions/reload-python-extensions!
+                                      (when-not root {:global-only? true})))]
+                              {"loaded" loaded
+                               "failed" failed
+                               "scopes" (mapv (fn [{:keys [scope dirs loaded failed extensions]}]
+                                                {"scope" (name scope)
+                                                 "dirs" dirs
+                                                 "loaded" loaded
+                                                 "failed" failed
+                                                 "extensions" extensions})
+                                              scopes)}))))))
 
 (defn- apply-settings-handler
   "PATCH /v1/settings; apply one versioned owner batch, or write nothing."

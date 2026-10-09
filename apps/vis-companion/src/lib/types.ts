@@ -402,10 +402,20 @@ export interface ToggleGroup {
   toggles: Toggle[];
 }
 
-/** Counts from one explicit extension reload. */
+/** One extension scope that a reload scanned: its directories and the extensions it loaded. */
+export interface ExtensionReloadScope {
+  scope: 'global' | 'project';
+  dirs: string[];
+  loaded: number;
+  failed: number;
+  extensions: string[];
+}
+
+/** Counts from one explicit extension reload, with each scanned scope. */
 export interface ExtensionReload {
   loaded: number;
   failed: number;
+  scopes: ExtensionReloadScope[];
 }
 
 export interface SettingsResponse {
