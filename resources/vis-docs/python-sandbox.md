@@ -84,17 +84,20 @@ After each block, Vis saves a snapshot of the session:
 - The source of each helper function and class, and each `import`.
 - Each variable that Python can pickle. One value can use up to 1 MiB, and all
   values together up to 4 MiB.
+- Each `bytes` or `str` value that is larger than these limits, up to 32 MiB.
+  Vis keeps these values in separate files beside the snapshot.
 
 The next sandbox restores this snapshot before it runs your next block. The
 output of that block starts with a `[Sandbox restarted]` notice. The notice names
 the restored helpers and variables. It also names each value that did not come
-back, with the reason.
+back, with the reason. If a restored helper or class uses a value that did not
+come back, the notice names that helper or class too.
 
 These values never survive a restart. Create them again when you need them:
 
 - Open files, sockets and other handles.
 - Generators and running processes.
-- Values that are larger than the limits.
+- Other values that are larger than the limits.
 
 `defs()` lists your helpers and variables. A variable row shows the type and size
 of the value, and tells you if Vis saved it. `defs()` never shows values. To remove

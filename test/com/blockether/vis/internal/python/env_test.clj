@@ -371,6 +371,66 @@
               (expect (str/includes? deleted "If an earlier block created `TOTAL`") deleted)))
           (finally (ep/forget-session-defs! sid) (io/delete-file file true)))))))
 
+;; #347: a restart keeps large text and bytes values in spill files, and the
+;; notice names the restored helpers and classes that use a lost value.
+(defdescribe
+  session-defs-spill-test
+  (it
+    "spills values past the snapshot budget and names what depends on a lost value"
+    (doseq [worker? [false true]]
+      (let [sid (str "vis-test-defs-spill-" (random-uuid))
+            file (io/file (paths/sandbox-defs-file sid))
+            spill (io/file (paths/sandbox-spill-dir sid))
+            spilled #(count (filter (fn [^java.io.File f]
+                                      (str/ends-with? (.getName f) ".bin"))
+                                    (file-seq spill)))]
+
+        (try
+          (tpc/with-own
+            [ctx {} nil {:worker? worker?}]
+            (let [made (ep/run-python-block
+                         ctx
+                         (str "import threading\n"
+                              "lock = threading.Lock()\n" "blob = bytes(range(256)) * 8192\n"
+                              "text = 'snapshot \\udc80 ' * 300000\n"
+                              "a1, a2, a3, a4, a5 = (bytes([i]) * 900000 for i in range(5))\n"
+                              "def held():\n    return lock.locked()\n"
+                              "def outer():\n    return held()\n"
+                              "class Guard:\n    def enter(self):\n        return lock.acquire()\n"
+                              "def plain():\n    return len(blob)\n"))]
+              (expect (nil? (:error made)) (str (:error made))))
+            (expect (some? (ep/persist-session-defs! ctx sid)))
+            ;; `blob` and `text` pass the 1 MiB limit, `a5` the 4 MiB budget.
+            (expect (= 3 (spilled))))
+          (ep/forget-session-defs! sid)
+          (tpc/with-own
+            [ctx {} nil {:worker? worker?}]
+            (ep/restore-session-defs! ctx sid)
+            (let [notice (str (ep/take-restore-notice! ctx))]
+              (doseq [part
+                      ["a5" "blob" "text" "NOT restored: lock ("
+                       "Restored names that use them: Guard (lock); held (lock); outer (lock). "
+                       "or the names that use them."]]
+                (expect (str/includes? notice part) notice))
+              (expect (not (str/includes? notice "NOT restored: a5")) notice)
+              (expect (not (str/includes? notice "plain (")) notice))
+            (let [answer
+                  (ep/run-python-block
+                    ctx
+                    (str
+                      "print(len(blob), blob == bytes(range(256)) * 8192, "
+                      "text == 'snapshot \\udc80 ' * 300000, a5 == bytes([4]) * 900000, plain())"))]
+              (expect (= "2097152 True True True 2097152\n" (:stdout answer))
+                      (str (:error answer))))
+            ;; A deleted value drops its spill file at the next snapshot.
+            (expect (nil? (:error (ep/run-python-block ctx "del blob"))))
+            (ep/persist-session-defs! ctx sid)
+            (expect (= 2 (spilled))))
+          (finally (ep/forget-session-defs! sid)
+                   (io/delete-file file true)
+                   (doseq [f (reverse (file-seq spill))]
+                     (io/delete-file f true))))))))
+
 ;; #317: an extension result is a record whose class exists for that result alone.
 ;; It comes back after a restart, with the runtime types inside it. A small result
 ;; keeps its type too, because a literal names only the base type.

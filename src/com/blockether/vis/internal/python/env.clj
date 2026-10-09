@@ -2113,7 +2113,8 @@
    It separates what the conversation still shows from what this NEW process
    holds: the host binds tools, `session` and workspace aliases again; helpers,
    imports and saved variables come back from the snapshot; every other name is
-   gone, and the ones the snapshot knew of are named with their reason."
+   gone, and the ones the snapshot knew of are named with their reason. The
+   host adds `:dependents`: the restored helpers and classes that use a lost name."
   [report]
   (let [kind
         (fn [k one many]
@@ -2131,8 +2132,20 @@
               [(kind :functions "helper" "helpers") (kind :classes "class" "classes")
                (kind :variables "variable" "variables") (kind :imports "import" "imports")])
 
+        listed
+        (fn [entries text]
+          (str (str/join "; "
+                         (map (fn [[n v]]
+                                (str (name n) " (" (text v) ")"))
+                              (take notice-name-limit entries)))
+               (when (> (count entries) notice-name-limit)
+                 (str "; +" (- (count entries) notice-name-limit) " more"))))
+
         lost
-        (sort-by key (:lost report))]
+        (sort-by key (:lost report))
+
+        dependents
+        (sort-by (comp name key) (:dependents report))]
 
     (str "[Sandbox restarted] This Python sandbox is a new process: the previous one "
          "stopped after an idle timeout, a settings change, a memory limit or a gateway "
@@ -2142,14 +2155,15 @@
            (str "Restored from the session snapshot: " (str/join ", " restored) ". ")
            "Nothing was restored from the session snapshot. ")
          (if (seq lost)
-           (str "NOT restored: "
-                (str/join "; "
-                          (map (fn [[n why]]
-                                 (str (name n) " (" why ")"))
-                               (take notice-name-limit lost)))
-                (when (> (count lost) notice-name-limit)
-                  (str "; +" (- (count lost) notice-name-limit) " more"))
-                ". Re-create these, and anything that depends on them, before you use them.")
+           (str
+             "NOT restored: "
+             (listed lost str)
+             ". "
+             (when (seq dependents)
+               (str "Restored names that use them: " (listed dependents #(str/join ", " %)) ". "))
+             "Re-create the lost names before you use them"
+             (when (seq dependents) " or the names that use them")
+             ".")
            (str "Every saved name is back. Open files, handles and running processes do not "
                 "survive a restart: create them again before you use them.")))))
 
@@ -2169,6 +2183,79 @@
   "session-id -> the snapshot last written, so an unchanged toolbox re-writes nothing."
   (atom {}))
 
+(def ^:private spill-value-max-bytes
+  "Largest text or bytes value that ONE spill file holds. The value crosses the
+   guest boundary as base64 JSON when it changes, so a larger one costs a turn."
+  (* 32 1024 1024))
+
+(def ^:private spill-max-bytes "Cap on the spill files of ONE session together." (* 128 1024 1024))
+
+(defn- spill-index
+  "The `{name {\"kind\" … \"digest\" … \"size\" …}}` index of spill directory `dir`,
+   `{}` when it has none."
+  [dir]
+  (let [f (io/file dir "index.json")]
+    (or (when (.isFile f)
+          (try (let [m (json/read-json (slurp f))]
+                 (when (map? m) m))
+               (catch Throwable _ nil)))
+        {})))
+
+(defn- write-spill-file!
+  "Copy guest global `value-name` into spill file `f`, answering true. Nil when the
+   value did not arrive whole inside [[guest-budget-ms]]."
+  [session value-name size ^java.io.File f]
+  (when-let [data (within-budget #(guest-value session
+                                               (str
+                                                 "__import__('vis_snapshot').spill_data(globals(), "
+                                                 (py-json-literal value-name)
+                                                 ")")))]
+    (let [^bytes raw (.decode (java.util.Base64/getDecoder) ^String data)
+          staged (io/file (.getParentFile f) (str (.getName f) ".part"))]
+
+      (when (= (alength raw) (long size))
+        (io/make-parents f)
+        (with-open [out (io/output-stream staged)]
+          (.write out raw))
+        (java.nio.file.Files/move (.toPath staged)
+                                  (.toPath f)
+                                  (into-array java.nio.file.CopyOption
+                                              [java.nio.file.StandardCopyOption/ATOMIC_MOVE
+                                               java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+        true))))
+
+(defn- sync-spill!
+  "Keep `session-id`'s spill files in step with `items`, the spill candidates of
+   the latest snapshot: write a new or changed value, and drop what is gone.
+
+   The runtime snapshot keeps saved values to a fixed budget. A large text or
+   bytes value past it is not session state the agent should lose (#347), so it
+   goes to a content-addressed file `<digest>.bin` beside the snapshot."
+  [session session-id items]
+  (let [dir
+        (io/file (paths/sandbox-spill-dir (str session-id)))
+
+        old
+        (spill-index dir)
+
+        new
+        (into {}
+              (keep (fn [{value-name :name kind :kind digest :digest size :size}]
+                      (let [f (io/file dir (str digest ".bin"))]
+                        (when (or (and (.isFile f) (= (.length f) (long size)))
+                                  (write-spill-file! session value-name size f))
+                          [value-name {"kind" kind "digest" digest "size" size}]))))
+              items)]
+
+    (cond (empty? new) (doseq [^java.io.File f (reverse (file-seq dir))]
+                         (.delete f))
+          (= new old) nil
+          :else (let [kept (into #{"index.json"} (map #(str (get % "digest") ".bin")) (vals new))]
+                  (spit (io/file dir "index.json") (util/json-str new))
+                  (doseq [^java.io.File f (.listFiles dir)]
+                    (when-not (contains? kept (.getName f)) (.delete f)))))
+    nil))
+
 (defn persist-session-defs!
   "Write this session's helpers, imports and variables beside the session, for a
    LATER process.
@@ -2177,14 +2264,23 @@
    interpreter dies with the PROCESS: an idle timeout, a settings change or a
    gateway restart. Without this file every helper and variable the session
    built is gone while the transcript still shows it, so the next call is a
-   NameError against names the model can still read. Best effort; answers the
-   file when it wrote one. A disposed session is skipped: a call under its name
-   would reach a fresh, empty namespace, and that empty snapshot would erase the
-   saved state."
+   NameError against names the model can still read. Large text and bytes values
+   that the snapshot budget leaves out go to spill files ([[sync-spill!]]). Best
+   effort; answers the file when it wrote one. A disposed session is skipped: a
+   call under its name would reach a fresh, empty namespace, and that empty
+   snapshot would erase the saved state."
   [session session-id]
   (when (and session session-id (not (contains? @disposed-sessions session)))
-    (try (let [src
-               (within-budget #(guest-value session "__vis_defs_snapshot__()"))
+    (try (let [snap
+               (within-budget #(guest-value session
+                                            (str "__import__('vis_snapshot').snapshot(globals(), "
+                                                 spill-value-max-bytes
+                                                 ", "
+                                                 spill-max-bytes
+                                                 ")")))
+
+               src
+               (:text snap)
 
                f
                (io/file (paths/sandbox-defs-file (str session-id)))]
@@ -2193,14 +2289,17 @@
              ;; Over budget: the snapshot never came back, which says nothing
              ;; about the toolbox on disk — leave what is there alone.
              (nil? src) nil
-             (str/blank? (str src))
-             (do (swap! last-session-defs dissoc session-id) (when (.exists f) (.delete f)) nil)
+             (str/blank? (str src)) (do (swap! last-session-defs dissoc session-id)
+                                        (when (.exists f) (.delete f))
+                                        (sync-spill! session session-id [])
+                                        nil)
              (> (count (str src)) (long session-defs-max-bytes)) nil
-             (= (str src) (get @last-session-defs session-id)) nil
-             :else (do (io/make-parents f)
-                       (spit f (str src))
-                       (swap! last-session-defs assoc session-id (str src))
-                       f)))
+             :else (do (sync-spill! session session-id (:spill snap))
+                       (when-not (= (str src) (get @last-session-defs session-id))
+                         (io/make-parents f)
+                         (spit f (str src))
+                         (swap! last-session-defs assoc session-id (str src))
+                         f))))
          (catch Throwable _ nil))))
 
 (defn forget-session-defs!
@@ -2209,15 +2308,80 @@
   [session-id]
   (when session-id (swap! last-session-defs dissoc session-id) nil))
 
+(defn- restore-spilled!
+  "Load `session-id`'s spill files back for the names in `lost`, answering the
+   names that came back."
+  [session session-id lost]
+  (let [dir
+        (io/file (paths/sandbox-spill-dir (str session-id)))
+
+        index
+        (spill-index dir)]
+
+    (into []
+          (filter
+            (fn [value-name]
+              (let [{kind "kind" digest "digest"}
+                    (get index value-name)
+
+                    f
+                    (io/file dir (str digest ".bin"))]
+
+                (and (string? kind)
+                     (.isFile f)
+                     (true? (guest-value session
+                                         (str "__import__('vis_snapshot').unspill(globals(), **"
+                                              (py-json-literal {"name" value-name
+                                                                "kind" kind
+                                                                "data"
+                                                                (.encodeToString
+                                                                  (java.util.Base64/getEncoder)
+                                                                  (java.nio.file.Files/readAllBytes
+                                                                    (.toPath f)))})
+                                              ")")))))))
+          lost)))
+
+(defn- complete-restore-report
+  "`report` after the spill files came back: their names move from `:lost` to
+   `:variables`, and `:dependents` names the restored helpers and classes that
+   use a name that is still lost (#347)."
+  [session session-id report]
+  (let [back
+        (set (restore-spilled! session session-id (map name (keys (:lost report)))))
+
+        lost
+        (into {}
+              (remove (fn [[k _]]
+                        (contains? back (name k))))
+              (:lost report))
+
+        restored
+        (vec (concat (:functions report) (:classes report)))
+
+        dependents
+        (when (and (seq lost) (seq restored))
+          (guest-value session
+                       (str "__import__('vis_snapshot').dependents(globals(), "
+                            (py-json-literal restored)
+                            ", "
+                            (py-json-literal (mapv name (keys lost)))
+                            ")")))]
+
+    (assoc report
+      :lost lost
+      :variables (vec (sort (concat (:variables report) back)))
+      :dependents (if (map? dependents) dependents {}))))
+
 (defn restore-session-defs!
   "Re-create the helpers, imports and variables an EARLIER process persisted for
    `session-id`, answering how many helpers are live afterwards.
 
    The restored source is registered as a real block, so `defs(\"name\")` and
    `inspect.getsource` read it back exactly like a local one, and it goes
-   through the same rewrite so it RUNS like one. What came back and what did not
-   becomes the restart notice of the next block ([[take-restore-notice!]]) and the
-   hint on a NameError for a name that is gone."
+   through the same rewrite so it RUNS like one. Spill files bring back the large
+   values the snapshot left out. What came back and what did not becomes the
+   restart notice of the next block ([[take-restore-notice!]]) and the hint on a
+   NameError for a name that is gone."
   [session session-id]
   (when (and session session-id)
     (try (let [f (io/file (paths/sandbox-defs-file (str session-id)))]
@@ -2228,17 +2392,18 @@
 
                (swap! last-session-defs assoc session-id src)
                (when (map? report)
-                 (swap! restore-reports assoc
-                   session
-                   {:notice (restore-notice report)
-                    :lost (into {}
-                                (map (fn [[k v]]
-                                       [(name k) (str v)]))
-                                (:lost report))
-                    :held (into #{}
-                                (map name)
-                                (concat (mapcat report [:functions :classes :variables :imports])
-                                        (keys (:lost report))))}))
+                 (let [report (complete-restore-report session session-id report)]
+                   (swap! restore-reports assoc
+                     session
+                     {:notice (restore-notice report)
+                      :lost (into {}
+                                  (map (fn [[k v]]
+                                         [(name k) (str v)]))
+                                  (:lost report))
+                      :held (into #{}
+                                  (map name)
+                                  (concat (mapcat report [:functions :classes :variables :imports])
+                                          (keys (:lost report))))})))
                (when (number? n) (long n)))))
          (catch Throwable e
            (tel/log! {:level :debug :id ::restore-session-defs-failed :error e})

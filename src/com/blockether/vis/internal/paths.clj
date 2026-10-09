@@ -180,6 +180,13 @@
   ^String [session-id]
   (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".py"))
 
+(defn sandbox-spill-dir
+  "Directory for ONE session's spilled sandbox values — `~/.vis/sandbox/<session-id>.spill`.
+   It holds large text and bytes values that the snapshot budget left out, beside
+   [[sandbox-defs-file]]. The id is reduced to a safe file name like there."
+  ^String [session-id]
+  (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".spill"))
+
 (defn process-id
   "This JVM's OS process id. Read fresh so native-image never bakes the builder's
    pid into the installed binary."
