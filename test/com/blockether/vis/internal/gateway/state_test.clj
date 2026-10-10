@@ -71,6 +71,52 @@
                      (expect (= draft (persistance/db-workspace-get store (:id draft))))))))
              (finally (sqlite/db-close! store))))))
 
+;; A session started in a project group without a folder belongs in that project's
+;; folder, not in the gateway process directory.
+(defdescribe
+  create-session-in-project-group-test
+  (it
+    "uses the folder of the group's project when the request has no root"
+    (let [store
+          (sqlite/db-open! :memory)
+
+          project-root
+          (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                        "vis-group-project"
+                                        (make-array java.nio.file.attribute.FileAttribute 0))))]
+
+      (try
+        (let [project
+              (persistance/db-create-project! store {:name "Project" :workspace-root project-root})
+
+              group
+              (persistance/db-create-session-group! store (:id project) {:name "Work"})]
+
+          (with-redefs-fn {#'lp/db-info (constantly store)
+                           #'lp/create! (fn [channel opts]
+                                          {:id (random-uuid)
+                                           :channel channel
+                                           :workspace-id (:workspace-id opts)})
+                           #'lp/assign-session-group! (fn [_ _]
+                                                        nil)
+                           #'state/put-session! (fn [_ _]
+                                                  nil)}
+            (fn []
+              (let [created (state/create-session! {:channel :api :group-id (:id group)})]
+                (expect (= project-root
+                           (:root (persistance/db-workspace-get store
+                                                                (get created "workspace_id"))))))
+              (let [other
+                    (System/getProperty "java.io.tmpdir")
+
+                    created
+                    (state/create-session! {:channel :api :group-id (:id group) :root other})]
+
+                (expect (= (workspace/normalize-root other)
+                           (:root (persistance/db-workspace-get store
+                                                                (get created "workspace_id")))))))))
+        (finally (sqlite/db-close! store) (.delete (io/file project-root)))))))
+
 (defn- with-draft-workspace
   [ws f]
   (expect (await-for 5000 @#'state/draft-status-reader))

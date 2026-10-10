@@ -2098,9 +2098,9 @@
 
 (defn- insert-trunk!
   "Insert a fresh TRUNK workspace row (root = repo_root = `root`, defaulting
-   to the real cwd; no clone, no fork_ms) and pin it to `session-state-id`
-   when given."
-  ([db-info session-state-id] (insert-trunk! db-info session-state-id (trunk-root)))
+   to the bound project folder, then the real cwd; no clone, no fork_ms) and pin
+   it to `session-state-id` when given."
+  ([db-info session-state-id] (insert-trunk! db-info session-state-id (cwd-root)))
   ([db-info session-state-id root]
    (let [trunk
          (source-root db-info root)
@@ -2118,9 +2118,10 @@
      ws)))
 
 (defn ensure-workspace!
-  "Find-or-create the session's workspace. The DEFAULT is TRUNK — the
-   user's real cwd (no clone). Resume returns whatever workspace the session was
-   pinned to. Idempotent per session-state."
+  "Find-or-create the session's workspace. The DEFAULT is TRUNK — the bound
+   project folder (`*workspace-root*`), else the user's real cwd (no clone).
+   Resume returns whatever workspace the session was pinned to. Idempotent per
+   session-state."
   [db-info {:keys [session-state-id]}]
   (or (for-session db-info session-state-id) (insert-trunk! db-info session-state-id)))
 

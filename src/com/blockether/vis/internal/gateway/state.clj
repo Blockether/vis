@@ -5656,10 +5656,25 @@
                    :group_id (some-> group-id
                                      str)}))
 
+(defn- group-project-root
+  "Folder of the project that owns session group `group-id`, or nil."
+  [group-id]
+  (some->> (some-> group-id
+                   lp/get-session-group
+                   :project-id)
+           (persistance/db-get-project (lp/db-info))
+           :workspace-root
+           not-empty))
+
 (defn- create-session-cold!
   [{:keys [channel title external-id workspace-id root group-id sources extensions]}]
   (let [channel
         (or channel :api)
+
+        ;; A session started in a project group without a folder works in that
+        ;; project's folder, not in the gateway directory.
+        root
+        (or root (when-not workspace-id (group-project-root group-id)))
 
         workspace-id
         (or workspace-id (when root (:id (workspace/create-trunk-at! (lp/db-info) root))))

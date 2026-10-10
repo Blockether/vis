@@ -514,6 +514,17 @@
                                  (expect (= (ws/normalize-root "~") (:root workspace)))
                                  (expect (= (:root workspace) (:repo-root workspace))))))))
 
+;; A new session in a project gets the project folder, not the process directory.
+(defdescribe new-session-default-root-test
+             (it "creates the default trunk in the bound project folder, not user.dir"
+                 (let [project (temp-dir "vis-new-session-project")]
+                   (try (with-store (fn [store]
+                                      (binding [ws/*workspace-root* project]
+                                        (let [workspace (ws/ensure-workspace! store {})]
+                                          (expect (= project (:root workspace)))
+                                          (expect (not= (ws/trunk-root) (:root workspace)))))))
+                        (finally (delete-tree! project))))))
+
 ;; #245: a new session must not adopt another session's draft as its trunk.
 (defdescribe
   new-session-from-draft-root-test
@@ -566,7 +577,7 @@
                             (expect (= expected (:repo-root fresh)))
                             (expect (not (ws/draft? fresh)))
                             (expect (not= (:id draft) (:id fresh))))))
-                      (with-redefs [ws/trunk-root (constantly (:root draft))]
+                      (binding [ws/*workspace-root* (:root draft)]
                         (expect (= (str source) (:root (ws/ensure-workspace! store {})))))
                       (expect (= (:id draft)
                                  (:id (ws/ensure-workspace! store {:session-state-id state-id}))))
