@@ -59,7 +59,12 @@
    An optional `group_id` STARTS it inside that session group, so a client that
    offered the verb ON a group never has to file the row a beat after it appears
    (BLO-167). An unknown group refuses the create instead of quietly making a
-   loose session somewhere else in the project."
+   loose session somewhere else in the project.
+
+   An optional `sources` list (`global`, `project`) limits the configuration tiers
+   the session reads. An optional `extensions` list keeps only the named
+   extensions, turns off `-name` entries, or turns off every optional extension
+   when it is empty. A bad value refuses the create with a 400 answer."
   [request]
   (let [body
         (http/body-json request)
@@ -69,21 +74,42 @@
 
         gid
         (some-> (not-empty (str raw))
-                parse-uuid)]
+                parse-uuid)
+
+        sources
+        (get body "sources")
+
+        extensions
+        (get body "extensions")
+
+        string-list?
+        #(or (nil? %) (and (sequential? %) (every? string? %)))]
 
     (cond (and (not (str/blank? (str raw))) (nil? gid))
           (http/error-response 400 :invalid-request "group_id must be a session group id")
           (and gid (nil? (state/get-session-group gid))) (http/group-404 (str raw))
-          :else (http/json-response 201
-                                    (state/create-session!
-                                      (cond-> {:channel (some-> (get body "channel")
-                                                                keyword)
-                                               :title (get body "title")
-                                               :external-id (get body "external_id")
-                                               :workspace-id (get body "workspace_id")
-                                               :root (get body "root")}
-                                        gid
-                                        (assoc :group-id gid)))))))
+          (not (string-list? sources))
+          (http/error-response 400 :invalid-request "sources must be a list of global and project")
+          (not (string-list? extensions))
+          (http/error-response 400 :invalid-request "extensions must be a list of extension names")
+          :else (try (http/json-response 201
+                                         (state/create-session!
+                                           (cond-> {:channel (some-> (get body "channel")
+                                                                     keyword)
+                                                    :title (get body "title")
+                                                    :external-id (get body "external_id")
+                                                    :workspace-id (get body "workspace_id")
+                                                    :root (get body "root")
+                                                    :sources sources
+                                                    :extensions extensions}
+                                             gid
+                                             (assoc :group-id gid))))
+                     (catch clojure.lang.ExceptionInfo e
+                       (if-let [status (:status (ex-data e))]
+                         (http/error-response status
+                                              (or (:type (ex-data e)) :invalid-request)
+                                              (ex-message e))
+                         (throw e)))))))
 
 (defn- sessions-etag
   "Conditional-GET validator for a session-list ANSWER: SHA-256 over the rows

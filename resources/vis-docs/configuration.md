@@ -11,6 +11,8 @@ when you want settings shared across projects or checked into a repository.
 - **Your team should share the same settings.** Commit a project `vis.yml`.
   [Configuration files](#configuration-files) shows which file wins when several set
   the same key.
+- **One session must not use your global or project setup, or some extensions.** Start it with
+  the flags in [Leave out global or project configuration](#leave-out-global-or-project-configuration).
 - **One session or group needs different behavior.** Open its
   [scoped settings](#project-group-and-session-settings) instead of changing the
   gateway defaults.
@@ -114,6 +116,41 @@ router:
 environment:
   ANTHROPIC_API_KEY: {env: ANTHROPIC_API_KEY}
 ```
+
+### Leave out global or project configuration
+
+Start the terminal with a flag when a session must not use part of your setup:
+
+```bash
+vis-agent tui --no-global                 # only the project configuration
+vis-agent tui --no-project                # only your global configuration
+vis-agent tui --tepro                     # neither: plain Vis with your providers
+vis-agent tui --extensions gh,clj         # only these extensions
+vis-agent tui --extensions -spel,-uplink  # every extension except these
+vis-agent tui --extensions none           # no optional extension
+```
+
+| Flag | What the session leaves out |
+| --- | --- |
+| `--no-global` | `~/.vis/config.yml`, the settings in `~/.vis/state.yml`, `~/.vis/extensions/`, `~/.vis/AGENTS.md` and global skills |
+| `--no-project` | `vis.yml`, `.vis/config.yml`, `.vis/extensions/`, `AGENTS.md` files and `.vis/skills` |
+| `--tepro` | Both of the rows above |
+
+Providers, sign-in data and your default and fallback models stay in every case. Without them, a
+session has no model.
+
+The flags apply to each new session that this terminal opens. A saved session keeps the choice that
+it started with. Do not combine the flags with `--session-id`, `--resume` or `--continue`.
+
+An extension name is the name in its manifest. A list of names keeps only those extensions. A list
+of `-names` turns only those off. Do not mix the two forms in one list. Vis refuses an unknown name
+before the session starts. Parts of Vis without an Auto/On/Off setting always stay on.
+
+For scripts, set `VIS_SOURCES` to `global`, `project` or `none`, and set `VIS_EXTENSIONS` to an
+extension list. A flag wins over its variable.
+
+A session cannot change the files of a tier that it leaves out. Vis refuses the change with a 409
+error. To start such a session from a program, see [Sessions API](sessions-api.md#create-a-session).
 
 ## Providers and models
 

@@ -660,6 +660,7 @@
        (optional-field? x :ext/slash-commands #(vector-of? slash? %))
        (optional-field? x :ext/sandbox-shims #(vector-of? sandbox-shim? %))
        (optional-field? x :ext/engine engine?)
+       (optional-field? x :ext/source-scope workspace/config-sources)
        (ns-alias-required-when-symbols? x)
        (kind-required-when-symbols? x)))
 
@@ -1506,6 +1507,9 @@
                                                deref)
                                        toggles/*overrides*)
                workspace/*workspace-root* (workspace/workspace-root env#)
+               workspace/*config-sources* (if (contains? env# :config/sources)
+                                            (:config/sources env#)
+                                            workspace/*config-sources*)
                workspace/*filesystem-roots* (workspace/env-filesystem-roots env#)]
 
        ~@body)))

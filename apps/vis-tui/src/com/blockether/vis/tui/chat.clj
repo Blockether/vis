@@ -1612,6 +1612,13 @@
     (fn []
       (try (cleanup) (catch Throwable _ nil)))))
 
+(defonce ^:private launch-session-options* (atom {}))
+
+(defn set-launch-session-options!
+  "Send `:sources` and `:extensions` with each new session that this client creates."
+  [opts]
+  (reset! launch-session-options* (select-keys opts [:sources :extensions])))
+
 (defn- create-session*
   [_provider-config {:keys [workspace-id root group-id]}]
   (let [root
@@ -1619,7 +1626,7 @@
             (when-not workspace-id (vis/workspace-normalize-root (System/getProperty "user.dir"))))
 
         resp
-        (vis/gateway-create-session! (cond-> {:channel :tui}
+        (vis/gateway-create-session! (cond-> (merge {:channel :tui} @launch-session-options*)
                                        workspace-id
                                        (assoc :workspace-id workspace-id)
 

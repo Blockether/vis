@@ -50,6 +50,52 @@
    `/reload`; they are never session-persisted or mutable through a command."
   nil)
 
+(def config-sources
+  "Configuration tiers a session can read: `~/.vis` (global) and the workspace (project)."
+  #{"global" "project"})
+
+(def ^:dynamic *config-sources*
+  "Configuration tiers the current session reads, a subset of `config-sources`. Nil
+   reads every tier. Bound from the session environment beside `*workspace-root*`.
+   Provider and sign-in settings in `~/.vis` load in every case."
+  nil)
+
+(def config-sources-setting
+  "Session setting that keeps the tiers a session was created with. The colon keeps
+   it apart from snake_case toggle ids."
+  "launch:config_sources")
+
+(defn source-enabled?
+  "True when the current session reads configuration tier `tier`."
+  [tier]
+  (or (nil? *config-sources*) (contains? *config-sources* tier)))
+
+(defn normalize-config-sources
+  "Validate a tier collection. Return nil for every tier, else the set of tiers.
+   Throw a 400 error for an unknown tier."
+  [sources]
+  (when (some? sources)
+    (let [chosen
+          (set (map str sources))
+
+          unknown
+          (remove config-sources chosen)]
+
+      (when (seq unknown)
+        (throw (ex-info (str "Unknown configuration source: "
+                             (str/join ", " (sort unknown))
+                             ". Use global or project.")
+                        {:status 400 :type :config/unknown-source :sources (vec (sort unknown))})))
+      (when-not (= chosen config-sources) chosen))))
+
+(defn session-config-sources
+  "Tiers that session `session-id` reads, from its saved setting. Nil reads every tier."
+  [db-info session-id]
+  (when (and db-info session-id)
+    (some-> (clojure.core/get (p/db-scoped-settings db-info "session" session-id)
+                              config-sources-setting)
+            normalize-config-sources)))
+
 (defn normalize-root
   "Canonicalize a workspace root string/File. Blank/nil → nil. Expand a leading
    `~` or `~/` against the current user's home directory."

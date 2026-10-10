@@ -1295,3 +1295,21 @@
                                              (ws/abandon! store {:workspace-id (:id draft)}))
                                            deref))))))))
            (finally (delete-tree! home) (delete-tree! base))))))
+
+(defdescribe config-sources-test
+             (it "reads every tier without a choice"
+                 (expect (nil? (ws/normalize-config-sources nil)))
+                 (expect (nil? (ws/normalize-config-sources ["project" "global"])))
+                 (expect (ws/source-enabled? "global")))
+             (it "keeps a chosen subset, also the empty --tepro set"
+                 (expect (= #{"project"} (ws/normalize-config-sources ["project"])))
+                 (expect (= #{} (ws/normalize-config-sources [])))
+                 (binding [ws/*config-sources* #{"project"}]
+                   (expect (not (ws/source-enabled? "global")))
+                   (expect (ws/source-enabled? "project"))))
+             (it "rejects an unknown tier with a 400 error"
+                 (let [e (try (ws/normalize-config-sources ["global" "home"])
+                              nil
+                              (catch clojure.lang.ExceptionInfo e e))]
+                   (expect (= {:status 400 :type :config/unknown-source :sources ["home"]}
+                              (ex-data e))))))

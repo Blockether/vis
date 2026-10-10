@@ -30,7 +30,7 @@
             [com.blockether.vis.tui.virtual :as virtual]
             [com.blockether.vis.tui.external-opener :as opener]
             [taoensso.telemere :as tel]
-            [lazytest.core :refer [defdescribe it expect]])
+            [lazytest.core :refer [defdescribe describe it expect]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
@@ -2597,7 +2597,50 @@ therapy line 2"
                  ;; and `--resume` would otherwise be silently treated as the id.
                  (expect (user-error? #(parse-args ["--session-id" "--resume"]))))
              (it "non-flag positional arg also errors (no positional API today)"
-                 (expect (user-error? #(parse-args ["stray-positional"])))))
+                 (expect (user-error? #(parse-args ["stray-positional"]))))
+             (it "--tepro turns off both configuration tiers"
+                 (expect (= {:no-global true :no-project true} (parse-args ["--tepro"]))))
+             (it "--extensions captures the list and needs a value"
+                 (expect (= {:extensions "gh,clj" :no-global true}
+                            (parse-args ["--no-global" "--extensions" "gh,clj"])))
+                 (expect (user-error? #(parse-args ["--extensions"])))))
+
+(def ^:private launch-session-options (deref #'screen/launch-session-options))
+
+(defdescribe
+  launch-session-options-test
+  (describe "configuration tiers"
+            (it "keeps every tier without flags or environment"
+                (expect (= {} (launch-session-options {} {}))))
+            (it "--no-global keeps only the project tier"
+                (expect (= {:sources ["project"]} (launch-session-options {:no-global true} {}))))
+            (it "--no-project keeps only the global tier"
+                (expect (= {:sources ["global"]} (launch-session-options {:no-project true} {}))))
+            (it "--tepro keeps no tier"
+                (expect (= {:sources []} (launch-session-options (parse-args ["--tepro"]) {}))))
+            (it "VIS_SOURCES applies without a flag, and a flag wins"
+                (expect (= {:sources []} (launch-session-options {} {"VIS_SOURCES" "none"})))
+                (expect (= {:sources ["project"]}
+                           (launch-session-options {} {"VIS_SOURCES" "project"})))
+                (expect (= {:sources ["global"]}
+                           (launch-session-options {:no-project true} {"VIS_SOURCES" "project"})))))
+  (describe
+    "extensions"
+    (it "splits the list, keeps exclusions and reads none as empty"
+        (expect (= {:extensions ["gh" "clj"]} (launch-session-options {:extensions "gh, clj"} {})))
+        (expect (= {:extensions ["-spel" "-uplink"]}
+                   (launch-session-options {:extensions "-spel,-uplink"} {})))
+        (expect (= {:extensions []} (launch-session-options {:extensions "none"} {}))))
+    (it "VIS_EXTENSIONS applies without a flag"
+        (expect (= {:extensions ["gh"]} (launch-session-options {} {"VIS_EXTENSIONS" "gh"})))))
+  (describe "existing sessions"
+            (it "rejects the flags with --session-id, --resume or --continue"
+                (expect (user-error? #(launch-session-options {:no-global true :continue true} {})))
+                (expect (user-error? #(launch-session-options {:extensions "gh" :session-id "x"}
+                                                              {}))))
+            (it "accepts environment values with --continue, because only new sessions use them"
+                (expect (= {:sources ["project"]}
+                           (launch-session-options {:continue true} {"VIS_SOURCES" "project"}))))))
 
 (defdescribe
   typing-diagnostics-test

@@ -2496,10 +2496,12 @@
                         (get metadata "repository")
                         (assoc :ext/repository (get metadata "repository")))
                       spec)
+               ;; The tier tag lets a session that does not read this tier turn the
+               ;; extension off (see `scoped/engine-mode`).
                validated (if-let [root (:project-root frozen)]
-                           (extension/project-extension spec
+                           (extension/project-extension (assoc spec :ext/source-scope "project")
                                                         (keep :ext (vals (scope-entries root))))
-                           (extension/register-extension! spec))]
+                           (extension/register-extension! (assoc spec :ext/source-scope "global")))]
 
            (tel/log! {:level :info
                       :id ::loaded

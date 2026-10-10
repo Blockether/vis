@@ -296,7 +296,7 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id]}]
+  [router {:keys [db session channel external-id title workspace-id sources]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; Everything from here to the end runs with the sandbox GUARDED: the session is
   ;; built ~130 lines before this function returns, and workspace resolution,
@@ -397,6 +397,14 @@
                                                                    :claimed? true}
                                                             root-provider
                                                             (assoc :provider root-provider))))
+            ;; A new session keeps the configuration tiers it was created with.
+            ;; `open-env!` reads them back when it rebuilds the session.
+            _ (when (and sources db-info (not resolved-session-id))
+                (persistance/db-set-scoped-setting! db-info
+                                                    "session"
+                                                    session-id
+                                                    workspace/config-sources-setting
+                                                    (vec (sort sources))))
             ;; Resolve the session_state row id ONCE here (reliable at env build)
             ;; and stamp it on the env, so workspace operations and turns do not re-query
             ;; it. The per-call re-query intermittently returned nil for fresh sessions.
@@ -638,6 +646,7 @@
                          ;; and egress all derive from this same environment-owned value.
                          :security-policy security-config
                          :config/toggles toggle-values
+                         :config/sources sources
                          :security/filesystem-roots configured-rw-roots
                          :security/no-search-roots (security-policy/no-search-roots security-config)
                          :access-view-fn access-view-fn
@@ -1524,9 +1533,88 @@
                      "Failed to rebuild router after provider change")))
     new-cfg))
 
+(defn- extension-selection
+  "Parse an extension selection from `--extensions`. Names keep only those extensions,
+   `-name` entries turn those off, and an empty list turns every optional extension off.
+   Return `{:keep names}`, `{:drop names}` or nil. Throw a 400 error for a mixed list."
+  [names]
+  (when (some? names)
+    (let [names
+          (into [] (comp (map (comp str/trim str)) (remove str/blank?)) names)
+
+          dropped
+          (filter #(str/starts-with? % "-") names)]
+
+      (cond (empty? names) {:keep #{}}
+            (empty? dropped) {:keep (set names)}
+            (= (count dropped) (count names)) {:drop (set (map #(subs % 1) dropped))}
+            :else (throw (ex-info (str "Use either extension names to keep or -names to turn off, "
+                                       "not both in one list.")
+                                  {:status 400 :type :extension/mixed-selection}))))))
+
+(defn- extensions-to-turn-off
+  "Validate `selection` against the extensions of the bound project. Return the
+   optional extensions that the selection turns off. Throw a 400 error for an unknown
+   name or for an engine part, which has no Auto/On/Off setting."
+  [selection]
+  (when selection
+    (python-extensions/ensure-python-extensions-loaded!)
+    (let [registered
+          (extension/registered-extensions)
+
+          by-name
+          (into {} (map (juxt :ext/name identity)) registered)
+
+          optional
+          (filterv scoped/engine-setting! registered)
+
+          named
+          (or (:keep selection) (:drop selection))
+
+          unknown
+          (sort (remove by-name named))
+
+          fixed
+          (sort (remove #(scoped/engine-setting! (by-name %)) (filter by-name (:drop selection))))]
+
+      (when (seq unknown)
+        (throw (ex-info (str "Unknown extension: "
+                             (str/join ", " unknown)
+                             ". Extensions you can select: "
+                             (str/join ", " (sort (map :ext/name optional)))
+                             ".")
+                        {:status 400 :type :extension/unknown :extensions (vec unknown)})))
+      (when (seq fixed)
+        (throw (ex-info (str "Part of Vis, cannot be turned off: " (str/join ", " fixed) ".")
+                        {:status 400 :type :extension/required :extensions (vec fixed)})))
+      (if-let [keep-names (:keep selection)]
+        (remove #(contains? keep-names (:ext/name %)) optional)
+        (map by-name (:drop selection))))))
+
+(defn- turn-off-extensions!
+  "Set each extension in `extensions` to Off for the new session of `env`."
+  [env extensions]
+  (when (seq extensions)
+    (let [db-info
+          (:db-info env)
+
+          session-id
+          (:session-id env)
+
+          target
+          (scoped/target db-info "session" session-id)]
+
+      (doseq [ext extensions]
+        (scoped/set-setting! db-info target (scoped/engine-setting! ext) "value" "off"))
+      (when-let [values (:config/toggles env)]
+        (reset! values (merge (scoped/values db-info session-id)
+                              toggles/*invocation-overrides*))))))
+
 (defn open-env!
-  "Open or resume a session with its project bound before resolving config and providers."
-  [id {:keys [channel external-id title workspace-id]}]
+  "Open or resume a session with its project and configuration tiers bound before
+   resolving config and providers. A new session takes `:sources` and `:extensions`
+   (see `extension-selection`); a resumed session keeps what it was created with."
+  [id {:keys [channel external-id title workspace-id sources extensions]}]
   (let [db
         (config/resolve-db-spec)
 
@@ -1537,26 +1625,43 @@
         (if id
           (some->> (persistance/db-latest-session-state-id db-info id)
                    (persistance/db-workspace-for-session db-info))
-          (when workspace-id (persistance/db-workspace-get db-info workspace-id)))]
+          (when workspace-id (persistance/db-workspace-get db-info workspace-id)))
 
-    (binding [workspace/*workspace-root* (or (:root active-workspace) workspace/*workspace-root*)]
+        sources
+        (if id
+          (workspace/session-config-sources db-info id)
+          (workspace/normalize-config-sources sources))]
+
+    (binding [workspace/*workspace-root*
+              (or (:root active-workspace) workspace/*workspace-root*)
+
+              workspace/*config-sources*
+              sources]
+
       (python-extensions/prepare-project! (workspace/cwd))
-      (create-environment (loop-router/get-router)
-                          (cond-> {:db db}
-                            id
-                            (assoc :session id)
+      (let [turned-off
+            (when-not id (doall (extensions-to-turn-off (extension-selection extensions))))
 
-                            channel
-                            (assoc :channel channel)
+            env
+            (create-environment (loop-router/get-router)
+                                (cond-> {:db db :sources sources}
+                                  id
+                                  (assoc :session id)
 
-                            external-id
-                            (assoc :external-id external-id)
+                                  channel
+                                  (assoc :channel channel)
 
-                            title
-                            (assoc :title title)
+                                  external-id
+                                  (assoc :external-id external-id)
 
-                            workspace-id
-                            (assoc :workspace-id workspace-id))))))
+                                  title
+                                  (assoc :title title)
+
+                                  workspace-id
+                                  (assoc :workspace-id workspace-id)))]
+
+        (turn-off-extensions! env turned-off)
+        env))))
 
 (defn ensure-env!
   [id]

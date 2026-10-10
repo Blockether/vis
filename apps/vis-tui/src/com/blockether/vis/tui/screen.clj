@@ -7180,6 +7180,8 @@
                            (chat/make-session config))
         ;; --resume starts fresh; the session picker opens after this session binds.
         (:resume opts) (chat/make-session config)
+        ;; Source or extension flags: these options apply only to a new session.
+        (:launch opts) (chat/make-session config)
         ;; A project IS a tab set. Eagerly resume only its most-recent member;
         ;; the rest become name-only tabs after the UI is live.
         :else (let [members
@@ -9651,7 +9653,7 @@
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage
-  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--tepro] [--extensions LIST]")
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
@@ -9689,8 +9691,67 @@
           ("--continue" "-c")
           (recur more (assoc opts :continue true))
 
+          "--no-global"
+          (recur more (assoc opts :no-global true))
+
+          "--no-project"
+          (recur more (assoc opts :no-project true))
+
+          "--tepro"
+          (recur more
+                 (assoc opts
+                   :no-global true
+                   :no-project true))
+
+          "--extensions"
+          (let [v (flag-value arg more tui-usage)]
+            (recur (next more) (assoc opts :extensions v)))
+
           (throw (ex-info (str "unknown flag: " arg "\nUsage: " tui-usage)
                           {:vis/user-error true})))))))
+
+(defn- name-list
+  "Split a comma-separated flag value. The single name `none` gives an empty list."
+  [s]
+  (let [names (into [] (comp (map str/trim) (remove str/blank?)) (str/split (str s) #","))]
+    (if (= ["none"] names) [] names)))
+
+(defn- launch-session-options
+  "Build the new-session options from the source and extension flags.
+   Without a flag, read `VIS_SOURCES` and `VIS_EXTENSIONS` from `env`. These
+   options apply to each session that this client creates; an existing session
+   keeps the sources and extensions that it started with."
+  [{:keys [no-global no-project extensions session-id resume continue]} env]
+  (when (and (or no-global no-project extensions) (or session-id resume continue))
+    (throw (ex-info
+             (str "--no-global, --no-project, --tepro and --extensions apply only to a new session."
+                  " Do not use them with --session-id, --resume or --continue."
+                  "\nUsage: " tui-usage)
+             {:vis/user-error true})))
+  (let [env-value
+        (fn [k]
+          (let [v (get env k)]
+            (when-not (str/blank? v) v)))
+
+        sources
+        (cond (or no-global no-project) (cond-> []
+                                          (not no-global)
+                                          (conj "global")
+
+                                          (not no-project)
+                                          (conj "project"))
+              (env-value "VIS_SOURCES") (name-list (env-value "VIS_SOURCES")))
+
+        extensions
+        (some-> (or extensions (env-value "VIS_EXTENSIONS"))
+                name-list)]
+
+    (cond-> {}
+      sources
+      (assoc :sources sources)
+
+      extensions
+      (assoc :extensions extensions))))
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
@@ -9728,7 +9789,13 @@
   (redirect-stdio-to-log!)
   (vis/init!)
   (let [exit-code (atom 0)]
-    (try (run-chat! (parse-args args))
+    (try (let [opts (parse-args args)
+               launch (launch-session-options opts (System/getenv))]
+
+           (chat/set-launch-session-options! launch)
+           (run-chat! (cond-> opts
+                        (seq launch)
+                        (assoc :launch launch))))
          (print-session-id-on-exit!)
          (catch Throwable t
            (if-let [ue (loop [c t]

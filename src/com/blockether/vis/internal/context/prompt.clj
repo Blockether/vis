@@ -561,6 +561,11 @@
                   (get-in environment [:workspace :root])
                   workspace/*workspace-root*)
 
+              workspace/*config-sources*
+              (if (contains? environment :config/sources)
+                (:config/sources environment)
+                workspace/*config-sources*)
+
               workspace/*filesystem-roots*
               (workspace/env-filesystem-roots environment)]
 

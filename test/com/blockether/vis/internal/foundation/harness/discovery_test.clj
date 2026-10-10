@@ -409,3 +409,14 @@
                (expect (not (contains? review :settings?)))
                (expect (d/own-setting? review)))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq snapshot))))))))
+
+(defdescribe config-source-skill-test
+             (it "maps a skill file to its configuration tier"
+                 (let [skill-source (deref #'d/skill-source)]
+                   (expect (= "project" (skill-source {:name "a" :project-root "/repo"})))
+                   (expect (= "global" (skill-source {:name "a"})))
+                   (expect (nil? (skill-source {:name "a" :tool :vis-package})))))
+             (it "turns off a skill from a tier that the session does not read"
+                 (expect (false? (d/skill-enabled? {:config/sources #{"global"}}
+                                                   {:name "a" :project-root "/repo"})))
+                 (expect (false? (d/skill-enabled? {:config/sources #{}} {:name "a"})))))

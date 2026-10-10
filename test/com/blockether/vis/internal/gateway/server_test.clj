@@ -7359,3 +7359,36 @@
                                    [:headers "Content-Encoding"])))
                 (expect (nil? (get-in (response {"accept-encoding" "identity"})
                                       [:headers "Content-Encoding"]))))))))))
+
+(defdescribe
+  create-session-sources-test
+  (let [request
+        (fn [body]
+          {:body (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str body) "UTF-8"))})
+
+        handler
+        #'sessions-api/create-session-handler]
+
+    (it "passes sources and extensions to the new session"
+        (let [seen (atom nil)]
+          (with-redefs [state/create-session! (fn [opts]
+                                                (reset! seen opts)
+                                                {"id" "s1"})]
+            (expect
+              (= 201 (:status (handler (request {"sources" ["project"] "extensions" ["-spel"]})))))
+            (expect (= {:sources ["project"] :extensions ["-spel"]}
+                       (select-keys @seen [:sources :extensions]))))))
+    (it "refuses a value that is not a list of strings"
+        (with-redefs [state/create-session! (fn [_]
+                                              (throw (ex-info "not called" {})))]
+          (expect (= 400 (:status (handler (request {"sources" "project"})))))
+          (expect (= 400 (:status (handler (request {"extensions" [1]})))))))
+    (it "answers an engine selection error with its status and message"
+        (with-redefs [state/create-session! (fn [_]
+                                              (throw (ex-info "Unknown extension: spell."
+                                                              {:status 400
+                                                               :type :extension/unknown})))]
+          (let [response (handler (request {"extensions" ["-spell"]}))]
+            (expect (= 400 (:status response)))
+            (expect (= {"type" "unknown" "message" "Unknown extension: spell."}
+                       (get (wire/parse-json (:body response)) "error"))))))))

@@ -572,17 +572,28 @@
   [skill]
   (not (false? (:settings? skill))))
 
+(defn- skill-source
+  "Configuration tier of a skill file: project for a repository skill, global for
+   one under the home directory. Nil for a packaged skill, which follows its extension."
+  [skill]
+  (when-not (= :vis-package (:tool skill)) (if (:project-root skill) "project" "global")))
+
 (defn skill-enabled?
-  "Live gate for one discovered skill. A skill without its own switch follows its
+  "Live gate for one discovered skill. A skill from a configuration tier that the
+   session does not read is off. A skill without its own switch follows its
    extension: Off removes it, Auto and On keep it. Pass a delay of
    [[scoped/live-values]] when checking several skills."
   ([env skill] (skill-enabled? env skill nil))
   ([env skill live]
-   (if (own-setting? skill)
-     (scoped/resource-enabled? env :skills (:name skill) live)
-     (let [owner (get-in skill [:package :name])]
-       (boolean (some #(and (= owner (:ext/name %)) (not= "off" (scoped/engine-mode env % live)))
-                      (extension/registered-extensions)))))))
+   (cond (some->> (skill-source skill)
+                  (scoped/source-enabled? env)
+                  not)
+         false
+         (own-setting? skill) (scoped/resource-enabled? env :skills (:name skill) live)
+         :else (let [owner (get-in skill [:package :name])]
+                 (boolean (some #(and (= owner (:ext/name %))
+                                      (not= "off" (scoped/engine-mode env % live)))
+                                (extension/registered-extensions)))))))
 
 (defn all-skills
   "Discovered skills before availability filtering, for human settings only. Registers

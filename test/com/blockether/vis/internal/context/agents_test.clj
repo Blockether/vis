@@ -207,3 +207,34 @@
                                            (mapv (juxt :scope :content) (:files result))]
 
                                        (expect (= [[:project "WS-RULE"]] scoped))))))))
+
+(defdescribe config-source-guidance-test
+             (it "reads AGENTS.md only from the tiers that the session reads"
+                 (with-tmp-root*
+                   (fn [^java.io.File root]
+                     (let [home
+                           (doto (java.io.File. root "home/.vis") .mkdirs)
+
+                           ws
+                           (doto (java.io.File. root "ws") .mkdirs)
+
+                           rules
+                           (fn [sources]
+                             (binding [workspace/*workspace-root*
+                                       (str ws)
+
+                                       workspace/*config-sources*
+                                       sources
+
+                                       workspace/*filesystem-roots*
+                                       nil]
+
+                               (with-redefs-fn {#'agents/global-config-dir (constantly home)}
+                                 #(set (keep :content (:files (agents/primary-instructions)))))))]
+
+                       (spit (java.io.File. home "AGENTS.md") "GLOBAL-RULE")
+                       (spit (java.io.File. ws "AGENTS.md") "WS-RULE")
+                       (expect (= #{"GLOBAL-RULE" "WS-RULE"} (rules nil)))
+                       (expect (= #{"GLOBAL-RULE"} (rules #{"global"})))
+                       (expect (= #{"WS-RULE"} (rules #{"project"})))
+                       (expect (= #{} (rules #{}))))))))

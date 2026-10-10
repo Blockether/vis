@@ -1140,13 +1140,52 @@
         (assoc merged "extensions" (apply merge (map #(get % "extensions") maps)))
         merged))))
 
-(defn load-global-config-raw
-  "Load the machine-written global store as a config map (or nil): `~/.vis/state.yml`.
-   Explicit global workspace and jail settings belong here; project environment
-   variables do not. Hand-written YAML stays outside the read-modify-write store.
+(def always-loaded-config-keys
+  "Global keys that every session loads and saves, also without the global tier:
+   providers with their sign-in data, the person's model choice and machine-derived
+   provider memory."
+  (into #{"providers" "default_provider" "default_model" "fallback_provider" "fallback_model"}
+        config-validation/derived-machine-keys))
 
+(defn- global-tier-view
+  "`raw` as the current session sees it: complete, or only `always-loaded-config-keys`
+   when the session does not read the global tier."
+  [raw]
+  (if (workspace/source-enabled? "global")
+    raw
+    (not-empty (select-keys raw always-loaded-config-keys))))
+
+(defn assert-source-enabled!
+  "Throw a 409 error when the current session does not read tier `source`, so a
+   write never lands in a file that the session ignores. `what` names the change."
+  [source what]
+  (when-not (workspace/source-enabled? source)
+    (throw (ex-info (str "This session does not use "
+                         source
+                         " configuration (--no-"
+                         source
+                         "), so it cannot change "
+                         what
+                         ". Start a session without --no-"
+                         source
+                         " or --tepro to change it.")
+                    {:status 409 :type :config/source-disabled :source source}))))
+
+(defn- assert-machine-change-allowed!
+  "Refuse a machine-store change outside `always-loaded-config-keys` when the
+   session does not read the global tier."
+  [before after]
+  (when-not (workspace/source-enabled? "global")
+    (when-let [changed (not-empty (sort (remove always-loaded-config-keys
+                                          (filter #(not= (get before %) (get after %))
+                                                  (distinct (concat (keys before)
+                                                                    (keys after)))))))]
+      (assert-source-enabled! "global" (str (str/join ", " changed) " in ~/.vis/state.yml")))))
+
+(defn- read-machine-store
+  "Read `~/.vis/state.yml` completely, for writers and for `load-global-config-raw`.
    Invalid derived blocks are dropped so a malformed cache cannot refuse the
-   person's next write. All authored configuration is validated before writing."
+   person's next write."
   []
   (let [raw
         (read-yaml-config-map-lenient (state-path))
@@ -1161,23 +1200,37 @@
                 "Ignoring a machine-written memory block the config contract rejects"))
     (dissoc config "environment")))
 
+(defn load-global-config-raw
+  "Load the machine-written global store as a config map (or nil): `~/.vis/state.yml`.
+   Explicit global workspace and jail settings belong here; project environment
+   variables do not. Hand-written YAML stays outside the read-modify-write store.
+
+   A session without the global tier sees only `always-loaded-config-keys`. All
+   authored configuration is validated before writing."
+  []
+  (global-tier-view (read-machine-store)))
+
 (defn load-global-yaml-config-raw
   "Load only the hand-written global YAML tier: the first existing of
    `~/.vis/config.yml` / `config.yaml` / `vis.yml` / `vis.yaml`, or nil. This
    hand-written base is deep-merged UNDER the machine-written `~/.vis/state.yml`
    store (`state.yml` wins per key), keeping user-authored config separate from
-   the RMW machine file."
+   the RMW machine file. A session without the global tier sees only
+   `always-loaded-config-keys`."
   []
-  (some read-yaml-config-map-lenient (global-config-yaml-paths)))
+  (some-> (some read-yaml-config-map-lenient (global-config-yaml-paths))
+          global-tier-view))
 
 (defn load-project-config-raw
   "Load the hidden project overlay tier: the first existing of
    `<workspace>/.vis/config.yml` / `.vis/config.yaml`, or nil. Skipped when
    the overlay dir resolves to the global `~/.vis` store, so running Vis from
-   $HOME never aliases a global file as a project overlay."
+   $HOME never aliases a global file as a project overlay, and when the session
+   does not read the project tier."
   []
   (let [overlay-dir (io/file (workspace/cwd) ".vis")]
-    (when-not (= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file (config-dir))))
+    (when (and (workspace/source-enabled? "project")
+               (not= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file (config-dir)))))
       (some read-yaml-config-map-lenient (project-config-yaml-paths)))))
 
 (def user-only-config-keys
@@ -1219,13 +1272,15 @@
 
 (defn load-project-root-config-raw
   "Load the visible project-root tier: the first existing of
-   `<workspace>/vis.yml` / `vis.yaml`, or nil. This file is COMMITTED, so
-   `user-only-config-keys` are dropped from it with one warning — see that Var."
+   `<workspace>/vis.yml` / `vis.yaml`, or nil. Nil also when the session does not
+   read the project tier. This file is COMMITTED, so `user-only-config-keys` are
+   dropped from it with one warning — see that Var."
   []
-  (some (fn [path]
-          (when-let [raw (read-yaml-config-map-lenient path)]
-            (without-user-only-keys! path raw)))
-        (project-root-yaml-paths)))
+  (when (workspace/source-enabled? "project")
+    (some (fn [path]
+            (when-let [raw (read-yaml-config-map-lenient path)]
+              (without-user-only-keys! path raw)))
+          (project-root-yaml-paths))))
 
 (defn load-project-tiers-raw
   "Merge the workspace's project tiers, the hidden overlay over the committed root file:
@@ -1236,7 +1291,8 @@
 (defn extension-package-scopes
   "Read validated declarations without installing. Relative local sources belong to
    the declaring YAML directory. Global/state and project/overlay merge by package
-   name, replacing complete declarations; they install into separate scopes."
+   name, replacing complete declarations; they install into separate scopes. A tier
+   that the session does not read gives no scope."
   []
   (letfn
     [(read-tier [paths]
@@ -1269,13 +1325,14 @@
           (merge (read-tier (project-root-yaml-paths))
                  (when-not same? (read-tier (project-config-yaml-paths))))]
 
-      (cond-> [{:scope "global"
-                :directory (str (global-extensions-dir))
-                :packages (if same? (merge global project) (or global {}))}]
-        (not same?)
-        (conj {:scope "project"
-               :directory (str (io/file (workspace/cwd) ".vis" "extensions"))
-               :packages (or project {})})))))
+      (filterv #(workspace/source-enabled? (:scope %))
+        (cond-> [{:scope "global"
+                  :directory (str (global-extensions-dir))
+                  :packages (if same? (merge global project) (or global {}))}]
+          (not same?)
+          (conj {:scope "project"
+                 :directory (str (io/file (workspace/cwd) ".vis" "extensions"))
+                 :packages (or project {})}))))))
 
 (defn- config-source-paths
   "Every YAML path that can contribute to `load-config-raw`, existing or not."
@@ -1305,9 +1362,9 @@
   "mtime+size fingerprint of every config source. Uses NIO's NANOSECOND mtime
    (not `File.lastModified`'s millisecond truncation) so two writes inside one
    millisecond still invalidate; `invalidate-config-cache!` covers our own
-   writes regardless."
+   writes regardless. The session's configuration tiers are part of the stamp."
   []
-  (mapv yaml-file-stamp (config-source-paths)))
+  (conj (mapv yaml-file-stamp (config-source-paths)) workspace/*config-sources*))
 
 (defn load-config-raw
   "Load raw config as the deep-merge of four YAML sources — later sources win,
@@ -1633,12 +1690,24 @@
    `update-machine-config!` so the read and write share one critical section."
   ([config] (save-config! config nil))
   ([config source]
-   (let [wire-config (first (config-validation/without-project-scoped (->yaml-safe config)))]
+   (let [wire-config
+         (first (config-validation/without-project-scoped (->yaml-safe config)))
+
+         store
+         (or (read-machine-store) {})
+
+         ;; Without the global tier, the caller saw only the always-loaded keys.
+         ;; Keep every other stored key as it is.
+         wire-config
+         (if (and (map? wire-config) (not (workspace/source-enabled? "global")))
+           (merge (apply dissoc store always-loaded-config-keys)
+                  (select-keys wire-config always-loaded-config-keys))
+           wire-config)]
+
      (write-machine-config! (if (map? wire-config)
                               (merge wire-config
                                      (or *machine-access-overrides*
-                                         (select-keys (load-global-config-raw)
-                                                      ["workspace" "jail"])))
+                                         (select-keys store ["workspace" "jail"])))
                               wire-config)
                             source))))
 
@@ -1679,10 +1748,13 @@
            apply-update!
            (fn []
              (let [raw
-                   (or (load-global-config-raw) {})
+                   (or (read-machine-store) {})
 
                    raw*
-                   (f raw)]
+                   (f raw)
+
+                   _
+                   (when raw* (assert-machine-change-allowed! raw raw*))]
 
                (when (and raw* (not= raw raw*))
                  (binding [*machine-access-overrides* (select-keys (->yaml-safe raw*)
@@ -1917,8 +1989,10 @@
 (defn update-project-config!
   "Atomically edit the workspace's local .vis/config.yml overlay, never vis.yml.
    The caller binds the canonical project root. Preserve unrelated keys and refuse
-   an overlay that aliases the global store. All project writers share the lock."
+   an overlay that aliases the global store. All project writers share the lock.
+   Refuse the edit when the session does not read the project tier."
   [f]
+  (assert-source-enabled! "project" "the project settings in .vis/config.yml")
   (locking machine-store-monitor
     (with-project-extension-save-lock
       (fn []
@@ -1950,6 +2024,7 @@
    Preserve project comments and other fields, reject conflicting declarations or
    concurrent edits, and keep local project sources relative to their YAML file."
   [{:keys [path scope raw snapshots overlays] :as plan} name declaration]
+  (assert-source-enabled! scope (str "the extension declarations in " path))
   (config-validation/assert-config! {"extensions" {name declaration}} path)
   (let [declaration
         (extension-save-source path declaration (= scope "project"))

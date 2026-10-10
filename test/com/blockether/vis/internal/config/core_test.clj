@@ -659,6 +659,90 @@
            (finally (rm-rf! (io/file tmp)))))))
 
 (defdescribe
+  config-source-tiers-test
+  "A session started with --no-global, --no-project or --tepro reads only the
+   chosen tiers. Providers and sign-in data in `~/.vis/state.yml` load in every case."
+  (it "loads only the always-loaded global keys without the global tier"
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-tiers-" (System/nanoTime))
+
+            path
+            (str tmp "/state.yml")]
+
+        (try (.mkdirs (io/file tmp))
+             (spit path
+                   (str "providers:\n  - id: prov-a\n    api_key: key-a\n"
+                        "default_provider: prov-a\nrouter:\n  budget:\n    max_cost: 5.0\n"))
+             (with-redefs [config/config-dir
+                           (constantly tmp)
+
+                           config/state-path
+                           (constantly path)]
+
+               (expect (= 5.0
+                          (get-in (config/load-global-config-raw) ["router" "budget" "max_cost"])))
+               (doseq [sources [#{"project"} #{}]]
+                 (binding [workspace/*config-sources* sources]
+                   (let [raw (config/load-global-config-raw)]
+                     (expect (= #{"providers" "default_provider"} (set (keys raw))))
+                     (expect (= "prov-a" (get raw "default_provider")))))))
+             (finally (rm-rf! (io/file tmp))))))
+  (it "keeps the hidden global keys when a session without the global tier saves providers"
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-tiers-" (System/nanoTime))
+
+            path
+            (str tmp "/state.yml")]
+
+        (try (.mkdirs (io/file tmp))
+             (spit path
+                   (str "providers:\n  - id: prov-a\n    api_key: key-a\n"
+                        "router:\n  budget:\n    max_cost: 5.0\n"))
+             (with-redefs [config/config-dir
+                           (constantly tmp)
+
+                           config/state-path
+                           (constantly path)]
+
+               (binding [workspace/*config-sources* #{"project"}]
+                 (config/save-config! (update (config/load-global-config-raw)
+                                              "providers"
+                                              conj
+                                              {"id" "prov-b" "api_key" "key-b"})))
+               (let [raw (config/load-global-config-raw)]
+                 (expect (= ["prov-a" "prov-b"] (mapv #(get % "id") (get raw "providers"))))
+                 (expect (= 5.0 (get-in raw ["router" "budget" "max_cost"])))))
+             (finally (rm-rf! (io/file tmp))))))
+  (it "skips the project overlay without the project tier"
+      (let [tmp
+            (str (System/getProperty "java.io.tmpdir") "/vis-cfg-tiers-" (System/nanoTime))
+
+            overlay
+            (str tmp "/project/.vis/config.yml")]
+
+        (try (.mkdirs (.getParentFile (io/file overlay)))
+             (spit overlay "router:\n  budget:\n    max_cost: 2.0\n")
+             (with-redefs [config/config-dir
+                           (constantly (str tmp "/home"))
+
+                           config/project-config-yaml-paths
+                           (constantly [overlay])]
+
+               (expect (some? (config/load-project-config-raw)))
+               (binding [workspace/*config-sources* #{"global"}]
+                 (expect (nil? (config/load-project-config-raw)))))
+             (finally (rm-rf! (io/file tmp))))))
+  (it "refuses a write to a tier that the session does not read"
+      (binding [workspace/*config-sources* #{}]
+        (let [e (try (config/assert-source-enabled! "project" "vis.yml")
+                     nil
+                     (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= {:status 409 :type :config/source-disabled :source "project"} (ex-data e)))
+          (expect (str/includes? (ex-message e) "--tepro"))))
+      (binding [workspace/*config-sources* #{"global"}]
+        (expect (nil? (config/assert-source-enabled! "global" "state.yml"))))))
+
+(defdescribe
   remove-config-provider-test
   "`remove-config-provider!` is the provider REMOVE write path (logout only clears
    the credential). Dropping the provider entry alone is not enough: a FALLBACK

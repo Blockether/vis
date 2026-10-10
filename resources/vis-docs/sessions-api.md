@@ -160,6 +160,22 @@ print(session.id)
 the app. The path must be an absolute path on the gateway machine. `post_sessions(body=...)` sends
 the same request and returns the new session as JSON.
 
+To leave out configuration tiers or extensions, add `sources` and `extensions`:
+
+```python
+session = client.create_session(
+    **client.session_options(os.environ["VIS_PROJECT_ROOT"]),
+    sources=["project"],
+    extensions=["-spel"],
+)
+```
+
+`sources` lists the configuration tiers that the session reads: `global`, `project`, both or none.
+`extensions` keeps the named extensions or turns off each `-name` entry. An empty list turns off
+every optional extension. An unknown tier or extension raises an error for the 400 answer. [Leave out
+global or project configuration](configuration.md#leave-out-global-or-project-configuration)
+describes each tier.
+
 To continue a saved session, call `client.session(session_id)`. It returns a handle and does not
 create a session.
 
@@ -176,7 +192,19 @@ The answer has the status 201 and the new session with its `id`. `root` must be 
 the gateway machine. The `app` channel makes the session visible in the app. Add `group_id` to put
 the new session in a group.
 
+To leave out configuration tiers or extensions, add `sources` and `extensions`:
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/json' \
+  --data '{"root": "/srv/projects/shop", "channel": "app", "sources": ["project"], "extensions": ["-spel"]}'
+```
+
 To continue a saved session, use its `id` in the paths of the next requests.
+
+`sources` lists the configuration tiers that the session reads: `global`, `project`, both or none.
+`extensions` keeps the named extensions or turns off each `-name` entry. An empty list turns off
+every optional extension. An unknown tier or extension returns 400. [Leave out global or project
+configuration](configuration.md#leave-out-global-or-project-configuration) describes each tier.
 
 </div>
 

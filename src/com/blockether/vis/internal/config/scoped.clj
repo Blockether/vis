@@ -509,14 +509,27 @@
         (get fresh id)
         (toggles/value-of id)))))
 
+(defn source-enabled?
+  "True when session `env` reads configuration tier `tier`. Without a session
+   environment, the bound `workspace/*config-sources*` decides."
+  [env tier]
+  (let [sources
+        (if (contains? env :config/sources) (:config/sources env) workspace/*config-sources*)]
+    (or (nil? sources) (contains? sources tier))))
+
 (defn engine-mode
-  "Live Auto/On/Off mode, independent of the response snapshot. Pass a delay of
+  "Live Auto/On/Off mode, independent of the response snapshot. An extension from a
+   configuration tier that the session does not read is always Off. Pass a delay of
    [[live-values]] when checking several extensions."
   ([env ext] (engine-mode env ext nil))
   ([env ext live]
-   (if-let [id (engine-setting! ext)]
-     (or (live-value env live id) "auto")
-     "auto")))
+   (cond (some->> (:ext/source-scope ext)
+                  (source-enabled? env)
+                  not)
+         "off"
+         :else (if-let [id (engine-setting! ext)]
+                 (or (live-value env live id) "auto")
+                 "auto"))))
 
 (defn resource-enabled?
   "Live gate: saved names and cached handles cannot bypass a scoped disable.

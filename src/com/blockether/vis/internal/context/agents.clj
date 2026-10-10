@@ -46,6 +46,16 @@
 
 (defn- global-config-dir ^java.io.File [] (java.io.File. (System/getProperty "user.home") ".vis"))
 
+(defn- global-guidance-dir
+  "The user-global guidance dir, or nil when the session does not read the global tier."
+  ^java.io.File []
+  (when (workspace/source-enabled? "global") (global-config-dir)))
+
+(defn- project-guidance-root
+  "The workspace root for guidance, or nil when the session does not read the project tier."
+  ^java.io.File []
+  (when (workspace/source-enabled? "project") (repo-cwd)))
+
 (defn- read-bytes-safely
   "Read the entire file `f` into a byte array. Returns
    `{:bytes byte-array :total-bytes long}` or `{:error string}` on
@@ -221,7 +231,7 @@
 
 (defn scan-roots
   "Stacked scan: guidance file in `global-dir` first (when non-nil),
-   then AGENTS.md / CLAUDE.md from every ancestor of `workspace-root`
+   then AGENTS.md / CLAUDE.md from every ancestor of `workspace-root` (when non-nil)
    (outermost first) down to the workspace root itself, then each added
    `extra-root`'s OWN directory (no ancestor walk — only what the user
    granted). Pure I/O; exposed for testing against fixture roots.
@@ -245,7 +255,7 @@
    (scan-roots global-dir workspace-root nil))
   ([^java.io.File global-dir ^java.io.File workspace-root extra-roots]
    (let [chain
-         (ancestor-chain workspace-root)
+         (if workspace-root (ancestor-chain workspace-root) [])
 
          n
          (count chain)
@@ -317,25 +327,27 @@
    the per-turn `*filesystem-roots*` binding (empty when unbound / single-root).
    The session's OWN trunk↔clone pair (`:primary?`) is already the primary
    chain, and a root the draft policy withholds (`:denied?`) must not be read
-   at all."
+   at all. Empty when the session does not read the project tier."
   []
-  (into []
-        (comp (remove :primary?)
-              (remove :denied?)
-              (keep (fn [{:keys [trunk]}]
-                      (some-> trunk
-                              str
-                              str/trim
-                              not-empty
-                              ((fn [^String p]
-                                 (java.io.File. p)))))))
-        workspace/*filesystem-roots*))
+  (if (workspace/source-enabled? "project")
+    (into []
+          (comp (remove :primary?)
+                (remove :denied?)
+                (keep (fn [{:keys [trunk]}]
+                        (some-> trunk
+                                str
+                                str/trim
+                                not-empty
+                                ((fn [^String p]
+                                   (java.io.File. p)))))))
+          workspace/*filesystem-roots*)
+    []))
 
 (defn primary-instructions
   "Read guidance for the primary workspace chain only. Added-root files are
    intentionally excluded so unrelated sessions do not pay their prompt cost."
   []
-  (:result (scan-roots (global-config-dir) (repo-cwd) nil)))
+  (:result (scan-roots (global-guidance-dir) (project-guidance-root) nil)))
 
 (defn added-root-guidance-index
   "Return metadata for guidance available at added filesystem roots without
@@ -354,7 +366,7 @@
    chain, and each added filesystem root's own directory for project-guidance
    files (stacked)."
   []
-  (scan-roots (global-config-dir) (repo-cwd) (extra-root-dirs)))
+  (scan-roots (global-guidance-dir) (project-guidance-root) (extra-root-dirs)))
 
 ;; Marker cache — stat-only revalidation on the hot path
 
@@ -377,8 +389,12 @@
 
 (defn- guidance-marker
   []
-  {:global (dir-marker (global-config-dir))
-   :chain (mapv dir-marker (ancestor-chain (repo-cwd)))
+  {:sources workspace/*config-sources*
+   :global (some-> (global-guidance-dir)
+                   dir-marker)
+   :chain (mapv dir-marker
+                (some-> (project-guidance-root)
+                        ancestor-chain))
    :extras (mapv dir-marker (extra-root-dirs))})
 
 (defn- rescan!

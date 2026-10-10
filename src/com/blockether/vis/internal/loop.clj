@@ -32,15 +32,21 @@
      :external-id   channel-specific external id
      :workspace-id  pre-spawned workspace to pin the new session to.
                     When omitted, a trunk workspace is auto-minted in
-                    create-environment."
+                    create-environment.
+     :sources       configuration tiers the session reads (`#{\"project\"}`);
+                    nil reads every tier.
+     :extensions    extension names to keep, `-name` entries to turn off, or an
+                    empty list for none; nil keeps every extension."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id workspace-id]}]
+  ([channel {:keys [title external-id workspace-id sources extensions]}]
    (let [env
          (loop-env/open-env! nil
                              (cond-> {:channel channel
                                       :external-id (some-> external-id
                                                            str)
-                                      :title title}
+                                      :title title
+                                      :sources sources
+                                      :extensions extensions}
                                workspace-id
                                (assoc :workspace-id workspace-id)))
 

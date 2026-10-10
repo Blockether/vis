@@ -23,7 +23,7 @@
   (:gen-class))
 
 (def usage
-  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue | --check-audio]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue | --check-audio] [--no-global] [--no-project] [--tepro] [--extensions LIST]")
 
 (def ^:private help-text
   [usage "" "The Vis terminal application. It talks to a Vis gateway over HTTP and SSE;"
@@ -35,6 +35,11 @@
    "  --resume, -r           pick a session to resume"
    "  --continue, -c         reopen the most recent session"
    "  --check-audio          check audio devices and recorder paths without opening a microphone"
+   "  --no-global            new sessions skip ~/.vis config, extensions, AGENTS.md and skills"
+   "  --no-project           new sessions skip the project config, extensions, AGENTS.md and skills"
+   "  --tepro                both --no-global and --no-project; providers and sign-in stay"
+   "  --extensions LIST      new sessions use only these extensions (gh,clj), all but these"
+   "                        (-spel,-uplink) or none (env VIS_EXTENSIONS; VIS_SOURCES=project|global|none)"
    "  --version, -V          print the version" "  --help, -h             print this help"])
 
 (defn- version
