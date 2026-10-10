@@ -660,7 +660,7 @@
 
 (defdescribe
   config-source-tiers-test
-  "A session started with --no-global, --no-project or --repro reads only the
+  "A session started with --no-global, --no-project or --vanilla reads only the
    chosen tiers. Providers and sign-in data in `~/.vis/state.yml` load in every case."
   (it "loads only the always-loaded global keys without the global tier"
       (let [tmp
@@ -738,7 +738,7 @@
                      nil
                      (catch clojure.lang.ExceptionInfo e e))]
           (expect (= {:status 409 :type :config/source-disabled :source "project"} (ex-data e)))
-          (expect (str/includes? (ex-message e) "--repro"))))
+          (expect (str/includes? (ex-message e) "--vanilla"))))
       (binding [workspace/*config-sources* #{"global"}]
         (expect (nil? (config/assert-source-enabled! "global" "state.yml"))))))
 

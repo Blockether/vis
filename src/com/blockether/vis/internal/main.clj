@@ -1601,7 +1601,7 @@
       (update :flag-errors
               (fnil conj [])
               (str
-                "--no-global, --no-project, --repro and --extensions apply only to a new session;"
+                "--no-global, --no-project, --vanilla and --extensions apply only to a new session;"
                 " do not use them with --session-id"))
 
       source-error
@@ -1639,12 +1639,12 @@
               (contains? #{"--help" "-h"} arg) (assoc opts
                                                  :help? true
                                                  :prompt "")
-              ;; `--repro` is `--no-global` and `--no-project` together.
-              (= "--repro" arg) (recur more
-                                       (assoc opts
-                                         :no-global? true
-                                         :no-project? true)
-                                       prompt-parts)
+              ;; `--vanilla` is `--no-global` and `--no-project` together.
+              (= "--vanilla" arg) (recur more
+                                         (assoc opts
+                                           :no-global? true
+                                           :no-project? true)
+                                         prompt-parts)
               (contains? run-boolean-flags arg)
               (recur more (assoc opts (run-boolean-flags arg) true) prompt-parts)
               (contains? run-value-flags arg)
@@ -1726,7 +1726,7 @@
     "  --no-global          Skip ~/.vis config, extensions, AGENTS.md and skills.")
   (commandline/stdout!
     "  --no-project         Skip the project config, extensions, AGENTS.md and skills.")
-  (commandline/stdout! "  --repro              Both --no-global and --no-project. Providers stay.")
+  (commandline/stdout! "  --vanilla            Both --no-global and --no-project. Providers stay.")
   (commandline/stdout! "  --extensions LIST    Use only these extensions (gh,clj), all but these")
   (commandline/stdout! "                       (-spel,-uplink) or none. Env: VIS_EXTENSIONS,")
   (commandline/stdout! "                       VIS_SOURCES=global|project|none.")
@@ -1745,7 +1745,7 @@
   (commandline/stdout!
     "  vis-agent --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\"")
   (commandline/stdout!
-    "  vis-agent --repro --json-schema @city.json \"Name the capital of Poland\""))
+    "  vis-agent --vanilla --json-schema @city.json \"Name the capital of Poland\""))
 
 (defn- parse-toggle-overrides
   "Parse a `--toggles` value like
@@ -2933,7 +2933,7 @@
      (help-row "--persist" "Persist as a :cli session.")
      (help-row "--no-global" "Skip ~/.vis config, extensions, AGENTS.md and skills.")
      (help-row "--no-project" "Skip project config, extensions, AGENTS.md and skills.")
-     (help-row "--repro" "Both --no-global and --no-project. Providers stay.")
+     (help-row "--vanilla" "Both --no-global and --no-project. Providers stay.")
      (help-row "--extensions LIST" "Only these (gh,clj), all but these (-spel) or none.")
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")

@@ -124,7 +124,7 @@ Start the terminal or a one-shot run with a flag when a session must not use par
 ```bash
 vis-agent tui --no-global                 # only the project configuration
 vis-agent tui --no-project                # only your global configuration
-vis-agent tui --repro                     # neither: plain Vis with your providers
+vis-agent tui --vanilla                   # neither: plain Vis with your providers
 vis-agent tui --extensions gh,clj         # only these extensions
 vis-agent tui --extensions -spel,-uplink  # every extension except these
 vis-agent tui --extensions none           # no optional extension
@@ -134,7 +134,7 @@ vis-agent tui --extensions none           # no optional extension
 | --- | --- |
 | `--no-global` | `~/.vis/config.yml`, the settings in `~/.vis/state.yml`, `~/.vis/extensions/`, `~/.vis/AGENTS.md` and global skills |
 | `--no-project` | `vis.yml`, `.vis/config.yml`, `.vis/extensions/`, `AGENTS.md` files and `.vis/skills` |
-| `--repro` | Both of the rows above |
+| `--vanilla` | Both of the rows above |
 
 Providers, sign-in data and your default and fallback models stay in every case. Without them, a
 session has no model.
@@ -142,7 +142,7 @@ session has no model.
 The same flags work for a one-shot run, also with `--json-schema`:
 
 ```bash
-vis-agent --repro --json-schema @city.json "Name the capital of Poland"
+vis-agent --vanilla --json-schema @city.json "Name the capital of Poland"
 vis-agent --no-global --extensions -spel --persist "Fix the failing test"
 ```
 

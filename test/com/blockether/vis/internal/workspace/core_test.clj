@@ -1301,7 +1301,7 @@
                  (expect (nil? (ws/normalize-config-sources nil)))
                  (expect (nil? (ws/normalize-config-sources ["project" "global"])))
                  (expect (ws/source-enabled? "global")))
-             (it "keeps a chosen subset, also the empty --repro set"
+             (it "keeps a chosen subset, also the empty --vanilla set"
                  (expect (= #{"project"} (ws/normalize-config-sources ["project"])))
                  (expect (= #{} (ws/normalize-config-sources [])))
                  (binding [ws/*config-sources* #{"project"}]

@@ -929,11 +929,11 @@
                  (#'main/check-launch-options (#'main/parse-run-args args) env))]
     (it "keeps every tier and extension without flags or environment"
         (expect (= {:prompt "task"} (launch ["task"] {}))))
-    (it "turns --no-global, --no-project and --repro into source lists"
+    (it "turns --no-global, --no-project and --vanilla into source lists"
         (expect (= ["project"] (:sources (launch ["--no-global" "task"] {}))))
         (expect (= ["global"] (:sources (launch ["--no-project" "task"] {}))))
         (expect (= {:sources [] :json-schema "{}" :prompt "task"}
-                   (launch ["--repro" "--json-schema" "{}" "task"] {}))))
+                   (launch ["--vanilla" "--json-schema" "{}" "task"] {}))))
     (it "splits --extensions and reads none as an empty list"
         (expect (= ["gh" "clj"] (:extensions (launch ["--extensions" "gh, clj" "task"] {}))))
         (expect (= ["-spel"] (:extensions (launch ["--extensions" "-spel" "task"] {}))))
@@ -950,7 +950,7 @@
         (expect (= ["Unknown configuration source: home. Use global or project."]
                    (:flag-errors (launch ["task"] {"VIS_SOURCES" "home"})))))
     (it "refuses the flags with --session-id and ignores the variables there"
-        (expect (= 1 (count (:flag-errors (launch ["--session-id" "abc" "--repro" "task"] {})))))
+        (expect (= 1 (count (:flag-errors (launch ["--session-id" "abc" "--vanilla" "task"] {})))))
         (expect (= {:session-id "abc" :persist? true :prompt "task"}
                    (launch ["--session-id" "abc" "task"] {"VIS_SOURCES" "project"}))))))
 
