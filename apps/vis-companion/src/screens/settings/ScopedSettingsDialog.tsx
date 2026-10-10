@@ -6,7 +6,7 @@ import { filterSettings, flattenSettings } from '../../lib/setting-tree';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow, settingTree } from './MachineSettings';
 import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
-import { SettingsBandsOpen, SettingsPanel, SettingsSection } from './SettingsLayout';
+import { SettingsBandsOpen, SettingsLoading, SettingsPanel, SettingsSection } from './SettingsLayout';
 
 type ScopedSettingsProps = {
   client: GatewayClient;
@@ -38,7 +38,11 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
       const version = epoch.current;
       try {
         const next = await client.settings(controller.signal, owner);
-        if (!controller.signal.aborted && version === epoch.current) setData(next);
+        if (!controller.signal.aborted && version === epoch.current) {
+          setData(next);
+          // A slow gateway that answers again ends the failure it reported.
+          setError(null);
+        }
       } catch (err) {
         if (!controller.signal.aborted) setError((err as Error).message);
       } finally { reading = false; }
@@ -65,6 +69,9 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     epoch.current += 1;
     setError(null);
     setData(await client.settings(undefined, owner));
+  };
+  const retry = async () => {
+    try { await reread(); } catch (err) { setError((err as Error).message); }
   };
   const needle = search.toLowerCase().trim();
   const bandsOpen = useContext(SettingsBandsOpen);
@@ -98,7 +105,8 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
   };
 
   return (
-    <Modal size="fit-wide" onDismiss={onClose}>
+    // `split` holds one height on a phone, so a late answer or a search cannot move the sheet.
+    <Modal size="split" onDismiss={onClose}>
       <DialogFrame title={`${scope[0].toUpperCase()}${scope.slice(1)} settings`} subtitle={label ?? data?.label ?? target_id} onClose={onClose}>
         <div className="min-h-0 overflow-y-auto">
           <div className="sticky top-0 z-10 border-b border-dialog-edge bg-panel-2 px-3 py-3 sm:px-4">
@@ -127,8 +135,14 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
               </Text>
             )}
           </div>
-          {error && <div className="p-3"><Banner kind="err">{error}</Banner></div>}
-          {!data && !error && <div className="p-6 text-center"><Text variant="description">Loading settings…</Text></div>}
+          {error && (
+            <div className="space-y-3 p-3">
+              <Banner kind="err">{error}</Banner>
+              {!data && <Button type="button" variant="secondary" onClick={() => void retry()}>Retry</Button>}
+            </div>
+          )}
+          {/* Until the first catalog arrives, nothing below it stands half built. */}
+          {!data && !error && <SettingsLoading headingLevel={3} />}
           {data && needle && groups.length === 0 && (
             <div role="status" className="px-4 py-8 text-center sm:py-10">
               <SearchIcon className="mx-auto size-5 text-dialog-hint" />
@@ -141,7 +155,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
               </Button>
             </div>
           )}
-          {(groups.length > 0 || !needle) && (
+          {data && (groups.length > 0 || !needle) && (
             // A search opens every band again, so a folded band cannot hide a match.
             <SettingsBandsOpen.Provider value={bandsOpen || Boolean(needle)}>
             <div className="divide-y divide-dialog-edge">

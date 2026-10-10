@@ -142,3 +142,21 @@ export const LongCatalog: Story = {
     }),
   },
 };
+
+/** A slow gateway: before the catalog arrives, one loading panel stands alone. */
+export const Loading: Story = {
+  args: {
+    client: {
+      cachedSettings: () => null,
+      settings: () => new Promise<SettingsResponse>(() => {}),
+      cachedMcpServers: () => null,
+      mcpServers: () => new Promise(() => {}),
+    } as unknown as ComponentProps<typeof ScopedSettingsDialog>['client'],
+  },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await expect(await page.findByRole('status', { name: 'Loading settings' })).toBeVisible();
+    await expect(page.queryByRole('heading', { name: 'Tools' })).toBeNull();
+    await expect(page.queryByRole('heading', { name: 'Extensions' })).toBeNull();
+  },
+};

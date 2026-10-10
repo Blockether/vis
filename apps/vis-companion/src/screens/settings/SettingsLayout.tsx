@@ -1,4 +1,4 @@
-import { Children, createContext, useContext, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Children, createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 
 import { SettingsHeader, Text } from '../../components/ui';
 
@@ -266,5 +266,42 @@ export function SettingsPanel({
         </div>
       )}
     </section>
+  );
+}
+
+/** How long a gateway may take to answer before its settings show a loading panel. */
+const LOADING_DELAY_MS = 400;
+
+/**
+ * The one frame that stands for settings that have not arrived yet. A gateway that
+ * answers within one beat shows no loading frame. A slow one shows this panel and
+ * nothing else, so no section stands half built under it.
+ */
+export function SettingsLoading({ headingLevel }: { headingLevel?: 3 | 4 }) {
+  const [isShown, setIsShown] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setIsShown(true), LOADING_DELAY_MS);
+    return () => window.clearTimeout(id);
+  }, []);
+  if (!isShown) return null;
+  return (
+    <SettingsPanel title="Loading" headingLevel={headingLevel}>
+      {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
+          tinted blocks were an invisible skeleton — a blank hole where
+          the settings should be. Bars are drawn in `--color-muted`. */}
+      <div className="space-y-px bg-dialog-edge" role="status" aria-live="polite" aria-label="Loading settings">
+        <div className="bg-panel px-4 py-2">
+          <Text as="p" variant="description">
+            Loading settings…
+          </Text>
+        </div>
+        {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
+          <div key={width} className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none">
+            <span className={`block h-2.5 bg-muted/30 ${width}`} />
+            <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
+          </div>
+        ))}
+      </div>
+    </SettingsPanel>
   );
 }

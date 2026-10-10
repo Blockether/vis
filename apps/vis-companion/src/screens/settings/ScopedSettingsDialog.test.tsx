@@ -107,7 +107,10 @@ it.each(['session', 'group', 'project'] as const)(
     renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
     const dialog = screen.getByRole('dialog', { name: `${scope[0].toUpperCase()}${scope.slice(1)} settings` });
-    expect(dialog.parentElement).toHaveClass('sm:h-auto', 'sm:max-w-4xl', 'mouse:max-w-6xl');
+    // The box of application settings: the same width, and one height that neither
+    // a late answer nor a search changes.
+    expect(dialog.parentElement).toHaveClass('sm:max-w-4xl', 'mouse:max-w-6xl');
+    expect(dialog.parentElement).not.toHaveClass('sm:h-auto');
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
     expect(search.parentElement?.querySelector('svg.lucide-search')).toBeInTheDocument();
     await screen.findByRole('switch', { name: 'Subagents: off' });
@@ -186,3 +189,60 @@ it.each(['session', 'group', 'project'] as const)(
     expect(screen.queryByRole('heading', { name: 'MCP servers' })).toBeNull();
   },
 );
+
+// Reported on a phone: with a slow gateway, project and group settings jumped as
+// each answer arrived, and the sheet showed a half-built Tools section under the
+// loading text.
+it('keeps one phone-height sheet and shows only a loading panel until the catalog arrives', async () => {
+  const target: SettingsTarget = { scope: 'group', target_id: 'wallet', label: 'Wallet work' };
+  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
+  let answer: (response: SettingsResponse) => void = () => {};
+  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
+  vi.spyOn(client, 'settings').mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+  vi.spyOn(client, 'cachedMcpServers').mockReturnValue(null);
+  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
+  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  // `split` stands at the full phone height; a sheet that stops at content grows with each answer.
+  const layer = screen.getByRole('dialog').closest('.inset-0');
+  expect(layer).toHaveClass('items-stretch');
+  expect(layer).not.toHaveClass('items-end');
+  await screen.findByRole('status', { name: 'Loading settings' });
+  for (const name of ['Tools', 'MCP servers', 'Extensions']) {
+    expect(screen.queryByRole('heading', { name })).toBeNull();
+  }
+  answer({
+    revision: 'wallet-1', scope: 'group', target_id: 'wallet',
+    groups: [{ id: 'agent', title: 'Agent', toggles: [{
+      id: 'subagents', label: 'Subagents', type: 'boolean', enabled: false,
+      scopes: ['global', 'group'], source: 'global', is_override: false,
+    }] }],
+  });
+  await screen.findByRole('heading', { name: 'Agent' });
+  expect(screen.queryByRole('status', { name: 'Loading settings' })).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Tools' })).toBeInTheDocument();
+});
+
+it('offers a retry after a failed first read and drops the failure when the gateway answers', async () => {
+  const target: SettingsTarget = { scope: 'project', target_id: '/work/wallet' };
+  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
+  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
+  vi.spyOn(client, 'settings')
+    .mockRejectedValueOnce(new Error('gateway timed out'))
+    .mockResolvedValue({
+      revision: 'wallet-1', scope: 'project', target_id: '/work/wallet',
+      groups: [{ id: 'agent', title: 'Agent', toggles: [{
+        id: 'subagents', label: 'Subagents', type: 'boolean', enabled: false,
+        scopes: ['global', 'project'], source: 'global', is_override: false,
+      }] }],
+    });
+  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
+  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
+  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  await screen.findByText('gateway timed out');
+  expect(screen.queryByRole('heading', { name: 'Tools' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  // The next poll answers, so the failure goes without a tap.
+  await screen.findByRole('heading', { name: 'Agent' }, { timeout: 4500 });
+  expect(screen.queryByText('gateway timed out')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+});

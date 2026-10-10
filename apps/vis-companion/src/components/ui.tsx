@@ -2557,20 +2557,19 @@ export function Modal({
   /**
    * `full` is the screen: a list, a browser, anything that wants every pixel.
    *
-   * `fit` is a short task: a confirmation that should stop at its content.
-   * `fit-wide` keeps that height but shares the desktop width of `wide` for
-   * one-column scoped settings. Both rise from the bottom edge on a phone.
+   * `fit` is a short task: a confirmation that should stop at its content. It
+   * rises from the bottom edge on a phone.
    *
    * `wide` is for the application's two-column settings (this device and the
    * machines). Same scrim, same physics, same desktop width, but a fixed
    * desktop height. Below `sm:` the columns stack and stop at content.
    *
-   * `split` is a search: the sessions found beside the messages that matched.
-   * It is the whole phone, like `full`, because a query and two result panes
-   * need every row of the glass, and from `sm:` up it takes the width of `wide`
-   * at the fixed desktop height.
+   * `split` is a search: the sessions found beside the messages that matched, or
+   * a scoped settings catalog with its search field. It is the whole phone, like
+   * `full`, so neither a late answer nor a query moves the box. From `sm:` up it
+   * takes the width of `wide` at the fixed desktop height.
    */
-  size?: 'full' | 'fit' | 'fit-wide' | 'wide' | 'split';
+  size?: 'full' | 'fit' | 'wide' | 'split';
   /**
    * WHAT THE DIALOG STANDS OVER. `app` is every dialog that belongs to the whole
    * application — settings, the machine fleet, a confirmation — and it covers the
@@ -2581,7 +2580,7 @@ export function Modal({
    * a parked question and the pick of the model THIS session runs on have no business
    * dimming the list beside them. A `full` or `wide` one takes every pixel of that pane —
    * the pane is already the bound the desktop box exists to impose — while `fit`
-   * and `fit-wide` stop at their content, centred in the pane they belong to.
+   * stops at its content, centred in the pane it belongs to.
    */
   within?: 'app' | 'session';
   children: ReactNode;
@@ -2605,11 +2604,11 @@ export function Modal({
   // could have had. Reported: opening a live run should fill the session it belongs to.
   const fillsPane = within === 'session' && !stopsAtContent;
   const boxHeight = stopsAtContent
-    ? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' || size === 'fit-wide' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
+    ? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
     : fillsPane
       ? 'sm:h-full'
       : DIALOG_DESKTOP_HEIGHT;
-  const desktopWidth = size === 'wide' || size === 'fit-wide' || size === 'split'
+  const desktopWidth = size === 'wide' || size === 'split'
     ? 'sm:max-w-4xl mouse:max-w-6xl'
     : 'sm:max-w-xl';
   const boxWidth = fillsPane ? 'sm:max-w-none' : desktopWidth;
@@ -2642,10 +2641,9 @@ export function Modal({
           provider presets — would otherwise stand its title under the clock.
           `wide` is the other, and it is a LAYOUT rather than a mood: settings stands
           two columns wide, and 36rem split in half is two columns of nothing.
-          `fit-wide` shares that width for one-column settings without the fixed
-          desktop height. Both stop at content on the phone, where a short fleet
-          otherwise left the glass below the last row as blank paper. `split` is
-          a search with two result panes: `wide` on a desk, `full` on a phone.
+          `wide` stops at content on the phone, where a short fleet otherwise left
+          the glass below the last row as blank paper. `split` is a search: `wide`
+          on a desk, `full` on a phone.
 
            A dialog that stands in ONE SESSION is the third, and it is a PLACE rather than
            a size: its layer is the session pane, not the window, so the box takes all of

@@ -52,7 +52,7 @@ import {
 } from '../../components/ProviderAuth';
 import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
-import { FormLabel, SettingsPanel, SettingsSection } from './SettingsLayout';
+import { FormLabel, SettingsLoading, SettingsPanel, SettingsSection } from './SettingsLayout';
 import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingField } from './SettingField';
 import { CouncilRooms } from './CouncilRooms';
@@ -368,9 +368,6 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: 
   );
 }
 
-/** How long a machine may take to answer before its settings show a loading panel. */
-const LOADING_DELAY_MS = 400;
-
 /**
  * ONE MACHINE'S OWN SETTINGS, standing under that machine's own row in `SettingsDialog`.
  *
@@ -414,9 +411,6 @@ export function MachineSettings({
   const [failure, setFailure] = useState<'unreachable' | 'unauthorized' | 'incompatible' | null>(
     null,
   );
-  // A machine that answers within one beat changes the sheet height once, not twice.
-  const [isLoadingShown, setIsLoadingShown] = useState(false);
-
   const load = useCallback(
     async (signal?: AbortSignal) => {
       // Status flags are assigned only after the request settles, and never once the
@@ -458,11 +452,6 @@ export function MachineSettings({
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
-
-  useEffect(() => {
-    const id = window.setTimeout(() => setIsLoadingShown(true), LOADING_DELAY_MS);
-    return () => window.clearTimeout(id);
-  }, []);
 
   // Escape belongs to the dialog that frames these panels.
 
@@ -613,34 +602,7 @@ export function MachineSettings({
           </div>
         </SettingsPanel>
       ) : groups === null ? (
-        isLoadingShown && (
-          <SettingsPanel title="Loading">
-            {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
-                    tinted blocks were an invisible skeleton — a blank hole where
-                    the settings should be. Bars are drawn in `--color-muted`. */}
-            <div
-              className="space-y-px bg-dialog-edge"
-              role="status"
-              aria-live="polite"
-              aria-label="Loading settings"
-            >
-              <div className="bg-panel px-4 py-2">
-                <Text as="p" variant="description">
-                  Loading settings…
-                </Text>
-              </div>
-              {['w-1/2', 'w-2/3', 'w-2/5'].map((width) => (
-                <div
-                  key={width}
-                  className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none"
-                >
-                  <span className={`block h-2.5 bg-muted/30 ${width}`} />
-                  <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
-                </div>
-              ))}
-            </div>
-          </SettingsPanel>
-        )
+        <SettingsLoading />
       ) : groups.length === 0 ? (
         <SettingsPanel title="Settings">
           <p className="px-4 py-6 text-center">
