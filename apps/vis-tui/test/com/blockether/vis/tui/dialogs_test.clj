@@ -2507,11 +2507,11 @@
         ;; No gateway read yet → Settings stays MCP-free.
         (reset! inventory {:status :unloaded :servers [] :error nil})
         (expect (nil? (mcp-rows)))
-        ;; An empty loaded inventory shows the section, its Add button and a hint (#338).
+        ;; An empty loaded inventory shows only the section and its Add button, no hint (#338).
         (reset! inventory {:status :ok :servers [] :error nil})
-        (expect (= [:section :info] (mapv :type (mcp-rows))))
+        (expect (= [:section] (mapv :type (mcp-rows))))
         (expect (= :mcp-add (get-in (first (mcp-rows)) [:button :id])))
-        (expect (= "No MCP servers yet" (:label (second (mcp-rows)))))
+        (expect (true? (:no-rule (first (mcp-rows)))))
         (reset! inventory {:status :loading :servers [] :error nil})
         (expect (= "Loading MCP servers…" (:label (second (mcp-rows)))))
         (reset! inventory

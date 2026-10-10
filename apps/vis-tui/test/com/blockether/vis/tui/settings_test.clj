@@ -280,6 +280,31 @@
         (expect (= {} (:ret capture)))
         (expect (str/includes? frame "No MCP servers"))
         (expect (str/includes? frame "Add a server to start."))))
+  (it "draws the MCP servers header without a rule and an empty section without a hint"
+      (let [inventory
+            (var-get #'dlg/mcp-inventory)
+
+            before
+            @inventory]
+
+        (try (reset! inventory {:status :ok :servers [] :error nil})
+             (let [rows
+                   (vec (concat settings-rows ((var-get #'dlg/mcp-settings-rows))))
+
+                   lines
+                   (str/split-lines
+                     (cap/frame-text
+                       (capture-settings rows [:esc] :callbacks {:focus-section "MCP servers"})))
+
+                   header
+                   (first (filter #(and (str/includes? % "MCP servers") (str/includes? % "Add"))
+                                  lines))]
+
+               (expect (some? header))
+               (expect (not (str/includes? header "─")))
+               (expect (some #(str/includes? % "── Response") lines))
+               (expect (not-any? #(str/includes? % "No MCP servers") lines)))
+             (finally (reset! inventory before)))))
   (it "refocuses the requested section when the initial inventory arrives without hiding others"
       (let [rows
             (atom (subvec settings-rows 0 5))
