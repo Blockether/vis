@@ -5112,15 +5112,24 @@
     result))
 
 (defn reconcile-orphaned-turns!
-  "Mark turns left running by a dead process as interrupted. A turn that
-   [[bus/live-turns]] reports is still in flight in a live vis process, so the
-   sweep leaves it to that process.
+  "Mark turns left running by a dead process as interrupted, and fail the managed
+   children it left queued or running. A turn that [[bus/live-turns]] reports is
+   still in flight in a live vis process, so the sweep leaves it to that process.
 
    Queued work is deliberately memory-only. Startup never reconstructs or
    resubmits messages from persisted user requests. Returns the persistence
    sweep result."
   []
-  (try (lp/db-sweep-orphaned-running-turns! (lp/db-info) (vals (bus/live-turns)))
+  (try (let [db
+             (lp/db-info)
+
+             live
+             (bus/live-turns)]
+
+         (try (agents/reconcile-orphans! db (keys live))
+              (catch Throwable t
+                (tel/log! :warn ["gateway: orphaned-child reconciliation failed" (ex-message t)])))
+         (lp/db-sweep-orphaned-running-turns! db (vals live)))
        (catch Throwable _ nil)))
 
 (defn- terminal-event->result

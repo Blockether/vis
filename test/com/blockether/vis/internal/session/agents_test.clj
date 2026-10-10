@@ -285,6 +285,49 @@
           (#'gateway/report-agent-outcome! db child "stopped" {})
           (expect (= [] (:ping (second (last @published)))))))))
 
+;; Regression: a gateway that died mid-team left its children queued or running forever,
+;; and a resumed leader waited for children that no process ran any more.
+(defdescribe
+  orphaned-children-reconcile-test
+  (it
+    "fails queued and running children that no live process runs"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          dead
+          (child! db leader {})
+
+          queued
+          (child! db leader {})
+
+          done
+          (child! db leader {})
+
+          live
+          (child! db leader {})
+
+          other-leader
+          (str (h/store-session! db {:channel :api}))
+
+          spared
+          (child! db other-leader {})]
+
+      (ps/db-agent-update! db dead {:status "running"})
+      (ps/db-agent-update! db done {:status "completed"})
+      (ps/db-agent-update! db live {:status "running"})
+      (ps/db-agent-update! db spared {:status "running"})
+      (expect (= 2 (agents/reconcile-orphans! db [live other-leader])))
+      (expect (= "failed" (:status (agents/info db dead))))
+      (expect (= "failed" (:status (agents/info db queued))))
+      (expect (= "completed" (:status (agents/info db done))))
+      (expect (= "running" (:status (agents/info db live))) "A child with a live turn stays")
+      (expect (= "running" (:status (agents/info db spared))) "A live leader still owns its team")
+      (expect (= 0 (agents/reconcile-orphans! db [live other-leader]))
+              "A second sweep finds nothing"))))
+
 (defdescribe
   stopping-a-parent-arms-its-backstop-before-stopping-children-test
   (it

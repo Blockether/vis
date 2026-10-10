@@ -148,6 +148,23 @@
 
                                       "failed")}))))
 
+(defn reconcile-orphans!
+  "Fail the children that a dead process left queued or running. Spare a child or a leader
+   that `live-sids` names: a live process still owns that team. Returns the count."
+  [db live-sids]
+  (let [live
+        (into #{} (map str) live-sids)
+
+        orphans
+        (filterv #(and (contains? #{"queued" "running"} (:status %))
+                       (not (live (str (:session_id %))))
+                       (not (live (str (:leader_id %)))))
+          (ps/db-agent-list db nil))]
+
+    (doseq [{sid :session_id} orphans]
+      (ps/db-agent-update! db sid {:status "failed"}))
+    (count orphans)))
+
 (defn controls?
   "Leaders control their descendants. Subagents control themselves and their direct children."
   [db actor-id target-id]
