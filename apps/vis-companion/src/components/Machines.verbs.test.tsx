@@ -146,9 +146,8 @@ describe('a machine keeps its verbs under its own row', () => {
         .getAllByRole('button')
         .map((b) => b.textContent),
     ).toEqual(['No, keep', 'Yes, forget']);
-    // What it costs is said where it is asked: the panel this verb came from
-    // spent a paragraph on it, and the answer is worthless without the sentence.
-    expect(screen.getByText(/access token from this device/)).toBeVisible();
+    // The question stands alone: no sentence under it about the token or pairing.
+    expect(within(ask).queryByText(/access token/)).toBeNull();
 
     await user.click(within(ask).getByRole('button', { name: 'No, keep' }));
     expect(onForget).not.toHaveBeenCalled();

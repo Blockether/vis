@@ -613,18 +613,9 @@ export function MachineRows({
 
         if (forgetting === conn.url)
           return (
-            // What forgetting COSTS, inside the frame that asks it: the panel this
-            // verb came from spent a paragraph on it, and the answer is worthless
-            // without the sentence.
             <ConfirmRow
               key={conn.url}
               question={`Forget ${name}?`}
-              cost={
-                <>
-                  Deletes {hostOf(conn.url)} and its access token from this device. Pairing again
-                  needs the link or QR code from &lsquo;vis-agent gateway pair&rsquo;.
-                </>
-              }
               confirmLabel="Yes, forget"
               onKeep={() => setForgetting(null)}
               onConfirm={() => {
