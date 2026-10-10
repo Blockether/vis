@@ -2827,6 +2827,56 @@
                  (persistance/db-dispose-connection! db)
                  (doseq [file (reverse (file-seq dir))]
                    (.delete ^java.io.File file))))))
+  ;; Regression for #364: after a gateway restart in a parent folder, a resumed session
+  ;; got that folder as its sandbox root instead of its saved workspace.
+  (it
+    "keeps a resumed session in its saved workspace, never the gateway directory"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-364"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          parent
+          (.getCanonicalPath dir)
+
+          project
+          (.getCanonicalPath (clojure.java.io/file dir "proj"))
+
+          db
+          (persistance/db-create-connection! :memory)
+
+          old-dir
+          (System/getProperty "user.dir")]
+
+      (try (.mkdirs (clojure.java.io/file project ".vis" "extensions"))
+           (with-redefs [config/config-dir (constantly (.getPath (clojure.java.io/file dir
+                                                                                       "global")))]
+             (let [ws (workspace/create-trunk-at! db project)
+                   created (loop-env/create-environment ::router {:db db :workspace-id (:id ws)})
+                   sid (:session-id created)]
+
+               (loop-env/dispose-environment! created)
+               ;; The new gateway process runs in the parent folder.
+               (System/setProperty "user.dir" parent)
+               (let [resumed (loop-env/create-environment ::router {:db db :session sid})]
+                 (try (expect (= project (workspace/workspace-root resumed)))
+                      ;; Another thread builds the sandbox without a workspace binding.
+                      (let [python (deref (future (env/python-context resumed)))]
+                        (expect (= (str project "\n")
+                                   (:stdout (env/run-python-block python
+                                                                  "print(project_root_path)")))))
+                      (finally (loop-env/dispose-environment! resumed))))
+               ;; A saved workspace that cannot be read fails loudly, without a fallback.
+               (with-redefs [persistance/db-workspace-for-session (constantly nil)]
+                 (expect (= :session/workspace-missing
+                            (try (loop-env/create-environment ::router {:db db :session sid})
+                                 nil
+                                 (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+           (finally (System/setProperty "user.dir" old-dir)
+                    (config/invalidate-config-cache!)
+                    (persistance/db-dispose-connection! db)
+                    (doseq [file (reverse (file-seq dir))]
+                      (.delete ^java.io.File file))))))
   (it "never borrows a last-good policy from another workspace on invalid config"
       (with-redefs [loop-env/last-good-security-snapshot (atom {})]
         (let [snapshot #(binding [workspace/*workspace-root* %1]

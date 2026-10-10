@@ -38,6 +38,7 @@
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.python.worker :as pyext]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -799,17 +800,18 @@
 (defn bind-ctx!
   "Refresh `session` and prebound Paths from workspace.root and filesystem_roots.
 
-   `project_root_path` always points at the working workspace (or the host working
-   directory for a standalone context). Each filesystem root's `python_name` binds
-   its working `cwd`, sharing the prompt's exact entries. Removed names disappear;
-   new names cannot overwrite tools or user variables.
+   `project_root_path` always points at the working workspace. Without one, it uses the
+   bound session workspace (`workspace/cwd`), and only then the host working directory.
+   Each filesystem root's `python_name` binds its working `cwd`, sharing the prompt's
+   exact entries. Removed names disappear; new names cannot overwrite tools or user
+   variables.
    All are host-owned: block-local shadows cannot replace later blocks' bindings."
   [session data]
   (py-exec! session
             (str "__vis_bind_ctx__(globals(), "
                  (py-json-literal data)
                  ", "
-                 (py-json-literal (System/getProperty "user.dir"))
+                 (py-json-literal (str (workspace/cwd)))
                  ")"))
   nil)
 

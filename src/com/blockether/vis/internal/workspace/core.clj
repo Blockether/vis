@@ -111,9 +111,17 @@
         (.getCanonicalPath (io/file s))))))
 
 (defn workspace-root
-  "Extract a canonical :workspace/root from an env map or raw root value."
+  "Extract a canonical workspace root from an env map or raw root value.
+
+   For an env map, the live `:workspace-atom` wins over the static `:workspace/root`:
+   it always holds the session's saved workspace (#364)."
   [env-or-root]
-  (normalize-root (if (map? env-or-root) (:workspace/root env-or-root) env-or-root)))
+  (normalize-root (if (map? env-or-root)
+                    (or (some-> (:workspace-atom env-or-root)
+                                deref
+                                :root)
+                        (:workspace/root env-or-root))
+                    env-or-root)))
 
 (defn ancestor-roots
   "Canonical workspace root followed by each parent through the nearest ancestor

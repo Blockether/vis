@@ -273,6 +273,19 @@
                                    "/reload. Keys are snake_case strings; the config is closed, "
                                    "so unknown or renamed keys are rejected.")}))))))))
 
+(defn- saved-workspace
+  "Workspace saved for the existing session `session-id`, or nil for an unknown session.
+
+   A resumed session always works in its saved folder. When that folder cannot be read,
+   throw: a silent fallback puts the sandbox, the file index and the extensions in the
+   gateway directory (#364)."
+  [db-info session-id]
+  (when (and session-id (persistance/db-get-session db-info session-id))
+    (or (some->> (persistance/db-latest-session-state-id db-info session-id)
+                 (persistance/db-workspace-for-session db-info))
+        (throw (ex-info "Session has no readable saved workspace"
+                        {:type :session/workspace-missing :session-id session-id})))))
+
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
    querying.
@@ -366,19 +379,16 @@
             ;;                                into db-store-session! below
             ;; db-info nil (sandbox-only mode) → skip; iteration loop never asserts
             ;;                                workspace pin when there's no DB
-            active-workspace
-            (when db-info
-              (cond
-                ;; Resume path: the existing session already pins a
-                ;; workspace; honour it.
-                resolved-session-id
-                (some->> (persistance/db-latest-session-state-id db-info resolved-session-id)
-                         (persistance/db-workspace-for-session db-info))
-                ;; New session, caller pre-spawned a workspace
-                ;; (e.g. /workspace slash spawn-branch path).
-                workspace-id (persistance/db-workspace-get db-info workspace-id)
-                ;; New session, no pre-spawn: clone cwd.
-                :else (workspace/ensure-workspace! db-info {})))
+            active-workspace (when db-info
+                               (cond
+                                 ;; Resume path: the existing session already pins a
+                                 ;; workspace; honour it or fail, never fall back to user.dir.
+                                 resolved-session-id (saved-workspace db-info resolved-session-id)
+                                 ;; New session, caller pre-spawned a workspace
+                                 ;; (e.g. /workspace slash spawn-branch path).
+                                 workspace-id (persistance/db-workspace-get db-info workspace-id)
+                                 ;; New session, no pre-spawn: clone cwd.
+                                 :else (workspace/ensure-workspace! db-info {})))
             ;; Persist the prompt from the pinned project, including on resume.
             system-prompt (prompt/build-system-prompt {:workspace-root (:root active-workspace)})
             session-id (or resolved-session-id
@@ -606,37 +616,41 @@
             new-sandbox
             (fn []
               (delay
-                (let [built (env/create-python-context (merge env-bindings
-                                                              (:custom-bindings @state-atom))
-                                                       sandbox-roots-fn
-                                                       network-opts
-                                                       nil)
-                      python-context (:python-context built)]
+                ;; Bind the session's pinned root: whoever forces this delay, on any thread,
+                ;; builds the sandbox and loads extensions for the saved workspace (#364).
+                (binding [workspace/*workspace-root* (or (:root @workspace-atom)
+                                                         workspace/*workspace-root*)]
+                  (let [built (env/create-python-context (merge env-bindings
+                                                                (:custom-bindings @state-atom))
+                                                         sandbox-roots-fn
+                                                         network-opts
+                                                         nil)
+                        python-context (:python-context built)]
 
-                  (vreset! pending built)
-                  ;; Every step past the build carries its own teardown. `create-environment`'s
-                  ;; try/catch used to cover this stretch; it has long returned by the time
-                  ;; this delay runs, so the failure path has to live in here. An abandoned
-                  ;; sandbox is never reclaimed — its Python namespace is a reference cycle
-                  ;; through every function defined in it, and the host half holds one closure
-                  ;; per tool — which is why the FAILURE path leaks worse than success can.
-                  (try
-                    ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
-                    ;; while the transcript still shows the helpers this session refined, so the
-                    ;; next call would be a NameError against code the model can read. Re-create
-                    ;; them from the snapshot `execute-code` wrote after every block.
-                    (env/restore-session-defs! python-context session-id)
-                    ;; Extensions installed while this sandbox was still cold skipped their
-                    ;; symbol sync; give them their globals now. The context goes in by hand
-                    ;; because reaching it through the environment would re-enter THIS delay.
-                    (when-let [environment @environment-atom]
-                      (sync-extension-symbols-into! python-context
-                                                    environment
-                                                    (prompt/active-extensions environment)))
-                    built
-                    (catch Throwable t
-                      (try (env/dispose-python-context! python-context) (catch Throwable _ nil))
-                      (throw t))))))
+                    (vreset! pending built)
+                    ;; Every step past the build carries its own teardown. `create-environment`'s
+                    ;; try/catch used to cover this stretch; it has long returned by the time
+                    ;; this delay runs, so the failure path has to live in here. An abandoned
+                    ;; sandbox is never reclaimed — its Python namespace is a reference cycle
+                    ;; through every function defined in it, and the host half holds one closure
+                    ;; per tool — which is why the FAILURE path leaks worse than success can.
+                    (try
+                      ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
+                      ;; while the transcript still shows the helpers this session refined, so the
+                      ;; next call would be a NameError against code the model can read. Re-create
+                      ;; them from the snapshot `execute-code` wrote after every block.
+                      (env/restore-session-defs! python-context session-id)
+                      ;; Extensions installed while this sandbox was still cold skipped their
+                      ;; symbol sync; give them their globals now. The context goes in by hand
+                      ;; because reaching it through the environment would re-enter THIS delay.
+                      (when-let [environment @environment-atom]
+                        (sync-extension-symbols-into! python-context
+                                                      environment
+                                                      (prompt/active-extensions environment)))
+                      built
+                      (catch Throwable t
+                        (try (env/dispose-python-context! python-context) (catch Throwable _ nil))
+                        (throw t)))))))
             env (cond-> {:environment-id environment-id
                          :session-id session-id
                          :session/state-id session-state-id
@@ -1632,8 +1646,7 @@
 
         active-workspace
         (if id
-          (some->> (persistance/db-latest-session-state-id db-info id)
-                   (persistance/db-workspace-for-session db-info))
+          (saved-workspace db-info (persistance/db-resolve-session-id db-info id))
           (when workspace-id (persistance/db-workspace-get db-info workspace-id)))
 
         sources
