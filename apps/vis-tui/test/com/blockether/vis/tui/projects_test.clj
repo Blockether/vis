@@ -4845,6 +4845,16 @@
                  :paint! (fn [{:keys [screen]}]
                            (projects/paint! (.newTextGraphics screen) db cols rows))}))
 
+(defdescribe row-menu-labels-test
+             ;; User report: menu actions such as "+ New session here" carried a sign
+             ;; before their text. A label with text needs no sign.
+             (it "starts every row menu label with its text, never a sign"
+                 (let [db (every-kind-db)]
+                   (doseq [entry (projects/sidebar-entries db)
+                           {:keys [label]} (projects/row-menu-items db entry)]
+
+                     (expect (re-find #"^[\p{L}\p{N}]" label) label)))))
+
 (defdescribe sidebar-row-keys-test
              (it "runs every keyed menu item from its key on the focused row"
                  (let [db (every-kind-db)]

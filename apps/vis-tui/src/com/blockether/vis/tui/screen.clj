@@ -6295,8 +6295,8 @@
                        {:id (str (get group "id"))
                         :label (str (get group "name") "  (" (get group "session_count" 0) ")")})
                      groups)
-               [{:id ::new-group :label "+ New group…"}
-                {:id ::remove-group :label "✗ Remove from group"}])))
+               [{:id ::new-group :label "New group…"}
+                {:id ::remove-group :label "Remove from group"}])))
 
 (defn- move-project-sessions!
   "File the chosen saved IDs one at a time, clearing only successful selections."
@@ -6701,7 +6701,7 @@
                                     screen
                                     (str "Delete group · " (get group "name"))
                                     [{:id :detach :label "Keep its sessions, ungrouped"}
-                                     {:id :with-sessions :label "✗ Delete its sessions too"}]))))]
+                                     {:id :with-sessions :label "Delete its sessions too"}]))))]
         (vis/worker-future "tui-group-delete"
                            (fn []
                              (try (let [result (vis/gateway-delete-session-group! gid answer)
@@ -7769,9 +7769,9 @@
                                                                      (get pr "session_count")
                                                                      ")")})
                                                       projects)
-                                                [{:id ::new-project :label "+ New project…"}
+                                                [{:id ::new-project :label "New project…"}
                                                  {:id ::remove-project
-                                                  :label "✗ Remove from project"}]))
+                                                  :label "Remove from project"}]))
                              pick (with-dialog-lock #(dlg/searchable-select!
                                                        screen
                                                        "Move session to project…"

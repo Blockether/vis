@@ -339,14 +339,14 @@
                       (when (and groups-archived? (pos? (long (or (:group-offset page) 0))))
                         [{:kind :project-group-page
                           :project project
-                          :label "← Previous groups"
+                          :label "Previous groups"
                           :action [:group-page pid :previous]}])
                       (when (and groups-archived?
                                  (< (+ (long (or (:group-offset page) 0)) (count groups))
                                     (long (or (get-in sidebar [:group-total pid]) 0))))
                         [{:kind :project-group-page
                           :project project
-                          :label "More groups →"
+                          :label "More groups"
                           :action [:group-page pid :next]}])
                       (when (and groups-archived?
                                  (not (:loading? page))
@@ -365,12 +365,12 @@
                   (when (and (not (get-in sidebar [:sessions-folded? pid])) (seq (:history page)))
                     [{:kind :project-page
                       :project project
-                      :label "← Previous sessions"
+                      :label "Previous sessions"
                       :action [:page pid :previous]}])
                   (when (and (not (get-in sidebar [:sessions-folded? pid])) (:has-more page))
                     [{:kind :project-page
                       :project project
-                      :label "More sessions →"
+                      :label "More sessions"
                       :action [:page pid :next]}])
                   (when (:loading? page)
                     [{:kind :project-state :project project :label "Loading sessions…"}])
@@ -454,22 +454,21 @@
         offset
         (long (or offset 0))]
 
-    (->> (concat
-           (when (pos? offset)
-             [{:kind :project-page
-               :label "← Previous search results"
-               :action [:search-page :previous]}])
-           hits
-           (when has-more?
-             [{:kind :project-page :label "More search results →" :action [:search-page :next]}])
-           (when loading? [{:kind :project-state :label "Searching sessions…"}])
-           (when error [{:kind :project-state :label (str "Search failed · " error)}])
-           (when (and (not loading?) (not error) (zero? total))
-             [{:kind :project-state
-               :label
-               (if (str/blank? text) "Type to search saved sessions" "No saved sessions match")}]))
-         (map-indexed #(assoc %2 :index (inc (long %1))))
-         vec)))
+    (->>
+      (concat
+        (when (pos? offset)
+          [{:kind :project-page :label "Previous search results" :action [:search-page :previous]}])
+        hits
+        (when has-more?
+          [{:kind :project-page :label "More search results" :action [:search-page :next]}])
+        (when loading? [{:kind :project-state :label "Searching sessions…"}])
+        (when error [{:kind :project-state :label (str "Search failed · " error)}])
+        (when (and (not loading?) (not error) (zero? total))
+          [{:kind :project-state
+            :label
+            (if (str/blank? text) "Type to search saved sessions" "No saved sessions match")}]))
+      (map-indexed #(assoc %2 :index (inc (long %1))))
+      vec)))
 
 (defn sidebar-entries
   "Project and saved-session rows in shared paint/keyboard order."
@@ -1152,7 +1151,7 @@
             g
             (+ (long left) 2)
             (- (long rows) (if (get-in db [:project-sidebar :error]) 5 4))
-            (if (get-in db [:project-sidebar :saving?]) "Creating folder…" "+ New folder  Ctrl+N")
+            (if (get-in db [:project-sidebar :saving?]) "Creating folder…" "New folder  Ctrl+N")
             :project-new-folder)
           cursor)))))
 
@@ -1513,28 +1512,27 @@
 
         true
         (conj (menu-item :delete-session "Delete session…" :delete)))
-      group (cond-> []
-              (not archived-group?)
-              (conj (menu-item :new-session "+ New session here" :new-session))
+      group
+      (cond-> []
+        (not archived-group?)
+        (conj (menu-item :new-session "New session here" :new-session))
 
-              (and (not archived-group?) (seq selected))
-              (conj
-                (menu-item :move-selected (str "Move " (count selected) " selected here") :move))
+        (and (not archived-group?) (seq selected))
+        (conj (menu-item :move-selected (str "Move " (count selected) " selected here") :move))
 
-              true
-              (into [(menu-item :new "+ New group…" :new-group)
-                     (menu-item :rename "Rename group…" :rename)
-                     (menu-item :recolour "Change group colour…" :recolour)
-                     (menu-item :settings "Group settings…" :settings)
-                     (if archived-group?
-                       (menu-item :unarchive-group "Unarchive group" :archive)
-                       (menu-item :archive-group "Archive group" :archive))
-                     (menu-item :delete "✗ Delete group" :delete)]))
+        true
+        (into [(menu-item :new "New group…" :new-group) (menu-item :rename "Rename group…" :rename)
+               (menu-item :recolour "Change group colour…" :recolour)
+               (menu-item :settings "Group settings…" :settings)
+               (if archived-group?
+                 (menu-item :unarchive-group "Unarchive group" :archive)
+                 (menu-item :archive-group "Archive group" :archive))
+               (menu-item :delete "Delete group" :delete)]))
       (= :sessions (:set entry))
       (cond-> [(menu-item :toggle-session-archive
                           (if (:archived? entry) "Hide archived sessions" "Show archived sessions")
-                          :show-archived) (menu-item :new-session "+ New session here" :new-session)
-               (menu-item :new "+ New group…" :new-group)]
+                          :show-archived) (menu-item :new-session "New session here" :new-session)
+               (menu-item :new "New group…" :new-group)]
         (seq selected)
         (conj (menu-item :ungroup-selected
                          (str "Ungroup " (count selected) " selected sessions")
@@ -1543,18 +1541,18 @@
         true
         (conj (menu-item :settings "Project settings…" :settings)))
       (= :groups (:set entry))
-      [(menu-item :new "+ New group…" :new-group)
+      [(menu-item :new "New group…" :new-group)
        (menu-item :toggle-group-archive
                   (if (:archived? entry) "Hide archived groups" "Show archived groups")
                   :show-archived) (menu-item :settings "Project settings…" :settings)]
       :else [(menu-item :use-project "Use project" nil)
-             (menu-item :new-session "+ New session" :new-session)
-             (menu-item :new "+ New group…" :new-group)
+             (menu-item :new-session "New session" :new-session)
+             (menu-item :new "New group…" :new-group)
              (menu-item :rename-project "Rename project…" :rename)
              (menu-item :move-project "Change folder…" nil)
              (menu-item :settings "Project settings…" :settings)
              (menu-item :refresh "Refresh projects" :refresh)
-             (menu-item :delete-project "✗ Remove project and sessions…" :delete)])))
+             (menu-item :delete-project "Remove project and sessions…" :delete)])))
 
 (def ^:private menu-kinds
   "Row kinds that own a ⋯ menu."
