@@ -1005,32 +1005,49 @@
     tab
     (clear-input-history tab)))
 
+(defn- saveable-command?
+  "True when `text` runs a slash command whose definition declares it saveable.
+   `:saveable-slashes` holds the full slash texts, such as `/goal`, from the catalog."
+  [db text]
+  (let [t (str/triml (str text))]
+    (boolean (some (fn [slash]
+                     (and (str/starts-with? t slash)
+                          (or (= (count t) (count slash))
+                              (Character/isWhitespace (.charAt ^String t (count slash))))))
+                   (:saveable-slashes db)))))
+
+(defn- remembered-text?
+  "True when `text` belongs in the recall ring: a prompt or a saveable command (#360)."
+  [db text]
+  (or (not (command-submission? text)) (saveable-command? db text)))
+
 (defn- remember-input
   "Append a prompt to this session's recall ring, retaining its newest 20 entries.
-   Commands and immediate repeats of the newest entry are not remembered.
+   Commands that are not saveable and immediate repeats of the newest entry are not
+   remembered.
    Archived sessions have no recall ring."
   [tab text]
   (let [tab (scoped-input-history tab)]
     (cond-> tab
-      (and (input-history-enabled? tab) (not (command-submission? text)))
+      (and (input-history-enabled? tab) (remembered-text? tab text))
       (update :input-history
               (fn [xs]
                 (let [xs (vec (or xs []))]
                   (bounded-input-history (if (= text (last xs)) xs (conj xs text)))))))))
 
 (defn- history-user-texts
-  "The newest 20 user prompts in a persisted transcript, excluding commands."
-  [history]
+  "The newest 20 user prompts in a persisted transcript, without unsaveable commands."
+  [db history]
   (->> (or history [])
        (keep (fn [message]
                (let [text (:text message)]
-                 (when (and (= :user (:role message)) (not (command-submission? text))) text))))
+                 (when (and (= :user (:role message)) (remembered-text? db text)) text))))
        bounded-input-history))
 
 (defn- hydrate-input-history
   [tab history]
   (assoc (clear-input-history tab)
-    :input-history (if (input-history-enabled? tab) (history-user-texts history) [])))
+    :input-history (if (input-history-enabled? tab) (history-user-texts tab history) [])))
 
 (defn- prepend-input-history
   [tab history]
@@ -1038,7 +1055,7 @@
     (if-not (input-history-enabled? tab)
       tab
       (let [current (vec (:input-history tab))
-            combined (bounded-input-history (into (history-user-texts history) current))
+            combined (bounded-input-history (into (history-user-texts tab history) current))
             added (- (count combined) (count current))]
 
         (cond-> (assoc tab :input-history combined)
@@ -3665,6 +3682,11 @@
 (reg-event-db :set-improve-settings
               (fn [db [_ settings]]
                 (assoc db :improve (if (map? settings) settings {:mode :off}))))
+
+;; The slash catalog names the commands that the recall ring keeps (#360).
+(reg-event-db :saveable-slashes
+              (fn [db [_ texts]]
+                (assoc db :saveable-slashes (set texts))))
 
 (reg-event-db :focus-attachments
               (fn [db _]

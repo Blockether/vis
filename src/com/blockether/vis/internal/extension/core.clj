@@ -521,6 +521,7 @@
        (optional-field? x :slash/parent #(vector-of? non-blank-string? %))
        (optional-field? x :slash/doc non-blank-string?)
        (optional-field? x :slash/usage non-blank-string?)
+       (optional-field? x :slash/saveable? boolean?)
        (optional-field? x :slash/run-fn ifn?)
        (optional-field? x :slash/requires #(set-of? #{:session :workspace :channel} %))
        (optional-field? x :slash/availability-fn ifn?)

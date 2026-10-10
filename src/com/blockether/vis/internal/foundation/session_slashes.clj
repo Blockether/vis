@@ -112,6 +112,8 @@
     :slash/usage
     "/goal [--budget ITERATIONS] [--] <objective> | <objective> --budget ITERATIONS | --pause | --resume | --cancel"
     :slash/prompt-arg "Objective"
+    ;; A goal is real prompt content, so the TUI keeps it in the prompt history (#360).
+    :slash/saveable? true
     :slash/requires #{:session}
     :slash/run-fn goals/slash!}
    {:slash/name "rename"

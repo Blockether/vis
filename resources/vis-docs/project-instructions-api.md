@@ -86,6 +86,9 @@ The list has the commands of the extensions, the commands of the channel and the
 the project. The `channel` is `web` or `tui`, `web` by default. Skills are not in the list. Each
 skill has the command `/skill:<name>`, as [Skills](skills.md) explains.
 
+A command with `saveable` set to true is prompt content, such as `/goal`. A client can keep it in its
+prompt history. Other commands do not have the field.
+
 </div>
 
 <div data-variant="http">
@@ -98,6 +101,9 @@ The answer has `commands`, with `name` and `doc` for each command. The list has 
 extensions, the commands of the channel and the prompt templates of the project. The `channel` is
 `web` or `tui`, `web` by default. Skills are not in the list. Each skill has the command
 `/skill:<name>`, as [Skills](skills.md) explains.
+
+A command with `saveable` set to true is prompt content, such as `/goal`. A client can keep it in its
+prompt history. Other commands do not have the field.
 
 </div>
 

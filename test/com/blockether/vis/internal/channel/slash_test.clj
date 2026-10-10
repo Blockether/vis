@@ -200,4 +200,16 @@
                                   :subcommands [{:name "init" :description "Initialize the project"}
                                                 {:name "audit" :description "Audit a surface"}]}])]
 
-        (expect (= [{:name "/impeccable" :doc "Design skill"}] (slash/slash-palette :web))))))
+        (expect (= [{:name "/impeccable" :doc "Design skill"}] (slash/slash-palette :web)))))
+  ;; Regression for #360: a client keeps only saveable commands in its prompt history.
+  (it "marks saveable commands in the palette and keeps others unmarked"
+      (with-redefs [slash/registered-slashes
+                    (constantly [{:slash/name "goal" :slash/doc "Set a goal" :slash/saveable? true}
+                                 {:slash/name "reload" :slash/doc "Reload"}])
+
+                    prompt-templates/templates
+                    (constantly [])]
+
+        (expect (= [{:name "/goal" :doc "Set a goal" :saveable true}
+                    {:name "/reload" :doc "Reload"}]
+                   (slash/slash-palette :tui))))))

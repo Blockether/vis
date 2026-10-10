@@ -56,11 +56,20 @@ def test_declarations_are_typed_pure_and_register_once(monkeypatch):
         wire["symbols"][0]["fn"]("Ada", {"loud": True})
     assert wire["providers"][0]["marker"] == "provider"
     assert wire["slash_commands"][0]["marker"] == "slash"
+    assert wire["slash_commands"][0]["saveable"] is False
     assert wire["op_hooks"][0]["ops"] == ["shell"]
     assert wire["network_filters"][0]["marker"] == "network_filter"
     with pytest.raises(ValueError, match="once per file"):
         vis.register_extension(extension)
     assert len(calls) == 1
+
+
+# Regression for #360: a slash command declares whether a client saves it as a prompt.
+def test_slash_command_saveable_flag():
+    assert vis.SlashCommand("greet", greet)._spec()["saveable"] is False
+    assert vis.SlashCommand("goal", greet, saveable=True)._spec()["saveable"] is True
+    with pytest.raises(TypeError, match="saveable must be a bool"):
+        vis.SlashCommand("goal", greet, saveable="yes")
 
 
 @pytest.mark.parametrize(

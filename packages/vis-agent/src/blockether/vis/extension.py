@@ -2413,6 +2413,7 @@ class SlashCommand:
     run: Callable[..., Any]
     doc: str | None = None
     usage: str | None = None
+    saveable: bool = False
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name.strip():
@@ -2424,6 +2425,8 @@ class SlashCommand:
                 getattr(self, name), str
             ):
                 raise TypeError(f"vis.SlashCommand {name} must be text")
+        if not isinstance(self.saveable, bool):
+            raise TypeError("vis.SlashCommand saveable must be a bool")
 
     def _spec(self):
         return {
@@ -2432,6 +2435,7 @@ class SlashCommand:
             "run": self.run,
             "doc": self.doc,
             "usage": self.usage,
+            "saveable": self.saveable,
         }
 
 

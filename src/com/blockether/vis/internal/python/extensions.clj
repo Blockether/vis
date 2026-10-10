@@ -1420,7 +1420,10 @@
       (assoc :slash/doc doc)
 
       (string? usage)
-      (assoc :slash/usage usage))))
+      (assoc :slash/usage usage)
+
+      (true? (get spec "saveable"))
+      (assoc :slash/saveable? true))))
 
 (defn- ->op-hook-entries
   [ext-name ctx spec]

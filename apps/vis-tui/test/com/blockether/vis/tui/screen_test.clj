@@ -692,7 +692,8 @@
                          (fn [session-id channel]
                            (swap! gateway-calls conj [session-id channel])
                            [{"name" "/voice" "doc" "Voice toggle"}
-                            {"name" "/python-echo" "doc" "Echo"}])
+                            ;; #360: an extension command declares itself saveable.
+                            {"name" "/python-echo" "doc" "Echo" "saveable" true}])
 
                          vis/registered-slashes
                          (constantly [{:slash/name "voice"
@@ -710,7 +711,8 @@
              (expect (= :navigator
                         (get-in (first @registry-slash-commands-cache)
                                 [:slash/spec :slash/ui :kind])))
-             (expect (= [[:bump-render-version]] @events)))
+             (expect (= [false true] (mapv :slash/saveable? @registry-slash-commands-cache)))
+             (expect (= [[:saveable-slashes ["/python-echo"]] [:bump-render-version]] @events)))
            (finally (reset! registry-slash-commands-cache previous)))))
   (it "menu-commands keeps slash registry for typed slash suggestions"
       (with-redefs [vis/registered-slashes (constantly [{:slash/name "voice"

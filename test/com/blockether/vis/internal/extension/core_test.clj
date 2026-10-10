@@ -1649,3 +1649,14 @@
         (expect (seq built-ins))
         (expect (empty? broken)
                 (str/join "\n" (cons "built-in documents that break the prose limits:" broken))))))
+
+(defdescribe slash-saveable-contract-test
+             ;; Regression for #360: a slash declaration says whether a client saves it as a prompt.
+             (it "accepts a boolean saveable flag and refuses other values"
+                 (let [slash {:slash/name "keep"
+                              :slash/run-fn (fn [_]
+                                              {:slash/status :ok})}]
+                   (expect (true? (#'extension/slash? slash)))
+                   (expect (true? (#'extension/slash? (assoc slash :slash/saveable? true))))
+                   (expect (true? (#'extension/slash? (assoc slash :slash/saveable? false))))
+                   (expect (false? (#'extension/slash? (assoc slash :slash/saveable? "yes")))))))

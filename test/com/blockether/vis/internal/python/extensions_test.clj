@@ -2493,7 +2493,7 @@ vis.register_extension(vis.Extension(
     kind=\"fun\",
     activation=_active,
     prompt=_prompt,
-    slash_commands=[vis.SlashCommand(\"mood\", _toggle, doc=\"Toggle mood.\")],
+    slash_commands=[vis.SlashCommand(\"mood\", _toggle, doc=\"Toggle mood.\", saveable=True)],
 ))
 ")
 
@@ -2505,7 +2505,10 @@ vis.register_extension(vis.Extension(
                                   (expect (nil? ((:ext/prompt-fn ext) {})))
                                   ((:slash/run-fn (first (:ext/slash-commands ext)))
                                     {:channel/id :tui :command/argv [] :command/raw "/mood"})
-                                  (expect (= "MOOD ON" ((:ext/prompt-fn ext) {})))))))
+                                  (expect (= "MOOD ON" ((:ext/prompt-fn ext) {})))
+                                  ;; #360: an extension command declares whether it is saveable.
+                                  (expect (true? (:slash/saveable? (first (:ext/slash-commands
+                                                                            ext)))))))))
              (it "activation callables gate the extension per env"
                  (with-loaded {"moods.py" moods-py}
                               (fn [_ _]

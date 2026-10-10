@@ -1076,7 +1076,8 @@
      :slash/name path-s
      :slash/path path
      :slash/text (str "/" path-s)
-     :slash/usage (or (:slash/usage spec) (str "/" path-s))}))
+     :slash/usage (or (:slash/usage spec) (str "/" path-s))
+     :slash/saveable? (true? (:slash/saveable? spec))}))
 
 (defn- slash-available-in-tui?
   "True when a slash spec is safe to expose in TUI slash UX.
@@ -1116,12 +1117,18 @@
    complete Clojure + Python + prompt-template catalog."
   (atom nil))
 
+(defn- store-slash-catalog!
+  "Cache a non-empty slash catalog and give the state its saveable commands (#360)."
+  [commands]
+  (reset! registry-slash-commands-cache commands)
+  (state/dispatch [:saveable-slashes (keep #(when (:slash/saveable? %) (:slash/text %)) commands)]))
+
 (defn- registry-slash-commands
   "The latest non-empty slash catalog. Reading it never performs I/O or starts Python."
   []
   (or @registry-slash-commands-cache
       (let [v (local-registry-slash-commands)]
-        (when (seq v) (reset! registry-slash-commands-cache v))
+        (when (seq v) (store-slash-catalog! v))
         v)))
 
 (defn- gateway-slash-row->menu-command
@@ -1158,7 +1165,8 @@
        :slash/name path-s
        :slash/path (vec path)
        :slash/text slash-text
-       :slash/usage slash-text})))
+       :slash/usage slash-text
+       :slash/saveable? (true? (get row "saveable"))})))
 
 (defn- refresh-gateway-slash-commands!
   "Fetch the complete catalog from the gateway. Local rows win by path so their TUI-only
@@ -1176,9 +1184,7 @@
         commands
         (mapv #(get local-by-text (:slash/text %) %) remote)]
 
-    (when (seq commands)
-      (reset! registry-slash-commands-cache commands)
-      (state/dispatch [:bump-render-version]))
+    (when (seq commands) (store-slash-catalog! commands) (state/dispatch [:bump-render-version]))
     commands))
 
 (defn- start-deferred-gateway-slash-load!

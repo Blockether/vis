@@ -82,7 +82,9 @@
 (defn slash-palette
   "THE canonical typed-`/` palette for a channel. Registered slash leaves,
    channel-native entries, and prompt templates become complete `{:name :doc}`
-   rows. Registered/channel-native names always win."
+   rows. A registered slash with `:slash/saveable?` adds `:saveable true`, so a
+   client can keep that command in its prompt history. Registered/channel-native
+   names always win."
   ([channel] (slash-palette channel nil))
   ([channel extra]
    (let [avail
@@ -103,7 +105,9 @@
          (->> avail
               (filter leaf?)
               (map (fn [s]
-                     {:name (path-name s) :doc (str (:slash/doc s))})))
+                     (cond-> {:name (path-name s) :doc (str (:slash/doc s))}
+                       (:slash/saveable? s)
+                       (assoc :saveable true)))))
 
          specs
          (concat (vec extra) registered)

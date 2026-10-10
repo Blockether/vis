@@ -809,7 +809,7 @@ This immediate local operation can use `show_start=False`.
 ## Slash commands
 
 ```python
-vis.SlashCommand(name, run, doc=None, usage=None)
+vis.SlashCommand(name, run, doc=None, usage=None, saveable=False)
 ```
 
 `run(ctx)` receives `{"channel", "args", "raw", "session_id"}` and returns
@@ -819,6 +819,12 @@ or a plain string, which counts as an ok title. `body` is Markdown.
 Vis runs `run` in the session that sent the command, as it does for a tool call.
 In `run`, [`vis.workspace_root()`](#workspace-root) returns the working copy of that
 session, including its draft.
+
+Set `saveable=True` when the command text is real prompt content that a person can
+want to run again, such as a goal. The terminal then keeps the full command in its
+prompt history, so **↑** recalls it. The default is `False`. Vis does not save
+control commands, such as `/reload`, unless their definition sets the flag. The
+built-in `/goal` command is saveable.
 
 ## Op hooks
 

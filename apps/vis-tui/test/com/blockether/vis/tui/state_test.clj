@@ -3445,8 +3445,27 @@
   (it "a resumed session hydrates the ring without the commands of its past"
       (expect (= ["first prompt" "second prompt"]
                  (#'state/history-user-texts
+                  {}
                   [{:role :user :text "first prompt"} {:role :assistant :text "answer"}
                    {:role :user :text "/reload"} {:role :user :text "second prompt"}]))))
+  ;; Regression for #360: a `/goal` command is prompt content, so the ring keeps it.
+  (it "a saveable command is remembered and hydrated with its full text"
+      (let [db {:saveable-slashes #{"/goal" "/team plan"}}]
+        (expect (= ["/goal fix the parser --budget 5"]
+                   (:input-history (#'state/remember-input db "/goal fix the parser --budget 5"))))
+        (expect (= ["/team plan the release"]
+                   (:input-history (#'state/remember-input db "/team plan the release"))))
+        (expect (nil? (:input-history (#'state/remember-input db "/goalie keep out"))))
+        (expect (nil? (:input-history (#'state/remember-input db "/team status"))))
+        (expect (nil? (:input-history (#'state/remember-input db "/reload"))))
+        (expect (= ["/goal ship it" "second prompt"]
+                   (#'state/history-user-texts
+                    db
+                    [{:role :user :text "/goal ship it"} {:role :user :text "/reload"}
+                     {:role :user :text "second prompt"}])))))
+  (it "takes the saveable commands from the slash catalog"
+      (let [saveable-fn (:fn (get @@#'state/event-registry :saveable-slashes))]
+        (expect (= #{"/goal"} (:saveable-slashes (saveable-fn {} [:saveable-slashes ["/goal"]]))))))
   (it "a recalled line keeps the slash overlay shut"
       (let [event-fn
             (fn [id]
