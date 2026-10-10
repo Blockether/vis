@@ -100,6 +100,7 @@ jobs:
           Blockether/vis-lang-clojure extension
           Blockether/vis-decisions -
           Blockether/vis-optmem -
+          Blockether/vis-graphify -
           FIRST_PARTY
           fi
           cat "$RUNNER_TEMP/targets"
