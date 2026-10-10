@@ -6,7 +6,7 @@
       "counts": {
         "running": 1,
         "succeeded": 2,
-        "failed": 1,
+        "failed": 2,
         "cancelled": 1
       },
       "rows": [
@@ -45,7 +45,10 @@
                   "kind": "context",
                   "text": "kept"
                 },
-                {"kind": "context", "text": ""}
+                {
+                  "kind": "context",
+                  "text": ""
+                }
               ],
               "additions": 1,
               "deletions": 1,
@@ -207,9 +210,50 @@
           "duration_ms": 5,
           "result_summary": "2 matches",
           "argument_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "id": "copy-terminal",
+          "sequence": 6,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "generic",
+          "state": "failed",
+          "summary": "npm test",
+          "duration_ms": 1200,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis · exit 1",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": 12,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
         }
       ]
     },
-    "text": "ACTIVITY\n\ngrep [succeeded] (5ms)\n  same query\n  Result: 2 matches\n  file: src/main.clj\n  arguments:\n  {\"query\":\"[REDACTED]\"}\n  result:\n  first result\n  second result\n\ngrep [failed]\n  same query\n  Error: Directory unavailable\n  error:\n  Directory unavailable\n\n  shell [running]\n    command running\n\n  shell [cancelled]\n    cancelled command\n\npatch [succeeded]\n  src/main.clj\n  diff:\n  src/main.clj\n  --- before\n  @@ -1 +1 @@\n  -old\n  +[REDACTED]\n   kept\n   \n  Diff truncated\n  Diff redacted\n  Patched source\n  Retained preview\n  Verification\n  Plain text\n  **Ready**\n  print(1)\n  print(2)\n  -old\n  +new\n  Check\tState\n  Unit\tPassed\n  image: Screenshot (image-1)\n  video: Playback (video-1)\n  audio: Recording (audio-1)\n  file: Report (file-1)\n  Checks: 1/2\n  Waiting\n  Details\n  Still bounded\n  Section output\n  Details truncated"
+    "text": "ACTIVITY\n\ngrep [succeeded] (5ms)\n  same query\n  Result: 2 matches\n  file: src/main.clj\n  arguments:\n  {\"query\":\"[REDACTED]\"}\n  result:\n  first result\n  second result\n\ngrep [failed]\n  same query\n  Error: Directory unavailable\n  error:\n  Directory unavailable\n\n  shell [running]\n    command running\n\n  shell [cancelled]\n    cancelled command\n\npatch [succeeded]\n  src/main.clj\n  diff:\n  src/main.clj\n  --- before\n  @@ -1 +1 @@\n  -old\n  +[REDACTED]\n   kept\n   \n  Diff truncated\n  Diff redacted\n  Patched source\n  Retained preview\n  Verification\n  Plain text\n  **Ready**\n  print(1)\n  print(2)\n  -old\n  +new\n  Check\tState\n  Unit\tPassed\n  image: Screenshot (image-1)\n  video: Playback (video-1)\n  audio: Recording (audio-1)\n  file: Report (file-1)\n  Checks: 1/2\n  Waiting\n  Details\n  Still bounded\n  Section output\n  Details truncated\n\nshell [failed] (1200ms)\n  npm test\n  npm test\n  ~/vis · exit 1\n  → Tests: 41 passed\n  $ cd apps/web && npm test | tail -3\n  … 12 earlier lines\n  Tests: 41 passed\n  warning: slow test"
   }
 ]

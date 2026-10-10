@@ -548,6 +548,97 @@ class ActivityProgress(_ActivityBlock):
             )
 
 
+_ActivityStream: TypeAlias = Literal["stdout", "stderr"]
+
+
+def _activity_line(value, limit, name, *, is_tab_allowed=False):
+    _bounded_text(value, limit, name)
+    if len(value.encode("utf-8")) > 4 * limit or any(
+        (ord(c) < 32 and not (is_tab_allowed and c == "\t"))
+        or ord(c) in (127, 8232, 8233)
+        for c in value
+    ):
+        raise ValueError(f"{name} must be one line without control characters")
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityTerminalLine:
+    """One output line of an ActivityTerminal. Vis shows ``"stderr"`` lines as errors."""
+
+    text: str
+    stream: _ActivityStream = "stdout"
+
+    def __post_init__(self):
+        _activity_line(self.text, 4096, "Activity terminal line", is_tab_allowed=True)
+        if self.stream not in get_args(_ActivityStream):
+            raise ValueError("Activity terminal stream must be stdout or stderr")
+
+    def to_wire(self) -> dict[str, Any]:
+        """Return a fresh terminal line in contract form."""
+        return {"text": self.text, "stream": self.stream}
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityTerminal(_ActivityBlock):
+    """A command and its output, shown like a terminal.
+
+    ``command`` holds one or more stages. Start each later stage with its operator, for
+    example ``("cd app", "&& npm test", "| tail -8")``. Vis highlights the operators.
+    ``lines`` holds the output in order; a plain string is a stdout line. Keep the end
+    of long output and count the dropped lines in ``omitted_lines``. Remove ANSI escape
+    codes first. ``exit`` is the exit code of a finished command.
+    """
+
+    command: tuple[str, ...]
+    lines: tuple[ActivityTerminalLine, ...] = ()
+    omitted_lines: int | None = None
+    exit: int | None = None
+    type: ClassVar[str] = "terminal"
+
+    def __post_init__(self):
+        if (
+            not isinstance(self.command, (tuple, list))
+            or not 1 <= len(self.command) <= 32
+            or any(
+                not isinstance(stage, str) or not stage or len(stage) > 4096
+                for stage in self.command
+            )
+        ):
+            raise ValueError(
+                "Activity terminal command requires 1 to 32 nonempty stages"
+            )
+        if not isinstance(self.lines, (tuple, list)) or len(self.lines) > 400:
+            raise ValueError("Activity terminal lines must be at most 400 lines")
+        lines = tuple(
+            ActivityTerminalLine(line) if isinstance(line, str) else line
+            for line in self.lines
+        )
+        if any(not isinstance(line, ActivityTerminalLine) for line in lines):
+            raise TypeError(
+                "Activity terminal lines must be text or ActivityTerminalLine"
+            )
+        object.__setattr__(self, "command", tuple(self.command))
+        object.__setattr__(self, "lines", lines)
+        if self.omitted_lines is not None and (
+            type(self.omitted_lines) is not int or self.omitted_lines < 0
+        ):
+            raise ValueError("Activity terminal omitted_lines must be a count")
+        if self.exit is not None and type(self.exit) is not int:
+            raise ValueError("Activity terminal exit must be an integer")
+
+    def to_wire(self) -> dict[str, Any]:
+        value = {
+            "type": self.type,
+            "command": list(self.command),
+            "lines": [line.to_wire() for line in self.lines],
+        }
+        if self.omitted_lines is not None:
+            value["omitted_lines"] = self.omitted_lines
+        if self.exit is not None:
+            value["exit"] = self.exit
+        return value
+
+
 ActivityBlock: TypeAlias = (
     ActivityText
     | ActivityHeading
@@ -560,6 +651,7 @@ ActivityBlock: TypeAlias = (
     | ActivityVideo
     | ActivityAudio
     | ActivityProgress
+    | ActivityTerminal
 )
 
 
@@ -633,11 +725,17 @@ class ActivityPresentation(ActivitySection):
     failing tests or lint findings, ``"passed"`` when every check passed. Vis pins a
     failed verdict in the settled turn's digest until a later run of the same tool
     passes.
+
+    ``outcome`` is one short result line. Vis shows it after an arrow on the closed
+    row, for example the last line of command output. ``aside`` is short muted context
+    at the right edge of the row, for example a directory or ``"exit 1"``.
     """
 
     sections: tuple[ActivitySection, ...] = ()
     handle_id: str | None = field(default=None, kw_only=True)
     verdict: _ActivityVerdict | None = field(default=None, kw_only=True)
+    outcome: str | None = field(default=None, kw_only=True)
+    aside: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self):
         ActivitySection.__post_init__(self)
@@ -664,6 +762,16 @@ class ActivityPresentation(ActivitySection):
                 )
         if self.verdict is not None and self.verdict not in get_args(_ActivityVerdict):
             raise ValueError("Activity verdict must be passed or failed")
+        if self.outcome is not None:
+            _activity_line(self.outcome, 512, "Activity outcome")
+            if len(self.outcome.encode("utf-8")) > 512:
+                raise ValueError("Activity outcome must be at most 512 UTF-8 bytes")
+        if self.aside is not None:
+            _activity_line(self.aside, 128, "Activity aside")
+            if not self.aside or len(self.aside.encode("utf-8")) > 512:
+                raise ValueError(
+                    "Activity aside must be nonempty and at most 512 UTF-8 bytes"
+                )
 
     def to_wire(self) -> dict[str, Any]:
         value = ActivitySection.to_wire(self)
@@ -673,6 +781,10 @@ class ActivityPresentation(ActivitySection):
             value["handle_id"] = self.handle_id
         if self.verdict is not None:
             value["verdict"] = self.verdict
+        if self.outcome is not None:
+            value["outcome"] = self.outcome
+        if self.aside is not None:
+            value["aside"] = self.aside
         return value
 
 

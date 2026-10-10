@@ -175,15 +175,17 @@
                 children
                 (:children group)
 
-                content
-                (mapcat #(get % "content") (get-in group [:presentation "sections"]))]
+                lines
+                (mapv #(get % "text") (get-in group [:presentation "content" 0 "lines"]))]
 
             (expect (nil? (:error result)))
             (expect (= "firstsecond\n" (:stdout result)))
             (expect (= 1 (count (:rows page))))
             (expect (= ["shell" "_shell-logs" "_shell-wait"] (mapv :operation children)))
-            (expect (= "Command finished" (get-in group [:presentation "headline"])))
-            (expect (= 1 (count (filter #(= "firstsecond" (get % "text")) content))))
+            (expect (= "printf first; sleep 0.2; printf second"
+                       (get-in group [:presentation "headline"])))
+            (expect (= ["firstsecond"] lines))
+            (expect (= "firstsecond" (get-in group [:presentation "outcome"])))
             (expect (= 3 (get-in page [:counts :succeeded])))
             (expect
               (= (mapv :id children)

@@ -327,7 +327,7 @@
 
         (expect (not (re-find #"258|secret-handle|uuid|Review\"" body)))
         (expect (re-find #"Useful result" body))))
-  (it "shows a short command with its exit code and its output in a closed section"
+  (it "shows the command as headline and its output in one terminal block"
       (let [view (result-view {:operation :_shell-wait :label "internal"}
                               {:command "printf 'a b' && false"
                                :out "a\nb"
@@ -335,14 +335,19 @@
                                :id "handle-123"
                                :log_path "/private/log"
                                :status "exited"})]
-        (expect (= "Command finished" (get view "headline")))
-        (expect (= "printf 'a b' && false · exit 1" (get view "summary")))
-        (expect (= [] (get view "content")))
-        (expect
-          (= [{"headline" "Output" "summary" "2 lines" "content" [{"type" "code" "text" "a\nb"}]}]
-             (get view "sections")))
+        (expect (= "printf 'a b' && false" (get view "headline")))
+        (expect (= "" (get view "summary")))
+        (expect (= "exit 1" (get view "aside")))
+        (expect (= "b" (get view "outcome")))
+        (expect (= "failed" (get view "verdict")))
+        (expect (= [{"type" "terminal"
+                     "command" ["printf 'a b'" "&& false"]
+                     "lines" [{"text" "a" "stream" "stdout"} {"text" "b" "stream" "stdout"}]
+                     "exit" 1}]
+                   (get view "content")))
+        (expect (contract/valid-presentation? view))
         (expect (not (re-find #"handle-123|/private/log|internal|Exit code" (pr-str view))))))
-  (it "shortens a long command and keeps the whole command in its own section"
+  (it "shortens a long headline and keeps the whole command in the terminal block"
       (let [command
             (str "clojure -M:test --namespace com.blockether.vis.internal.activity.presenter-test"
                  " --namespace com.blockether.vis.internal.activity.core-test")
@@ -350,34 +355,84 @@
             view
             (result-view {:operation :shell} {:command command :exit 0 :status "exited"})]
 
-        (expect (re-matches #".{80}… · exit 0" (get view "summary")))
-        (expect (= [{"headline" "Command"
-                     "summary" "1 line"
-                     "content" [{"type" "code" "language" "bash" "text" command}]}]
-                   (get view "sections")))))
+        (expect (re-matches #".{80}…" (get view "headline")))
+        (expect (= [command] (get-in view ["content" 0 "command"])))
+        (expect (not (contains? view "verdict")))
+        (expect (not (contains? view "aside")))))
+  (it
+    "splits stages at top-level operators and keeps quoted operators inside a stage"
+    (let [view (result-view
+                 {:operation :shell}
+                 {:command "rg 'a|b' src | sort; echo \"x && y\" || echo $(a | b) && 2>&1 cat >| f"
+                  :status "exited"
+                  :exit 0})]
+      (expect (= ["rg 'a|b' src" "| sort" "; echo \"x && y\"" "|| echo $(a | b)" "&& 2>&1 cat >| f"]
+                 (get-in view ["content" 0 "command"])))))
+  (it "moves leading cd stages into the aside and writes the home directory as ~"
+      (let [home
+            (System/getProperty "user.home")
+
+            view
+            (result-view {:operation :shell}
+                         {:command "cd apps/web && cd 'src' && npm test | tail -3"
+                          :cwd (str home "/vis")
+                          :out "ok\n\n"
+                          :status "exited"
+                          :exit 2})]
+
+        (expect (= "npm test | tail -3" (get view "headline")))
+        (expect (= ["npm test" "| tail -3"] (get-in view ["content" 0 "command"])))
+        (expect (= "~/vis/apps/web/src · exit 2" (get view "aside")))
+        (expect (= "ok" (get view "outcome")))))
+  (it "removes terminal escapes, resolves redraws and marks stderr lines"
+      (let [view (result-view {:operation :shell}
+                              {:command "build"
+                               :out "\u001b[32mok\u001b[0m\n10%\r50%\r100%\ttotal"
+                               :err "boom\u0007"
+                               :status "exited"
+                               :exit 0})]
+        (expect (= [{"text" "ok" "stream" "stdout"} {"text" "100%\ttotal" "stream" "stdout"}
+                    {"text" "boom" "stream" "stderr"}]
+                   (get-in view ["content" 0 "lines"])))
+        (expect (contract/valid-presentation? view))))
+  (it "keeps the end of long output and counts the earlier lines"
+      (let [out
+            (str/join "\n" (map #(str "line " %) (range 250)))
+
+            view
+            (result-view {:operation :shell} {:command "seq" :out out :status "exited" :exit 0})
+
+            block
+            (get-in view ["content" 0])]
+
+        (expect (= 50 (get block "omitted_lines")))
+        (expect (= 200 (count (get block "lines"))))
+        (expect (= "line 50" (get-in block ["lines" 0 "text"])))
+        (expect (= "line 249" (get view "outcome")))
+        (expect (contract/valid-presentation? view))))
   ;; Every call on one handle reads as the same command, so a wait or a read in a later
   ;; block never looks like a second run.
   (it "gives every call on a handle the same command headline"
       (let [running
-            {:command "npm test" :exit nil :status "running"}
+            {:command "npm test" :exit nil :status "running" :out "1\n2"}
 
             exited
-            {:command "npm test" :exit 0 :status "exited"}
+            {:command "npm test" :exit 0 :status "exited" :out "1\n2"}
 
             view
             (fn [op value]
-              (select-keys (result-view {:operation op} value) ["headline" "summary"]))]
+              (select-keys (result-view {:operation op} value) ["headline" "summary" "outcome"]))]
 
         (doseq [op [:shell :_shell-logs :_shell-wait :_shell-type]]
-          (expect (= {"headline" "Running command" "summary" "npm test"} (view op running))))
+          (expect (= {"headline" "npm test" "summary" ""} (view op running))))
         (doseq [op [:_shell-wait :_shell-logs :_shell-stop]]
-          (expect (= {"headline" "Command finished" "summary" "npm test · exit 0"}
-                     (view op exited))))))
+          (expect (= {"headline" "npm test" "summary" "" "outcome" "2"} (view op exited))))))
   (it "does not invent an exit code that the command did not report"
       (let [view (result-view {:operation :_shell-wait}
                               {:command "sleep 10" :exit nil :status "exited"})]
-        (expect (= "sleep 10" (get view "summary")))
-        (expect (= [] (get view "sections")))))
+        (expect (= "sleep 10" (get view "headline")))
+        (expect (not (contains? (get-in view ["content" 0]) "exit")))
+        (expect (not (contains? view "verdict")))))
   (it "does not turn a publish receipt identifier into expandable content"
       (expect (= [] (get (result-view {:operation :council.publish} 279) "content"))))
   (it "retains useful titles within member lists"

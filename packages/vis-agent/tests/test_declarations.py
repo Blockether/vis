@@ -126,6 +126,16 @@ def test_register_refuses_raw_maps_and_failure_does_not_register(monkeypatch):
         ("ActivityFile", {"attachment_id": "attachment-1", "label": "File"}),
         ("ActivityProgress", {"label": "Building"}),
         ("ActivityProgress", {"label": "Building", "value": 1, "total": 2}),
+        ("ActivityTerminal", {"command": ["npm test"]}),
+        (
+            "ActivityTerminal",
+            {
+                "command": ["cd app", "&& npm test", "| tail -8"],
+                "lines": ["ok\tdone", vis.ActivityTerminalLine("bad", "stderr")],
+                "omitted_lines": 3,
+                "exit": 1,
+            },
+        ),
     ],
 )
 def test_activity_blocks_are_immutable_and_match_canonical_schema(class_name, kwargs):
@@ -153,6 +163,13 @@ def test_activity_blocks_are_immutable_and_match_canonical_schema(class_name, kw
         ("ActivityProgress", {"label": "Work", "value": 3, "total": 2}),
         ("ActivityProgress", {"label": "Work", "value": float("nan"), "total": 2}),
         ("ActivityTable", {"columns": ["a"], "rows": [["a", "b"]]}),
+        ("ActivityTerminal", {"command": []}),
+        ("ActivityTerminal", {"command": [""]}),
+        ("ActivityTerminal", {"command": ["ls"], "lines": ["a\nb"]}),
+        ("ActivityTerminal", {"command": ["ls"], "lines": ["\x1b[31mred"]}),
+        ("ActivityTerminal", {"command": ["ls"], "omitted_lines": -1}),
+        ("ActivityTerminal", {"command": ["ls"], "exit": True}),
+        ("ActivityTerminalLine", {"text": "x", "stream": "stdin"}),
     ],
 )
 def test_invalid_activity_blocks_are_refused(class_name, kwargs):
@@ -177,6 +194,24 @@ def test_activity_publish_is_typed_and_preserves_host_result(monkeypatch):
     assert updates[-1]["content"] == []
     monkeypatch.setattr(vis._host, "activity", lambda _: False)
     assert not vis.publish_activity(view)
+
+
+def test_activity_presentation_outcome_and_aside_match_canonical_schema():
+    view = vis.ActivityPresentation(
+        "npm test",
+        "",
+        (vis.ActivityTerminal(("npm test",), ("41 passed",), exit=0),),
+        outcome="41 passed",
+        aside="~/vis",
+    )
+    wire = view.to_wire()
+    assert wire["outcome"] == "41 passed"
+    assert wire["aside"] == "~/vis"
+    assert wire["content"][0]["lines"] == [{"text": "41 passed", "stream": "stdout"}]
+    assert _contracts.validate("activity", "presentation", wire) == wire
+    for kwargs in ({"outcome": "a\nb"}, {"aside": ""}, {"aside": "x" * 129}):
+        with pytest.raises(ValueError):
+            vis.ActivityPresentation("Run", "", (), **kwargs)
 
 
 @pytest.mark.parametrize(

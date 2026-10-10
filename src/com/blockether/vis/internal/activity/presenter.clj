@@ -102,41 +102,227 @@
 (defn summary-line [parts] (str/join " · " (remove str/blank? parts)))
 
 (def ^:private shell-command-chars
-  "The longest command that a shell summary shows before it shortens the command."
+  "The longest command that a shell headline shows before it shortens the command."
   80)
 
-(defn- shell-section
-  "One closed shell section: its title, a line count and the text in one block."
-  [title language text]
-  {"headline" title
-   "summary" (counted-label (count (str/split-lines text)) "line")
-   "content" [(cond-> {"type" "code" "text" text}
-                language
-                (assoc "language" language))]})
+(def ^:private terminal-line-limit
+  "The most output lines that one terminal block keeps. It keeps the end of the output."
+  200)
+
+(def ^:private terminal-line-chars "The longest output line that a terminal block keeps." 4096)
+
+(def ^:private terminal-escape-re
+  "ANSI and VT escape sequences: CSI, OSC and two-character escapes."
+  #"\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[@-Z\\-_])")
+
+(defn- clip-code-points
+  "TEXT with at most LIMIT code points; a shortened text ends with an ellipsis."
+  [^String text limit]
+  (let [limit (long limit)]
+    (if (<= (.codePointCount text 0 (.length text)) limit)
+      text
+      (str (subs text 0 (.offsetByCodePoints text 0 (int (dec limit)))) "…"))))
+
+(defn- terminal-lines
+  "Visible lines of terminal output, without escapes, control characters and trailing blank
+   lines. A carriage-return redraw keeps its last visible text."
+  [text]
+  (if (str/blank? text)
+    []
+    (->> (str/split (str/replace (str text) terminal-escape-re "") #"\r?\n" -1)
+         (mapv (fn [line]
+                 (-> (or (last (str/split line #"\r")) "")
+                     (str/replace #"[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]" "")
+                     (clip-code-points terminal-line-chars))))
+         (reverse)
+         (drop-while str/blank?)
+         (reverse)
+         vec)))
+
+(defn- command-stages
+  "Split a shell command at top-level `&&`, `||`, `|` and `;`. Each later stage starts with
+   its operator. Quotes, escapes and parentheses keep their text inside one stage."
+  [^String command]
+  (let [n
+        (.length command)
+
+        stage
+        (fn [stages operator start end]
+          (let [text (str/trim (subs command start end))]
+            (cond (and (str/blank? text) (or (nil? operator) (= ";" operator))) stages
+                  operator (conj stages (str/trim (str operator " " text)))
+                  :else (conj stages text))))]
+
+    (loop [i
+           0
+
+           start
+           0
+
+           operator
+           nil
+
+           quote
+           nil
+
+           depth
+           0
+
+           stages
+           []]
+
+      (if (>= i n)
+        (stage stages operator start n)
+        (let [c
+              (.charAt command i)
+
+              pair
+              (when (< (inc i) n) (subs command i (+ i 2)))]
+
+          (cond (and quote (= c \\) (not= quote \'))
+                (recur (+ i 2) start operator quote depth stages)
+                quote (recur (inc i) start operator (when-not (= c quote) quote) depth stages)
+                (= c \\) (recur (+ i 2) start operator quote depth stages)
+                (contains? #{\' \" \`} c) (recur (inc i) start operator c depth stages)
+                (= c \() (recur (inc i) start operator quote (inc depth) stages)
+                (= c \)) (recur (inc i) start operator quote (max 0 (dec depth)) stages)
+                (pos? depth) (recur (inc i) start operator quote depth stages)
+                (contains? #{"&&" "||"} pair)
+                (recur (+ i 2) (+ i 2) pair nil 0 (stage stages operator start i))
+                (and (= c \|) (not (and (pos? i) (= \> (.charAt command (dec i))))))
+                (recur (inc i) (inc i) "|" nil 0 (stage stages operator start i))
+                (= c \;) (recur (inc i) (inc i) ";" nil 0 (stage stages operator start i))
+                :else (recur (inc i) start operator quote depth stages)))))))
+
+(defn- join-stages
+  "One command line from STAGES. A `;` stage attaches to the stage before it."
+  [stages]
+  (reduce (fn [line stage]
+            (if (str/starts-with? stage ";") (str line stage) (str line " " stage)))
+          (first stages)
+          (rest stages)))
+
+(defn- home-path
+  "PATH with the home directory written as `~`."
+  [path]
+  (let [home (System/getProperty "user.home")]
+    (cond (str/blank? home) path
+          (= path home) "~"
+          (str/starts-with? path (str home "/")) (str "~" (subs path (count home)))
+          :else path)))
+
+(defn- change-directory
+  "The directory that `cd DIR` reaches from CWD, for display."
+  [cwd dir]
+  (let [dir (str/replace dir #"^(['\"])(.*)\1$" "$2")]
+    (cond (or (str/starts-with? dir "/") (str/starts-with? dir "~") (str/blank? cwd)) dir
+          :else (str (.normalize (java.nio.file.Paths/get ^String cwd
+                                                          (into-array String [dir])))))))
+
+(defn- leading-directory
+  "Move each leading `cd DIR &&` stage into the working directory, for display."
+  [cwd stages]
+  (loop [cwd
+         cwd
+
+         stages
+         stages]
+
+    (let [[first-stage second-stage]
+          stages
+
+          [_ dir]
+          (some->> first-stage
+                   (re-matches #"cd\s+('[^']*'|\"[^\"]*\"|[^\s'\";&|]+)"))]
+
+      (if (and dir second-stage (str/starts-with? second-stage "&& "))
+        (recur (change-directory cwd dir) (into [(subs second-stage 3)] (drop 2 stages)))
+        [cwd stages]))))
+
+(defn- shell-aside
+  "Muted row context: the working directory and a non-zero exit code."
+  [cwd exit]
+  (let [cwd
+        (when-not (str/blank? cwd) (home-path cwd))
+
+        cwd
+        (when cwd (if (> (count cwd) 64) (str "…" (subs cwd (- (count cwd) 63))) cwd))]
+
+    (not-empty (summary-line
+                 [cwd (when (and (integer? exit) (not (zero? (long exit)))) (str "exit " exit))]))))
 
 (defn- shell-presentation
-  "One command as one row: a short command and exit code, then its output on request.
-   Every call on a handle uses the same headline, so a wait or a read is never a new command."
+  "One command as one row: the command as headline, the directory and a failed exit at the
+   edge, the last output line as outcome and one terminal block on request. Every call on a
+   handle uses the same headline, so a wait or a read is never a new command."
   [value]
   (let [command
-        (str (or (field value "command") ""))
+        (str/trim (str (or (field value "command") "")))
 
-        short-command
-        (session-preview command shell-command-chars)
+        [cwd stages]
+        (leading-directory (field value "cwd")
+                           (if (str/blank? command) [] (command-stages command)))
+
+        stages
+        (if (> (count stages) 32)
+          (conj (subvec stages 0 31) (str/join " " (subvec stages 31)))
+          stages)
+
+        shown-command
+        (join-stages stages)
 
         exit
-        (field value "exit")]
+        (field value "exit")
 
-    {"headline" (if (= "running" (field value "status")) "Running command" "Command finished")
-     "summary" (summary-line [short-command (when (integer? exit) (str "exit " exit))])
-     "content" []
-     "sections" (vec (concat (when (not= short-command command)
-                               [(shell-section "Command" "bash" command)])
-                             (keep (fn [[key title]]
-                                     (when-let [text (not-empty (field value key))]
-                                       (shell-section title nil text)))
-                                   [["out" "Output"] ["stdout" "Output"] ["err" "Stderr"]
-                                    ["stderr" "Stderr"]])))}))
+        running?
+        (= "running" (field value "status"))
+
+        lines
+        (into (mapv #(hash-map "text" % "stream" "stdout")
+                    (mapcat terminal-lines (keep #(not-empty (field value %)) ["out" "stdout"])))
+              (map #(hash-map "text" % "stream" "stderr"))
+              (mapcat terminal-lines (keep #(not-empty (field value %)) ["err" "stderr"])))
+
+        dropped
+        (max 0 (- (count lines) terminal-line-limit))
+
+        omitted
+        (+ (long (or (field value "omitted_lines") 0)) dropped)
+
+        lines
+        (subvec lines dropped)
+
+        outcome
+        (when-not running?
+          (some->> (rseq lines)
+                   (some #(when-not (str/blank? (get % "text")) (get % "text")))
+                   str/trim
+                   (#(session-preview % 120))
+                   not-empty))
+
+        aside
+        (shell-aside cwd exit)]
+
+    (cond-> {"headline"
+             (if (seq stages) (session-preview shown-command shell-command-chars) "Shell command")
+             "summary" ""
+             "content"
+             (cond (seq stages) [(cond-> {"type" "terminal" "command" stages "lines" lines}
+                                   (pos? omitted)
+                                   (assoc "omitted_lines" omitted)
+
+                                   (integer? exit)
+                                   (assoc "exit" exit))]
+                   (seq lines) [{"type" "code" "text" (str/join "\n" (map #(get % "text") lines))}]
+                   :else [])}
+      aside
+      (assoc "aside" aside)
+
+      outcome
+      (assoc "outcome" outcome)
+
+      (and (integer? exit) (not (zero? (long exit))))
+      (assoc "verdict" "failed"))))
 
 (defn- shell-overlap
   "Length of the suffix of `left` that is a prefix of `right`, in linear time."
@@ -194,28 +380,37 @@
                      (subs new overlap)))))
 
 (defn- shell-content-fields
-  "Read back the shell presenter's own headline, summary and sections, never arbitrary tool text."
+  "Read back the shell presenter's own terminal block and aside, never arbitrary tool text."
   [presentation]
-  (let [[_ summary-command exit]
-        (re-matches #"(?s)(.*?)(?: · exit (-?\d+))?" (get presentation "summary" ""))
+  (let [terminal
+        (some #(when (= "terminal" (get % "type")) %) (get presentation "content"))
 
-        section-text
-        (fn [title]
-          (some (fn [section]
-                  (when (= title (get section "headline")) (get-in section ["content" 0 "text"])))
-                (get presentation "sections")))]
+        stages
+        (get terminal "command")
 
-    (cond-> {"command" (or (section-text "Command") summary-command)
-             "out" (section-text "Output")
-             "err" (section-text "Stderr")}
-      (= "Running command" (get presentation "headline"))
-      (assoc "status" "running")
+        aside
+        (get presentation "aside" "")
 
-      (= "Command finished" (get presentation "headline"))
-      (assoc "status" "exited")
+        [_ cwd]
+        (when-not (re-matches #"exit -?\d+" aside) (re-matches #"(.+?)(?: · exit -?\d+)?" aside))
 
-      exit
-      (assoc "exit" (Long/parseLong exit)))))
+        stream-text
+        (fn [stream]
+          (not-empty (str/join "\n"
+                               (keep #(when (= stream (get % "stream")) (get % "text"))
+                                     (get terminal "lines")))))]
+
+    (cond-> {"command" (when (seq stages) (join-stages stages))
+             "out" (stream-text "stdout")
+             "err" (stream-text "stderr")}
+      cwd
+      (assoc "cwd" cwd)
+
+      (get terminal "omitted_lines")
+      (assoc "omitted_lines" (get terminal "omitted_lines"))
+
+      (integer? (get terminal "exit"))
+      (assoc "exit" (get terminal "exit")))))
 
 (defn shell-receipt-presentation
   "One current shell outcome from ordered handle receipts, retaining distinct output and errors."
@@ -230,7 +425,10 @@
         (reduce (fn [fields presentation]
                   (let [next-fields (shell-content-fields presentation)]
                     (-> fields
-                        (merge (dissoc next-fields "out" "err"))
+                        (merge (into {}
+                                     (remove (comp nil? val))
+                                     (dissoc next-fields "out" "err" "omitted_lines")))
+                        (update "omitted_lines" (fnil max 0) (get next-fields "omitted_lines" 0))
                         (update "out" merge-shell-output (get next-fields "out"))
                         (update "err" merge-shell-output (get next-fields "err")))))
                 {}
@@ -248,22 +446,18 @@
     (when (or (seq presentations) (seq errors))
       (let [value (cond-> (assoc fields "command" command)
                     (= :failed (:state current))
-                    (dissoc "status" "exit")
+                    (dissoc "exit")
 
                     (= :running (:state current))
                     (assoc "status" "running"))]
         (cond-> (shell-presentation value)
-          (= :failed (:state current))
-          (assoc "headline" "Command status unavailable")
-
           (seq errors)
-          (update "sections"
-                  into
-                  (map (fn [error]
-                         {"headline" (if (= error current-error) "Error" "Earlier error")
-                          "summary" (session-preview error shell-command-chars)
-                          "content" [{"type" "text" "text" error}]})
-                       errors)))))))
+          (assoc "sections"
+            (mapv (fn [error]
+                    {"headline" (if (= error current-error) "Error" "Earlier error")
+                     "summary" (session-preview error shell-command-chars)
+                     "content" [{"type" "text" "text" error}]})
+                  errors)))))))
 
 (defn result-blocks
   "Keep metadata in readable text; tables are reserved for comparable records."

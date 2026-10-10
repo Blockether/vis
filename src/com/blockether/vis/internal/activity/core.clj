@@ -315,7 +315,7 @@
              :extension (:extension first-row)
              :resources (vec (take event/max-resources (distinct (mapcat :resources children))))
              :evidence []
-             :summary (cond view (or (get view "summary") (:summary first-row))
+             :summary (cond view (or (not-empty (get view "summary")) (:summary first-row))
                             (:summary head) (:summary head)
                             :else (str "observations · " (count children) " operations"))
              :duration-ms (reduce (fn [total duration]

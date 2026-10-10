@@ -274,6 +274,12 @@ class ActivityProjection:
                     for key in ("headline", "summary")
                 ):
                     raise ValueError("activity headline or summary exceeds bound")
+                if presentation is not None and any(
+                    len(presentation[key].encode("utf-8")) > 512
+                    for key in ("outcome", "aside")
+                    if key in presentation
+                ):
+                    raise ValueError("activity outcome or aside exceeds bound")
                 for block in content:
                     if block["type"] == "progress" and "value" in block:
                         if not (0 <= block["value"] <= block["total"]):

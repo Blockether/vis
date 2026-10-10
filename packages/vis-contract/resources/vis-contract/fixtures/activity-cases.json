@@ -2148,5 +2148,503 @@
         }
       ]
     }
+  },
+  {
+    "name": "terminal-block",
+    "valid": true,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis · exit 1",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": 12,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "terminal-minimal",
+    "valid": true,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis · exit 1",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ]
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "terminal-rejects-empty-command",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis · exit 1",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": 12,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "terminal-rejects-unknown-stream",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis · exit 1",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdin"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": 12,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "terminal-line-rejects-newline",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis · exit 1",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "a\nb",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": 12,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "terminal-rejects-negative-omitted",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis · exit 1",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": -1,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "aside-rejects-newline",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis\nexit 1",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": 12,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "aside-rejects-empty",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "",
+            "outcome": "Tests: 41 passed",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": 12,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "outcome-rejects-newline",
+    "valid": false,
+    "projection": {
+      "state": "succeeded",
+      "counts": {
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0
+      },
+      "rows": [
+        {
+          "id": "call-1",
+          "sequence": 1,
+          "operation": "shell",
+          "presenter": "shell",
+          "signal": "verification",
+          "state": "succeeded",
+          "summary": "npm test",
+          "duration_ms": 900,
+          "resources": [],
+          "evidence": [],
+          "presentation": {
+            "headline": "npm test",
+            "summary": "",
+            "aside": "~/vis · exit 1",
+            "outcome": "a\nb",
+            "content": [
+              {
+                "type": "terminal",
+                "command": [
+                  "cd apps/web",
+                  "&& npm test",
+                  "| tail -3"
+                ],
+                "lines": [
+                  {
+                    "text": "Tests: 41 passed",
+                    "stream": "stdout"
+                  },
+                  {
+                    "text": "warning: slow test",
+                    "stream": "stderr"
+                  }
+                ],
+                "omitted_lines": 12,
+                "exit": 1
+              }
+            ],
+            "verdict": "failed"
+          }
+        }
+      ]
+    }
   }
 ]

@@ -119,6 +119,74 @@ export const ACTIVITY_LONG_RUNNING = projection({
   })),
 });
 
+/** Two shell commands as terminal blocks: one settled with stderr, one running with a live tail. */
+export const ACTIVITY_TERMINAL = projection({
+  state: 'running',
+  counts: { running: 1, succeeded: 0, failed: 1, cancelled: 0 },
+  rows: [
+    {
+      id: 'terminal-failed',
+      sequence: 0,
+      operation: 'shell',
+      presenter: 'shell',
+      signal: 'verification',
+      summary: 'npm test && npm run lint',
+      state: 'failed',
+      duration_ms: 8400,
+      presentation: {
+        headline: 'npm test && npm run lint',
+        summary: '',
+        outcome: '1 failed, 40 passed',
+        aside: '~/vis/apps/vis-companion · exit 1',
+        verdict: 'failed',
+        content: [
+          {
+            type: 'terminal',
+            command: ['npm test', '&& npm run lint'],
+            omitted_lines: 12,
+            exit: 1,
+            lines: [
+              { text: ' ✓ src/lib/activity.test.ts (91 tests)', stream: 'stdout' },
+              { text: ' ✗ src/components/ActivityPanel.test.tsx', stream: 'stdout' },
+              { text: 'AssertionError: expected 2 to be 3', stream: 'stderr' },
+              { text: '1 failed, 40 passed', stream: 'stdout' },
+            ],
+          },
+        ],
+      },
+      resources: [],
+      evidence: [],
+    },
+    {
+      id: 'terminal-running',
+      sequence: 1,
+      operation: 'shell',
+      presenter: 'shell',
+      signal: 'verification',
+      summary: 'clojure -M:test',
+      state: 'running',
+      presentation: {
+        headline: 'clojure -M:test',
+        summary: '',
+        aside: '~/vis',
+        content: [
+          {
+            type: 'terminal',
+            command: ['clojure -M:test'],
+            lines: [
+              { text: 'Running tests in #{"test"}', stream: 'stdout' },
+              { text: 'com.blockether.vis.internal.activity.presenter-test', stream: 'stdout' },
+              { text: '  shell presentation ✓', stream: 'stdout' },
+              { text: '  terminal lines ✓', stream: 'stdout' },
+            ],
+          },
+        ],
+      },
+      resources: [],
+      evidence: [],
+    },
+  ],
+});
 /** Every operation group stays visible, including settled groups beyond the old preview. */
 export const ACTIVITY_ALL_GROUPS = projection({
   state: 'succeeded',

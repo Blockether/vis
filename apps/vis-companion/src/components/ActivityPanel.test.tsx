@@ -73,6 +73,64 @@ it('shows one shell command as one row with its exit code in the summary', () =>
   expect(screen.getAllByText(/Command finished/)).toHaveLength(1);
 });
 
+// A terminal block shows the command by stage and its output, stderr apart. The head
+// carries the outcome after an arrow and the working directory as an aside.
+it('paints a shell terminal block with its outcome, aside and live tail', () => {
+  const activity = activityProjection();
+  const terminal = {
+    type: 'terminal' as const,
+    command: ['npm test', '&& npm run lint'],
+    lines: [
+      { text: 'one', stream: 'stdout' as const },
+      { text: 'two', stream: 'stdout' as const },
+      { text: 'warning: slow', stream: 'stderr' as const },
+      { text: '41 passed', stream: 'stdout' as const },
+    ],
+    omitted_lines: 3,
+    exit: 0,
+  };
+  const row = {
+    ...activity.rows[0],
+    id: 'terminal',
+    operation: 'shell',
+    presenter: 'shell' as const,
+    state: 'succeeded' as const,
+    summary: 'npm test && npm run lint',
+    presentation: {
+      headline: 'npm test && npm run lint',
+      summary: '',
+      outcome: '41 passed',
+      aside: '~/vis · exit 0',
+      content: [terminal],
+    },
+  };
+  activity.rows = [row];
+  activity.counts = { running: 0, succeeded: 1, failed: 0, cancelled: 0 };
+  paintActivity({ activity });
+  expect(document.querySelector('[data-activity-outcome]')).toHaveTextContent('41 passed');
+  expect(document.querySelector('[data-activity-aside]')).toHaveTextContent('~/vis · exit 0');
+  expect(document.querySelector('[data-activity-terminal]')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /npm test && npm run lint/ }));
+  const block = screen.getByRole('group', { name: 'Terminal' });
+  const stages = block.querySelectorAll('[data-terminal-stage]');
+  expect([...stages].map((stage) => stage.textContent)).toEqual(['$ npm test', '&& npm run lint']);
+  expect(within(block).getByText('… 3 earlier lines')).toBeVisible();
+  expect(within(block).getByText('warning: slow')).toHaveAttribute(
+    'data-terminal-stream',
+    'stderr',
+  );
+
+  // A closed running step shows the last output lines under its head, without the command.
+  cleanup();
+  activity.rows = [{ ...row, state: 'running' as const }];
+  activity.counts = { running: 1, succeeded: 0, failed: 0, cancelled: 0 };
+  paintActivity({ activity });
+  const tail = screen.getByRole('group', { name: 'Terminal' });
+  expect(tail.querySelectorAll('[data-terminal-stage]')).toHaveLength(0);
+  const lines = [...tail.querySelectorAll('[data-terminal-stream]')];
+  expect(lines.map((line) => line.textContent)).toEqual(['two', 'warning: slow', '41 passed']);
+});
+
 // A collapsed operation group reports live work in its tally, not in an extra line.
 it('keeps a running shell command behind its closed group', () => {
   const activity = activityProjection();

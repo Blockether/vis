@@ -16,6 +16,7 @@ import {
   ACTIVITY_FAILED,
   ACTIVITY_RUNNING,
   ACTIVITY_SETTLED,
+  ACTIVITY_TERMINAL,
   ACTIVITY_TREE_CHANGES,
 } from '../dev/story-data';
 import { ActivityHistoryContext, ActivityPanel } from './ActivityPanel';
@@ -238,6 +239,11 @@ export const RepeatedArguments: Story = {
 /** A turn in flight: one call answered, one still running. */
 export const Running: Story = {
   args: { activity: ACTIVITY_RUNNING },
+};
+
+/** Shell steps as terminals: the outcome after the command, the directory and exit code apart. */
+export const Terminal: Story = {
+  args: { activity: ACTIVITY_TERMINAL },
 };
 
 /** Pointer and keyboard can open retained evidence without waiting for settlement. */

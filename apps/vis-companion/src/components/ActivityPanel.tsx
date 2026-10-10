@@ -591,6 +591,68 @@ function activityContentRuns(content: ActivityContent[]): ActivityContent[][] {
  */
 const ACTIVITY_TEXT_INSET = 'px-3';
 
+const TERMINAL_STAGE = /^(&&|\|\||\||;)\s*([\s\S]*)$/;
+/** Output lines that a closed, running shell step shows under its head. */
+const ACTIVITY_TERMINAL_TAIL = 3;
+
+type ActivityTerminalBlock = Extract<ActivityContent, { type: 'terminal' }>;
+
+/**
+ * A command and what it printed. Each stage of the command is on its own line, with its
+ * operator first. Standard error uses the error ink. With `tail`, show only the last
+ * `tail` output lines, one row each, as a running step's live view.
+ */
+function ActivityTerminal({ block, tail }: { block: ActivityTerminalBlock; tail?: number }) {
+  const lines = tail === undefined ? block.lines : block.lines.slice(-tail);
+  const row = tail === undefined ? 'whitespace-pre-wrap break-words' : 'truncate whitespace-pre';
+  return (
+    <div
+      data-activity-terminal
+      role="group"
+      aria-label="Terminal"
+      className="max-w-full overflow-x-auto overscroll-x-contain bg-code px-3 py-1 font-mono text-meta"
+    >
+      {tail === undefined &&
+        block.command.map((stage, index) => {
+          const match = index > 0 ? TERMINAL_STAGE.exec(stage) : null;
+          return (
+            <div
+              key={`stage-${index}`}
+              data-terminal-stage
+              className={`${row} text-code-foreground ${index > 0 ? 'pl-[2ch]' : ''}`}
+            >
+              {index === 0 ? (
+                <>
+                  <span aria-hidden="true" className="text-dialog-hint">
+                    ${' '}
+                  </span>
+                  <span className="font-bold">{stage}</span>
+                </>
+              ) : match ? (
+                <>
+                  <span className="text-code-syntax-keyword">{match[1]}</span> {match[2]}
+                </>
+              ) : (
+                stage
+              )}
+            </div>
+          );
+        })}
+      {tail === undefined && Boolean(block.omitted_lines) && (
+        <div className="text-dialog-hint">… {block.omitted_lines} earlier lines</div>
+      )}
+      {lines.map((line, index) => (
+        <div
+          key={index}
+          data-terminal-stream={line.stream}
+          className={`${row} ${line.stream === 'stderr' ? 'text-code-error' : 'text-code-result'}`}
+        >
+          {line.text || '\u00a0'}
+        </div>
+      ))}
+    </div>
+  );
+}
 function ActivityBody({ content, running }: { content: ActivityContent[]; running: boolean }) {
   const attachment = useContext(ActivityAttachmentContext);
   return (
@@ -690,6 +752,8 @@ function ActivityBody({ content, running }: { content: ActivityContent[]; runnin
                 </table>
               </div>
             );
+          case 'terminal':
+            return <ActivityTerminal key={index} block={block} />;
           case 'progress':
             return (
               <div key={index} className={`${ACTIVITY_TEXT_INSET} text-meta text-dialog-hint`}>
@@ -814,8 +878,15 @@ function ActivityStep({
   const summary = presentation ? '' : activityStepObject(row);
   // The head says WHAT the step was about — the authored summary, failed or not. WHY it
   // failed belongs to the body, said once, under the head, to a reader who opened it.
-  const caption = presentation?.summary ?? '';
-  const linkedSummary = Boolean(caption) && presentation?.summary_format === 'markdown';
+  // Without a summary, the head carries the outcome: what the work produced, after an arrow.
+  const caption = presentation?.summary || presentation?.outcome || '';
+  const captionIsOutcome = !presentation?.summary && Boolean(presentation?.outcome);
+  const aside = presentation?.aside;
+  const terminal = content?.find(
+    (block): block is ActivityTerminalBlock => block.type === 'terminal',
+  );
+  const linkedSummary =
+    Boolean(caption) && !captionIsOutcome && presentation?.summary_format === 'markdown';
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
   // One shell handle is ONE command: its receipt already joins every call on that handle,
@@ -857,10 +928,11 @@ function ActivityStep({
   const captionLabel = caption && (
     <>
       <span aria-hidden="true" className="text-dialog-hint">
-        ·
+        {captionIsOutcome ? '→' : '·'}
       </span>
       <span
         data-activity-summary
+        data-activity-outcome={captionIsOutcome || undefined}
         className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
         title={caption}
       >
@@ -884,16 +956,28 @@ function ActivityStep({
           +{delta.additions} &minus;{delta.deletions}
         </span>
       )}
+      {aside && (
+        <span
+          data-activity-aside
+          className="ml-auto min-w-0 max-w-[40%] shrink truncate font-mono font-normal text-dialog-hint"
+          title={aside}
+        >
+          {aside}
+        </span>
+      )}
       {duration && (
         <time
           aria-label={`Duration ${duration}`}
-          className="ml-auto shrink-0 font-normal text-code-duration"
+          className={`${aside ? '' : 'ml-auto'} shrink-0 font-normal text-code-duration`}
         >
           {duration}
         </time>
       )}
       {!duration && running && (
-        <span aria-label="Running" className="ml-auto shrink-0 font-normal text-code-duration">
+        <span
+          aria-label="Running"
+          className={`${aside ? '' : 'ml-auto'} shrink-0 font-normal text-code-duration`}
+        >
           …
         </span>
       )}
@@ -956,6 +1040,9 @@ function ActivityStep({
           {linkedSummary && metadata}
         </Headline>
       </div>
+      {!open && running && terminal && terminal.lines.length > 0 && (
+        <ActivityTerminal block={terminal} tail={ACTIVITY_TERMINAL_TAIL} />
+      )}
       {row.state === 'cancelled' && (
         <p className="pb-1 pl-3 text-meta text-dialog-hint">Cancelled</p>
       )}

@@ -2862,6 +2862,36 @@
                           (p/fill-rect! g band-col y band-w 1)
                           (p/put-str! g band-col y (str (:band-text meta))))
 
+                        ;; A terminal block keeps the code band and colours its own words:
+                        ;; the first command bold, each operator in the accent, stderr in the
+                        ;; error ink and notes muted.
+                        :activity-terminal
+                        (let [band-col (+ (long x) (long (:band-col meta)))
+                              band-w (max 0 (- (+ (long fbx) (long iw)) band-col))]
+
+                          (p/set-colors! g t/code-block-fg t/code-block-bg)
+                          (p/fill-rect! g band-col y band-w 1)
+                          (reduce (fn [at [text tone]]
+                                    (p/set-colors! g
+                                                   (case tone
+                                                     :operator
+                                                     t/code-syntax-keyword-fg
+
+                                                     :error
+                                                     t/code-error-fg
+
+                                                     :muted
+                                                     t/dialog-hint
+
+                                                     t/code-block-fg)
+                                                   t/code-block-bg)
+                                    (if (= :command tone)
+                                      (p/styled g [p/BOLD] (p/put-str! g at y text))
+                                      (p/put-str! g at y text))
+                                    (+ (long at) (long (p/display-width text))))
+                                  (+ (long x) (long (:text-col meta)))
+                                  (:segments meta)))
+
                         nil))
                     (str/starts-with? line thinking-marker)
                     (let [raw (subs line 1)]
@@ -6139,6 +6169,92 @@
 
     nil))
 
+(defn- terminal-wrap
+  "Cut TEXT into pieces of at most WIDTH terminal columns."
+  [^String text width]
+  (let [width (max 1 (long width))]
+    (loop [at 0
+           start 0
+           cols 0
+           pieces []]
+
+      (if (>= at (.length text))
+        (conj pieces (subs text start))
+        (let [next-at (+ at (Character/charCount (.codePointAt text at)))
+              w (long (p/display-width (subs text at next-at)))]
+
+          (if (and (> (+ cols w) width) (> at start))
+            (recur next-at at w (conj pieces (subs text start at)))
+            (recur next-at start (+ cols w) pieces)))))))
+
+(defn- activity-terminal-rows
+  "Rows of one terminal block as [text tone] segments within WIDTH columns: the command
+   stages, a count of omitted lines, then the output. With TAIL, only the last TAIL output
+   lines, each cut to one row."
+  [{:keys [command lines omitted-lines]} width tail]
+  (let [width
+        (max 1 (long width))
+
+        detab
+        #(str/replace (str %) "\t" "    ")
+
+        wrapped
+        (fn [prefix prefix-tone text tone]
+          (let [pad (repeat-str \space (p/display-width prefix))]
+            (map-indexed (fn [i piece]
+                           [[(if (zero? (long i)) prefix pad) prefix-tone] [piece tone]])
+                         (terminal-wrap text (max 1 (- width (long (p/display-width prefix))))))))
+
+        stage-rows
+        (fn [i stage]
+          (let [[_ operator body]
+                (re-matches #"(?s)(&&|\|\||\||;)\s*(.*)" stage)
+
+                [first-line & more]
+                (str/split-lines (detab (if operator body stage)))]
+
+            (concat (cond (zero? (long i)) (wrapped "$ " :muted (str first-line) :command)
+                          operator
+                          (wrapped (str "  " operator " ") :operator (str first-line) :plain)
+                          :else (wrapped "  " :muted (str first-line) :plain))
+                    (mapcat #(wrapped "    " :muted % :plain) more))))
+
+        tone
+        #(if (= "stderr" (:stream %)) :error :output)]
+
+    (if tail
+      (mapv (fn [line]
+              [[(ellipsize-cols (detab (:text line)) width) (tone line)]])
+            (take-last (long tail) lines))
+      (vec (concat (apply concat (map-indexed stage-rows command))
+                   (when (pos? (long (or omitted-lines 0)))
+                     [[[(str "… " omitted-lines " earlier lines") :muted]]])
+                   (mapcat (fn [line]
+                             (map (fn [piece]
+                                    [[piece (tone line)]])
+                                  (terminal-wrap (detab (:text line)) width)))
+                           lines))))))
+
+(defn- activity-terminal-entries
+  "Paint one terminal block in the code band from `col`. TAIL, when given, keeps only the
+   last output lines: the live view of a closed running row."
+  [block width col session-id tail]
+  (let [text-col
+        (+ (long col) (long code-block-h-pad))
+
+        lead
+        (activity-lead text-col)]
+
+    (mapv (fn [segments]
+            {:line (str activity-marker
+                        (ellipsize-cols (str lead (apply str (map first segments))) width))
+             :meta {:session-id (str session-id)
+                    :kind :activity-terminal
+                    :band-col (long col)
+                    :text-col text-col
+                    :segments segments}})
+          (activity-terminal-rows block (- (long width) text-col (long code-block-h-pad)) tail))))
+
 (defn- activity-content-entries
   "Render symbol content through the existing Markdown/table/code painter, set in
    from the paper's edge to `col`, the column its step's words start in.
@@ -6148,99 +6264,102 @@
   (vec
     (mapcat
       (fn [group]
-        (let [[_ block]
-              (first group)
+        (if (= "terminal" (:type (second (first group))))
+          (activity-terminal-entries (second (first group)) width col session-id nil)
+          (let [[_ block]
+                (first group)
 
-              kind
-              (:type block)
+                kind
+                (:type block)
 
-              text
-              (:text block)
+                text
+                (:text block)
 
-              artifact
-              (get artifacts (:attachment-id block))
+                artifact
+                (get artifacts (:attachment-id block))
 
-              media?
-              (contains? #{"image" "video" "audio" "file"} kind)
+                media?
+                (contains? #{"image" "video" "audio" "file"} kind)
 
-              ast
-              (case kind
-                "markdown"
-                (vis/markdown->ast text)
+                ast
+                (case kind
+                  "markdown"
+                  (vis/markdown->ast text)
 
-                "heading"
-                [:ast {} [:h {:level 3} text]]
+                  "heading"
+                  [:ast {} [:h {:level 3} text]]
 
-                "text"
-                [:ast {} [:p {} text]]
+                  "text"
+                  [:ast {} [:p {} text]]
 
-                ("code" "diff")
-                [:ast {} [:code {:lang (if (= kind "diff") "diff" (:language block))} text]]
+                  ("code" "diff")
+                  [:ast {} [:code {:lang (if (= kind "diff") "diff" (:language block))} text]]
 
-                "table"
-                [:ast {}
-                 (into [:table {}]
-                       (mapcat (fn [[_ table]]
-                                 (let [paths (vec (:paths table))]
-                                   (cons (into [:tr {}] (map #(vector :th {} %) (:columns table)))
-                                         (map-indexed
-                                           (fn [at row]
-                                             (let [path (not-empty (str (nth paths at "")))]
-                                               (into [:tr {}]
-                                                     (map-indexed (fn [col cell]
-                                                                    (if (and path
-                                                                             (zero? (long col)))
-                                                                      [:td {:path path} cell]
-                                                                      [:td {} cell]))
-                                                                  row))))
-                                           (:rows table)))))
-                               group))]
+                  "table"
+                  [:ast {}
+                   (into [:table {}]
+                         (mapcat (fn [[_ table]]
+                                   (let [paths (vec (:paths table))]
+                                     (cons (into [:tr {}] (map #(vector :th {} %) (:columns table)))
+                                           (map-indexed
+                                             (fn [at row]
+                                               (let [path (not-empty (str (nth paths at "")))]
+                                                 (into [:tr {}]
+                                                       (map-indexed (fn [col cell]
+                                                                      (if (and path
+                                                                               (zero? (long col)))
+                                                                        [:td {:path path} cell]
+                                                                        [:td {} cell]))
+                                                                    row))))
+                                             (:rows table)))))
+                                 group))]
 
-                "progress"
-                [:ast {}
-                 [:p {}
-                  (str (:label block)
-                       " · "
-                       (if (:total block)
-                         (str (:value block) " / " (:total block))
-                         (if running? "In progress…" "Stopped")))]]
+                  "progress"
+                  [:ast {}
+                   [:p {}
+                    (str (:label block)
+                         " · "
+                         (if (:total block)
+                           (str (:value block) " / " (:total block))
+                           (if running? "In progress…" "Stopped")))]]
 
-                [:ast {}
-                 [:p {}
-                  (str (:label block)
-                       " · "
-                       (if artifact
-                         "→ click to open in the system viewer"
-                         "Attachment unavailable"))]])
+                  [:ast {}
+                   [:p {}
+                    (str (:label block)
+                         " · "
+                         (if artifact
+                           "→ click to open in the system viewer"
+                           "Attachment unavailable"))]])
 
-              ;; Code rows set their words in by `code-block-h-pad` inside the band, and a
-              ;; heading's gutter mark fills that pad. Every other row takes the same inset,
-              ;; so all words of a body share one left edge.
-              text-col
-              (+ (long col) (long code-block-h-pad))
+                ;; Code rows set their words in by `code-block-h-pad` inside the band, and a
+                ;; heading's gutter mark fills that pad. Every other row takes the same inset,
+                ;; so all words of a body share one left edge.
+                text-col
+                (+ (long col) (long code-block-h-pad))
 
-              entries
-              (mapv
-                (fn [entry]
-                  (update entry
-                          :meta assoc
-                          :activity-content? true
-                          :activity-content-col (if (some #(str/starts-with? (str (:line entry)) %)
-                                                          [md-code-marker md-h3-marker])
-                                                  col
-                                                  text-col)))
-                (layout/ast->entries
-                  ast
-                  (max 1
-                       (- (long width) (if (contains? #{"code" "diff"} kind) (long col) text-col)))
-                  {:mode :channel :code-spacing? false :session-id session-id}))]
+                entries
+                (mapv (fn [entry]
+                        (update entry
+                                :meta assoc
+                                :activity-content? true
+                                :activity-content-col
+                                (if (some #(str/starts-with? (str (:line entry)) %)
+                                          [md-code-marker md-h3-marker])
+                                  col
+                                  text-col)))
+                      (layout/ast->entries
+                        ast
+                        (max 1
+                             (- (long width)
+                                (if (contains? #{"code" "diff"} kind) (long col) text-col)))
+                        {:mode :channel :code-spacing? false :session-id session-id}))]
 
-          (concat (when (= kind "heading")
-                    [{:line "" :meta {:activity-content? true :activity-content-col col}}])
-                  (if (and media? artifact)
-                    (mapv #(update % :meta merge {:artifact artifact :session-id session-id})
-                          entries)
-                    entries))))
+            (concat (when (= kind "heading")
+                      [{:line "" :meta {:activity-content? true :activity-content-col col}}])
+                    (if (and media? artifact)
+                      (mapv #(update % :meta merge {:artifact artifact :session-id session-id})
+                            entries)
+                      entries)))))
       (partition-by (fn [[index block]]
                       (if (= "table" (:type block)) (:columns block) index))
                     (map-indexed vector blocks)))))
@@ -6747,6 +6866,10 @@
                                                        content
                                                        (:content presentation)
 
+                                                       terminal
+                                                       (some #(when (= "terminal" (:type %)) %)
+                                                             content)
+
                                                        sections
                                                        (:sections presentation)
 
@@ -6755,10 +6878,27 @@
                                                          (if-let [error (:error-summary row)]
                                                            {:line (str/trim
                                                                     (str/replace error #"\s+" " "))}
-                                                           (activity-summary-entry presentation)))
+                                                           (let [entry (activity-summary-entry
+                                                                         presentation)
+                                                                 outcome (some-> (:outcome
+                                                                                   presentation)
+                                                                                 str/trim
+                                                                                 not-empty)]
+
+                                                             ;; A row without a summary shows its
+                                                             ;; result line after an arrow.
+                                                             (if (and outcome
+                                                                      (str/blank? (:line entry)))
+                                                               {:line outcome :outcome? true}
+                                                               entry))))
 
                                                        caption
                                                        (not-empty (:line summary-entry))
+
+                                                       separator
+                                                       (cond (:outcome? summary-entry) " → "
+                                                             caption " · "
+                                                             :else " ")
 
                                                        lead-word
                                                        (if caption
@@ -6802,14 +6942,13 @@
                                                          (when (or (nil? filename)
                                                                    (<= (+ 4
                                                                           (p/display-width
-                                                                            (str
-                                                                              (activity-lead col)
-                                                                              lead-word
-                                                                              (if caption " · " " ")
-                                                                              filename
-                                                                              text
-                                                                              (activity-row-tail
-                                                                                row))))
+                                                                            (str (activity-lead col)
+                                                                                 lead-word
+                                                                                 separator
+                                                                                 filename
+                                                                                 text
+                                                                                 (activity-row-tail
+                                                                                   row))))
                                                                        (long width)))
                                                            text))
 
@@ -6823,7 +6962,24 @@
                                                        (and openable? (expanded? id false))
 
                                                        suffix
-                                                       (activity-row-tail row)
+                                                       (let [aside
+                                                             (some-> (:aside presentation)
+                                                                     str/trim
+                                                                     not-empty)
+
+                                                             aside
+                                                             (when aside
+                                                               (if (> (count aside) 28)
+                                                                 (str "…"
+                                                                      (subs aside
+                                                                            (- (count aside) 27)))
+                                                                 aside))]
+
+                                                         (not-empty (str/join "  "
+                                                                              (remove str/blank?
+                                                                                [aside
+                                                                                 (activity-row-tail
+                                                                                   row)]))))
 
                                                        mark
                                                        (when openable? (if open? " ▾" " ▸"))
@@ -6842,7 +6998,7 @@
                                                                    (p/display-width
                                                                      (str (activity-lead col)
                                                                           lead-word
-                                                                          (if caption " · " " ")
+                                                                          separator
                                                                           delta
                                                                           suffix
                                                                           mark))
@@ -6856,11 +7012,10 @@
 
                                                        path-col
                                                        (if path-subject
-                                                         (p/display-width (str
-                                                                            (activity-lead col)
-                                                                            lead-word
-                                                                            mark
-                                                                            (if caption " · " " ")))
+                                                         (p/display-width (str (activity-lead col)
+                                                                               lead-word
+                                                                               mark
+                                                                               separator))
                                                          0)
 
                                                        path-width
@@ -6875,8 +7030,7 @@
                                                        (str (activity-lead col)
                                                             lead-word
                                                             mark
-                                                            (when subject
-                                                              (str (if caption " · " " ") subject))
+                                                            (when subject (str separator subject))
                                                             delta)
 
                                                        line
@@ -6956,6 +7110,13 @@
                                                        (activity-diffs row)]
 
                                                    (cond-> [head]
+                                                     (and (not open?) (= :running state) terminal)
+                                                     (into (activity-terminal-entries terminal
+                                                                                      width
+                                                                                      col
+                                                                                      session-id
+                                                                                      3))
+
                                                      (and open? (seq content))
                                                      (into (activity-content-entries
                                                              content

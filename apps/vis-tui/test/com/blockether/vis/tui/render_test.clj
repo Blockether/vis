@@ -10151,6 +10151,50 @@ print(paths)"
                                    {}
                                    false))
                              "Stopped"))))
+  (it "paints a terminal block: bold command, accent operators, stderr ink and omitted lines"
+      (let [block
+            {:type "terminal"
+             :command ["npm test" "| tail -3" "&& echo done"]
+             :lines [{:text "41 passed" :stream "stdout"} {:text "warn\tslow" :stream "stderr"}]
+             :omitted-lines 12
+             :exit 0}
+
+            entries
+            (#'render/activity-content-entries [block] 60 4 "s" {} false)
+
+            segments
+            (mapv #(get-in % [:meta :segments]) entries)]
+
+        (expect (every? #(= :activity-terminal (get-in % [:meta :kind])) entries))
+        (expect (= [["$ " :muted] ["npm test" :command]] (first segments)))
+        (expect (= [["  | " :operator] ["tail -3" :plain]] (second segments)))
+        (expect (= [["  && " :operator] ["echo done" :plain]] (nth segments 2)))
+        (expect (= [["… 12 earlier lines" :muted]] (nth segments 3)))
+        (expect (= [["41 passed" :output]] (nth segments 4)))
+        (expect (= [["warn    slow" :error]] (nth segments 5)))
+        (expect (str/includes? (:line (first entries)) "$ npm test"))))
+  (it "wraps long terminal lines inside the band and keeps a live tail of three lines"
+      (let [long-line
+            (apply str (repeat 90 "x"))
+
+            block
+            {:type "terminal"
+             :command ["build"]
+             :lines (mapv #(hash-map :text % :stream "stdout") ["a" "b" "c" "d" long-line])}
+
+            full
+            (#'render/activity-terminal-entries block 40 4 "s" nil)
+
+            tail
+            (#'render/activity-terminal-entries block 40 4 "s" 3)]
+
+        (expect (= 90
+                   (count (apply str
+                            (keep #(when (= :output (second %)) (first %))
+                                  (mapcat #(get-in % [:meta :segments]) (drop 5 full)))))))
+        (expect (every? #(<= (p/display-width (:line %)) 41) full))
+        (expect (= ["c" "d"] (mapv #(ffirst (get-in % [:meta :segments])) (take 2 tail))))
+        (expect (= 3 (count tail)))))
   (it "sets text, Markdown and heading words in to the column of code words"
       ;; Regression: a Council message body sat on the band edge, left of Command output.
       (let [entries
@@ -11109,6 +11153,49 @@ print(paths)"
             (expect (not (str/includes? text "5 / 5")))
             (expect (not (str/includes? text "In progress")))
             (expect (not-any? #(= :running (get-in % [:meta :status-tone])) entries))))))))
+
+(defdescribe
+  activity-terminal-row-render-test
+  (let [render-state (fn [state]
+                       (#'render/activity-detail-entries
+                        {:node-id "terminal"
+                         :activity-rows
+                         [{:id "sh"
+                           :sequence 1
+                           :operation "shell"
+                           :state state
+                           :summary "npm test"
+                           :duration-ms 1200
+                           :resources []
+                           :evidence []
+                           :presentation
+                           (cond-> {:headline "npm test"
+                                    :summary ""
+                                    :aside "~/vis"
+                                    :content [{:type "terminal"
+                                               :command ["npm test"]
+                                               :lines (mapv #(hash-map :text % :stream "stdout")
+                                                            ["one" "two" "three" "41 passed"])}]}
+                             (not= "running" state)
+                             (assoc :outcome "41 passed"))}]
+                         :activity-expanded? (fn [key default]
+                                               (get {"#band" true} key default))}
+                        100
+                        "terminal"))]
+    (it "shows the outcome after an arrow and the directory at the edge of a closed row"
+        (let [entries (render-state "succeeded")
+              head (some #(when (= :activity-row (get-in % [:meta :kind])) %) entries)]
+
+          (expect (re-find #"npm test ▸ → 41 passed" (:line head)))
+          (expect (str/starts-with? (str (get-in head [:meta :right-suffix])) "~/vis"))
+          (expect (not-any? #(= :activity-terminal (get-in % [:meta :kind])) entries))))
+    (it "keeps the last three output lines under a closed running row"
+        (let [entries (render-state "running")
+              tail (filterv #(= :activity-terminal (get-in % [:meta :kind])) entries)]
+
+          (expect (= ["two" "three" "41 passed"]
+                     (mapv #(ffirst (get-in % [:meta :segments])) tail)))
+          (expect (not-any? #(str/includes? (str (:line %)) "→") entries))))))
 
 (defdescribe
   activity-path-target-test

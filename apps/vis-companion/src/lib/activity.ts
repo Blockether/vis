@@ -23,6 +23,18 @@ const PAGE_BYTE_TARGET = activitySchema.$defs.projection.properties.history['x-v
 const RESOURCE_LIMIT = activitySchema.$defs.row.properties.resources.maxItems;
 const SUMMARY_BYTE_LIMIT = activitySchema.$defs.section.properties.summary['x-vis-max-bytes'];
 const HANDLE_LIMIT = activitySchema.$defs.handle_id;
+const ASIDE_LIMIT = activitySchema.$defs.presentation.properties.aside;
+type TerminalSchema = {
+  properties: {
+    command: { maxItems: number; items: { maxLength: number } };
+    lines: { maxItems: number; items: { properties: { text: { maxLength: number } } } };
+  };
+};
+const TERMINAL_LIMIT = (
+  activitySchema.$defs.content.items.oneOf as unknown as Array<{
+    properties: { type: { const?: string } };
+  }>
+).find((shape) => shape.properties.type.const === 'terminal') as unknown as TerminalSchema;
 
 type RowSchema = {
   properties: Record<string, { items?: { $ref: string } }>;
@@ -187,7 +199,51 @@ export type ActivityContent =
       attachment_id: string;
       label: string;
     }
-  | { type: 'progress'; label: string; value?: number; total?: number };
+  | { type: 'progress'; label: string; value?: number; total?: number }
+  | {
+      type: 'terminal';
+      command: string[];
+      lines: ActivityTerminalLine[];
+      omitted_lines?: number;
+      exit?: number;
+    };
+
+export interface ActivityTerminalLine {
+  text: string;
+  stream: 'stdout' | 'stderr';
+}
+
+function validTerminalLine(value: unknown): boolean {
+  const line = record(value);
+  return (
+    !!line &&
+    hasExactKeys(line, ['text', 'stream']) &&
+    typeof line.text === 'string' &&
+    [...line.text].length <= TERMINAL_LIMIT.properties.lines.items.properties.text.maxLength &&
+    !/[\u0000-\u0008\u000a-\u001f\u007f\u2028\u2029]/.test(line.text) &&
+    (line.stream === 'stdout' || line.stream === 'stderr')
+  );
+}
+
+function validTerminal(b: Record<string, unknown>): boolean {
+  const { command, lines } = TERMINAL_LIMIT.properties;
+  return (
+    hasExactKeys(b, ['type', 'command', 'lines'], ['omitted_lines', 'exit']) &&
+    Array.isArray(b.command) &&
+    b.command.length > 0 &&
+    b.command.length <= command.maxItems &&
+    b.command.every(
+      (stage) =>
+        typeof stage === 'string' && stage !== '' && [...stage].length <= command.items.maxLength,
+    ) &&
+    Array.isArray(b.lines) &&
+    b.lines.length <= lines.maxItems &&
+    b.lines.every(validTerminalLine) &&
+    (b.omitted_lines === undefined ||
+      (Number.isInteger(b.omitted_lines) && (b.omitted_lines as number) >= 0)) &&
+    (b.exit === undefined || Number.isInteger(b.exit))
+  );
+}
 
 /** Closed, lossless content grammar shared with activity.json. Never accept markup as HTML. */
 function activityContentFromWire(value: unknown): ActivityContent[] | null {
@@ -269,6 +325,9 @@ function activityContentFromWire(value: unknown): ActivityContent[] | null {
             return null;
         }
         break;
+      case 'terminal':
+        if (!validTerminal(b)) return null;
+        break;
       default:
         return null;
     }
@@ -287,6 +346,10 @@ export interface ActivityPresentation extends ActivitySection {
   sections?: ActivitySection[];
   handle_id?: string;
   verdict?: ActivityVerdict;
+  /** One line that says what the work produced, shown after the headline. */
+  outcome?: string;
+  /** Quiet context, such as a working directory and an exit code. */
+  aside?: string;
 }
 
 function validHandleId(value: unknown): value is string {
@@ -298,6 +361,24 @@ function validHandleId(value: unknown): value is string {
   );
 }
 
+/** One display line within the section summary byte limit. */
+function validOutcome(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    new TextEncoder().encode(value).length <= SUMMARY_BYTE_LIMIT &&
+    !/[\u0000-\u001f\u007f\u2028\u2029]/.test(value)
+  );
+}
+
+function validAside(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value !== '' &&
+    Array.from(value).length <= ASIDE_LIMIT.maxLength &&
+    new TextEncoder().encode(value).length <= SUMMARY_BYTE_LIMIT &&
+    !/[\u0000-\u001f\u007f\u2028\u2029]/.test(value)
+  );
+}
 function activityPresentationFromWire(value: unknown): ActivityPresentation | null {
   const raw = record(value);
   if (
@@ -307,9 +388,13 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
       'summary_format',
       'handle_id',
       'verdict',
+      'outcome',
+      'aside',
     ]) ||
     (raw.handle_id !== undefined && !validHandleId(raw.handle_id)) ||
-    (raw.verdict !== undefined && !activityEnum(raw.verdict, ACTIVITY_VERDICTS))
+    (raw.verdict !== undefined && !activityEnum(raw.verdict, ACTIVITY_VERDICTS)) ||
+    (raw.outcome !== undefined && !validOutcome(raw.outcome)) ||
+    (raw.aside !== undefined && !validAside(raw.aside))
   )
     return null;
   const sections = raw.sections === undefined ? [] : raw.sections;
@@ -322,7 +407,9 @@ function activityPresentationFromWire(value: unknown): ActivityPresentation | nu
       !hasExactKeys(
         section,
         ['headline', 'summary', 'content'],
-        index === 0 ? ['sections', 'summary_format', 'handle_id', 'verdict'] : ['summary_format'],
+        index === 0
+          ? ['sections', 'summary_format', 'handle_id', 'verdict', 'outcome', 'aside']
+          : ['summary_format'],
       )
     )
       return null;
@@ -440,6 +527,12 @@ export function activityCopyText(activity: ActivityProjection): string {
     if ('text' in block) return block.text;
     if (block.type === 'table')
       return [block.columns, ...block.rows].map((row) => row.join('\t')).join('\n');
+    if (block.type === 'terminal')
+      return [
+        `$ ${block.command.join(' ')}`,
+        ...(block.omitted_lines ? [`… ${block.omitted_lines} earlier lines`] : []),
+        ...block.lines.map((line) => line.text),
+      ].join('\n');
     if (block.type === 'progress')
       return `${block.label}${block.value === undefined ? '' : `: ${block.value}/${block.total}`}`;
     return `${block.type}: ${block.label} (${block.attachment_id})`;
@@ -469,9 +562,15 @@ export function activityCopyText(activity: ActivityProjection): string {
       add(parts.join('\n'));
     }
     if (row.presentation) {
-      for (const section of [row.presentation, ...(row.presentation.sections ?? [])]) {
+      const sections: Array<ActivitySection & Pick<ActivityPresentation, 'aside' | 'outcome'>> = [
+        row.presentation,
+        ...(row.presentation.sections ?? []),
+      ];
+      for (const section of sections) {
         add(section.headline);
         add(section.summary);
+        add(section.aside);
+        if (section.outcome) add(`→ ${section.outcome}`);
         section.content.forEach((block) => add(contentText(block)));
       }
     }

@@ -47,7 +47,8 @@
 
            (and (or (not (contains? value "handle_id")) (valid-handle-id? (get value "handle_id")))
                 (every? #(<= (long (bytes %)) (long summary-byte-limit))
-                        (mapcat #(map % ["headline" "summary"]) sections))
+                        (concat (mapcat #(map % ["headline" "summary"]) sections)
+                                (keep value ["outcome" "aside"])))
                 (every? (fn [block]
                           (case (get block "type")
                             "progress"
@@ -152,13 +153,20 @@
           (distinct (map :operation ordered)))))
 
 (defn- content-copy-text
-  [{:keys [type text columns rows label value total attachment-id]}]
+  [{:keys [type text columns rows label value total attachment-id command lines omitted-lines]}]
   (case (name type)
     "table"
     (str/join "\n" (map #(str/join "\t" %) (cons columns rows)))
 
     "progress"
     (str label (when (some? value) (str ": " value "/" total)))
+
+    "terminal"
+    (str/join "\n"
+              (concat [(str "$ " (str/join " " command))]
+                      (when (pos? (long (or omitted-lines 0)))
+                        [(str "… " omitted-lines " earlier lines")])
+                      (map :text lines)))
 
     (or text (str (name type) ": " label " (" attachment-id ")"))))
 
@@ -202,8 +210,9 @@
                  (when error-summary (str "Error: " error-summary))]
                 (map #(str (name (:type %)) ": " (:id %)) resources)
                 (map evidence-text evidence)
-                (mapcat (fn [{:keys [headline summary content]}]
-                          (concat [headline summary] (map content-copy-text content)))
+                (mapcat (fn [{:keys [headline summary aside outcome content]}]
+                          (concat [headline summary aside (when outcome (str "→ " outcome))]
+                                  (map content-copy-text content)))
                         sections)
                 (when is-truncated ["Details truncated"]))]
 

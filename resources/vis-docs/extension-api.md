@@ -435,8 +435,8 @@ Show meaningful counts, targets and failure context, not a serialized result or 
 preview.
 
 Choose typed `ActivityText`, `ActivityHeading`, `ActivityMarkdown`, `ActivityCode`, `ActivityDiff`,
-`ActivityTable`, `ActivityProgress`, `ActivityImage`, `ActivityVideo`, `ActivityAudio` and
-`ActivityFile` blocks. Media references existing attachments.
+`ActivityTable`, `ActivityProgress`, `ActivityTerminal`, `ActivityImage`, `ActivityVideo`,
+`ActivityAudio` and `ActivityFile` blocks. Media references existing attachments.
 `ActivitySection(headline, summary, content=())` groups related results without nesting sections.
 Each section has its own disclosure. You can scan its headline and summary before you open the
 complete details.
@@ -592,6 +592,41 @@ Show the result in the step's summary and content.
 A call that fails or is cancelled shows that state on its own step.
 Like `mutation`, the other tags describe the operation.
 They grant no permission and enforce no policy.
+
+To show a command and what it printed, use an `ActivityTerminal` block. Give the command as a list
+of stages. Start each later stage with its operator, such as `&&` or `|`. Give each output line as
+an `ActivityTerminalLine` with its stream, `stdout` or `stderr`. A plain string is a `stdout` line.
+Set `omitted_lines` when you keep only the last lines of a long output.
+
+Two optional fields of the top-level `ActivityPresentation` complete the step's head line:
+
+- `outcome` is one line that tells what the work produced, such as `41 passed`. It shows after the
+  headline when `summary` is empty.
+- `aside` is quiet context, such as the working directory and the exit code. It shows at the end
+  of the head line.
+
+```python
+vis.ActivityPresentation(
+    "npm test && npm run lint",
+    "",
+    content=(
+        vis.ActivityTerminal(
+            ("npm test", "&& npm run lint"),
+            lines=(
+                "41 passed",
+                vis.ActivityTerminalLine("warning: slow test", stream="stderr"),
+            ),
+            exit=0,
+        ),
+    ),
+    outcome="41 passed",
+    aside="~/vis · exit 0",
+)
+```
+
+The Companion app and the TUI show each stage on its own line and show `stderr` lines in the error
+color. A closed step that is still running shows its last three output lines. Copy text starts with
+`$ ` and the command.
 
 ## Prompts and discovery
 
