@@ -6691,14 +6691,17 @@
                      :ttl-ms copy-success-ttl-ms))))))
 
       :delete
-      ;; BLO-167: the delete asks what becomes of the members. Cancel never
+      ;; BLO-167: the delete asks what becomes of the members. A group with no
+      ;; sessions, archived or not, has nothing to ask about (#361). Cancel never
       ;; touches the gateway; only the answer's exact IDs update local views.
-      (when-let [answer (:id (with-dialog-lock
-                               #(dlg/select-dialog!
-                                  screen
-                                  (str "Delete group · " (get group "name"))
-                                  [{:id :detach :label "Keep its sessions, ungrouped"}
-                                   {:id :with-sessions :label "✗ Delete its sessions too"}])))]
+      (when-let [answer (if (= 0 (get group "session_count"))
+                          :detach
+                          (:id (with-dialog-lock
+                                 #(dlg/select-dialog!
+                                    screen
+                                    (str "Delete group · " (get group "name"))
+                                    [{:id :detach :label "Keep its sessions, ungrouped"}
+                                     {:id :with-sessions :label "✗ Delete its sessions too"}]))))]
         (vis/worker-future "tui-group-delete"
                            (fn []
                              (try (let [result (vis/gateway-delete-session-group! gid answer)

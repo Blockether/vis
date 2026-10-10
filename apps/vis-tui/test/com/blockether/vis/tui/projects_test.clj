@@ -3813,6 +3813,9 @@
           fail?
           (atom false)
 
+          asked
+          (atom 0)
+
           db
           (-> (fixture-db)
               (assoc-in [:project-sidebar :selected "a"] #{"a2"})
@@ -3839,7 +3842,7 @@
                         (do (when (some #(= :unarchive-group (:id %)) items)
                               (expect (not-any? #(= :new-session (:id %)) items)))
                             {:id @choice})
-                        (when @mode {:id @mode})))
+                        (do (swap! asked inc) (when @mode {:id @mode}))))
 
                     vis/gateway-update-session-group!
                     (fn [gid opts]
@@ -3888,7 +3891,17 @@
         (reset! fail? true)
         (#'screen/sidebar-row-menu! nil group-entry nil)
         (expect (= [:delete "g1" :with-sessions] (last @calls)))
-        (expect (some #(str/includes? % "Could not delete group") @notices))))))
+        (expect (some #(str/includes? % "Could not delete group") @notices))
+        ;; #361: a group with no sessions, archived or not, has nothing to ask about.
+        (reset! fail? false)
+        (reset! mode nil)
+        (reset! asked 0)
+        (#'screen/sidebar-row-menu!
+         nil
+         (assoc group-entry :group (assoc group-release "session_count" 0))
+         nil)
+        (expect (zero? @asked) "An empty group is deleted without the sessions question")
+        (expect (= [[:delete "g1" :detach] [:refresh]] (take-last 2 @calls)))))))
 
 (defdescribe
   groups-set-menu-reveals-its-own-archive-test

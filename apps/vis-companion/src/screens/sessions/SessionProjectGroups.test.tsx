@@ -1092,6 +1092,26 @@ describe('ProjectGroup groups', () => {
       expect(client.deleteSessionGroup).toHaveBeenCalledWith(WALLET, 'with-sessions'),
     );
   });
+  // Regression #361: a group with no sessions, archived or not, has nothing to ask about.
+  it('deletes an empty group without asking about its sessions', async () => {
+    const { client, user } = mount(
+      machine({
+        listSessionGroups: vi.fn(async () =>
+          wall([
+            WALLET_GROUP,
+            { ...WALLET_GROUP, id: 'group-notes', name: 'Notes', session_count: 0 },
+          ]),
+        ),
+      }),
+    );
+    await band('Notes');
+    await user.click(screen.getByRole('button', { name: 'Actions for Notes' }));
+    await user.click(within(sheet(`Groups in ${ROOT}`)).getByText('Delete group'));
+    await waitFor(() =>
+      expect(client.deleteSessionGroup).toHaveBeenCalledWith('group-notes', 'detach'),
+    );
+    expect(screen.queryByText('Delete its sessions too')).toBeNull();
+  });
 
   // Regression, user report: the mobile action must not expand the project list.
   it('opens a compact anchored popup without shifting the session rows', async () => {

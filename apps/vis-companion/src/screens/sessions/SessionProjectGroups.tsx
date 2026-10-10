@@ -1531,6 +1531,16 @@ export const ProjectGroup = memo(function ProjectGroup({
       setIsBusy(false);
     }
   };
+  // Deleting a group answers what becomes of its sessions; the menu returns to its root.
+  const deleteGroup = (id: string, sessions: 'detach' | 'with-sessions') =>
+    void attempt(async () => {
+      const { detached, deleted } = await getClient(conn).deleteSessionGroup(id, sessions);
+      setRefiled((kept) => {
+        const next = new Map(kept);
+        for (const sid of [...detached, ...deleted]) next.delete(sid);
+        return next;
+      });
+    }, { kind: 'root' });
   // A project's verbs run on the screen that holds its machine. A refusal stays in this
   // sheet; a partial delete says how many sessions stayed.
   const runProject = async (act: () => Promise<void>) => {
@@ -2234,18 +2244,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             // wears no band spelling the name the reader just pressed, and no sentence
             // under a title that already says what the row does.
             if (step.kind === 'delete') {
-              const drop = (sessions: 'detach' | 'with-sessions') =>
-                void attempt(async () => {
-                  const { detached, deleted } = await getClient(conn).deleteSessionGroup(
-                    band.id,
-                    sessions,
-                  );
-                  setRefiled((kept) => {
-                    const next = new Map(kept);
-                    for (const sid of [...detached, ...deleted]) next.delete(sid);
-                    return next;
-                  });
-                }, { kind: 'root' });
+              const drop = (sessions: 'detach' | 'with-sessions') => deleteGroup(band.id, sessions);
               return (
                 <>
                   <MenuItem
@@ -2356,7 +2355,12 @@ export const ProjectGroup = memo(function ProjectGroup({
                   title="Delete group"
                   tone="danger"
                   icon={<TrashIcon className="size-3.5" />}
-                  onSelect={() => goTo({ kind: 'delete', id: band.id })}
+                  // An empty group, archived sessions included, has nothing to ask about (#361).
+                  onSelect={() =>
+                    band.count === 0
+                      ? deleteGroup(band.id, 'detach')
+                      : goTo({ kind: 'delete', id: band.id })
+                  }
                 />
                 {failure && <MenuNote>{failure}</MenuNote>}
               </>
