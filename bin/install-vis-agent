@@ -13,15 +13,17 @@ track=release
 track_named=0
 version="${VIS_AGENT_VERSION:-}"
 launcher_sha256="${VIS_AGENT_SHA256:-}"
+components="${VIS_COMPONENTS:-}"
 usage() {
   cat <<EOF
 Usage: install-vis-agent [--install-dir PATH] [--track release|beta|dev]
-                         [--version X.Y.Z] [--sha256 HASH]
+                         [--version X.Y.Z] [--sha256 HASH] [--components LIST]
 
 Installs the latest complete stable release, or the version you name:
   $install_dir/vis-agent          command and native engine
   $install_dir/vis-agent-python   bundled Python runtime
-  $install_dir/vis-tui            native terminal client
+  $install_dir/vis-tui            native terminal client (component tui)
+  $install_dir/vis-web            web app for vis-agent web (component web)
 
 No JDK or Clojure installation is required.
   --track release  latest complete stable native release (default)
@@ -32,6 +34,12 @@ No JDK or Clojure installation is required.
   --sha256 HASH    expected SHA-256 of the downloaded vis-agent command. With
                    --version, the command comes from that release, so the hash
                    stays valid. Any other command stops the installation.
+  --components LIST
+                   optional parts beside the command, the engine and Python:
+                   tui, web and desktop separated by commas, all, or none.
+                   The default is tui,web, or the selection of an earlier install.
+                   Use none for only the command line. desktop also downloads
+                   the desktop app now; else vis-agent desktop gets it on first use.
 The vis-agent command and every release archive must match the SHA256SUMS
 of their release. A release without SHA256SUMS is installed with a warning.
 Environment overrides:
@@ -40,6 +48,7 @@ Environment overrides:
   VIS_REPO_SLUG      GitHub OWNER/REPO (default: Blockether/vis)
   VIS_AGENT_VERSION  the same as --version
   VIS_AGENT_SHA256   the same as --sha256
+  VIS_COMPONENTS     the same as --components
 EOF
 }
 
@@ -69,6 +78,12 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --sha256=*) launcher_sha256="${1#*=}"; shift ;;
+    --components)
+      [[ $# -ge 2 ]] || { echo "vis-agent install: --components requires a list" >&2; exit 2; }
+      components="$2"
+      shift 2
+      ;;
+    --components=*) components="${1#*=}"; shift ;;
     -h|--help)
       usage
       exit 0
@@ -85,6 +100,14 @@ case "$track" in
   release|beta|dev) ;;
   *) echo "vis-agent install: unknown track '$track' (release, beta or dev)" >&2; exit 2 ;;
 esac
+
+# Check the selection before any download; the vis-agent command saves it.
+component_pattern='(tui|web|desktop)'
+if [[ -n "$components" && ! "$components" =~ ^(none|all|$component_pattern(,$component_pattern)*)$ ]]; then
+  echo "vis-agent install: unknown components '$components'" >&2
+  echo "  Use none, all, or tui, web and desktop separated by commas." >&2
+  exit 2
+fi
 
 # A pinned version installs exactly that release tag, never the newest one (#332).
 release_tag=""
@@ -239,6 +262,7 @@ fi
 # A pinned version goes to the update command; it never falls back to latest.
 update_args=(update --track "$track")
 [[ -z "$release_tag" ]] || update_args+=("$release_tag")
+[[ -z "$components" ]] || update_args+=(--components "$components")
 if ! ( VIS_HOME="$vis_home" "$install_dir/vis-agent" "${update_args[@]}" ); then
   if (( ! path_configured )); then
     cat >&2 <<EOF
@@ -254,7 +278,11 @@ if [[ -n "$release_tag" ]]; then
 else
   echo "Vis Agent $track installed in $install_dir."
 fi
-echo "Run: vis-agent help; vis-agent tui"
+if [[ -z "$components" || ",$components," == *,tui,* || "$components" == all ]]; then
+  echo "Run: vis-agent help; vis-agent tui"
+else
+  echo "Run: vis-agent help"
+fi
 if [[ "$track" == dev ]]; then
   echo "Source: $vis_home/install/src (requires JDK 25+)."
 fi

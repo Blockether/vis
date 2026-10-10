@@ -63,6 +63,9 @@ managed_src="$vis_install_dir/src"
 managed_ref_file="$vis_install_dir/ref"
 # The installed selection controls launch, not the default for a later update.
 vis_track_file="$vis_install_dir/track"
+# The optional parts that an update installs beside the engine and Python.
+vis_components_file="$vis_install_dir/components"
+vis_default_components="tui,web"
 
 # Show each path under $HOME as ~ in messages. Bash 3.2 needs this loop, not ${//}.
 tilde_home() {
@@ -900,14 +903,59 @@ vis_github_rate_limit_note() {
   printf 'GitHub API rate limit: no requests left from this network for about %s min.\n' "$minutes"
 }
 
+# Components are the optional parts of a native installation: tui, web and desktop.
+# Print the canonical list of a selection (`none`, `all` or names separated by
+# commas), or fail for an unknown name.
+vis_components_normalize() {
+  local list="$1" name out="" seen=","
+  local -a names=()
+  case "$list" in
+    none) printf 'none\n'; return 0 ;;
+    all) printf 'tui,web,desktop\n'; return 0 ;;
+    "") return 1 ;;
+  esac
+  IFS=',' read -r -a names <<< "$list"
+  for name in "${names[@]}"; do
+    case "$name" in
+      tui|web|desktop) seen="$seen$name," ;;
+      *) return 1 ;;
+    esac
+  done
+  for name in tui web desktop; do
+    if [[ "$seen" == *",$name,"* ]]; then out="${out:+$out,}$name"; fi
+  done
+  printf '%s\n' "${out:-none}"
+}
+
+vis_components_has() { [[ ",$1," == *",$2,"* ]]; }
+
+# The saved selection, or the default for an installation that never chose one.
+vis_components_selected() {
+  local saved
+  saved="$(read_state "$vis_components_file")"
+  vis_components_normalize "${saved:-$vis_default_components}" 2>/dev/null || \
+    printf '%s\n' "$vis_default_components"
+}
+
+# The saved selection plus one component, for an actionable hint.
+vis_components_with() {
+  local selected
+  selected="$(vis_components_selected)"
+  if [[ "$selected" == none ]]; then printf '%s\n' "$1"; return 0; fi
+  vis_components_normalize "$selected,$1"
+}
+
 # Published release tags identify versions; immutable beta tags identify commits.
 # Only a complete installation with matching source can skip bundle acquisition.
 native_install_current() {
   local native_dir="$1" tag="$2" track="$3" web_dl="$4" tui_library="$5"
   local version commit build_track metadata installed_tag changes
   [[ -x "$native_dir/vis-agent" && -x "$native_dir/vis-agent-native" \
-     && -s "$native_dir/vis-agent-native.build" && -x "$native_dir/vis-tui" \
-     && -s "$native_dir/$tui_library" && -d "$native_dir/vis-agent-python/python" ]] || return 1
+     && -s "$native_dir/vis-agent-native.build" && -d "$native_dir/vis-agent-python/python" ]] || return 1
+  # An empty TUI library name means that the TUI is not a selected component.
+  if [[ -n "$tui_library" ]]; then
+    [[ -x "$native_dir/vis-tui" && -s "$native_dir/$tui_library" ]] || return 1
+  fi
   compgen -G "$native_dir/vis-agent-python/libvispython.*" >/dev/null || return 1
   if [[ -n "$web_dl" ]]; then
     [[ -f "$native_dir/vis-web/index.html" ]] || return 1
@@ -935,6 +983,7 @@ native_install_current() {
 # Releases replace the launcher and its native runtime together.
 update_native() {
   local target="${1:-latest}" track="${2:-release}" keep_gateway="${3:-0}"
+  local components="${4:-$vis_default_components}" want_tui=0 want_web=0 tui_check=""
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
   local asset dl release_url archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack web_dl web_archive web_unpack
@@ -967,14 +1016,21 @@ update_native() {
         "Native bundles support Linux x64/arm64 and macOS arm64." \
         "No JVM fallback was installed. For source development use vis-agent update --track dev."
 
-  tui_asset="${asset/vis-agent-/vis-tui-}"
-  tui_dl="$release_url/$tui_asset"
-  vis_release_asset "$tui_dl" update || die "update: incomplete release: missing $tui_asset" \
-      "The engine and terminal client must come from the same release."
+  if vis_components_has "$components" tui; then want_tui=1; fi
+  if vis_components_has "$components" web; then want_web=1; fi
+  if (( want_tui )); then
+    tui_asset="${asset/vis-agent-/vis-tui-}"
+    tui_dl="$release_url/$tui_asset"
+    vis_release_asset "$tui_dl" update || die "update: incomplete release: missing $tui_asset" \
+        "The engine and terminal client must come from the same release."
+  fi
   # One web app build serves every platform. Releases that predate it install
   # without one; `vis-agent web` then explains how to get it.
-  web_dl="$release_url/vis-web.tar.gz"
-  vis_release_asset "$web_dl" update || web_dl=""
+  web_dl=""
+  if (( want_web )); then
+    web_dl="$release_url/vis-web.tar.gz"
+    vis_release_asset "$web_dl" update || web_dl=""
+  fi
   # Where the private runtime belongs: beside an installed launcher, or in Vis
   # state when the launcher is a tracked checkout file we must never overwrite.
   if (( launcher_is_git_owned )); then
@@ -987,9 +1043,21 @@ update_native() {
     Linux) tui_library=libjsound.so ;;
     *) die "update: unsupported terminal client platform: $(uname -s)" ;;
   esac
+  # A component that is not selected leaves the installation, without a download.
+  if (( want_tui )); then
+    tui_check="$tui_library"
+  elif [[ -e "$native_dir/vis-tui" || -e "$native_dir/$tui_library" ]]; then
+    rm -f "$native_dir/vis-tui" "$native_dir/$tui_library" || \
+      die "update: cannot remove the terminal client from $native_dir"
+    say "removed the terminal client (not a selected component)"
+  fi
+  if (( ! want_web )) && [[ -e "$native_dir/vis-web" ]]; then
+    rm -rf "$native_dir/vis-web" || die "update: cannot remove the web app from $native_dir"
+    say "removed the web app (not a selected component)"
+  fi
   release_tag="${dl%/*}"
   release_tag="${release_tag##*/}"
-  if native_install_current "$native_dir" "$release_tag" "$track" "$web_dl" "$tui_library"; then
+  if native_install_current "$native_dir" "$release_tag" "$track" "$web_dl" "$tui_check"; then
     # Switching from source still releases the old JVM gateway before selecting native.
     if (( ! keep_gateway )) && [[ "$(runtime_effective)" != native ]]; then
       release_stale_gateway
@@ -1030,10 +1098,12 @@ update_native() {
   curl -fSL "$dl" -o "$archive" || exit 1
   vis_verify_asset "$checked" "$asset" "$archive"
   tar -xzf "$archive" -C "$unpack" || exit 1
-  say "downloading $tui_dl"
-  curl -fSL "$tui_dl" -o "$tui_archive" || exit 1
-  vis_verify_asset "$checked" "$tui_asset" "$tui_archive"
-  tar -xzf "$tui_archive" -C "$tui_unpack" || exit 1
+  if (( want_tui )); then
+    say "downloading $tui_dl"
+    curl -fSL "$tui_dl" -o "$tui_archive" || exit 1
+    vis_verify_asset "$checked" "$tui_asset" "$tui_archive"
+    tar -xzf "$tui_archive" -C "$tui_unpack" || exit 1
+  fi
   if [[ -n "$web_dl" ]]; then
     say "downloading $web_dl"
     curl -fSL "$web_dl" -o "$web_archive" || exit 1
@@ -1045,8 +1115,10 @@ update_native() {
   if [[ ! -d "$unpack/vis-agent-python/python" ]] || ! compgen -G "$unpack/vis-agent-python/libvispython.*" >/dev/null; then
     die "update: the release bundle is missing its Python runtime"
   fi
-  [[ -x "$tui_unpack/vis-tui" ]] || die "update: the release bundle is missing its terminal client"
-  [[ -s "$tui_unpack/$tui_library" ]] || die "update: the release bundle is missing its Java Sound library"
+  if (( want_tui )); then
+    [[ -x "$tui_unpack/vis-tui" ]] || die "update: the release bundle is missing its terminal client"
+    [[ -s "$tui_unpack/$tui_library" ]] || die "update: the release bundle is missing its Java Sound library"
+  fi
   [[ -z "$web_dl" || -f "$web_unpack/vis-web/index.html" ]] || die "update: the release web app bundle is missing its index.html"
   read -r native_version native_commit _native_metadata < "$unpack/vis-agent-native.build" || \
     die "update: invalid build stamp; native installation unchanged."
@@ -1068,9 +1140,11 @@ update_native() {
   fi
   mv -f "$unpack/vis-agent-native" "$native_dir/vis-agent-native"
   mv -f "$unpack/vis-agent-native.build" "$native_dir/vis-agent-native.build"
-  rm -f "$native_dir/libjsound.dylib" "$native_dir/libjsound.so"
-  mv -f "$tui_unpack/$tui_library" "$native_dir/$tui_library"
-  mv -f "$tui_unpack/vis-tui" "$native_dir/vis-tui"
+  if (( want_tui )); then
+    rm -f "$native_dir/libjsound.dylib" "$native_dir/libjsound.so"
+    mv -f "$tui_unpack/$tui_library" "$native_dir/$tui_library"
+    mv -f "$tui_unpack/vis-tui" "$native_dir/vis-tui"
+  fi
   # The embedded-CPython sidecar travels WITH the runtime it was built for: the
   # interpreter is a cdylib plus a vendored tree, never part of the binary.
   # Always clear the old one first, so a stale directory cannot outlive a
@@ -1094,12 +1168,15 @@ update_native() {
   fi
   rm -rf "$unpack" "$archive" "$tui_unpack" "$tui_archive" "$web_unpack" "$web_archive" "$sums"
   trap - EXIT
-  say "installed launcher + native runtime + Python + TUI${web_dl:+ + web app}: $native_version revision $native_commit ($track)"
+  local installed_parts="launcher + native runtime + Python"
+  if (( want_tui )); then installed_parts="$installed_parts + TUI"; fi
+  say "installed $installed_parts${web_dl:+ + web app}: $native_version revision $native_commit ($track)"
 }
 
 vis_update_usage() {
   cat >&2 <<'EOF'
 Usage: vis-agent update|upgrade [vX.Y.Z] [--track release|beta|dev] [--keep-gateway]
+                               [--components LIST]
          `upgrade` is an alias of `update`; both run exactly this command.
          --track NAME  release  newest complete stable native release (default)
                        beta     newest published native beta from green main CI
@@ -1109,10 +1186,16 @@ Usage: vis-agent update|upgrade [vX.Y.Z] [--track release|beta|dev] [--keep-gate
                        leave a running gateway alone. Otherwise an idle managed
                        gateway is released before replacing its old runtime.
                        Busy or user-owned gateways are never stopped.
+         --components LIST
+                       optional parts to install beside the engine and Python:
+                       tui, web and desktop separated by commas, all, or none.
+                       The default is tui,web. Each update keeps the last selection.
+                       A part that is not selected is removed; `vis-agent desktop`
+                       still downloads the desktop app on first use.
 
          Every update without --track selects release, even after beta or dev.
          A successful update records the selection for subsequent launches.
-         Native updates include the matching Python worker and terminal client.
+         Native updates include the matching Python worker and the selected components.
          Each download must match the SHA256SUMS of its release before it is unpacked.
          An installed desktop app of that track is refreshed too; none is installed for you.
          Existing managed source is pinned to the native build commit; Git is required.
@@ -1175,13 +1258,19 @@ release_stale_gateway() {
 }
 # One public selector; commit its state only after installation succeeds.
 vis_do_update() {
-  local target="" keep_gateway=0 track=release arg
+  local target="" keep_gateway=0 track=release arg components="" requested=""
   while (( $# )); do
     arg="$1"
     case "$arg" in
       --keep-gateway) keep_gateway=1 ;;
       --track) track="${2:-}"; [[ -n "$track" ]] || die "update: --track needs release, beta or dev"; shift ;;
       --track=*) track="${arg#*=}" ;;
+      --components)
+        requested="${2:-}"
+        [[ -n "$requested" ]] || die "update: --components needs a list" "Example: --components tui,web"
+        shift
+        ;;
+      --components=*) requested="${arg#*=}" ;;
       -h|--help) vis_update_usage; exit 0 ;;
       -*) die "update: unknown option $arg" "Run: vis-agent update --help" ;;
       latest|v[0-9]*|beta-*)
@@ -1207,6 +1296,13 @@ vis_do_update() {
         die "update: versions are available only on the release track"
       ;;
   esac
+  if [[ -n "$requested" ]]; then
+    components="$(vis_components_normalize "$requested")" || \
+      die "update: unknown components '$requested'" \
+          "Use none, all, or tui, web and desktop separated by commas."
+  else
+    components="$(vis_components_selected)"
+  fi
   mkdir -p "$vis_install_dir"
 
   if (( keep_gateway )); then
@@ -1219,13 +1315,15 @@ vis_do_update() {
       sync_wrapper_from_source "$managed_src"
       ;;
     release|beta)
-      update_native "${target:-latest}" "$track" "$keep_gateway"
+      update_native "${target:-latest}" "$track" "$keep_gateway" "$components"
       ;;
   esac
   printf '%s\n' "$track" > "$vis_track_file.tmp"
   mv -f "$vis_track_file.tmp" "$vis_track_file"
-  say "installed the $track track"
-  vis_update_desktop "$track"
+  printf '%s\n' "$components" > "$vis_components_file.tmp"
+  mv -f "$vis_components_file.tmp" "$vis_components_file"
+  say "installed the $track track (components: $components)"
+  vis_update_desktop "$track" "$components"
   exit 0
 }
 
@@ -1238,7 +1336,7 @@ vis_do_update() {
 vis_switch_usage() {
   cat >&2 <<'EOF'
 Usage: vis-agent switch list
-       vis-agent switch <identifier> [--keep-gateway]
+       vis-agent switch <identifier> [--keep-gateway] [--components LIST]
 
   list           Show the installed build and every identifier you can select.
   release        Newest complete stable native release.
@@ -1249,6 +1347,7 @@ Usage: vis-agent switch list
 
   A switch downloads the bundle it names and records the selection, so later
   launches use it. Use --keep-gateway to leave a running gateway alone.
+  --components selects the optional parts, as for vis-agent update.
 EOF
 }
 
@@ -1323,7 +1422,12 @@ vis_do_switch() {
     arg="$1"
     case "$arg" in
       -h|--help) vis_switch_usage; exit 0 ;;
-      --keep-gateway) rest+=("$arg") ;;
+      --keep-gateway|--components=*) rest+=("$arg") ;;
+      --components)
+        [[ $# -ge 2 ]] || die "switch: --components needs a list" "Example: --components tui,web"
+        rest+=("$arg" "$2")
+        shift
+        ;;
       -*) die "switch: unknown option $arg" "Run: vis-agent switch --help" ;;
       *)
         [[ -z "$identifier" ]] || die "switch: one identifier at a time" \
@@ -1680,19 +1784,29 @@ vis_do_desktop() {
 # refresh that cannot finish keeps both the installed app and the successful
 # engine update.
 vis_update_desktop() {
-  local track="$1" desktop_dir installed version
+  local track="$1" components="${2:-}" desktop_dir installed version
   # Dev desktops are rebuilt from the selected source on every launch.
   [[ "$track" != dev ]] || return 0
   vis_desktop_platform "$(uname -s)" "$(uname -m)" "$track" || return 0
   installed="$(read_state "$desktop_dir/current")"
-  vis_desktop_version_valid "$installed" || return 0
+  if ! vis_desktop_version_valid "$installed"; then
+    # Only a selected desktop component installs a new app.
+    vis_components_has "$components" desktop || return 0
+    installed=""
+  fi
   if ! vis_fetch_desktop "$track" "$desktop_dir" "$desktop_platform" "$desktop_extension" \
     "$desktop_executable"; then
-    warn "desktop: kept the installed app $installed"
+    if [[ -n "$installed" ]]; then
+      warn "desktop: kept the installed app $installed"
+    else
+      warn "desktop: the desktop app was not installed; vis-agent desktop tries again"
+    fi
     return 0
   fi
   version="$(read_state "$desktop_dir/current")"
-  if [[ "$version" == "$installed" ]]; then
+  if [[ -z "$installed" ]]; then
+    say "installed the desktop app: $version"
+  elif [[ "$version" == "$installed" ]]; then
     say "desktop app is current: $version"
   else
     say "updated the desktop app: $installed → $version"
@@ -1837,8 +1951,12 @@ if (( tui_requested )) && [[ "$runtime" == native ]]; then
     set -- gateway tui -- "$tui_runtime" "-Duser.home=${HOME:-$vis_home}" "$@"
   fi
   if [[ -z "$tui_runtime" ]]; then
-    die "the native terminal client is not installed" \
-        "Run: vis-agent update" "For JVM development: vis-agent update --track dev"
+    if vis_components_has "$(vis_components_selected)" tui; then
+      die "the native terminal client is not installed" \
+          "Run: vis-agent update" "For JVM development: vis-agent update --track dev"
+    fi
+    die "the terminal client is not a selected component" \
+        "Add it: vis-agent update --components $(vis_components_with tui)"
   fi
 fi
 

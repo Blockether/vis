@@ -88,6 +88,33 @@ has no bundle for your platform, the installation stops. It never falls back to 
 latest release. A version is always a stable release, so you cannot add `--track beta`
 or `--track dev`.
 
+### Choose what to install
+
+By default the installer adds the terminal client (TUI) and the web app. If you use
+only the `vis-agent` command line, for example on a server or in CI, install less
+with `--components`:
+
+```bash
+# Only the command line, the engine and Python:
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --components none
+# The TUI, without the web app:
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --components tui
+# Everything, and the desktop app now:
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | VIS_COMPONENTS=all bash
+```
+
+| Component | What it adds |
+| --- | --- |
+| `tui` | The terminal client for `vis-agent tui`. |
+| `web` | The web app for `vis-agent web`. |
+| `desktop` | The desktop app, downloaded during the installation. |
+
+The engine and the Python runtime are always installed. Use `none`, `all` or a list
+separated by commas. Vis saves your selection, and `vis-agent update` keeps it. To
+change it later, run `vis-agent update --components tui,web`. An update removes the
+parts that you do not select. Without `desktop`, `vis-agent desktop` still downloads
+the desktop app the first time that you open it.
+
 ### Verify what you download
 
 Each release publishes `SHA256SUMS`, with the SHA-256 hash of each of its assets.

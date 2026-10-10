@@ -243,7 +243,7 @@
   "Exercise installed commands with local release archives; Git/JVM are denied by default."
   [{:keys [installer? installed? missing-worker? missing-tui? missing-tui-library? web? broken-web?
            stale-web? track previous-track prepare! build-commit extra-env target desktop
-           desktop-fail? checksums]} f]
+            desktop-fail? checksums extra-args]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -449,7 +449,10 @@
                         (into ["--track" track])
 
                         target
-                        (conj target))
+                        (conj target)
+
+                        extra-args
+                        (into extra-args))
                       env)]
 
         (f (assoc result
@@ -725,7 +728,83 @@
                                      (fn [{:keys [exit output native]}]
                                        (expect (not (zero? exit)) output)
                                        (expect (str/includes? (slurp native) "old-runtime")
-                                               output))))))
+                                               output)))))
+  (it "installs only the command line, the engine and Python with --components none"
+      (with-native-install-fixture
+        {:installer? true :web? true :extra-args ["--components" "none"]}
+        (fn [{:keys [exit output bin launcher env urls]}]
+          (expect (zero? exit) output)
+          (expect (not (str/includes? urls "vis-tui")) urls)
+          (expect (not (str/includes? urls "vis-web")) urls)
+          (expect (.isDirectory (io/file bin "vis-agent-python/python")))
+          (expect (not (.exists (io/file bin "vis-tui"))))
+          (expect (not (.exists (io/file bin "libjsound.so"))))
+          (expect (not (.exists (io/file bin "vis-web"))))
+          (expect (= "none\n" (slurp (io/file (get env "VIS_HOME") "install" "components"))))
+          (expect (str/includes? output "Run: vis-agent help\n") output)
+          ;; Only the fixture tools, so a terminal client on the host PATH stays out.
+          (let [path
+                (str (.getParent bin) "/../tools:" bin ":/usr/bin:/bin")
+
+                {:keys [exit output]}
+                (run-bash ["bash" (.getAbsolutePath launcher) "tui"] (assoc env "PATH" path))]
+
+            (expect (not (zero? exit)) output)
+            (expect (str/includes? output "the terminal client is not a selected component") output)
+            (expect (str/includes? output "Add it: vis-agent update --components tui") output)))))
+  (it
+    "removes a deselected component without a download and keeps the selection"
+    (with-native-install-fixture
+      {:installed? true :web? true}
+      (fn [{:keys [exit output bin launcher env]}]
+        (expect (zero? exit) output)
+        (expect (.canExecute (io/file bin "vis-tui")))
+        (let [urls-file
+              (io/file (get env "VIS_TEST_URLS"))
+
+              before
+              (slurp urls-file)
+
+              {:keys [exit output]}
+              (run-bash ["bash" (.getAbsolutePath launcher) "update" "--keep-gateway" "--components"
+                         "web"]
+                        env)]
+
+          (expect (zero? exit) output)
+          (expect (str/includes? output "removed the terminal client") output)
+          (expect (not (str/includes? (subs (slurp urls-file) (count before)) "vis-tui")))
+          (expect (not (.exists (io/file bin "vis-tui"))))
+          (expect (not (.exists (io/file bin "libjsound.so"))))
+          (expect (= "web-app" (slurp (io/file bin "vis-web/index.html"))))
+          (spit (io/file bin "vis-agent-native.build") "9.9.8 abc123 release now\n")
+          (let [{:keys [exit output]}
+                (run-bash ["bash" (.getAbsolutePath launcher) "update" "--keep-gateway"] env)
+
+                urls
+                (subs (slurp urls-file) (count before))]
+
+            (expect (zero? exit) output)
+            (expect (str/includes? output "components: web") output)
+            (expect (str/includes? urls "vis-agent-linux-x64.tar.gz") urls)
+            (expect (not (str/includes? urls "vis-tui")) urls)
+            (expect (not (.exists (io/file bin "vis-tui")))))))))
+  (it "downloads the desktop app now when desktop is a selected component"
+      (with-native-install-fixture
+        {:installed? true :extra-args ["--components" "tui,desktop"]}
+        (fn [{:keys [exit output desktop urls]}]
+          (expect (zero? exit) output)
+          (expect (str/includes? output "installed the desktop app: 9.9.9") output)
+          (expect (str/includes? urls "vis-companion-9.9.9-linux-x64.AppImage") urls)
+          (expect (= "9.9.9\n" (slurp (io/file desktop "current")))))))
+  (it "rejects an unknown component before any download"
+      (doseq [installer? [true false]]
+        (with-native-install-fixture
+          {:installer? installer? :installed? true :extra-args ["--components" "tui,desk"]}
+          (fn [{:keys [exit output urls native]}]
+            (expect (not (zero? exit)) output)
+            (expect (str/includes? output "unknown components 'tui,desk'") output)
+            (expect (not (str/includes? urls "tar.gz")) urls)
+            (expect (str/includes? (slurp native) "old-runtime") output))))))
 
 ;; Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: source update
 ;; replaced the runtime before asking its protocol-2 gateway to stop, then labelled a
