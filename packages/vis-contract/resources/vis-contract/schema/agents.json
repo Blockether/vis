@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/agents.json",
   "$ref": "#/$defs/agent",
-  "x-vis-max-team-children": 32,
-  "x-vis-max-active-children": 8,
+  "x-vis-max-team-children": 128,
+  "x-vis-max-active-children": 16,
   "$comment": "Child-count limits are enforced against persisted team and leader state, not one agent payload.",
   "$defs": {
     "spawn": {
@@ -26,8 +26,8 @@
         "iteration_budget": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 200,
-          "default": 32
+          "maximum": 600,
+          "default": 64
         },
         "allowed_models": {
           "type": "array",

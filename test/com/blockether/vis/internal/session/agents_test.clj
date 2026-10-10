@@ -36,14 +36,14 @@
 
         (expect (= agents/default-iterations
                    (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"])
-                   32))
+                   64))
         (expect
           (= agents/max-depth (get-in schema ["$defs" "agent" "properties" "depth" "maximum"]) 2))
-        (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 32))
-        (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 8))
+        (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 128))
+        (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 16))
         (expect (document/valid? "agents" agent))
         (expect (not (document/valid? "agents" (assoc agent "depth" 3))))
-        (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 201))))
+        (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
         (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
         (expect
           (not (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8193 "x"))}))))))

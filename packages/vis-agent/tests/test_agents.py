@@ -164,7 +164,7 @@ def test_group_members_are_not_the_managed_team():
     [
         {"task": " "},
         {"task": "x", "iteration_budget": 0},
-        {"task": "x", "iteration_budget": 201},
+        {"task": "x", "iteration_budget": 601},
         {"task": "x", "model": "small"},
         {"task": "x", "allowed_models": []},
     ],
@@ -275,7 +275,7 @@ def test_empty_team_and_default_spawn_and_self_route():
             if "/agents" in path and method == "POST"
         ]
         assert bodies == [
-            {"task": "Check the contract", "iteration_budget": 32},
+            {"task": "Check the contract"},
             {"model": "small", "provider": "p"},
         ]
 

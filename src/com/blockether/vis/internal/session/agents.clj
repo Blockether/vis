@@ -204,8 +204,8 @@
    concrete goal, scope and acceptance criteria. The child gets a fresh runtime and shares the
    checkout, so it is not isolated. A safe model checkpoint is required.
 
-   Optional arguments are a provider/model pair, allowed_models, iteration_budget (default 32, max
-   200) and a retry key. Limits: depth 2, 32 children per task and 8 active. Reusing a key with
+   Optional arguments are a provider/model pair, allowed_models, iteration_budget (default 64, max
+   600) and a retry key. Limits: depth 2, 128 children per task and 16 active. Reusing a key with
    different inputs fails. Inspect results with council.subagents and Council."
   ([env task] (spawn env task {}))
   ([env task opts] (tool-result env :spawn (assoc (walk/keywordize-keys opts) :task task))))

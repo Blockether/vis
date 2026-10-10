@@ -351,3 +351,50 @@
                       (scalar ds (str "SELECT " column " FROM " table " WHERE id = 'i1'"))))
            (expect (not (contains? (columns-of ds table) (str column "_vis_superseded"))))
            (finally (.delete file))))))
+
+(defn- agent-row
+  "One managed-agent row with only the columns V1 makes NOT NULL."
+  [^String id ^long budget]
+  (str "INSERT INTO session_agent"
+       " (session_id, parent_id, leader_id, team_id, task, depth, iteration_budget,"
+       " inherited_turns, spawn_key, spawn_fingerprint, checkpoint, created_at)"
+       " VALUES ('"
+       id
+       "', 'p', 'p', 't', 'Check', 1, "
+       budget
+       ", 0, '"
+       id
+       "', 'f', x'00', 1)"))
+
+;; Regression: the subagent iteration budget limit rose from 200 to 600. The column
+;; had no DEFAULT, so the realign pass skipped it, and a store created before the
+;; change refused every spawn with a budget above 200.
+(defdescribe
+  agent-budget-realign-test
+  (it
+    "realigns the subagent budget limit in an existing store, keeping its rows"
+    (let
+      [[^java.io.File file ds]
+       (temp-ds)
+
+       old-table
+       (->
+         (re-find #"(?s)CREATE TABLE session_agent \(.*?\n\);" (v1-sql))
+         (str/replace
+           #"iteration_budget INTEGER NOT NULL DEFAULT 64 CHECK \(iteration_budget BETWEEN 1 AND 600\)"
+           "iteration_budget INTEGER NOT NULL CHECK (iteration_budget BETWEEN 1 AND 200)"))]
+
+      (try (migration/migrate! ds [migration-dir])
+           ;; the shape an older V1 left behind: the same table, budget capped at 200
+           (exec! ds "DROP TABLE session_agent")
+           (exec! ds old-table)
+           (exec! ds (agent-row "a1" 32))
+           (expect (some? (refused ds (agent-row "a2" 600))))
+           (migration/migrate! ds [migration-dir])
+           (expect (nil? (refused ds (agent-row "a2" 600))))
+           (expect (some? (refused ds (agent-row "a3" 601))))
+           (expect (= 2 (row-count ds "session_agent")))
+           (expect
+             (= "32"
+                (scalar ds "SELECT iteration_budget FROM session_agent WHERE session_id = 'a1'")))
+           (finally (.delete file))))))

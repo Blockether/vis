@@ -233,7 +233,7 @@ class Council:
         *,
         provider: str | None = None,
         model: str | None = None,
-        iteration_budget: int = 32,
+        iteration_budget: int | None = None,
         allowed_models: list[dict[str, str]] | None = None,
         key: str | None = None,
     ) -> Subagent:
@@ -246,12 +246,13 @@ class Council:
         it with different input is rejected. This is not an ordinary independent fork,
         and it does not grant broader permissions.
         """
-        body = {"task": task, "iteration_budget": iteration_budget}
+        body = {"task": task}
         body.update(
             {
                 name: value
                 for name, value in {
                     "provider": provider,
+                    "iteration_budget": iteration_budget,
                     "model": model,
                     "allowed_models": allowed_models,
                     "key": key,
