@@ -924,6 +924,37 @@
                                 (#'main/parse-run-args ["--json-schema" "{}" "--code" "hi"])))))))
 
 (defdescribe
+  launch-options-test
+  (let [launch (fn [args env]
+                 (#'main/check-launch-options (#'main/parse-run-args args) env))]
+    (it "keeps every tier and extension without flags or environment"
+        (expect (= {:prompt "task"} (launch ["task"] {}))))
+    (it "turns --no-global, --no-project and --tepro into source lists"
+        (expect (= ["project"] (:sources (launch ["--no-global" "task"] {}))))
+        (expect (= ["global"] (:sources (launch ["--no-project" "task"] {}))))
+        (expect (= {:sources [] :json-schema "{}" :prompt "task"}
+                   (launch ["--tepro" "--json-schema" "{}" "task"] {}))))
+    (it "splits --extensions and reads none as an empty list"
+        (expect (= ["gh" "clj"] (:extensions (launch ["--extensions" "gh, clj" "task"] {}))))
+        (expect (= ["-spel"] (:extensions (launch ["--extensions" "-spel" "task"] {}))))
+        (expect (= [] (:extensions (launch ["--extensions" "none" "task"] {})))))
+    (it "still refuses --extensions followed by a long flag"
+        (expect (= ["--extensions needs a value (got --json)"]
+                   (:flag-errors (launch ["--extensions" "--json" "task"] {})))))
+    (it "reads VIS_SOURCES and VIS_EXTENSIONS without a flag, and a flag wins"
+        (expect (= {:sources ["project"] :extensions ["gh"] :prompt "task"}
+                   (launch ["task"] {"VIS_SOURCES" "project" "VIS_EXTENSIONS" "gh"})))
+        (expect (= ["global"]
+                   (:sources (launch ["--no-project" "task"] {"VIS_SOURCES" "project"})))))
+    (it "refuses an unknown tier"
+        (expect (= ["Unknown configuration source: home. Use global or project."]
+                   (:flag-errors (launch ["task"] {"VIS_SOURCES" "home"})))))
+    (it "refuses the flags with --session-id and ignores the variables there"
+        (expect (= 1 (count (:flag-errors (launch ["--session-id" "abc" "--tepro" "task"] {})))))
+        (expect (= {:session-id "abc" :persist? true :prompt "task"}
+                   (launch ["--session-id" "abc" "task"] {"VIS_SOURCES" "project"}))))))
+
+(defdescribe
   json-schema-arg-test
   (it "reads an inline schema and a schema file"
       (expect (= city-schema

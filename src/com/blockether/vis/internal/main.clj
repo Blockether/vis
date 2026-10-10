@@ -50,6 +50,7 @@
     [com.blockether.vis.internal.provider.cli :as provider-cli]
     [com.blockether.vis.internal.session.cli :as session-cli]
     [com.blockether.vis.internal.workspace.cli :as workspace-cli]
+    [com.blockether.vis.internal.workspace.core :as workspace]
     [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
     [com.blockether.vis-python-runtime :as pyrt]
     [com.blockether.vis.internal.python.env :as env]
@@ -726,7 +727,7 @@
    `(sessions/by-channel :cli)`."
   [agent-def prompt &
    [{:keys [spec model provider reasoning-effort on-chunk debug? config db persist? no-persist?
-            session-id json-schema]
+            session-id json-schema sources extensions]
      :as _opts}]]
   (let [json-compiled
         ;; The CLI checked its schema already. A direct caller gets the same
@@ -826,8 +827,12 @@
       ;; off it to drop the candidate propose-and-STOP-for-approval gate —
       ;; there is no human here to approve, so a candidate plan would stall.
       (let [env (loop-env/create-environment (router-for-run cfg local-router?)
-                                             {:db (or db :memory) :channel :cli})]
-        (try (let [submit! (fn [_request turn-messages]
+                                             {:db (or db :memory)
+                                              :channel :cli
+                                              :sources (workspace/normalize-config-sources
+                                                         sources)})]
+        (try (loop-env/turn-off-extensions! env (loop-env/check-extension-selection! extensions))
+             (let [submit! (fn [_request turn-messages]
                              (let [result (turn/turn! env turn-messages q-opts)]
                                (cond-> {:session-id nil
                                         :content (content/answer-content (:answer result))
@@ -892,7 +897,12 @@
               ;; `usable-existing-title` and SUPPRESS auto-titling,
               ;; leaving every persisted CLI session stuck on the
               ;; raw prompt text.
-              (gateway-state/create-session! {:channel :cli}))
+              (gateway-state/create-session! (cond-> {:channel :cli}
+                                               (some? sources)
+                                               (assoc :sources sources)
+
+                                               (some? extensions)
+                                               (assoc :extensions extensions))))
 
             session-id
             (or resolved-session-id (get created-session "id"))]
@@ -1464,7 +1474,9 @@
    "--debug" :debug?
    "--verbose" :debug?
    "-v" :debug?
-   "--persist" :persist?})
+   "--persist" :persist?
+   "--no-global" :no-global?
+   "--no-project" :no-project?})
 
 (def ^:private run-value-flags
   "Root one-shot flags that consume the NEXT token as their value."
@@ -1475,7 +1487,8 @@
    "--name" :agent-name
    "--db" :db
    "--session-id" :session-id
-   "--json-schema" :json-schema})
+   "--json-schema" :json-schema
+   "--extensions" :extensions})
 
 (defn- option-token?
   "True for a bare token SHAPED like a flag (`-v`, `--json`, `--full-trace-stream`).
@@ -1539,6 +1552,61 @@
         err
         (update :flag-errors (fnil conj []) err)))))
 
+(defn- comma-names
+  "Split a comma-separated flag value. The single name `none` gives an empty list."
+  [s]
+  (let [names (into [] (comp (map str/trim) (remove str/blank?)) (str/split (str s) #","))]
+    (if (= ["none"] names) [] names)))
+
+(defn- check-launch-options
+  "Turn the source and extension flags into `:sources` and `:extensions` name lists.
+   Without a flag, read `VIS_SOURCES` and `VIS_EXTENSIONS` from `env`. A saved
+   session keeps the choice that it started with, so the flags do not work with
+   `--session-id`, and `--session-id` ignores the variables."
+  [{:keys [no-global? no-project? extensions session-id] :as opts} env]
+  (let [env-value
+        (fn [k]
+          (let [v (get env k)]
+            (when-not (str/blank? v) v)))
+
+        new-session?
+        (nil? session-id)
+
+        sources
+        (cond (or no-global? no-project?) (cond-> []
+                                            (not no-global?)
+                                            (conj "global")
+
+                                            (not no-project?)
+                                            (conj "project"))
+              (and new-session? (env-value "VIS_SOURCES")) (comma-names (env-value "VIS_SOURCES")))
+
+        extensions
+        (some-> (or extensions (when new-session? (env-value "VIS_EXTENSIONS")))
+                comma-names)
+
+        source-error
+        (try (workspace/normalize-config-sources sources)
+             nil
+             (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+
+    (cond-> (dissoc opts :no-global? :no-project? :extensions)
+      sources
+      (assoc :sources sources)
+
+      extensions
+      (assoc :extensions extensions)
+
+      (and (not new-session?) (or no-global? no-project? (:extensions opts)))
+      (update :flag-errors
+              (fnil conj [])
+              (str
+                "--no-global, --no-project, --tepro and --extensions apply only to a new session;"
+                " do not use them with --session-id"))
+
+      source-error
+      (update :flag-errors (fnil conj []) source-error))))
+
 (defn- parse-run-args
   "Parse root one-shot run arguments into {:prompt str :json? bool ...}.
 
@@ -1571,15 +1639,25 @@
               (contains? #{"--help" "-h"} arg) (assoc opts
                                                  :help? true
                                                  :prompt "")
+              ;; `--tepro` is `--no-global` and `--no-project` together.
+              (= "--tepro" arg) (recur more
+                                       (assoc opts
+                                         :no-global? true
+                                         :no-project? true)
+                                       prompt-parts)
               (contains? run-boolean-flags arg)
               (recur more (assoc opts (run-boolean-flags arg) true) prompt-parts)
               (contains? run-value-flags arg)
               ;; A value flag with no usable value used to vanish: `--model ""`
               ;; ran the DEFAULT model, and `--model --json "task"` ran a model
               ;; literally named "--json". Blank, `--`, and flag-shaped tokens
-              ;; are all "you forgot the value".
+              ;; are all "you forgot the value". `--extensions -spel` is an
+              ;; exclusion list, so one leading dash is a value there.
               (let [v (first more)]
-                (if (or (str/blank? v) (= "--" v) (option-token? v))
+                (if (or (str/blank? v)
+                        (= "--" v)
+                        (and (option-token? v)
+                             (not (and (= "--extensions" arg) (not (str/starts-with? v "--"))))))
                   (recur more
                          (update
                            opts
@@ -1644,6 +1722,14 @@
   (commandline/stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
   (commandline/stdout! "                       resumable :cli session. Without it a run is")
   (commandline/stdout! "                       ephemeral: no resume, no session row on disk.")
+  (commandline/stdout!
+    "  --no-global          Skip ~/.vis config, extensions, AGENTS.md and skills.")
+  (commandline/stdout!
+    "  --no-project         Skip the project config, extensions, AGENTS.md and skills.")
+  (commandline/stdout! "  --tepro              Both --no-global and --no-project. Providers stay.")
+  (commandline/stdout! "  --extensions LIST    Use only these extensions (gh,clj), all but these")
+  (commandline/stdout! "                       (-spel,-uplink) or none. Env: VIS_EXTENSIONS,")
+  (commandline/stdout! "                       VIS_SOURCES=global|project|none.")
   (commandline/stdout! "  --                   End flag parsing: every later word is prompt")
   (commandline/stdout! "                       text, dashes and all.")
   (commandline/stdout! "")
@@ -1657,7 +1743,9 @@
     "  vis-agent --toggles reasoning_level=deep \"Run the test suite and fix failures\"")
   (commandline/stdout! "  vis-agent --toggles reasoning_level=balanced \"Refactor carefully\"")
   (commandline/stdout!
-    "  vis-agent --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
+    "  vis-agent --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\"")
+  (commandline/stdout!
+    "  vis-agent --tepro --json-schema @city.json \"Name the capital of Poland\""))
 
 (defn- parse-toggle-overrides
   "Parse a `--toggles` value like
@@ -1800,8 +1888,8 @@
         (doseq [line (:schema-errors result)]
           (commandline/stderr! (str "  " line))))))
 
-(defn- cli-run!
-  "Root one-shot run handler. `_parsed` is unused - we re-parse the residual
+(defn- run-one-shot!
+  "Run the root one-shot command. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
@@ -1814,7 +1902,8 @@
         (-> residual
             parse-run-args
             check-run-conflicts
-            check-db-target)]
+            check-db-target
+            (check-launch-options (System/getenv)))]
     ;; A flag typo used to be smuggled into the prompt: `vis-agent --modle x "task"`
     ;; ran with the DEFAULT model and never said so. Refuse instead, and name the
     ;; escape hatch for prompts that really do start with dashes.
@@ -1826,6 +1915,12 @@
         (commandline/stderr! "  Or make it the prompt text:   vis-agent -- <text>"))
       (exit-process! 2))
     (when (or help? (str/blank? prompt)) (print-run-usage!) (exit-process! 0))
+    ;; Check the extension list before any provider spend: a typo is a usage error.
+    (when (some? (:extensions opts))
+      (try (loop-env/check-extension-selection! (:extensions opts))
+           (catch clojure.lang.ExceptionInfo e
+             (commandline/stderr! (str "vis-agent: " (ex-message e)))
+             (exit-process! 2))))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
     ;; Otherwise `vis-agent ... > out.txt` leaves bold/italic ANSI markers in
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
@@ -1907,6 +2002,17 @@
                         (commandline/stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents)
       (when (pos? (long exit-code)) (exit-process! exit-code)))))
+
+(defn- cli-run!
+  "Root one-shot run handler. Bind the configuration tiers that the flags choose
+   before Vis reads any configuration."
+  [parsed residual]
+  (binding [workspace/*config-sources*
+            (try (workspace/normalize-config-sources
+                   (:sources (check-launch-options (parse-run-args residual) (System/getenv))))
+                 ;; `run-one-shot!` reports the bad value.
+                 (catch clojure.lang.ExceptionInfo _ nil))]
+    (run-one-shot! parsed residual)))
 
 ;;; ── `vis-agent doctor` ────────────────────────────────────────────────────────
 
@@ -2825,6 +2931,10 @@
      (help-row "--db PATH|:memory" "SQLite DB path or in-memory DB.")
      (help-row "--session-id ID" "Continue an existing persisted session.")
      (help-row "--persist" "Persist as a :cli session.")
+     (help-row "--no-global" "Skip ~/.vis config, extensions, AGENTS.md and skills.")
+     (help-row "--no-project" "Skip project config, extensions, AGENTS.md and skills.")
+     (help-row "--tepro" "Both --no-global and --no-project. Providers stay.")
+     (help-row "--extensions LIST" "Only these (gh,clj), all but these (-spel) or none.")
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
      (help-row "--help, -h" "Show help.") "" "RUNTIME"

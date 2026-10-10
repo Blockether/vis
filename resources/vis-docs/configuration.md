@@ -119,7 +119,7 @@ environment:
 
 ### Leave out global or project configuration
 
-Start the terminal with a flag when a session must not use part of your setup:
+Start the terminal or a one-shot run with a flag when a session must not use part of your setup:
 
 ```bash
 vis-agent tui --no-global                 # only the project configuration
@@ -139,8 +139,15 @@ vis-agent tui --extensions none           # no optional extension
 Providers, sign-in data and your default and fallback models stay in every case. Without them, a
 session has no model.
 
-The flags apply to each new session that this terminal opens. A saved session keeps the choice that
-it started with. Do not combine the flags with `--session-id`, `--resume` or `--continue`.
+The same flags work for a one-shot run, also with `--json-schema`:
+
+```bash
+vis-agent --tepro --json-schema @city.json "Name the capital of Poland"
+vis-agent --no-global --extensions -spel --persist "Fix the failing test"
+```
+
+In the terminal, the flags apply to each new session that it opens. A saved session keeps the choice
+that it started with. Do not combine the flags with `--session-id`, `--resume` or `--continue`.
 
 An extension name is the name in its manifest. A list of names keeps only those extensions. A list
 of `-names` turns only those off. Do not mix the two forms in one list. Vis refuses an unknown name

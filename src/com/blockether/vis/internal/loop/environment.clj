@@ -1560,7 +1560,10 @@
   (when selection
     (python-extensions/ensure-python-extensions-loaded!)
     (let [registered
-          (extension/registered-extensions)
+          ;; An extension from a tier that the session does not read is not available.
+          (filter #(let [scope (:ext/source-scope %)] (or (nil? scope)
+                                                          (workspace/source-enabled? scope)))
+                  (extension/registered-extensions))
 
           by-name
           (into {} (map (juxt :ext/name identity)) registered)
@@ -1591,7 +1594,13 @@
         (remove #(contains? keep-names (:ext/name %)) optional)
         (map by-name (:drop selection))))))
 
-(defn- turn-off-extensions!
+(defn check-extension-selection!
+  "Validate an extension selection against the extensions of the bound project.
+   Return the extensions that it turns off. Throw a 400 error for a bad selection."
+  [extensions]
+  (doall (extensions-to-turn-off (extension-selection extensions))))
+
+(defn turn-off-extensions!
   "Set each extension in `extensions` to Off for the new session of `env`."
   [env extensions]
   (when (seq extensions)
@@ -1640,7 +1649,7 @@
 
       (python-extensions/prepare-project! (workspace/cwd))
       (let [turned-off
-            (when-not id (doall (extensions-to-turn-off (extension-selection extensions))))
+            (when-not id (check-extension-selection! extensions))
 
             env
             (create-environment (loop-router/get-router)
