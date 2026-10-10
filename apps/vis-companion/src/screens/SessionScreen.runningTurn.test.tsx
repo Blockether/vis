@@ -5,7 +5,7 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { renderSessionScreen, sessionFixture } from './session-screen-harness';
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
 import { reduceRunningTurnEvent } from '../lib/running-turn';
-import type { SseEvent } from '../lib/types';
+import type { SseEvent, TranscriptTurn } from '../lib/types';
 
 describe('turn header metadata', () => {
   it.each([false, true])('keeps the canonical position and datetime when live=%s', async (live) => {
@@ -764,5 +764,87 @@ describe('a windowed running turn', () => {
     );
     expect(screen.queryByRole('button', { name: /earlier step/ })).toBeNull();
     expect(turnTrace).not.toHaveBeenCalled();
+  });
+});
+
+describe('a queued turn that starts before the finished row lands', () => {
+  // The next turn (a queue drain, an automation, a Council wake) starts in the same
+  // breath as the terminal frame. Its bubble used to replace the finished one at once,
+  // so the finished turn left the transcript until its durable row was read, and the
+  // reader at the end of the page was thrown up to the turn before it.
+  it('keeps the finished turn on screen until its row replaces it', async () => {
+    const listeners = new Set<(event: Record<string, unknown>) => void>();
+    let persisted: TranscriptTurn[] = [];
+    const finished = {
+      id: 't-done',
+      request: 'the first question',
+      answer: 'The first answer.',
+      iterations: [],
+      startedAt: Date.now(),
+      status: 'running' as const,
+    };
+
+    renderSessionScreen({
+      session: sessionFixture({ status: 'running', live: true, current_turn_id: 't-done' }),
+      client: {
+        cachedRunningTurn: () => ({ turn: finished, seq: 1 }),
+        cachedTranscript: () => [],
+        transcript: async () => persisted,
+      },
+      subscriptions: {
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+        subscribeSession: (_sid: string, on: (event: Record<string, unknown>) => void) => {
+          listeners.add(on);
+          return () => listeners.delete(on);
+        },
+      },
+    });
+
+    await waitFor(() => expect(listeners.size).toBeGreaterThanOrEqual(1));
+    expect(await screen.findByText('The first answer.')).toBeInTheDocument();
+    act(() => {
+      for (const listener of listeners) {
+        listener({
+          type: 'turn.completed',
+          turn_id: 't-done',
+          seq: 2,
+          content: [{ id: 'answer', type: 'prose', markdown: 'The first answer.' }],
+        });
+        listener({
+          type: 'turn.started',
+          turn_id: 't-next',
+          request: 'the queued question',
+          seq: 3,
+        });
+      }
+    });
+
+    expect(await screen.findByText('the queued question')).toBeInTheDocument();
+    expect(screen.getByText('The first answer.')).toBeInTheDocument();
+    expect(screen.getByText('the first question')).toBeInTheDocument();
+    expect(document.querySelector('[data-settling][data-turn-id="t-done"]')).not.toBeNull();
+
+    persisted = [
+      {
+        turn_id: 't-done',
+        position: 1,
+        request: 'the first question',
+        status: 'completed',
+        created_at: Date.now(),
+        completed_at: Date.now(),
+        content: [{ id: 'answer', type: 'prose', markdown: 'The first answer.' }],
+        iterations: [],
+      } as TranscriptTurn,
+    ];
+    // The row replaces the retained copy: the finished turn is painted once.
+    await waitFor(() => expect(document.querySelector('[data-settling]')).toBeNull(), {
+      timeout: 3000,
+    });
+    expect(document.querySelectorAll('[data-turn-id="t-done"]')).toHaveLength(1);
+    expect(screen.getAllByText('The first answer.')).toHaveLength(1);
+    expect(screen.getByText('the queued question')).toBeInTheDocument();
   });
 });

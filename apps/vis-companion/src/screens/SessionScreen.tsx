@@ -288,6 +288,64 @@ function settledTurnRow(
   return row && isSettledRow(row) ? row : null;
 }
 
+/** The status a terminal frame gives the turn it ends. */
+function terminalStatus(type: string): RunningTurn['status'] {
+  if (type === 'turn.failed') return 'failed';
+  if (type === 'turn.cancelled') return 'cancelled';
+  return 'completed';
+}
+
+/**
+ * The finished turn whose bubble the NEXT turn just took, while its durable row has
+ * not landed yet. A queue drain, an automation or a Council wake starts that turn in
+ * the same breath as the terminal frame, and the row is a round trip behind it.
+ * Without this copy the whole finished turn left the transcript for that round
+ * trip: the page shrank under a reader at its end and threw them up to the turn
+ * before it.
+ */
+function retiredTurnAwaitingRow(
+  previous: RunningTurn | null,
+  next: RunningTurn | null,
+  batch: readonly SseEvent[],
+  turns: readonly TranscriptTurn[],
+): RunningTurn | null {
+  if (!previous?.id || !next || next.id === previous.id) return null;
+  if (settledTurnRow(turns, previous.id)) return null;
+  let terminal: SseEvent | undefined;
+  for (let index = batch.length - 1; index >= 0 && !terminal; index -= 1) {
+    const event = batch[index];
+    if (TERMINAL_EVENTS.has(event.type) && eventString(event, 'turn_id') === previous.id) {
+      terminal = event;
+    }
+  }
+  // Without its terminal frame the turn is not over: it is not ours to keep.
+  if (!terminal) return previous.status === 'running' ? null : previous;
+  const content = Array.isArray(terminal.content) ? (terminal.content as ContentBlock[]) : [];
+  return {
+    ...previous,
+    status: terminalStatus(terminal.type),
+    progress: undefined,
+    cancelling: false,
+    content: content.length ? content : previous.content,
+  };
+}
+
+/** The transcript shape of a running-turn bubble, for the message that paints it. */
+function runningTurnAsTranscriptTurn(turn: RunningTurn): TranscriptTurn {
+  return {
+    turn_id: turn.id ?? 'live',
+    position: turn.position,
+    created_at: turn.createdAt ?? turn.startedAt,
+    request: turn.request,
+    status: turn.status,
+    iterations: turn.iterations,
+    iterations_offset: turn.iterationsOffset,
+    content:
+      turn.content ??
+      (turn.answer ? [{ id: 'live-answer', type: 'prose', markdown: turn.answer }] : []),
+  };
+}
+
 function compactLabel(value: string, fallback: string): string {
   const label = value.split('\n', 1)[0].trim();
   if (!label) return fallback;
@@ -788,6 +846,10 @@ export function SessionScreen({
   const [cancelledTurnSnapshots, setCancelledTurnSnapshots] = useState<
     ReadonlyMap<string, RunningTurn>
   >(() => cancelledTurnSeed(client, sid));
+  // A finished turn painted from its bubble until its durable row lands. See
+  // `retiredTurnAwaitingRow`. The ref lets `settle` hand it over without a stale read.
+  const [settlingTurn, setSettlingTurn] = useState<RunningTurn | null>(null);
+  const settlingTurnRef = useRef<RunningTurn | null>(null);
   const [queued, setQueued] = useState<QueuedTurn[]>(() => client.cachedQueuedTurns(sid) ?? []);
   // Queue reads can race newer live removals. Accept a row only when its last live
   // delta predates the read that returned it.
@@ -1231,6 +1293,8 @@ export function SessionScreen({
     setRunningTurn(seed?.turn ?? null);
     setRunning(seed?.turn.status === 'running');
     setCancelledTurnSnapshots(cancelledTurnSeed(client, sid));
+    settlingTurnRef.current = null;
+    setSettlingTurn(null);
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueuePaused(null);
     runningTurnRef.current = seed?.turn ?? null;
@@ -2603,12 +2667,7 @@ export function SessionScreen({
         if (!turn || turn.status !== 'running' || !ownsTerminal(turn)) return turn;
         const next: RunningTurn = {
           ...turn,
-          status:
-            type === 'turn.failed'
-              ? 'failed'
-              : type === 'turn.cancelled'
-                ? 'cancelled'
-                : 'completed',
+          status: terminalStatus(type),
           progress: undefined,
           cancelling: false,
           // Completion can overtake the 150 ms body-delta queue in a browser.
@@ -2698,6 +2757,12 @@ export function SessionScreen({
           runningTurnRef.current = null;
           // ...and the same carry as the stream's own handover above.
           followThroughHandover();
+        } else if (landed && settlingTurnRef.current?.id === finishedId) {
+          // A queued turn took the bubble before this row landed. Its retained copy
+          // hands over here, in the same batch; the window was widened when it was kept.
+          setHandedOverRowId(rowId(landed));
+          settlingTurnRef.current = null;
+          setSettlingTurn(null);
         }
       }
       if (type === 'turn.failed') {
@@ -2840,12 +2905,21 @@ export function SessionScreen({
       // still the PREVIOUS batch's bubble when `settle` reads it three lines
       // below — and settle decides both who owns the terminal frame and what
       // this bubble had already painted from exactly that read.
+      const previous = runningTurnRef.current;
       const reduced = withRunningReplayHead(
-        batch.reduce(reduceRunningTurnEvent, runningTurnRef.current),
+        batch.reduce(reduceRunningTurnEvent, previous),
         latestReplayHeadRef.current,
       );
       runningTurnRef.current = reduced;
       setRunningTurn(reduced);
+      const retired = retiredTurnAwaitingRow(previous, reduced, batch, turnsRef.current);
+      if (retired) {
+        settlingTurnRef.current = retired;
+        setSettlingTurn(retired);
+        // Widen now, not when the row lands: whichever read brings that row in, the
+        // oldest row on screen must not leave the window in the same commit.
+        widenWindowForHandover();
+      }
 
       let terminal: SseEvent | undefined;
       for (let index = batch.length - 1; index >= 0; index -= 1) {
@@ -4365,9 +4439,13 @@ export function SessionScreen({
       }),
     [preservedTurns, runningTurn, runningTurnId, turnsFresh],
   );
-  const visibleStart = Math.max(0, paintableTurns.length - visibleTurnCount);
+  // A retained finished turn holds the window slot its row takes when it lands, so
+  // neither its retention nor that landing moves the oldest row on screen.
+  const settlingShown = !!settlingTurn?.id && !settledTurnRow(turns, settlingTurn.id);
+  const windowedTurns = paintableTurns.length + (settlingShown ? 1 : 0);
+  const visibleStart = Math.max(0, windowedTurns - visibleTurnCount);
   // What is mounted this frame: the window, clamped by the hydration ramp.
-  const renderStart = Math.max(visibleStart, paintableTurns.length - hydratedTurnCount);
+  const renderStart = Math.max(visibleStart, windowedTurns - hydratedTurnCount);
   // Everything older than the first bubble on screen, wherever it lives.
   const earlierTotal = visibleStart + earlierRemaining;
   const visibleTurns = useMemo(
@@ -4642,26 +4720,7 @@ export function SessionScreen({
         )}
         <AssistantMessage
           agentName={session?.agent_name}
-          turn={{
-            turn_id: runningTurn.id ?? 'live',
-            position: runningTurn.position,
-            created_at: runningTurn.createdAt ?? runningTurn.startedAt,
-            request: runningTurn.request,
-            status: runningTurn.status,
-            iterations: runningTurn.iterations,
-            iterations_offset: runningTurn.iterationsOffset,
-            content:
-              runningTurn.content ??
-              (runningTurn.answer
-                ? [
-                    {
-                      id: 'live-answer',
-                      type: 'prose',
-                      markdown: runningTurn.answer,
-                    },
-                  ]
-                : []),
-          }}
+          turn={runningTurnAsTranscriptTurn(runningTurn)}
           streaming={runningTurn.status === 'running'}
           progressLabel={runningTurnPhase(
             runningTurn,
@@ -4693,6 +4752,54 @@ export function SessionScreen({
     openLinkedArtifact,
     session?.agent_name,
   ]);
+  const settlingRow = useMemo(() => {
+    if (!settlingShown || !settlingTurn?.id) return null;
+    const attachments =
+      settlingTurn.attachments ?? client.cachedSentAttachments(sid, settlingTurn.id);
+    return (
+      <div
+        className={turns.length ? 'mt-10' : undefined}
+        data-settling="true"
+        data-turn-id={settlingTurn.id}
+      >
+        {(settlingTurn.request || (attachments?.length ?? 0) > 0) && (
+          <UserMessage
+            position={settlingTurn.position}
+            createdAt={settlingTurn.createdAt ?? settlingTurn.startedAt}
+            requestKind={settlingTurn.requestKind}
+            council={settlingTurn.council}
+            attachments={attachments}
+          >
+            {settlingTurn.request}
+          </UserMessage>
+        )}
+        <AssistantMessage
+          agentName={session?.agent_name}
+          turn={runningTurnAsTranscriptTurn(settlingTurn)}
+          startedAt={settlingTurn.startedAt}
+          client={client}
+          sid={sid}
+          onOpenAttachment={openLinkedArtifact}
+          liveViews={liveViews}
+        />
+      </div>
+    );
+  }, [
+    settlingShown,
+    settlingTurn,
+    turns.length,
+    client,
+    sid,
+    liveViews,
+    openLinkedArtifact,
+    session?.agent_name,
+  ]);
+  // A row that lands by another read (the reconcile tick, a reopen) retires the copy too.
+  useEffect(() => {
+    if (!settlingTurn || settlingShown) return;
+    settlingTurnRef.current = null;
+    setSettlingTurn(null);
+  }, [settlingTurn, settlingShown]);
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this
   // has to do: the anchor observer holds the reader's line for every mutation.
   const anchorPrepend = () => {
@@ -5152,6 +5259,8 @@ export function SessionScreen({
                   )}
 
                   {turnRows}
+
+                  {settlingRow}
 
                   {liveRow}
                 </>
