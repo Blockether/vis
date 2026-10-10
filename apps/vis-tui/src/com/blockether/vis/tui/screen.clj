@@ -6785,6 +6785,9 @@
              (= MouseActionType/MOVE (.getActionType ^MouseAction key))
              (.updateHovered projects/hit-map ^MouseAction key))
     (state/dispatch [:bump-render-version]))
+  ;; A press in the rail moves the keys there before its action runs (#359).
+  (when-let [focus (projects/click-focus @state/app-db key)]
+    (state/dispatch [:project-sidebar focus]))
   (when-let [[action value detail] (projects/key-action @state/app-db key)]
     (case action
       :help
@@ -6887,8 +6890,11 @@
       :session
       (let [before (:active-tab-id @state/app-db)]
         ;; Invalidate a slower project lookup before focusing this exact session.
+        ;; Enter hands the keys to the chat; a mouse press keeps them in the rail.
         (state/dispatch [:project-sidebar
-                         {:opening nil :request-id nil :focused? false :adding nil}])
+                         (cond-> {:opening nil :request-id nil :adding nil}
+                           (not (instance? MouseAction key))
+                           (assoc :focused? false))])
         (state/dispatch [:select-tab-by-session value])
         (if (= before (:active-tab-id @state/app-db))
           (when open-session! (open-session! value))

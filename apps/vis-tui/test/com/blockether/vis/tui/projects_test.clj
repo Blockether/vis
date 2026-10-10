@@ -1209,7 +1209,9 @@
                        (input/input->text (get-in @state/app-db [:tab-locals :tab-1 :input]))))
             (expect (= background (get-in @state/app-db [:tab-locals :tab-4])))
             (expect (= [false] @refreshes))
-            (expect (false? (get-in @state/app-db [:project-sidebar :focused?])))))))))
+            ;; Enter hands the keys to the chat; a mouse press keeps them in the rail (#359).
+            (expect (= (boolean pointer?)
+                       (get-in @state/app-db [:project-sidebar :focused?])))))))))
 
 (defdescribe project-input-scroll-test
              (it "project input scroll"
@@ -2636,6 +2638,73 @@
             (expect (str/includes? (nth (str/split-lines (cap/frame-text capture))
                                         (get-in sessions [:bounds :row]))
                                    "▸ Sessions"))))))))
+
+(defdescribe
+  project-sidebar-click-focus-test
+  ;; Regression for #359: a mouse press gives keyboard focus to the pane under the pointer.
+  (it
+    "focuses the rail on a press inside it and the chat on a press outside it"
+    (let [db
+          (-> (fixture-db)
+              (assoc-in [:project-sidebar :expanded] #{"a"})
+              (assoc-in [:project-sidebar :focused?] false)
+              (assoc-in [:project-sidebar :index] 0)
+              (assoc-in [:project-sidebar :groups "a"] [group-release])
+              (assoc-in [:project-sidebar :pages "a"]
+                        {:sessions [{"id" "loose" "title" "Loose session"}]}))
+
+          opened
+          (atom [])
+
+          handle!
+          (fn [key]
+            (#'screen/project-sidebar-key!
+             key
+             (constantly nil)
+             (constantly nil)
+             (constantly nil)
+             (constantly nil)
+             #(swap! opened conj %)))
+
+          hit!
+          (fn [pred]
+            (cap/capture! {:cols 180
+                           :rows 36
+                           :paint!
+                           (fn [{:keys [screen]}]
+                             (projects/paint! (.newTextGraphics screen) @state/app-db 180 36))})
+            (first (filter pred (.current projects/hit-map))))
+
+          click!
+          (fn [col row]
+            (handle!
+              (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. (int col) (int row)))))
+
+          sidebar
+          #(get-in @state/app-db [:project-sidebar %])]
+
+      (with-redefs [state/app-db (atom db)]
+        (let [groups (hit! #(and (= :project-set (:kind %)) (= :groups (:set %))))]
+          (click! 6 (get-in groups [:bounds :row]))
+          (expect (true? (sidebar :focused?)) "A press in the rail gives it the keys")
+          (expect (= (:index groups) (sidebar :index)) "The pressed row becomes the selected row")
+          (handle! (cap/key-stroke :down))
+          (expect (= (inc (long (:index groups))) (sidebar :index))
+                  "The rail keys act on the rail after the press"))
+        (click! 170 10)
+        (expect (false? (sidebar :focused?)) "A press in the chat gives the keys back to the chat")
+        (let [session (hit! #(and (= :project-session (:kind %))
+                                  (= "loose" (get-in % [:session "id"]))))]
+          (click! (inc (long (get-in session [:bounds :col]))) (get-in session [:bounds :row]))
+          (expect (= ["loose"] @opened))
+          (expect (true? (sidebar :focused?))
+                  "A press that opens a session keeps the keys in the rail")
+          (expect (= (:index session) (sidebar :index))))
+        (let [rail (hit! #(= :project-rail (:kind %)))]
+          (click! 170 10)
+          (click! (inc (long (get-in rail [:bounds :col])))
+                  (- (long (get-in rail [:bounds :height])) 4))
+          (expect (true? (sidebar :focused?)) "A press on empty rail space focuses the rail"))))))
 
 (defdescribe folded-group-uses-project-disclosure-icon-test
              (it "folded group uses project disclosure icon"

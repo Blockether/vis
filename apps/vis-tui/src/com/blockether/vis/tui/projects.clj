@@ -1668,6 +1668,32 @@
                   [:fold-parent (- (inc (long at)) (long index))]
                   [:noop]))))
 
+(def ^:private rail-kinds
+  "Hit kinds that belong to the rail, so a mouse event on them is a sidebar event."
+  #{:project-rail :project-select :project-group :project-input :project-unread :project-session
+    :project-details :project-set :project-page :project-group-page :project-state :project-add
+    :project-hide :project-suggest :project-new-folder :project-search-field :project-group-add
+    :project-session-add :project-set-menu :project-footer})
+
+(defn click-focus
+  "Return the sidebar change for a mouse press in the rail, or nil for other events.
+   The press gives the rail keyboard focus and selects the row under the pointer."
+  [db key]
+  (when (and (instance? MouseAction key)
+             (get-in db [:project-sidebar :open?])
+             (= MouseActionType/CLICK_DOWN (.getActionType ^MouseAction key))
+             (#{1 3} (.getButton ^MouseAction key)))
+    (let [pos
+          (.getPosition ^MouseAction key)
+
+          hit
+          (.lookup hit-map (.getColumn pos) (.getRow pos))]
+
+      (when (rail-kinds (:kind hit))
+        (cond-> {:focused? true}
+          (integer? (:index hit))
+          (assoc :index (:index hit)))))))
+
 (defn key-action
   "Return a sidebar action or nil to leave the event to the normal TUI dispatcher."
   [db ^KeyStroke key]
@@ -1689,12 +1715,7 @@
               hit
               (.lookup hit-map (.getColumn pos) (.getRow pos))]
 
-          (if (#{:project-rail :project-select :project-group :project-input :project-unread
-                 :project-session :project-details :project-set :project-page :project-group-page
-                 :project-state :project-add :project-hide :project-suggest :project-new-folder
-                 :project-search-field :project-group-add :project-session-add :project-set-menu
-                 :project-footer}
-               (:kind hit))
+          (if (rail-kinds (:kind hit))
             (cond
               (#{MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN} (.getActionType mouse))
               (let [delta (if (= MouseActionType/SCROLL_UP (.getActionType mouse)) -1 1)]
