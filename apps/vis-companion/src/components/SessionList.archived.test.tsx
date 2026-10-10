@@ -90,7 +90,7 @@ describe('the archive verb on a session row', () => {
       toggleStar: vi.fn(),
       archive,
     };
-    render(
+    const view = render(
       <SessionRow
         session={{ ...STORY_SESSION_ROW, ...session }}
         group={null}
@@ -101,7 +101,19 @@ describe('the archive verb on a session row', () => {
         deletion={null}
       />,
     );
-    return commands;
+    const update = (next: Partial<Session>) =>
+      view.rerender(
+        <SessionRow
+          session={{ ...STORY_SESSION_ROW, ...next }}
+          group={null}
+          draft={EMPTY_DRAFT_MESSAGE}
+          conn={STORY_GATEWAYS[0]}
+          needle=""
+          commands={commands}
+          deletion={null}
+        />,
+      );
+    return Object.assign(commands, { update });
   };
 
   const verbs = () =>
@@ -154,6 +166,23 @@ describe('the archive verb on a session row', () => {
     drawer(idle, archive);
     await userEvent.click(verbs().getByRole('button', { name: 'Archive' }));
     expect(await screen.findByText(STILL_WORKING)).toBeInTheDocument();
+  });
+
+  // User report: the refusal stayed on the row with no way to close it.
+  it('closes the refusal from its own close button', async () => {
+    drawer({}, vi.fn(async (session: Session) => session));
+    await userEvent.click(verbs().getByRole('button', { name: 'Archive' }));
+    expect(await screen.findByText(STILL_WORKING)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss message' }));
+    expect(screen.queryByText(STILL_WORKING)).not.toBeInTheDocument();
+  });
+
+  it('clears the refusal by itself once the turn is done', async () => {
+    const commands = drawer({}, vi.fn(async (session: Session) => session));
+    await userEvent.click(verbs().getByRole('button', { name: 'Archive' }));
+    expect(await screen.findByText(STILL_WORKING)).toBeInTheDocument();
+    commands.update(idle);
+    await waitFor(() => expect(screen.queryByText(STILL_WORKING)).not.toBeInTheDocument());
   });
 
   it('offers nothing to a row standing only because its group was put away', () => {

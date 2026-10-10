@@ -2450,7 +2450,7 @@ export function Banner({
   return (
     <div
       className={`border font-mono text-body ${colors} ${
-        isTitled ? 'flex min-h-12 items-stretch p-0' : 'px-3 py-2'
+        isTitled ? 'flex min-h-12 items-stretch p-0' : dismiss ? 'flex items-center gap-2 py-1 pr-1 pl-3' : 'px-3 py-2'
       }`}
       role="status"
     >
@@ -2461,6 +2461,11 @@ export function Banner({
             <div className="block truncate text-body text-footer-strong">{children}</div>
           </div>
           {dismiss ? <CloseButton isBand label={dismiss.label} onClick={dismiss.onClick} /> : null}
+        </>
+      ) : dismiss ? (
+        <>
+          <div className="min-w-0 flex-1 py-1">{children}</div>
+          <CloseButton label={dismiss.label} onClick={dismiss.onClick} />
         </>
       ) : (
         children

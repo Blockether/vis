@@ -533,6 +533,11 @@ export const SessionRow = memo(function SessionRow({
   // reason (409 `session-busy`), which the row reads back the same way.
   const groupIsArchived = group?.archived_at != null;
   const [archiveError, setArchiveError] = useState('');
+  // The refusal says the session is still working, so it ends when that work ends.
+  const isWorking = sessionIsLive(session) || sessionNeedsInput(session);
+  useEffect(() => {
+    if (!isWorking) setArchiveError((shown) => (shown === STILL_WORKING ? '' : shown));
+  }, [isWorking]);
   const toggleArchive = useCallback(() => {
     const archive = commands.archive;
     if (!archive) return;
@@ -884,7 +889,20 @@ export const SessionRow = memo(function SessionRow({
       )}
       {(renameError || forkError || archiveError || deletion?.error) && (
         <div className="px-3 pb-2">
-          <Banner kind="err">{renameError || forkError || archiveError || deletion?.error}</Banner>
+          <Banner
+            kind="err"
+            dismiss={{
+              label: 'Dismiss message',
+              onClick: () => {
+                setRenameError('');
+                setForkError('');
+                setArchiveError('');
+                if (deletion?.error) deletion.cancel();
+              },
+            }}
+          >
+            {renameError || forkError || archiveError || deletion?.error}
+          </Banner>
         </div>
       )}
       {/* Height eases through a 0fr -> 1fr grid track: the one pure-CSS way to
