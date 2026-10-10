@@ -67,7 +67,7 @@ once it can act.
 |---|---|
 | Ctrl+X n | Start a new session |
 | Ctrl+X s | Switch to another session |
-| Ctrl+X Delete or Ctrl+X Backspace | Delete this session permanently. Vis asks you to confirm first |
+| Ctrl+X D (Shift+D), Ctrl+X Delete or Ctrl+X Backspace | Delete this session permanently. Vis asks you to confirm first |
 | Ctrl+X w | Open **Projects**, the list of saved sessions |
 | Ctrl+X y | Fork this session: open a new session with a copy of the whole conversation |
 | Ctrl+X t | Fork from an earlier turn: choose the last turn the new session keeps |

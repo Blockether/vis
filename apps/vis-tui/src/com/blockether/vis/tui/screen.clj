@@ -7713,7 +7713,7 @@
                        (vis/notify! "No current session to fork"
                                     :level :warn
                                     :ttl-ms copy-success-ttl-ms))
-                     ;; C-x ⌫ deletes the CURRENT session; the picker's C-d names its row.
+                     ;; C-x D deletes the CURRENT session; the picker's C-d names its row.
                      (= :delete (:action choice))
                      (if-let [target-id (or (:id choice) (current-session-id))]
                        (when (with-dialog-lock
@@ -9426,7 +9426,7 @@
                          :show-sessions
                          (do (show-sessions!) (recur))
 
-                         ;; C-x ⌫ — delete the current session after a confirmation.
+                         ;; C-x D — delete the current session after a confirmation.
                          :delete-session
                          (do (switch-session! {:action :delete}) (recur))
 

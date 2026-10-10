@@ -185,24 +185,30 @@
         (expect (every? (set keymap/prefix-groups) (map :group keymap/prefix-commands))))))
 
 ;; User report: C-x had no key to delete a session, and the hydra's Session pane did
-;; not show one. Every letter is taken, so the Delete/Backspace key carries it.
-(defdescribe delete-session-chord-test
-             (it "C-x Backspace and C-x Delete delete the current session"
-                 (expect (= :delete-session (keymap/prefix-action-for keymap/prefix-delete-key)))
-                 (expect (= "C-x ⌫" (keymap/label-for :delete-session)))
-                 (doseq [kt [KeyType/Backspace KeyType/Delete]]
-                   (expect (= :delete-session
-                              (:action (input/resolve-prefix-key (KeyStroke. kt) {:prefix :cx}))))))
-             (it "the hydra shows it under Session, also without turns"
-                 (let [session-ids (fn [db]
-                                     (->> (keymap/prefix-spec db)
-                                          :groups
-                                          (filter #(= "Session" (:title %)))
-                                          first
-                                          :items
-                                          (mapv :id)))]
-                   (expect (some #{:delete-session} (session-ids {})))
-                   (expect (some #{:delete-session} (session-ids {:messages [{:role :user}]}))))))
+;; not show one. Every lower-case letter is taken, so Shift+d carries it, like the
+;; sidebar's D. The user rejected a glyph key, and a DEL key column made the hydra
+;; too wide for four panes at 100 columns.
+(defdescribe
+  delete-session-chord-test
+  (it "C-x D, C-x Backspace and C-x Delete delete the current session; C-x d does not"
+      (expect (= \D keymap/prefix-delete-key))
+      (expect (= "C-x D" (keymap/label-for :delete-session)))
+      (expect (= :session-group (keymap/prefix-action-for \d)))
+      (doseq [key [(KeyStroke. \D false false true) (KeyStroke. KeyType/Backspace)
+                   (KeyStroke. KeyType/Delete)]]
+        (expect (= :delete-session (:action (input/resolve-prefix-key key {:prefix :cx}))))))
+  (it "the hydra shows it under Session, also without turns"
+      (let [session-ids (fn [db]
+                          (->> (keymap/prefix-spec db)
+                               :groups
+                               (filter #(= "Session" (:title %)))
+                               first
+                               :items
+                               (mapv :id)))]
+        (expect (some #{:delete-session} (session-ids {})))
+        (expect (some #{:delete-session} (session-ids {:messages [{:role :user}]})))
+        (expect (some #(= {:key "D" :type :action :id :delete-session :label "delete session"} %)
+                      (mapcat :items (:groups (keymap/prefix-spec {}))))))))
 
 (defdescribe session-group-chord-test
              ;; BLO-167: a session can be filed under one of its project's groups.
@@ -246,9 +252,8 @@
             listed
             (into #{}
                   (comp (map second)
-                        (mapcat #(re-seq #"Ctrl\+X ([a-z]|Delete)\b" %))
-                        (map (fn [[_ k]]
-                               (if (= "Delete" k) keymap/prefix-delete-key (first k)))))
+                        (mapcat #(re-seq #"Ctrl\+X ([a-zA-Z])\b" %))
+                        (map (comp first second)))
                   (re-seq #"(?m)^\|([^|\n]*)\|" (or page "")))
 
             ;; Improve is experimental, and the published manual leaves experimental

@@ -77,10 +77,10 @@
   \x)
 
 (def ^:const prefix-delete-key
-  "C-x ⌫ — delete the current session after a confirmation. ⌫ is one glyph for two
-   keys: the Mac delete key (Backspace) and the forward Delete key. Every letter
-   after C-x is taken, and Emacs also binds C-x DEL."
-  \⌫)
+  "C-x D (Shift+d) — delete the current session after a confirmation. `D` also
+   deletes the row in the project sidebar. C-x Backspace and C-x Delete do the same.
+   Every lower-case letter after C-x is taken."
+  \D)
 
 (def prefix-commands
   "C-x <key> → app verb. `:key` is the SECOND key pressed after the C-x prefix,
@@ -180,9 +180,11 @@
   (when ch (action-by-char (Character/toLowerCase ^char ch))))
 
 (defn prefix-action-for
-  "The verb action bound to the C-x prefix followed by `ch`, or nil. Lower-cased."
+  "The verb action bound to the C-x prefix followed by `ch`, or nil. An exact match
+   wins, so C-x D is not C-x d; any other key is lower-cased."
   [ch]
-  (when ch (prefix-action-by-char (Character/toLowerCase ^char ch))))
+  (when ch
+    (or (prefix-action-by-char ch) (prefix-action-by-char (Character/toLowerCase ^char ch)))))
 
 (defn queue-row-index
   "The 1-based queue row that C-x followed by `ch` toggles for the next step, or nil.
@@ -212,7 +214,7 @@
               :key
               chord)
       (when-let [b (prefix-binding-by-action action)]
-        (str "C-x " (str/lower-case (str (:key b)))))))
+        (str "C-x " (:key b)))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else
