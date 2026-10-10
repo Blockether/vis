@@ -156,6 +156,22 @@
                    (expect (= "/work/new" (:workspace/root @state/app-db)))
                    (expect (= 1 (count (model/project-tabs @state/app-db)))))))
 
+;; Regression, this Vis session (paraphrased: a new session that the user starts from a
+;; session in a project must open in that same project).
+(defdescribe built-session-joins-its-project-test
+             (it "moves the active building tab into the project its session joined"
+                 (with-redefs [state/app-db (atom (fixture-db))]
+                   (state/dispatch [:open-building-tab "build"])
+                   (state/dispatch [:bind-built-session "build" {:id "new" :project-id "b"} []
+                                    {"root" "/work/b"}])
+                   (let [db @state/app-db
+                         tab (some #(when (= (:active-tab-id db) (:id %)) %) (:tabs db))]
+
+                     (expect (= "b" (:project-id tab)))
+                     (expect (= "b" (:active-project-id db)))
+                     (expect (= "new" (str (get-in db [:session :id]))))
+                     (expect (some #(= (:id tab) (:id %)) (model/project-tabs db)))))))
+
 (defdescribe project-close-keeps-last-tab-test
              (it "project close keeps last tab"
                  (with-redefs [state/app-db (atom (fixture-db))]
@@ -2433,11 +2449,11 @@
         (#'screen/sidebar-row-menu!
          nil
          (assoc (first (filter #(= :sessions (:set %)) entries)) :initial-action :new-session)
-         (fn [gid root]
-           (swap! calls conj [:session gid root])))
+         (fn [gid root pid]
+           (swap! calls conj [:session gid root pid])))
         (expect (false? (get-in @state/app-db [:project-sidebar :focused?]))
                 "A new session hands the keys to the chat, so typing never runs rail commands"))
-      (expect (= [[:group "a"] [:session nil "/work/vis"]] @calls)))))
+      (expect (= [[:group "a"] [:session nil "/work/vis" "a"]] @calls)))))
 
 (defdescribe
   project-sections-indent-rows-and-metadata-test
@@ -3544,9 +3560,9 @@
                 "A failed rename does not refresh as though it succeeded")
         (expect (some #(str/includes? % "Could not rename group") @notices))
         (reset! choice :new-session)
-        (#'screen/sidebar-row-menu! nil loose-entry #(swap! calls conj [:start %1 %2]))
-        (#'screen/sidebar-row-menu! nil group-entry #(swap! calls conj [:start %1 %2]))
-        (expect (= [[:start nil "/work/vis"] [:start "g1" "/work/vis"]]
+        (#'screen/sidebar-row-menu! nil loose-entry #(swap! calls conj [:start %1 %2 %3]))
+        (#'screen/sidebar-row-menu! nil group-entry #(swap! calls conj [:start %1 %2 %3]))
+        (expect (= [[:start nil "/work/vis" "a"] [:start "g1" "/work/vis" "a"]]
                    (subvec @calls (- (count @calls) 2))))))))
 
 (defdescribe

@@ -5152,6 +5152,45 @@
           :id
           str))
 
+(defn- new-session-project-id
+  "Project id that a new session joins, or nil. A group carries its own project.
+   An explicit `:project-id` wins. Then the gateway project of `source-sid`, the
+   session the user started from, then its tab and then the active project."
+  [db {:keys [group-id project-id]} source-sid]
+  (when-not group-id
+    (or (some-> project-id
+                str
+                not-empty)
+        (some-> (not-empty (str source-sid))
+                (#(try (vis/gateway-soul %) (catch Throwable _ nil)))
+                (get "project_id")
+                str
+                not-empty)
+        (:project-id (some #(when (= (:active-tab-id db) (:id %)) %) (:tabs db)))
+        (:active-project-id db))))
+
+(defn- create-tab-session!
+  "Create the session for a new tab and file it in its project. This blocks, so
+   call it on a worker. Returns `{:id :history :project-id}`."
+  [config db opts source-sid]
+  (let [gid
+        (:group-id opts)
+
+        pid
+        (new-session-project-id db opts source-sid)
+
+        project
+        (some #(when (= pid (str (get % "id"))) %) (get-in db [:project-sidebar :items]))
+
+        {:keys [id history]}
+        (chat/make-session config
+                           {:root
+                            (or (:root opts) (get project "workspace_root") (:workspace/root db))
+                            :group-id gid})]
+
+    (when pid (vis/gateway-assign-project! id pid))
+    {:id id :history history :project-id pid}))
+
 (defn- session-column-offset
   "Left column of the live session pane, so that a picker stays in that pane."
   [cols rows]
@@ -6457,8 +6496,8 @@
   "The rail's ⋯ menu for the row under the cursor, from `projects/row-menu-items`.
    An `:initial-action` on `entry` runs that item without the menu, which is how
    the sidebar keys act. Every verb that changes the gateway refreshes the rail
-   from the gateway's own answer. `start-in-group!` is called with a group id and
-   its project root when the human starts a session from a group."
+   from the gateway's own answer. `start-in-group!` is called with a group id, its
+   project root and its project id when the human starts a session from the rail."
   [screen entry start-in-group! & [choose!]]
   (let [group
         (:group entry)
@@ -6640,7 +6679,7 @@
       ;; message never runs the rail's single-letter commands.
       (when (and pid start-in-group!)
         (state/dispatch [:project-sidebar {:focused? false :adding nil}])
-        (start-in-group! gid (get project "workspace_root")))
+        (start-in-group! gid (get project "workspace_root") pid))
 
       :new
       (when pid (create-group! screen pid))
@@ -7591,29 +7630,24 @@
                                       str/trim
                                       not-empty)
                          db @state/app-db
-                         pid (:active-project-id db)
                          ;; A session STARTED in a group joins it as the gateway mints
-                         ;; it, and the group carries the project with it.
+                         ;; it, and the group carries the project with it. Otherwise
+                         ;; the new session joins the project of the session the user
+                         ;; started from.
                          gid (:group-id opts)
-                         project (some #(when (= pid (str (get % "id"))) %)
-                                       (get-in db [:project-sidebar :items]))
-                         result (chat/make-session-async config
-                                                         {:root (or (:root opts)
-                                                                    (get project "workspace_root")
-                                                                    (:workspace/root db))
-                                                          :group-id gid})
-                         build-id (or (:build-id opts) (str (java.util.UUID/randomUUID)))
-                         fut (:building result)]
+                         source-sid (current-session-id)
+                         build-id (or (:build-id opts) (str (java.util.UUID/randomUUID)))]
 
                      (when-not (:build-id opts) (state/dispatch [:open-building-tab build-id]))
                      (when seed (state/dispatch [:send-message seed]))
                      (vis/worker-future
                        "tui-new-session-bind"
                        (fn []
-                         (try (let [{:keys [id history]} @fut]
-                                (when (and pid (not gid)) (vis/gateway-assign-project! id pid))
+                         (try (let [{:keys [id history project-id]}
+                                    (create-tab-session! config db opts source-sid)]
                                 (ensure-session-live! id)
-                                (state/dispatch [:bind-built-session build-id {:id id :group-id gid}
+                                (state/dispatch [:bind-built-session build-id
+                                                 {:id id :group-id gid :project-id project-id}
                                                  history (session-workspace id)])
                                 (persist-tabs!)
                                 (vis/notify! "Opened session"
@@ -7972,22 +8006,22 @@
                       (binding [dlg/*dialog-region* (sidebar-dialog-region entry)
                                 frame/*column-offset* 0]
 
-                        (sidebar-row-menu! screen
-                                           entry
-                                           (fn [gid root]
-                                             (start-new-session! (:config @state/app-db)
-                                                                 nil
-                                                                 {:root root :group-id gid}))
-                                           (fn [project]
-                                             (choose-project!
-                                               project
-                                               (fn [sid]
-                                                 (switch-session! {:action :switch :id sid}))
-                                               (fn [root build-id]
-                                                 (start-new-session! (:config @state/app-db)
-                                                                     nil
-                                                                     {:root root
-                                                                      :build-id build-id})))))))
+                        (sidebar-row-menu!
+                          screen
+                          entry
+                          (fn [gid root pid]
+                            (start-new-session! (:config @state/app-db)
+                                                nil
+                                                {:root root :group-id gid :project-id pid}))
+                          (fn [project]
+                            (choose-project! project
+                                             (fn [sid]
+                                               (switch-session! {:action :switch :id sid}))
+                                             (fn [root build-id]
+                                               (start-new-session! (:config @state/app-db)
+                                                                   nil
+                                                                   {:root root
+                                                                    :build-id build-id})))))))
                     (fn [sid]
                       (vis/worker-future "tui-open-saved-session"
                                          (fn []

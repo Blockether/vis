@@ -3031,7 +3031,12 @@
                           (assoc :workspace workspace)
 
                           (get workspace "root")
-                          (assoc :workspace/root (get workspace "root")))
+                          (assoc :workspace/root (get workspace "root"))
+
+                          ;; The project the session was filed in, which can differ
+                          ;; from the project that was active when the tab opened.
+                          (:project-id session)
+                          (assoc :project-id (:project-id session)))
                         e))
                     entries)
 
@@ -3048,7 +3053,10 @@
                 (insert-tab-grouped without entry'))
 
               db
-              (assoc db :tabs entries')
+              (cond-> (assoc db :tabs entries')
+                (and (:project-id session) (= tab-id (current-tab-id db)))
+                (-> (assoc :active-project-id (:project-id session))
+                    (assoc-in [:project-active-tabs (:project-id session)] tab-id)))
 
               db
               (update-tab db

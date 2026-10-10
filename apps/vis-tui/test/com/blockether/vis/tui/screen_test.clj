@@ -3005,6 +3005,48 @@ therapy line 2"
                      ((deref #'screen/persist-tabs-order!) pid ids))
                    (expect (= [[:reorder pid ids]] @calls)))))
 
+;; Regression, this Vis session (paraphrased: a new session that the user starts from a
+;; session in a project must open in that same project): Ctrl+N filed the new session in
+;; the project that was active in the rail, not in the project of the session.
+(defdescribe
+  new-session-joins-source-project-test
+  (let [db
+        {:active-project-id "other"
+         :active-tab-id :tab-1
+         :tabs [{:id :tab-1 :project-id "other"}]
+         :workspace/root "/work/source"
+         :project-sidebar {:items [{"id" "p1" "workspace_root" "/work/p1"}]}}
+
+        resolve
+        (deref #'screen/new-session-project-id)]
+
+    (it "files the session in the project of the session it started from"
+        (let [calls (atom [])]
+          (with-redefs [vis/gateway-soul (fn [sid]
+                                           (swap! calls conj [:soul sid])
+                                           {"id" sid "project_id" "p1"})
+                        chat/make-session (fn [_ opts]
+                                            (swap! calls conj [:create opts])
+                                            {:id "new" :history []})
+                        vis/gateway-assign-project! (fn [id pid]
+                                                      (swap! calls conj [:assign id pid]))]
+
+            (expect (= {:id "new" :history [] :project-id "p1"}
+                       ((deref #'screen/create-tab-session!) {} db nil "source")))
+            (expect (= [[:soul "source"] [:create {:root "/work/p1" :group-id nil}]
+                        [:assign "new" "p1"]]
+                       @calls)))))
+    (it "keeps a group's project, an explicit project and the tab fallback"
+        (let [souls (atom [])]
+          (with-redefs [vis/gateway-soul (fn [sid]
+                                           (swap! souls conj sid)
+                                           {"id" sid})]
+            (expect (nil? (resolve db {:group-id "g1"} "source")))
+            (expect (= "x" (resolve db {:project-id "x"} "source")))
+            (expect (empty? @souls) "A group or an explicit project needs no lookup")
+            (expect (= "other" (resolve db nil "source"))
+                    "A session without a project keeps the tab's project"))))))
+
 ;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
 ;; list too"): a project's tab set was found by downloading every session this gateway
 ;; holds and filtering the rows in this process.
