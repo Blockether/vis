@@ -110,6 +110,8 @@ export type SessionRowAction = {
   mode: 'delete';
   session: Session;
   conn: GatewayConn;
+  /** Every session one confirm deletes when a selection is held; absent for one row. */
+  ids?: string[];
 };
 
 export type SessionRowCommands = {
@@ -131,7 +133,8 @@ export type SessionRowCommands = {
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   /** Copy the entire conversation and open the fork; absent in standalone rows. */
   fork?: (session: Session, conn: GatewayConn) => Promise<void>;
-  requestDelete: (session: Session, conn: GatewayConn) => void;
+  /** Ask to delete the session, or the whole selection `ids` that holds it. */
+  requestDelete: (session: Session, conn: GatewayConn, ids?: string[]) => void;
   toggleStar: (session: Session, conn: GatewayConn) => void;
   /**
    * Take the session straight out of its group, with nothing to choose. OPTIONAL, and
@@ -153,7 +156,12 @@ export type SessionListActions = {
   };
 };
 
-export type SessionRowDeletion = Omit<SessionListActions['deletion'], 'target'> | null;
+export type SessionRowDeletion =
+  | (Omit<SessionListActions['deletion'], 'target'> & {
+      /** Sessions the confirm deletes; more than one asks for the whole selection. */
+      count?: number;
+    })
+  | null;
 
 /**
  * The row's slab keeps one geometry while its title changes from ink to a field.
@@ -621,7 +629,11 @@ export const SessionRow = memo(function SessionRow({
           with a caret. Metadata, status, and disclosure do not blink out around it. */}
       {deletion ? (
         <ConfirmRow
-          question={`Delete ${title}?`}
+          question={
+            deletion.count && deletion.count > 1
+              ? `Delete ${deletion.count} selected sessions?`
+              : `Delete ${title}?`
+          }
           confirmLabel={deletion.isBusy ? 'Deleting...' : 'Yes, delete'}
           isBusy={deletion.isBusy}
           rowHeight={standingHeight}

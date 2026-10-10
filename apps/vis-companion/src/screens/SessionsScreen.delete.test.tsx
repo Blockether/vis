@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
@@ -310,5 +310,95 @@ describe('deleting a session does not re-download the fleet', () => {
     ).toEqual([['/v1/sessions/a1', { title: 'Renamed' }]]);
     expect(screen.queryByText('Elsewhere')).toBeNull();
     expect(listReads(view)).toEqual([]);
+  });
+});
+
+// User request: Shift-select several sessions, then the regular delete deletes all of them.
+describe('deleting a Shift-selected batch of sessions', () => {
+  const batch = () => [
+    {
+      label: 'alpha',
+      sessions: [
+        listSession({ id: 'b1', title: 'One' }),
+        listSession({ id: 'b2', title: 'Two' }),
+        listSession({ id: 'b3', title: 'Three' }),
+      ],
+    },
+  ];
+  const surface = (sid: string) =>
+    document.querySelector(`[data-session-id="${sid}"]`) as HTMLElement;
+  const deletes = (view: ReturnType<typeof renderSessionsScreen>) =>
+    view.requests
+      .filter((request) => request.method === 'DELETE')
+      .map((request) => request.path)
+      .sort();
+
+  async function selectAll() {
+    const matchMedia = window.matchMedia;
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      ...matchMedia(query),
+      matches: query === '(pointer: fine)',
+    }));
+    const view = renderSessionsScreen({ machines: batch() });
+    restore = () => {
+      view.restore();
+      vi.restoreAllMocks();
+    };
+    await screen.findByText('One');
+    fireEvent.click(surface('b1'));
+    fireEvent.click(surface('b3'), { shiftKey: true });
+    for (const sid of ['b1', 'b2', 'b3']) {
+      expect(surface(sid)).toHaveAttribute('aria-pressed', 'true');
+    }
+    view.requests.length = 0;
+    return view;
+  }
+
+  it('the Delete key asks once and deletes every selected session', async () => {
+    const view = await selectAll();
+    fireEvent.keyDown(window, { key: 'Delete' });
+    await screen.findByRole('group', { name: 'Delete 3 selected sessions?' });
+    expect(deletes(view)).toEqual([]);
+    fireEvent.click(await screen.findByText('Yes, delete'));
+    await waitFor(() =>
+      expect(deletes(view)).toEqual(['/v1/sessions/b1', '/v1/sessions/b2', '/v1/sessions/b3']),
+    );
+    await waitFor(() => expect(screen.queryByText('Two')).toBeNull());
+    expect(screen.queryByText('One')).toBeNull();
+    expect(screen.queryByText('Three')).toBeNull();
+  });
+
+  it('the Backspace key asks too, and No keeps every session', async () => {
+    const view = await selectAll();
+    fireEvent.keyDown(window, { key: 'Backspace' });
+    fireEvent.click(await screen.findByText('No, keep'));
+    await waitFor(() =>
+      expect(screen.queryByRole('group', { name: 'Delete 3 selected sessions?' })).toBeNull(),
+    );
+    expect(deletes(view)).toEqual([]);
+    expect(screen.getByText('Two')).toBeVisible();
+  });
+
+  it("a selected row's own Delete action deletes the whole selection", async () => {
+    const view = await selectAll();
+    fireEvent.click(
+      screen
+        .getByRole('group', { name: 'Two actions' })
+        .querySelector("button[aria-label='Delete']")!,
+    );
+    fireEvent.click(await screen.findByText('Yes, delete'));
+    await waitFor(() =>
+      expect(deletes(view)).toEqual(['/v1/sessions/b1', '/v1/sessions/b2', '/v1/sessions/b3']),
+    );
+  });
+
+  it('a key typed into a field never deletes the selection', async () => {
+    const view = await selectAll();
+    const field = document.createElement('input');
+    document.body.append(field);
+    fireEvent.keyDown(field, { key: 'Backspace' });
+    field.remove();
+    expect(screen.queryByRole('group', { name: 'Delete 3 selected sessions?' })).toBeNull();
+    expect(deletes(view)).toEqual([]);
   });
 });

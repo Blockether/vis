@@ -29,7 +29,7 @@ const NON_TEXT_INPUT_TYPES = new Set([
   'submit',
 ]);
 
-function isKeyboardInputElement(element: Element | null): element is HTMLElement {
+export function isKeyboardInputElement(element: Element | null): element is HTMLElement {
   if (!(element instanceof HTMLElement)) return false;
   const tag = element.tagName;
   return (

@@ -85,6 +85,7 @@ import {
 import { SESSION_DRAG_MIME, useSessionDropTarget } from '../../lib/session-drag';
 import type { ArchiveView, BandWindow, GatewayConn, Session, SessionGroup } from '../../lib/types';
 import { unreadAfterVisit } from '../../lib/unread';
+import { isKeyboardInputElement } from '../../lib/viewport';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
 type MenuStep =
@@ -1411,12 +1412,21 @@ export const ProjectGroup = memo(function ProjectGroup({
     ? visibleIds.filter((id) => selection.ids.includes(id))
     : [];
   const selectedSet = new Set(selectedIds);
+  const latestDeleteSelection = useRef<() => boolean>(() => false);
   useEffect(() => {
     if (selectedIds.length === 0) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setSelection(null);
-      anchor.current = null;
+      if (event.key === 'Escape') {
+        setSelection(null);
+        anchor.current = null;
+        return;
+      }
+      // Delete, or the Mac delete key (Backspace), asks to delete the whole selection.
+      // A key typed into a field still edits that field.
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (isKeyboardInputElement(event.target as Element | null)) return;
+      if (latestDeleteSelection.current()) event.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1474,8 +1484,18 @@ export const ProjectGroup = memo(function ProjectGroup({
   // whenever this list rendered. Rows share one handler for the life of the list, which
   // runs this render's selection through a ref.
   const latestSelectionClick = useRef(onSelectionClick);
+  const latestSelectedIds = useRef(selectedIds);
+  // One confirm on the first selected row deletes every selected session.
+  const deleteSelection = (): boolean => {
+    const first = painted.find((session) => session.id === selectedIds[0]);
+    if (!first) return false;
+    rowActions.commands.requestDelete(first, conn, selectedIds.length > 1 ? selectedIds : undefined);
+    return true;
+  };
   useLayoutEffect(() => {
     latestSelectionClick.current = onSelectionClick;
+    latestSelectedIds.current = selectedIds;
+    latestDeleteSelection.current = deleteSelection;
   });
   const onRowSelectionClick = useCallback(
     (id: string, event: MouseEvent<HTMLButtonElement>) => latestSelectionClick.current(id, event),
@@ -1663,10 +1683,20 @@ export const ProjectGroup = memo(function ProjectGroup({
     [getClient],
   );
   const retain = isVisible && isShowing ? retainTranscript : undefined;
+  // A row's own Delete inside a held selection asks for the whole selection.
+  const requestDelete = useCallback(
+    (session: Session, target: GatewayConn, ids?: string[]) => {
+      const held = latestSelectedIds.current;
+      const batch = held.length > 1 && held.includes(session.id) ? held : undefined;
+      rowActions.commands.requestDelete(session, target, ids ?? batch);
+    },
+    [rowActions.commands],
+  );
   // The row's own verb opens an anchored popup only when there is a group to choose.
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       ...rowActions.commands,
+      requestDelete,
       archive: archiveSession,
       retain,
       ...(bands.length > 0 && {
@@ -1679,7 +1709,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         },
       }),
     }),
-    [archiveSession, bands.length, retain, rowActions.commands],
+    [archiveSession, bands.length, requestDelete, retain, rowActions.commands],
   );
   // The project's only group is the one this row is under, so there is no other
   // destination to choose: Ungroup acts directly. A refused move leaves the row put.
@@ -1696,8 +1726,14 @@ export const ProjectGroup = memo(function ProjectGroup({
     [assignGroup],
   );
   const soleGroupCommands = useMemo<SessionRowCommands>(
-    () => ({ ...rowActions.commands, archive: archiveSession, ungroup: ungroupSession, retain }),
-    [archiveSession, retain, rowActions.commands, ungroupSession],
+    () => ({
+      ...rowActions.commands,
+      requestDelete,
+      archive: archiveSession,
+      ungroup: ungroupSession,
+      retain,
+    }),
+    [archiveSession, requestDelete, retain, rowActions.commands, ungroupSession],
   );
   const row = (session: Session) => {
     const pending = pendingDeleteId === session.id;
@@ -1706,6 +1742,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     const deletion: SessionRowDeletion = pending
       ? {
           isBusy: rowActions.deletion.isBusy,
+          count: rowActions.deletion.target?.ids?.length,
           error: rowActions.deletion.error,
           confirm: rowActions.deletion.confirm,
           cancel: rowActions.deletion.cancel,

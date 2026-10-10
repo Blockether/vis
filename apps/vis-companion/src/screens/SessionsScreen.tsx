@@ -1611,8 +1611,8 @@ export function SessionsScreen({
     [load, removeProject],
   );
 
-  const startDelete = useCallback((session: Session, conn: GatewayConn) => {
-    setRowAction({ mode: 'delete', session, conn });
+  const startDelete = useCallback((session: Session, conn: GatewayConn, ids?: string[]) => {
+    setRowAction({ mode: 'delete', session, conn, ...(ids && ids.length > 1 && { ids }) });
     setActionError(null);
   }, []);
 
@@ -1675,8 +1675,29 @@ export function SessionsScreen({
     try {
       // Regression, user report: deleting one session used to end in `load()`, a full
       // walk of every paired machine. The DELETE already names the one row to forget.
-      await clientFor(action.conn).deleteSession(action.session.id);
-      forgetSessions(action.conn, [action.session.id]);
+      const api = clientFor(action.conn);
+      const anchor = action.session.id;
+      // The confirm stands on the anchor row, so it goes last: a refusal keeps the row
+      // and its note, and Yes retries only the sessions that remain.
+      const others = (action.ids ?? []).filter((sid) => sid !== anchor);
+      const gone: string[] = [];
+      const kept: string[] = [];
+      for (const sid of others) {
+        try {
+          await api.deleteSession(sid);
+          gone.push(sid);
+        } catch {
+          kept.push(sid);
+        }
+      }
+      if (kept.length > 0) {
+        forgetSessions(action.conn, gone);
+        const remaining = { ...action, ids: [anchor, ...kept] };
+        setRowAction((current) => (current === action ? remaining : current));
+        throw new Error(`${kept.length} of ${others.length + 1} sessions could not be deleted.`);
+      }
+      await api.deleteSession(anchor);
+      forgetSessions(action.conn, [...gone, anchor]);
       setRowAction((current) => (current === action ? null : current));
     } catch (cause) {
       setActionError((cause as Error).message);
