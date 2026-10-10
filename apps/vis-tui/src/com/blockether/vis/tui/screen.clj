@@ -7713,8 +7713,9 @@
                        (vis/notify! "No current session to fork"
                                     :level :warn
                                     :ttl-ms copy-success-ttl-ms))
+                     ;; C-x ⌫ deletes the CURRENT session; the picker's C-d names its row.
                      (= :delete (:action choice))
-                     (when-let [target-id (:id choice)]
+                     (if-let [target-id (or (:id choice) (current-session-id))]
                        (when (with-dialog-lock
                                #(dlg/confirm-dialog!
                                   screen
@@ -7730,7 +7731,10 @@
                               (catch Throwable t
                                 (vis/notify! (str "Could not delete session: " (ex-message t))
                                              :level :warn
-                                             :ttl-ms copy-success-ttl-ms)))))
+                                             :ttl-ms copy-success-ttl-ms))))
+                       (vis/notify! "No current session to delete"
+                                    :level :warn
+                                    :ttl-ms copy-success-ttl-ms))
                      ;; Ctrl+S in the navigator → the human's STAR. The gateway owns
                      ;; the mark and allocates its rank, so the PATCH is the whole
                      ;; write: reopening the list paints the row the gateway echoed.
@@ -9101,6 +9105,9 @@
                                      :fork-session
                                      (switch-session! {:action :fork})
 
+                                     :delete-session
+                                     (switch-session! {:action :delete})
+
                                      :fork-at-turn
                                      (switch-session! {:action :fork-at-turn})
 
@@ -9418,6 +9425,10 @@
 
                          :show-sessions
                          (do (show-sessions!) (recur))
+
+                         ;; C-x ⌫ — delete the current session after a confirmation.
+                         :delete-session
+                         (do (switch-session! {:action :delete}) (recur))
 
                          :fork-session
                          (do (switch-session! {:action :fork}) (recur))

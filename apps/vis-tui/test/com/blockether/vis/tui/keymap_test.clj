@@ -1,9 +1,11 @@
 (ns com.blockether.vis.tui.keymap-test
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
+            [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.transient :as tr]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (defdescribe chord-label-test
              (it "Emacs notation, lower-cased; named keys pass through — same on every platform"
@@ -182,6 +184,26 @@
     (it "every verb declares a heading the hydra knows"
         (expect (every? (set keymap/prefix-groups) (map :group keymap/prefix-commands))))))
 
+;; User report: C-x had no key to delete a session, and the hydra's Session pane did
+;; not show one. Every letter is taken, so the Delete/Backspace key carries it.
+(defdescribe delete-session-chord-test
+             (it "C-x Backspace and C-x Delete delete the current session"
+                 (expect (= :delete-session (keymap/prefix-action-for keymap/prefix-delete-key)))
+                 (expect (= "C-x ⌫" (keymap/label-for :delete-session)))
+                 (doseq [kt [KeyType/Backspace KeyType/Delete]]
+                   (expect (= :delete-session
+                              (:action (input/resolve-prefix-key (KeyStroke. kt) {:prefix :cx}))))))
+             (it "the hydra shows it under Session, also without turns"
+                 (let [session-ids (fn [db]
+                                     (->> (keymap/prefix-spec db)
+                                          :groups
+                                          (filter #(= "Session" (:title %)))
+                                          first
+                                          :items
+                                          (mapv :id)))]
+                   (expect (some #{:delete-session} (session-ids {})))
+                   (expect (some #{:delete-session} (session-ids {:messages [{:role :user}]}))))))
+
 (defdescribe session-group-chord-test
              ;; BLO-167: a session can be filed under one of its project's groups.
              (it "is a palette verb whose key is free — `g` can only ever be the abort"
@@ -224,8 +246,9 @@
             listed
             (into #{}
                   (comp (map second)
-                        (mapcat #(re-seq #"Ctrl\+X ([a-z])\b" %))
-                        (map (comp first second)))
+                        (mapcat #(re-seq #"Ctrl\+X ([a-z]|Delete)\b" %))
+                        (map (fn [[_ k]]
+                               (if (= "Delete" k) keymap/prefix-delete-key (first k)))))
                   (re-seq #"(?m)^\|([^|\n]*)\|" (or page "")))
 
             ;; Improve is experimental, and the published manual leaves experimental

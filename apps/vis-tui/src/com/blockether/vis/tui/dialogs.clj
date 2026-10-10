@@ -8434,10 +8434,11 @@
    ;; nothing to fork, so the palette must not even offer them.
    {:id :fork-session :label "Fork Session" :show-when :has-turns}
    {:id :fork-at-turn :label "Fork Session at Turn…" :show-when :has-turns}
-   {:id :close-tab :label "Close Tab"} {:id :providers :label "Providers"}
-   {:id :mcp :label "MCP Servers"} {:id :settings :label "Settings"}
-   {:id :session-settings :label "Session settings"} {:id :group-settings :label "Group settings"}
-   {:id :project-settings :label "Project settings"} {:id :automations :label "Automations"}
+   {:id :delete-session :label "Delete Session"} {:id :close-tab :label "Close Tab"}
+   {:id :providers :label "Providers"} {:id :mcp :label "MCP Servers"}
+   {:id :settings :label "Settings"} {:id :session-settings :label "Session settings"}
+   {:id :group-settings :label "Group settings"} {:id :project-settings :label "Project settings"}
+   {:id :automations :label "Automations"}
    ;; Only Claude adaptive thinking can show or omit its summary. C-x x and the
    ;; footer chip also toggle it, and the chip shows the state.
    {:id :toggle-thinking-summary :label "Thinking Summary" :show-when :thinking-summary}

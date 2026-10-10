@@ -76,6 +76,12 @@
    C-x is Emacs's own command prefix, so this is the faithful home for vis verbs."
   \x)
 
+(def ^:const prefix-delete-key
+  "C-x ⌫ — delete the current session after a confirmation. ⌫ is one glyph for two
+   keys: the Mac delete key (Backspace) and the forward Delete key. Every letter
+   after C-x is taken, and Emacs also binds C-x DEL."
+  \⌫)
+
 (def prefix-commands
   "C-x <key> → app verb. `:key` is the SECOND key pressed after the C-x prefix,
    displayed and pressed as a PLAIN letter (`C-x s`, `C-x m`, …). A Ctrl'd second
@@ -122,6 +128,7 @@
     :show-when :never} {:action :toggle-help :key \h :label "help" :group "Buffer"}
    {:action :new-session :key \n :label "new session" :group "Session"}
    {:action :show-sessions :key \s :label "switch session" :group "Session"}
+   {:action :delete-session :key prefix-delete-key :label "delete session" :group "Session"}
    {:action :session-metrics :key \u :label "session metrics" :group "Session"}
    ;; `k` = kick the queue: mark every queued message for the running turn's next
    ;; step (the header's Send all now button). Palette-only — the Session band is full.
