@@ -1454,15 +1454,15 @@
                             (filter #(= :section (:type %)))
                             (mapv :label))]
 
-          ;; One flat list, web-shaped: Theme leads, then General, as in the app. Code mode
-          ;; and Compact mode end General under View. The Models section was retired (it
-          ;; only carried reasoning-effort, which moved to Ctrl+R).
-          (expect (= ["Theme" "Theme"] (mapv :label (take 2 rows))))
-          (expect (= ["Theme" "General"] (take 2 sections)))
+          ;; One flat list, web-shaped: General leads, as in the app. Theme, Code mode and
+          ;; Compact mode end General under View. The Models section was retired (it only
+          ;; carried reasoning-effort, which moved to Ctrl+R).
+          (expect (= "General" (first sections)))
+          (expect (not-any? #{"Theme"} sections))
           (expect (not-any? #{"Responses"} sections))
-          (expect (= :theme-name (:key (second rows))))
-          (expect (= [:show-python-code :summarize-steps]
-                     (vec (filter #{:show-python-code :summarize-steps} (keep :key rows)))))
+          (expect (= [:theme-name :show-python-code :summarize-steps]
+                     (vec (filter #{:theme-name :show-python-code :summarize-steps}
+                                  (keep :key rows)))))
           (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
           ;; vis-dark/light are pinned to the TOP; every other built-in follows by id.
@@ -1508,23 +1508,25 @@
                 next-section (first (filter #(= :section (:type (nth rows %)))
                                             (range (inc view) (count rows))))]
 
-            ;; Theme opens the list; no setting stands above the first header.
-            (expect (= {:type :section :label "Theme"} (select-keys (first rows) [:type :label])))
+            ;; General opens the list; no setting stands above the first header.
+            (expect (= {:type :section :label "General"} (select-keys (first rows) [:type :label])))
             (expect (= "General" (:label (last (filter #(= :section (:type %)) (take view rows))))))
             (expect (= :subsection (:type (nth rows view))))
-            (expect (= ["Code mode" "Compact mode" "Simplified thinking modes"]
-                       (subvec labels (inc view) (+ view 4))))
+            (expect (= ["Theme" "Code mode" "Compact mode" "Simplified thinking modes"]
+                       (subvec labels (inc view) (+ view 5))))
+            (expect (= :theme-name (:key (nth rows (inc view)))))
             ;; The View rows are the last rows of General.
-            (expect (or (nil? next-section) (= (+ view 4) next-section)))
+            (expect (or (nil? next-section) (= (+ view 5) next-section)))
             (expect
               (= {:type :registry-toggle :toggle-id "simplified_thinking_modes" :toggle-value true}
-                 (select-keys (nth rows (+ view 3)) [:type :toggle-id :toggle-value])))
+                 (select-keys (nth rows (+ view 4)) [:type :toggle-id :toggle-value])))
             (expect (= 1 (count (filter #(= "simplified_thinking_modes" (:toggle-id %)) rows))))))
         ;; A group, project or session target has no View rows: they are global only.
         (binding [dlg/*settings-target* {:scope "project" :target-id "p1"}]
           (with-redefs [vis/get-router (constantly nil)]
             (let [rows (settings-rows)]
-              (expect (not-any? #{"View" "Code mode" "Compact mode" "Simplified thinking modes"}
+              (expect (not-any? #{"View" "Theme" "Code mode" "Compact mode"
+                                  "Simplified thinking modes"}
                                 (map :label rows))))))
         (reset! thinking-modes nil)
         (with-redefs [vis/get-router (constantly nil)]

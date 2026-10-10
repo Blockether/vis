@@ -3347,13 +3347,19 @@
         :description (str (get row "description"))}])))
 
 (defn- view-settings-rows
-  "The View rows at the end of General: two terminal preferences and the gateway's
-   simplified thinking modes row. Each one has only a global value, so a group,
-   project or session target never shows them."
+  "The View rows at the end of General: the terminal theme, two terminal preferences and
+   the gateway's simplified thinking modes row. Each one has only a global value, so a
+   group, project or session target never shows them."
   []
   (vec
     (concat
       [{:type :subsection :label "View"}
+       {:key :theme-name
+        :type :choice
+        :choices (theme-choice-order)
+        :label "Theme"
+        :description
+        "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}
        {:key :show-python-code
         :type :toggle
         :label "Code mode"
@@ -3365,17 +3371,6 @@
         :description
         "Fold the steps between progress notes into one row with their state, live views and time. Open the row to see their thinking, code and Activity. Turn off to show Activity for each step."}]
       (thinking-modes-rows))))
-
-(defn- settings-theme-rows
-  "The terminal theme, the first section of global Settings."
-  []
-  [{:type :section :label "Theme"}
-   {:key :theme-name
-    :type :choice
-    :choices (theme-choice-order)
-    :label "Theme"
-    :description
-    "Reusable channel theme from com.blockether.vis.tui.shared-theme and extension :ext/theme maps"}])
 
 (declare titleize-label)
 
@@ -4086,28 +4081,26 @@
     (vec rows)))
 
 (defn- settings-rows
-  "Every setting in one flat list, in the gateway's sections. Global Settings start with the
-   theme, add the agent name to General, end General with the View rows and add the provider
-   accounts to Providers. A failed catalog read keeps the last catalog and says so. Tools ends
-   the list."
+  "Every setting in one flat list, in the gateway's sections. Global Settings add the agent
+   name to General, end General with the View rows (theme first) and add the provider accounts
+   to Providers. A failed catalog read keeps the last catalog and says so. Tools ends the list."
   []
-  (vec
-    (concat (when-not *settings-target* (settings-theme-rows))
-            (cond-> (or (registry-toggle-rows) [])
-              (not *settings-target*)
-              (-> (put-in-section "general"
-                                  "General"
-                                  [{:type :agent-name
-                                    :label "Agent name"
-                                    :description
-                                    (or (get @agent-name-setting "error")
+  (vec (concat (cond-> (or (registry-toggle-rows) [])
+                 (not *settings-target*)
+                 (-> (put-in-section
+                       "general"
+                       "General"
+                       [{:type :agent-name
+                         :label "Agent name"
+                         :description (or
+                                        (get @agent-name-setting "error")
                                         "Shared by all gateway clients. Overrides project names.")}]
-                                  true)
-                  (put-at-section-end "general" (view-settings-rows))
-                  (put-provider-rows (provider-settings-rows))))
-            (when-let [error (:error @(settings-inventory-atom))]
-              [{:type :info :tone :bad :label "Settings unavailable" :description error}])
-            (tools-settings-rows))))
+                       true)
+                     (put-at-section-end "general" (view-settings-rows))
+                     (put-provider-rows (provider-settings-rows))))
+               (when-let [error (:error @(settings-inventory-atom))]
+                 [{:type :info :tone :bad :label "Settings unavailable" :description error}])
+               (tools-settings-rows))))
 
 (defn- settings-option-label
   [{:keys [label type toggle-id experimental? locked is-override?]} _values]
