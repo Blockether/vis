@@ -1611,10 +1611,13 @@ export function SessionsScreen({
     [load, removeProject],
   );
 
-  const startDelete = useCallback((session: Session, conn: GatewayConn, ids?: string[]) => {
-    setRowAction({ mode: 'delete', session, conn, ...(ids && ids.length > 1 && { ids }) });
-    setActionError(null);
-  }, []);
+  const startDelete = useCallback(
+    (session: Session, conn: GatewayConn, ids?: string[], heights?: Record<string, number>) => {
+      setRowAction({ mode: 'delete', session, conn, ...(ids && ids.length > 1 && { ids, heights }) });
+      setActionError(null);
+    },
+    [],
+  );
 
   // Dismissable even mid-request. A delete already on the wire cannot be taken back, but
   // the row must never trap the screen for the full timeout of an unreachable machine.

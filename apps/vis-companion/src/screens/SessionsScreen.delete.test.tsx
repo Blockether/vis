@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
@@ -400,5 +401,74 @@ describe('deleting a Shift-selected batch of sessions', () => {
     field.remove();
     expect(screen.queryByRole('group', { name: 'Delete 3 selected sessions?' })).toBeNull();
     expect(deletes(view)).toEqual([]);
+  });
+
+  it('one confirm stands the height of every selected row, and the others step aside', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.hasAttribute('data-session-row') ? 40 : 0;
+    });
+    await selectAll();
+    fireEvent.keyDown(window, { key: 'Delete' });
+    const strip = await screen.findByRole('group', { name: 'Delete 3 selected sessions?' });
+    expect(strip).toHaveStyle({ minHeight: '120px' });
+    expect(screen.queryByText('Two')).toBeNull();
+    expect(screen.queryByText('Three')).toBeNull();
+    fireEvent.click(screen.getByText('No, keep'));
+    expect(await screen.findByText('Two')).toBeVisible();
+    expect(screen.getByText('Three')).toBeVisible();
+  });
+});
+
+// User request: Shift-select several sessions, then the regular Archive archives all of them.
+describe('archiving a Shift-selected batch of sessions', () => {
+  it("a selected row's own Archive action archives the whole selection", async () => {
+    const matchMedia = window.matchMedia;
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      ...matchMedia(query),
+      matches: query === '(pointer: fine)',
+    }));
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: 'alpha',
+          sessions: [
+            listSession({ id: 'c1', title: 'One' }),
+            listSession({ id: 'c2', title: 'Two' }),
+            listSession({ id: 'c3', title: 'Three' }),
+            listSession({ id: 'c4', title: 'Four' }),
+          ],
+        },
+      ],
+    });
+    restore = () => {
+      view.restore();
+      vi.restoreAllMocks();
+    };
+    await screen.findByText('One');
+    const surface = (sid: string) =>
+      document.querySelector(`[data-session-id="${sid}"]`) as HTMLElement;
+    fireEvent.click(surface('c1'));
+    fireEvent.click(surface('c3'), { shiftKey: true });
+    view.requests.length = 0;
+
+    const actions = screen.getByRole('group', { name: 'Two actions' });
+    await userEvent.click(within(actions).getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() =>
+      expect(
+        view.requests
+          .filter((request) => request.method === 'PATCH')
+          .map((request) => [request.path, request.body])
+          .sort(),
+      ).toEqual([
+        ['/v1/sessions/c1', { archived: true }],
+        ['/v1/sessions/c2', { archived: true }],
+        ['/v1/sessions/c3', { archived: true }],
+      ]),
+    );
+    await waitFor(() => expect(screen.queryByText('Two')).toBeNull());
+    expect(screen.queryByText('One')).toBeNull();
+    expect(screen.queryByText('Three')).toBeNull();
+    expect(screen.getByText('Four')).toBeVisible();
   });
 });

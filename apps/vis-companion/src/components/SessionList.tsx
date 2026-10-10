@@ -112,6 +112,8 @@ export type SessionRowAction = {
   conn: GatewayConn;
   /** Every session one confirm deletes when a selection is held; absent for one row. */
   ids?: string[];
+  /** The measured height of each row in `ids`, so one confirm stands for all of them. */
+  heights?: Record<string, number>;
 };
 
 export type SessionRowCommands = {
@@ -133,8 +135,13 @@ export type SessionRowCommands = {
   rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   /** Copy the entire conversation and open the fork; absent in standalone rows. */
   fork?: (session: Session, conn: GatewayConn) => Promise<void>;
-  /** Ask to delete the session, or the whole selection `ids` that holds it. */
-  requestDelete: (session: Session, conn: GatewayConn, ids?: string[]) => void;
+  /** Ask to delete the session, or the whole selection `ids` with its measured row `heights`. */
+  requestDelete: (
+    session: Session,
+    conn: GatewayConn,
+    ids?: string[],
+    heights?: Record<string, number>,
+  ) => void;
   toggleStar: (session: Session, conn: GatewayConn) => void;
   /**
    * Take the session straight out of its group, with nothing to choose. OPTIONAL, and
@@ -160,6 +167,8 @@ export type SessionRowDeletion =
   | (Omit<SessionListActions['deletion'], 'target'> & {
       /** Sessions the confirm deletes; more than one asks for the whole selection. */
       count?: number;
+      /** The summed height of every row the confirm deletes, in px. */
+      height?: number;
     })
   | null;
 
@@ -636,7 +645,7 @@ export const SessionRow = memo(function SessionRow({
           }
           confirmLabel={deletion.isBusy ? 'Deleting...' : 'Yes, delete'}
           isBusy={deletion.isBusy}
-          rowHeight={standingHeight}
+          rowHeight={deletion.height ?? standingHeight}
           onKeep={deletion.cancel}
           onConfirm={deletion.confirm}
         />

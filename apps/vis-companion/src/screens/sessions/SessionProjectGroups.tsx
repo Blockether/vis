@@ -1485,17 +1485,30 @@ export const ProjectGroup = memo(function ProjectGroup({
   // runs this render's selection through a ref.
   const latestSelectionClick = useRef(onSelectionClick);
   const latestSelectedIds = useRef(selectedIds);
-  // One confirm on the first selected row deletes every selected session.
-  const deleteSelection = (): boolean => {
-    const first = painted.find((session) => session.id === selectedIds[0]);
+  const latestPainted = useRef(painted);
+  const latestBatchDelete = useRef<(ids: string[], target: GatewayConn) => boolean>(() => false);
+  // One confirm on the first selected row deletes every selected session. It stands the
+  // height of every selected row, and the other selected rows step aside while it asks.
+  const requestBatchDelete = (ids: string[], target: GatewayConn): boolean => {
+    const first = latestPainted.current.find((session) => session.id === ids[0]);
     if (!first) return false;
-    rowActions.commands.requestDelete(first, conn, selectedIds.length > 1 ? selectedIds : undefined);
+    const heights = Object.fromEntries(
+      ids.map((id) => [
+        id,
+        document.querySelector<HTMLElement>(`[data-session-row="${id}"]`)?.clientHeight ?? 0,
+      ]),
+    );
+    rowActions.commands.requestDelete(first, target, ids, heights);
     return true;
   };
+  const deleteSelection = (): boolean =>
+    selectedIds.length > 0 && requestBatchDelete(selectedIds, conn);
   useLayoutEffect(() => {
     latestSelectionClick.current = onSelectionClick;
     latestSelectedIds.current = selectedIds;
+    latestPainted.current = painted;
     latestDeleteSelection.current = deleteSelection;
+    latestBatchDelete.current = requestBatchDelete;
   });
   const onRowSelectionClick = useCallback(
     (id: string, event: MouseEvent<HTMLButtonElement>) => latestSelectionClick.current(id, event),
@@ -1598,13 +1611,36 @@ export const ProjectGroup = memo(function ProjectGroup({
   // PUTTING A ROW AWAY RIDES THE SAME BRIDGE FILING DOES: the screen's verb answers with the
   // row the gateway stamped, and it is held here until the list's window catches up, so the
   // band it left stops painting it without waiting for a poll.
+  // A row's own Archive inside a held selection puts every selected session away. The
+  // other rows go first; a refusal keeps the clicked row, its note and the refused rows.
   const archiveSession = useMemo(() => {
     const putAway = rowActions.commands.archive;
     if (!putAway) return undefined;
-    return async (session: Session, rowConn: GatewayConn, away: boolean) => {
+    const one = async (session: Session, rowConn: GatewayConn, away: boolean) => {
       const moved = await putAway(session, rowConn, away);
       setRefiled((held) => new Map(held).set(moved.id, moved));
       return moved;
+    };
+    return async (session: Session, rowConn: GatewayConn, away: boolean) => {
+      const held = latestSelectedIds.current;
+      const others = held.length > 1 && held.includes(session.id)
+        ? latestPainted.current.filter(
+            (row) => row.id !== session.id && held.includes(row.id) && sessionIsArchived(row) !== away,
+          )
+        : [];
+      let failed = 0;
+      for (const row of others) {
+        try {
+          await one(row, rowConn, away);
+        } catch {
+          failed += 1;
+        }
+      }
+      if (failed > 0) {
+        const verb = away ? 'archived' : 'unarchived';
+        throw new Error(`${failed} of ${others.length + 1} sessions could not be ${verb}.`);
+      }
+      return one(session, rowConn, away);
     };
   }, [rowActions.commands.archive]);
   // The row's Move action opens the same anchored popup on a phone and a desktop.
@@ -1685,10 +1721,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   const retain = isVisible && isShowing ? retainTranscript : undefined;
   // A row's own Delete inside a held selection asks for the whole selection.
   const requestDelete = useCallback(
-    (session: Session, target: GatewayConn, ids?: string[]) => {
+    (session: Session, target: GatewayConn) => {
       const held = latestSelectedIds.current;
-      const batch = held.length > 1 && held.includes(session.id) ? held : undefined;
-      rowActions.commands.requestDelete(session, target, ids ?? batch);
+      if (held.length > 1 && held.includes(session.id) && latestBatchDelete.current(held, target)) return;
+      rowActions.commands.requestDelete(session, target);
     },
     [rowActions.commands],
   );
@@ -1739,10 +1775,23 @@ export const ProjectGroup = memo(function ProjectGroup({
     const pending = pendingDeleteId === session.id;
     // Nowhere to move it: this project has ONE group and the row is filed under it.
     const soleGroup = bands.length === 1 && bands[0].id === session.group_id;
+    const target = rowActions.deletion.target;
+    // A batch confirm stands on its first row; the other rows it deletes step aside.
+    if (
+      target?.ids?.includes(session.id) &&
+      !pending &&
+      machineKey(target.conn) === machineKey(conn)
+    ) {
+      return null;
+    }
+    const height = pending
+      ? target?.ids?.reduce((sum, id) => sum + (target.heights?.[id] ?? 0), 0)
+      : undefined;
     const deletion: SessionRowDeletion = pending
       ? {
           isBusy: rowActions.deletion.isBusy,
-          count: rowActions.deletion.target?.ids?.length,
+          count: target?.ids?.length,
+          height: height || undefined,
           error: rowActions.deletion.error,
           confirm: rowActions.deletion.confirm,
           cancel: rowActions.deletion.cancel,
