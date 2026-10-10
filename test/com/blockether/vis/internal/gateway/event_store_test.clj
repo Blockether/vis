@@ -230,3 +230,62 @@
                                                   2 :full))))
               ;; Only the read is filtered; the ring keeps every stored frame.
               (expect (= 10 (count (get-in @registry [sid :events])))))))))))
+
+(defdescribe
+  running-iteration-ring-flood-test
+  (it "keeps the running iteration's prose and code when live view patches flood the ring"
+      ;; Regression: a gh.watch form sent a view.patch about every 6 seconds for
+      ;; 18 hours. The patches evicted the prose and code of the running iteration,
+      ;; and a resumed app showed the previous iteration's prose as the latest one.
+      (with-replay
+        (fn [sid registry]
+          (with-redefs-fn {#'state/EVENT_RING_MAX (delay 6)}
+            (fn []
+              (let [iteration-frames
+                    (fn [iteration prose]
+                      (let [block-id (str "t:assistant-prose:" iteration)]
+                        [["content.block.started"
+                          {:turn_id "t" :block {:id block-id :type "prose"}}]
+                         ["content.block.delta"
+                          {:turn_id "t"
+                           :iteration iteration
+                           :block_id block-id
+                           :field "markdown"
+                           :cumulative prose}]
+                         ["block.started"
+                          {:turn_id "t" :iteration iteration :form_index 0 :code "watch()"}]]))
+
+                    patch!
+                    #(state/append-event! sid
+                                          "view.patch"
+                                          {:view_id "v" :kind "live" :patch {:seq %}})
+
+                    frames
+                    #(mapv (fn [event]
+                             [(get event "type") (get event "iteration") (get event "cumulative")])
+                           (state/events-since sid 0))]
+
+                (state/append-event! sid "turn.started" {:turn_id "t"})
+                (swap! registry assoc-in [sid :current-turn] "t")
+                (doseq [[type payload] (concat
+                                         (iteration-frames 1 "Old note.")
+                                         [["block.output"
+                                           {:turn_id "t" :iteration 1 :form_index 0 :output "done"}]
+                                          ["iteration.completed" {:turn_id "t" :iteration 1}]]
+                                         (iteration-frames 2 "I watch it until it ends."))]
+                  (state/append-event! sid type payload))
+                (dotimes [i 20]
+                  (patch! i))
+                (expect (= [["content.block.started" nil nil]
+                            ["content.block.delta" 2 "I watch it until it ends."]
+                            ["block.started" 2 nil] ["view.patch" nil nil] ["view.patch" nil nil]
+                            ["view.patch" nil nil]]
+                           (frames)))
+                ;; A resume below the floor rewinds and must find the kept frames.
+                (expect (< 6 (state/replay-floor sid)))
+                ;; A settled turn has nothing to keep: the plain bound applies again.
+                (swap! registry assoc-in [sid :current-turn] nil)
+                (dotimes [i 3]
+                  (patch! i))
+                (expect (= (repeat 6 "view.patch")
+                           (mapv #(get % "type") (state/events-since sid 0)))))))))))

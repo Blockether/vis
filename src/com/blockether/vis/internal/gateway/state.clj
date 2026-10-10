@@ -513,6 +513,34 @@
 
 ;; Event log + fan-out
 
+(defn- frame-iteration
+  "The iteration that a stored turn frame paints: its `\"iteration\"`, else the
+   trailing number of its content block id (`<turn>:<kind>:<iteration>`)."
+  [descriptor]
+  (let [iteration (get descriptor "iteration")]
+    (if (number? iteration)
+      (long iteration)
+      (some->> (get descriptor "block_id")
+               str
+               (re-find #":(\d+)$")
+               second
+               parse-long))))
+
+(defn- running-iteration-frame
+  "Predicate for the stored frames that paint the newest iteration of `entry`'s
+   running turn, or nil when no turn runs. These frames are the only replay source
+   for that iteration: the transcript persists an iteration only when it ends."
+  [entry ring]
+  (when-let [tid (some-> (:current-turn entry)
+                         str)]
+    (let [own? #(and (= tid
+                        (some-> (get % "turn_id")
+                                str))
+                     (contains? gateway-contract/turn-stream-event-types (get % "type")))
+          newest (transduce (comp (filter own?) (keep frame-iteration)) max 0 ring)]
+
+      (when (pos? newest) #(and (own? %) (= newest (frame-iteration %)))))))
+
 (defn- conj-ring
   "Append `event` to `entry`'s bounded replay ring, remembering the highest
    `\"seq\"` the bound had to EVICT as `:evicted-through`.
@@ -526,19 +554,32 @@
    `seq > cursor` over a ring that already dropped that cursor's neighbourhood
    answers a TAIL whose opening frames are gone - deltas for blocks nothing
    started, activity for forms nothing opened - and neither side can see the
-   hole. `replay-floor` is what turns that into a decision."
+   hole. `replay-floor` is what turns that into a decision.
+
+   The bound evicts the oldest frame, except the frames of the running turn's
+   newest iteration (`running-iteration-frame`). A long form can stream frames
+   for hours, for example `view.patch` from a live view. Oldest-first eviction
+   then dropped that iteration's prose and code, and a resumed client painted
+   the previous iteration's prose as the latest. Only when every frame is kept
+   does the oldest one go, so the bound still holds."
   [entry event]
   (let [events
         (:events entry)
 
         max-events
-        (long @EVENT_RING_MAX)]
+        (long @EVENT_RING_MAX)
+
+        ring
+        (conj (if (instance? clojure.lang.PersistentQueue events)
+                events
+                (into clojure.lang.PersistentQueue/EMPTY (or events [])))
+              event)
+
+        kept?
+        (running-iteration-frame entry ring)]
 
     (loop [ring
-           (conj (if (instance? clojure.lang.PersistentQueue events)
-                   events
-                   (into clojure.lang.PersistentQueue/EMPTY (or events [])))
-                 event)
+           ring
 
            floor
            (long (:evicted-through entry 0))]
@@ -547,7 +588,16 @@
                (or (> (count ring) max-events)
                    (> (reduce + 0 (map #(long (::event-store/bytes % 0)) ring))
                       event-store/*max-bytes*)))
-        (recur (pop ring) (max floor (long (or (get (peek ring) "seq") 0))))
+        (let [oldest
+              (peek ring)
+
+              victim
+              (if (and kept? (kept? oldest)) (or (first (remove kept? ring)) oldest) oldest)]
+
+          (recur (if (identical? victim oldest)
+                   (pop ring)
+                   (into clojure.lang.PersistentQueue/EMPTY (remove #(identical? victim %)) ring))
+                 (max floor (long (or (get victim "seq") 0)))))
         (assoc entry
           :events ring
           :evicted-through floor)))))

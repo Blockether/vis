@@ -13,7 +13,14 @@
 (defn write-event!
   "Persist before publishing the descriptor. Failed writes declare a replay gap."
   [event]
-  (let [descriptor (select-keys event ["seq" "type" "turn_id" "iteration" "form_index"])]
+  (let [block-id
+        (or (get event "block_id") (get-in event ["block" "id"]))
+
+        descriptor
+        (cond-> (select-keys event ["seq" "type" "turn_id" "iteration" "form_index"])
+          block-id
+          (assoc "block_id" block-id))]
+
     (try (let [file (archive/write! event)]
            (assoc descriptor
              ::file file
