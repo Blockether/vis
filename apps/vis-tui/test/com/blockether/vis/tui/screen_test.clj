@@ -2598,8 +2598,8 @@ therapy line 2"
                  (expect (user-error? #(parse-args ["--session-id" "--resume"]))))
              (it "non-flag positional arg also errors (no positional API today)"
                  (expect (user-error? #(parse-args ["stray-positional"]))))
-             (it "--tepro turns off both configuration tiers"
-                 (expect (= {:no-global true :no-project true} (parse-args ["--tepro"]))))
+             (it "--repro turns off both configuration tiers"
+                 (expect (= {:no-global true :no-project true} (parse-args ["--repro"]))))
              (it "--extensions captures the list and needs a value"
                  (expect (= {:extensions "gh,clj" :no-global true}
                             (parse-args ["--no-global" "--extensions" "gh,clj"])))
@@ -2616,8 +2616,8 @@ therapy line 2"
                 (expect (= {:sources ["project"]} (launch-session-options {:no-global true} {}))))
             (it "--no-project keeps only the global tier"
                 (expect (= {:sources ["global"]} (launch-session-options {:no-project true} {}))))
-            (it "--tepro keeps no tier"
-                (expect (= {:sources []} (launch-session-options (parse-args ["--tepro"]) {}))))
+            (it "--repro keeps no tier"
+                (expect (= {:sources []} (launch-session-options (parse-args ["--repro"]) {}))))
             (it "VIS_SOURCES applies without a flag, and a flag wins"
                 (expect (= {:sources []} (launch-session-options {} {"VIS_SOURCES" "none"})))
                 (expect (= {:sources ["project"]}

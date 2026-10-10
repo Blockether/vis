@@ -9653,7 +9653,7 @@
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage
-  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--tepro] [--extensions LIST]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--repro] [--extensions LIST]")
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
@@ -9697,7 +9697,7 @@
           "--no-project"
           (recur more (assoc opts :no-project true))
 
-          "--tepro"
+          "--repro"
           (recur more
                  (assoc opts
                    :no-global true
@@ -9724,7 +9724,7 @@
   [{:keys [no-global no-project extensions session-id resume continue]} env]
   (when (and (or no-global no-project extensions) (or session-id resume continue))
     (throw (ex-info
-             (str "--no-global, --no-project, --tepro and --extensions apply only to a new session."
+             (str "--no-global, --no-project, --repro and --extensions apply only to a new session."
                   " Do not use them with --session-id, --resume or --continue."
                   "\nUsage: " tui-usage)
              {:vis/user-error true})))

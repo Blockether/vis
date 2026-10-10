@@ -1168,7 +1168,7 @@
                          what
                          ". Start a session without --no-"
                          source
-                         " or --tepro to change it.")
+                         " or --repro to change it.")
                     {:status 409 :type :config/source-disabled :source source}))))
 
 (defn- assert-machine-change-allowed!
