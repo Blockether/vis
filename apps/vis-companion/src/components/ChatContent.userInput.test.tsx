@@ -27,8 +27,9 @@ describe('a queued message delivered into the turn', () => {
 
     const [band] = bands(container);
     // User report: the band said `step N`; the transcript counts iterations, so it says `iter N`.
-    expect(band?.textContent).toContain('Queued · sent now · iter 2');
-    expect(band?.textContent).toContain('You');
+    expect(band?.textContent).toContain('You · Queued · sent now · iter 2');
+    // User report: `You` sat on its own row below `Queued`; it now leads the header row.
+    expect(band?.querySelectorAll(':scope > div')).toHaveLength(2);
     expect(band?.textContent).toContain('Also check the lint config.');
     const text = container.textContent ?? '';
     // The reasoning folds into the THINKING row of its digest, below the message.

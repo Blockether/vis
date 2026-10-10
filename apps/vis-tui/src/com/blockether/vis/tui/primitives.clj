@@ -1042,9 +1042,7 @@
 
 (def MARKER_USER_INPUT "\uE016") ;; queued message delivered into the running turn (`→ Send now`) -> the user's words on the user bubble paper, like a normal user message
 
-(def MARKER_USER_INPUT_HDR "\uE017") ;; "Queued" header above a delivered message -> bold accent label, then the delivery meta in the hint color
-
-(def MARKER_USER_INPUT_LABEL "\uE018") ;; "You" role label of a delivered message -> bold user role fg, like a normal user bubble
+(def MARKER_USER_INPUT_HDR "\uE017") ;; `You · Queued · …` header row of a delivered message -> bold user role "You", bold accent "Queued", then the delivery meta in the hint color
 
 (def MARKER_ACTIVITY "\uE015") ;; compact Activity timeline surface
 

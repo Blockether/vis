@@ -1512,7 +1512,7 @@
    answer dividers, padding bands, iteration labels, and provider/model footers."
   #{p/MARKER_ITERATION_HDR p/MARKER_SEP p/MARKER_ANSWER_SEP p/MARKER_ANSWER_HDR p/MARKER_ANSWER_PAD
     p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD p/MARKER_ITERATION_PAD
-    p/MARKER_QUEUE_HDR p/MARKER_USER_INPUT_HDR p/MARKER_USER_INPUT_LABEL})
+    p/MARKER_QUEUE_HDR p/MARKER_USER_INPUT_HDR})
 
 (defn- copyable-transcript-line?
   [line]

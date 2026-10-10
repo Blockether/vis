@@ -2954,10 +2954,13 @@ function DeliveredUserInputBand({
 }) {
   return (
     <div className="mb-2.5 min-w-0" data-transcript-user-input>
-      <div className="mb-1 font-mono text-meta font-bold text-accent-ink">
-        Queued <span className="font-normal text-dialog-hint">· sent now · iter {step}</span>
+      {/* User report: `You` sat on its own row below `Queued`; it leads the one header row. */}
+      <div className="mb-1.5 font-mono text-meta font-bold">
+        <span className="text-you-role">You</span>
+        <span className="font-normal text-dialog-hint"> · </span>
+        <span className="text-accent-ink">Queued</span>
+        <span className="font-normal text-dialog-hint"> · sent now · iter {step}</span>
       </div>
-      <div className="mb-1.5 font-mono text-meta font-bold text-you-role">You</div>
       <div
         className={`${RAIL_SPINE} border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground mouse:text-title`}
       >

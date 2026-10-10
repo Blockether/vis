@@ -12156,8 +12156,8 @@ print(paths)"
 (defdescribe
   delivered-user-input-test
   ;; Issue #330: a queued message the running turn received through `→ Send now` looks
-  ;; like a normal user message: a "Queued" header, the "You" label, then the words on
-  ;; the user bubble paper. No queue rail or border.
+  ;; like a normal user message: one `You · Queued` header row, then the words on the
+  ;; user bubble paper. No queue rail or border.
   (let [entry
         (iteration/canonicalize {:iteration 2
                                  :forms []
@@ -12169,16 +12169,14 @@ print(paths)"
         (format-iteration-entry entry 60 2)
 
         ;; User report: the header said `step K`; it counts iterations, so it says `iter K`.
+        ;; User report: `You` sat on its own row below `Queued`; it now leads the header row.
         hdr
-        (str p/MARKER_USER_INPUT_HDR "Queued · sent now · iter 2")
+        (str p/MARKER_USER_INPUT_HDR "You · Queued · sent now · iter 2")]
 
-        label
-        (str p/MARKER_USER_INPUT_LABEL "You")]
-
-    (it "opens with the Queued header and the You label, then the words in queue order"
+    (it "opens with one You · Queued header row, then the words in queue order"
         (let [hdr-at (.indexOf ^java.util.List lines hdr)]
           (expect (<= 0 hdr-at))
-          (expect (= label (nth lines (inc hdr-at)))))
+          (expect (= (str p/MARKER_USER_INPUT "") (nth lines (inc hdr-at)))))
         ;; The display copy (chips, not paths) is what the reader sees. One padding row
         ;; opens and closes the bubble, and one separates two messages.
         (expect (= [(str p/MARKER_USER_INPUT "") (str p/MARKER_USER_INPUT "ship it")
@@ -12237,7 +12235,10 @@ print(paths)"
         (expect (= {:fg t/user-bubble-fg :bg t/user-bubble-bg} (select-keys words [:fg :bg])))
         (expect (some #(and (= (:row words) (:row %)) (= t/user-bubble-bg (:bg %))) @fills))
         (expect (= t/user-role-fg (:fg (put-of "You"))))
-        (expect (= t/header-active-tab-accent (:fg (put-of "Queued"))))))
+        (expect (= t/header-active-tab-accent (:fg (put-of "Queued"))))
+        (expect (= t/dialog-hint (:fg (put-of "sent now"))))
+        ;; `You`, `Queued` and the meta share one row.
+        (expect (= 1 (count (distinct (map #(:row (put-of %)) ["You" "Queued" "sent now"])))))))
     (it "paints no block for a step that received nothing"
         (let [plain (format-iteration-entry (iteration/canonicalize {:iteration 1 :forms []}) 60 1)]
           (expect (not-any? #(str/starts-with? % p/MARKER_USER_INPUT_HDR) plain))

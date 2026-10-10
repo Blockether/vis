@@ -1352,8 +1352,6 @@
 
 (def ^:private user-input-hdr-marker p/MARKER_USER_INPUT_HDR)
 
-(def ^:private user-input-label-marker p/MARKER_USER_INPUT_LABEL)
-
 (def ^:private activity-marker p/MARKER_ACTIVITY)
 
 (def ^:private md-h1-marker p/MARKER_MD_H1)
@@ -2650,29 +2648,31 @@
                                            iw
                                            viewport-top)))
                     ;; ── Delivered message — a queued message the running turn received at
-                    ;; this step (`→ Send now`). It paints like a normal user message: the
-                    ;; "Queued" header, the bold "You" label, then the words on the user
+                    ;; this step (`→ Send now`). It paints like a normal user message: one
+                    ;; header row `You · Queued · sent now · iter N`, then the words on the user
                     ;; bubble paper with the bubble's 2-column padding and its left rail.
                     (str/starts-with? line user-input-hdr-marker)
                     (let [raw (subs line 1)
-                          [label meta-text] (str/split raw #" · " 2)]
+                          [role label meta-text] (str/split raw #" · " 3)
+                          sep " · "
+                          label-x
+                          (+ (long x) (long (p/display-width role)) (long (p/display-width sep)))]
 
                       (p/set-bg! g bg-color)
                       (p/fill-rect! g fbx y fill-iw 1)
-                      (p/set-colors! g t/header-active-tab-accent bg-color)
-                      (p/styled g [p/BOLD] (p/put-str! g x y label))
+                      (p/set-colors! g t/user-role-fg bg-color)
+                      (p/styled g [p/BOLD] (p/put-str! g x y role))
+                      (when label
+                        (p/set-colors! g t/dialog-hint bg-color)
+                        (p/put-str! g (+ (long x) (long (p/display-width role))) y sep)
+                        (p/set-colors! g t/header-active-tab-accent bg-color)
+                        (p/styled g [p/BOLD] (p/put-str! g label-x y label)))
                       (when meta-text
                         (p/set-colors! g t/dialog-hint bg-color)
                         (p/put-str! g
-                                    (+ (long x) (long (p/display-width label)))
+                                    (+ label-x (long (p/display-width label)))
                                     y
-                                    (str " · " meta-text))))
-                    (str/starts-with? line user-input-label-marker)
-                    (let [raw (subs line 1)]
-                      (p/set-bg! g bg-color)
-                      (p/fill-rect! g fbx y fill-iw 1)
-                      (p/set-colors! g t/user-role-fg bg-color)
-                      (p/styled g [p/BOLD] (p/put-str! g x y raw)))
+                                    (str sep meta-text))))
                     (str/starts-with? line user-input-marker)
                     (let [raw (subs line 1)]
                       (p/set-bg! g t/user-bubble-bg)
@@ -8429,8 +8429,8 @@
 
         ;; The queued messages this step received (`→ Send now`), above the step's own
         ;; work, so the reader sees what the model read before it acted. Each block looks
-        ;; like a normal user message: a "Queued" header with the delivery meta, the
-        ;; "You" label, then the words on the user bubble paper.
+        ;; like a normal user message: one `You · Queued` header row with the delivery
+        ;; meta, then the words on the user bubble paper.
         user-input-body
         (when (seq user-input)
           (let [texts (into []
@@ -8443,8 +8443,7 @@
             (when (seq texts)
               (-> [(line-entry "")
                    (line-entry
-                     (str user-input-hdr-marker "Queued · sent now · iter " iteration-number))
-                   (line-entry (str user-input-label-marker "You"))
+                     (str user-input-hdr-marker "You · Queued · sent now · iter " iteration-number))
                    {:line (str user-input-marker "") :meta {:user-input-pad? true}}]
                   (into (mapcat (fn [i text]
                                   (cond->> (mapv #(line-entry (str user-input-marker %))
