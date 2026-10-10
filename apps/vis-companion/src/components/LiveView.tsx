@@ -37,7 +37,7 @@ import {
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
-import { VIEW_CLOSE_EVENT, VIEW_PATCH_EVENT } from '../lib/view';
+import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT } from '../lib/view';
 import {
   applyLiveViewEvent,
   LIVE_NOTE_CHARS,
@@ -1474,6 +1474,12 @@ export function RunDialog({
  * for the same reason: a phone woken by a push never saw the frames that opened
  * the view it is about to paint.
  *
+ * A snapshot describes the moment the gateway answered, so the events that arrive
+ * while it is in flight are folded OVER it, never a reason to drop it. A running
+ * watch patches every few seconds, and a dropped snapshot left the panel empty
+ * until the next view opened. A patch that names a view this panel never mounted
+ * means its open was missed, so it reads the snapshot again.
+ *
  * A HOOK rather than the panel's own state, because an open view is not only a
  * panel: the running row above the transcript stops saying "Vis is thinking"
  * and names what is on screen instead, and both must read one list.
@@ -1485,21 +1491,39 @@ export function useLiveViews(
   onRecordFiled?: () => void,
 ): LiveViewModel[] {
   const [views, setViews] = useState<LiveViewModel[]>([]);
-  const revision = useRef(0);
+  const reloadRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    revision.current += 1;
     let cancelled = false;
     const controller = new AbortController();
+    // The live events since the oldest snapshot read still in flight, in order.
+    let journal: SseEvent[] | null = null;
+    let inFlight = 0;
+    let requested = 0;
+    let applied = 0;
+    const mounted = new Set<string>();
     const reload = () => {
-      const requestedAt = revision.current;
+      requested += 1;
+      const request = requested;
+      journal ??= [];
+      const from = journal.length;
+      inFlight += 1;
       client
         .liveViews(sid, controller.signal)
         .then((open) => {
-          if (!cancelled && requestedAt === revision.current) setViews(open);
+          if (cancelled || request < applied) return;
+          applied = request;
+          const settled = (journal ?? []).slice(from).reduce(applyLiveViewEvent, open);
+          for (const view of settled) mounted.add(view.id);
+          setViews(settled);
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight -= 1;
+          if (inFlight === 0) journal = null;
+        });
     };
+    reloadRef.current = reload;
     reload();
     const stopConnection = subscriptions.subscribeConnection((connected) => {
       if (connected) reload();
@@ -1532,7 +1556,14 @@ export function useLiveViews(
     };
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
       if (!isLiveViewEvent(event)) return;
-      revision.current += 1;
+      const viewId = typeof event.view_id === 'string' ? event.view_id : '';
+      if (event.type === VIEW_OPEN_EVENT) {
+        const opened = event.view as { id?: unknown } | null | undefined;
+        if (typeof opened?.id === 'string') mounted.add(opened.id);
+      } else if (event.type === VIEW_PATCH_EVENT && viewId && !mounted.has(viewId) && inFlight === 0) {
+        reload();
+      }
+      journal?.push(event);
       if (event.type === VIEW_PATCH_EVENT) {
         pendingPatches.push(event);
         // Activity can emit much faster than WKWebView can paint. Fold a burst in
@@ -1547,7 +1578,7 @@ export function useLiveViews(
     });
     return () => {
       cancelled = true;
-      revision.current += 1;
+      reloadRef.current = null;
       controller.abort();
       stopConnection();
       stopEvents();
@@ -1563,21 +1594,8 @@ export function useLiveViews(
   // quietly missing a row is the failure this whole numbering exists to catch.
   const isStale = views.some((view) => view.is_stale === true);
   useEffect(() => {
-    if (!isStale) return;
-    let cancelled = false;
-    const controller = new AbortController();
-    const requestedAt = revision.current;
-    client
-      .liveViews(sid, controller.signal)
-      .then((open) => {
-        if (!cancelled && requestedAt === revision.current) setViews(open);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [isStale, client, sid]);
+    if (isStale) reloadRef.current?.();
+  }, [isStale]);
 
   return views;
 }

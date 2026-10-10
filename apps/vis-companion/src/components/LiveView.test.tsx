@@ -927,6 +927,85 @@ describe('what a run says about its own layout', () => {
     await waitFor(() => expect(screen.getByText('2')).toBeVisible());
     expect(liveViews).toHaveBeenCalledTimes(2);
   });
+
+  // Regression, session c4a1bfb6-58f4-4dd5-ae1d-b1e4d7217ffa: a CI watch patched its
+  // view every few seconds, so each reconnect snapshot was thrown away for a newer
+  // event, and the patches for a view the panel never mounted were ignored. The run
+  // showed no live view until the watch opened its next one.
+  describe('snapshot reads that live events overtake', () => {
+    function deferredClient(...answers: LiveView[][]) {
+      const resolvers: ((views: LiveView[]) => void)[] = [];
+      const liveViews = vi.fn(
+        () =>
+          new Promise<LiveView[]>((resolve) => {
+            resolvers.push(resolve);
+          }),
+      );
+      const answer = async (index: number) => {
+        await waitFor(() => expect(resolvers.length).toBeGreaterThan(index));
+        act(() => resolvers[index](answers[index]));
+      };
+      return { client: { liveViews } as unknown as GatewayClient, liveViews, answer };
+    }
+
+    function hub() {
+      let receive: ((event: SseEvent) => void) | null = null;
+      const subscriptions = {
+        subscribeConnection: () => () => undefined,
+        subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+          receive = listener;
+          return () => undefined;
+        },
+      } as unknown as SessionSubscriptionHub;
+      return { subscriptions, send: (event: SseEvent) => act(() => receive?.(event)) };
+    }
+
+    const patchOf = (view: LiveView, seq: number): SseEvent => ({
+      type: VIEW_PATCH_EVENT,
+      kind: 'live',
+      view_id: view.id,
+      first_seq: seq,
+      patch: { view_id: view.id, seq, ops: [] },
+    });
+
+    function Probe({ client, subscriptions }: { client: GatewayClient; subscriptions: SessionSubscriptionHub }) {
+      const views = useLiveViews(client, subscriptions, 'session-1');
+      return <span>{views.map((view) => `${view.id}@${view.seq}`).join(',') || 'none'}</span>;
+    }
+
+    it('keeps a snapshot that a patch overtook and folds the patch over it', async () => {
+      const running = opened();
+      const { client, answer } = deferredClient([running]);
+      const { subscriptions, send } = hub();
+      render(<Probe client={client} subscriptions={subscriptions} />);
+      send(patchOf(running, 1));
+      await answer(0);
+      await waitFor(() => expect(screen.getByText(`${running.id}@1`)).toBeVisible());
+    });
+
+    it('reads the snapshot again when a patch names a view it never mounted', async () => {
+      const running = opened();
+      const { client, liveViews, answer } = deferredClient([], [{ ...running, seq: 3 }]);
+      const { subscriptions, send } = hub();
+      render(<Probe client={client} subscriptions={subscriptions} />);
+      await answer(0);
+      await waitFor(() => expect(screen.getByText('none')).toBeVisible());
+      send(patchOf(running, 4));
+      await answer(1);
+      await waitFor(() => expect(screen.getByText(`${running.id}@4`)).toBeVisible());
+      expect(liveViews).toHaveBeenCalledTimes(2);
+    });
+
+    it('never brings back a view that closed while the snapshot was in flight', async () => {
+      const running = opened();
+      const { client, answer } = deferredClient([running]);
+      const { subscriptions, send } = hub();
+      render(<Probe client={client} subscriptions={subscriptions} />);
+      send({ type: VIEW_CLOSE_EVENT, kind: 'live', view_id: running.id, result: {} });
+      await answer(0);
+      await waitFor(() => expect(screen.getByText('none')).toBeVisible());
+    });
+  });
 });
 
 describe('the section is built from the closed vocabulary', () => {
