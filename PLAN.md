@@ -84,7 +84,7 @@ Data:
 - The prompt is the first `user` step. Each iteration is one `agent` step, with `reasoning_content`, `model_name` and `reasoning_effort`.
 - Each code block is one tool call `python_execution` with the argument `code`. Its stdout and error are the observation.
 - The final answer is the message of the last agent step. Totals go to `final_metrics`.
-- Vis facts go to `extra`: iteration, block status, Activity counts, repairs, timeouts, session id and profile.
+- Vis facts go to `extra`: iteration, provider, block status, Activity counts, repairs, timeouts, session id and profile.
 - Council children go to `subagent_trajectories` (phase 3).
 
 Acceptance criteria: Lazytest tests cover the mapping and the redaction. A host run with `--trajectory` passes validation with Harbor's `Trajectory` model. `harbor view` shows its steps. The token totals equal the result frame.
@@ -189,7 +189,8 @@ Unknowns: the budget, the number of tasks for enough power and the Podman machin
 
 ## Plan state
 
-- Phase 1: in progress.
-- Phase 2: in progress.
-- Phases 3 to 8: not started.
+- Phase 1: done. The benchmark commit `22223a5` stays local until the baseline round is sealed.
+- Phase 2: done. A host run with `--trajectory` passed Harbor's `Trajectory` model, and `harbor view` showed its 3 steps. Its totals equaled the result frame. A planted fake credential did not appear in the file, and the file mode was `0600`.
+- Phase 3: next.
+- Phases 4 to 8: not started.
 - The baseline round (`ctb-baseline`) has no Vis trials. It runs until about 2026-10-13. After its seal, commit `results/baseline.json` in the benchmark repository.

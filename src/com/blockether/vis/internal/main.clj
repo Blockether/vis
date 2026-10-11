@@ -65,6 +65,7 @@
     [com.blockether.vis.internal.loop.environment :as loop-env]
     [com.blockether.vis.internal.loop.router :as loop-router]
     [com.blockether.vis.internal.loop.turn :as turn]
+    [com.blockether.vis.internal.loop.trajectory :as trajectory]
     [com.blockether.vis.internal.gateway.client :as gateway-client]
     [com.blockether.vis.internal.gateway.server :as gateway-server]
     [com.blockether.vis.internal.gateway.stdio :as gateway-stdio]
@@ -77,6 +78,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.system-trust :as system-trust]
     [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.util :as util]
     [taoensso.telemere :as tel])
   (:import [com.blockether.skjema Uri]))
 
@@ -1488,6 +1490,7 @@
    "--db" :db
    "--session-id" :session-id
    "--json-schema" :json-schema
+   "--trajectory" :trajectory
    "--extensions" :extensions})
 
 (defn- option-token?
@@ -1710,6 +1713,9 @@
   (commandline/stdout! "                    happening, then print the answer.")
   (commandline/stdout! "  --full-trace-json-stream")
   (commandline/stdout! "                    Stream raw JSON trace frames, one object per line.")
+  (commandline/stdout! "  --trajectory PATH Write the run to PATH as an ATIF trajectory (JSON).")
+  (commandline/stdout! "                    Known credentials become [REDACTED]. Only you can")
+  (commandline/stdout! "                    read the file.")
   (commandline/stdout! "  --debug           Enable verbose debug logging.")
   (commandline/stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
   (commandline/stdout! "  --model MODEL        Override the configured model. Also accepts")
@@ -1888,6 +1894,31 @@
         (doseq [line (:schema-errors result)]
           (commandline/stderr! (str "  " line))))))
 
+(defn- run-profile
+  "The run options that shape the agent, for the `--trajectory` file."
+  [{:keys [agent-name toggles provider model reasoning-effort extensions db persist?]}]
+  (cond-> {:name (or agent-name "cli")}
+    toggles
+    (assoc :toggles (parse-toggle-overrides toggles))
+
+    provider
+    (assoc :provider provider)
+
+    model
+    (assoc :model model)
+
+    reasoning-effort
+    (assoc :reasoning-effort reasoning-effort)
+
+    (some? extensions)
+    (assoc :extensions extensions)
+
+    db
+    (assoc :db (if (= db ":memory") "memory" "file"))
+
+    persist?
+    (assoc :is-persist true)))
+
 (defn- run-one-shot!
   "Run the root one-shot command. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
@@ -1897,7 +1928,7 @@
   ;; constructing the one-shot environment; explicit --toggles still wins below.
   (toggles/hydrate-from-config! (config/load-config-raw))
   (let [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name
-                db toggles json-schema]
+                db toggles json-schema trajectory]
          :as opts}
         (-> residual
             parse-run-args
@@ -1945,7 +1976,8 @@
                              :compact?
                              :agent-name
                              :db
-                             :toggles)
+                             :toggles
+                             :trajectory)
                      trace-on-chunk
                      (assoc :on-chunk trace-on-chunk)
 
@@ -1956,11 +1988,26 @@
                      (assoc :db
                        (config/resolve-db-spec
                          (if (= db ":memory") :memory {:backend :sqlite :path db}))))
+          started-at-ms (util/now-ms)
           result (call-with-toggle-overrides (parse-toggle-overrides toggles)
                                              #(run! agent-def prompt run-opts))
+          trajectory-error
+          (when trajectory
+            (try (trajectory/export!
+                   trajectory
+                   result
+                   {:prompt prompt :started-at-ms started-at-ms :profile (run-profile opts)})
+                 nil
+                 (catch Exception e
+                   (str "vis-agent: cannot write the trajectory: " (ex-message e)))))
+          _ (some-> trajectory-error
+                    commandline/stderr!)
           exit-code (cond-> (cli-result-exit-code result)
                       ;; A `--json-schema` run without a structured answer failed.
                       (and json-schema (not (contains? result :structured)))
+                      (max 1)
+
+                      trajectory-error
                       (max 1))
           trace-result (select-keys result
                                     [:session-id :content :trace :iteration-count :duration-ms
@@ -2924,6 +2971,7 @@
      (help-row "--toggles NAME=VAL[,..]" "Set registered toggles for this run only.")
      (help-row "--full-trace-stream" "Stream pretty human trace.")
      (help-row "--full-trace-json-stream" "Stream raw JSON trace frames.")
+     (help-row "--trajectory PATH" "Write an ATIF trajectory file.")
      (help-row "--provider PROVIDER" "Override provider.")
      (help-row "--model MODEL" "Override model, or use provider/model.")
      (help-row "--reasoning-effort E" "Exact provider-native effort that the model offers.")

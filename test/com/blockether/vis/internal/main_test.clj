@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.turn :as turn]
+            [com.blockether.vis.internal.loop.trajectory :as trajectory]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -1398,3 +1399,50 @@
         (expect (= [] @out))
         (expect (= 2 @exit))
         (expect (= ["vis-agent: Invalid value for --toggles draft_backend: x"] @err)))))
+
+(defdescribe
+  one-shot-trajectory-test
+  (it "writes the run as an ATIF trajectory without the known credentials"
+      (let [path
+            (str (java.nio.file.Files/createTempDirectory
+                   "vis-trajectory"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+                 "/run.json")
+
+            result
+            {:session-id "session-1"
+             :content [{"id" "block_1" "type" "prose" "markdown" "Done: secret-value-1."}]
+             :trace [{:iteration 0 :final? true :blocks []}]
+             :tokens {"input" 10 "output" 2 "cached" 0 "cache_created" 0 "total" 12}}
+
+            {:keys [err exit]}
+            (with-redefs-fn {#'trajectory/run-secrets (fn []
+                                                        ["secret-value-1"])}
+              #(run-cli ["--trajectory" path "--" "Say done."] result))
+
+            document
+            (json/read-json (slurp path))]
+
+        (expect (= [] err))
+        (expect (nil? exit))
+        (expect (= "ATIF-v1.8" (get document "schema_version")))
+        (expect (= ["user" "agent"] (mapv #(get % "source") (get document "steps"))))
+        (expect (= "Say done." (get-in document ["steps" 0 "message"])))
+        (expect (= "Done: [REDACTED]." (get-in document ["steps" 1 "message"])))
+        (expect (= 10 (get-in document ["final_metrics" "total_prompt_tokens"])))))
+  (it "refuses --trajectory without a path"
+      (let [{:keys [out err exit]} (run-cli ["--trajectory" "--json" "hi"] {:content []})]
+        (expect (= [] out))
+        (expect (= 2 exit))
+        (expect (some #(str/includes? % "--trajectory") err))))
+  (it "fails the run when it cannot write the trajectory"
+      (let [file
+            (java.io.File/createTempFile "vis-trajectory" ".txt")
+
+            {:keys [err exit]}
+            (with-redefs-fn {#'trajectory/run-secrets (fn []
+                                                        [])}
+              #(run-cli ["--trajectory" (str file "/run.json") "--" "hi"] {:content []}))]
+
+        (expect (= 1 exit))
+        (expect (some #(str/starts-with? % "vis-agent: cannot write the trajectory: ") err)))))
