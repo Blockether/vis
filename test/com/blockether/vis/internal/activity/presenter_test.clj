@@ -384,6 +384,25 @@
         (expect (= ["npm test" "| tail -3"] (get-in view ["content" 0 "command"])))
         (expect (= "~/vis/apps/web/src · exit 2" (get view "aside")))
         (expect (= "ok" (get view "outcome")))))
+  (it "writes the home directory as ~ in the command and its output"
+      (let [home
+            (System/getProperty "user.home")
+
+            view
+            (result-view
+              {:operation :shell}
+              {:command (str home "/vis-decisions/.venv/bin/python " home "/.vis/tmp/info.py")
+               :cwd (str home "/vis-decisions")
+               :err (str "  File \"" home "/vis-decisions/x.py\", line 1\nModuleNotFoundError")
+               :status "exited"
+               :exit 1})]
+
+        (expect (= "~/vis-decisions/.venv/bin/python ~/.vis/tmp/info.py" (get view "headline")))
+        (expect (= ["~/vis-decisions/.venv/bin/python ~/.vis/tmp/info.py"]
+                   (get-in view ["content" 0 "command"])))
+        (expect (= "  File \"~/vis-decisions/x.py\", line 1"
+                   (get-in view ["content" 0 "lines" 0 "text"])))
+        (expect (= "~/vis-decisions · exit 1" (get view "aside")))))
   (it "removes terminal escapes, resolves redraws and marks stderr lines"
       (let [view (result-view {:operation :shell}
                               {:command "build"

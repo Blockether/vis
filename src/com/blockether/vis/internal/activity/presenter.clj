@@ -3,6 +3,7 @@
    never channel markup, and never inspect Python source."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.activity :as contract]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]))
 
 (def presenters contract/presenters)
@@ -23,7 +24,7 @@
    `running: <command>` becomes the command itself in Activity."
   [{:keys [presenter phrase] :as event}]
   (or (when (and (= :shell presenter) (string? phrase) (str/starts-with? phrase "running: "))
-        (subs phrase (count "running: ")))
+        (paths/compact-path-text nil (subs phrase (count "running: "))))
       phrase
       (:label event)
       (:result-summary event)
@@ -259,7 +260,7 @@
    handle uses the same headline, so a wait or a read is never a new command."
   [value]
   (let [command
-        (str/trim (str (or (field value "command") "")))
+        (paths/compact-path-text nil (str/trim (str (or (field value "command") ""))))
 
         [cwd stages]
         (leading-directory (field value "cwd")
@@ -280,9 +281,9 @@
         (= "running" (field value "status"))
 
         lines
-        (into (mapv #(hash-map "text" % "stream" "stdout")
+        (into (mapv #(hash-map "text" (paths/compact-path-text nil %) "stream" "stdout")
                     (mapcat terminal-lines (keep #(not-empty (field value %)) ["out" "stdout"])))
-              (map #(hash-map "text" % "stream" "stderr"))
+              (map #(hash-map "text" (paths/compact-path-text nil %) "stream" "stderr"))
               (mapcat terminal-lines (keep #(not-empty (field value %)) ["err" "stderr"])))
 
         dropped
