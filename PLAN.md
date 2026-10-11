@@ -1,123 +1,195 @@
-# Automations: schedules and webhooks
+# Evaluations on Harbor
 
-Start agent work on a schedule or from an external event, and report the result. Follow the Hermes Agent feature set where it fits Vis.
+Run every Vis evaluation through Harbor, keep trajectories on this machine and decide harness changes with paired statistics.
 
 ## Context
 
-The previous plan, Council Rooms, is complete, deployed and verified on two machines (`580c5051b` to `d8183db51`).
-Git history keeps that plan. Its last open item is closed: the relay CI token can now write to D1.
+The previous plan, Automations, is complete and verified (phases 1 to 6, native test `2687ca926`).
+Git history keeps that plan.
 
-Hermes Agent (`NousResearch/hermes-agent`) has cron jobs and webhook routes. A job runs a prompt in a fresh session on a schedule.
-A route checks a signature, filters the event, renders a prompt from the payload and starts a run.
-Hermes records each attempt and delivers the result to a chat platform.
+Vis has four evaluation runners, and each one writes its own result format:
 
-Vis already has the parts that one run needs: `state/create-session!`, `state/submit-turn-sync!`, `state/close-session!`, scoped Settings and Push.
-Vis has no scheduler, no run ledger and no public inbound route.
+- `e2e/run.py` runs 40 editing scenarios from `e2e/scenarios/<id>/scenario.json` on the host. It starts the source CLI (`clojure -M:vis`) with `--full-trace-json-stream`. Results go to `~/.vis/evals/runs/<run_id>/`.
+- `~/curated-terminal-benchmark/terminal_bench/` runs the full Terminal-Bench queue for Vis on Harbor 0.23.0.
+- `~/curated-terminal-benchmark/ctb/` runs 12 curated Terminal-Bench tasks for 7 agents and seals each round in `results/<round>.json`.
+- `~/.vis/tmp/subagent-bench/` holds a one-time subagent benchmark.
 
-Current paths:
+`.vis/extensions/evals.py` gives the `evals.*` tools. It starts the first two runners. It also has the statistics: 95% intervals with tasks as clusters, paired comparisons, power and Cohen's kappa for failure labels.
 
-- Contracts: `packages/vis-contract/resources/vis-contract/schema/automations.json` and `gateway.json`.
-- Engine: `src/com/blockether/vis/internal/automation/` and `gateway/server/automations.clj`.
-- Storage: `resources/db/sqlite/migration/V1__schema.sql`, `persistance/core.clj` and `persistance/sqlite/core.clj`.
-- Clients: `packages/vis-agent/src/blockether/vis/engine/_client.py`, `apps/vis-companion/src/` and `apps/vis-tui/`.
+Problems:
+
+- You cannot compare an e2e result with a Terminal-Bench result.
+- The Vis Harbor adapters write no ATIF `trajectory.json`. They copy only the token counts. `harbor view`, `harbor analyze` and trajectory criteria do not see the Vis steps.
+- Two Vis adapters do the same work: `ctb/agents/vis.py` and `terminal_bench/vis_agent.py`.
+- Harness components have no named switches. A component ablation is not possible.
+- Harbor sends usage telemetry by default, with agents, models, rewards and durations. Nothing in our tools prevents an upload to Harbor Hub.
+- Container runs need a Linux native build. The benchmark uses v0.2.37, which does not have the Council subagent API (`104c91899`). A dry run of `native-release.yml` uploads only build logs, not the binary.
+
+Evidence: arXiv 2609.20804, "An Empirical Study of Harness Design for Coding Agents", keeps the agent loop fixed and changes one component at a time: planning, action space and context management.
+It runs SWE-Bench Verified and Terminal-Bench 2.1 through Harbor and reports success rate and cost together.
+It compares settings with two-sided exact McNemar tests on paired tasks and the Benjamini-Hochberg procedure (FDR 0.05).
+LLM judges label failure stages and action types, and human labels validate the judges with Cohen's kappa.
+
+Harbor facts (0.23.0 installed, 0.24.0 latest):
+
+- `Job.create(JobConfig)` and `Job.run()` return a `JobResult`. Trial hooks run on start, environment start, agent start and end, verification start, end and cancel.
+- `JobConfig` takes several agents, datasets, attempts, retries and metrics in one job.
+- `--agent`, `--env` and `--plugin` accept a `module:Class` import path.
+- A task is `task.toml`, an instruction, an environment and `tests/`. It can have steps, network rules for each phase, MCP servers, skills and a separate verifier.
+- `harbor-rewardkit` 0.2.3 gives file, command, data, HTTP and trajectory criteria, and LLM or agent judges with `samples` and `guard`.
+- ATIF v1.8 has steps, tool calls, observations, step metrics, `is_copied_context` and `subagent_trajectories`.
+- `harbor job regrade` grades a job again without a new agent run. `harbor view`, `harbor analyze` and `harbor check` read jobs, trajectories and tasks.
+- Telemetry turns off only with `HARBOR_TELEMETRY=off`. There is no configuration file for it.
 
 Decisions:
 
-- An automation has one or more triggers, one action and one delivery.
-- Rooms and Council are not delivery targets. The session, Push and signed callbacks report the result.
-- The setting `automations` is off by default. An explicit `false` on a project, group or session blocks runs there.
-- A run that an automation started cannot create, change or delete automations.
-- Webhooks arrive only at the gateway route `POST /v1/hooks/{automation_id}`. The relay does not carry webhooks.
-- The gateway keeps every secret and checks every signature.
+- Harbor is the only runner. A Harbor job directory is the only raw result format.
+- Vis writes ATIF itself. Every consumer (Harbor, e2e and other tools) gets the same trajectory.
+- Trajectories and results stay on this machine. No tool of ours uploads them.
+- A round is one Vis build, one profile set and one Harbor version. A sealed round never changes.
+- A harness change is accepted only through a paired test on held-out tasks and a person's approval.
 
 Rejected alternatives:
 
-- Separate toggles for webhooks and agent management: one toggle and one fixed rule are easier to understand.
-- A webhook inbox on the relay: webhooks belong in the gateway. Commit `5f2a59a4a` added the inbox, and phase 4 removes it.
-- Script filters and script-only jobs: they run code for a webhook and need a separate security decision.
-- Council or Room delivery: it adds a second result channel without a new capability.
+- A new runner in Vis: Harbor already owns tasks, containers, verifiers, retries, job results and trajectories.
+- An ATIF converter in the benchmark repository: e2e also needs ATIF, and the engine owns the trace.
+- Harbor Hub as result storage: it sends trajectories off this machine.
+- A self-improvement loop that changes Vis without a gate: it fits the benchmark, not the work.
 
-## 1. Contract, schedules and run ledger
+## 1. Private trajectories
 
-Rationale: every client uses one canonical protocol, and schedules run without a person.
-
-Data:
-
-- `automations.json`: `automation`, `automation_input`, `trigger` (`cron`, `every`, `once`, `webhook`), `target` (`session`, `new`, `temporary`), `delivery`, `run`, `run_event`, `webhook_result` and limits.
-- Routes: `GET`/`POST /v1/automations`, `GET`/`PATCH`/`DELETE /v1/automations/{id}`, `POST /v1/automations/{id}/run`, `POST /v1/automations/{id}/secrets`, `GET /v1/automations/runs` and `GET /v1/automations/runs/{run_id}`.
-- `automation/cron.clj`: five fields, names, lists, ranges, steps, macros, the Vixie OR rule and IANA time zones.
-- A local time in a DST gap runs at the first instant after the gap. A repeated local time runs once.
-- Tables `automation` and `automation_run`. A due trigger claims one run atomically. Missed fires do not run later.
-- An overlapping run is `skipped`. A run that a stopped process left becomes `unknown` and never runs again.
-- Targets: `session` queues a turn, `new` keeps a fresh session, and `temporary` keeps only the answer.
-- The `automations` setting of the target scope (session, group or global) allows each run. The scheduler fires no schedule while the global setting is off.
-
-Acceptance criteria: cron tests, including Europe/Warsaw DST; scheduler tests with a fake clock; route, contract and SDK tests; a run reaches `completed` with its answer through a stub model.
-
-Unknowns: none.
-
-## 2. Delivery
-
-Rationale: the owner learns the result without watching the session.
+Rationale: trajectories hold source code, prompts and command output, and they can hold credentials. They must stay on this machine.
 
 Data:
 
-- Push: the existing turn push. A completed run whose answer starts with `[SILENT]` sends no push and no callback. Failures always deliver.
-- A temporary session sends an automation push, not a session push.
-- Callback: Standard Webhooks headers and `v1,<base64 HMAC-SHA256>` signatures for `run.completed`, `run.failed`, `run.cancelled` and `run.skipped`.
-- The persisted outbox uses a 10-second timeout. It retries after 30 seconds, 2 minutes, 10 minutes, 1 hour and 6 hours, and stops after 6 attempts. Each attempt keeps the message ID.
+- Every Harbor process that our tools start gets `HARBOR_TELEMETRY=off`. In the benchmark repository, `sitecustomize.py` also sets it for each Python process with the repository on `PYTHONPATH`. A running round then stops telemetry at its next trial.
+- Our Harbor commands refuse the Hub flags `--upload`, `--public`, `--share-org`, `--launch` and `--stream`.
+- Vis redacts credentials in `trajectory.json`: known provider credentials and environment values whose names contain `KEY`, `TOKEN`, `SECRET`, `PASSWORD` or `CREDENTIAL`. The Harbor adapter then removes the exact secret values that it gave to the trial.
+- Job directories get mode `0700`. `jobs/` and `runs/` stay out of git. A sealed result has no trajectory content.
+- Claude Code in Harbor already sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
+- Harbor 0.24 comes after the running baseline round is sealed. A round never changes its Harbor version.
 
-Acceptance criteria: a local receiver checks the signature; a receiver failure retries and then delivers once; `[SILENT]` suppresses delivery.
+Acceptance criteria: tests check the process environment, the refused flags, the redaction and the directory mode. A planted fake credential does not appear in `trajectory.json`.
 
 Unknowns: none.
 
-## 3. Webhook triggers
+## 2. ATIF trajectories from Vis
 
-Rationale: external events start work at once.
+Rationale: Harbor tools read ATIF. With ATIF, Vis trials appear in `harbor view`, `harbor analyze`, rewardkit trajectory criteria and `harbor-atif2otel`.
 
 Data:
 
-- `POST /v1/hooks/{automation_id}` is public. Its own signature check replaces the API token and protocol gates.
-- Schemes: `github` (`X-Hub-Signature-256`), `standard` (Standard Webhooks), `generic` (`X-Webhook-Signature-V2` with a timestamp within 300 seconds) and `token` (bearer).
-- An `events` filter and field filters (`equals`, `contains`, `in`) select deliveries. Prompt templates use `{dot.path}` and `{__raw__}`.
-- One delivery ID starts at most one run while that run stays in the run ledger. Limits: 30 requests each minute and 1 MiB for each body.
-- `deliver_only` sends the rendered text without a model. The answer is `202` with the run ID.
+- The `result` frame of `--full-trace-json-stream` has each iteration: thinking, prose, code blocks, stdout, error, tool call id, times and the final answer. `tokens` and `cost` hold the totals.
+- `vis-agent --trajectory PATH` writes ATIF v1.8 when the run ends. `src/com/blockether/vis/internal/loop/trajectory.clj` owns the mapping.
+- The prompt is the first `user` step. Each iteration is one `agent` step, with `reasoning_content`, `model_name` and `reasoning_effort`.
+- Each code block is one tool call `python_execution` with the argument `code`. Its stdout and error are the observation.
+- The final answer is the message of the last agent step. Totals go to `final_metrics`.
+- Vis facts go to `extra`: iteration, block status, Activity counts, repairs, timeouts, session id and profile.
+- Council children go to `subagent_trajectories` (phase 3).
 
-Acceptance criteria: route tests for each status; a repeated delivery returns the first run; the turn request marks payload text as untrusted.
+Acceptance criteria: Lazytest tests cover the mapping and the redaction. A host run with `--trajectory` passes validation with Harbor's `Trajectory` model. `harbor view` shows its steps. The token totals equal the result frame.
 
-Unknowns: event coalescing (later).
+Unknowns: the trace has no token counts for each iteration, so step metrics can stay empty.
 
-## 4. Remove the relay inbox
+## 3. One Vis agent, profiles and a current Linux build
 
-Rationale: webhooks belong in the gateway, not in the relay. A sender must reach the gateway route directly.
+Rationale: one adapter gives one behavior. Named profiles make each harness component a switch, and the profile is part of each result.
 
-Data: remove the Worker `hooks` module, its D1 tables, the gateway poller and the `webhook.url` field. The wire shape keeps `webhook.path`.
+Data:
 
-Acceptance criteria: relay, engine, TUI and Companion tests pass without the inbox. The deployed relay answers `404` on the inbox routes and has no hook tables.
+- `ctb/agents/vis.py` stays the only Vis adapter. `terminal_bench/` uses it.
+- Current switches: `--toggles` (for example `council`, `draft_backend`, `subagents` and `reasoning_level`), `--extensions`, `--reasoning-effort` and `--db :memory` or `--persist`.
+- `profiles.toml` names each profile: toggles, extensions, effort and a configuration overlay. The profile goes to ATIF `agent.extra` and to the run record.
+- `native-release.yml` dry runs upload the Linux binary as a workflow artifact with a short retention. The benchmark pins that archive by sha256, run id and commit. This is not a release.
 
-Unknowns: none. The relay CI token can now write to D1.
+Acceptance criteria: one canary task each for `vis-solo` and `vis-team` on a build from `main`, with valid ATIF and the profile in it. The second adapter is removed.
 
-## 5. Interfaces and documentation
+Unknowns: which context components have switches today. Phase 8 needs switches for compaction (on, off and thresholds), fold hints, planning and the action space. A missing switch becomes an engine toggle.
 
-Data: a Companion Automations screen (list, create, edit, pause, run now, runs and a one-time secret); TUI `/automations`; a model tool for interactive sessions; a docs page.
+## 4. e2e scenarios as a Harbor dataset
 
-Acceptance criteria: Companion unit and Storybook tests, TUI tests, documentation tests and Activity presentation tests.
+Rationale: one runner for all evaluations. Harbor gives retries, job results, `view` and `regrade`.
+
+Data:
+
+- `scenario.json` keys: `want`, `wantnot`, `want_answer`, `want_answer_json`, `want_json_files`, `want_tools`, `want_forms`, `want_requested_route`, `want_folded_prefix`, `want_cache_read`, `want_cache_metrics`, `want_helper_reuse`, `measurement`, `files_from`, `fixture_generator`, `timeout_s` and `lang`.
+- A Harbor environment for the host (`--env module:Class`) makes a new git repository for each trial, as `e2e/run.py` does now. It uses the source CLI, so no Linux build is necessary.
+- A compiler makes one Harbor task from each `scenario.json`: `task.toml`, `instruction.md`, the files and `tests/`.
+- The verifier reads the workspace and `trajectory.json`, and writes named rewards: correctness and each process guard. Rewardkit criteria are used where one fits.
+
+Acceptance criteria: one Harbor run of all scenarios is graded by the old and the new grader, and they agree on 100% of the verdicts. Then `evals.run_scenarios` uses Harbor, and `e2e/run.py` is removed.
+
+Unknowns: some e2e guards read Activity data that the trace may not hold. Such a guard gets its data in ATIF `extra` first.
+
+## 5. One result store and one statistics module
+
+Rationale: the same code and the same rules compare any two runs.
+
+Data:
+
+- A Harbor job directory has `config.json`, `result.json` and trials with `result.json`, `agent/trajectory.json` and `verifier/reward.json`.
+- The SDK module `blockether.vis.evals` reads Harbor jobs and holds the statistics: cluster intervals, exact McNemar, Benjamini-Hochberg, power and cost. The `evals` extension and the benchmark repository import it.
+- Every round has a seal: commit, pins, profiles, artifact sha256, task checksums and one row for each trial.
+- Vis keeps an index of runs that it can build again from the files. It does not keep a copy.
+
+Acceptance criteria: `evals.compare` reads a benchmark round and an e2e round with the same code. McNemar and Benjamini-Hochberg values equal reference values.
 
 Unknowns: none.
 
-## 6. End-to-end verification
+## 6. Evaluations in Vis
 
-Data: a native suite with an owned gateway, a stub model and a local callback receiver.
+Rationale: a person starts, watches and compares evaluations from chat, the TUI and the Companion app. A real failed session becomes a new scenario.
 
-Acceptance criteria: the schedule, webhook and callback paths pass on a fresh native build.
+Data:
 
-Unknowns: none.
+- `evals.run(dataset, agents, profiles, attempts)` starts a Harbor job in the background.
+- The Harbor plugin `VisLive` sends trial events to the gateway.
+- The TUI and the Companion app show runs, live progress and comparisons.
+- `evals.capture(session, turn)` makes a task draft from a session: instruction, files and rubric. A person approves the rubric.
+- An automation runs the e2e dataset every night and reports a regression.
+
+Acceptance criteria: a run starts from chat, its progress shows live and its result is sealed. `harbor check` accepts a captured task. Each new TUI fold has arrow-key tests.
+
+Unknowns: the gateway route for evaluation events and the Companion screen design.
+
+## 7. Trajectory judges
+
+Rationale: a pass rate does not tell why a run fails.
+
+Data:
+
+- Rubrics label the failure stage and the action type of each tool call: understand, write, verify and other, as in the paper.
+- `harbor analyze` or rewardkit judges read `trajectory.json`, with `samples` for agreement and `guard` against prompt injection.
+- People label failures with `evals.label`. Cohen's kappa compares each judge with the people.
+
+Acceptance criteria: each rubric has at least 30 human labels. A judge with kappa of 0.6 or more is used for review. Automatic causes need kappa of 0.8 or more.
+
+Unknowns: the judge cost and the time for human labels.
+
+## 8. Ablations and the improvement gate
+
+Rationale: find which component helps which model, and at which cost.
+
+Data:
+
+- Axes:
+  - context management (compaction off and on, thresholds and fold hints) for each context budget,
+  - planning on and off,
+  - all tools or the shell only,
+  - solo or Council,
+  - effort.
+- The tasks are split into a working set and a held-out set.
+- `evals.ablate` plans a run before it starts: cost, time and statistical power.
+- A change needs a paired test on the held-out set and a person's approval. The test must show a gain, or a lower cost without a loss.
+- An agent can propose a change from the paper and the diagnoses. The gate makes the decision.
+
+Acceptance criteria: one complete ablation family on held-out tasks, with a sealed report.
+
+Unknowns: the budget, the number of tasks for enough power and the Podman machine time.
 
 ## Plan state
 
-- Phase 1: done. Cron tests with Europe/Warsaw DST, scheduler, route, contract and SDK tests pass. An isolated source gateway starts and answers the automation routes.
-- Phase 2: done. A local receiver checks the Standard Webhooks signature. A failed callback retries, then arrives once, or stops after 6 attempts. `[SILENT]` sends nothing.
-- Phase 3: done. Route and runner tests cover each webhook status, a repeated delivery and the untrusted-content note.
-- Phase 4: done. Commit `2687ca926` removes the relay inbox. Relay tests pass (deploy 4 of 4, suite 50 of 50). The relay is deployed by hand: the four inbox routes answer `404`, and Push and Rooms still answer. The two hook tables are dropped from production D1. They held 3 test inboxes and no requests. After the relay CI token got D1 write permission, relay CI run `37172247013` deployed `f250109d3`.
-- Phase 5: done. The model tool `automations.*` has Activity presentation and refuses changes during an automation run. The TUI Automations view (command palette) runs, pauses, resumes, lists runs, creates one-time secrets and deletes. The Companion Automations screen does the same and also creates and edits automations in a form. The form sends only the changed fields and keeps webhook filters. Companion unit tests (lib 19, screen 14), Storybook tests (9) and the guide page contract pass.
-- Phase 6: done. `native_automations_test` passes 4 of 4 cases on a fresh native build with commit `2687ca926`. The cases cover one-time and cron schedules, a GitHub webhook with forged and repeated deliveries, a Standard Webhooks request with a forged signature and a signed callback. Each webhook goes directly to the gateway route. `native_rooms_test` passes with the restored relay fixture.
+- Phase 1: in progress.
+- Phase 2: in progress.
+- Phases 3 to 8: not started.
+- The baseline round (`ctb-baseline`) has no Vis trials. It runs until about 2026-10-13. After its seal, commit `results/baseline.json` in the benchmark repository.
