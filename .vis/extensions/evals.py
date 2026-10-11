@@ -1,9 +1,10 @@
 """Evals: run and read Vis evaluations, from e2e scenarios to Terminal-Bench on Harbor.
 
-This extension drives the two runners in this repository. It does not copy them:
+This extension drives two runners. It does not copy them:
 
-    e2e/run.py                   editing scenarios under e2e/scenarios/<id>/
-    benchmarks/terminal_bench/   Harbor queue (run_suite.py) and summary (summarize.py)
+    e2e/run.py                   editing scenarios under e2e/scenarios/<id>/ in this repository
+    terminal_bench/              Harbor queue (run_suite.py) and summary (summarize.py) in the
+                                 curated-terminal-benchmark repository (VIS_TERMINAL_BENCH)
 
 The first Terminal-Bench 4.0 run of Vis taught these rules, and the code enforces them:
 
@@ -31,7 +32,7 @@ The first Terminal-Bench 4.0 run of Vis taught these rules, and the code enforce
 
 Run records live in ~/.vis/evals/runs/<run_id>/, or under VIS_EVALS_HOME: run.json,
 output.log, exit_code and, for scenario runs, traces/results.json. A named round keeps
-its jobs/ and runs/ in benchmarks/terminal_bench/rounds/<round>/. Its runs/ holds
+its jobs/ and runs/ in terminal_bench/rounds/<round>/. Its runs/ holds
 summary.json, provenance.json and the human labels in labels.json.
 """
 
@@ -61,7 +62,10 @@ import blockether.vis.extension as vis
 REPO = Path(__file__).resolve().parents[2]
 SCENARIOS = REPO / "e2e" / "scenarios"
 E2E_RUNNER = REPO / "e2e" / "run.py"
-BENCH = REPO / "benchmarks" / "terminal_bench"
+BENCH = Path(
+    os.environ.get("VIS_TERMINAL_BENCH")
+    or Path.home() / "curated-terminal-benchmark" / "terminal_bench"
+)
 HOME = Path(os.environ.get("VIS_EVALS_HOME") or Path.home() / ".vis" / "evals")
 MACHINE = "vis-amd64"
 MIN_FREE_GB = 12.0
@@ -1071,7 +1075,7 @@ def _preflight(round_name: str | None = None) -> Preflight:
             "uv",
             uv,
             uv or "not found",
-            "Install uv, then run `uv sync --locked` in benchmarks/terminal_bench.",
+            f"Install uv, then run `uv sync --locked` in {BENCH}.",
         )
     )
     podman = shutil.which("podman")

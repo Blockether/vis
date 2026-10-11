@@ -83,7 +83,7 @@ def repo(tmp_path, monkeypatch):
             "measurement": True,
         },
     )
-    bench = root / "benchmarks" / "terminal_bench"
+    bench = tmp_path / "curated-terminal-benchmark" / "terminal_bench"
     bench.mkdir(parents=True)
     paths = {
         "REPO": root,
