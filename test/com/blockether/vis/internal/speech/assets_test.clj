@@ -326,8 +326,7 @@
                      (expect (str/includes? rendered (:id model)))
                      (expect (str/includes? rendered (:revision model)))
                      (expect (str/includes? rendered (:attribution model)))
-                     (doseq [artifact (concat [(get-in model [:artifacts :inference])
-                                               (get-in model [:artifacts :training])]
+                     (doseq [artifact (concat (keep #(get-in model [:artifacts %]) [:inference :training])
                                               (vals (get-in model [:artifacts :wheels])))]
                        (expect (str/includes? rendered (:sha256 artifact)))
                        (doseq [part (or (seq (:parts artifact)) [artifact])]

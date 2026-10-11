@@ -137,6 +137,7 @@
          (str "- Installs into: `~/.vis/models/decisions/" (:id entry) "/" (:revision entry) "/`")
          "- Downloaded from the shared Vis assets-pack release (verified by SHA-256):"]
         (for [[kind artifact] artifacts
+              :when artifact
               :let [label (if (keyword? kind) (name kind) kind)]]
 
           (if-let [parts (seq (:parts artifact))]
@@ -167,10 +168,12 @@
                  ", SHA-256 `"
                  (:sha256 artifact)
                  "`)")))
-        ["- Training checkpoints are installed only when explicitly requested."
-         "- The vis-decisions extension supplies training dependencies."]
-        ;; Decision 2.0 has no action head, so only one head needs evaluation.
-        (if (contains? decisions/decision2-architectures (:id entry))
+        (when (get-in entry [:artifacts :training])
+          ["- Training checkpoints are installed only when explicitly requested."
+           "- The vis-decisions extension supplies training dependencies."])
+        ;; Decision 2.0 and D3 have no action head, so only one head needs evaluation.
+        (if (or (contains? decisions/decision2-architectures (:id entry))
+                (contains? decisions/d3-architectures (:id entry)))
           ["- Model scores do not authorize autonomous actions; evaluate the decision"
            "  head on held-out examples before relying on it."]
           ["- Model scores do not authorize autonomous actions; evaluate both decision"

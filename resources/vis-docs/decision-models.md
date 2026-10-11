@@ -25,7 +25,8 @@ heads. Then decide when a human must review a result before you rely on it.
   computers have enough memory, evaluate the larger
   [GLiNER2.5 Decide 1B model](#choose-and-train-a-gliner2-5-model).
 - **The GLiNER2.5 models do not answer your questions well enough, and you need no action
-  score.** Evaluate the [Decision 2.0 models](#choose-and-train-decision-2-0) on your own labels.
+  score.** Evaluate the [Decision 2.0 models](#choose-and-train-decision-2-0) and the
+  [D3 models](#choose-d3) on your own labels.
 - **The baseline does not fit your data.** [Train with your own
   labels](#train-locally-with-the-python-sdk), then [publish a verified version and
   select it](#publish-explicitly-and-select-a-version).
@@ -128,9 +129,9 @@ GLiNER does not truncate the state or question. The gateway rejects a sequence a
 limit before model inference. A sequence exactly at the limit is accepted. Character counts
 cannot predict this boundary because each model uses its own tokenizer.
 
-Decision 2.0 has a fixed limit of 2,048 tokens for each question. The state, question type,
-instructions, option keys, option descriptions and prompt text share that budget. Decision 2.0
-also does not truncate input. The gateway rejects a longer question before model inference.
+Decision 2.0 and D3 have a fixed limit of 2,048 tokens for each question. The state, question
+type, instructions, option keys, option descriptions and prompt text share that budget. These
+models also do not truncate input. The gateway rejects a longer question before model inference.
 
 For overlong input, `Decisions.infer` raises `GatewayError` with `status == 400` and
 `code == "input-too-long"`. Its `input_tokens` attribute gives the rejected sequence's token
@@ -384,6 +385,47 @@ Set only `min_decision_accuracy` in `policy.json`. The trainer rejects a policy 
 `min_action_accuracy`. Then call `Trainer.train` as in the GLiNER2.5 example. The validation
 report and the gateway job metrics give `action_accuracy` as `null`. To train on the gateway, pass
 the model ID as `model_id`, as [Train on the gateway instead](#train-on-the-gateway-instead) shows.
+
+### Choose D3
+
+D3 (Decision 3.0) has two text decision models from vLLM Semantic Router. Each model reads the
+state, the instructions and all options in one pass. Then it gives each option a probability.
+D3 is for inference only. You cannot train or fine-tune it with Vis.
+
+| Model | Model ID | FP32 bundle download |
+| --- | --- | --- |
+| D3 Edge | `d3-edge` | 1.03 GB |
+| D3 Lite | `d3-lite` | 1.56 GB |
+
+Evaluate both models and Decision 2.0 on your own labels. Then choose the model that answers them
+better.
+
+D3 answers `choice`, `score` and `noul` questions with the same answer fields as Decision 2.0. It
+has no action head, so its answers have no `action` field. A `choice` question needs 1 to 64
+options. A `score` question needs 2 to 10 distinct levels. For a `noul` question, you can describe
+`false` and `true` in `criteria`.
+
+The Vis bundles contain only the text model. The upstream models also read images and videos, but
+Vis does not send them. Vis runs the model in FP32, but the upstream runtime runs it in BF16. So
+the probabilities can differ from the upstream runtime in the third decimal place.
+
+Check these resources before you choose a model:
+
+- While a model is loaded, the gateway reserves 4,096 MB of memory for Edge and 4,308 MB for Lite.
+  The default `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for one of these models. To
+  keep both models loaded at the same time, set it to at least 8,404 MB.
+- On an Apple M4 Max with 4 CPU threads, a question of about 2,000 tokens took about 1.2 seconds
+  with Edge. With Lite, it took about 2.4 seconds. The first question also waits while the model
+  loads: about 6 seconds for Edge and 10 seconds for Lite.
+
+Download the FP32 bundle for the gateway. This command downloads Edge. For Lite, use the model ID
+`d3-lite`:
+
+```bash
+vis-agent decisions models download --model d3-edge
+```
+
+Then pass the model ID as `model` when you [ask from Python](#ask-from-python).
 
 ### Resume or continue training
 

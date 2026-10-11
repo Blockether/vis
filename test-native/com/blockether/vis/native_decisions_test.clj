@@ -180,17 +180,19 @@
       (expect (number? (get-in result ["answers" "intent" "action" "act_probability"]))))))
 
 (defn- native-download!
-  "Install one pinned model and its training checkpoint with the native CLI. The gateway that
-   answers later never downloads; this step is the only network use."
+  "Install one pinned model and, when the catalog has one, its training checkpoint with the native
+   CLI. The gateway that answers later never downloads; this step is the only network use."
   [^File executable ^File home ^File store model-id]
   (let [model
         (assets/entry model-id)
 
         builder
         (doto (ProcessBuilder. ^java.util.List
-                               [(.getAbsolutePath executable)
-                                (str "-Duser.home=" (.getAbsolutePath home)) "decisions" "models"
-                                "download" "--model" model-id "--training"])
+                               (cond-> [(.getAbsolutePath executable)
+                                        (str "-Duser.home=" (.getAbsolutePath home)) "decisions"
+                                        "models" "download" "--model" model-id]
+                                 (get-in model [:artifacts :training])
+                                 (conj "--training")))
           (.directory home)
           (.redirectErrorStream true))
 
@@ -211,7 +213,7 @@
         (throw (ex-info "Native model download timed out" {:model model-id})))
       (expect (zero? (.exitValue process)) @output)
       (doseq [kind
-              [:inference :training]
+              (keys (:artifacts model))
 
               :let [dir
                     (io/file store model-id (:revision model) (name kind))]]
@@ -220,7 +222,7 @@
         (expect (assets/installed? (assets/artifact model kind) (.getPath dir)))))))
 
 (defn- decision2-native-check!
-  "Answer all three question types with one installed catalog Decision 2.0 model."
+  "Answer all three question types with one installed catalog Decision 2.0 or D3 model."
   [model-id]
   (let [response
         (gateway-client/request!
@@ -246,15 +248,16 @@
     (expect (#{"refund" "repair"} (get-in body ["answers" "intent" "choice"])))
     (expect (number? (get-in body ["answers" "priority" "score"])))
     (expect (number? (get-in body ["answers" "policy" "noul"])))
-    ;; Decision 2.0 has no action head.
+    ;; Decision 2.0 and D3 have no action head.
     (expect (nil? (get-in body ["answers" "intent" "action"])))))
 
 (defdescribe
   native-decision-inference-test
   ;; Regression: the first native /v1/systemone request returned 500 because ORT's
   ;; platform libraries were not embedded; JVM inference alone could not catch it.
-  ;; Gate: -Dvis.test.decision2.download=<comma-separated Decision 2.0 IDs> installs those
-  ;; models with the native `decisions models download --training` before the gateway starts.
+  ;; Gate: -Dvis.test.decision2.download=<comma-separated Decision 2.0 or D3 IDs> installs those
+  ;; models with the native `decisions models download` before the gateway starts. It adds
+  ;; `--training` for a model that has a training checkpoint.
   (it
     "answers all three typed questions through bundled native JNI and no network"
     (let [^File home

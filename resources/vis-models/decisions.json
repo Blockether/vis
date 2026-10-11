@@ -388,5 +388,53 @@
     "license": "Apache-2.0",
     "revision": "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764",
     "source-url": "https://huggingface.co/vllm-sr/Decision-2.0-Kai-0.6B/tree/cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764"
+  },
+  {
+    "artifacts": {
+      "inference": {
+        "bytes": 1033663890,
+        "file": "d3-edge-fp32.zip",
+        "requires": [
+          "model.onnx",
+          "model.onnx.data",
+          "decision_config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "8ede41e11658080f36c481a1280e8d121e35b704c7f0d2f5200150a6cdea740f",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32.zip"
+      }
+    },
+    "attribution": "D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.",
+    "id": "d3-edge",
+    "license": "Apache-2.0",
+    "revision": "18d61df78684675463af9ae732872478845c5a79",
+    "source-url": "https://huggingface.co/vllm-sr/d3-edge/tree/18d61df78684675463af9ae732872478845c5a79"
+  },
+  {
+    "artifacts": {
+      "inference": {
+        "bytes": 1560778186,
+        "file": "d3-lite-fp32.zip",
+        "requires": [
+          "model.onnx",
+          "model.onnx.data",
+          "decision_config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "637101183e5fb8fe36a0048dbb353a70fbcd2f0332ce15bb31a9d92c938f5559",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32.zip"
+      }
+    },
+    "attribution": "D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.",
+    "id": "d3-lite",
+    "license": "Apache-2.0",
+    "revision": "a8d25a91ef75552803f7009d25b7bd435991abd9",
+    "source-url": "https://huggingface.co/vllm-sr/d3-lite/tree/a8d25a91ef75552803f7009d25b7bd435991abd9"
   }
 ]

@@ -35,6 +35,11 @@
   {"decision2.0-eos-0.8b" "qwen3.5-text-endpoints-global-query-shared-bilinear-mlp"
    "decision2.0-kai-0.6b" "qwen3-text-endpoints-global-query-shared-bilinear-mlp"})
 
+(def d3-architectures
+  "vLLM Semantic Router D3 models: one noncausal pass reads the option codes. Inference only."
+  {"d3-edge" "qwen3.5-text-noncausal-code-readout-255"
+   "d3-lite" "qwen3.5-text-noncausal-code-readout-255"})
+
 (defn inference-required
   "Files required by one explicitly named FP32 inference family."
   [model-id]
@@ -44,7 +49,7 @@
         (contains? gliner-architectures model-id)
         ["model.onnx" "config.json" "encoder_config/config.json" "tokenizer/tokenizer.json"
          "tokenizer/tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"]
-        (contains? decision2-architectures model-id)
+        (or (contains? decision2-architectures model-id) (contains? d3-architectures model-id))
         ["model.onnx" "model.onnx.data" "decision_config.json" "tokenizer/tokenizer.json"
          "tokenizer/tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"]
         :else (throw (ex-info "Unsupported decision model family"
@@ -330,7 +335,8 @@
 
           family
           (cond (contains? gliner-architectures model-id) "gliner2.5"
-                (contains? decision2-architectures model-id) "decision2")]
+                (contains? decision2-architectures model-id) "decision2"
+                (contains? d3-architectures model-id) "d3")]
 
       (when-not
         (and (= "inference" (get provenance "kind"))
@@ -346,6 +352,10 @@
                (and (= family (get provenance "family"))
                     (= (get decision2-architectures model-id) (get provenance "architecture")))
 
+               "d3"
+               (and (= family (get provenance "family"))
+                    (= (get d3-architectures model-id) (get provenance "architecture")))
+
                (nil? (get provenance "family")))
              (re-matches #"(?:[0-9a-f]{40}|[0-9a-f]{64})" (str (get provenance "revision")))
              (= listed files)
@@ -356,7 +366,7 @@
                                "gliner2.5"
                                "config.json"
 
-                               "decision2"
+                               ("decision2" "d3")
                                "decision_config.json"
 
                                "rl_agent_config.json"))

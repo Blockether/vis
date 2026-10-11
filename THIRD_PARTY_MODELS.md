@@ -29,6 +29,8 @@ This file is generated from `resources/vis-models/manifest.edn` and
 | `gliner2.5-multi-decide` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `decision2.0-eos-0.8b` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 | `decision2.0-kai-0.6b` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
+| `d3-edge` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
+| `d3-lite` | Apache-2.0 | yes | the Vis assets release | only when asked for by name |
 
 ## `parakeet-tdt-0.6b-v3-int8`
 
@@ -335,5 +337,33 @@ Decision 2.0 Kai 0.6B by vLLM Semantic Router, Apache-2.0, fine-tuned from Qwen3
   - training: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-training.zip> (1226 MB, SHA-256 `a243b0c4471866023d0758cb0145438d48e4caba6a0d346c3181b1e50c4116b4`)
 - Training checkpoints are installed only when explicitly requested.
 - The vis-decisions extension supplies training dependencies.
+- Model scores do not authorize autonomous actions; evaluate the decision
+  head on held-out examples before relying on it.
+
+## `d3-edge`
+
+Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
+
+D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.
+
+- Upstream: <https://huggingface.co/vllm-sr/d3-edge/tree/18d61df78684675463af9ae732872478845c5a79>
+- Pinned revision: `18d61df78684675463af9ae732872478845c5a79`
+- Installs into: `~/.vis/models/decisions/d3-edge/18d61df78684675463af9ae732872478845c5a79/`
+- Downloaded from the shared Vis assets-pack release (verified by SHA-256):
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32.zip> (1034 MB, SHA-256 `8ede41e11658080f36c481a1280e8d121e35b704c7f0d2f5200150a6cdea740f`)
+- Model scores do not authorize autonomous actions; evaluate the decision
+  head on held-out examples before relying on it.
+
+## `d3-lite`
+
+Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
+
+D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.
+
+- Upstream: <https://huggingface.co/vllm-sr/d3-lite/tree/a8d25a91ef75552803f7009d25b7bd435991abd9>
+- Pinned revision: `a8d25a91ef75552803f7009d25b7bd435991abd9`
+- Installs into: `~/.vis/models/decisions/d3-lite/a8d25a91ef75552803f7009d25b7bd435991abd9/`
+- Downloaded from the shared Vis assets-pack release (verified by SHA-256):
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32.zip> (1561 MB, SHA-256 `637101183e5fb8fe36a0048dbb353a70fbcd2f0332ce15bb31a9d92c938f5559`)
 - Model scores do not authorize autonomous actions; evaluate the decision
   head on held-out examples before relying on it.
