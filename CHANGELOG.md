@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - The D3 decision models `d3-edge` and `d3-lite` from vLLM Semantic Router answer `choice`,
-  `score` and `noul` questions with up to 16,384 tokens each. They are FP32 text bundles for
-  inference only, and their memory grows linearly with the question length (#366).
+  `score` and `noul` questions with up to 16,384 tokens each. Their FP32 text bundles use memory
+  that grows linearly with the question length (#366).
+- D3 Edge and Lite have training checkpoints. Local and gateway training jobs fine-tune them fully or
+  with LoRA, and export the result with the same FP32 D3 export.
 
 ### Changed
 - Decision 2.0 Eos accepts questions of up to 16,384 tokens and Kai up to 8,192 tokens, instead of

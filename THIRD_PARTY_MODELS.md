@@ -344,13 +344,16 @@ Decision 2.0 Kai 0.6B by vLLM Semantic Router, Apache-2.0, fine-tuned from Qwen3
 
 Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
 
-D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.
+D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. The training checkpoint keeps the upstream text weights and the readout, without the vision encoder.
 
 - Upstream: <https://huggingface.co/vllm-sr/d3-edge/tree/18d61df78684675463af9ae732872478845c5a79>
 - Pinned revision: `18d61df78684675463af9ae732872478845c5a79`
 - Installs into: `~/.vis/models/decisions/d3-edge/18d61df78684675463af9ae732872478845c5a79/`
 - Downloaded from the shared Vis assets-pack release (verified by SHA-256):
   - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32-chunked.zip> (1034 MB, SHA-256 `07b9f13a0c07321a07ccfafa72609284028af6e0031951bdef28333779352335`)
+  - training: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-training.zip> (798 MB, SHA-256 `f36ea31655f4078c2156c9c42e60e6fae17188e68c43b42e219d4e0aeee2a151`)
+- Training checkpoints are installed only when explicitly requested.
+- The vis-decisions extension supplies training dependencies.
 - Model scores do not authorize autonomous actions; evaluate the decision
   head on held-out examples before relying on it.
 
@@ -358,12 +361,15 @@ D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3
 
 Decision model - Apache-2.0 - commercial use permitted - hosted by Vis.
 
-D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.
+D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. The training checkpoint keeps the upstream text weights and the readout, without the vision encoder.
 
 - Upstream: <https://huggingface.co/vllm-sr/d3-lite/tree/a8d25a91ef75552803f7009d25b7bd435991abd9>
 - Pinned revision: `a8d25a91ef75552803f7009d25b7bd435991abd9`
 - Installs into: `~/.vis/models/decisions/d3-lite/a8d25a91ef75552803f7009d25b7bd435991abd9/`
 - Downloaded from the shared Vis assets-pack release (verified by SHA-256):
   - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32-chunked.zip> (1561 MB, SHA-256 `0d50c95703ab101356d9eb342400f67e17e0481156f9094b4a1eb6229bba6025`)
+  - training: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-training.zip> (1204 MB, SHA-256 `36e378c44453ce315c12bbf9178c97b970be891b374f79e0b2388669035696f3`)
+- Training checkpoints are installed only when explicitly requested.
+- The vis-decisions extension supplies training dependencies.
 - Model scores do not authorize autonomous actions; evaluate the decision
   head on held-out examples before relying on it.

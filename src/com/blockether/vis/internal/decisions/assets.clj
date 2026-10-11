@@ -36,7 +36,7 @@
    "decision2.0-kai-0.6b" "qwen3-text-endpoints-global-query-shared-bilinear-mlp"})
 
 (def d3-architectures
-  "vLLM Semantic Router D3 models: one noncausal pass reads the option codes. Inference only."
+  "vLLM Semantic Router D3 models: one noncausal pass reads the option codes."
   {"d3-edge" "qwen3.5-text-noncausal-code-readout-255"
    "d3-lite" "qwen3.5-text-noncausal-code-readout-255"})
 

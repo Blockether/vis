@@ -329,7 +329,7 @@
 (defdescribe
   decision2-jobs-report-no-action-accuracy
   (it
-    "decision2 jobs complete without action accuracy, and other families still need it"
+    "Decision 2.0 and D3 jobs complete without action accuracy, and other families still need it"
     (fixture
       (fn [_ _ baseline]
         (let [digest (apply str (repeat 64 "c"))]
@@ -349,10 +349,12 @@
                       (fn [spec _ _]
                         (spit (get (wire/parse-json (slurp spec)) "archive") "fp32-only")
                         {"sha256" digest "bytes" 9 "decision_accuracy" 0.75 "action_accuracy" nil})]
-              (let [created (jobs/create! (assoc request "model_id" "decision2.0-eos-0.8b"))
-                    done (await-status (get created "job_id") "completed")]
+              (doseq [model-id ["decision2.0-eos-0.8b" "d3-edge" "d3-lite"]]
+                (let [created (jobs/create! (assoc request "model_id" model-id))
+                      done (await-status (get created "job_id") "completed")]
 
-                (expect (= {"decision_accuracy" 0.75 "action_accuracy" nil} (get done "metrics"))))
+                  (expect (= {"decision_accuracy" 0.75 "action_accuracy" nil}
+                             (get done "metrics")))))
               (let [created (jobs/create! (assoc request "model_id" "gliner2.5-base"))
                     failed (await-status (get created "job_id") "failed")]
 

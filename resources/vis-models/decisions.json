@@ -405,9 +405,26 @@
         ],
         "sha256": "07b9f13a0c07321a07ccfafa72609284028af6e0031951bdef28333779352335",
         "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32-chunked.zip"
+      },
+      "training": {
+        "bytes": 798163817,
+        "file": "d3-edge-training.zip",
+        "requires": [
+          "config.json",
+          "model.safetensors",
+          "readout.safetensors",
+          "decision_config.json",
+          "MODEL_MANIFEST.json",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "f36ea31655f4078c2156c9c42e60e6fae17188e68c43b42e219d4e0aeee2a151",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-training.zip"
       }
     },
-    "attribution": "D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.",
+    "attribution": "D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. The training checkpoint keeps the upstream text weights and the readout, without the vision encoder.",
     "id": "d3-edge",
     "license": "Apache-2.0",
     "revision": "18d61df78684675463af9ae732872478845c5a79",
@@ -429,9 +446,26 @@
         ],
         "sha256": "0d50c95703ab101356d9eb342400f67e17e0481156f9094b4a1eb6229bba6025",
         "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32-chunked.zip"
+      },
+      "training": {
+        "bytes": 1204252208,
+        "file": "d3-lite-training.zip",
+        "requires": [
+          "config.json",
+          "model.safetensors",
+          "readout.safetensors",
+          "decision_config.json",
+          "MODEL_MANIFEST.json",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "36e378c44453ce315c12bbf9178c97b970be891b374f79e0b2388669035696f3",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-training.zip"
       }
     },
-    "attribution": "D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.",
+    "attribution": "D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. The training checkpoint keeps the upstream text weights and the readout, without the vision encoder.",
     "id": "d3-lite",
     "license": "Apache-2.0",
     "revision": "a8d25a91ef75552803f7009d25b7bd435991abd9",

@@ -202,7 +202,7 @@
                 (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
                 (expect (< 0 (:bytes artifact) 2000000000))
                 (expect (nil? (:parts artifact)))))))))
-  (it "publishes D3 as inference-only FP32 bundles with external weights"
+  (it "publishes D3 FP32 inference bundles and text-only training checkpoints"
       (let [revisions {"d3-edge" "18d61df78684675463af9ae732872478845c5a79"
                        "d3-lite" "a8d25a91ef75552803f7009d25b7bd435991abd9"}]
         (expect (= (set (keys revisions)) (set (keys assets/d3-architectures))))
@@ -218,8 +218,14 @@
             (expect (some #{"model.onnx.data"} (:requires artifact)))
             (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
             (expect (< 0 (:bytes artifact) 2000000000))
-            (expect (= :decisions/unknown-artifact
-                       (:type (error-data #(assets/artifact model :training)))))))))
+            (expect (= #{"config.json" "decision_config.json" "MODEL_MANIFEST.json"
+                         "model.safetensors" "readout.safetensors" "tokenizer.json"
+                         "tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"}
+                       (set (:requires (assets/artifact model :training)))))
+            (let [training (assets/artifact model :training)]
+              (expect (re-matches #"[0-9a-f]{64}" (:sha256 training)))
+              (expect (< 0 (:bytes training) 2000000000))
+              (expect (nil? (:parts training))))))))
   (it "splits every archive above the release asset limit into verified parts"
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :training))))
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :inference))))
@@ -238,10 +244,7 @@
           (expect (< (:bytes artifact) 2147483648)))))
   (it "includes model weights only, not dependency archives"
       (doseq [model (assets/manifest)]
-        (expect (= (if (contains? assets/d3-architectures (:id model))
-                     #{:inference}
-                     #{:inference :training})
-                   (set (keys (:artifacts model))))))
+        (expect (= #{:inference :training} (set (keys (:artifacts model))))))
       (expect (= :decisions/unknown-artifact
                  (:type (ex-data (try (assets/artifact (assets/entry "laya-typed-decisions")
                                                        :wheels)
