@@ -312,8 +312,8 @@
   {
     "artifacts": {
       "inference": {
-        "bytes": 1763139485,
-        "file": "decision2.0-eos-0.8b-fp32.zip",
+        "bytes": 1763146081,
+        "file": "decision2.0-eos-0.8b-fp32-chunked.zip",
         "requires": [
           "model.onnx",
           "model.onnx.data",
@@ -323,8 +323,8 @@
           "PROVENANCE.json",
           "LICENSE.txt"
         ],
-        "sha256": "0d6761151d36999def1ed27d6a345b23631ff5c4a53357cb9ca54fe723528afa",
-        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-fp32.zip"
+        "sha256": "4161c997a6f887df6986d92bfcdd64c2349405a5591d018efedadb8924d90108",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-fp32-chunked.zip"
       },
       "training": {
         "bytes": 1524793982,
@@ -352,8 +352,8 @@
   {
     "artifacts": {
       "inference": {
-        "bytes": 1436529097,
-        "file": "decision2.0-kai-0.6b-fp32.zip",
+        "bytes": 1436547653,
+        "file": "decision2.0-kai-0.6b-fp32-chunked.zip",
         "requires": [
           "model.onnx",
           "model.onnx.data",
@@ -363,8 +363,8 @@
           "PROVENANCE.json",
           "LICENSE.txt"
         ],
-        "sha256": "19f7222e7eb6d47f55eb220b611f3606a49ff2852c2cd89659937a08b53aa339",
-        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-fp32.zip"
+        "sha256": "e9e824176ae330d3c5b2bbe25d88e68961109d5cdf4bf4565214dbe9e2f3818b",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-fp32-chunked.zip"
       },
       "training": {
         "bytes": 1225605368,

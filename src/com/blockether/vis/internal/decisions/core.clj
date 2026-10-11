@@ -365,9 +365,10 @@
       :markers markers)))
 
 (def ^:private ^:const max-decision2-input-tokens
-  "Longest Decision 2.0 question. The cache reserves 1.5 times the FP32 weights. A 2048-token CPU
-   run peaked at 3.0 GB, but a 4096-token run peaked at 5.6 GB, about 1.9 times the weights."
-  2048)
+  "Upper bound on a Decision 2.0 question; the export declares the limit of each model. The graph
+   runs causal attention in blocks of 256 queries, so memory grows linearly with the length. On CPU
+   with 4 threads, Eos peaked at 4.2 GB at 16384 tokens and Kai at 3.3 GB at 8192 tokens."
+  16384)
 
 (def ^:private ^:const max-d3-input-tokens
   "Longest D3 question; the export declares the same limit. The graph runs full attention in blocks

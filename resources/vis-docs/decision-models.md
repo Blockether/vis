@@ -129,10 +129,10 @@ GLiNER does not truncate the state or question. The gateway rejects a sequence a
 limit before model inference. A sequence exactly at the limit is accepted. Character counts
 cannot predict this boundary because each model uses its own tokenizer.
 
-Decision 2.0 has a fixed limit of 2,048 tokens for each question. D3 has a limit of 16,384 tokens
-for each question. The state, question type, instructions, option keys, option descriptions and
-prompt text share that budget. These models also do not truncate input. The gateway rejects a
-longer question before model inference.
+Decision 2.0 Eos has a limit of 16,384 tokens for each question, and Kai has a limit of 8,192
+tokens. D3 has a limit of 16,384 tokens for each question. The state, question type, instructions,
+option keys, option descriptions and prompt text share that budget. These models also do not
+truncate input. The gateway rejects a longer question before model inference.
 
 For overlong input, `Decisions.infer` raises `GatewayError` with `status == 400` and
 `code == "input-too-long"`. Its `input_tokens` attribute gives the rejected sequence's token
@@ -369,9 +369,11 @@ Check these resources before you choose a model:
 - While a model is loaded, the gateway reserves 4,312 MB of memory for Eos and 4,096 MB for Kai.
   The default `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for one of these models. To
   keep both models loaded at the same time, set it to at least 8,408 MB.
-- On an Apple M4 Max with 4 CPU threads, a question near the 2,048-token limit took about
-  2.5 seconds with Eos. With Kai, it took about 3 seconds. The first question also waits about
-  1.3 seconds while the model loads.
+- On an Apple M4 Max with 4 CPU threads, a question of about 2,000 tokens took about 2 seconds
+  with Eos or Kai. At 8,192 tokens, Eos took about 8 seconds and Kai about 17 seconds. At
+  16,384 tokens, Eos took about 19 seconds. The first question also waits about 1.3 seconds
+  while the model loads.
+- A question at the token limit uses at most about 4.2 GB of memory with Eos and 3.3 GB with Kai.
 - Local training with the default batch size of 1 used a peak of about 16 GB of RAM with Eos.
   With Kai, it used about 12 GB. These peaks include the FP32 export. A larger batch needs more
   memory.

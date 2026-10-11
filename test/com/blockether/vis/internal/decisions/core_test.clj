@@ -756,6 +756,7 @@
     (when-let [dir (System/getProperty "vis.test.decision2.fp32.dir")]
       (let [provenance (wire/parse-json (slurp (io/file dir "PROVENANCE.json")))
             model-id (get provenance "model")
+            limit (long (get provenance "max_input_tokens"))
             model {:id model-id
                    :revision (get provenance "revision")
                    :artifacts {:inference {:sha256 (apply str (repeat 64 "a"))
@@ -844,12 +845,21 @@
                     (expect (every? (fn [[label probability]]
                                       (close? probability (get-in answer ["probabilities" label])))
                                     expected)))))
+              ;; Issue #366: chunked attention answers a question near the model limit.
+              (let [result (decisions/infer!
+                             {"model" model-id
+                              "state" (apply str (repeat (quot (- limit 400) 10) "1234567890"))
+                              "questions" {"q" requested}})]
+                (expect (< (- limit 500) (get-in result ["usage" "input_tokens"]) (inc limit)))
+                (expect (map? (get-in result ["answers" "q"]))))
               ;; The request path rejects long input instead of truncating it.
               (expect (= :decisions/input-too-long
-                         (error-type #(decisions/infer! {"model" model-id
-                                                         "state" (str/join " "
-                                                                           (repeat 3000 "parcel"))
-                                                         "questions" {"q" requested}}))))))
+                         (error-type #(decisions/infer!
+                                        {"model" model-id
+                                         "state"
+                                         ;; Each digit is one token: over the limit, under 65536 characters.
+                                         (apply str (repeat (inc (quot limit 10)) "1234567890"))
+                                         "questions" {"q" requested}}))))))
           (finally (cache/release-idle!)))))))
 
 (defn- d3-chat

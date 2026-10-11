@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `score` and `noul` questions with up to 16,384 tokens each. They are FP32 text bundles for
   inference only, and their memory grows linearly with the question length (#366).
 
+### Changed
+- Decision 2.0 Eos accepts questions of up to 16,384 tokens and Kai up to 8,192 tokens, instead of
+  2,048. The new FP32 bundles run attention in blocks, so memory grows linearly with the question
+  length (#366).
+
 ## [v0.2.37] - 2026-10-09
 
 ### Added

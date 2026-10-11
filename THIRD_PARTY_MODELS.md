@@ -316,7 +316,7 @@ Decision 2.0 Eos 0.8B by vLLM Semantic Router, Apache-2.0, fine-tuned from Decis
 - Pinned revision: `3594047d69f476f1d01cf84c593e213fc3a4dfe0`
 - Installs into: `~/.vis/models/decisions/decision2.0-eos-0.8b/3594047d69f476f1d01cf84c593e213fc3a4dfe0/`
 - Downloaded from the shared Vis assets-pack release (verified by SHA-256):
-  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-fp32.zip> (1763 MB, SHA-256 `0d6761151d36999def1ed27d6a345b23631ff5c4a53357cb9ca54fe723528afa`)
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-fp32-chunked.zip> (1763 MB, SHA-256 `4161c997a6f887df6986d92bfcdd64c2349405a5591d018efedadb8924d90108`)
   - training: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-training.zip> (1525 MB, SHA-256 `40cf3908b994a7244a25654ac0eb32f940b9bb94b095130907516c7cfbe5173f`)
 - Training checkpoints are installed only when explicitly requested.
 - The vis-decisions extension supplies training dependencies.
@@ -333,7 +333,7 @@ Decision 2.0 Kai 0.6B by vLLM Semantic Router, Apache-2.0, fine-tuned from Qwen3
 - Pinned revision: `cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764`
 - Installs into: `~/.vis/models/decisions/decision2.0-kai-0.6b/cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764/`
 - Downloaded from the shared Vis assets-pack release (verified by SHA-256):
-  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-fp32.zip> (1437 MB, SHA-256 `19f7222e7eb6d47f55eb220b611f3606a49ff2852c2cd89659937a08b53aa339`)
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-fp32-chunked.zip> (1437 MB, SHA-256 `e9e824176ae330d3c5b2bbe25d88e68961109d5cdf4bf4565214dbe9e2f3818b`)
   - training: <https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-training.zip> (1226 MB, SHA-256 `a243b0c4471866023d0758cb0145438d48e4caba6a0d346c3181b1e50c4116b4`)
 - Training checkpoints are installed only when explicitly requested.
 - The vis-decisions extension supplies training dependencies.
