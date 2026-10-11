@@ -881,6 +881,9 @@ def bench_launches(repo, monkeypatch):
     bundle = repo / "vis-agent-linux-amd64.tar.gz"
     bundle.write_bytes(b"bundle")
     monkeypatch.setattr(evals, "_bundle", lambda: bundle)
+    (evals.BENCH.parent / "profiles.toml").write_text(
+        f'[build]\nrun_id = 7\nasset = "b.tar.gz"\ncommit = "{"e" * 40}"\n'
+    )
     monkeypatch.setattr(
         evals, "_bench_env", lambda: {"PATH": os.environ.get("PATH", "")}
     )
@@ -958,6 +961,7 @@ def test_run_bench_pins_a_named_round_with_its_attempts(bench_launches, monkeypa
         MODEL,
         BUNDLE_SHA256,
     )
+    assert pins["source_commit"] == "e" * 40
     # The round keeps its attempt count; another count needs a new round.
     with pytest.raises(ValueError, match="round glm-k3 pins 3 attempts for each task"):
         tools.run_bench(max_tasks=1, attempts=2, round_name="glm-k3")
@@ -1105,7 +1109,16 @@ def test_preflight_passes_on_a_ready_machine_and_pins_the_bundle(
         evals.shutil, "disk_usage", lambda path: SimpleNamespace(free=100e9)
     )
     monkeypatch.setenv("DOCKER_HOST", "unix:///tmp/podman-machine-default-api.sock")
-    bundle = evals.BENCH / "artifacts" / "vis-agent-linux-amd64.tar.gz"
+    (evals.BENCH.parent / "profiles.toml").write_text(
+        '[build]\nrun_id = 7\nasset = "vis-agent-linux-x64.tar.gz"\n'
+    )
+    bundle = (
+        evals.BENCH.parent
+        / "artifacts"
+        / "vis-builds"
+        / "7"
+        / "vis-agent-linux-x64.tar.gz"
+    )
     bundle.parent.mkdir(parents=True)
     bundle.write_bytes(b"bundle")
     digest = hashlib.sha256(b"bundle").hexdigest()

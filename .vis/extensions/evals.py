@@ -1011,8 +1011,27 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _bundle() -> Path:
-    return BENCH / "artifacts" / "vis-agent-linux-amd64.tar.gz"
+def _build() -> dict:
+    """The Vis build pin of the benchmark adapter: `[build]` in profiles.toml."""
+    try:
+        text = (BENCH.parent / "profiles.toml").read_text(encoding="utf-8")
+        return tomllib.loads(text)["build"]
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def _bundle() -> Path | None:
+    """The local copy of the pinned build, or None without a pin."""
+    build = _build()
+    if not build:
+        return None
+    return (
+        BENCH.parent
+        / "artifacts"
+        / "vis-builds"
+        / str(build["run_id"])
+        / build["asset"]
+    )
 
 
 def _provenance(round_name: str | None = None) -> dict:
@@ -1035,10 +1054,11 @@ def _start_round(round_name: str, attempts: int, model: str, digest: str) -> Non
         "attempts": attempts,
         "model": model,
         "bundle_sha256": digest,
+        "source_commit": _build().get("commit"),
         "vis_commit": vis_commit,
         "is_dirty": is_dirty,
-        "note": "vis_commit is the checkout when the round started. The bundle "
-        "records no source commit.",
+        "note": "source_commit built the bundle. vis_commit is the checkout when the "
+        "round started.",
     }
     path.write_text(json.dumps(data, indent=2) + "\n", "utf-8")
 
@@ -1137,7 +1157,7 @@ def _preflight(round_name: str | None = None) -> Preflight:
             replace(idle, name=name) for name in ("Docker socket", "Compose provider")
         ]
     bundle = _bundle()
-    if bundle.is_file():
+    if bundle is not None and bundle.is_file():
         digest = _sha256(bundle)
         pinned = _provenance(round_name).get("bundle_sha256")
         same = pinned in (None, digest)
@@ -1162,9 +1182,9 @@ def _preflight(round_name: str | None = None) -> Preflight:
             _check(
                 "Vis bundle",
                 False,
-                "missing artifacts/vis-agent-linux-amd64.tar.gz",
-                "Build the Linux amd64 native bundle. macOS and arm64 binaries cannot "
-                "run in Harbor task images.",
+                f"missing {bundle}" if bundle else "no [build] pin in profiles.toml",
+                "Run `uv run python -m ctb.agents.vis fetch` in the benchmark repository. "
+                "Harbor task images need the Linux amd64 build.",
             )
         )
     dataset = BENCH / "artifacts" / "datasets" / "terminal-bench"
