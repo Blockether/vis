@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -159,6 +160,43 @@
             (expect (= :unverified
                        (:auth-state (providers/provider-status-cached {:id :cached-status-test}))))
             (expect (= calls @probes)))))))
+
+(defdescribe
+  cached-provider-status-outlives-the-memo-window
+  (it "cached provider status keeps the last live verdict after the memo window"
+      ;; Removing one provider answered with a fleet where every OTHER OAuth provider
+      ;; read "Not signed in" once the last live check was more than 30 s old, although
+      ;; no credential changed. Only an auth change may drop the remembered verdict.
+      (let [probes
+            (atom 0)
+
+            now
+            (atom 1000000)
+
+            registered
+            {:provider/status-fn (fn []
+                                   (swap! probes inc)
+                                   {:is-authenticated true :source :auth-file})}]
+
+        (with-redefs [registry/provider-by-id
+                      (constantly registered)
+
+                      util/now-ms
+                      (fn ^long []
+                        (long @now))]
+
+          (providers/forget-provider-status! :stale-status-test)
+          (expect (true? (:is-authenticated (providers/provider-status {:id :stale-status-test}))))
+          (swap! now + (* 10 60 1000))
+          (let [calls
+                @probes
+
+                status
+                (providers/provider-status-cached {:id :stale-status-test})]
+
+            (expect (true? (:is-authenticated status)))
+            (expect (= calls @probes) "repeating it costs nothing"))
+          (providers/forget-provider-status! :stale-status-test)))))
 
 (defdescribe initial-provider-status-is-neutral-until-a-live-check
              (it "initial provider status is neutral until a live check"

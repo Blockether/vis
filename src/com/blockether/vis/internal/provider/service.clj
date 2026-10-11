@@ -396,15 +396,10 @@
 
 (defonce ^:private last-provider-status
   ;; provider id -> {:status … :at-ms …}: what the last LIVE `provider-status`
-  ;; concluded for it, so a non-probing read can repeat a recent verdict instead
-  ;; of greying out a fleet the human is already looking at.
+  ;; concluded for it, so a non-probing read can repeat that verdict instead
+  ;; of greying out a fleet the human is already looking at. It has no age limit:
+  ;; only an auth change makes it wrong, and every auth change forgets it.
   (atom {}))
-
-(def status-memo-ms
-  "How long the last live verdict stands in for the probe a non-probing caller
-   refuses to pay. Short on purpose: it only has to bridge the seconds between
-   the fleet a client is showing and the mutation it just made."
-  30000)
 
 (defn forget-provider-status!
   "Drop the remembered verdict for one provider (or all of them) so the next
@@ -534,24 +529,18 @@
     status))
 
 (defn provider-status-cached
-  "The same verdict WITHOUT any upstream call: the one a live `provider-status`
-   reached within `status-memo-ms`, else what config alone proves — `:unverified`
+  "The same verdict WITHOUT any upstream call: the last one a live
+   `provider-status` reached, else what config alone proves — `:unverified`
    wherever only a probe could decide.
 
    Fleet MUTATIONS answer with this. Adding a provider used to re-probe every
    configured provider's auth and quota endpoints before its response, so the tap
    that should open an API-key box waited seconds on OTHER providers' networks.
+   The last verdict has no age limit: with one, removing a provider more than 30 s
+   after the fleet loaded painted every other OAuth provider as signed out.
    `GET /v1/router` still reads live."
   [provider]
-  (let [now
-        (util/now-ms)
-
-        {:keys [status at-ms]}
-        (get @last-provider-status (:id provider))]
-
-    (if (and status (< (- now (long at-ms)) (long status-memo-ms)))
-      status
-      (status-of provider false))))
+  (or (get-in @last-provider-status [(:id provider) :status]) (status-of provider false)))
 
 (defn provider-reachable?
   "Cheap ROUTING-time liveness verdict: local providers (Ollama /
