@@ -232,6 +232,38 @@
                   :total-steps 2}
                  (:final-metrics (first (:subagent-trajectories team-document)))))))
 
+(def ^:private persisted-document
+  "A persisted run: the result has no trace, so the iterations of its turn come
+   from the session."
+  (trajectory/build (dissoc result :trace)
+                    (assoc opts
+                      :iterations [{"position" 0
+                                    "created_at" 1000
+                                    "finished_at" 1500
+                                    "thinking" "Add the numbers."
+                                    "model" "claude-test"
+                                    "provider" "anthropic"
+                                    "input_tokens" 1200
+                                    "output_tokens" 80
+                                    "forms" [{"src" "print(1 + 1)"
+                                              "stdout" "2\n"
+                                              "tool_call_id" "toolu_1"
+                                              "tool_name" "python_execution"}]}
+                                   {"position" 1 "created_at" 2000 "forms" []}])))
+
+(defdescribe persisted-run-test
+             (it "maps the persisted iterations of a run without a trace to agent steps"
+                 (let [[request step final-step] (:steps persisted-document)]
+                   (expect (= 3 (count (:steps persisted-document))))
+                   (expect (= "What is 1 + 1?" (:message request)))
+                   (expect (= [2 3] [(:step-id step) (:step-id final-step)]))
+                   (expect (= "claude-test" (:model-name step)))
+                   (expect (= [{"code" "print(1 + 1)"}] (mapv :arguments (:tool-calls step))))
+                   (expect (= "2\n" (get-in step [:observation :results 0 :content])))
+                   (expect (= "The answer is 2." (:message final-step)))))
+             (it "keeps the totals of the result as the final metrics"
+                 (expect (= (:final-metrics document) (:final-metrics persisted-document)))))
+
 (defdescribe
   known-secrets-test
   (it "takes environment values whose names contain a credential word"

@@ -108,7 +108,7 @@
 
 (defn- tool-call
   "The ATIF tool call and observation result of one code block. A persisted form
-   of a Council child has its code in `src`."
+   has its code in `src`."
   [call-id block]
   (let [envelope (get block "envelope")]
     {:call {:tool-call-id call-id
@@ -193,8 +193,8 @@
         :else (wire/json-str request)))
 
 (defn- iteration-step
-  "The ATIF agent step of one persisted iteration of a Council child. The final
-   iteration of a turn carries `answer`."
+  "The ATIF agent step of one persisted iteration: of a Council child, or of a
+   persisted run. The final iteration of a turn carries `answer`."
   [step-id iteration answer]
   (let [position
         (get iteration "position")
@@ -491,10 +491,12 @@
      :prompt         the user prompt
      :started-at-ms  the time when the run started
      :profile        the run options that shape the agent
+     :iterations     the persisted iterations of the turn of the run. A persisted
+                     run returns no `trace`, so they give its agent steps.
      :subagents      the Council children of the run: agent rows with their
                      `turns`, and each turn with its persisted iterations in
                      `trace`"
-  [result {:keys [prompt started-at-ms profile subagents]}]
+  [result {:keys [prompt started-at-ms profile iterations subagents]}]
   (let [run
         (wire/canonical (select-keys result
                                      [:session-id :content :trace :iteration-count :duration-ms
@@ -503,13 +505,20 @@
         answer
         (not-empty (content/text-projection (vec (get run "content"))))
 
+        persisted
+        (when (empty? (get run "trace")) (not-empty (vec iterations)))
+
         steps
         (into [(cond-> {:step-id 1 :source "user" :message (str prompt)}
                  started-at-ms
                  (assoc :timestamp (iso-time started-at-ms)))]
-              (map-indexed (fn [i entry]
-                             (agent-step (+ 2 i) entry answer)))
-              (get run "trace"))
+              (if persisted
+                (map-indexed
+                  (fn [i iteration]
+                    (iteration-step (+ 2 i) iteration (when (= i (dec (count persisted))) answer))))
+                (map-indexed (fn [i entry]
+                               (agent-step (+ 2 i) entry answer))))
+              (or persisted (get run "trace")))
 
         root
         (some-> (get run "session_id")
