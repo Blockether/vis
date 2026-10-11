@@ -11,7 +11,8 @@
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as ps]
-            [com.blockether.vis.internal.session.model :as smodel]))
+            [com.blockether.vis.internal.session.model :as smodel]
+            [com.blockether.vis.internal.util :as util]))
 
 (defn info [db sid] (when (and db sid) (ps/db-agent-info db sid)))
 
@@ -279,7 +280,7 @@
         (when (seq ids) (set (map str ids)))
 
         deadline
-        (+ (System/currentTimeMillis) (* 1000 (long timeout-secs)))
+        (+ (util/now-ms) (* 1000 (long timeout-secs)))
 
         pick
         (fn []
@@ -303,7 +304,7 @@
                       {:session_id i :status "unknown"}))))]
 
     (loop [grace-until nil]
-      (let [now (System/currentTimeMillis)
+      (let [now (util/now-ms)
             recs (mapv #(record db live? now %) (pick))
             done? (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
             answered? (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
@@ -352,7 +353,7 @@
          (wait-timeout opts 240)
 
          started
-         (System/currentTimeMillis)
+         (util/now-ms)
 
          spawn
          (fn [spec]
@@ -362,8 +363,7 @@
                           (catch clojure.lang.ExceptionInfo e
                             ;; A full team admits the next child when an earlier one ends.
                             (if (and (= :agent-limit (:error (ex-data e)))
-                                     (< (- (System/currentTimeMillis) started)
-                                        (* 1000 (long timeout))))
+                                     (< (- (util/now-ms) started) (* 1000 (long timeout))))
                               ::full
                               (throw e))))]
                (if (= ::full r) (do (Thread/sleep 1000) (recur)) r))))
@@ -372,7 +372,7 @@
          (mapv spawn specs)
 
          left
-         (max 1 (- (long timeout) (quot (- (System/currentTimeMillis) started) 1000)))]
+         (max 1 (- (long timeout) (quot (- (util/now-ms) started) 1000)))]
 
      (result :council.run (wait-records env ids left)))))
 
@@ -422,7 +422,7 @@
          (wait-timeout (walk/keywordize-keys opts) 600)
 
          deadline
-         (+ (System/currentTimeMillis) (* 1000 (long timeout)))
+         (+ (util/now-ms) (* 1000 (long timeout)))
 
          parent
          (str (:parent_id me))
@@ -445,7 +445,7 @@
 
                 (let [reply-id (some :reply_entry_id (:replies (ps/db-council-get db entry-id)))]
                   (cond reply-id (result :council.ask (:content (ps/db-council-get db reply-id)))
-                        (or (> (System/currentTimeMillis) deadline)
+                        (or (> (util/now-ms) deadline)
                             (= "cancelled" (:status (info db sid)))
                             (not (live? parent)))
                         (result :council.ask nil)

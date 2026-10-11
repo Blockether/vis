@@ -2,7 +2,8 @@
   "Closed semantic presenter registry for Activity rows. Presenters return data,
    never channel markup, and never inspect Python source."
   (:require [clojure.string :as str]
-            [com.blockether.vis.contract.activity :as contract]))
+            [com.blockether.vis.contract.activity :as contract]
+            [com.blockether.vis.internal.util :as util]))
 
 (def presenters contract/presenters)
 
@@ -778,7 +779,7 @@
 
       "council.ask"
       {"headline" headline
-       "summary" (if (and (string? value) (not (str/blank? value))) "Parent replied" "No reply")
+       "summary" (if (util/non-blank-string? value) "Parent replied" "No reply")
        "content" (if (string? value) (council-body {"content" value} "content") [])})))
 
 (defn- automation-state [value] (if (true? (field value "enabled")) "On" "Paused"))

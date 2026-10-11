@@ -339,6 +339,20 @@
                          (expect (= :extension-owned (:provider-id result)))
                          (expect (empty? @effects))))))))
 
+(defn- machine-update
+  "A stand-in for `config/update-machine-config!` over `read` and `write`. Without it a
+   provider write reads the REAL `~/.vis/state.yml`, so the result depends on the machine.
+   Like the real one, it answers the written map, or nil when `f` changed nothing."
+  [read write]
+  (fn [f & _]
+    (let [raw
+          (read)
+
+          raw'
+          (f raw)]
+
+      (when (and raw' (not= raw raw')) (write raw') raw'))))
+
 (defn- with-machine-config
   "Run `f` against an in-memory machine config `raw` — the string-keyed shape
    `load-global-config-raw` answers — and return that config as it stands
@@ -352,6 +366,7 @@
                                         (reset! state raw')
                                         nil)
                   config/reload-config! (constantly nil)
+                  config/update-machine-config! (machine-update #(deref state) #(reset! state %))
                   config/load-config (fn []
                                        {:providers (vec (get @state "providers"))
                                         :default-provider (get @state "default_provider")
@@ -564,6 +579,9 @@
                     (fn [wire _]
                       (reset! saved wire))
 
+                    config/update-machine-config!
+                    (machine-update #(config/load-global-config-raw) #(reset! saved %))
+
                     config/reload-config!
                     (constantly nil)]
 
@@ -615,6 +633,9 @@
                       config/save-config!
                       (fn [wire _]
                         (reset! saved wire))
+
+                      config/update-machine-config!
+                      (machine-update #(config/load-global-config-raw) #(reset! saved %))
 
                       config/reload-config!
                       (constantly nil)]
@@ -993,6 +1014,9 @@
                     config/save-config!
                     (fn [wire _]
                       (reset! saved wire))
+
+                    config/update-machine-config!
+                    (machine-update #(config/load-global-config-raw) #(reset! saved %))
 
                     config/reload-config!
                     (constantly nil)]
