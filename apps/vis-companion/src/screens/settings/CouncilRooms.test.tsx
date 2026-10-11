@@ -251,5 +251,10 @@ describe('Council room Settings', () => {
       'Locked: group settings deny this permission. This scope cannot allow it.');
     expect(lockNote({ id: 'wake', label: 'Wake', type: 'boolean', enabled: false,
       inheritance: 'restrict', source: 'default', scope: 'session' })).toBeNull();
+    expect(lockNote({ id: 'council_room_wake', label: 'Allow room wake', type: 'enum', value: 'off',
+      choices: ['off', 'recent', 'always'], inheritance: 'restrict', source: 'group', scope: 'session' })).toBe(
+      'Locked: group settings deny this permission. This scope cannot allow it.');
+    expect(lockNote({ id: 'council_room_wake', label: 'Allow room wake', type: 'enum', value: 'always',
+      choices: ['off', 'recent', 'always'], inheritance: 'restrict', source: 'group', scope: 'session' })).toBeNull();
   });
 });

@@ -282,7 +282,9 @@ export function ValueSetting({
  * row stays locked: changing it here would not change what that session uses.
  */
 export function lockNote(toggle: Toggle): string | null {
-  if (toggle.inheritance === 'restrict' && toggle.enabled === false && toggle.source
+  // A restricted boolean denies with false, a restricted enum with its first choice.
+  const denied = toggle.type === 'enum' ? toggle.value === toggle.choices?.[0] : toggle.enabled === false;
+  if (toggle.inheritance === 'restrict' && denied && toggle.source
       && toggle.source !== 'default' && toggle.source !== toggle.scope) {
     return `Locked: ${toggle.source} settings deny this permission. This scope cannot allow it.`;
   }

@@ -113,16 +113,21 @@
    Layers are ordered least-specific first. Illegal scope declarations in YAML
    do not gain power by bypassing an HTTP writer."
   [specs layers scope overrides]
-  (mapv (fn [{:keys [id default scopes inheritance] :as spec}]
+  (mapv (fn [{:keys [id default scopes inheritance type choices] :as spec}]
           (let [allowed
                 (set scopes)
+
+                ;; A restricted boolean denies with false, a restricted enum with its first choice.
+                denial?
+                (fn [value]
+                  (or (false? value) (and (= :enum type) (= value (first choices)))))
 
                 resolved
                 (reduce (fn [result layer]
                           (if (and (allowed (:scope layer))
                                    (contains? (:values layer) id)
                                    (not (and (= "restrict" inheritance)
-                                             (false? (:value result))
+                                             (denial? (:value result))
                                              (not= "default" (:source result)))))
                             {:value (get (:values layer) id) :source (:scope layer)}
                             result))

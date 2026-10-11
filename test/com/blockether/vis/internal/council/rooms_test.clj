@@ -180,9 +180,9 @@
                     (store/db-set-scoped-setting! db "group" gid "council_room" room-id)
                     (expect (= room-id (rooms/selected-room db sid)))
                     (expect (not (rooms/wake-allowed? db sid)))
-                    (store/db-set-scoped-setting! db "session" sid "council_room_wake" true)
+                    (store/db-set-scoped-setting! db "session" sid "council_room_wake" "always")
                     (expect (rooms/wake-allowed? db sid))
-                    (store/db-set-scoped-setting! db "group" gid "council_room_wake" false)
+                    (store/db-set-scoped-setting! db "group" gid "council_room_wake" "off")
                     (expect (not (rooms/wake-allowed? db sid)))
                     (store/db-set-scoped-setting! db "group" gid (rooms/access-id room-id) false)
                     (store/db-set-scoped-setting! db "session" sid (rooms/access-id room-id) true)
@@ -285,7 +285,7 @@
               @(var-get #'rooms/runtime)]
 
           (store/db-set-scoped-setting! db "session" sid "council_room" room-id)
-          (store/db-set-scoped-setting! db "session" sid "council_room_wake" true)
+          (store/db-set-scoped-setting! db "session" sid "council_room_wake" "always")
           (try (rooms/install-runtime! (fn [_ _]
                                          {})
                                        (constantly true)
@@ -317,15 +317,22 @@
                               (mapv #(get-in % [:body :sessions])
                                     (filter #(= "/v1/rooms/{room_id}/presence" (:path %))
                                             @calls)))))))
-  (it "rejects restrictive enum contributions at the canonical boundary"
-      (expect (not (document/valid? "toggle"
-                                    "contribution"
-                                    {:id "room_policy"
-                                     :label "Room policy"
-                                     :type "enum"
-                                     :choices ["local"]
-                                     :default "local"
-                                     :inheritance "restrict"})))))
+  (it "accepts a restricted enum only with a choice besides its denial"
+      (let [contribution {:id "room_policy"
+                          :label "Room policy"
+                          :type "enum"
+                          :choices ["local"]
+                          :default "local"
+                          :inheritance "restrict"}]
+        (expect (not (document/valid? "toggle" "contribution" contribution)))
+        (expect (document/valid? "toggle"
+                                 "contribution"
+                                 (assoc contribution :choices ["local" "shared"])))
+        (expect
+          (not (document/valid?
+                 "toggle"
+                 "contribution"
+                 {:id "room_flag" :label "Room flag" :default "yes" :inheritance "restrict"}))))))
 
 (defdescribe
   room-input-receipts
@@ -440,6 +447,61 @@
                    (rooms/register-settings! [])
                    (expect (nil? (toggles/toggle-spec (rooms/access-id room-id))))
                    (expect (some? (toggles/toggle-spec "council_room_wake")))))))
+
+(defdescribe
+  rooms-wake-choice
+  (it "keeps an explicit enum denial: its first choice"
+      (let [spec
+            [{:id "wake"
+              :type :enum
+              :choices ["off" "recent" "always"]
+              :default "recent"
+              :inheritance "restrict"
+              :scopes ["global" "project" "group" "session"]}]
+
+            resolved
+            (first (scoped/resolve-layers spec
+                                          [{:scope "group" :values {"wake" "off"}}
+                                           {:scope "session" :values {"wake" "always"}}]
+                                          "session"
+                                          {"wake" "always"}))]
+
+        (expect (= "off" (:value resolved)))
+        (expect (= "group" (:source resolved)))))
+  (it "wakes a session with a turn in the last hour by default"
+      (with-room (fn [{:keys [db sid room-id]}]
+                   (store/db-set-scoped-setting! db "session" sid "council_room" room-id)
+                   (let [age (atom 0)]
+                     (with-redefs [store/db-session-turn-stats
+                                   (fn [_ _]
+                                     {:latest-turn-at (java.util.Date. (- (util/now-ms)
+                                                                          (long @age)))})]
+                       (reset! age (* 10 60 1000))
+                       (expect (rooms/wake-allowed? db sid))
+                       (reset! age (* 2 60 60 1000))
+                       (expect (not (rooms/wake-allowed? db sid)))
+                       (store/db-set-scoped-setting! db "session" sid "council_room_wake" "always")
+                       (expect (rooms/wake-allowed? db sid))
+                       ;; A boolean saved before the choice existed allows no wake.
+                       (store/db-set-scoped-setting! db "session" sid "council_room_wake" true)
+                       (expect (not (rooms/wake-allowed? db sid)))))))))
+
+(defdescribe rooms-settings-without-rooms
+             (it "hides the room selection and wake rows while the machine has no room"
+                 (rooms/register-settings! [])
+                 (let [groups
+                       (get (json/read-json (:body (#'settings-api/list-settings-handler {})))
+                            "groups")
+
+                       ids
+                       (set (map #(get % "id")
+                                 (tree-seq map?
+                                           #(concat (get % "toggles") (get % "children"))
+                                           {"toggles" groups})))]
+
+                   (expect (contains? ids "council"))
+                   (expect (not (contains? ids "council_room")))
+                   (expect (not (contains? ids "council_room_wake"))))))
 
 (defdescribe
   rooms-machine-name

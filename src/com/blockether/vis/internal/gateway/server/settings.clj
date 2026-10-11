@@ -46,6 +46,9 @@
     (assoc :choice-labels
       (into {"local" "Local Council"} (map (juxt :room_id :name)) (rooms/known-rooms)))
 
+    (= "council_room_wake" id)
+    (assoc :choice-labels {"off" "Off" "recent" "Active in the last hour" "always" "Always"})
+
     description
     (assoc :description description)
 
@@ -316,7 +319,10 @@
                      (owners (:id %))
 
                      true)
-                   (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
+                   ;; Room rows stay hidden in every scope while this machine has no room.
+                   (if (rooms/setting? (:id %))
+                     (toggles/toggle-visible? %)
+                     (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %))))
                    (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
                 (one-thinking-control (scoped/settings (lp/db-info) target)))
 
