@@ -9,11 +9,17 @@
      tool call      one `python_execution` call for each code block, with its `code`
      observation    the stdout and the error of that block
      final_metrics  the token and cost totals of the run
+     subagents      one embedded trajectory for each Council child
 
    The final agent step carries the final answer. Vis facts without an ATIF
    field go to `extra`: iteration, block status, Activity counts, repairs,
    timeouts and the run profile. The run result has no token counts for each
-   iteration, so the steps have no `metrics`.
+   iteration, so the steps of the run have no `metrics`.
+
+   A Council child comes from its persisted turns, so its steps have the token
+   counts and the cost of each iteration. The observation of the step that
+   started the child refers to the child trajectory. The total cost of the run
+   includes the cost of the children.
 
    The CLI result has two shapes: engine keywords, or the snake_case string keys
    of a `--persist` run through the gateway. [[build]] reads the canonical wire
@@ -101,12 +107,13 @@
                  ids)))
 
 (defn- tool-call
-  "The ATIF tool call and observation result of one code block."
+  "The ATIF tool call and observation result of one code block. A persisted form
+   of a Council child has its code in `src`."
   [call-id block]
   (let [envelope (get block "envelope")]
     {:call {:tool-call-id call-id
             :function-name (or (get block "tool_name") "python_execution")
-            :arguments {"code" (str (get block "code"))}
+            :arguments {"code" (str (or (get block "code") (get block "src")))}
             :extra (compact {:status (get envelope "status")
                              :ref (get envelope "ref")
                              :started-at-ms (get envelope "started_at_ms")
@@ -170,6 +177,289 @@
         (mapv :call calls) :observation
         {:results (mapv :result calls)}))))
 
+(defn- epoch-ms
+  "Epoch milliseconds of one wire time: a number or an ISO-8601 instant."
+  [value]
+  (cond (number? value) (long value)
+        (string? value) (try (.toEpochMilli (Instant/parse value)) (catch Exception _ nil))))
+
+(defn- text-value [value] (when (util/non-blank-string? value) value))
+
+(defn- request-text
+  "The text of one turn request."
+  [request]
+  (cond (string? request) request
+        (nil? request) ""
+        :else (wire/json-str request)))
+
+(defn- iteration-step
+  "The ATIF agent step of one persisted iteration of a Council child. The final
+   iteration of a turn carries `answer`."
+  [step-id iteration answer]
+  (let [position
+        (get iteration "position")
+
+        forms
+        (get iteration "forms")
+
+        calls
+        (mapv tool-call (call-ids position forms) forms)
+
+        created
+        (epoch-ms (get iteration "created_at"))
+
+        model
+        (text-value (or (get iteration "llm_actual_model") (get iteration "model")))
+
+        metrics
+        (compact {:prompt-tokens (get iteration "input_tokens")
+                  :completion-tokens (get iteration "output_tokens")
+                  :cached-tokens (get iteration "input_cache_read_tokens")
+                  :cost-usd (some-> (get iteration "cost_usd")
+                                    double)})
+
+        thinking
+        (get iteration "thinking")]
+
+    (cond-> {:step-id step-id
+             :source "agent"
+             :message (or answer (get iteration "assistant_prose") "")
+             :extra (compact {:iteration position
+                              :provider (text-value (or (get iteration "llm_actual_provider")
+                                                        (get iteration "provider")))
+                              :finished-at-ms (or (epoch-ms (get iteration "finished_at")) created)
+                              :error (error-text (get iteration "error"))})}
+      created
+      (assoc :timestamp (iso-time created))
+
+      model
+      (assoc :model-name model)
+
+      (seq metrics)
+      (assoc :metrics metrics)
+
+      (util/non-blank-string? thinking)
+      (assoc :reasoning-content thinking)
+
+      (seq calls)
+      (assoc :tool-calls
+        (mapv :call calls) :observation
+        {:results (mapv :result calls)}))))
+
+(defn- turn-steps
+  "The ATIF steps of one turn of a Council child, from step `first-id`: the
+   request, then one agent step for each persisted iteration."
+  [first-id turn]
+  (let [answer
+        (or (not-empty (content/text-projection (vec (get turn "content"))))
+            (text-value (get turn "answer")))
+
+        iterations
+        (vec (or (seq (get turn "trace")) (when answer [{}])))
+
+        created
+        (epoch-ms (get turn "created_at"))]
+
+    (into [(cond-> {:step-id first-id :source "user" :message (request-text (get turn "request"))}
+             created
+             (assoc :timestamp (iso-time created)))]
+          (map-indexed (fn [i iteration]
+                         (iteration-step (+ first-id 1 i)
+                                         iteration
+                                         (when (= i (dec (count iterations))) answer))))
+          iterations)))
+
+(defn- child-steps
+  "The ATIF steps of each turn of one Council child. A child without a turn has
+   only its task."
+  [record]
+  (or (not-empty (reduce (fn [steps turn]
+                           (into steps (turn-steps (inc (count steps)) turn)))
+                         []
+                         (get record "turns")))
+      [{:step-id 1 :source "user" :message (request-text (get record "task"))}]))
+
+(defn- step-end-ms
+  "The time when one agent step ended: its own end, else the end of its last call."
+  [step]
+  (or (get-in step [:extra :finished-at-ms])
+      (some->> (:tool-calls step)
+               (keep #(get-in % [:extra :finished-at-ms]))
+               seq
+               (apply max))))
+
+(defn- spawn-index
+  "The index of the step that started a child at `created-ms`: the first agent
+   step that ends at or after that time. Without a time, the last agent step."
+  [steps created-ms]
+  (let [indexes (keep-indexed (fn [i step]
+                                (when (= "agent" (:source step)) i))
+                              steps)]
+    (or (when created-ms
+          (some (fn [i]
+                  (when-let [end (step-end-ms (nth steps i))]
+                    (when (>= (long end) (long created-ms)) i)))
+                indexes))
+        (last indexes))))
+
+(defn- with-ref
+  "`step` with `ref` on the observation result of the call that started the
+   child: the first call that ends at or after `created-ms`, else the last call.
+   A step without calls gets an observation result with only the reference."
+  [step ref created-ms]
+  (let [results
+        (get-in step [:observation :results])
+
+        index
+        (when (seq results)
+          (or (when created-ms
+                (first (keep-indexed (fn [i call]
+                                       (when-let [end (get-in call [:extra :finished-at-ms])]
+                                         (when (>= (long end) (long created-ms)) i)))
+                                     (:tool-calls step))))
+              (dec (count results))))]
+
+    (if index
+      (update-in step [:observation :results index :subagent-trajectory-ref] (fnil conj []) ref)
+      (update-in step [:observation :results] (fnil conj []) {:subagent-trajectory-ref [ref]}))))
+
+(defn- subagent-ref
+  "The ATIF reference to one embedded trajectory."
+  [trajectory]
+  (compact {:trajectory-id (:trajectory-id trajectory)
+            :session-id (:session-id trajectory)
+            :extra (not-empty (compact {:status (get-in trajectory [:extra :status])}))}))
+
+(defn- subagent-cost
+  "The total cost of the embedded trajectories, or nil when none has a cost."
+  [trajectory]
+  (some->> (:subagent-trajectories trajectory)
+           (keep #(get-in % [:final-metrics :total-cost-usd]))
+           seq
+           (reduce +)))
+
+(defn- with-subagents
+  "`trajectory` with one embedded trajectory for each child record, and a
+   reference on the step that started the child. `embed` builds one embedded
+   trajectory from one record."
+  [trajectory records embed]
+  (if-let [records (seq records)]
+    (let [embedded (mapv embed records)]
+      (-> trajectory
+          (assoc :subagent-trajectories embedded)
+          (update :steps
+                  (fn [steps]
+                    (reduce (fn [steps [record sub]]
+                              (let [created (epoch-ms (get record "created_at"))]
+                                (if-let [i (spawn-index steps created)]
+                                  (update steps i with-ref (subagent-ref sub) created)
+                                  steps)))
+                            (vec steps)
+                            (map vector records embedded))))))
+    trajectory))
+
+(defn- child-metrics
+  "The totals of one child trajectory: the totals of its turns, else the sums of
+   its step metrics. The cost includes the children of the child."
+  [record trajectory]
+  (let [sum
+        (fn [values]
+          (some->> values
+                   (remove nil?)
+                   seq
+                   (reduce +)))
+
+        turns
+        (get record "turns")
+
+        metrics
+        (keep :metrics (:steps trajectory))
+
+        total
+        (fn [path step-key]
+          (or (sum (map #(get-in % path) turns)) (sum (map step-key metrics))))
+
+        costs
+        (remove nil? [(total ["cost" "total_cost"] :cost-usd) (subagent-cost trajectory)])]
+
+    (compact {:total-prompt-tokens (total ["tokens" "input"] :prompt-tokens)
+              :total-completion-tokens (total ["tokens" "output"] :completion-tokens)
+              :total-cached-tokens (total ["tokens" "cached"] :cached-tokens)
+              :total-cost-usd (when (seq costs) (double (reduce + costs)))
+              :total-steps (count (:steps trajectory))})))
+
+(defn- subagent-trajectory
+  "The embedded ATIF trajectory of one Council child record. `children` maps a
+   parent session id to its child records, so a child also embeds its own
+   children. `seen` holds the session ids above the child, so a bad parent link
+   cannot loop."
+  [children seen record]
+  (let [sid
+        (str (get record "session_id"))
+
+        seen
+        (conj seen sid)
+
+        steps
+        (child-steps record)
+
+        provider
+        (or (text-value (get record "provider")) (some #(get-in % [:extra :provider]) steps))
+
+        trajectory
+        (with-subagents
+          {:schema-version schema-version
+           :session-id sid
+           :trajectory-id sid
+           :agent (compact
+                    {:name "vis"
+                     :version (runtime/release-version)
+                     :model-name (or (text-value (get record "model")) (some :model-name steps))
+                     :extra (not-empty (compact {:provider provider
+                                                 :parent-session-id (some-> (get record "parent_id")
+                                                                            str)
+                                                 :depth (get record "depth")}))})
+           :steps steps
+           :extra (not-empty (compact {:status (text-value (get record "status"))}))}
+          (remove #(contains? seen (str (get % "session_id"))) (get children sid))
+          #(subagent-trajectory children seen %))]
+
+    (assoc trajectory :final-metrics (child-metrics record trajectory))))
+
+(defn- children-by-parent
+  "Child records by parent session id, each session once and the oldest first. A
+   child without a known parent belongs to `root`."
+  [root records]
+  (let [unique
+        (->> records
+             (map wire/canonical)
+             (remove #(contains? #{"" root} (str (get % "session_id"))))
+             (reduce (fn [[ids out] record]
+                       (let [sid (str (get record "session_id"))]
+                         (if (contains? ids sid) [ids out] [(conj ids sid) (conj out record)])))
+                     [#{} []])
+             second
+             (sort-by #(or (epoch-ms (get % "created_at")) 0)))
+
+        known
+        (into #{root} (map #(str (get % "session_id"))) unique)]
+
+    (group-by (fn [record]
+                (let [parent (some-> (get record "parent_id")
+                                     str)]
+                  (if (contains? known parent) parent root)))
+              unique)))
+
+(defn- with-subagent-cost
+  "Run totals with the cost of the embedded trajectories. The ATIF total cost
+   includes the subagents."
+  [metrics cost]
+  (if cost
+    (-> metrics
+        (assoc :total-cost-usd (+ (double (or (:total-cost-usd metrics) 0.0)) (double cost)))
+        (assoc-in [:extra :subagent-cost-usd] (double cost)))
+    metrics))
+
 (defn- final-metrics
   "Run totals. The input count of Vis includes cached tokens, as ATIF prompt tokens do."
   [run step-count]
@@ -200,8 +490,11 @@
 
      :prompt         the user prompt
      :started-at-ms  the time when the run started
-     :profile        the run options that shape the agent"
-  [result {:keys [prompt started-at-ms profile]}]
+     :profile        the run options that shape the agent
+     :subagents      the Council children of the run: agent rows with their
+                     `turns`, and each turn with its persisted iterations in
+                     `trace`"
+  [result {:keys [prompt started-at-ms profile subagents]}]
   (let [run
         (wire/canonical (select-keys result
                                      [:session-id :content :trace :iteration-count :duration-ms
@@ -216,27 +509,43 @@
                  (assoc :timestamp (iso-time started-at-ms)))]
               (map-indexed (fn [i entry]
                              (agent-step (+ 2 i) entry answer)))
-              (get run "trace"))]
+              (get run "trace"))
 
-    (cond-> {:schema-version schema-version
-             :agent (compact
-                      {:name "vis"
-                       :version (runtime/release-version)
-                       :model-name (or (get-in run ["cost" "model"]) (some :model-name steps))
-                       :tool-definitions (tool-definitions)
-                       :extra (compact {:build (runtime/build-id)
-                                        :provider (or (get-in run ["cost" "provider"])
-                                                      (some #(get-in % [:extra :provider]) steps))
-                                        :profile profile})})
-             :steps steps
-             :final-metrics (final-metrics run (count steps))
-             :extra (compact {:status (get run "status")
-                              :error (some-> (:error result)
-                                             error/format-error)
-                              :eval (not-empty (select-keys (get run "eval")
-                                                            ["is_valid" "invalid_reasons"]))})}
-      (get run "session_id")
-      (assoc :session-id (str (get run "session_id"))))))
+        root
+        (some-> (get run "session_id")
+                str)
+
+        children
+        (children-by-parent (or root "") subagents)
+
+        document
+        (with-subagents
+          (cond-> {:schema-version schema-version
+                   :trajectory-id (or root (str (random-uuid)))
+                   :agent (compact
+                            {:name "vis"
+                             :version (runtime/release-version)
+                             :model-name (or (get-in run ["cost" "model"]) (some :model-name steps))
+                             :tool-definitions (tool-definitions)
+                             :extra (compact {:build (runtime/build-id)
+                                              :provider (or (get-in run ["cost" "provider"])
+                                                            (some #(get-in % [:extra :provider])
+                                                                  steps))
+                                              :profile profile})})
+                   :steps steps
+                   :final-metrics (final-metrics run (count steps))
+                   :extra (compact {:status (get run "status")
+                                    :error (some-> (:error result)
+                                                   error/format-error)
+                                    :eval (not-empty (select-keys (get run "eval")
+                                                                  ["is_valid"
+                                                                   "invalid_reasons"]))})}
+            root
+            (assoc :session-id root))
+          (get children (or root ""))
+          #(subagent-trajectory children #{(or root "")} %))]
+
+    (update document :final-metrics with-subagent-cost (subagent-cost document))))
 
 (defn- secret-leaves
   "Each string of `data` under a credential key."

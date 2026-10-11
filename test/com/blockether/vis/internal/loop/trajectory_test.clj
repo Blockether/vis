@@ -141,6 +141,97 @@
         (expect (= ["user"] (mapv :source (:steps failed))))
         (expect (= {:status "error" :error "ERROR: No provider."} (:extra failed))))))
 
+(def ^:private child
+  "One Council child of `result` as the gateway gives it: an agent row with one
+   persisted turn and its iterations."
+  {:session_id "child-1"
+   :parent_id "session-1"
+   :task "Count the files."
+   :status "completed"
+   :depth 1
+   :created_at 1200
+   :model "claude-child"
+   :provider "anthropic"
+   :turns [{"turn_id" "turn-1"
+            "request" "Count the files."
+            "status" "completed"
+            "created_at" 1200
+            "content" [{"id" "block_1" "type" "prose" "markdown" "There are 3 files."}]
+            "tokens" {"input" 300 "output" 20 "cached" 100}
+            "cost" {"total_cost" 0.5}
+            "trace" [{"position" 0
+                      "created_at" 1300
+                      "finished_at" 1400
+                      "thinking" "List the directory."
+                      "model" "claude-child"
+                      "provider" "anthropic"
+                      "input_tokens" 300
+                      "output_tokens" 20
+                      "input_cache_read_tokens" 100
+                      "cost_usd" 0.5
+                      "forms" [{"src" "print(len(ls()))"
+                                "stdout" "3\n"
+                                "tool_call_id" "toolu_c1"
+                                "tool_name" "python_execution"
+                                "duration_ms" 12}]}]}]})
+
+(def ^:private grandchild
+  "A child of `child` that has no persisted turn yet."
+  {:session_id "child-2"
+   :parent_id "child-1"
+   :task "Check one file."
+   :status "failed"
+   :created_at 1350})
+
+(def ^:private team-document
+  (trajectory/build result (assoc opts :subagents [child grandchild child])))
+
+(defdescribe
+  subagent-test
+  (it "embeds each Council child once, as a trajectory with its own id"
+      (expect (= "session-1" (:trajectory-id team-document)))
+      (expect (= ["child-1"] (mapv :trajectory-id (:subagent-trajectories team-document)))))
+  (it "maps the persisted turn of a child to steps with metrics"
+      (let [[request step] (:steps (first (:subagent-trajectories team-document)))]
+        (expect (= {:step-id 1
+                    :source "user"
+                    :message "Count the files."
+                    :timestamp "1970-01-01T00:00:01.200Z"}
+                   request))
+        (expect (= "There are 3 files." (:message step)))
+        (expect (= "claude-child" (:model-name step)))
+        (expect (= "List the directory." (:reasoning-content step)))
+        (expect (= {:prompt-tokens 300 :completion-tokens 20 :cached-tokens 100 :cost-usd 0.5}
+                   (:metrics step)))
+        (expect (= [{"code" "print(len(ls()))"}] (mapv :arguments (:tool-calls step))))
+        (expect (= "3\n" (get-in step [:observation :results 0 :content])))))
+  (it "refers to the child from the call that started it"
+      (expect (= [{:trajectory-id "child-1" :session-id "child-1" :extra {:status "completed"}}]
+                 (get-in team-document
+                         [:steps 1 :observation :results 0 :subagent-trajectory-ref]))))
+  (it "embeds a child of a child in that child"
+      (let [sub
+            (first (:subagent-trajectories team-document))
+
+            nested
+            (first (:subagent-trajectories sub))]
+
+        (expect (= "child-2" (:trajectory-id nested)))
+        (expect (= [{:step-id 1 :source "user" :message "Check one file."}] (:steps nested)))
+        (expect (= "child-2"
+                   (get-in sub
+                           [:steps 1 :observation :results 0 :subagent-trajectory-ref 0
+                            :trajectory-id])))))
+  (it "adds the cost of the children to the total cost of the run"
+      (expect (= 0.75 (get-in team-document [:final-metrics :total-cost-usd])))
+      (expect (= 0.5 (get-in team-document [:final-metrics :extra :subagent-cost-usd])))
+      (expect (= {:total-prompt-tokens 300
+                  :total-completion-tokens 20
+                  :total-cached-tokens 100
+                  :total-cost-usd 0.5
+                  :total-steps 2}
+                 (:final-metrics (first (:subagent-trajectories team-document)))))))
+
 (defdescribe
   known-secrets-test
   (it "takes environment values whose names contain a credential word"

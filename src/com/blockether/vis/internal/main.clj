@@ -1919,6 +1919,38 @@
     persist?
     (assoc :is-persist true)))
 
+(defn- council-subagents
+  "The Council children of the persisted session `sid`, for the `--trajectory`
+   file: each agent row with its `turns`, and each turn with its persisted
+   iterations in `trace`. A failed read gives a warning and nil, so the file
+   still has the run."
+  [sid]
+  (when sid
+    (try (not-empty
+           (into []
+                 (keep (fn [agent]
+                         (let [row
+                               (wire/canonical agent)
+
+                               child
+                               (some-> (get row "session_id")
+                                       str)]
+
+                           (when (and child (not= child (str sid)))
+                             (assoc row
+                               "turns" (mapv (fn [turn]
+                                               (assoc turn
+                                                 "trace" (gateway-state/turn-trace
+                                                           child
+                                                           (or (get turn "turn_id")
+                                                               (get turn "id")))))
+                                             (gateway-state/list-turns child)))))))
+                 (gateway-state/agents-operation! (str sid) :list {})))
+         (catch Exception e
+           (commandline/stderr! (str "vis-agent: the trajectory has no Council children: "
+                                     (ex-message e)))
+           nil))))
+
 (defn- run-one-shot!
   "Run the root one-shot command. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
@@ -1993,10 +2025,13 @@
                                              #(run! agent-def prompt run-opts))
           trajectory-error
           (when trajectory
-            (try (trajectory/export!
-                   trajectory
-                   result
-                   {:prompt prompt :started-at-ms started-at-ms :profile (run-profile opts)})
+            (try (trajectory/export! trajectory
+                                     result
+                                     {:prompt prompt
+                                      :started-at-ms started-at-ms
+                                      :profile (run-profile opts)
+                                      :subagents (when (:persist? opts)
+                                                   (council-subagents (:session-id result)))})
                  nil
                  (catch Exception e
                    (str "vis-agent: cannot write the trajectory: " (ex-message e)))))
