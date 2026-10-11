@@ -106,9 +106,36 @@ export function StringSetting({
   const saved = typeof toggle.value === 'string' ? toggle.value : '';
   const [draft, setDraft] = useState(saved);
   const changed = draft !== saved;
+  const multiline = toggle.multiline || toggle.editor === 'multiline';
+  const actions = (changed || busy) && (
+    <div className={`flex min-w-0 flex-wrap items-center gap-2 ${multiline ? '' : 'col-span-2 justify-end'}`}>
+      <Button
+        type="submit"
+        density="panel"
+        disabled={busy || !draft.trim()}
+        aria-busy={busy}
+      >
+        {busy ? 'Saving…' : 'Save'}
+      </Button>
+      {changed && (
+        <Button
+          type="button"
+          variant="secondary"
+          density="panel"
+          disabled={busy}
+          onClick={() => setDraft(saved)}
+        >
+          Cancel
+        </Button>
+      )}
+    </div>
+  );
   return (
     <form
-      className="flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4"
+      // A one-line value sits on the right, like the switch and picker rows.
+      className={multiline
+        ? 'flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4'
+        : 'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 py-2 sm:px-4'}
       onSubmit={(event) => {
         event.preventDefault();
         if (!busy && !disabled && changed && draft.trim()) {
@@ -118,50 +145,29 @@ export function StringSetting({
         }
       }}
     >
-      <div>
-        <Text as="p" variant="label">
+      <div className="min-w-0">
+        <Text as="p" variant="label" className="break-words">
           {toggle.label}
         </Text>
         {toggle.description && (
-          <Text as="p" variant="description" className="mt-0.5">
+          <Text as="p" variant="description" className="mt-0.5 break-words">
             {toggle.description}
           </Text>
         )}
       </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {toggle.multiline || toggle.editor === 'multiline' ? <textarea aria-label={toggle.label} value={draft} disabled={busy || disabled}
-          className="min-h-24 w-full border border-dialog-edge bg-input p-2 font-mono text-meta"
-          onChange={(event) => setDraft(event.target.value)} /> : <Input
+      {multiline ? <textarea aria-label={toggle.label} value={draft} disabled={busy || disabled}
+        className="min-h-24 w-full border border-dialog-edge bg-input p-2 font-mono text-meta"
+        onChange={(event) => setDraft(event.target.value)} /> : <div className="w-40 sm:w-56">
+        <Input
           aria-label={toggle.label}
           value={draft}
           maxLength={toggle.max_length}
           disabled={busy || disabled}
           required
-          className="flex-1"
           onChange={(event) => setDraft(event.target.value)}
-        />}
-        {(changed || busy) && (
-          <Button
-            type="submit"
-            density="panel"
-            disabled={busy || !draft.trim()}
-            aria-busy={busy}
-          >
-            {busy ? 'Saving…' : 'Save'}
-          </Button>
-        )}
-        {changed && (
-          <Button
-            type="button"
-            variant="secondary"
-            density="panel"
-            disabled={busy}
-            onClick={() => setDraft(saved)}
-          >
-            Cancel
-          </Button>
-        )}
-      </div>
+        />
+      </div>}
+      {actions}
     </form>
   );
 }
