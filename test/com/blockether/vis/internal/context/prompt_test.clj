@@ -873,7 +873,8 @@
       ;; names no natural language. It lands at 12 070.
       ;; #349: the shell handle line says that `sh.type` adds Enter and how to omit it.
       ;; It lands at 12 138.
-      (expect (< (count text) 12150))
+      ;; `ls` gains `is_ignored`, which lists gitignored entries. It lands at 12 183.
+      (expect (< (count text) 12200))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
                          "`patch(path, edits)`"])]
@@ -1663,17 +1664,19 @@
 (defdescribe
   core-prompt-ls-contract-test
   ;; Regression: the prompt omitted ls keywords, including the hidden alias.
-  (it "states the ls signature, batching, return type, and hidden precedence"
-      (let [text (prompt/build-system-prompt {})]
-        (doseq
-          [rule
-           ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None, as_paths=False)"
-            "`pattern` is a case-sensitive basename glob, not a regex"
-            "It applies at each depth and keeps ancestors; a per-path spec overrides it"
-            "takes a str, a Path or a list"
-            "It returns a string, or a flat list of paths with `as_paths=True`"
-            "A non-None `hidden` overrides `is_hidden`" "Gitignored entries stay out"]]
-          (expect (str/includes? text rule) rule)))))
+  (it
+    "states the ls signature, batching, return type, and hidden precedence"
+    (let [text (prompt/build-system-prompt {})]
+      (doseq
+        [rule
+         ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None, is_ignored=False, pattern=None, as_paths=False)"
+          "`pattern` is a case-sensitive basename glob, not a regex"
+          "It applies at each depth and keeps ancestors; a per-path spec overrides it"
+          "takes a str, a Path or a list"
+          "It returns a string, or a flat list of paths with `as_paths=True`"
+          "A non-None `hidden` overrides `is_hidden`"
+          "Gitignored entries stay out unless `is_ignored=True`"]]
+        (expect (str/includes? text rule) rule)))))
 
 (defdescribe
   core-prompt-helper-lifecycle-test

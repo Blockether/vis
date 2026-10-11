@@ -1118,11 +1118,15 @@
    builds nothing, so that refusal cannot apply and the listing every machine has is
    served by fff like every other one: fff still owns `.gitignore`/`.ignore` and its own
    cache-directory rules, a symlinked directory is listed but never descended, and
-   dotfiles still need `is_hidden`."
-  [^File root ^long levels is-hidden?]
+   dotfiles still need `is_hidden`. With `respect-ignore?` false, the walk also lists
+   entries that `.gitignore`, `.ignore` and fff's cache-directory rules exclude."
+  [^File root ^long levels is-hidden? respect-ignore?]
   (mapv (fn [{:keys [relative-path dir? size]}]
           {:relative-path relative-path :directory? dir? :size (when-not dir? size)})
-        (fff/list-directory (.getPath root) {:max-depth levels :include-hidden? is-hidden?})))
+        (fff/list-directory (.getPath root)
+                            {:max-depth levels
+                             :include-hidden? is-hidden?
+                             :respect-ignore-files? (boolean respect-ignore?)})))
 
 (defn- list-dir
   "Directory listing as MODEL data, powered by fff — never a filesystem walk.
@@ -1149,8 +1153,11 @@
    Records are depth-filtered inside the paging loop (`fff-ls-scan`), so cost tracks
    the rows RETURNED rather than the size of the tree, and rendered paths are joined
    from the directory's own rendered path instead of canonicalizing per row. Results
-   remain directories-first then alphabetical, and are exhaustive."
-  [^File d {:keys [depth is_hidden] :or {depth 1 is_hidden false}}]
+   remain directories-first then alphabetical, and are exhaustive.
+
+   `is_ignored` skips all four: every directory then gets the stateless listing with
+   ignore files off, so gitignored entries such as build output appear."
+  [^File d {:keys [depth is_hidden is_ignored] :or {depth 1 is_hidden false is_ignored false}}]
   (let [^File root
         (.getCanonicalFile d)
 
@@ -1167,14 +1174,14 @@
         (boolean is_hidden)
 
         items
-        (if-not (workspace-dir? root)
-          (fff-ls-listing-items root levels is-hidden?)
-          (or (fff-ls-workspace-items root target-rel levels is-hidden?)
-              (try (fff-ls-target-items root target-rel levels is-hidden?)
-                   (catch clojure.lang.ExceptionInfo e
-                     (if (= :ext.foundation.editing/fff-unavailable (:type (ex-data e)))
-                       (fff-ls-listing-items root levels is-hidden?)
-                       (throw e))))))
+        (cond (boolean is_ignored) (fff-ls-listing-items root levels is-hidden? false)
+              (not (workspace-dir? root)) (fff-ls-listing-items root levels is-hidden? true)
+              :else (or (fff-ls-workspace-items root target-rel levels is-hidden?)
+                        (try (fff-ls-target-items root target-rel levels is-hidden?)
+                             (catch clojure.lang.ExceptionInfo e
+                               (if (= :ext.foundation.editing/fff-unavailable (:type (ex-data e)))
+                                 (fff-ls-listing-items root levels is-hidden? true)
+                                 (throw e))))))
 
         render-prefix
         (if (= "." base) "" (str base "/"))
@@ -3393,13 +3400,16 @@
 
           row
           (list-dir f
-                    {:depth (or (get spec "depth") 1) :is_hidden (boolean (get spec "is_hidden"))})]
+                    {:depth (or (get spec "depth") 1)
+                     :is_hidden (boolean (get spec "is_hidden"))
+                     :is_ignored (boolean (get spec "is_ignored"))})]
 
       (if matcher (update row "entries" #(ls-filter-entries matcher %)) row))))
 
 (defn list-directories
   "List directories for the sandbox's `ls` helper. `args` is the string-keyed
-   request — `{\"paths\" [dir | {\"path\" dir, …}, …], \"depth\" n, \"is_hidden\" b}`,
+   request — `{\"paths\" [dir | {\"path\" dir, …}, …], \"depth\" n, \"is_hidden\" b,
+   \"is_ignored\" b}`,
    an entry's own options overriding the shared ones — and the answer is one row
    per requested directory IN REQUEST ORDER. Optional `pattern` is a basename glob;
    nil disables it. Matching descendants retain their ancestors.

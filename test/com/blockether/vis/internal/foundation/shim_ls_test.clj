@@ -83,7 +83,7 @@
                  "      \".gitignore \" in hidden, \".gitignore\" in plain,\n"
                  "      \"target/\" in plain)")]
 
-        ;; gitignored entries are never listed, on either axis
+        ;; gitignored entries stay out of the default listing on either axis
         (expect (= "True True True False False\n" (out ctx code)))))
   (it "accepts hidden as a keyword alias, overriding is_hidden when supplied"
       (let [ctx
@@ -633,3 +633,29 @@
                  "      \"as_paths=True\" in page)")]
 
         (expect (= "True True True\n" (out ctx code))))))
+
+(defdescribe
+  ls-shim-ignored-test
+  "`is_ignored=True` lists gitignored entries; the default keeps them out."
+  (it "lists a gitignored directory only when is_ignored asks for it"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "plain = ls('.', is_hidden=True)\n"
+                 "wide = ls('.', is_hidden=True, is_ignored=True)\n"
+                 "spec = ls([{'path': '.', 'is_ignored': True}], is_hidden=True)\n"
+                 "flat = ls('.', is_hidden=True, is_ignored=True, as_paths=True)\n"
+                 "print('.cpcache/' in plain.split('\\n'), '.cpcache/' in wide.split('\\n'),\n"
+                 "      spec == wide, './.cpcache/' in flat,\n"
+                 "      'is_ignored=False' in ls.__doc__)")]
+
+        (expect (= "False True True True True\n" (out ctx code)))))
+  (it "applies the ignore files again when is_ignored is false"
+      (let [ctx
+            (sandbox)
+
+            code
+            "print(ls('.', is_hidden=True, is_ignored=False) == ls('.', is_hidden=True))"]
+
+        (expect (= "True\n" (out ctx code))))))

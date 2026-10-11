@@ -100,6 +100,7 @@ def __vis_install_ls__():
         is_hidden=False,
         *,
         hidden=None,
+        is_ignored=False,
         pattern=None,
         as_paths=False,
     ):
@@ -118,6 +119,7 @@ def __vis_install_ls__():
                     "paths": specs,
                     "depth": int(depth),
                     "is_hidden": bool(is_hidden),
+                    "is_ignored": bool(is_ignored),
                     "pattern": pattern,
                 }
             )
@@ -139,9 +141,10 @@ def __vis_install_ls__():
 
     docs = g.setdefault("__vis_docs__", {})
     docs["ls"] = (
-        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None, "
-        "as_paths=False) lists directory contents from the ignore-aware walk of the "
-        "host, as a compact printable STRING. `ls(dir)` gives a `path  Nd Nf` header, "
+        "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, is_ignored=False, "
+        "pattern=None, as_paths=False) lists directory contents from the ignore-aware "
+        "walk of the host, as a compact printable STRING. `ls(dir)` gives a "
+        "`path  Nd Nf` header, "
         "then one tree line per entry, with directories first and then in alphabetical "
         "order. A directory is `name/`, with its child count when depth expanded it. A "
         "file is `name size`, for example `812`, `7.2k` or `2.1M`. Children indent two "
@@ -160,7 +163,9 @@ def __vis_install_ls__():
         "override pattern, and None disables it there. Example: `ls(dir, "
         "pattern='*snapshot*')`."
         "\n\nDotfiles need is_hidden=True (alias: hidden=True). When hidden is not "
-        "None, it overrides is_hidden. The listing never includes gitignored entries."
+        "None, it overrides is_hidden. By default, the listing skips gitignored entries. "
+        "is_ignored=True also lists entries that .gitignore, .ignore and the host's "
+        "cache rules exclude, such as build output. A per-path spec can set it too."
         "\n\nas_paths=True returns the same walk as a flat list of paths instead of "
         "the tree, in the same order. Each path is the requested path joined with the "
         "entry name, and directories end in '/'. A relative request gives relative "
