@@ -3,7 +3,7 @@
  *
  * A native date picker draws another control on each platform, in the platform's type,
  * line height and palette. These parts keep the app's face: the mono type, square
- * corners and rows that keep their height, so the panel never jumps between months.
+ * corners and day rows of one fixed height.
  *
  * A day is a `YYYY-MM-DD` string in the calendar of this device. A moment is the
  * `YYYY-MM-DDTHH:mm` value that a `datetime-local` input gives. Day arithmetic runs in
@@ -17,9 +17,6 @@ import { CalendarIcon, ChevronIcon, DotIcon } from './icons';
 import { Button, useAnchoredLayer } from './ui';
 
 const DAY_MS = 86_400_000;
-
-/** Six weeks: every month fits, so the grid has the same height in each month. */
-const GRID_DAYS = 42;
 
 /** The tallest that the open panel grows before it scrolls inside itself, in CSS pixels. */
 const PANEL_HEIGHT = 480;
@@ -60,11 +57,20 @@ const monthOf = (day: string) => day.slice(0, 7);
 /** The column of a day in a week that starts on Monday: 0 for Monday, 6 for Sunday. */
 const weekday = (day: string) => (new Date(dayMillis(day)).getUTCDay() + 6) % 7;
 
-/** The six weeks that show a month, from the Monday on or before its first day. */
-function monthDays(month: string): string[] {
+/**
+ * The weeks of a month, Monday first. A cell before the first day or after the last day
+ * is an empty string: the grid shows the days of one month only.
+ */
+function monthWeeks(month: string): string[][] {
   const first = `${month}-01`;
-  const start = addDays(first, -weekday(first));
-  return Array.from({ length: GRID_DAYS }, (_, index) => addDays(start, index));
+  const lead = weekday(first);
+  const length = new Date(dayMillis(addMonths(first, 1)) - DAY_MS).getUTCDate();
+  const cells = [
+    ...Array.from({ length: lead }, () => ''),
+    ...Array.from({ length }, (_, index) => `${month}-${pad(index + 1)}`),
+  ];
+  while (cells.length % 7 !== 0) cells.push('');
+  return Array.from({ length: cells.length / 7 }, (_, week) => cells.slice(week * 7, week * 7 + 7));
 }
 
 // Each list renders many labels on each render. Build each format once, in the device locale.
@@ -136,7 +142,7 @@ export function Calendar({
     if (value) setFocus(value);
   }
   const month = monthOf(focus);
-  const days = monthDays(month);
+  const weeks = monthWeeks(month);
   const titleId = useId();
   const gridRef = useRef<HTMLDivElement>(null);
   // Only a move from the keyboard takes the focus with it. A press on an arrow keeps its own.
@@ -214,9 +220,10 @@ export function Calendar({
             </span>
           ))}
         </div>
-        {[0, 1, 2, 3, 4, 5].map((week) => (
-          <div key={week} role="row" className="grid grid-cols-7">
-            {days.slice(week * 7, week * 7 + 7).map((day) => {
+        {weeks.map((days) => (
+          <div key={days.find(Boolean)} role="row" className="grid grid-cols-7">
+            {days.map((day, column) => {
+              if (!day) return <span key={column} role="gridcell" className="h-10 mouse:h-8" />;
               const isChosen = day === value;
               const isToday = day === today;
               const isUnavailable = isBefore(day);
@@ -226,9 +233,7 @@ export function Calendar({
                   ? 'cursor-not-allowed text-muted opacity-50'
                   : isToday
                     ? 'font-bold text-accent-ink'
-                    : monthOf(day) !== month
-                      ? 'text-dialog-hint hover:text-accent-ink'
-                      : 'text-white hover:text-accent-ink';
+                    : 'text-white hover:text-accent-ink';
               return (
                 <span key={day} role="gridcell" aria-selected={isChosen} className="grid">
                   <button
