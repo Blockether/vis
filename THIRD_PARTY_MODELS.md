@@ -11,6 +11,8 @@ This file is generated from `resources/vis-models/manifest.edn` and
 | --- | --- | --- | --- | --- |
 | `parakeet-tdt-0.6b-v3-int8` | CC-BY-4.0 | yes | the Vis assets release | automatically |
 | `pocket-tts-int8` | CC-BY-4.0 | yes | the Vis assets release | automatically |
+| `vibevoice-realtime-0.5b-int8` | MIT AND Apache-2.0 | yes | the Vis assets release | automatically |
+| `vibevoice-asr-streaming-1.5b-int8` | MIT | yes | the Vis assets release | automatically |
 | `piper-en_US-kristin-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
 | `piper-en_GB-cori-high` | LicenseRef-public-domain | yes | its publisher | automatically |
 | `piper-en_US-john-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
@@ -52,6 +54,31 @@ pocket-tts by Kyutai (https://huggingface.co/kyutai/pocket-tts), CC BY 4.0, chec
 - Installs into: `~/.vis/models/sherpa-onnx-pocket-tts-int8`
 - Downloaded from, in order:
   - the Vis assets release, 96 MB - <https://github.com/Blockether/vis/releases/download/assets-pack/pocket-tts-onnx.tar.bz2>
+
+## `vibevoice-realtime-0.5b-int8`
+
+Engine `:vibevoice-tts` - MIT AND Apache-2.0 - commercial use permitted - hosted by Vis
+
+VibeVoice-Realtime-0.5B by Microsoft (https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B), MIT, revision 6bce5f06, with the voice presets of https://github.com/microsoft/VibeVoice (MIT). Tokenizer from Qwen2.5-0.5B by Alibaba Cloud (https://huggingface.co/Qwen/Qwen2.5-0.5B), Apache-2.0. ONNX export and int8 quantization by the Vis project, published under the same terms.
+
+> Microsoft publishes VibeVoice for research and development. Tell listeners that the audio is synthetic, and do not use it to imitate a real person without consent.
+
+- Upstream: <https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B>
+- Voices: Carter (English), Emma (English), Davis (English), Frank (English), Grace (English), Mike (English), Samuel (Indian English), German man, German woman, Spanish man, Spanish woman, French man, French woman, Italian man, Italian woman, Japanese man, Japanese woman, Korean man, Korean woman, Dutch man, Dutch woman, Polish man, Polish woman, Portuguese man, Portuguese woman
+- Installs into: `~/.vis/models/vibevoice-realtime-0.5b-int8`
+- Downloaded from, in order:
+  - the Vis assets release, 1228 MB, 8 files - <https://github.com/Blockether/vis>
+
+## `vibevoice-asr-streaming-1.5b-int8`
+
+Engine `:vibevoice-asr` - MIT - commercial use permitted - hosted by Vis
+
+VibeVoice-ASR-Streaming-1.5B by Microsoft (https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B), MIT, revision 4262d23d. ONNX export and int8 quantization by the Vis project, published under the same terms.
+
+- Upstream: <https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B>
+- Installs into: `~/.vis/models/vibevoice-asr-streaming-1.5b-int8`
+- Downloaded from, in order:
+  - the Vis assets release, 2742 MB, 4 files - <https://github.com/Blockether/vis>
 
 ## `piper-en_US-kristin-medium`
 

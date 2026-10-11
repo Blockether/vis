@@ -52,7 +52,7 @@
         url
         (or (:url source)
             (some-> (some :url files)
-                    (str/replace #"/resolve/.*$" "")))]
+                    (str/replace #"/(resolve|releases/download)/.*$" "")))]
 
     (str "  - "
          host

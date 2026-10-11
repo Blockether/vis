@@ -52,13 +52,18 @@
         (expect (= ["status" "download" "licenses"]
                    (mapv :cmd/name (:cmd/subcommands (get by-name "models")))))
         (expect (= ["file" "name" "lang" "text"] (mapv :name (:cmd/args (get by-name "import")))))
-        (expect (= ["text" "voice" "pocket-tts" "out"]
+        (expect (= ["text" "voice" "pocket-tts" "vibevoice" "out"]
                    (mapv :name (:cmd/args (get by-name "say")))))
         (expect (every? #(or (:cmd/run-fn %) (seq (:cmd/subcommands %))) (:cmd/subcommands cli)))))
   (it "downloads every family it may fetch unless specific families were named"
       (expect (= [:parakeet :piper :pocket-tts] (#'speech/download-families {})))
       (expect (= [:parakeet :piper :pocket-tts] (#'speech/download-families {"all" true})))
-      (expect (= [:pocket-tts] (#'speech/download-families {"pocket-tts" true}))))
+      (expect (= [:pocket-tts] (#'speech/download-families {"pocket-tts" true})))
+      ;; VibeVoice is 3.9 GB, so it comes only by name, also beside --all.
+      (expect (= [:vibevoice :vibevoice-asr]
+                 (#'speech/download-families {"vibevoice" true "vibevoice-asr" true})))
+      (expect (= [:parakeet :piper :pocket-tts :vibevoice]
+                 (#'speech/download-families {"all" true "vibevoice" true}))))
   (it "runs diagnostics from one gateway-owned model snapshot"
       (let [calls (atom 0)]
         (with-redefs [speech/model-status (fn []

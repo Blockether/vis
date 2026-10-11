@@ -244,9 +244,21 @@
     :pocket-tts
     [(pocket-asset)]))
 
+(defn model-state-of
+  "Readiness of a group of assets, for an engine outside sherpa-onnx that shares
+   this download tracking."
+  [needed]
+  (combined-state (mapv asset-state needed)))
+
+(defn start-downloads!
+  "Start each absent download in `needed` without blocking, and return the group
+   readiness."
+  [needed]
+  (combined-state (mapv start-asset-download! needed)))
+
 (defn model-state
   ([family] (model-state family nil))
-  ([family voice-id] (combined-state (mapv asset-state (required-assets family voice-id)))))
+  ([family voice-id] (model-state-of (required-assets family voice-id))))
 
 (defn start-download!
   "Begin every required download without blocking. An opt-in voice starts only when
@@ -261,7 +273,7 @@
                                     needed))]
        {:state :failed
         :error (str "Accept " (:license opt-in) " before downloading " (:id opt-in) ".")}
-       (combined-state (mapv start-asset-download! needed))))))
+       (start-downloads! needed)))))
 
 (defn install-model!
   "Blocking install of everything `family` needs before it can speak, for the

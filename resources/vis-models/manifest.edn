@@ -94,6 +94,118 @@
     :sha256 "a733ba9bc5d4b9e621fdc1cc389227159d8879bbf0088b3fea17c5c441c428e3"
     :url
     "https://github.com/Blockether/vis/releases/download/assets-pack/pocket-tts-onnx.tar.bz2"}]}
+ ;; OUR export of Microsoft's VibeVoice-Realtime-0.5B (MIT): `scripts/export_tts_onnx.py`
+ ;; in vis-podcaster, int8 except the diffusion head. The files arrive loose: int8
+ ;; weights hardly compress, and no file is near the 2 GB release limit. A voice is a
+ ;; cached prompt state in `voices.bin`, so this catalogue is the whole catalogue.
+ ;; About 1.2 GB, so it comes down only when the VibeVoice engine is used or named.
+ {:id "vibevoice-realtime-0.5b-int8"
+  :engine :vibevoice-tts
+  :install-dir "vibevoice-realtime-0.5b-int8"
+  :requires ["base_lm.onnx" "tts_lm.onnx" "diffusion.onnx" "acoustic_decoder.onnx" "vibevoice.json" "tokenizer.json" "voices.bin" "voices.json"]
+  :voices
+  [{:gender :male :id "carter" :label "Carter (English)" :language "en"}
+   {:gender :female :id "emma" :label "Emma (English)" :language "en"}
+   {:gender :male :id "davis" :label "Davis (English)" :language "en"}
+   {:gender :male :id "frank" :label "Frank (English)" :language "en"}
+   {:gender :female :id "grace" :label "Grace (English)" :language "en"}
+   {:gender :male :id "mike" :label "Mike (English)" :language "en"}
+   {:gender :male :id "samuel" :label "Samuel (Indian English)" :language "en-IN"}
+   {:gender :male :id "de-man" :label "German man" :language "de"}
+   {:gender :female :id "de-woman" :label "German woman" :language "de"}
+   {:gender :male :id "sp-man" :label "Spanish man" :language "es"}
+   {:gender :female :id "sp-woman" :label "Spanish woman" :language "es"}
+   {:gender :male :id "fr-man" :label "French man" :language "fr"}
+   {:gender :female :id "fr-woman" :label "French woman" :language "fr"}
+   {:gender :male :id "it-man" :label "Italian man" :language "it"}
+   {:gender :female :id "it-woman" :label "Italian woman" :language "it"}
+   {:gender :male :id "jp-man" :label "Japanese man" :language "ja"}
+   {:gender :female :id "jp-woman" :label "Japanese woman" :language "ja"}
+   {:gender :male :id "kr-man" :label "Korean man" :language "ko"}
+   {:gender :female :id "kr-woman" :label "Korean woman" :language "ko"}
+   {:gender :male :id "nl-man" :label "Dutch man" :language "nl"}
+   {:gender :female :id "nl-woman" :label "Dutch woman" :language "nl"}
+   {:gender :male :id "pl-man" :label "Polish man" :language "pl"}
+   {:gender :female :id "pl-woman" :label "Polish woman" :language "pl"}
+   {:gender :male :id "pt-man" :label "Portuguese man" :language "pt"}
+   {:gender :female :id "pt-woman" :label "Portuguese woman" :language "pt"}]
+  :license "MIT AND Apache-2.0"
+  :attribution
+  "VibeVoice-Realtime-0.5B by Microsoft (https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B), MIT, revision 6bce5f06, with the voice presets of https://github.com/microsoft/VibeVoice (MIT). Tokenizer from Qwen2.5-0.5B by Alibaba Cloud (https://huggingface.co/Qwen/Qwen2.5-0.5B), Apache-2.0. ONNX export and int8 quantization by the Vis project, published under the same terms."
+  :source-url "https://huggingface.co/microsoft/VibeVoice-Realtime-0.5B"
+  :notice
+  "Microsoft publishes VibeVoice for research and development. Tell listeners that the audio is synthetic, and do not use it to imitate a real person without consent."
+  :is-commercial-ok true
+  :is-redistributed true
+  :sources
+  [{:host :pack
+    :kind :files
+    :files
+    [{:bytes 196198957
+      :path "base_lm.onnx"
+      :sha256 "73ef120b944ee7e5b94bdcbeeebe10c324c790296b132bafa2047664f473ed6f"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-base_lm.onnx"}
+     {:bytes 301139107
+      :path "tts_lm.onnx"
+      :sha256 "1b387b187bf557567a886cad31f716d0f631e912c4908761d5d63336b24cde93"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-tts_lm.onnx"}
+     {:bytes 172043072
+      :path "diffusion.onnx"
+      :sha256 "16c05dc405c850abe6a8694e5fe60ad83ed91c3d5996daa9a8ac575e6a32a4e4"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-diffusion.onnx"}
+     {:bytes 469796638
+      :path "acoustic_decoder.onnx"
+      :sha256 "1d8d22632bc16ea05a17b0d097ae3a13c350e9786bc38dfa4a7161d81cf30fcc"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-acoustic_decoder.onnx"}
+     {:bytes 324
+      :path "vibevoice.json"
+      :sha256 "aeb4f39337d59bda51a850d9c4c56dd0f504464c57a1144acb34506d87298840"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-vibevoice.json"}
+     {:bytes 7031645
+      :path "tokenizer.json"
+      :sha256 "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-tokenizer.json"}
+     {:bytes 81526528
+      :path "voices.bin"
+      :sha256 "b9dae468f39ba1cf0e52c01054be8400eecaf05084fdf2f5041375daca4eebd4"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-voices.bin"}
+     {:bytes 342523
+      :path "voices.json"
+      :sha256 "e135c22117e3d747f0dd37d7b481e427e81d8031a684c34034043af3b6839f66"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-voices.json"}]}]}
+ ;; OUR export of Microsoft's VibeVoice-ASR-Streaming-1.5B (MIT): `scripts/export_asr_onnx.py`
+ ;; in vis-podcaster, int8 matrix weights. The decoder is 1.78 GB, one file under the
+ ;; 2 GB release limit. About 2.7 GB, so it comes down only when the engine is used or named.
+ {:id "vibevoice-asr-streaming-1.5b-int8"
+  :engine :vibevoice-asr
+  :install-dir "vibevoice-asr-streaming-1.5b-int8"
+  :requires ["speech_encoder.onnx" "decoder.onnx" "tokenizer.json" "vibevoice_asr.json"]
+  :license "MIT"
+  :attribution
+  "VibeVoice-ASR-Streaming-1.5B by Microsoft (https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B), MIT, revision 4262d23d. ONNX export and int8 quantization by the Vis project, published under the same terms."
+  :source-url "https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B"
+  :is-commercial-ok true
+  :is-redistributed true
+  :sources
+  [{:host :pack
+    :kind :files
+    :files
+    [{:bytes 948513775
+      :path "speech_encoder.onnx"
+      :sha256 "c4859cf37d6f80bb833963515c9ab2864ac1635b4896cf54e4455070ae6ed6fa"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-asr-speech_encoder.onnx"}
+     {:bytes 1782442259
+      :path "decoder.onnx"
+      :sha256 "229b4844161f20ba70731e38073fd840b9170fa09a8799b4025ff92df830a858"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-asr-decoder.onnx"}
+     {:bytes 11422657
+      :path "tokenizer.json"
+      :sha256 "d198a051741ee47805797b744e6524c259b08a59b58d1ec159cfd7f1da5f2df7"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-asr-tokenizer.json"}
+     {:bytes 827
+      :path "vibevoice_asr.json"
+      :sha256 "6e722e4ce03abcafdd812daacee60663315080703034780e9be821b042874114"
+      :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-asr-vibevoice_asr.json"}]}]}
  ;; Piper voices, each at the quality LEVEL upstream published it at. `low`,
  ;; `medium` and `high` are separate trainings, not a setting: Vis carries a
  ;; speaker's `high` where one exists, `medium` only where none does. Of the five

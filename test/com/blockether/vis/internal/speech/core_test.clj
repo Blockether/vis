@@ -41,16 +41,17 @@
                               text))
                    {:audio-path (str f) :sample-rate 24000}))})
 
-(defdescribe the-gateway-has-one-fixed-engine-set
-             (it
-               "the gateway has one fixed engine set"
-               (expect (= [:parakeet-local] (mapv :id (speech/engines :transcribe))))
-               (expect (= [:piper-local :pocket-tts-local] (mapv :id (speech/engines :synthesize))))
-               (expect (= [:uploading :queued :preparing :transcribing :done :failed]
-                          (speech/direction-phases :transcribe)))
-               (expect (= [:uploading :queued :preparing :synthesizing :done :failed]
-                          (speech/direction-phases :synthesize)))
-               (expect (= "Unknown speech direction: :speak" (refusal #(speech/engines :speak))))))
+(defdescribe
+  the-gateway-has-one-fixed-engine-set
+  (it "the gateway has one fixed engine set"
+      (expect (= [:parakeet-local :vibevoice-asr-local] (mapv :id (speech/engines :transcribe))))
+      (expect (= [:piper-local :pocket-tts-local :vibevoice-local]
+                 (mapv :id (speech/engines :synthesize))))
+      (expect (= [:uploading :queued :preparing :transcribing :done :failed]
+                 (speech/direction-phases :transcribe)))
+      (expect (= [:uploading :queued :preparing :synthesizing :done :failed]
+                 (speech/direction-phases :synthesize)))
+      (expect (= "Unknown speech direction: :speak" (refusal #(speech/engines :speak))))))
 
 (defdescribe
   engine-selection-is-a-lookup-not-a-registry

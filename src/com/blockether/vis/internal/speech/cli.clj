@@ -37,7 +37,14 @@
   {:parakeet {:direction :transcribe :engine-id "parakeet-local" :label "Parakeet ASR model"}
    :piper {:direction :synthesize :engine-id "piper-local" :label "Piper speech voice"}
    :pocket-tts
-   {:direction :synthesize :engine-id "pocket-tts-local" :label "pocket-tts speech voice"}})
+   {:direction :synthesize :engine-id "pocket-tts-local" :label "pocket-tts speech voice"}
+   :vibevoice {:direction :synthesize :engine-id "vibevoice-local" :label "VibeVoice speech model"}
+   :vibevoice-asr
+   {:direction :transcribe :engine-id "vibevoice-asr-local" :label "VibeVoice ASR model"}})
+
+(def ^:private automatic-families
+  "The families a download without names fetches. VibeVoice (3.9 GB) comes only by name."
+  [:parakeet :piper :pocket-tts])
 
 (defn- model-path
   [{:keys [direction engine-id]}]
@@ -115,8 +122,11 @@
 
 (defn- download-families
   [parsed]
-  (let [named (filterv #(get parsed (name %)) [:parakeet :piper :pocket-tts])]
-    (if (or (get parsed "all") (empty? named)) [:parakeet :piper :pocket-tts] named)))
+  (let [named (filterv #(get parsed (name %))
+                [:parakeet :piper :pocket-tts :vibevoice :vibevoice-asr])]
+    (cond (get parsed "all") (into automatic-families (remove (set automatic-families)) named)
+          (empty? named) automatic-families
+          :else named)))
 
 (defn- download-family!
   [family voice-id]
@@ -204,7 +214,9 @@
         (str/trim (str (or (get parsed "text") (str/join " " residual))))
 
         engine-id
-        (if (get parsed "pocket-tts") "pocket-tts-local" "piper-local")
+        (cond (get parsed "vibevoice") "vibevoice-local"
+              (get parsed "pocket-tts") "pocket-tts-local"
+              :else "piper-local")
 
         audio
         (gateway-client/synthesize-speech! nil
@@ -243,12 +255,18 @@
       {:cmd/name "download"
        :cmd/doc "Prepare gateway speech models."
        :cmd/usage
-       "vis-agent speech models download [--parakeet|--piper|--pocket-tts|--all] [--voice ID]"
-       :cmd/args [{:name "parakeet" :kind :flag :type :boolean :doc "Prepare Parakeet ASR."}
-                  {:name "piper" :kind :flag :type :boolean :doc "Prepare Piper speech."}
-                  {:name "pocket-tts" :kind :flag :type :boolean :doc "Prepare pocket-tts speech."}
-                  {:name "all" :kind :flag :type :boolean :doc "Prepare every model."}
-                  {:name "voice" :kind :flag :type :string :doc "Piper voice id."}]
+       "vis-agent speech models download [--parakeet|--piper|--pocket-tts|--vibevoice|--vibevoice-asr|--all] [--voice ID]"
+       :cmd/args
+       [{:name "parakeet" :kind :flag :type :boolean :doc "Prepare Parakeet ASR."}
+        {:name "piper" :kind :flag :type :boolean :doc "Prepare Piper speech."}
+        {:name "pocket-tts" :kind :flag :type :boolean :doc "Prepare pocket-tts speech."}
+        {:name "vibevoice" :kind :flag :type :boolean :doc "Prepare VibeVoice speech (1.2 GB)."}
+        {:name "vibevoice-asr" :kind :flag :type :boolean :doc "Prepare VibeVoice ASR (2.7 GB)."}
+        {:name "all"
+         :kind :flag
+         :type :boolean
+         :doc "Prepare every model that comes without a name."}
+        {:name "voice" :kind :flag :type :string :doc "Piper voice id."}]
        :cmd/run-fn #'speech-models-download-command}
       {:cmd/name "licenses"
        :cmd/doc "Show voice model licences and attribution."
@@ -278,10 +296,12 @@
      :cmd/run-fn #'voice-forget-command}
     {:cmd/name "say"
      :cmd/doc "Synthesize a line in the gateway."
-     :cmd/usage "vis-agent speech say <text> [--voice ID] [--pocket-tts] [--out FILE.wav]"
+     :cmd/usage
+     "vis-agent speech say <text> [--voice ID] [--pocket-tts|--vibevoice] [--out FILE.wav]"
      :cmd/args [{:name "text" :kind :positional :type :string :required true :doc "What to say."}
                 {:name "voice" :kind :flag :type :string :doc "Voice id."}
                 {:name "pocket-tts" :kind :flag :type :boolean :doc "Use pocket-tts."}
+                {:name "vibevoice" :kind :flag :type :boolean :doc "Use VibeVoice."}
                 {:name "out" :kind :flag :type :string :doc "Output WAV path."}]
      :cmd/run-fn #'speech-say-command}
     {:cmd/name "transcribe"

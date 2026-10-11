@@ -95,7 +95,8 @@
   (check-direction! direction)
   (case direction
     :transcribe
-    [@(requiring-resolve 'com.blockether.vis.internal.speech.engine/descriptor)]
+    [@(requiring-resolve 'com.blockether.vis.internal.speech.engine/descriptor)
+     @(requiring-resolve 'com.blockether.vis.internal.speech.vibevoice/asr-descriptor)]
 
     :synthesize
     @(requiring-resolve 'com.blockether.vis.internal.speech.synthesis/descriptors)))

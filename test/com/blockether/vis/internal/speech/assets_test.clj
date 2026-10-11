@@ -63,10 +63,9 @@
 
                            source)]
         (expect (seq pack-sources))
-        (doseq [source pack-sources]
-          (expect (str/starts-with?
-                    (:url source)
-                    "https://github.com/Blockether/vis/releases/download/assets-pack/")))
+        (doseq [source pack-sources
+                url (if (= :files (:kind source)) (mapv :url (:files source)) [(:url source)])]
+          (expect (str/starts-with? url "https://github.com/Blockether/vis/releases/download/assets-pack/")))
         (expect (= "https://github.com/Blockether/vis/releases/tag/assets-pack"
                    (:source-url (assets/entry "voice-samples"))))))
   (it "says of every asset what it is, who to credit and where it may come from"
@@ -126,6 +125,8 @@
                   "piper-en_US-ljspeech-high" "piper-en_US-ryan-high"]
                  (mapv :id (assets/for-engine :piper))))
       (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
+      (expect (= ["vibevoice-realtime-0.5b-int8"] (mapv :id (assets/for-engine :vibevoice-tts))))
+      (expect (= ["vibevoice-asr-streaming-1.5b-int8"] (mapv :id (assets/for-engine :vibevoice-asr))))
       (let [data (ex-data-of #(assets/entry "no-such-model"))]
         (expect (= :speech-assets/unknown-asset (:type data)))
         (expect (contains? (set (:known data)) "parakeet-tdt-0.6b-v3-int8"))))
@@ -248,10 +249,11 @@
                        (expect (true? (:is-redistributed entry)) (:id entry))
                        (expect (true? (:is-commercial-ok entry)) (:id entry))
                        (expect (nil? (:voice entry)) (:id entry))
-                       (doseq [source pack]
-                         (expect (str/starts-with?
-                                   (:url source)
-                                   "https://github.com/Blockether/vis/releases/download/")
+                       (doseq [source pack
+                               url (if (= :files (:kind source))
+                                     (mapv :url (:files source))
+                                     [(:url source)])]
+                         (expect (str/starts-with? url "https://github.com/Blockether/vis/releases/download/")
                                  (:id entry))))
                      (when-not (:is-redistributed entry) (expect (empty? pack) (:id entry)))))
                  (expect (empty? (filter #(= "espeak-ng-data" (:id %)) (assets/manifest)))))
@@ -260,7 +262,7 @@
                  ;; with no voice at all: the install reports itself ready and the
                  ;; first synthesis is what discovers the clip was never there.
                  (doseq [entry
-                         (assets/manifest)
+                         (remove #(= :vibevoice-tts (:engine %)) (assets/manifest))
 
                          voice
                          (:voices entry)]
@@ -269,7 +271,14 @@
                    (expect (str/starts-with? (:clip voice) "voices/") (:id entry))
                    (expect (contains? (set (:requires entry)) (:clip voice)) (:id entry))
                    ;; the transcript rides along, because the clone is given the words
-                   (expect (seq (:clip-text voice)) (:id entry)))))
+                   (expect (seq (:clip-text voice)) (:id entry))))
+             (it "requires the preset pack that holds every VibeVoice voice"
+                 ;; A VibeVoice voice is a cached prompt state, not a clip: all of them
+                 ;; are in one `voices.bin`, indexed by `voices.json`.
+                 (let [entry (assets/entry "vibevoice-realtime-0.5b-int8")]
+                   (expect (seq (:voices entry)))
+                   (expect (every? (set (:requires entry)) ["voices.bin" "voices.json"]))
+                   (expect (not-any? :clip (:voices entry))))))
 
 (defn- repo-document
   "The generated document at the repository root, found by walking up from the
