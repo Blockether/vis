@@ -112,6 +112,8 @@ it('paints a shell terminal block with its outcome, aside and live tail', () => 
   expect(document.querySelector('[data-activity-terminal]')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /npm test && npm run lint/ }));
   const block = screen.getByRole('group', { name: 'Terminal' });
+  // A phone hides the aside in the head line, so the open step repeats it first.
+  expect(document.querySelector('[data-activity-aside-body]')).toHaveTextContent('~/vis · exit 0');
   const stages = block.querySelectorAll('[data-terminal-stage]');
   expect([...stages].map((stage) => stage.textContent)).toEqual(['$ npm test', '&& npm run lint']);
   expect(within(block).getByText('… 3 earlier lines')).toBeVisible();

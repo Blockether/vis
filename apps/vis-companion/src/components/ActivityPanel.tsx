@@ -933,7 +933,9 @@ function ActivityStep({
       <span
         data-activity-summary
         data-activity-outcome={captionIsOutcome || undefined}
-        className="min-w-0 flex-1 truncate font-normal text-dialog-hint"
+        className={`min-w-0 truncate font-normal text-dialog-hint ${
+          captionIsOutcome ? 'max-w-[16ch] flex-auto sm:max-w-[24ch]' : 'flex-1'
+        }`}
         title={caption}
       >
         {linkedSummary ? (
@@ -959,7 +961,7 @@ function ActivityStep({
       {aside && (
         <span
           data-activity-aside
-          className="ml-auto min-w-0 max-w-[40%] shrink truncate font-mono font-normal text-dialog-hint"
+          className="ml-auto hidden min-w-0 max-w-[24ch] shrink truncate font-mono font-normal text-dialog-hint sm:block"
           title={aside}
         >
           {aside}
@@ -968,7 +970,7 @@ function ActivityStep({
       {duration && (
         <time
           aria-label={`Duration ${duration}`}
-          className={`${aside ? '' : 'ml-auto'} shrink-0 font-normal text-code-duration`}
+          className={`ml-auto shrink-0 font-normal text-code-duration ${aside ? 'sm:ml-0' : ''}`}
         >
           {duration}
         </time>
@@ -976,20 +978,28 @@ function ActivityStep({
       {!duration && running && (
         <span
           aria-label="Running"
-          className={`${aside ? '' : 'ml-auto'} shrink-0 font-normal text-code-duration`}
+          className={`ml-auto shrink-0 font-normal text-code-duration ${aside ? 'sm:ml-0' : ''}`}
         >
           …
         </span>
       )}
     </>
   );
+  // A command can be longer than the row. When the head ends in an outcome or only in
+  // metadata, the command gives way first, so the outcome and the time stay visible.
+  const labelGivesWay = captionIsOutcome || (!caption && !object);
   const label = (
-    <span className="min-w-0 truncate font-semibold" title={activityStepHeadline(row)}>
+    <span
+      className={`min-w-0 truncate font-semibold ${labelGivesWay ? 'shrink-[100]' : ''}`}
+      title={activityStepHeadline(row)}
+    >
       {lead}
     </span>
   );
   const detail = (
-    <span className="flex min-w-0 flex-1 items-baseline gap-x-2">
+    <span
+      className={`flex min-w-0 flex-auto items-baseline gap-x-2 ${labelGivesWay ? 'shrink-0' : ''}`}
+    >
       {object ? ' ' : null}
       {object && (
         <span className="min-w-0 flex-1 truncate font-normal text-dialog-hint" title={object}>
@@ -1045,6 +1055,15 @@ function ActivityStep({
       )}
       {row.state === 'cancelled' && (
         <p className="pb-1 pl-3 text-meta text-dialog-hint">Cancelled</p>
+      )}
+      {/* A phone has no room for the aside in the head line, so an open step shows it first. */}
+      {open && aside && (
+        <p
+          data-activity-aside-body
+          className="truncate px-3 pb-1 font-mono text-meta text-dialog-hint sm:hidden"
+        >
+          {aside}
+        </p>
       )}
       {open && content && content.length > 0 && (
         <ActivityBody content={content} running={running} />

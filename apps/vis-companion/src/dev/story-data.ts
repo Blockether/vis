@@ -122,7 +122,7 @@ export const ACTIVITY_LONG_RUNNING = projection({
 /** Two shell commands as terminal blocks: one settled with stderr, one running with a live tail. */
 export const ACTIVITY_TERMINAL = projection({
   state: 'running',
-  counts: { running: 1, succeeded: 0, failed: 1, cancelled: 0 },
+  counts: { running: 1, succeeded: 1, failed: 1, cancelled: 0 },
   rows: [
     {
       id: 'terminal-failed',
@@ -185,8 +185,35 @@ export const ACTIVITY_TERMINAL = projection({
       resources: [],
       evidence: [],
     },
+    {
+      id: 'terminal-long-command',
+      sequence: 2,
+      operation: 'shell',
+      presenter: 'shell',
+      signal: 'observation',
+      summary: 'python3 -c "import ast;ast.parse(open(\'bench.py\').read())" && echo ok',
+      state: 'succeeded',
+      duration_ms: 167,
+      presentation: {
+        headline: 'python3 -c "import ast;ast.parse(open(\'bench.py\').read())" && echo ok',
+        summary: '',
+        outcome: 'ok',
+        aside: '~/.vis/tmp/subagent-bench',
+        content: [
+          {
+            type: 'terminal',
+            command: ['python3 -c "import ast;ast.parse(open(\'bench.py\').read())"', '&& echo ok'],
+            lines: [{ text: 'ok', stream: 'stdout' }],
+            exit: 0,
+          },
+        ],
+      },
+      resources: [],
+      evidence: [],
+    },
   ],
 });
+
 /** Every operation group stays visible, including settled groups beyond the old preview. */
 export const ACTIVITY_ALL_GROUPS = projection({
   state: 'succeeded',
