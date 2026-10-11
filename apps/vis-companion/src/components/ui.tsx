@@ -2502,7 +2502,7 @@ export function Banner({
 
   return (
     <div
-      className={`border font-mono text-body ${colors} ${
+      className={`border font-mono text-body [overflow-wrap:anywhere] ${colors} ${
         isTitled ? 'flex min-h-12 items-stretch p-0' : dismiss ? 'flex items-center gap-2 py-1 pr-1 pl-3' : 'px-3 py-2'
       }`}
       role="status"

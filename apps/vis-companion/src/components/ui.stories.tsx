@@ -674,6 +674,15 @@ export const Feedback: Story = {
           Sign in again to keep this provider.
         </Banner>
       </Group>
+      <Group of="Long unbroken text wraps inside the box">
+        <div className="w-72">
+          <Banner kind="err">
+            {
+              '"vis://gateway?url=http%3A%2F%2F100.64.0.10%3A7890&alt=http%3A%2F%2F10.0.0.5%3A7890&token=0b4202-6879f9" is not a pairing link or a machine address'
+            }
+          </Banner>
+        </div>
+      </Group>
       <Group of="Icon-only copy">
         <CopyChip value="done" label="Copy the id" density="compact" />
       </Group>
