@@ -369,6 +369,12 @@
    run peaked at 3.0 GB, but a 4096-token run peaked at 5.6 GB, about 1.9 times the weights."
   2048)
 
+(def ^:private ^:const max-d3-input-tokens
+  "Longest D3 question; the export declares the same limit. Full attention reads every token pair,
+   so memory grows with the square of the length. On CPU, 4096 tokens peaked at 3.1 GB (Edge) and
+   4.2 GB (Lite), inside the cache reservation. 8192 tokens peaked at 8.4 and 9.4 GB."
+  4096)
+
 (def ^:private decision2-prompt-version "decision2-segmented-options-global-query-v1")
 
 (def ^:private decision2-suffix
@@ -1205,7 +1211,7 @@
                       {:type :decisions/invalid-bundle :model (:id model)})))
     (open-onnx-session! dir
                         {:family :d3
-                         :config {"max_input_tokens" (min (long limit) max-decision2-input-tokens)
+                         :config {"max_input_tokens" (min (long limit) max-d3-input-tokens)
                                   "codes" (vec codes)}
                          :temperature (double temperature)})))
 

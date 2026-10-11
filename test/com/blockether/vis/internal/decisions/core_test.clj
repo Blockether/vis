@@ -960,6 +960,46 @@
           (expect (str/starts-with? (ex-message error) (str "D3 input has " size " tokens")))))))
 
 (defdescribe
+  d3-input-limit-follows-the-bundle-up-to-4096-tokens
+  (it
+    "uses the declared limit and caps it at 4096 tokens"
+    (let [model
+          (assets/entry "d3-edge")
+
+          dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "d3-limit-"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          opened
+          (atom nil)
+
+          limit-for
+          (fn [declared]
+            (spit (io/file dir "PROVENANCE.json")
+                  (wire/json-str {"format" "onnx"
+                                  "precision" "fp32"
+                                  "family" "d3"
+                                  "model" (:id model)
+                                  "revision" (:revision model)
+                                  "architecture" (get assets/d3-architectures (:id model))
+                                  "prompt_version" @#'decisions/d3-prompt-version
+                                  "max_input_tokens" declared}))
+            (spit (io/file dir "decision_config.json")
+                  (wire/json-str {"format_id" @#'decisions/d3-prompt-version
+                                  "codes" (mapv #(str "c" %) (range 255))
+                                  "temperature" 1.0}))
+            (with-redefs [decisions/open-onnx-session! (fn [_ state]
+                                                         (reset! opened state))]
+              (#'decisions/open-d3-model! model dir))
+            (get-in @opened [:config "max_input_tokens"]))]
+
+      (try (expect (= 2048 (limit-for 2048)))
+           (expect (= 4096 (limit-for 4096)))
+           (expect (= 4096 (limit-for 16384)))
+           (finally (run! io/delete-file (reverse (file-seq dir))))))))
+
+(defdescribe
   d3-fp32-bundle-matches-reference
   ;; Expected token hashes and probabilities come from the vis-decisions D3 export: its ONNX
   ;; Runtime check of the FP32 bundle at the pinned revision of each model. Upstream runs its
@@ -1037,7 +1077,7 @@
                  (expect (= :decisions/input-too-long
                             (error-type #(decisions/infer! {"model" model-id
                                                             "state"
-                                                            (str/join " " (repeat 3000 "parcel"))
+                                                            (str/join " " (repeat 6000 "parcel"))
                                                             "questions" {"q" verified}}))))))
              (finally (cache/release-idle!)))))))
 

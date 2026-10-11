@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - The D3 decision models `d3-edge` and `d3-lite` from vLLM Semantic Router answer `choice`,
-  `score` and `noul` questions. They are FP32 text bundles for inference only (#366).
+  `score` and `noul` questions with up to 4,096 tokens each. They are FP32 text bundles for
+  inference only (#366).
 
 ## [v0.2.37] - 2026-10-09
 
