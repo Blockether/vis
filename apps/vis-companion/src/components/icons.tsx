@@ -11,6 +11,7 @@ import {
   ArrowUp,
   ArrowUpRight,
   CalendarClock,
+  CalendarDays,
   Camera,
   ChartNoAxesColumn,
   Check,
@@ -141,6 +142,11 @@ export function ImproveIcon({ className }: { className?: string }) {
 /** Prompts that run on a schedule or a webhook. */
 export function AutomationsIcon({ className }: { className?: string }) {
   return <Mark icon={CalendarClock} className={className} />;
+}
+
+/** A field that opens a calendar to choose a day. */
+export function CalendarIcon({ className }: { className?: string }) {
+  return <Mark icon={CalendarDays} className={className} />;
 }
 
 /**

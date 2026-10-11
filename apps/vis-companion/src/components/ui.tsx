@@ -47,6 +47,7 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
 } from 'react';
 
 import { createPortal } from 'react-dom';
@@ -2027,11 +2028,11 @@ export const Input = forwardRef<
 });
 
 /**
- * Hide every other branch from assistive tools while the picker is open; restore only
+ * Hide every other branch from assistive tools while a panel is open; restore only
  * attributes we own. This is `aria-hidden`, not `inert`: `inert` restyles the whole
  * page behind on open and again on close, and the scrim already takes every press.
  */
-function isolateSelectContent(node: HTMLDivElement | null) {
+function isolateLayer(node: HTMLDivElement | null) {
   if (!node?.isConnected) return;
   const changed: Element[] = [];
   for (let branch: Element = node; branch.parentElement; branch = branch.parentElement) {
@@ -2054,8 +2055,8 @@ function isolateSelectContent(node: HTMLDivElement | null) {
 /** The tallest an open list grows, in CSS pixels, before it scrolls inside itself. */
 const SELECT_LIST_HEIGHT = 320;
 
-/** The part of its frame that an open list can fill: the `70vh` that `menuPosition` places. */
-const SELECT_LIST_SHARE = 0.7;
+/** The part of its frame that an open panel can fill: the `70vh` that `menuPosition` places. */
+const PANEL_SHARE = 0.7;
 
 /** One row of an open list. A `null` value is the filter's none row, which clears every choice. */
 type SelectRow = { key: string; value: string | null; label: string; disabled: boolean; isChosen: boolean };
@@ -2075,6 +2076,110 @@ function openingOption(list: HTMLElement) {
     list.querySelector<HTMLElement>('[role="option"][aria-selected="true"]:not([aria-disabled])') ??
     list.querySelector<HTMLElement>('[role="option"]:not([aria-disabled])')
   );
+}
+
+/** What a panel that opens beside its trigger needs from its owner. */
+type AnchoredLayer = {
+  isOpen: boolean;
+  /** The full-frame scrim that holds the panel. It mounts on `document.body`. */
+  layerRef: RefObject<HTMLDivElement | null>;
+  panelRef: RefObject<HTMLElement | null>;
+  triggerRef: RefObject<HTMLElement | null>;
+  /** The tallest the panel grows before it scrolls inside itself, in CSS pixels. */
+  maxHeight: number;
+  /** Make the panel at least as wide as its trigger. */
+  isTriggerWide: boolean;
+  /** Move the focus into the panel. This runs after the first placement, before the paint. */
+  onOpen: (panel: HTMLElement) => void;
+  /** A press outside the layer and the trigger closed the panel. Close it in the owner's state. */
+  onOutsidePress: () => void;
+  /** The panel closed for any reason. The page already shows to assistive tools again. */
+  onClose: (trigger: HTMLElement) => void;
+};
+
+/**
+ * Keep an open panel beside its trigger. The panel follows the scroll, the resize and
+ * the phone keyboard, hides the page from assistive tools and closes on a press outside.
+ * `Select` and the calendar field share it, so both open in the same frame and place.
+ */
+export function useAnchoredLayer(options: AnchoredLayer) {
+  // The owner makes new callbacks on each render. The open panel reads the latest ones.
+  const latest = useRef(options);
+  useLayoutEffect(() => {
+    latest.current = options;
+  });
+  const { isOpen } = options;
+
+  useLayoutEffect(() => {
+    const { layerRef, panelRef, triggerRef } = latest.current;
+    const layer = layerRef.current;
+    const panel = panelRef.current;
+    const trigger = triggerRef.current;
+    if (!isOpen || !layer || !panel || !trigger) return;
+    // Measure once before the first paint, so the panel shows beside its trigger at once.
+    const place = () => {
+      const box = layer.getBoundingClientRect();
+      // The keyboard can cover the foot of the layer. Place the panel in the part that shows.
+      const visible = window.visualViewport;
+      const top = visible ? Math.max(box.top, visible.offsetTop) : box.top;
+      const bottom = visible && visible.height > 0 ? Math.min(box.bottom, visible.offsetTop + visible.height) : box.bottom;
+      const frame = { left: box.left, top, width: box.width, height: Math.max(bottom - top, 0) };
+      const anchor = trigger.getBoundingClientRect();
+      const { maxHeight, isTriggerWide } = latest.current;
+      const cap = frame.height > 0 ? Math.min(maxHeight, Math.floor(frame.height * PANEL_SHARE)) : maxHeight;
+      if (isTriggerWide) {
+        const room = frame.width > 0 ? frame.width - 2 * EDGE_MARGIN : anchor.width;
+        panel.style.minWidth = `${Math.min(anchor.width, room)}px`;
+      }
+      panel.style.maxHeight = `${cap}px`;
+      const width = panel.offsetWidth;
+      // `menuPosition` aligns right edges. This right edge starts the panel where its trigger starts.
+      const at = menuPosition(
+        { top: anchor.top - frame.top, bottom: anchor.bottom - frame.top, right: anchor.left - frame.left + width },
+        width,
+        { width: frame.width, height: frame.height },
+        panel.offsetHeight,
+      );
+      if (!at) return;
+      panel.style.left = `${at.left}px`;
+      panel.style.top = at.top === undefined ? '' : `${at.top + frame.top - box.top}px`;
+      panel.style.bottom = at.bottom === undefined ? '' : `${at.bottom + box.bottom - bottom}px`;
+      if (at.maxHeight !== undefined) panel.style.maxHeight = `${Math.min(cap, at.maxHeight)}px`;
+    };
+    place();
+    latest.current.onOpen(panel);
+    // Hide the page only after the focus left it: a hidden branch must not hold the focus.
+    const restore = isolateLayer(layer);
+    const onScroll = (event: Event) => {
+      if (!(event.target instanceof Node && layer.contains(event.target))) place();
+    };
+    // The scrim takes a real press. This listener catches a press on a layer above the scrim.
+    const onOutsidePress = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Node) || layer.contains(target) || trigger.contains(target)) return;
+      latest.current.onOutsidePress();
+      // Give the focus back after the press, unless the press gave it to another control.
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) trigger.focus({ preventScroll: true });
+      }, 0);
+    };
+    const viewport = window.visualViewport;
+    window.addEventListener('resize', place);
+    viewport?.addEventListener('resize', place);
+    viewport?.addEventListener('scroll', place);
+    document.addEventListener('scroll', onScroll, true);
+    document.addEventListener('pointerdown', onOutsidePress, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      viewport?.removeEventListener('resize', place);
+      viewport?.removeEventListener('scroll', place);
+      document.removeEventListener('scroll', onScroll, true);
+      document.removeEventListener('pointerdown', onOutsidePress, true);
+      restore?.();
+      latest.current.onClose(trigger);
+    };
+  }, [isOpen]);
 }
 
 /**
@@ -2174,84 +2279,32 @@ export const Select = forwardRef<
   // The phone's back closes the open list before the screen under it.
   useBackLayer(isOpen ? dismiss : null);
 
-  useLayoutEffect(() => {
-    const layer = layerRef.current;
-    const list = listRef.current;
-    const trigger = triggerRef.current;
-    if (!isOpen || !layer || !list || !trigger) return;
-    const gesture = gestureRef.current;
-    // Measure once before the first paint, so the list shows beside its trigger at once.
-    const place = () => {
-      const box = layer.getBoundingClientRect();
-      // The keyboard can cover the foot of the layer. Place the list in the part that shows.
-      const visible = window.visualViewport;
-      const top = visible ? Math.max(box.top, visible.offsetTop) : box.top;
-      const bottom = visible && visible.height > 0 ? Math.min(box.bottom, visible.offsetTop + visible.height) : box.bottom;
-      const frame = { left: box.left, top, width: box.width, height: Math.max(bottom - top, 0) };
-      const anchor = trigger.getBoundingClientRect();
-      const cap =
-        frame.height > 0
-          ? Math.min(SELECT_LIST_HEIGHT, Math.floor(frame.height * SELECT_LIST_SHARE))
-          : SELECT_LIST_HEIGHT;
-      const room = frame.width > 0 ? frame.width - 2 * EDGE_MARGIN : anchor.width;
-      list.style.minWidth = `${Math.min(anchor.width, room)}px`;
-      list.style.maxHeight = `${cap}px`;
-      const width = list.offsetWidth;
-      // `menuPosition` aligns right edges. This right edge starts the list where its trigger starts.
-      const at = menuPosition(
-        { top: anchor.top - frame.top, bottom: anchor.bottom - frame.top, right: anchor.left - frame.left + width },
-        width,
-        { width: frame.width, height: frame.height },
-        list.offsetHeight,
-      );
-      if (!at) return;
-      list.style.left = `${at.left}px`;
-      list.style.top = at.top === undefined ? '' : `${at.top + frame.top - box.top}px`;
-      list.style.bottom = at.bottom === undefined ? '' : `${at.bottom + box.bottom - bottom}px`;
-      if (at.maxHeight !== undefined) list.style.maxHeight = `${Math.min(cap, at.maxHeight)}px`;
-    };
-    place();
-    const start = openingOption(list);
-    if (start) showOption(list, start);
-    else list.focus({ preventScroll: true });
-    // Hide the page only after the focus left it: a hidden branch must not hold the focus.
-    const restore = isolateSelectContent(layer);
-    const onScroll = (event: Event) => {
-      if (!(event.target instanceof Node && layer.contains(event.target))) place();
-    };
-    // The scrim takes a real press. This listener catches a press on a layer above the scrim.
-    const onOutsidePress = (event: Event) => {
-      const target = event.target;
-      if (!(target instanceof Node) || layer.contains(target) || trigger.contains(target)) return;
-      gesture.dismissedPress = true;
+  useAnchoredLayer({
+    isOpen,
+    layerRef,
+    panelRef: listRef,
+    triggerRef,
+    maxHeight: SELECT_LIST_HEIGHT,
+    isTriggerWide: true,
+    onOpen: (list) => {
+      const start = openingOption(list);
+      if (start) showOption(list, start);
+      else list.focus({ preventScroll: true });
+    },
+    onOutsidePress: () => {
+      gestureRef.current.dismissedPress = true;
       setOpen(false);
-      // Give the focus back after the press, unless the press gave it to another control.
-      window.setTimeout(() => {
-        const active = document.activeElement;
-        if (!active || active === document.body) trigger.focus({ preventScroll: true });
-      }, 0);
-    };
-    const viewport = window.visualViewport;
-    window.addEventListener('resize', place);
-    viewport?.addEventListener('resize', place);
-    viewport?.addEventListener('scroll', place);
-    document.addEventListener('scroll', onScroll, true);
-    document.addEventListener('pointerdown', onOutsidePress, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      viewport?.removeEventListener('resize', place);
-      viewport?.removeEventListener('scroll', place);
-      document.removeEventListener('scroll', onScroll, true);
-      document.removeEventListener('pointerdown', onOutsidePress, true);
+    },
+    onClose: (trigger) => {
+      const gesture = gestureRef.current;
       window.clearTimeout(gesture.typedTimer);
       gesture.typed = '';
-      restore?.();
       if (gesture.returnFocus) {
         gesture.returnFocus = false;
         trigger.focus({ preventScroll: true });
       }
-    };
-  }, [isOpen]);
+    },
+  });
 
   const commit = (row: SelectRow, element: HTMLElement) => {
     if (row.disabled) return;

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { DateTimeField } from '../components/Calendar';
 import {
   Banner,
   Button,
@@ -159,11 +160,11 @@ function TriggerFields({
       )}
       {trigger.kind === 'once' && (
         <FormLabel label="Date and time" hint="The time on this device.">
-          <Input
-            type="datetime-local"
+          <DateTimeField
             value={trigger.at}
             disabled={busy}
-            onChange={(event) => onChange({ at: event.target.value })}
+            isFutureOnly
+            onValueChange={(at) => onChange({ at })}
           />
         </FormLabel>
       )}
