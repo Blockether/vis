@@ -43,6 +43,7 @@
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.validation :as config-validation]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -2957,6 +2958,63 @@
                      diffed-config-keys)]
     (when (seq tokens) (str/join ", " tokens))))
 
+(defn- reload-report
+  "Summary line and details of one `/reload` from its typed data (Vis #363).
+   The line counts what changed and names failures; the body lists each part."
+  [{:keys [loaded failed scopes configuration-changes prompt-templates failed-hooks context-error
+           duration-ms]}]
+  (let [counted
+        (fn [n word]
+          (str n " " word (when-not (= 1 (long n)) "s")))
+
+        summary
+        (cond-> ["Reloaded" (counted loaded "extension")]
+          (pos? (long failed))
+          (conj (str failed " failed"))
+
+          configuration-changes
+          (conj (str "configuration changed: " configuration-changes))
+
+          prompt-templates
+          (conj (counted prompt-templates "prompt template"))
+
+          (seq failed-hooks)
+          (conj (str (counted (count failed-hooks) "reload hook") " failed"))
+
+          context-error
+          (conj "context files failed")
+
+          duration-ms
+          (conj (fmt/format-duration duration-ms)))
+
+        details
+        (concat (for [{:keys [scope loaded failed extensions]} scopes]
+                  (str "- Extensions ("
+                       (name scope)
+                       "): "
+                       loaded
+                       " loaded"
+                       (when (pos? (long failed)) (str ", " failed " failed"))
+                       (when (seq extensions) (str " — " (str/join ", " extensions)))))
+                [(str
+                   "- Configuration: "
+                   (if configuration-changes (str "changed " configuration-changes) "unchanged"))]
+                (when prompt-templates [(str "- Prompt templates: " prompt-templates)])
+                (when (seq failed-hooks)
+                  [(str "- Reload hooks failed: " (str/join ", " (map str failed-hooks)))])
+                [(str "- Skills, agents and context files: "
+                      (if context-error
+                        (str "failed — " (util/redact-secret-text context-error))
+                        "rescanned"))])
+
+        failures
+        (when (pos? (long failed))
+          (str "Vis remains available. Healthy extensions and core tools still work.\n\n"
+               (str/join "\n\n" (map failure-summary (load-failures)))))]
+
+    {:slash/title (str/join " · " summary)
+     :slash/body (str/join "\n\n" (remove nil? [(str/join "\n" details) failures]))}))
+
 (defn- reload-slash
   [{argv :command/argv}]
   (if (seq argv)
@@ -2965,7 +3023,10 @@
     ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
     ;; templates, and any extension-owned discovery cache registered as a
     ;; reload hook (harness skills/agents).
-    (let [{:keys [loaded failed]}
+    (let [started
+          (util/now-ms)
+
+          {:keys [loaded failed scopes]}
           (reload-python-extensions!)
 
           old-config
@@ -3005,20 +3066,21 @@
           (try (agents/reload!) nil (catch Throwable t (ex-message t)))
 
           template-cnt
-          (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
+          (try (count (prompt-templates/reload!)) (catch Throwable _ nil))
 
-      {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
-       :slash/title
-       (str "Reloaded — configuration" (when cfg-changes (str " (" cfg-changes ")"))
-            "; Python extensions: " loaded
-            " loaded" (when (pos? (long failed)) (str ", " failed " failed — see details below"))
-            "; skills/agents, prompt templates" (when template-cnt (str " (" template-cnt ")"))
-            ", and context files rescanned" (when (seq failed-hooks)
-                                              (str " — hook failures: "
-                                                   (str/join ", " (map str failed-hooks)))))
-       :slash/body (when (pos? (long failed))
-                     (str "Vis remains available. Healthy extensions and core tools still work.\n\n"
-                          (str/join "\n\n" (map failure-summary (load-failures)))))})))
+          data
+          {:loaded loaded
+           :failed failed
+           :scopes (vec scopes)
+           :configuration-changes cfg-changes
+           :prompt-templates template-cnt
+           :failed-hooks failed-hooks
+           :context-error guidance
+           :duration-ms (- (long (util/now-ms)) (long started))}]
+
+      (assoc (reload-report data)
+        :slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
+        :slash/data data))))
 
 (def ^:private http-methods
   #{"GET" "HEAD" "POST" "PUT" "PATCH" "DELETE" "OPTIONS" "TRACE" "CONNECT"})

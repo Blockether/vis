@@ -166,9 +166,9 @@
 
           envelope
           (cond-> {:scope scope :tag :user-slash :src user-request}
+            ;; The body now always lists the reload; only failed extensions flag it.
             (and (= "/reload" (str/trim user-request))
-                 (= :error (get-in slash-result [:result :slash/status]))
-                 (seq (get-in slash-result [:result :slash/body])))
+                 (pos? (long (or (get-in slash-result [:result :slash/data :failed]) 0))))
             (assoc :extension-load-failure? true))
 
           answer-md

@@ -1308,6 +1308,18 @@
     (it "a replayed iteration row without delivered messages has no :user-input"
         (let [[entry] (chat/iteration-rows->trace [{"id" "it-1" "position" 1 "forms" []}] false)]
           (expect (nil? (:user-input entry)))))
+    (it "a slash turn's synthetic iteration projects to no trace"
+        ;; Vis #363: the live refresh painted the `user-slash` form as RAW EXECUTION.
+        (let [slash
+              [{"id" "it-1" "position" 1 "forms" [{"tag" "user-slash" "src" "/reload"}]}]
+
+              bang
+              [{"id" "it-1" "position" 1 "forms" [{"tag" "user-shell" "src" "ls"}]}]]
+
+          (expect (chat/slash-turn-rows? slash))
+          (expect (= [] (chat/iteration-rows->trace slash false)))
+          (expect (not (chat/slash-turn-rows? bang)))
+          (expect (= 1 (count (chat/iteration-rows->trace bang false))))))
     (it "the live tracker keeps the messages on the step the chunk names"
         (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
           (on-chunk {:phase :user-input :iteration 2 :messages rows})

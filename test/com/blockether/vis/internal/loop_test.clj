@@ -4138,8 +4138,9 @@
                   environment
                   "/reload"
                   {:result {:slash/status :error
-                            :slash/title "Reloaded: 1 loaded, 1 failed"
-                            :slash/body report}}
+                            :slash/title "Reloaded · 1 extension · 1 failed"
+                            :slash/body report
+                            :slash/data {:loaded 1 :failed 1}}}
                   {})
 
                  turn-id

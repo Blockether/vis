@@ -4888,6 +4888,15 @@
         (state/dispatch [:message-received nil (vis/markdown->ast "full answer")
                          {:client-turn-id "c1" :status :completed :terminal-trace canonical}])
         (expect (= canonical (get-in @state/app-db [:messages 1 :traces])))))
+  (it "a slash turn settles with its answer and no RAW EXECUTION step"
+      ;; Vis #363: a live `/reload` showed its synthetic slash form as a raw step.
+      (let [live [{:id :iter-1 :forms [{:id :form-1}]}]]
+        (reset! state/app-db (terminal-test-db {:progress {:iterations live}}))
+        (state/dispatch
+          [:message-received nil (vis/markdown->ast "Reloaded")
+           {:client-turn-id "c1" :status :completed :slash-turn? true :terminal-trace []}])
+        (expect (nil? (get-in @state/app-db [:messages 1 :traces])))
+        (expect (= (vis/markdown->ast "Reloaded") (get-in @state/app-db [:messages 1 :content])))))
   (it "a late c1 callback cannot mutate c2 editor or active turn state"
       (reset! state/app-db (-> (terminal-test-db)
                                (assoc :live-turn-client-id "c2"

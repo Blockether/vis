@@ -309,19 +309,29 @@
        :user-input (not-empty (user-input-rows (get it "user_input")))
        :forms forms})))
 
+(defn slash-turn-rows?
+  "True when gateway iteration rows hold a slash turn's synthetic `user-slash` form."
+  [turn-iterations]
+  (boolean (some (fn [it]
+                   (some #(= "user-slash" (str (get % "tag"))) (get it "forms")))
+                 turn-iterations)))
+
 (defn iteration-rows->trace
   "Project canonical gateway iteration rows into the TUI trace shape. Used both
-   by restored transcript history and by the terminal refresh of a live turn."
+   by restored transcript history and by the terminal refresh of a live turn.
+   A slash turn has no trace: its answer is the result, not a raw form (Vis #363)."
   [turn-iterations produced-answer?]
-  (let [rows
-        (vec (or turn-iterations []))
+  (if (slash-turn-rows? turn-iterations)
+    []
+    (let [rows
+          (vec (or turn-iterations []))
 
-        last-iteration-id
-        (get (last rows) "id")]
+          last-iteration-id
+          (get (last rows) "id")]
 
-    (mapv (partial it->iteration-entry
-                   {:produced-answer? produced-answer? :last-iteration-id last-iteration-id})
-          rows)))
+      (mapv (partial it->iteration-entry
+                     {:produced-answer? produced-answer? :last-iteration-id last-iteration-id})
+            rows))))
 
 (def ^:private trace-prose-keys
   "Trace-entry keys the ITERATION bubble paints as answer Markdown: the live
@@ -846,13 +856,11 @@
                                 (assoc :trace (get last-it "llm_routing_trace")))
                   produced-answer? (seq content-blocks)
                   ;; A slash turn persists ONE synthetic iteration whose envelope is
-                  ;; tagged `:user-slash`. Live slash turns stream no iterations, so
-                  ;; suppress it on resume as well. A `user-shell` form is the bang
-                  ;; command's one visible stdout owner and must remain in the trace.
-                  slash-turn? (some (fn [it]
-                                      (some #(= "user-slash" (str (get % "tag"))) (get it "forms")))
-                                    turn-iterations)
-                  trace (if slash-turn? [] (iteration-rows->trace turn-iterations produced-answer?))
+                  ;; tagged `:user-slash`; `iteration-rows->trace` gives it no trace. A
+                  ;; `user-shell` form is the bang command's one visible stdout owner
+                  ;; and must remain in the trace.
+                  slash-turn? (slash-turn-rows? turn-iterations)
+                  trace (iteration-rows->trace turn-iterations produced-answer?)
                   ;; The answer band owns prose the settled answer repeats (issue #145);
                   ;; the restore keeps one copy exactly like the live settle path.
                   traces (drop-answered-trace-prose trace content-blocks)

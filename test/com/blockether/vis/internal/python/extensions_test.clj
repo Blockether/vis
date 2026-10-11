@@ -5175,7 +5175,50 @@ vis.register_extension(vis.Extension(
                       "Traceback" "line 7" "ImportError: missing_dependency" "[REDACTED]"
                       "/reload"]]
           (expect (str/includes? body text)))
-        (expect (not (str/includes? body "fixture-secret")))))))
+        (expect (not (str/includes? body "fixture-secret"))))))
+  (it
+    "summarizes a healthy reload in one line and lists each part (Vis #363)"
+    (with-redefs [pyx/reload-python-extensions!
+                  (constantly
+                    {:loaded 2
+                     :failed 0
+                     :scopes
+                     [{:scope :global :dirs [] :loaded 2 :failed 0 :extensions ["memo" "spel"]}]})
+
+                  config/current-config
+                  (let [calls (atom 0)]
+                    (fn []
+                      {:network (swap! calls inc)}))
+
+                  config/reload-config!
+                  (constantly {})
+
+                  config/load-config-raw
+                  (constantly {})
+
+                  extension/run-reload-hooks!
+                  (constantly {})
+
+                  agents/reload!
+                  (constantly nil)
+
+                  prompt-templates/reload!
+                  (constantly [:review])]
+
+      (let [{:slash/keys [status title body data]} (#'pyx/reload-slash {:command/argv []})]
+        (expect (= :ok status))
+        (expect
+          (str/starts-with?
+            title
+            "Reloaded · 2 extensions · configuration changed: network · 1 prompt template · "))
+        (expect (not (str/includes? title "failed")))
+        (doseq [text ["- Extensions (global): 2 loaded — memo, spel"
+                      "- Configuration: changed network" "- Prompt templates: 1"
+                      "- Skills, agents and context files: rescanned"]]
+          (expect (str/includes? body text)))
+        (expect (= {:loaded 2 :failed 0 :configuration-changes "network" :prompt-templates 1}
+                   (select-keys data [:loaded :failed :configuration-changes :prompt-templates])))
+        (expect (nat-int? (:duration-ms data)))))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
 (defn- answer-pending!
