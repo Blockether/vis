@@ -216,6 +216,13 @@ for **both** heads in `policy.json`:
 {"min_decision_accuracy":0.8,"min_action_accuracy":0.8}
 ```
 
+To choose the training device, add `"device"` with `auto`, `cpu`, `mps` or `cuda`. With
+MPS, training stops before it starts if `PYTORCH_ENABLE_MPS_FALLBACK` is set, because that
+setting runs some work on the CPU without an error. If MPS does not support the model, set
+`"device": "cpu"`. To train small adapters instead of all encoder weights, add
+`"lora": {"rank": 16}` and keep `train_encoder` false. Each checkpoint stores full merged
+weights.
+
 Choose thresholds from your own evaluation, not the example values. Then train, export
 FP32 and reopen the graph for validation in one call:
 
