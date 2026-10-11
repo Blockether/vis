@@ -582,11 +582,8 @@
            str/lower-case
            (str/split #","))
        (some (fn [token]
-               (let [[coding & params]
-                     (map str/trim (str/split (str/trim token) #";"))]
-
-                 (and (= "gzip" coding)
-                      (not-any? #(re-matches #"q=0(\.0{1,3})?" %) params)))))
+               (let [[coding & params] (map str/trim (str/split (str/trim token) #";"))]
+                 (and (= "gzip" coding) (not-any? #(re-matches #"q=0(\.0{1,3})?" %) params)))))
        boolean))
 
 (defn- sse-stream
@@ -609,7 +606,9 @@
   [gzip?]
   (cond-> sse/sse-headers
     gzip?
-    (assoc "Content-Encoding" "gzip" "Vary" "Accept-Encoding")))
+    (assoc "Content-Encoding"
+      "gzip" "Vary"
+      "Accept-Encoding")))
 
 (defn- sse-closer
   "Zero-arg terminator for ONE SSE connection: mark it dead, unsubscribe, close

@@ -243,7 +243,7 @@
   "Exercise installed commands with local release archives; Git/JVM are denied by default."
   [{:keys [installer? installed? missing-worker? missing-tui? missing-tui-library? web? broken-web?
            stale-web? track previous-track prepare! build-commit extra-env target desktop
-            desktop-fail? checksums extra-args]} f]
+           desktop-fail? checksums extra-args]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -385,18 +385,15 @@
           ;; Release checks send HEAD to github.com: 302 means published, 404 missing.
           ;; The URL log below records downloads only.
           "if (( head )); then\n"
-          "  code=302; location=''\n"
-          "  case $url in\n"
+          "  code=302; location=''\n" "  case $url in\n"
           "    */releases/latest) location=https://github.com/example/vis/releases/tag/v9.9.9 ;;\n"
           "    */vis-agent-linux-x64.tar.gz) code=${VIS_TEST_ENGINE_STATUS:-302} ;;\n"
           "    */vis-web.tar.gz) [[ -f $VIS_TEST_WEB_ARCHIVE ]] || code=404 ;;\n"
           "    */SHA256SUMS) [[ -f $VIS_TEST_SUMS ]] || code=404 ;;\n"
-          "    */releases/tag/*) code=${VIS_TEST_TAG_STATUS:-302} ;;\n"
-          "  esac\n"
+          "    */releases/tag/*) code=${VIS_TEST_TAG_STATUS:-302} ;;\n" "  esac\n"
           "  if [[ $format == *redirect_url* ]]; then printf '%s' \"$location\"; else printf '%s' \"$code\"; fi\n"
           "  exit 0\n"
-          "fi\n"
-          "printf '%s\\n' \"$url\" >> \"$VIS_TEST_URLS\"\n"
+          "fi\n" "printf '%s\\n' \"$url\" >> \"$VIS_TEST_URLS\"\n"
           "case $url in\n"
           (when (= track "beta")
             (str
@@ -2466,8 +2463,7 @@
          (run-bash
            ["bash" "-c"
             (str
-              "gh() {\ncase \"$*\" in\n"
-              " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
+              "gh() {\ncase \"$*\" in\n" " *'/commits/main'*) printf '%s' \"$TEST_MAIN\" ;;\n"
               " *'/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1'*) printf '%s' \"$TEST_GREEN_MAIN\" ;;\n"
               " *\"/compare/$SHA...$TEST_GREEN_MAIN\"*) printf '%s' \"$TEST_ORDER\" ;;\n"
               " *'/actions/workflows/ci.yml/runs?head_sha='*) printf '%s' \"$TEST_GREEN\" ;;\n"
@@ -5017,17 +5013,17 @@
                        (str "#!/usr/bin/env bash\n" "case \"${1:-}\" in\n"
                             "  -s) printf 'Darwin\\n' ;;\n" "  -m) printf 'arm64\\n' ;;\n"
                             "  *)  printf 'Darwin\\n' ;;\n" "esac\n"))
-    (write-executable!
-      (io/file dir "codesign")
-      (str
-        "#!/usr/bin/env bash\n" record
-        "case \" $* \" in *' --check-notarization '*)\n"
-        ;; `VIS_TEST_NOTARY_PENDING` checks see no ticket yet, as right after acceptance.
-        "  checks=$(grep -c -- '--check-notarization' " (.getAbsolutePath log) ")\n"
-        "  if (( checks <= ${VIS_TEST_NOTARY_PENDING:-0} )); then exit 1; fi\n"
-        "  exit \"${VIS_TEST_NOTARY_EXIT:-0}\" ;;\n"
-        "esac\n"
-        "exit 0\n"))
+    (write-executable! (io/file dir "codesign")
+                       (str "#!/usr/bin/env bash\n"
+                            record
+                            "case \" $* \" in *' --check-notarization '*)\n"
+                            ;; `VIS_TEST_NOTARY_PENDING` checks see no ticket yet, as right after acceptance.
+                            "  checks=$(grep -c -- '--check-notarization' "
+                            (.getAbsolutePath log)
+                            ")\n"
+                            "  if (( checks <= ${VIS_TEST_NOTARY_PENDING:-0} )); then exit 1; fi\n"
+                            "  exit \"${VIS_TEST_NOTARY_EXIT:-0}\" ;;\n"
+                            "esac\n" "exit 0\n"))
     (write-executable!
       (io/file dir "spctl")
       (str "#!/usr/bin/env bash\n" record
@@ -5036,16 +5032,17 @@
     (write-executable! (io/file dir "sleep") "#!/usr/bin/env bash\nexit 0\n")
     ;; The script reports the size of the archive it is about to submit, and the
     ;; log lists each submitted file as `submitted <path>`.
-    (write-executable! (io/file dir "ditto")
-                       (str "#!/usr/bin/env bash\n"
-                            record
-                            "source=\"\"\narchive=\"\"\n"
-                            "for argument in \"$@\"; do source=\"$archive\"; archive=\"$argument\"; done\n"
-                            "(cd \"$source\" && find . -type f) | sed 's|^\\./|submitted |' >> "
-                            (.getAbsolutePath log)
-                            "\n"
-                            "printf 'zip' > \"$archive\"\n"
-                            "exit 0\n"))
+    (write-executable!
+      (io/file dir "ditto")
+      (str "#!/usr/bin/env bash\n"
+           record
+           "source=\"\"\narchive=\"\"\n"
+           "for argument in \"$@\"; do source=\"$archive\"; archive=\"$argument\"; done\n"
+           "(cd \"$source\" && find . -type f) | sed 's|^\\./|submitted |' >> "
+           (.getAbsolutePath log)
+           "\n"
+           "printf 'zip' > \"$archive\"\n"
+           "exit 0\n"))
     (write-executable! (io/file dir "xcrun")
                        (str "#!/usr/bin/env bash\n"
                             record
@@ -5107,114 +5104,119 @@
           (fn [env-extra & flags]
             (run-bash (into ["bash" "bin/sign-macos-release" "--entitlements"
                              "bin/vis-agent-macos.entitlements"]
-                            (concat flags
-                                    [(.getAbsolutePath runtime) (.getAbsolutePath sidecar)]))
+                            (concat flags [(.getAbsolutePath runtime) (.getAbsolutePath sidecar)]))
                       (merge {"PATH" (str (.getAbsolutePath stubs) ":" (System/getenv "PATH"))
                               "VIS_ASC_KEY_ID" "KEYID"
                               "VIS_ASC_ISSUER_ID" "ISSUER"
                               "VIS_ASC_KEY" notary-key}
                              env-extra)))]
 
-      (try (io/make-parents stdlib-data)
-           (spit stdlib-data "{}\n")
-           (apple-tool-stubs! stubs log)
-           ;; A release built without the notary key would hand every user the
-           ;; ad-hoc firewall identity again, so it must not produce an asset.
-           (let [{:keys [exit output]} (sign! {"VIS_ASC_KEY" ""})]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "VIS_ASC_KEY") output)
-             (expect (not (.isFile log)) "credentials are checked before anything is signed"))
-           (let [{:keys [exit output]}
-                 (sign! {})
+      (try
+        (io/make-parents stdlib-data)
+        (spit stdlib-data "{}\n")
+        (apple-tool-stubs! stubs log)
+        ;; A release built without the notary key would hand every user the
+        ;; ad-hoc firewall identity again, so it must not produce an asset.
+        (let [{:keys [exit output]} (sign! {"VIS_ASC_KEY" ""})]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "VIS_ASC_KEY") output)
+          (expect (not (.isFile log)) "credentials are checked before anything is signed"))
+        (let [{:keys [exit output]}
+              (sign! {})
 
-                 calls
-                 (slurp log)
+              calls
+              (slurp log)
 
-                 signed
-                 (fn [^File file]
-                   (->> (str/split-lines calls)
-                        (filter #(and (str/includes? % "--force")
-                                      (str/includes? % (.getAbsolutePath file))))
-                        first))]
+              signed
+              (fn [^File file]
+                (->> (str/split-lines calls)
+                     (filter #(and (str/includes? % "--force")
+                                   (str/includes? % (.getAbsolutePath file))))
+                     first))]
 
-             (expect (= 0 exit) output)
-             (expect (not (str/includes? output notary-key)) "the notary key is never printed")
-             ;; One identity for the runtime, uv, libpython and every extension
-             ;; module: the sidecar is loaded by the process the firewall judges.
-             (doseq [file [runtime uv libpython extension]]
-               (let [call (signed file)]
-                 (expect (some? call) (str "left unsigned: " file "\n" calls))
-                 (expect (str/includes? call "--options runtime") call)
-                 (expect (str/includes? call "--timestamp") call)
-                 (expect (str/includes?
-                           call
-                           "Developer ID Application: BLOCKETHER SP. Z O.O. (JSZTFUBUBB)")
-                         call)))
-             ;; Entitlements are honored on executables only, and codesign
-             ;; refuses a whole run over one object file or static archive.
-             (expect (str/includes? (signed runtime) "--entitlements") (signed runtime))
-             (expect (not (str/includes? (signed libpython) "--entitlements")) (signed libpython))
-             (doseq [file [object stray stdlib-data]]
-               (expect (nil? (signed file)) (str "signed what codesign cannot sign: " file)))
-             (expect (str/includes? calls "--verify --strict") calls)
-             (expect (str/includes? calls "leaf[subject.OU] = \"JSZTFUBUBB\"") calls)
-             ;; Nothing is stapled to a bare executable: one submission covers
-             ;; every cdhash and Gatekeeper resolves the ticket online.
-             (expect
-               (= 1 (count (filter #(str/includes? % "notarytool submit") (str/split-lines calls))))
-               calls)
-             (expect (str/includes? calls "--wait") calls)
-             ;; Only Mach-O files travel, so a smoke test that writes `.pyc` files
-             ;; into the interpreter tree cannot break a background copy.
-             (doseq [path ["vis" "vis-agent-python/python/bin/uv"
-                           "vis-agent-python/python/lib/libpython3.13.dylib"
-                           "vis-agent-python/python/lib/python3.13/lib-dynload/_ssl.cpython-313-darwin.so"]]
-               (expect (str/includes? calls (str "submitted " path "\n")) calls))
-             (expect (not (str/includes? calls "submitted vis-agent-python/python/lib/stdlib.json"))
-                     calls)
-             (expect (not (str/includes? calls "python.o")) calls)
-             ;; Vis #277: spctl assesses app bundles, not the bare CLI we ship.
-             (expect (not (str/includes? calls "spctl ")) calls)
-             (expect (some #(and (str/includes? % "--verify --strict --check-notarization")
-                                 (str/includes? % "and notarized")
-                                 (str/includes? % (.getAbsolutePath runtime)))
-                           (str/split-lines calls))
-                     calls))
-           (let [{:keys [exit output]} (sign! {"VIS_TEST_NOTARY_EXIT" "1"})]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "notarization ticket") output))
-           (let [{:keys [exit output]} (sign! {"VIS_TEST_NOTARY_STATUS" "Invalid"})]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "did not accept") output))
-           ;; CI signs in the foreground and waits for the notary in a background
-           ;; step, so the slow wait overlaps the smoke tests.
-           (.delete log)
-           (let [{:keys [exit output]} (sign! {"VIS_ASC_KEY_ID" ""
-                                                "VIS_ASC_ISSUER_ID" ""
-                                                "VIS_ASC_KEY" ""}
-                                               "--sign-only")
-                 calls (slurp log)]
-             (expect (= 0 exit) output)
-             (expect (str/includes? calls "--force") calls)
-             (expect (str/includes? calls "leaf[subject.OU] = \"JSZTFUBUBB\"") calls)
-             (expect (not (str/includes? calls "notarytool")) calls))
-           (.delete log)
-           ;; A fast acceptance can come minutes before the ticket is online, and
-           ;; a background step can wait for it at no cost to the job.
-           (let [{:keys [exit output]} (sign! {"VIS_TEST_NOTARY_PENDING" "6"} "--notarize-only")
-                 calls (slurp log)]
-             (expect (= 0 exit) output)
-             (expect (not (str/includes? calls "--force")) "notarization signs nothing again")
-             (expect (str/includes? calls "--verify --strict") calls)
-             (expect
-               (= 1 (count (filter #(str/includes? % "notarytool submit") (str/split-lines calls))))
-               calls)
-             (expect (str/includes? output "no notarization ticket online yet") output)
-             (expect (str/includes? calls "--check-notarization") calls))
-           (let [{:keys [exit output]} (sign! {} "--sign-only" "--notarize-only")]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "use one of") output))
-           (finally (delete-tree! root)))))
+          (expect (= 0 exit) output)
+          (expect (not (str/includes? output notary-key)) "the notary key is never printed")
+          ;; One identity for the runtime, uv, libpython and every extension
+          ;; module: the sidecar is loaded by the process the firewall judges.
+          (doseq [file [runtime uv libpython extension]]
+            (let [call (signed file)]
+              (expect (some? call) (str "left unsigned: " file "\n" calls))
+              (expect (str/includes? call "--options runtime") call)
+              (expect (str/includes? call "--timestamp") call)
+              (expect (str/includes? call
+                                     "Developer ID Application: BLOCKETHER SP. Z O.O. (JSZTFUBUBB)")
+                      call)))
+          ;; Entitlements are honored on executables only, and codesign
+          ;; refuses a whole run over one object file or static archive.
+          (expect (str/includes? (signed runtime) "--entitlements") (signed runtime))
+          (expect (not (str/includes? (signed libpython) "--entitlements")) (signed libpython))
+          (doseq [file [object stray stdlib-data]]
+            (expect (nil? (signed file)) (str "signed what codesign cannot sign: " file)))
+          (expect (str/includes? calls "--verify --strict") calls)
+          (expect (str/includes? calls "leaf[subject.OU] = \"JSZTFUBUBB\"") calls)
+          ;; Nothing is stapled to a bare executable: one submission covers
+          ;; every cdhash and Gatekeeper resolves the ticket online.
+          (expect
+            (= 1 (count (filter #(str/includes? % "notarytool submit") (str/split-lines calls))))
+            calls)
+          (expect (str/includes? calls "--wait") calls)
+          ;; Only Mach-O files travel, so a smoke test that writes `.pyc` files
+          ;; into the interpreter tree cannot break a background copy.
+          (doseq [path
+                  ["vis" "vis-agent-python/python/bin/uv"
+                   "vis-agent-python/python/lib/libpython3.13.dylib"
+                   "vis-agent-python/python/lib/python3.13/lib-dynload/_ssl.cpython-313-darwin.so"]]
+            (expect (str/includes? calls (str "submitted " path "\n")) calls))
+          (expect (not (str/includes? calls "submitted vis-agent-python/python/lib/stdlib.json"))
+                  calls)
+          (expect (not (str/includes? calls "python.o")) calls)
+          ;; Vis #277: spctl assesses app bundles, not the bare CLI we ship.
+          (expect (not (str/includes? calls "spctl ")) calls)
+          (expect (some #(and (str/includes? % "--verify --strict --check-notarization")
+                              (str/includes? % "and notarized")
+                              (str/includes? % (.getAbsolutePath runtime)))
+                        (str/split-lines calls))
+                  calls))
+        (let [{:keys [exit output]} (sign! {"VIS_TEST_NOTARY_EXIT" "1"})]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "notarization ticket") output))
+        (let [{:keys [exit output]} (sign! {"VIS_TEST_NOTARY_STATUS" "Invalid"})]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "did not accept") output))
+        ;; CI signs in the foreground and waits for the notary in a background
+        ;; step, so the slow wait overlaps the smoke tests.
+        (.delete log)
+        (let [{:keys [exit output]}
+              (sign! {"VIS_ASC_KEY_ID" "" "VIS_ASC_ISSUER_ID" "" "VIS_ASC_KEY" ""} "--sign-only")
+
+              calls
+              (slurp log)]
+
+          (expect (= 0 exit) output)
+          (expect (str/includes? calls "--force") calls)
+          (expect (str/includes? calls "leaf[subject.OU] = \"JSZTFUBUBB\"") calls)
+          (expect (not (str/includes? calls "notarytool")) calls))
+        (.delete log)
+        ;; A fast acceptance can come minutes before the ticket is online, and
+        ;; a background step can wait for it at no cost to the job.
+        (let [{:keys [exit output]}
+              (sign! {"VIS_TEST_NOTARY_PENDING" "6"} "--notarize-only")
+
+              calls
+              (slurp log)]
+
+          (expect (= 0 exit) output)
+          (expect (not (str/includes? calls "--force")) "notarization signs nothing again")
+          (expect (str/includes? calls "--verify --strict") calls)
+          (expect
+            (= 1 (count (filter #(str/includes? % "notarytool submit") (str/split-lines calls))))
+            calls)
+          (expect (str/includes? output "no notarization ticket online yet") output)
+          (expect (str/includes? calls "--check-notarization") calls))
+        (let [{:keys [exit output]} (sign! {} "--sign-only" "--notarize-only")]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "use one of") output))
+        (finally (delete-tree! root)))))
   (it "refuses a payload with nothing signable instead of shipping it unsigned"
       (let [root
             (.toFile (Files/createTempDirectory "vis-macos-signing-empty-"
@@ -5360,7 +5362,8 @@
                     ["jobs" "macos" "steps"])
 
             index-of
-            (fn [pred] (first (keep-indexed #(when (pred %2) %1) steps)))
+            (fn [pred]
+              (first (keep-indexed #(when (pred %2) %1) steps)))
 
             notarize-ids
             ["notarize-engine" "notarize-tui"]
@@ -5374,14 +5377,16 @@
             (expect (str/includes? (str (get step "run")) "--notarize-only") id)
             (expect (nil? (get-in step ["env" "VIS_MACOS_P12"]))
                     "the notary step needs no signing certificate")))
-        (doseq [step steps
+        (doseq [step
+                steps
+
                 :when (str/includes? (str (get step "run")) "--sign-only")]
+
           (expect (nil? (get-in step ["env" "VIS_ASC_KEY"]))
                   "the signing step needs no notary key"))
         (expect (some? wait-at) "a wait step names both notarizations")
         (doseq [step-name ["Verify draft before attaching" "Attach to release"]]
-          (expect (< (long wait-at) (long (index-of #(= step-name (get % "name")))))
-                  step-name)))))
+          (expect (< (long wait-at) (long (index-of #(= step-name (get % "name"))))) step-name)))))
 
 (defn- gateway-route-stub!
   "A staged wrapper that only pretends to be the gateway: it records how it was

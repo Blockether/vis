@@ -306,20 +306,20 @@
                                             :revise
                                             "r Send for revision"
 
-                                                   "Add comments to request changes"))
-                                               "s Save · w Whole")))
-                                       (- (long inner-w) 3)))
-              (dlg/draw-hint-bar! g
-                                  left
-                                  hint-row
-                                  inner-w
-                                  (cond-> (if commentable
-                                            [["Enter" "comment"] ["Tab" "notes"] ["w" "whole"]
-                                             ["?" "help"]]
-                                            [["↑↓" "scroll"] ["Esc" "close"]])
-                                    (:diff state)
-                                    (conj ["o" "open file"])))
-              nil)
+                                            "Add comments to request changes"))
+                                        "s Save · w Whole")))
+                                (- (long inner-w) 3)))
+       (dlg/draw-hint-bar! g
+                           left
+                           hint-row
+                           inner-w
+                           (cond-> (if commentable
+                                     [["Enter" "comment"] ["Tab" "notes"] ["w" "whole"]
+                                      ["?" "help"]]
+                                     [["↑↓" "scroll"] ["Esc" "close"]])
+                             (:diff state)
+                             (conj ["o" "open file"])))
+       nil)
      :on-key
      (fn [state ^KeyStroke key {:keys [doc-h]}]
        (let [done

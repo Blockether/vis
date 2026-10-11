@@ -3867,22 +3867,21 @@
       (expect (= {:repo-id "vis-new" :repo-root "/new/vis" :root "/new/vis"} (ws trunk)))
       (expect (= {:repo-id "vis-new" :repo-root "/new/vis" :root "/drafts/vis-1"} (ws draft)))
       (expect (= {:repo-id "x" :repo-root "/old/x" :root "/old/x"} (ws other)))))
-  (it
-    "names a path-named project by its folder when the store opens"
-    (let [s
-          (h/store)
+  (it "names a path-named project by its folder when the store opens"
+      (let [s
+            (h/store)
 
-          legacy
-          (persistance/db-create-project! s {:name "/old/vis" :workspace-root "/old/vis"})
+            legacy
+            (persistance/db-create-project! s {:name "/old/vis" :workspace-root "/old/vis"})
 
-          named
-          (persistance/db-create-project! s {:name "Main app" :workspace-root "/old/app"})
+            named
+            (persistance/db-create-project! s {:name "Main app" :workspace-root "/old/app"})
 
-          _
-          ((private-core-fn "install-schema!") (:datasource s))]
+            _
+            ((private-core-fn "install-schema!") (:datasource s))]
 
-      (expect (= "vis" (:name (persistance/db-get-project s (:id legacy)))))
-      (expect (= "Main app" (:name (persistance/db-get-project s (:id named)))))))
+        (expect (= "vis" (:name (persistance/db-get-project s (:id legacy)))))
+        (expect (= "Main app" (:name (persistance/db-get-project s (:id named)))))))
   (it
     "keeps project sessions MOVABLE via project_position"
     (let [s

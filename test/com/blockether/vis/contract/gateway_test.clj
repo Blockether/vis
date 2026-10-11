@@ -114,7 +114,7 @@
                                              :client-min-gateway 1})))))
   (it "builds handshake and error response envelopes"
       (expect (=
-              {:protocol 17 :min-client 17 :min-gateway 17 :version "1.2.3" :build "abc123def456"}
+                {:protocol 17 :min-client 17 :min-gateway 17 :version "1.2.3" :build "abc123def456"}
                 (contract/handshake {:version "1.2.3" :build "abc123def456"})))
       (expect (= {"error" {"type" "invalid-request" "message" "replacement" "session_id" "s1"}}
                  (contract/error-body :mcp/invalid-request

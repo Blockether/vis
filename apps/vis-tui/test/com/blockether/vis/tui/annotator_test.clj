@@ -99,8 +99,8 @@
                  (let [component
                        (review-component)
 
-            state
-            (:init component)
+                       state
+                       (:init component)
 
                        dirty
                        (assoc state :dirty? true)
@@ -301,16 +301,17 @@
                                  vis/submit-turn! (fn [& _]
                                                     (throw (AssertionError. "Sent")))]
 
-          (let [capture (cap/capture! {:cols cols
-                                       :rows rows
-                                       :keys [\w \s \r \a :enter :esc]
-                                       :paint! #(annotator/show! (:screen %)
-                                                                 "s"
-                                                                 (assoc review-row
-                                                                   :commentable false
-                                                                   :filename
-                                                                   "IMPLEMENTATION-search.md"))})
-                text (cap/frame-text capture)]
+                     (let [capture (cap/capture! {:cols cols
+                                                  :rows rows
+                                                  :keys [\w \s \r \a :enter :esc]
+                                                  :paint! #(annotator/show!
+                                                             (:screen %)
+                                                             "s"
+                                                             (assoc review-row
+                                                               :commentable false
+                                                               :filename
+                                                               "IMPLEMENTATION-search.md"))})
+                           text (cap/frame-text capture)]
 
                        (expect (nil? (:error capture)))
                        (expect (str/includes? text "Read only"))
@@ -466,26 +467,27 @@
                  (doseq [[cols rows]
                          [[40 24] [96 32]]
 
-              [payload expected]
-              [[(diff/render diff-envelope) "-(search title)"]
-               [(diff/render (assoc diff-envelope "patch" "")) "No changes"]
-               ["{bad json" "malformed"]]]
+                         [payload expected]
+                         [[(diff/render diff-envelope) "-(search title)"]
+                          [(diff/render (assoc diff-envelope "patch" "")) "No changes"]
+                          ["{bad json" "malformed"]]]
 
-        (let [state
-              (annotator/artifact-state diff-row payload nil)
+                   (let [state
+                         (annotator/artifact-state diff-row payload nil)
 
                          component
                          (annotator/modal-component "DIFF-search.json" true state)
 
-              capture
-              (cap/capture!
-                {:cols cols
-                 :rows rows
-                 :keys (if (= expected "-(search title)") [:down :down :down :down :esc] [:esc])
-                 :paint! #(dlg/run-modal! (:screen %) component)})
+                         capture
+                         (cap/capture! {:cols cols
+                                        :rows rows
+                                        :keys (if (= expected "-(search title)")
+                                                [:down :down :down :down :esc]
+                                                [:esc])
+                                        :paint! #(dlg/run-modal! (:screen %) component)})
 
-              text
-              (cap/frame-text capture)]
+                         text
+                         (cap/frame-text capture)]
 
                      (expect (nil? (:error capture)))
                      (expect (str/includes? text expected))

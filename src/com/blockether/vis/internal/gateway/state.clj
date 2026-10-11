@@ -3721,62 +3721,77 @@
 
    Self-terminating: exits as soon as the turn no longer owes a terminal."
   [sid tid cancel-token stall]
-  (let [check-ms (-> (min (long TURN_STALL_TIMEOUT_MS)
-                          (long TURN_FIRST_OUTPUT_TIMEOUT_MS)
-                          (long TURN_LAUNCH_TIMEOUT_MS))
-                     (quot 8)
-                     (max 25)
-                     (min (long TURN_WATCHDOG_TICK_MS)))
-        shown-wait (volatile! nil)]
-    (doto (Thread.
-            ^Runnable
-            (fn []
-              (try (loop []
+  (let [check-ms
+        (-> (min (long TURN_STALL_TIMEOUT_MS)
+                 (long TURN_FIRST_OUTPUT_TIMEOUT_MS)
+                 (long TURN_LAUNCH_TIMEOUT_MS))
+            (quot 8)
+            (max 25)
+            (min (long TURN_WATCHDOG_TICK_MS)))
 
-                     (Thread/sleep check-ms)
-                     (when (turn-watchdog-live? sid tid cancel-token)
-                       (let [{:keys [phase last-ms started?] :as stall-state} @stall
-                             idle-ms (- (util/now-ms) (long (or last-ms 0)))
-                             {:keys [awaiting-output? tripped?]} (turn-stall-decision stall-state
-                                                                                      idle-ms)]
+        shown-wait
+        (volatile! nil)]
 
-                         (if tripped?
-                           (let [idle (or (fmt/format-duration idle-ms) "0ms")
-                                 detail (cond (not started?) (str "no worker activity for " idle)
-                                              awaiting-output? (str "no response for " idle
-                                                                    " " (stall-phase-text phase))
-                                              :else (str "no new output for " idle
-                                                         " " (stall-phase-text phase)))
-                                 _ (swap! stall assoc :stalled? true :stall-detail detail)
-                                 reason (if started?
-                                          (stall-failure-text stall)
-                                          (str "turn never started running: " detail))]
+    (doto
+      (Thread.
+        ^Runnable
+        (fn []
+          (try
+            (loop []
 
-                             (diagnostics/capture! {:session-id sid
-                                                    :turn-id tid
-                                                    :reason :turn-stall
-                                                    :phase phase
-                                                    :idle-ms idle-ms})
-                             (tel/log! :warn
-                                       ["gateway: turn made no progress — force-cancelling" tid
-                                        reason])
-                             (cancellation/cancel! cancel-token
-                                                   (if started? :stall-watchdog :launch-watchdog))
-                             ;; Last line of defence: the cancel normally makes the
-                             ;; worker (or the cancel hook) land the terminal. When
-                             ;; neither can, land it here — a `turn.started` with no
-                             ;; terminal is what wedges a session forever. A turn
-                             ;; that produced nothing has nothing to flush, so it
-                             ;; gets the short grace.
-                             (Thread/sleep (cancel-terminal-grace-ms stall))
-                             (when (turn-watchdog-live? sid tid cancel-token)
-                               (fail-orphaned-turn! sid tid cancel-token reason)))
-                           (do (publish-provider-wait! sid tid stall-state shown-wait (util/now-ms))
-                               (recur))))))
-                   (catch InterruptedException _ nil)
-                   (catch Throwable t
-                     (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
-            (str "gateway-turn-stall-watchdog-" tid))
+              (Thread/sleep check-ms)
+              (when (turn-watchdog-live? sid tid cancel-token)
+                (let [{:keys [phase last-ms started?] :as stall-state}
+                      @stall
+
+                      idle-ms
+                      (- (util/now-ms) (long (or last-ms 0)))
+
+                      {:keys [awaiting-output? tripped?]}
+                      (turn-stall-decision stall-state idle-ms)]
+
+                  (if tripped?
+                    (let [idle
+                          (or (fmt/format-duration idle-ms) "0ms")
+
+                          detail
+                          (cond (not started?) (str "no worker activity for " idle)
+                                awaiting-output? (str "no response for " idle
+                                                      " " (stall-phase-text phase))
+                                :else (str "no new output for " idle " " (stall-phase-text phase)))
+
+                          _
+                          (swap! stall assoc :stalled? true :stall-detail detail)
+
+                          reason
+                          (if started?
+                            (stall-failure-text stall)
+                            (str "turn never started running: " detail))]
+
+                      (diagnostics/capture! {:session-id sid
+                                             :turn-id tid
+                                             :reason :turn-stall
+                                             :phase phase
+                                             :idle-ms idle-ms})
+                      (tel/log! :warn
+                                ["gateway: turn made no progress — force-cancelling" tid reason])
+                      (cancellation/cancel! cancel-token
+                                            (if started? :stall-watchdog :launch-watchdog))
+                      ;; Last line of defence: the cancel normally makes the
+                      ;; worker (or the cancel hook) land the terminal. When
+                      ;; neither can, land it here — a `turn.started` with no
+                      ;; terminal is what wedges a session forever. A turn
+                      ;; that produced nothing has nothing to flush, so it
+                      ;; gets the short grace.
+                      (Thread/sleep (cancel-terminal-grace-ms stall))
+                      (when (turn-watchdog-live? sid tid cancel-token)
+                        (fail-orphaned-turn! sid tid cancel-token reason)))
+                    (do (publish-provider-wait! sid tid stall-state shown-wait (util/now-ms))
+                        (recur))))))
+            (catch InterruptedException _ nil)
+            (catch Throwable t
+              (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
+        (str "gateway-turn-stall-watchdog-" tid))
       (.setDaemon true)
       (.start))
     nil))
@@ -3854,38 +3869,37 @@
    attach that missed the live `turn.queued.sent` still learns where the message went."
   [sid into-tid iteration]
   (let [taken (volatile! [])]
-    (update-session!
-      sid
-      (fn [entry]
-        (let [tids (filterv (fn [tid]
-                              (let [turn (get-in entry [:turns tid])]
-                                (and (marked-for-next-iteration? turn)
-                                     (not (left-queued-by-cancel? entry turn)))))
-                     (:turn-order entry))]
-          (vreset! taken (mapv #(get-in entry [:turns %]) tids))
-          (if (seq tids)
-            (-> entry
-                (update :turns
-                        (fn [turns]
-                          (reduce (fn [m tid]
-                                    (update m
-                                            tid
-                                            #(-> %
-                                                 (dissoc :deliver
-                                                         :messages
-                                                         :attachments
-                                                         :cancel-token
-                                                         ::cancel-disposer)
-                                                 (assoc :status "sent"
-                                                        :into_turn_id into-tid
-                                                        :iteration iteration
-                                                         :sent_at (util/now-ms)))))
-                                  turns
-                                  tids)))
-                (update :turn-order
-                        (fn [order]
-                          (vec (remove (set tids) order)))))
-            entry))))
+    (update-session! sid
+                     (fn [entry]
+                       (let [tids (filterv (fn [tid]
+                                             (let [turn (get-in entry [:turns tid])]
+                                               (and (marked-for-next-iteration? turn)
+                                                    (not (left-queued-by-cancel? entry turn)))))
+                                    (:turn-order entry))]
+                         (vreset! taken (mapv #(get-in entry [:turns %]) tids))
+                         (if (seq tids)
+                           (-> entry
+                               (update :turns
+                                       (fn [turns]
+                                         (reduce (fn [m tid]
+                                                   (update m
+                                                           tid
+                                                           #(-> %
+                                                                (dissoc :deliver
+                                                                        :messages
+                                                                        :attachments
+                                                                        :cancel-token
+                                                                        ::cancel-disposer)
+                                                                (assoc :status "sent"
+                                                                       :into_turn_id into-tid
+                                                                       :iteration iteration
+                                                                       :sent_at (util/now-ms)))))
+                                                 turns
+                                                 tids)))
+                               (update :turn-order
+                                       (fn [order]
+                                         (vec (remove (set tids) order)))))
+                           entry))))
     (when (seq @taken)
       (doseq [turn @taken]
         (when-let [dispose (::cancel-disposer turn)]
@@ -5361,8 +5375,8 @@
         (let [decision
               (volatile! nil)
 
-                    existing
-                    (turn-record sid tid)
+              existing
+              (turn-record sid tid)
 
               previews
               (when (contains? changes :request)
@@ -6331,33 +6345,32 @@
    of the count it last saw and disagreeing about a session it never happened
    to list."
   [souls stats marks]
-  (mapv
-    (fn [s]
-      (let [st
-            (get stats (str (get s "id")))
+  (mapv (fn [s]
+          (let [st
+                (get stats (str (get s "id")))
 
-            answers
-            (long (or (:answer-count st) 0))
+                answers
+                (long (or (:answer-count st) 0))
 
-            ;; A row the reader has NEVER been shown reads as READ: the
-            ;; listing stamps its watermark as it answers
-            ;; (`seed-first-sights!`), so only an answer that landed AFTER
-            ;; that first sight is NEW.
-            unread
-            (if-let [seen (get marks (str (get s "id")))]
-              (max 0 (- answers (long seen)))
-              0)]
+                ;; A row the reader has NEVER been shown reads as READ: the
+                ;; listing stamps its watermark as it answers
+                ;; (`seed-first-sights!`), so only an answer that landed AFTER
+                ;; that first sight is NEW.
+                unread
+                (if-let [seen (get marks (str (get s "id")))]
+                  (max 0 (- answers (long seen)))
+                  0)]
 
-        (cond-> (assoc s
-                  "turn_count" (long (or (:turn-count st) 0))
-                  "answer_count" answers
-                  "unread_answers" unread
-                  "is_unread" (pos? unread)
-                  "was_interrupted" (boolean (:latest-turn-interrupted? st))
-                  "was_failed" (boolean (:latest-turn-failed? st)))
-          (:latest-turn-at st)
-          (assoc "modified_at" (:latest-turn-at st)))))
-    souls))
+            (cond-> (assoc s
+                      "turn_count" (long (or (:turn-count st) 0))
+                      "answer_count" answers
+                      "unread_answers" unread
+                      "is_unread" (pos? unread)
+                      "was_interrupted" (boolean (:latest-turn-interrupted? st))
+                      "was_failed" (boolean (:latest-turn-failed? st)))
+              (:latest-turn-at st)
+              (assoc "modified_at" (:latest-turn-at st)))))
+        souls))
 
 ;; Times reach this namespace as ms longs, `Instant`s or legacy `java.util.Date`s
 ;; depending on which store they came from; ordering must not care which.
@@ -6900,7 +6913,6 @@
               ;; answer itself.
               :next-cursor (when (< (count window) (count tail)) (->session-cursor (peek window)))
               :has-more (< (count window) (count tail))}
-
        ;; OMITTED on a tail window, never an empty vector: the shelves belong to the
        ;; head answer, and a reader that cannot tell "not shipped here" from "this
        ;; project has no bands" wipes the shelves it already painted on page two.
@@ -6938,18 +6950,14 @@
    the only part the cache actually saves, and the epoch above covers the one way
    a workspace moves while these facts stand still."
   [channel unsent ranked live waiting named unread? stopped?]
-  [@projects-overview-epoch
-   (str channel)
-   unsent
+  [@projects-overview-epoch (str channel) unsent
    (mapv (fn [row]
            [(:id row) (:project-id row) (:recency-ms row) (contains? live (:id row))
             (contains? waiting (:id row)) (boolean (unread? (:id row)))
             (boolean (stopped? (:id row)))])
          ranked)
    (mapv (fn [[root project]]
-           [root
-            (str (:id project))
-            (str (:name project))])
+           [root (str (:id project)) (str (:name project))])
          (sort-by key named))])
 
 (defn projects-overview
