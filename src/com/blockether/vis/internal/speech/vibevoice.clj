@@ -595,6 +595,128 @@
        :sample-rate sample-rate
        :duration-ms (long (* 1000.0 (/ (alength samples) (double sample-rate))))})))
 
+;; Samples - one sentence in each voice, so a voice is chosen by ear
+
+;; The pack holds the sample sentence in all 25 voices, about 6 MB against 1.2 GB
+;; for the model, so a surface can play a voice before the download. A machine that
+;; has the model speaks a missing sample itself and keeps it. Each voice reads the
+;; sentence in its own language: a Korean voice reading English gives noise, not a
+;; preview. Voices of one language read the same words, so they compare.
+
+(def sample-texts
+  "The Piper sample sentence in each language of the catalogue, by base language."
+  {"de" "So klinge ich, wenn ich in normalem Tempo lese, mit den Pausen dort, wo sie hingehören."
+   "es" "Así sueno yo, leyendo a un ritmo normal, con las pausas donde caen."
+   "fr" "Voici ma voix, quand je lis à un rythme normal, avec les pauses là où elles tombent."
+   "it" "Ecco come suono, leggendo a un ritmo normale, con le pause dove capitano."
+   "ja" "これが私の声です。普通の速さで、区切りは自然なところで読んでいます。"
+   "ko" "이것이 제 목소리입니다. 보통 속도로, 쉼은 자연스러운 곳에 두고 읽고 있습니다."
+   "nl" "Zo klink ik, als ik in een gewoon tempo lees, met de pauzes waar ze vallen."
+   "pl" "Tak brzmię, czytając w zwykłym tempie, z pauzami tam, gdzie wypadają."
+   "pt" "É assim que eu soo, lendo num ritmo normal, com as pausas onde elas caem."})
+
+(defn sample-text
+  "The sentence that `voice-id` reads for its sample, in the voice's language."
+  [voice-id]
+  (let [language (some #(when (= (name voice-id) (name (:id %))) (:language %)) (voices))]
+    (get sample-texts (first (str/split (str language) #"-")) tts/sample-text)))
+
+(def ^:const samples-asset-id "vibevoice-voice-samples")
+
+(defn samples-asset [] (assets/entry samples-asset-id))
+
+(defn- sample-file-name ^String [voice-id] (str (name voice-id) ".wav"))
+
+(defn- known-voice?
+  "Whether `voice-id` is in the bundle catalogue. A name from a URL that is not in
+   the catalogue never becomes a path."
+  [voice-id]
+  (boolean (some #(= (name voice-id) (name (:id %))) (voices))))
+
+(defn- is-packed-voice
+  [voice-id]
+  (boolean (some #{(sample-file-name voice-id)} (:requires (samples-asset)))))
+
+(defn- spoken-sample
+  "Where a sample that this machine spoke lives: beside the pack, never inside it."
+  ^File [voice-id]
+  (io/file (assets/models-root) "vibevoice-samples-spoken" (sample-file-name voice-id)))
+
+(defn- sample-on-disk
+  [voice-id]
+  (let [^File f (first (filter #(.isFile ^File %)
+                               [(io/file (assets/install-dir (samples-asset))
+                                         (sample-file-name voice-id)) (spoken-sample voice-id)]))]
+    (when f {:audio-path (str f) :media-type "audio/wav"})))
+
+(defn level
+  "Scale `samples` to a peak of 0.7 (-3 dBFS), as the Piper samples are, so no
+   voice plays louder than the one before it. Silence stays silence."
+  ^floats [^floats samples]
+  (let [n
+        (alength samples)
+
+        peak
+        (loop [i
+               0
+
+               peak
+               0.0]
+
+          (if (< i n) (recur (inc i) (max peak (Math/abs (double (aget samples i))))) peak))
+
+        out
+        (float-array n)]
+
+    (if (< peak 1.0e-6)
+      (aclone samples)
+      (let [gain (/ 0.7 peak)]
+        (dotimes [i n]
+          (aset out i (float (* gain (double (aget samples i))))))
+        out))))
+
+(defn speak-sample!
+  "Speak the shared sample sentence in `voice-id` into `out` with the installed
+   model, levelled. The file appears whole or not at all.
+   `bin/make-vibevoice-samples` builds the pack with it."
+  [voice-id ^File out]
+  (let [{:keys [^floats samples sample-rate]}
+        (speak (assets/install-dir (tts-asset)) (sample-text voice-id) (name voice-id))
+
+        part
+        (io/file (str out ".part"))]
+
+    (io/make-parents out)
+    (write-wav! part (level samples) (long sample-rate))
+    (when-not (.renameTo part out) (io/copy part out) (.delete part))
+    out))
+
+(defn voice-sample
+  "The sample of `voice-id`, without making one: `{:audio-path …}` on disk,
+   `{:is-preparable true}` when the pack or the installed model can make it, or nil."
+  [voice-id]
+  (when (known-voice? voice-id)
+    (or (sample-on-disk voice-id)
+        (when (or (is-packed-voice voice-id) (assets/installed? (tts-asset)))
+          {:is-preparable true}))))
+
+(defn prepare-voice-sample!
+  "Make the sample that [[voice-sample]] called preparable and return it. Installs
+   the small pack, or speaks the sentence with the installed model and keeps the
+   file. Never downloads the model."
+  [voice-id]
+  (when-not (known-voice? voice-id)
+    (throw (ex-info (str "No VibeVoice voice named " (pr-str voice-id))
+                    {:type :speech-tts/unknown-voice :family :vibevoice :voice-id voice-id})))
+  (or (sample-on-disk voice-id)
+      (when (is-packed-voice voice-id) (assets/install! (samples-asset)) (sample-on-disk voice-id))
+      (when (assets/installed? (tts-asset))
+        (speak-sample! voice-id (spoken-sample voice-id))
+        (sample-on-disk voice-id))
+      (throw (ex-info
+               (str "No sample for " (name voice-id) " without the VibeVoice model.")
+               {:type :speech-tts/sample-unavailable :family :vibevoice :voice-id voice-id}))))
+
 ;; Transcription
 
 (defn asr-asset [] (assets/entry asr-asset-id))
@@ -838,7 +960,9 @@
    :synthesize synthesize!
    :voices voices
    :model-state #(model-state (tts-asset))
-   :start-download #(start-download! (tts-asset))})
+   :start-download #(start-download! (tts-asset))
+   :voice-sample voice-sample
+   :prepare-voice-sample prepare-voice-sample!})
 
 (def asr-descriptor
   {:id :vibevoice-asr-local

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Speak ONE sentence in every VibeVoice voice, so a reader can hear a voice
+# BEFORE downloading the 1.2 GB model. The result is
+# `vibevoice-voice-samples.tar.bz2`, one small asset in the assets-pack release,
+# carried by the `vibevoice-voice-samples` manifest entry.
+#
+# Each voice reads the Piper sample sentence (`tts/sample-text`) in its own
+# language (`vibevoice/sample-texts`), levelled to the same -3 dBFS peak. Voices
+# of one language read the same words, so they compare. Each sample uses the
+# default noise seed, so a run gives the same audio again.
+#
+# Licence: VibeVoice-Realtime-0.5B and its voice presets are MIT, so the audio
+# that it speaks can ship in a release asset.
+#
+# Usage:
+#   bin/make-vibevoice-samples                     # dist/vibevoice-voice-samples
+#   bin/make-vibevoice-samples --out /tmp/samples
+#
+# Then upload the pack and paste the printed sha256 and byte count into the
+# `vibevoice-voice-samples` entry of the model manifest:
+#   gh release upload assets-pack dist/vibevoice-voice-samples/vibevoice-voice-samples.tar.bz2
+#
+# Requires: clojure, tar and the installed model
+# (`vis-agent speech models download --vibevoice`).
+
+set -euo pipefail
+
+PACK_NAME="vibevoice-voice-samples"
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+out_dir="${repo_root}/dist/${PACK_NAME}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) out_dir="$2"; shift 2 ;;
+    -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+for tool in clojure tar; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
+done
+
+digest_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/vis-vibevoice-samples.XXXXXX")"
+trap 'rm -rf "$work_dir"' EXIT
+pack_dir="${work_dir}/${PACK_NAME}"
+mkdir -p "$pack_dir" "$out_dir"
+
+echo "==> speaking every voice into ${pack_dir}"
+cd "$repo_root"
+clojure -M -e "
+(require '[com.blockether.vis.internal.speech.assets :as assets]
+         '[com.blockether.vis.internal.speech.vibevoice :as vibevoice])
+(when-not (assets/installed? (vibevoice/tts-asset))
+  (binding [*out* *err*] (println \"Install the model first: vis-agent speech models download --vibevoice\"))
+  (System/exit 1))
+(doseq [{:keys [id]} (vibevoice/voices)]
+  (vibevoice/speak-sample! id (java.io.File. \"${pack_dir}\" (str id \".wav\")))
+  (println \"   \" id))
+(shutdown-agents)
+(System/exit 0)"
+
+# One top-level directory, because the installer strips exactly one on the way in.
+# COPYFILE_DISABLE keeps the macOS AppleDouble `._*` files out of the pack.
+pack="${out_dir}/${PACK_NAME}.tar.bz2"
+COPYFILE_DISABLE=1 tar -cjf "$pack" -C "$work_dir" "$PACK_NAME"
+
+cat <<EOF
+
+==> packed into ${pack}
+    bytes   $(wc -c < "$pack" | tr -d ' ')
+    sha256  $(digest_of "$pack")
+
+Upload it, then move those two numbers into the vibevoice-voice-samples entry of
+resources/vis-models/manifest.edn.
+EOF

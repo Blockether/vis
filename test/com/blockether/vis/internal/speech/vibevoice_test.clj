@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.speech.vibevoice-test
   "VibeVoice noise, audio IO, transcript timing and request checks. The model round
    trip runs only on a machine where both bundles are installed."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.speech.assets :as assets]
+            [com.blockether.vis.internal.speech.tts :as tts]
             [com.blockether.vis.internal.speech.vibevoice :as vibevoice]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]))
@@ -83,6 +85,46 @@
       (let [data (ex-data-of #(vibevoice/synthesize! {:text "Hello." :voice-id "nobody"}))]
         (expect (= :speech-tts/unknown-voice (:type data)))
         (expect (contains? (set (:known data)) "carter")))))
+
+(defn- temp-models-root
+  ^File []
+  (doto (File/createTempFile "vis-vibevoice-models" "") (.delete) (.mkdirs)))
+
+(defdescribe
+  sample-test
+  (it "levels a sample to a 0.7 peak and keeps silence silent"
+      (let [loud (float-array [0.1 -0.35 0.2])]
+        (expect (= [0.2 -0.7 0.4]
+                   (mapv #(/ (Math/round (* 1000.0 (double %))) 1000.0) (vibevoice/level loud))))
+        (expect (= [0.0 0.0] (mapv double (vibevoice/level (float-array 2)))))))
+  (it "reads the sample sentence in the language of each voice"
+      (expect (= tts/sample-text (vibevoice/sample-text "carter")))
+      (expect (= tts/sample-text (vibevoice/sample-text "samuel")))
+      (expect (= (get vibevoice/sample-texts "ko") (vibevoice/sample-text "kr-man")))
+      (expect (every? #(or (str/starts-with? (:language %) "en")
+                           (contains? vibevoice/sample-texts (:language %)))
+                      (vibevoice/voices))))
+  (it "offers the pack sample of every voice, and nothing for a name outside the catalogue"
+      (let [root (temp-models-root)]
+        (with-redefs [assets/models-root (constantly (str root))]
+          (expect (every? #(= {:is-preparable true} (vibevoice/voice-sample (:id %)))
+                          (vibevoice/voices)))
+          (expect (nil? (vibevoice/voice-sample "../../etc/passwd")))
+          (expect (= :speech-tts/unknown-voice
+                     (:type (ex-data-of #(vibevoice/prepare-voice-sample! "nobody"))))))))
+  (it "answers with the file once one is on disk, packed or spoken here"
+      (let [root (temp-models-root)]
+        (with-redefs [assets/models-root (constantly (str root))]
+          (let [packed (io/file root "vibevoice-voice-samples" "carter.wav")
+                spoken (io/file root "vibevoice-samples-spoken" "emma.wav")]
+
+            (doseq [^File f [packed spoken]]
+              (io/make-parents f)
+              (vibevoice/write-wav! f (sine 24000 240 440.0) 24000))
+            (expect (= {:audio-path (str packed) :media-type "audio/wav"}
+                       (vibevoice/voice-sample "carter")))
+            (expect (= {:audio-path (str spoken) :media-type "audio/wav"}
+                       (vibevoice/prepare-voice-sample! "emma"))))))))
 
 (defdescribe
   round-trip-test
