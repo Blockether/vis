@@ -256,19 +256,22 @@ describe('human input sheet', () => {
     expect(heading).toContain('line-clamp-3');
   });
 
-  it('enters a one-time code as one box per digit, not as a text field', () => {
+  it('draws one box per digit over one real code input', () => {
     const html = markup('otp', {}, { ...otpValues, code: '408' });
-    const boxes = html.match(/<input[^>]*aria-label="One-time code digit \d"[^>]*>/g) ?? [];
-    expect(boxes).toHaveLength(6);
+    const row = element(html, 'data-otp-row');
+    const inputs = row.match(/<input[^>]*>/g) ?? [];
+    expect(inputs).toHaveLength(1);
     // The keypad, not the alphabet: a code field that opens a QWERTY keyboard on
     // a phone costs the operator every tap it takes to find the numbers.
-    expect(boxes[0]).toContain('inputmode="numeric"');
-    expect(boxes[0]).toContain('pattern="[0-9]*"');
-    expect(boxes[0]).toContain('maxlength="1"');
-    // Only the FIRST box may claim the SMS autofill, or one code arrives six times.
-    expect(boxes[0]).toContain('autocomplete="one-time-code"');
-    expect(boxes[1]).toContain('autocomplete="off"');
-    expect(boxes.slice(0, 4).map((box) => /value="(\d?)"/.exec(box)?.[1])).toEqual([
+    expect(inputs[0]).toContain('inputmode="numeric"');
+    expect(inputs[0]).toContain('pattern="[0-9]*"');
+    // One input claims the SMS autofill once, and a paste can carry the whole code.
+    expect(inputs[0]).toContain('autocomplete="one-time-code"');
+    expect(inputs[0]).not.toContain('maxlength');
+    expect(inputs[0]).toContain('value="408"');
+    const boxes = row.match(/<span[^>]*data-otp-box="\d"[^>]*>[^<]*<\/span>/g) ?? [];
+    expect(boxes).toHaveLength(6);
+    expect(boxes.slice(0, 4).map((box) => />(\d?)<\/span>$/.exec(box)?.[1])).toEqual([
       '4',
       '0',
       '8',
@@ -352,8 +355,7 @@ describe('a pause is only as tall as the question it asks', () => {
   // because now its too much"): each box took a sixth of the glass — 55px wide on
   // a 390px phone — so a six-digit code read as six empty fields.
   it('stretches a digit box only as far as a digit box goes', () => {
-    const html = markup('otp');
-    const boxes = html.match(/<input[^>]*aria-label="One-time code digit \d"[^>]*>/g) ?? [];
+    const boxes = markup('otp').match(/<span[^>]*data-otp-box="\d"[^>]*>/g) ?? [];
     // One shape everywhere — the desktop no longer shrinks it to `w-9`.
     expect(boxes[0]).not.toContain('sm:flex-none');
     expect(boxes[0]).not.toContain('w-9');
@@ -362,7 +364,7 @@ describe('a pause is only as tall as the question it asks', () => {
   // Regression: a narrow field shrinks flex widths below 44px while a fixed
   // 44px height leaves tall, thin digits. Each box must follow its own width.
   it('keeps every code box square as the field column narrows', () => {
-    const boxes = markup('otp').match(/<input[^>]*aria-label="One-time code digit \d"[^>]*>/g) ?? [];
+    const boxes = markup('otp').match(/<span[^>]*data-otp-box="\d"[^>]*>/g) ?? [];
     expect(boxes).toHaveLength(6);
     for (const box of boxes) {
       const classes = (/class="([^"]*)"/.exec(box)?.[1] ?? '').split(/\s+/);
@@ -376,7 +378,7 @@ describe('a pause is only as tall as the question it asks', () => {
   // bounded row was capped on the phone too, so the code stopped 24px short of the
   // field under it — justified against nothing.
   it('runs the code row to the edges of the field column on a phone', () => {
-    const row = element(markup('otp'), 'aria-label="One-time code"');
+    const row = element(markup('otp'), 'data-otp-row');
     const classes = (/class="([^"]*)"/.exec(row)?.[1] ?? '').split(/\s+/);
     // Below `sm:` the cap is wider than the widest phone's field column (408px on
     // a 440pt iPhone), so it never bites there; it only tightens in the box.
@@ -442,7 +444,7 @@ describe('the engine’s whole node vocabulary', () => {
     expect(slider).toContain('step="0.5"');
     expect(slider).toContain('value="2.5"');
     // otp: one box per digit it accepts, and it says the shorter code is enough.
-    expect(html.match(/aria-label="One-time code digit \d"/g) ?? []).toHaveLength(6);
+    expect(html.match(/data-otp-box="\d"/g) ?? []).toHaveLength(6);
     expect(html).toContain('4–6 digits');
     // group: the row, and the column nested inside it.
     expect(html).toContain('data-direction="row"');
