@@ -392,8 +392,8 @@
   {
     "artifacts": {
       "inference": {
-        "bytes": 1033663890,
-        "file": "d3-edge-fp32.zip",
+        "bytes": 1033669644,
+        "file": "d3-edge-fp32-chunked.zip",
         "requires": [
           "model.onnx",
           "model.onnx.data",
@@ -403,8 +403,8 @@
           "PROVENANCE.json",
           "LICENSE.txt"
         ],
-        "sha256": "8ede41e11658080f36c481a1280e8d121e35b704c7f0d2f5200150a6cdea740f",
-        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32.zip"
+        "sha256": "07b9f13a0c07321a07ccfafa72609284028af6e0031951bdef28333779352335",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32-chunked.zip"
       }
     },
     "attribution": "D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.",
@@ -416,8 +416,8 @@
   {
     "artifacts": {
       "inference": {
-        "bytes": 1560778186,
-        "file": "d3-lite-fp32.zip",
+        "bytes": 1560785811,
+        "file": "d3-lite-fp32-chunked.zip",
         "requires": [
           "model.onnx",
           "model.onnx.data",
@@ -427,8 +427,8 @@
           "PROVENANCE.json",
           "LICENSE.txt"
         ],
-        "sha256": "637101183e5fb8fe36a0048dbb353a70fbcd2f0332ce15bb31a9d92c938f5559",
-        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32.zip"
+        "sha256": "0d50c95703ab101356d9eb342400f67e17e0481156f9094b4a1eb6229bba6025",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32-chunked.zip"
       }
     },
     "attribution": "D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. Inference only.",

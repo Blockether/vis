@@ -960,9 +960,9 @@
           (expect (str/starts-with? (ex-message error) (str "D3 input has " size " tokens")))))))
 
 (defdescribe
-  d3-input-limit-follows-the-bundle-up-to-4096-tokens
+  d3-input-limit-follows-the-bundle-up-to-16384-tokens
   (it
-    "uses the declared limit and caps it at 4096 tokens"
+    "uses the declared limit and caps it at 16384 tokens"
     (let [model
           (assets/entry "d3-edge")
 
@@ -994,9 +994,9 @@
               (#'decisions/open-d3-model! model dir))
             (get-in @opened [:config "max_input_tokens"]))]
 
-      (try (expect (= 2048 (limit-for 2048)))
-           (expect (= 4096 (limit-for 4096)))
-           (expect (= 4096 (limit-for 16384)))
+      (try (expect (= 4096 (limit-for 4096)))
+           (expect (= 16384 (limit-for 16384)))
+           (expect (= 16384 (limit-for 65536)))
            (finally (run! io/delete-file (reverse (file-seq dir))))))))
 
 (defdescribe
@@ -1037,49 +1037,56 @@
             close? #(< (Math/abs (- (double %1) (double %2))) 0.001)]
 
         (expect (seq expected))
-        (try (decisions/validate-runtime! model (io/file dir))
-             (with-open [^HuggingFaceTokenizer tokenizer (#'decisions/decision2-tokenizer
-                                                          (io/file dir))]
-               (with-redefs [assets/manifest (constantly [model])
-                             assets/install-dir (fn [& _]
-                                                  dir)
-                             assets/installed? (fn [& _]
-                                                 true)]
+        (try
+          (decisions/validate-runtime! model (io/file dir))
+          (with-open [^HuggingFaceTokenizer tokenizer (#'decisions/decision2-tokenizer
+                                                       (io/file dir))]
+            (with-redefs [assets/manifest (constantly [model])
+                          assets/install-dir (fn [& _]
+                                               dir)
+                          assets/installed? (fn [& _]
+                                              true)]
 
-                 (doseq [[[state definition] token-sha probabilities]
-                         (map vector
-                              [[parcel queue] [account verified] [build urgency]]
-                              hashes
-                              expected)]
-                   (let [config {"max_input_tokens" 4096
-                                 "codes" (get (wire/parse-json
-                                                (slurp (io/file dir "decision_config.json")))
-                                              "codes")}
-                         item
-                         (#'decisions/d3-sequence-item tokenizer config state (d3-item definition))
-                         result (decisions/infer!
-                                  {"model" model-id "state" state "questions" {"q" definition}})
-                         answer (get-in result ["answers" "q"])]
+              (doseq [[[state definition] token-sha probabilities]
+                      (map vector
+                           [[parcel queue] [account verified] [build urgency]]
+                           hashes
+                           expected)]
+                (let [config {"max_input_tokens" 4096
+                              "codes" (get (wire/parse-json (slurp
+                                                              (io/file dir "decision_config.json")))
+                                           "codes")}
+                      item
+                      (#'decisions/d3-sequence-item tokenizer config state (d3-item definition))
+                      result (decisions/infer!
+                               {"model" model-id "state" state "questions" {"q" definition}})
+                      answer (get-in result ["answers" "q"])]
 
-                     (expect (= token-sha
-                                (util/bytes->hex (.digest ^MessageDigest (util/sha256-digest)
-                                                          (.getBytes (#'decisions/canonical-json
-                                                                      (:ids item))
-                                                                     "UTF-8")))))
-                     (expect (= model-id (get result "model")))
-                     (expect (= (count (:ids item)) (get-in result ["usage" "input_tokens"])))
-                     (if (= "noul" (get definition "type"))
-                       (expect (close? (get probabilities "true") (get answer "noul")))
-                       (expect (every? (fn [[label probability]]
-                                         (close? probability
-                                                 (get-in answer ["probabilities" label])))
-                                       probabilities)))))
-                 (expect (= :decisions/input-too-long
-                            (error-type #(decisions/infer! {"model" model-id
-                                                            "state"
-                                                            (str/join " " (repeat 6000 "parcel"))
-                                                            "questions" {"q" verified}}))))))
-             (finally (cache/release-idle!)))))))
+                  (expect (= token-sha
+                             (util/bytes->hex (.digest ^MessageDigest (util/sha256-digest)
+                                                       (.getBytes (#'decisions/canonical-json
+                                                                   (:ids item))
+                                                                  "UTF-8")))))
+                  (expect (= model-id (get result "model")))
+                  (expect (= (count (:ids item)) (get-in result ["usage" "input_tokens"])))
+                  (if (= "noul" (get definition "type"))
+                    (expect (close? (get probabilities "true") (get answer "noul")))
+                    (expect (every? (fn [[label probability]]
+                                      (close? probability (get-in answer ["probabilities" label])))
+                                    probabilities)))))
+              ;; Issue #366: chunked attention answers a question near the 16384-token limit.
+              (let [result (decisions/infer! {"model" model-id
+                                              "state" (apply str (repeat 1600 "1234567890"))
+                                              "questions" {"q" verified}})]
+                (expect (< 16000 (get-in result ["usage" "input_tokens"]) 16385))
+                (expect (map? (get-in result ["answers" "q"]))))
+              (expect (= :decisions/input-too-long
+                         (error-type #(decisions/infer! {"model" model-id
+                                                         "state"
+                                                         ;; Each digit is one token: over 16384 tokens, under 65536 characters.
+                                                         (apply str (repeat 2000 "1234567890"))
+                                                         "questions" {"q" verified}}))))))
+          (finally (cache/release-idle!)))))))
 
 (defdescribe
   decision2-fp32-archive-imports-warms-and-survives-cache-restart

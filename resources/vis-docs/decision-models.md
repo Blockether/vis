@@ -129,7 +129,7 @@ GLiNER does not truncate the state or question. The gateway rejects a sequence a
 limit before model inference. A sequence exactly at the limit is accepted. Character counts
 cannot predict this boundary because each model uses its own tokenizer.
 
-Decision 2.0 has a fixed limit of 2,048 tokens for each question. D3 has a limit of 4,096 tokens
+Decision 2.0 has a fixed limit of 2,048 tokens for each question. D3 has a limit of 16,384 tokens
 for each question. The state, question type, instructions, option keys, option descriptions and
 prompt text share that budget. These models also do not truncate input. The gateway rejects a
 longer question before model inference.
@@ -422,12 +422,12 @@ Check these resources before you choose a model:
 - While a model is loaded, the gateway reserves 4,096 MB of memory for Edge and 4,308 MB for Lite.
   The default `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for one of these models. To
   keep both models loaded at the same time, set it to at least 8,404 MB.
-- On an Apple M4 Max with 4 CPU threads, a question of about 2,000 tokens took about 1.2 seconds
-  with Edge. With Lite, it took about 2.4 seconds. At 4,096 tokens, Edge took about 2.2 seconds
-  and Lite about 3.9 seconds. The first question also waits while the model loads: about
+- On an Apple M4 Max with 4 CPU threads, a question of about 2,000 tokens took about 0.9 seconds
+  with Edge. With Lite, it took about 1.8 seconds. At 16,384 tokens, Edge took about 13 seconds
+  and Lite about 19 seconds. The first question also waits while the model loads: about
   6 seconds for Edge and 10 seconds for Lite.
-- A question of 4,096 tokens uses at most about 3.1 GB of memory with Edge and 4.2 GB with Lite.
-  This is inside the reserved memory. Memory grows with the square of the question length.
+- A question of 16,384 tokens uses at most about 3.2 GB of memory with Edge and 4.2 GB with Lite.
+  This is inside the reserved memory. Memory grows linearly with the question length.
 
 Download the FP32 bundle for the gateway. This command downloads Edge. For Lite, use the model ID
 `d3-lite`:

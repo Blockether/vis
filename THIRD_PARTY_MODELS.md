@@ -350,7 +350,7 @@ D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3
 - Pinned revision: `18d61df78684675463af9ae732872478845c5a79`
 - Installs into: `~/.vis/models/decisions/d3-edge/18d61df78684675463af9ae732872478845c5a79/`
 - Downloaded from the shared Vis assets-pack release (verified by SHA-256):
-  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32.zip> (1034 MB, SHA-256 `8ede41e11658080f36c481a1280e8d121e35b704c7f0d2f5200150a6cdea740f`)
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32-chunked.zip> (1034 MB, SHA-256 `07b9f13a0c07321a07ccfafa72609284028af6e0031951bdef28333779352335`)
 - Model scores do not authorize autonomous actions; evaluate the decision
   head on held-out examples before relying on it.
 
@@ -364,6 +364,6 @@ D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3
 - Pinned revision: `a8d25a91ef75552803f7009d25b7bd435991abd9`
 - Installs into: `~/.vis/models/decisions/d3-lite/a8d25a91ef75552803f7009d25b7bd435991abd9/`
 - Downloaded from the shared Vis assets-pack release (verified by SHA-256):
-  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32.zip> (1561 MB, SHA-256 `637101183e5fb8fe36a0048dbb353a70fbcd2f0332ce15bb31a9d92c938f5559`)
+  - inference: <https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32-chunked.zip> (1561 MB, SHA-256 `0d50c95703ab101356d9eb342400f67e17e0481156f9094b4a1eb6229bba6025`)
 - Model scores do not authorize autonomous actions; evaluate the decision
   head on held-out examples before relying on it.

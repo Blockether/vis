@@ -370,10 +370,10 @@
   2048)
 
 (def ^:private ^:const max-d3-input-tokens
-  "Longest D3 question; the export declares the same limit. Full attention reads every token pair,
-   so memory grows with the square of the length. On CPU, 4096 tokens peaked at 3.1 GB (Edge) and
-   4.2 GB (Lite), inside the cache reservation. 8192 tokens peaked at 8.4 and 9.4 GB."
-  4096)
+  "Longest D3 question; the export declares the same limit. The graph runs full attention in blocks
+   of 256 queries, so memory grows linearly with the length. On CPU with 4 threads, 16384 tokens
+   peaked at 3.2 GB (Edge) and 4.2 GB (Lite), inside the cache reservation."
+  16384)
 
 (def ^:private decision2-prompt-version "decision2-segmented-options-global-query-v1")
 
