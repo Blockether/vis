@@ -1884,7 +1884,8 @@
                         (:output baseline))
                 (expect (every? project-package? (vals (:packages report))) (pr-str report))
                 (expect (= {:loaded 1 :failed 0 :changed? true}
-                           (pyx/reload-python-extensions! {:dirs [(str entries)]})))
+                           (select-keys (pyx/reload-python-extensions! {:dirs [(str entries)]})
+                                        [:loaded :failed :changed?])))
                 (let [jvm-worker @#'worker/child-argv
                       ext (some #(when (= "package-check" (:ext/name %)) %)
                                 (extension/registered-extensions))]

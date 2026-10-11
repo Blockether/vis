@@ -2073,10 +2073,13 @@
                     (try (when (.exists (io/file path))
                            (Files/copy target
                                        temporary
+                                       ^"[Ljava.nio.file.CopyOption;"
                                        (into-array CopyOption
                                                    [StandardCopyOption/REPLACE_EXISTING
                                                     StandardCopyOption/COPY_ATTRIBUTES])))
-                         (Files/write temporary (util/utf8 content) (make-array OpenOption 0))
+                         (Files/write temporary
+                                      (util/utf8 content)
+                                      ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
                          (assert-extension-save-snapshot! plan)
                          (Files/move temporary
                                      target

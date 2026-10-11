@@ -654,19 +654,21 @@
    convey to every pass rather than falling back to the operator's real `~/.vis`."
   ([] (sweep-stale-async! nil))
   ([opts]
-   (let [interval-ms (long (or (:interval-ms opts) default-log-sweep-interval-ms))]
-     (doto (Thread. ^Runnable
-                    (bound-fn []
-                              (try (loop [initial? true]
-                                     (when-not (.isInterrupted (Thread/currentThread))
-                                       (try (if initial? (sweep-stale! opts) (sweep-logs! opts))
-                                            (catch InterruptedException e (throw e))
-                                            (catch Throwable _ nil))
-                                       (Thread/sleep interval-ms)
-                                       (recur false)))
-                                   (catch InterruptedException _
-                                     (.interrupt (Thread/currentThread)))))
-                    "vis-stale-sweep")
+   (let [interval-ms
+         (long (or (:interval-ms opts) default-log-sweep-interval-ms))
+
+         ^Runnable body
+         (bound-fn []
+                   (try (loop [initial? true]
+                          (when-not (.isInterrupted (Thread/currentThread))
+                            (try (if initial? (sweep-stale! opts) (sweep-logs! opts))
+                                 (catch InterruptedException e (throw e))
+                                 (catch Throwable _ nil))
+                            (Thread/sleep interval-ms)
+                            (recur false)))
+                        (catch InterruptedException _ (.interrupt (Thread/currentThread)))))]
+
+     (doto (Thread. body "vis-stale-sweep")
        (.setDaemon true)
        (.setPriority Thread/MIN_PRIORITY)
        (.start)))))

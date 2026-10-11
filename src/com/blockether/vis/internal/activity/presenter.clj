@@ -182,7 +182,8 @@
 
           (cond (and quote (= c \\) (not= quote \'))
                 (recur (+ i 2) start operator quote depth stages)
-                quote (recur (inc i) start operator (when-not (= c quote) quote) depth stages)
+                quote
+                (recur (inc i) start operator (when-not (= c (char quote)) quote) depth stages)
                 (= c \\) (recur (+ i 2) start operator quote depth stages)
                 (contains? #{\' \" \`} c) (recur (inc i) start operator c depth stages)
                 (= c \() (recur (inc i) start operator quote (inc depth) stages)

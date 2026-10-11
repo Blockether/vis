@@ -235,18 +235,15 @@
                           [(.getAbsolutePath bin) (str "-Duser.home=" (.getAbsolutePath dir))
                            "--raw" "Run the supplied Python fixture and finish."]
                           90)
-                         messages (mapcat #(get (json/read-json (:body %)) "messages") @asked)
-                         results (filter #(= "tool" (get % "role")) messages)]
+                         results (#'binary/provider-result-messages @asked)]
 
                      (expect finished?)
                      (expect (= 0 exit) output)
                      (expect (seq results))
                      (doseq [result results]
-                       (expect (not (str/includes? (str (get result "content"))
-                                                   "python_execution failed"))
-                               (str (get result "content")))
-                       (expect (str/includes? (str (get result "content"))
-                                              "native-shell-pages-done")
-                               (str (get result "content")))))
+                       (expect (not (str/includes? result "python_execution failed")) result)
+                       (expect (str/includes? result "native-shell-pages-done") result)
+                       (expect (not (str/includes? result "Activity history could not be saved"))
+                               result)))
                    (finally (.stop ^HttpServer server 0))))))
         (finally (#'binary/delete-tree! dir))))))

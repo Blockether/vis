@@ -118,6 +118,39 @@
       (expect (= {"gateway" {"host" "0.0.0.0" "port" 7890}}
                  (yamlstar/load "gateway:\n  host: 0.0.0.0\n  port: 7890\n")))))
 
+(defn- reflective-classes
+  "AOT-compile `nses` into a temporary directory and name each class that calls
+   `clojure.lang.Reflector`. The compiler does not warn for every such call."
+  [nses]
+  (let [dir (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-reflection-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try (binding [*compile-path* (str dir)
+                   *compile-files* true]
+
+           (doseq [n nses]
+             (require n :reload)))
+         (vec (for [^java.io.File f (file-seq dir)
+                    :when (str/ends-with? (.getName f) ".class")
+                    :when (str/includes? (String. (java.nio.file.Files/readAllBytes (.toPath f))
+                                                  "ISO-8859-1")
+                                         "clojure/lang/Reflector")]
+
+                (.getName f)))
+         (finally (doseq [^java.io.File f (reverse (file-seq dir))]
+                    (.delete f))))))
+
+(defdescribe
+  first-party-code-avoids-reflection-test
+  ;; Native release run 38136265896: `(= c quote)` on a primitive char compiled to a
+  ;; reflective Util/equiv call without a compiler warning. The image had no
+  ;; reflection entry for clojure.lang.Util, so every shell Activity row failed.
+  (it "compiles the shell presenter, extension saves and the stale sweep without Reflector"
+      (expect (= []
+                 (reflective-classes '[com.blockether.vis.internal.activity.presenter
+                                       com.blockether.vis.internal.config.core
+                                       com.blockether.vis.internal.foundation.housekeeping])))))
+
 (defdescribe
   onnx-runtime-jni-reachability-test
   ;; ORT constructs tensor values and their shape metadata through JNI callbacks.
