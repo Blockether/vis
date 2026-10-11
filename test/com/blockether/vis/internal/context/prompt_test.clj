@@ -656,8 +656,9 @@
         ;; #358: the sandbox pre-imports `dataclasses` and `inspect`, so no rule asks for an import.
         (expect (not (str/includes? text "Import `dataclasses` first.")))
         (expect (not (str/includes? text "import inspect;")))
-        (doseq [rule ["An extension result is a frozen record of its public fields"
-                      "without methods. Its declared sequences iterate"
+        (doseq [rule ["An extension result is a frozen record of its public fields and"
+                      "properties, without methods; `print(r)` shows its own text."
+                      "Its declared sequences iterate."
                       "For a plain dict, use `dataclasses.asdict(r)`, not `dict(r)`."
                       "Arguments | `print(inspect.signature(fn))`."
                       "A wrong name raises an error that lists the real fields"]]

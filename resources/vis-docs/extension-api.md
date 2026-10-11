@@ -256,6 +256,32 @@ A dict is enough for simple results. Use frozen dataclasses with annotated publi
 and meaning matter. The [tested example](extension-design.md#describe-structure-once) shows field
 descriptions with `Annotated`. Private fields and original methods do not cross into the sandbox.
 
+Derived data and a text report can cross with the fields:
+
+- Each public `@property` or `functools.cached_property` of the dataclass becomes a field of the
+  record. Vis reads it once when the tool answers. A property that raises is left out.
+- If the class defines its own `__str__`, its text becomes the record's `str`. Then `print(result)`
+  shows your report, and `repr(result)` still shows the fields.
+
+```python
+@dataclass(frozen=True)
+class Status:
+    env: str
+    phases: tuple[int, ...] = ()
+
+    @property
+    def next_phase(self) -> int:
+        return len(self.phases) + 1
+
+    def __str__(self) -> str:
+        return f"{self.env}: next phase {self.next_phase}"
+```
+
+In the sandbox, `status.next_phase` is a field and `print(status)` shows `DEV04: next phase 1`.
+Other methods, such as `status.text_report()`, stay in your process. Expose the value as a property,
+or as `__str__`, or expose the operation as a tool. When the record goes back to a tool as an
+argument, Vis ignores the property fields and calls your constructor with the declared fields.
+
 Generated records support both `result.url` and `result["url"]`, including nested
 records. An unknown name raises `KeyError` (`result["missing"]`) or `AttributeError`
 (`result.missing`) listing the available fields, so `hasattr` and `getattr(result, name, default)`
@@ -1055,13 +1081,14 @@ Results arrive in the same shape the model sees:
   `result["field"]`. An unknown field raises `AttributeError` or `KeyError`
   listing the available fields. An object with a
   [field-backed sequence](#field-backed-sequences) iterates over that field and
-  supports `len()`.
+  supports `len()`. Its property fields and its `str` text arrive as in
+  [Return typed objects](#return-typed-objects).
 - Other results are JSON data. Objects become dicts that also allow attribute
   access, such as `page.meta.total`, and lists stay lists.
 
 The object is a copy in your extension's process, not an instance of the other extension's class. So
 check its fields. Do not use `isinstance` with the other package's class. Results with the same
-class name and fields share one class.
+class name and fields share one class, unless the object has its own `str` text.
 
 Pass JSON-compatible arguments: strings, numbers, booleans, `None`, lists and
 dicts. A dataclass argument is sent as a dict of its public fields. An extension
@@ -1095,7 +1122,8 @@ are not shared across workers.
 | Lifetime | session worker | separate registration or session worker, reloaded by `/reload` |
 
 Tool results cross as data. Objects and dataclasses expose their public fields as
-frozen data records in the sandbox, including nested records. The original class,
+frozen data records in the sandbox, including nested records. A dataclass also sends its public
+properties and its own `str` text, as described in [Return typed objects](#return-typed-objects).
 methods, native pointers and object identity stay in the trusted process. Explicit
 [field-backed sequences](#field-backed-sequences) add only local collection operations.
 Expose other operations as declared tools rather than methods on returned objects.

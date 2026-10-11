@@ -6856,6 +6856,67 @@ vis.register_extension(vis.Extension(
               (finally (ep/dispose-python-context! ctx)))))))))
 
 (defdescribe
+  python-record-derived-data-test
+  ;; #367: a model's properties and its own `str` text reach the sandbox, while
+  ;; methods stay in the extension and the record still rebuilds as an argument.
+  (it
+    "sends public properties as fields and custom str text in both sandboxes"
+    (doseq [worker? [false true]]
+      (with-fresh-loaded
+        {"model_status.py"
+         (str
+           "import blockether.vis.extension as vis\n"
+           "from dataclasses import dataclass\n" "@dataclass(frozen=True)\n"
+           "class Phase:\n" "    number: int\n"
+           "    @property\n" "    def label(self) -> str:\n"
+           "        return f'phase {self.number}'\n" "@dataclass(frozen=True)\n"
+           "class Status:\n" "    env: str\n"
+           "    phases: tuple[Phase, ...] = ()\n" "    @property\n"
+           "    def next_phase(self) -> int:\n" "        return len(self.phases) + 1\n"
+           "    @property\n" "    def broken(self) -> int:\n"
+           "        raise RuntimeError('not ready')\n" "    @property\n"
+           "    def _hidden(self) -> int:\n" "        return 1\n"
+           "    def text_report(self) -> str:\n"
+           "        return f'STATUS: {self.env} next {self.next_phase}'\n"
+           "    __str__ = text_report\n" "def status(env: str) -> Status:\n"
+           "    'Read one environment.'\n" "    return Status(env, (Phase(1),))\n"
+           "def report(status: Status) -> str:\n" "    'Report one environment.'\n"
+           "    if not isinstance(status, Status) or not isinstance(status.phases[0], Phase):\n"
+           "        raise TypeError(f'status must be a Status, not {type(status).__name__}')\n"
+           "    return status.text_report()\n"
+           "vis.register_extension(vis.Extension(name='model-status', description='Return models', alias='model_probe', symbols=[vis.Symbol(status, name='env_status'), vis.Symbol(report, name='env_report')]))\n")}
+        (fn [result _]
+          (expect (= 1 (:loaded result)))
+          (let [made (ep/create-python-context {} nil {:worker? worker?} nil)
+                ctx (:python-context made)
+                env {:python-context ctx :extensions (atom []) :active-extensions (atom [])}
+                ext (registered "model-status")]
+
+            (try
+              (reset! (:extensions env) [ext])
+              (if worker?
+                (loop-env/sync-active-extension-symbols! env [ext])
+                (loop-env/sync-extension-symbols-into! ctx (dissoc env :python-context) [ext]))
+              (let
+                [answer
+                 (ep/run-python-block
+                   ctx
+                   (str
+                     "import dataclasses\n" "r = await env_status('DEV04')\n"
+                     "print(r.next_phase, r['next_phase'], r.phases[0].label)\n" "print(r)\n"
+                     "print(str(r.phases[0]) == repr(r.phases[0]))\n"
+                     "print([f.name for f in dataclasses.fields(r)])\n"
+                     "print(hasattr(r, 'broken'), hasattr(r, 'text_report'), hasattr(r, '_hidden'))\n"
+                     "print(await env_report(r))\n"))]
+                (expect (nil? (:error answer)) (str "worker? " worker? " " (pr-str answer)))
+                (expect (= (str "2 2 phase 1\n" "STATUS: DEV04 next 2\n"
+                                "True\n" "['env', 'phases', 'next_phase']\n"
+                                "False False False\n" "STATUS: DEV04 next 2\n")
+                           (:stdout answer))
+                        (str "worker? " worker?)))
+              (finally (ep/dispose-python-context! ctx)))))))))
+
+(defdescribe
   python-string-list-argument-test
   ;; #324: a bare string for a list of strings reaches the tool as one item, not one
   ;; item for each character, so `py.lint_code('/src/app.py')` cannot lint `/`.

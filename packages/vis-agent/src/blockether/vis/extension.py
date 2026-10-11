@@ -20,6 +20,7 @@ from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar as _ContextVar
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass, make_dataclass
+from functools import cached_property
 from os import PathLike
 from pathlib import Path
 from types import FunctionType, MappingProxyType, MethodType, ModuleType, UnionType
@@ -203,15 +204,16 @@ class _ToolRecord(dict):
 _tool_classes = {}
 
 
-def _tool_class(name, names, sequence):
+def _tool_class(name, names, sequence, text=None):
     """The frozen class for objects answered as `name` with fields `names`.
 
     Built once per shape, as python_execution rebuilds an extension object. It has its
     public fields only, read by field or key. It is iterable only through its declared
-    sequence field.
+    sequence field. A `text` answer from a class with its own `__str__` becomes the
+    `str` of a class built for that one object.
     """
     shape = (name, names, sequence)
-    if shape in _tool_classes:
+    if text is None and shape in _tool_classes:
         return _tool_classes[shape]
 
     def missing(self, key):
@@ -237,6 +239,8 @@ def _tool_class(name, names, sequence):
     if sequence is not None:
         namespace["__iter__"] = lambda self: iter(getattr(self, sequence))
         namespace["__len__"] = lambda self: len(getattr(self, sequence))
+    if text is not None:
+        namespace["__str__"] = lambda self: text
     cls = make_dataclass(
         name,
         [(n, object) for n in names],
@@ -244,11 +248,13 @@ def _tool_class(name, names, sequence):
         frozen=True,
         slots=True,
     )
+    if text is not None:
+        return cls
     # setdefault keeps one class per shape when two threads build it at once.
     return _tool_classes.setdefault(shape, cls)
 
 
-def _tool_object(name, attrs, sequence):
+def _tool_object(name, attrs, sequence, text=None):
     values = {str(key): _tool_value(item) for key, item in attrs.items()}
     if sequence is not None:
         if (
@@ -260,7 +266,9 @@ def _tool_object(name, attrs, sequence):
             raise ValueError("sequence field must name a public serialized field")
         if type(values[sequence]) not in (list, tuple):
             raise TypeError("sequence field must contain a list or tuple")
-    return _tool_class(name, tuple(values), sequence)(**values)
+    if not isinstance(text, str):
+        text = None
+    return _tool_class(name, tuple(values), sequence, text)(**values)
 
 
 def _tool_value(value):
@@ -269,7 +277,12 @@ def _tool_value(value):
         name = value.get("__vis_object__")
         attrs = value.get("__vis_attrs__")
         if isinstance(name, str) and isinstance(attrs, Mapping):
-            return _tool_object(name, attrs, value.get("__vis_sequence_field__"))
+            return _tool_object(
+                name,
+                attrs,
+                value.get("__vis_sequence_field__"),
+                value.get("__vis_text__"),
+            )
         return _ToolRecord({key: _tool_value(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)):
         return [_tool_value(item) for item in value]
@@ -289,6 +302,53 @@ def _tool_data(value) -> Any:
     if isinstance(value, (list, tuple)):
         return [_tool_data(item) for item in value]
     return value
+
+
+def _is_derived_source(cls) -> bool:
+    """Whether a result of `cls` also sends its properties and its own `str` text.
+
+    Only dataclass models of extensions qualify. Vis SDK classes keep their wire shape.
+    """
+    return (
+        isinstance(cls, type)
+        and is_dataclass(cls)
+        and not str(cls.__module__).startswith("blockether.vis")
+    )
+
+
+def _derived_names(cls) -> tuple[str, ...]:
+    """The public properties that a result of `cls` sends as fields, in class order.
+
+    `property` and `functools.cached_property` count. Declared fields keep their own value.
+    """
+    if not _is_derived_source(cls):
+        return ()
+    declared = {f.name for f in fields(cls)}
+    candidates = dict.fromkeys(
+        name
+        for klass in reversed(cls.__mro__)
+        for name in vars(klass)
+        if not name.startswith("_") and name not in declared
+    )
+    return tuple(
+        name
+        for name in candidates
+        if isinstance(inspect.getattr_static(cls, name), (property, cached_property))
+    )
+
+
+def _derived_text(value) -> str | None:
+    """`str(value)` for a dataclass model whose class defines its own `__str__`.
+
+    A failing `__str__` sends no text.
+    """
+    cls = type(value)
+    if not _is_derived_source(cls) or cls.__str__ is object.__str__:
+        return None
+    try:
+        return str(value)
+    except Exception:
+        return None
 
 
 class _Tools:
@@ -1747,15 +1807,16 @@ def _rebuilt_record(cls, value, namespace):
     """A `cls` record from a mapping of its fields, or `_UNFIT` for any other value.
 
     The mapping may leave out fields with defaults and may carry `init=False`
-    fields, which the record computes itself. Constructor errors propagate: they
-    are the record's own validation.
+    fields and public properties, which the record computes itself. Constructor
+    errors propagate: they are the record's own validation.
     """
     if isinstance(value, cls):
         return value
     if not isinstance(value, Mapping):
         return _UNFIT
     declared = {f.name: f for f in fields(cls)}
-    if not all(isinstance(key, str) and key in declared for key in value):
+    known = declared.keys() | set(_derived_names(cls))
+    if not all(isinstance(key, str) and key in known for key in value):
         return _UNFIT
     initial = [f for f in declared.values() if f.init]
     if any(
