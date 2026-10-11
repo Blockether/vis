@@ -317,14 +317,26 @@ function TimeSegment({
       aria-valuetext={pad(value)}
       disabled={disabled}
       value={typed ?? pad(value)}
-      onFocus={(event) => event.currentTarget.select()}
+      onFocus={(event) => {
+        setTyped(null);
+        event.currentTarget.select();
+      }}
       onBlur={() => setTyped(null)}
       onKeyDown={onKeyDown}
       onChange={(event) => {
-        let digits = event.target.value.replace(/\D/g, '').slice(-2);
-        if (Number(digits) > max) digits = digits.slice(-1);
+        // Read the typed digits, not the whole text: the caret can sit anywhere in it.
+        const input = event.nativeEvent as InputEvent;
+        if (input.inputType?.startsWith('delete')) {
+          setTyped('');
+          return;
+        }
+        const added = (input.data ?? event.target.value).replace(/\D/g, '');
+        if (added === '') return;
+        // A new entry starts after a full one, as in a native time field.
+        const kept = typed === null || typed.length >= 2 ? '' : typed;
+        let digits = `${kept}${added}`.slice(-2);
+        if (Number(digits) > max) digits = added.slice(-1);
         setTyped(digits);
-        if (digits === '') return;
         onValueChange(Number(digits));
         // A full segment, or a digit that no second digit can follow, moves on.
         if (digits.length === 2 || Number(digits) * 10 > max) nextRef?.current?.focus();

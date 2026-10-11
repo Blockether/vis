@@ -106,6 +106,18 @@ describe('DateTimeField', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('reads the typed digit, not the caret position, in a focused segment', async () => {
+    render(<Field initial="2026-10-12T22:00" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Run at' }));
+    const hours = screen.getByRole('spinbutton', { name: 'Hours' }) as HTMLInputElement;
+    hours.focus();
+    // The caret sits between the two digits of 22, as after a second press on the box.
+    hours.setSelectionRange(1, 1);
+    await userEvent.keyboard('7');
+    expect(screen.getByRole('status', { hidden: true })).toHaveTextContent('2026-10-12T07:00');
+    expect(screen.getByRole('spinbutton', { name: 'Minutes' })).toHaveFocus();
+  });
+
   it('keeps Tab inside the open panel', async () => {
     render(<Field initial="2026-10-12T14:00" />);
     await userEvent.click(screen.getByRole('button', { name: 'Run at' }));
