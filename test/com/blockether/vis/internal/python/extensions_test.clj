@@ -5218,7 +5218,29 @@ vis.register_extension(vis.Extension(
           (expect (str/includes? body text)))
         (expect (= {:loaded 2 :failed 0 :configuration-changes "network" :prompt-templates 1}
                    (select-keys data [:loaded :failed :configuration-changes :prompt-templates])))
-        (expect (nat-int? (:duration-ms data)))))))
+        (expect (nat-int? (:duration-ms data))))))
+  (it "names the folders that each extension scope scanned (Vis #365)"
+      (let [home
+            (System/getProperty "user.home")
+
+            {:slash/keys [body]}
+            (#'pyx/reload-report
+             {:loaded 1
+              :failed 0
+              :scopes [{:scope :global
+                        :dirs [(str home "/.vis/extensions")]
+                        :loaded 1
+                        :failed 0
+                        :extensions ["memo"]}
+                       {:scope :project
+                        :dirs ["/srv/rewrite/.vis/extensions"]
+                        :loaded 0
+                        :failed 0
+                        :extensions []}]})]
+
+        (doseq [text ["- Extensions (global): 1 loaded — memo (scanned ~/.vis/extensions)"
+                      "- Extensions (project): 0 loaded (scanned /srv/rewrite/.vis/extensions)"]]
+          (expect (str/includes? body text))))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
 (defn- answer-pending!

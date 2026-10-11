@@ -2988,14 +2988,17 @@
           (conj (fmt/format-duration duration-ms)))
 
         details
-        (concat (for [{:keys [scope loaded failed extensions]} scopes]
+        (concat (for [{:keys [scope dirs loaded failed extensions]} scopes]
+                  ;; Name the scanned folders, so "0 loaded" shows WHERE Vis looked (Vis #365).
                   (str "- Extensions ("
                        (name scope)
                        "): "
                        loaded
                        " loaded"
                        (when (pos? (long failed)) (str ", " failed " failed"))
-                       (when (seq extensions) (str " — " (str/join ", " extensions)))))
+                       (when (seq extensions) (str " — " (str/join ", " extensions)))
+                       (when (seq dirs)
+                         (str " (scanned " (str/join ", " (map paths/abbreviate-home dirs)) ")"))))
                 [(str
                    "- Configuration: "
                    (if configuration-changes (str "changed " configuration-changes) "unchanged"))]
