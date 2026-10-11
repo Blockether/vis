@@ -579,75 +579,54 @@
 
 (defdescribe
   managed-agent-presentation-test
-  (it "keeps cancellation counts without exposing recipient identifiers"
-      (let [view (result-view {:operation :council.cancel}
-                              {:session_id "internal-child"
-                               :status "cancelled"
-                               :cancelled ["internal-child" "internal-grandchild"]})]
-        (expect (= "Cancelled · 2 subagents" (get view "summary")))
-        (expect (empty? (get view "content")))
-        (expect (not (re-find #"internal-" (pr-str view))))))
-  (it "bounds Unicode summaries without dropping the delegated task"
-      (let [task
+  (it "bounds Unicode answers without dropping the delegated result"
+      (let [answer
             (apply str (repeat 160 "😀"))
 
-            agent
-            {:task task
-             :status "running"
-             :model "fixture-model-with-a-long-name"
-             :iteration_budget 12
-             :iterations_used 2
-             :pending_input true}
+            record
+            {:session_id "internal-child" :status "completed" :answer answer :iterations_used 2}
 
             projection
-            (result-fixture [[:council.publish_spawn "" agent nil]
-                             [:council.subagents "" [agent] nil]])
+            (result-fixture [[:council.run "" [record] nil]])
 
-            views
-            (mapv #(get % "presentation") (get projection "rows"))]
+            view
+            (get-in projection ["rows" 0 "presentation"])]
 
         (expect (contract/valid-projection? projection))
-        (expect (= task (get-in views [0 "content" 0 "text"])))
-        (expect (= task (get-in views [1 "sections" 0 "content" 0 "text"])))
-        (expect (re-find #"Input pending" (get-in views [1 "sections" 0 "summary"])))))
-  (it "shows meaningful empty and populated team counts"
-      (doseq [[value expected] [[[] "No subagents"]
-                                [[{:session_id "child" :status "queued"}] "1 subagent"]]]
-        (expect (= expected (get (result-view {:operation :council.subagents} value) "summary")))))
-  (it "keeps all agent result views valid and retains lifecycle evidence"
-      (let [projection
-            (result-fixture
-              [[:council.publish_spawn ""
-                {:session_id "child" :task "Verify" :status "queued" :iteration_budget 2} nil]
-               [:council.subagents ""
-                [{:session_id "child"
-                  :task "Verify"
-                  :status "running"
-                  :iterations_used 1
-                  :iteration_budget 2}] nil]
-               [:council.cancel "" {:session_id "child" :status "cancelled"} nil]
-               [:council.route ""
-                {:session_id "child" :provider "fixture" :model "small" :effective "next_request"}
-                nil]])]
+        (expect (= answer (get-in view ["sections" 0 "content" 0 "text"])))
+        (expect (= "Completed · 2 iterations" (get-in view ["sections" 0 "summary"])))
+        (expect (not (re-find #"internal-" (pr-str view))))))
+  (it "shows meaningful empty and populated status counts"
+      (doseq [[value expected]
+              [[[] "No subagents"]
+               [[{:session_id "a" :status "completed"} {:session_id "b" :status "running"}
+                 {:session_id "c" :status "completed"}] "2 completed · 1 running"]]]
+        (expect (= expected (get (result-view {:operation :council.wait} value) "summary")))))
+  (it "keeps all agent result views valid and shows open questions"
+      (let [projection (result-fixture
+                         [[:council.run ""
+                           [{:session_id "child" :status "asking" :question "Which file?"}] nil]
+                          [:council.wait "" [{:session_id "child" :status "lost"}] nil]
+                          [:council.cancel "" [{:session_id "child" :status "cancelled"}] nil]
+                          [:council.ask "" "Use the parser file." nil] [:council.ask "" nil nil]])]
         (expect (contract/valid-projection? projection))
         (let [views (mapv #(get % "presentation") (get projection "rows"))]
-          (expect (= ["Verify · Queued · Up to 2 iterations" "1 subagent" "Cancelled"
-                      "fixture/small · next request"]
+          (expect (= ["1 asking" "1 lost" "1 cancelled" "Parent replied" "No reply"]
                      (mapv #(get % "summary") views)))
-          (expect (= "Running · Iterations: 1/2" (get-in views [1 "sections" 0 "summary"])))
-          (expect (= [{"type" "markdown" "text" "Verify"}]
-                     (get-in views [1 "sections" 0 "content"])))
-          (expect (every? empty? (map #(get-in views [% "content"]) [2 3])))
-          (expect (not (re-find #"child|next_request|Session|Parent" (pr-str views)))))))
-  (it "shows only spawn as running work"
-      (doseq [[operation visible?] [[:council.publish_spawn true] [:council.subagents false]
-                                    [:council.cancel false] [:council.route false]]]
+          (expect (= [{"type" "markdown" "text" "Which file?"}]
+                     (get-in views [0 "sections" 0 "content"])))
+          (expect (= [{"type" "markdown" "text" "Use the parser file."}]
+                     (get-in views [3 "content"])))
+          (expect (not (re-find #"child|Session|Parent:" (pr-str views)))))))
+  (it "shows slow agent work as running"
+      (doseq [[operation visible?] [[:council.run true] [:council.wait true] [:council.ask true]
+                                    [:council.cancel false]]]
         (expect (= visible? (:show-start (presenter/for-tool operation))))))
   (it
     "preserves failures and cancellation across every Council binding"
     (doseq [operation
             [:council.publish :council.get :council.read :council.threads :council.members
-             :council.publish_spawn :council.subagents :council.cancel :council.route]
+             :council.run :council.wait :council.cancel :council.ask]
 
             outcome
             [:failed :cancelled]]

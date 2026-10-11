@@ -6049,6 +6049,13 @@
 
 (defonce ^:private agent-spawn-lock (Object.))
 
+(defn- model-key [m] (mapv #(when % (name %)) [(:provider m) (:model m)]))
+
+(defn- system-prefix
+  "The leading system messages of a model input."
+  [messages]
+  (into [] (take-while #(= :system (keyword (:role %)))) messages))
+
 (defn- agent-spawn
   [env opts]
   (locking agent-spawn-lock
@@ -6114,7 +6121,14 @@
                             (or (:model opts) (:model inherited)))
 
               allowed
-              (or (:allowed_models opts) (:allowed_models parent))]
+              (or (:allowed_models opts) (:allowed_models parent))
+
+              ;; A child on another model gets only the system prompt and its task by default.
+              context
+              (or (:context opts) (if (= (model-key pair) (model-key inherited)) "full" "task"))
+
+              checkpoint
+              (if (= "task" context) (system-prefix checkpoint) checkpoint)]
 
           (when-not (and (council/enabled?)
                          (= (get-in (ctx-loop/read-turn-state env) [:council :activation-id])
@@ -6195,9 +6209,32 @@
                    (throw e)))
             (agent-view db (agents/info db child-id))))))))
 
+(defn- agent-live?
+  "True when this gateway holds a queued or running turn for `sid`."
+  [sid]
+  (boolean (some #(contains? #{"queued" "running"} (:status %))
+                 (vals (:turns (session-entry (str sid)))))))
+
+(defn- agent-publish
+  "Publish a Council entry as the calling session in its active turn."
+  [env opts]
+  (let [db (:db-info env)]
+    (council/publish! db
+                      #(council/runtime db)
+                      {:session-id (str (:session-id env))
+                       :source "sdk"
+                       :activation-id (get-in (ctx-loop/read-turn-state env)
+                                              [:council :activation-id])}
+                      opts)))
+
 (def agent-runtime
   "The session-agent operations `agents/install-runtime!` receives at startup."
-  {:spawn #'agent-spawn :list #'agent-list :cancel #'agent-cancel :route #'agent-route})
+  {:spawn #'agent-spawn
+   :list #'agent-list
+   :cancel #'agent-cancel
+   :route #'agent-route
+   :live? #'agent-live?
+   :publish #'agent-publish})
 
 (defn agents-operation!
   [sid operation opts]

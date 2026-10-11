@@ -22,6 +22,7 @@
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.diff :as diff]
             [com.blockether.vis.contract.improve :as improve-contract]
@@ -5089,25 +5090,32 @@
       (execute! db {:update :session_agent :set changes :where [:= :session_id (str sid)]})))
   (db-agent-info db sid))
 
+(def ^:private agent-schema (document/schema-document "agents"))
+
+(def ^:private max-team-children (long (get agent-schema "x-vis-max-team-children")))
+
+(def ^:private max-active-children (long (get agent-schema "x-vis-max-active-children")))
+
 (defn db-agent-claim-iteration!
   "Reserve one child model iteration atomically, including admission under the active-team cap."
   [db sid]
-  (pos? (long (or (:next.jdbc/update-count
-                    (first (execute!
-                             db
-                             {:update :session_agent
-                              :set {:iterations_used [:+ :iterations_used 1] :status "running"}
-                              :where
-                              [:and [:= :session_id (str sid)]
-                               [:not-in :status ["cancelled" "budget_limited"]]
-                               [:< :iterations_used :iteration_budget]
-                               [:or [:in :status ["queued" "running"]]
-                                [:<
-                                 {:select [[[:count :*]]]
-                                  :from [[:session_agent :active]]
-                                  :where [:and [:= :active.leader_id :session_agent.leader_id]
-                                          [:in :active.status ["queued" "running"]]]} 8]]]})))
-                  0))))
+  (pos?
+    (long (or (:next.jdbc/update-count
+                (first (execute! db
+                                 {:update :session_agent
+                                  :set {:iterations_used [:+ :iterations_used 1] :status "running"}
+                                  :where [:and [:= :session_id (str sid)]
+                                          [:not-in :status ["cancelled" "budget_limited"]]
+                                          [:< :iterations_used :iteration_budget]
+                                          [:or [:in :status ["queued" "running"]]
+                                           [:<
+                                            {:select [[[:count :*]]]
+                                             :from [[:session_agent :active]]
+                                             :where [:and
+                                                     [:= :active.leader_id :session_agent.leader_id]
+                                                     [:in :active.status ["queued" "running"]]]}
+                                            max-active-children]]]})))
+              0))))
 
 (defn db-fork-session-at-turn!
   "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is
@@ -5190,16 +5198,18 @@
                                                    {:select [[[:count :*] :n]]
                                                     :from :session_agent
                                                     :where [:= :team_id (:team_id agent)]})))
-                             32))
-                (throw (ex-info "A task may create at most 32 subagents." {:error :agent-limit})))
+                             max-team-children))
+                (throw (ex-info (str "A task may create at most " max-team-children " subagents.")
+                                {:error :agent-limit})))
               (when (and agent
                          (>= (long (:n (query-one! tx-info
                                                    {:select [[[:count :*] :n]]
                                                     :from :session_agent
                                                     :where [:and [:= :leader_id (:leader_id agent)]
                                                             [:in :status ["queued" "running"]]]})))
-                             8))
-                (throw (ex-info "A leader may run at most 8 subagents." {:error :agent-limit})))
+                             max-active-children))
+                (throw (ex-info (str "A leader may run at most " max-active-children " subagents.")
+                                {:error :agent-limit})))
               ;; A managed fork is hidden under its parent; an ordinary fork remains a leader.
               (execute! tx-info
                         {:insert-into :session_soul
@@ -6310,11 +6320,13 @@
                                       {:select [:*]
                                        :from [:council_ping]
                                        :where [:and [:= :entry_id reply-to]
-                                               [:= :recipient_sid (:author_sid row)]]}))]
+                                               [:= :recipient_sid (:author_sid row)]]}))
+              ;; A reply is terminal. A later answer stays in the thread as a continuation.
+              reply-to (when-not (:reply_entry_id recipient) reply-to)
+              row (cond-> row
+                    (nil? reply-to)
+                    (dissoc :reply_to))]
 
-          (when (and reply-to (:reply_entry_id recipient))
-            (throw (ex-info "This recipient already answered the request"
-                            {:error :already-replied})))
           (when (and reply-to (nil? recipient))
             (throw (ex-info "Reply author is not a request recipient" {:error :invalid-reply})))
           (execute! tx

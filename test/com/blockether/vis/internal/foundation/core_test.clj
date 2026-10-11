@@ -32,9 +32,8 @@
           end-only
           '#{cat patch _shell-logs _shell-type council.read council.get council.threads
              council.members draft-status main-agent-instructions update_goal council.publish
-             council.subagents council.cancel council.route automations.list automations.get
-             automations.create automations.update automations.delete automations.run
-             automations.runs}]
+             council.cancel automations.list automations.get automations.create automations.update
+             automations.delete automations.run automations.runs}]
 
       (expect (= end-only
                  (set (keep #(when (false? (get-in % [:ext.symbol/activity :show-start]))
@@ -209,8 +208,8 @@
                     (constantly "off")]
 
         (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-          (expect (str/includes? prompt "Leadership and managed subagents"))
-          (expect (str/includes? prompt "Inherited conversation is background evidence")))))
+          (expect (str/includes? prompt "## Subagents (Council)"))
+          (expect (str/includes? prompt "do only your task")))))
   (it "contributes only the workspace block through ctx now"
       ;; `:session/env` (host / project / extensions digest) moved to
       ;; `internal.context.env-digest` — it's core functionality, not extension-

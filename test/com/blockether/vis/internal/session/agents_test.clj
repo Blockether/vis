@@ -167,7 +167,7 @@
             group-id (when grouped?
                        (str (:id (ps/db-create-session-group! db project-id {:name "Research"}))))
             gid (or group-id project-id)
-            router {:providers [{:id :p :root "small" :models [{:name "small"}]}]}
+            router {:providers [{:id :p :root "small" :models [{:name "small"} {:name "large"}]}]}
             checkpoint [{:role :system :content "Rules"}
                         {:role :user :content "Current task and folded evidence"}]
             env {:db-info db
@@ -214,6 +214,16 @@
                                                          (assoc opts :task "Different task"))
                               nil
                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+              ;; A child on another model gets only the system prompt unless it asks for full context.
+              (let [other {:task "Review on another model" :provider "p" :model "large"}
+                    task-child (:session_id (gateway/agents-operation! leader :spawn other))
+                    full-child
+                    (:session_id
+                      (gateway/agents-operation! leader :spawn (assoc other :context "full")))]
+
+                (expect (= [{:role :system :content "Rules"}]
+                           (ps/db-agent-checkpoint db task-child)))
+                (expect (= checkpoint (ps/db-agent-checkpoint db full-child))))
               (expect (= "cancelled"
                          (:status (gateway/agents-operation! leader :cancel {:session_id sid}))))
               (expect (not (agents/claim-iteration! {:db-info db :session-id sid})))
@@ -451,13 +461,14 @@
           (fn [n]
             (try (fork n) (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))]
 
-      (dotimes [n 8]
+      ;; The store uses the contract limits, not its own copies.
+      (dotimes [n agents/max-active-children]
         (fork n))
-      (expect (= :agent-limit (refusal 8)))
-      (expect (= 8 (count (ps/db-agent-list db leader))))
+      (expect (= :agent-limit (refusal agents/max-active-children)))
+      (expect (= agents/max-active-children (count (ps/db-agent-list db leader))))
       (let [[idle blocker] (map :session_id (ps/db-agent-list db leader))]
         (ps/db-agent-update! db idle {:status "completed"})
-        (fork 8)
+        (fork agents/max-active-children)
         (expect (not (ps/db-agent-claim-iteration! db idle))
                 "Resuming a completed child cannot bypass the active team limit")
         (expect (= 0 (:iterations_used (agents/info db idle))))
@@ -471,7 +482,7 @@
                 "A capacity refusal is retryable after another child settles"))
       (doseq [child (ps/db-agent-list db leader)]
         (ps/db-agent-update! db (:session_id child) {:status "completed"}))
-      (doseq [n (range 9 32)]
+      (doseq [n (range (inc agents/max-active-children) agents/max-team-children)]
         (ps/db-agent-update! db (fork n) {:status "completed"}))
-      (expect (= :agent-limit (refusal 32)))
-      (expect (= 32 (count (ps/db-agent-list db leader)))))))
+      (expect (= :agent-limit (refusal agents/max-team-children)))
+      (expect (= agents/max-team-children (count (ps/db-agent-list db leader)))))))

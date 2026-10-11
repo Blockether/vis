@@ -66,8 +66,7 @@
                    (:group-not-found :entry-not-found)
                    404
 
-                   (:disabled :inactive-session :invalid-recipient
-                              :idempotency-conflict :already-replied)
+                   (:disabled :inactive-session :invalid-recipient :idempotency-conflict)
                    409
 
                    (:invalid-request :invalid-thread :invalid-reply)

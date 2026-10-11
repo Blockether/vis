@@ -85,7 +85,7 @@
    `ping=\"all\"` selects active peers only. A peer that is already running reads the ping inside
    its turn only with `reply_required=True`.
 
-   With Subagents enabled, spawn owned children with `council.publish_spawn` instead of treating
+   With Subagents enabled, delegate work to owned children with `council.run` instead of treating
    project peers as subagents. See `doc(\"council\")` for the delivery and work protocols."
   ([env content] (publish env content {}))
   ([env content opts]

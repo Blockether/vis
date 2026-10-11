@@ -346,19 +346,25 @@
           [agents/operation!
            (fn [host op opts]
              (swap! calls conj [(:session-id host) op opts])
-             {:status "observed"})
+             {:session_id (str "child-" (count @calls))})
+
+           agents/wait-records
+           (fn [host ids timeout]
+             (swap! calls conj [(:session-id host) :wait {:ids (vec ids) :timeout timeout}])
+             [{:session_id "child-1" :status "completed" :answer "Done"}])
 
            svar/ask-code!
            (fn [_ _]
              (if (= 1 (swap! requests inc))
                (code-response
-                 "assert 'agents' not in globals()\nassert callable(council.members)\nassert council.subagents()['op'] == 'council.subagents'\nassert council.publish_spawn('Verify only the boundary', iteration_budget=2)['op'] == 'council.publish_spawn'\nassert council.route('small', provider='fixture')['op'] == 'council.route'\nassert council.cancel('fixture-child')['op'] == 'council.cancel'")
+                 "assert 'agents' not in globals()\nassert callable(council.members)\nr = council.run(['Verify only the boundary', {'task': 'Check docs', 'iteration_budget': 2}], timeout_secs=5)\nassert r[0]['answer'] == 'Done', r\nassert council.wait(['child-1'])[0]['status'] == 'completed'\nassert council.wait(timeout_secs=3)[0]['status'] == 'completed'\nassert council.cancel('child-1')[0]['session_id'] == 'child-1'")
                {:stop-reason :end :content "Bindings invoked"}))]
 
           (turn/run-turn! env "Exercise registered Python methods" {}))
-        (expect (= [:list :spawn :route :cancel] (mapv second @calls)))
-        (expect (= [{} {:task "Verify only the boundary" :iteration_budget 2}
-                    {:model "small" :provider "fixture"} {:session_id "fixture-child"}]
+        (expect (= [:spawn :spawn :wait :wait :wait :cancel :wait] (mapv second @calls)))
+        (expect (= [{:task "Verify only the boundary"} {:task "Check docs" :iteration_budget 2}
+                    {:ids ["child-1" "child-2"] :timeout 5} {:ids ["child-1"] :timeout 240}
+                    {:ids [] :timeout 3} {:session_id "child-1"} {:ids ["child-1"] :timeout 5}]
                    (mapv #(nth % 2) @calls)))
         (expect (every? #(= (:session-id env) (first %)) @calls))
         (finally (loop-env/dispose-environment! env))))))

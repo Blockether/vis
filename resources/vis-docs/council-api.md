@@ -387,7 +387,7 @@ the code.
 |---|---|---|
 | 400 | `invalid-request`, `invalid-thread`, `invalid-reply` | The request, the thread or the reply target is not valid. |
 | 404 | `group-not-found`, `entry-not-found`, `session-not-found` | The group, the message or the session does not exist. |
-| 409 | `disabled`, `inactive-session`, `invalid-recipient`, `idempotency-conflict`, `already-replied` | Council is off, the run ended, or the request conflicts with an earlier one. |
+| 409 | `disabled`, `inactive-session`, `invalid-recipient`, `idempotency-conflict` | Council is off, the run ended, or the request conflicts with an earlier one. |
 | 503 | `rooms-error` | The relay is not available. A refused room request has the status 400 or the status of the relay. |
 
 ## See also

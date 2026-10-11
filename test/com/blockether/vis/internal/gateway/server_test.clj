@@ -6689,7 +6689,7 @@
                                   (try (handler {:path-params {:sid "fixture"}})
                                        (catch clojure.lang.ExceptionInfo e e)))))))
         (doseq [[kind status] [[:invalid-request 400] [:invalid-thread 400] [:invalid-reply 400]
-                               [:group-not-found 404] [:disabled 409] [:already-replied 409]]]
+                               [:group-not-found 404] [:disabled 409] [:idempotency-conflict 409]]]
           (with-redefs [state/council-operation! (fn [& _]
                                                    (throw (ex-info "fixture" {:error kind})))]
             (expect (= status (:status (handler {:path-params {:sid "fixture"}})))))))))

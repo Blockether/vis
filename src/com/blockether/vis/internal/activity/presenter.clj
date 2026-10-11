@@ -523,10 +523,10 @@
    "council.get" ["Read Council message" "Read Council message" false]
    "council.threads" ["List threads" "Listed threads" false]
    "council.members" ["List members" "Listed members" false]
-   "council.publish_spawn" ["Spawn subagent" "Spawned subagent" true]
-   "council.subagents" ["List subagents" "Listed subagents" false]
+   "council.run" ["Run subagents" "Ran subagents" true]
+   "council.wait" ["Wait for subagents" "Waited for subagents" true]
    "council.cancel" ["Cancel subagent" "Cancelled subagent" false]
-   "council.route" ["Choose agent model" "Chose agent model" false]
+   "council.ask" ["Ask parent" "Asked parent" true]
    "automations.list" ["List automations" "Listed automations" false]
    "automations.get" ["Read automation" "Read automation" false]
    "automations.create" ["Create automation" "Created automation" false]
@@ -714,18 +714,18 @@
                        (remove str/blank? [(council-reference value) (council-replies value)]))
    "content" (council-body value "content")})
 
-(defn- council-agent
+(defn- council-record
   [value]
-  {"headline" (session-preview (or (not-empty (field value "task")) "Subagent") 96)
+  {"headline" (session-preview (or (not-empty (field value "question"))
+                                   (not-empty (field value "answer"))
+                                   "Subagent")
+                               96)
    "summary" (str/join " · "
                        (remove str/blank?
-                         [(label (field value "status")) (field value "model")
-                          (when-let [budget (field value "iteration_budget")]
-                            (if-let [used (field value "iterations_used")]
-                              (str "Iterations: " used "/" budget)
-                              (str "Up to " (counted-label budget "iteration"))))
-                          (when (field value "pending_input") "Input pending")]))
-   "content" (council-body value "task")})
+                         [(label (field value "status"))
+                          (when-let [used (field value "iterations_used")]
+                            (counted-label used "iteration"))]))
+   "content" (council-body value (if (not-empty (field value "question")) "question" "answer"))})
 
 (defn- council-presentation
   "Show messages and outcomes, not Council's storage and delivery envelopes."
@@ -740,15 +740,12 @@
                               (when-not (not-empty (field value "content")) "No message content")]))
        "content" (council-body value "content")}
 
-      ("council.read" "council.threads" "council.members" "council.subagents")
+      ("council.read" "council.threads" "council.members")
       (let [items
             (if (contains? #{"council.read" "council.threads"} op) (field value "entries") value)
-            noun ({"council.read" "message"
-                   "council.threads" "thread"
-                   "council.members" "member"
-                   "council.subagents" "subagent"}
+            noun ({"council.read" "message" "council.threads" "thread" "council.members" "member"}
                   op)
-            sections? (contains? #{"council.read" "council.subagents"} op)]
+            sections? (= op "council.read")]
 
         (cond-> {"headline" headline
                  "summary" (str (if (seq items)
@@ -766,30 +763,23 @@
                                             items)}]
                              [])}
           sections?
-          (assoc "sections" (mapv (if (= op "council.read") council-message council-agent) items))))
+          (assoc "sections" (mapv council-message items))))
 
-      "council.publish_spawn"
-      (let [agent (council-agent value)]
-        (assoc agent
-          "headline" headline
-          "summary" (str/join " · "
-                              (remove str/blank? [(get agent "headline") (get agent "summary")]))))
-
-      "council.cancel"
+      ("council.run" "council.wait" "council.cancel")
       {"headline" headline
-       "summary" (str (label (field value "status"))
-                      (when-let [cancelled (field value "cancelled")]
-                        (str " · " (counted-label (count cancelled) "subagent"))))
-       "content" []}
+       "summary" (if (seq value)
+                   (str/join " · "
+                             (for [[status n]
+                                   (sort-by key (frequencies (map #(field % "status") value)))]
+                               (str n " " (str/lower-case (label status)))))
+                   "No subagents")
+       "content" []
+       "sections" (mapv council-record value)}
 
-      "council.route"
+      "council.ask"
       {"headline" headline
-       "summary" (str (field value "provider")
-                      "/"
-                      (field value "model")
-                      (when-let [effective (field value "effective")]
-                        (str " · " (str/replace (scalar effective) "_" " "))))
-       "content" []})))
+       "summary" (if (and (string? value) (not (str/blank? value))) "Parent replied" "No reply")
+       "content" (if (string? value) (council-body {"content" value} "content") [])})))
 
 (defn- automation-state [value] (if (true? (field value "enabled")) "On" "Paused"))
 

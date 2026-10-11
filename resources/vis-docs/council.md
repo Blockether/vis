@@ -404,8 +404,9 @@ latest message addressed to the publishing session **if it is an unanswered
 request**. Otherwise it only records a message. It never selects an older request
 as a fallback.
 
-`reply_to` selects a particular unanswered request. It cannot answer the same
-request twice or reply to a reply. An explicit ping or `reply_required=True`
+`reply_to` selects a particular unanswered request. It cannot reply to a reply. If
+you answer the same request again, the message becomes a continuation in its
+thread, and the first reply stays the answer. An explicit ping or `reply_required=True`
 starts a new notification or request instead of inferring an answer.
 
 ### IDs and limits

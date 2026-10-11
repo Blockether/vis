@@ -90,7 +90,7 @@
                  (expect (nil? (agents/prompt {})))
                  (expect (every? #(false? ((:ext.symbol/active-fn %) {})) agents/symbols))
                  (toggles/set-enabled! "subagents" true)
-                 (expect (str/includes? (agents/prompt {}) "council.publish_spawn"))
+                 (expect (str/includes? (agents/prompt {}) "council.run"))
                  (expect (every? #((:ext.symbol/active-fn %) {}) agents/symbols)))))
 
 (defdescribe disabling-subagents-stops-wakes-and-new-iterations-without-erasing-teams
