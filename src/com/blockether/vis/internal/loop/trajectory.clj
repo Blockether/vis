@@ -116,16 +116,22 @@
   [block]
   (not-empty (select-keys (get block "activity") ["state" "counts" "rows"])))
 
+(defn- code-points
+  "The number of Unicode code points in `s`. Python and the JSON text count
+   characters this way, not as UTF-16 units."
+  [^String s]
+  (.codePointCount s 0 (.length s)))
+
 (defn- tool-call
   "The ATIF tool call and observation result of one code block. A persisted form
-   has its code in `src`."
-  [call-id block]
+   has its code in `src`. `ref` names the block when its envelope has no ref."
+  [call-id block ref]
   (let [envelope (get block "envelope")]
     {:call {:tool-call-id call-id
             :function-name (or (get block "tool_name") "python_execution")
             :arguments {"code" (str (or (get block "code") (get block "src")))}
             :extra (compact {:status (get envelope "status")
-                             :ref (get envelope "ref")
+                             :ref (or (get envelope "ref") ref)
                              :started-at-ms (get envelope "started_at_ms")
                              :finished-at-ms (get envelope "finished_at_ms")
                              :is-repaired (boolean (or (get envelope "is_repaired")
@@ -134,7 +140,7 @@
                                                       (get block "is_timeout")))
                              :activity (block-activity block)
                              :stdout-chars (some-> (get block "stdout")
-                                                   count)
+                                                   code-points)
                              :error (get block "error")
                              :repaired-source (get block "repaired_source")})}
      :result {:source-call-id call-id :content (observation-text block)}}))
@@ -165,7 +171,7 @@
         (boolean (get entry "is_final"))
 
         calls
-        (mapv tool-call (call-ids iteration blocks) blocks)
+        (mapv tool-call (call-ids iteration blocks) blocks (repeat nil))
 
         started
         (get-in (first blocks) ["envelope" "started_at_ms"])
@@ -224,10 +230,20 @@
         (nil? request) ""
         :else (wire/json-str request)))
 
+(defn- form-refs
+  "The ref `t<turn>/i<iteration>/f<form>` of each persisted form, as the envelope
+   of a live form names it. Without a turn position, each ref is nil."
+  [turn-position iteration forms]
+  (map-indexed (fn [i _]
+                 (when (and turn-position iteration)
+                   (str "t" turn-position "/i" iteration "/f" (inc (long i)))))
+               forms))
+
 (defn- iteration-step
   "The ATIF agent step of one persisted iteration: of a Council child, or of a
-   persisted run. The final iteration of a turn carries `answer`."
-  [step-id iteration answer]
+   persisted run. The final iteration of a turn carries `answer`. `turn-position`
+   is the position of its turn."
+  [step-id turn-position iteration answer]
   (let [position
         (get iteration "position")
 
@@ -235,7 +251,7 @@
         (get iteration "forms")
 
         calls
-        (mapv tool-call (call-ids position forms) forms)
+        (mapv tool-call (call-ids position forms) forms (form-refs turn-position position forms))
 
         created
         (epoch-ms (get iteration "created_at"))
@@ -257,6 +273,7 @@
              :source "agent"
              :message (or answer (get iteration "assistant_prose") "")
              :extra (compact {:iteration position
+                              :is-final (some? answer)
                               :provider (text-value (or (get iteration "llm_actual_provider")
                                                         (get iteration "provider")))
                               :finished-at-ms (or (epoch-ms (get iteration "finished_at")) created)
@@ -297,6 +314,7 @@
              (assoc :timestamp (iso-time created)))]
           (map-indexed (fn [i iteration]
                          (iteration-step (+ first-id 1 i)
+                                         (get turn "position")
                                          iteration
                                          (when (= i (dec (count iterations))) answer))))
           iterations)))
@@ -525,12 +543,14 @@
      :profile        the run options that shape the agent
      :iterations     the persisted iterations of the turn of the run. A persisted
                      run returns no `trace`, so they give its agent steps.
+     :turn-position  the position of that turn. It gives the refs of its forms.
      :subagents      the Council children of the run: agent rows with their
                      `turns`, and each turn with its persisted iterations in
                      `trace`
      :session-usage  the usage rollup of a persisted session
      :goal           the saved goal of a persisted session"
-  [result {:keys [prompt started-at-ms profile iterations subagents session-usage goal]}]
+  [result
+   {:keys [prompt started-at-ms profile iterations turn-position subagents session-usage goal]}]
   (let [run
         (wire/canonical (select-keys result
                                      [:session-id :content :trace :iteration-count :duration-ms
@@ -547,9 +567,11 @@
                  started-at-ms
                  (assoc :timestamp (iso-time started-at-ms)))]
               (if persisted
-                (map-indexed
-                  (fn [i iteration]
-                    (iteration-step (+ 2 i) iteration (when (= i (dec (count persisted))) answer))))
+                (map-indexed (fn [i iteration]
+                               (iteration-step (+ 2 i)
+                                               turn-position
+                                               iteration
+                                               (when (= i (dec (count persisted))) answer))))
                 (map-indexed (fn [i entry]
                                (agent-step (+ 2 i) entry answer))))
               (or persisted (get run "trace")))

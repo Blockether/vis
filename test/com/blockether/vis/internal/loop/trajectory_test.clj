@@ -169,6 +169,10 @@
                           [:tool-calls 0 :extra])]
         (expect (= 7 (:stdout-chars extra)))
         (expect (= {"message" "boom"} (:error extra)))))
+  (it "counts the stdout size in Unicode code points, as Python does"
+      (expect (= 2
+                 (get-in (block-step [{:code "x" :stdout "😀\n"}])
+                         [:tool-calls 0 :extra :stdout-chars]))))
   (it "adds the error of a failed block to its observation"
       (expect (= [{:source-call-id "vis-3-1"
                    :content "partial\n✗ runtime error: name 'x' is not defined"}]
@@ -200,13 +204,14 @@
    :model "claude-child"
    :provider "anthropic"
    :turns [{"turn_id" "turn-1"
+            "position" 2
             "request" "Count the files."
             "status" "completed"
             "created_at" 1200
             "content" [{"id" "block_1" "type" "prose" "markdown" "There are 3 files."}]
             "tokens" {"input" 300 "output" 20 "cached" 100}
             "cost" {"total_cost" 0.5}
-            "trace" [{"position" 0
+            "trace" [{"position" 1
                       "created_at" 1300
                       "finished_at" 1400
                       "thinking" "List the directory."
@@ -246,6 +251,8 @@
                     :timestamp "1970-01-01T00:00:01.200Z"}
                    request))
         (expect (= "There are 3 files." (:message step)))
+        (expect (true? (get-in step [:extra :is-final])))
+        (expect (= "t2/i1/f1" (get-in step [:tool-calls 0 :extra :ref])))
         (expect (= "claude-child" (:model-name step)))
         (expect (= "List the directory." (:reasoning-content step)))
         (expect (= {:prompt-tokens 300 :completion-tokens 20 :cached-tokens 100 :cost-usd 0.5}
@@ -279,37 +286,57 @@
                   :total-steps 2}
                  (:final-metrics (first (:subagent-trajectories team-document)))))))
 
+(def ^:private persisted-iterations
+  "The iterations of the turn of a persisted run. The answer step also runs code."
+  [{"position" 1
+    "created_at" 1000
+    "finished_at" 1500
+    "thinking" "Add the numbers."
+    "model" "claude-test"
+    "provider" "anthropic"
+    "input_tokens" 1200
+    "output_tokens" 80
+    "forms"
+    [{"src" "print(1 + 1)" "stdout" "2\n" "tool_call_id" "toolu_1" "tool_name" "python_execution"}]}
+   {"position" 2
+    "created_at" 2000
+    "forms" [{"src" "print('done')"
+              "stdout" "done\n"
+              "tool_call_id" "toolu_2"
+              "tool_name" "python_execution"}]}])
+
 (def ^:private persisted-document
   "A persisted run: the result has no trace, so the iterations of its turn come
    from the session."
   (trajectory/build (dissoc result :trace)
                     (assoc opts
-                      :iterations [{"position" 0
-                                    "created_at" 1000
-                                    "finished_at" 1500
-                                    "thinking" "Add the numbers."
-                                    "model" "claude-test"
-                                    "provider" "anthropic"
-                                    "input_tokens" 1200
-                                    "output_tokens" 80
-                                    "forms" [{"src" "print(1 + 1)"
-                                              "stdout" "2\n"
-                                              "tool_call_id" "toolu_1"
-                                              "tool_name" "python_execution"}]}
-                                   {"position" 1 "created_at" 2000 "forms" []}])))
+                      :iterations persisted-iterations
+                      :turn-position 3)))
 
-(defdescribe persisted-run-test
-             (it "maps the persisted iterations of a run without a trace to agent steps"
-                 (let [[request step final-step] (:steps persisted-document)]
-                   (expect (= 3 (count (:steps persisted-document))))
-                   (expect (= "What is 1 + 1?" (:message request)))
-                   (expect (= [2 3] [(:step-id step) (:step-id final-step)]))
-                   (expect (= "claude-test" (:model-name step)))
-                   (expect (= [{"code" "print(1 + 1)"}] (mapv :arguments (:tool-calls step))))
-                   (expect (= "2\n" (get-in step [:observation :results 0 :content])))
-                   (expect (= "The answer is 2." (:message final-step)))))
-             (it "keeps the totals of the result as the final metrics"
-                 (expect (= (:final-metrics document) (:final-metrics persisted-document)))))
+(defdescribe
+  persisted-run-test
+  (it "maps the persisted iterations of a run without a trace to agent steps"
+      (let [[request step final-step] (:steps persisted-document)]
+        (expect (= 3 (count (:steps persisted-document))))
+        (expect (= "What is 1 + 1?" (:message request)))
+        (expect (= [2 3] [(:step-id step) (:step-id final-step)]))
+        (expect (= "claude-test" (:model-name step)))
+        (expect (= [{"code" "print(1 + 1)"}] (mapv :arguments (:tool-calls step))))
+        (expect (= "2\n" (get-in step [:observation :results 0 :content])))
+        (expect (= "The answer is 2." (:message final-step)))))
+  (it "keeps the totals of the result as the final metrics"
+      (expect (= (:final-metrics document) (:final-metrics persisted-document))))
+  (it "marks only the answer step as final, also when it runs code"
+      (expect (= [false true]
+                 (mapv #(get-in % [:extra :is-final]) (rest (:steps persisted-document))))))
+  (it "names each persisted form with its turn, iteration and form"
+      (expect (= ["t3/i1/f1" "t3/i2/f1"]
+                 (mapv #(get-in % [:tool-calls 0 :extra :ref])
+                       (rest (:steps persisted-document))))))
+  (it "leaves out the ref of a persisted form when the turn position is unknown"
+      (expect (nil? (get-in (trajectory/build (dissoc result :trace)
+                                              (assoc opts :iterations persisted-iterations))
+                            [:steps 1 :tool-calls 0 :extra :ref])))))
 
 (defdescribe
   known-secrets-test

@@ -323,6 +323,24 @@ class ToolCall:
         return _str(self.arguments.get("code"))
 
     @property
+    def stdout(self) -> str:
+        """The standard output of the block: the start of `output`.
+
+        The first `stdout_chars` Unicode code points of `output` are the standard
+        output. A newline separates them from the error text. Vis leaves a blank
+        standard output out of `output`, so a blank or missing standard output gives
+        "".
+        """
+        size = self.stdout_chars
+        text = self.output or ""
+        if not size or len(text) < size:
+            return ""
+        head = text[:size]
+        if not head.strip() or (len(text) > size and text[size] != "\n"):
+            return ""
+        return head
+
+    @property
     def activity_state(self) -> str | None:
         """The state of the whole block, or None without Activity."""
         return self.activity.state if self.activity is not None else None
@@ -553,8 +571,9 @@ class Trajectory:
     def final_step(self) -> Step | None:
         """The step with the final answer, or None when the run has no final answer.
 
-        A trace run marks that step with `is_final`. A persisted run has no marks:
-        then it is the last agent step, if that step has no code blocks and no error.
+        Vis marks that step with `is_final`. A file without marks, such as one from an
+        earlier Vis version, ends with the last agent step, if that step has no code
+        blocks and no error.
         """
         agent_steps = self.agent_steps
         if any("is_final" in step.extra for step in agent_steps):

@@ -1951,18 +1951,19 @@
                                      (ex-message e)))
            nil))))
 
-(defn- persisted-iterations
-  "The iterations of the last turn of the persisted session `sid`, for the
-   `--trajectory` file. A persisted run returns no trace. A failed read gives a
-   warning and nil, so the file still has the run."
+(defn- persisted-turn
+  "The iterations and the position of the last turn of the persisted session
+   `sid`, for the `--trajectory` file. A persisted run returns no trace. A failed
+   read gives a warning and nil, so the file still has the run."
   [sid]
   (when sid
-    (try (when-let [turn (last (gateway-state/list-turns (str sid)))]
-           (gateway-state/turn-trace (str sid) (or (get turn "turn_id") (get turn "id"))))
-         (catch Exception e
-           (commandline/stderr! (str "vis-agent: the trajectory has no iterations: "
-                                     (ex-message e)))
-           nil))))
+    (try
+      (when-let [turn (last (gateway-state/list-turns (str sid)))]
+        {:iterations (gateway-state/turn-trace (str sid) (or (get turn "turn_id") (get turn "id")))
+         :turn-position (get turn "position")})
+      (catch Exception e
+        (commandline/stderr! (str "vis-agent: the trajectory has no iterations: " (ex-message e)))
+        nil))))
 
 (defn- persisted-session
   "The usage rollup and the saved goal of the persisted session `sid`, for the
@@ -2058,9 +2059,9 @@
                 (merge {:prompt prompt
                         :started-at-ms started-at-ms
                         :profile (run-profile opts)
-                        :iterations (when (and (:persist? opts) (empty? (:trace result)))
-                                      (persisted-iterations (:session-id result)))
                         :subagents (when (:persist? opts) (council-subagents (:session-id result)))}
+                       (when (and (:persist? opts) (empty? (:trace result)))
+                         (persisted-turn (:session-id result)))
                        (when (:persist? opts) (persisted-session (:session-id result)))))
               nil
               (catch Exception e (str "vis-agent: cannot write the trajectory: " (ex-message e)))))

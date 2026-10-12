@@ -277,6 +277,23 @@ def test_a_failed_block_keeps_its_error_output_and_repair():
     assert tool.is_repaired and tool.repaired_source == "shell('make test')\n"
     assert tool.activity_state == "failed" and tool.activity_counts.failed == 1
     assert tool.code == "shell('make test')"
+    assert tool.stdout == ""
+
+
+def test_stdout_is_the_start_of_the_output_before_the_error_text():
+    call = parse_trajectory(_document()).tool_calls[0]
+    assert call.stdout == "3\n"
+
+    def stdout(output, stdout_chars):
+        return dataclasses.replace(
+            call, output=output, stdout_chars=stdout_chars
+        ).stdout
+
+    assert stdout("partial\nRuntimeError: boom", 7) == "partial"
+    assert stdout("3\n\nRuntimeError: boom", 2) == "3\n"
+    assert stdout("RuntimeError: boom", 3) == ""
+    assert stdout("RuntimeError: boom", None) == ""
+    assert stdout(None, 2) == ""
 
 
 def test_a_step_without_metrics_or_blocks_has_empty_values():
