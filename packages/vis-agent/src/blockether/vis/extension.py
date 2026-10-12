@@ -142,6 +142,14 @@ class Host(Protocol):
         """Run one active session tool by the name `python_execution` calls."""
         ...
 
+    def read_session(self, target: str | None) -> str:
+        """Read one whole session as the sandbox `read_session` does. Return JSON."""
+        ...
+
+    def list_sessions(self, search: str | None) -> str:
+        """List sessions as the sandbox `list_sessions` does. Return JSON."""
+        ...
+
     def attach(self, options: Mapping[str, Any]) -> str:
         """Store one artifact of the running block. Return its descriptor as JSON."""
         ...
@@ -3972,6 +3980,32 @@ def show_attachment(target, version=None):
     """
     shown = list(_host.show_attachment(*_attachment_target(target, version)))
     return dict(zip(("id", "filename", "media_type", "size"), shown, strict=True))
+
+
+def read_session(target=None):
+    """Read one whole session, exactly as the sandbox `read_session` does.
+
+    Without `target`, it reads the session that runs the extension. `target` takes a
+    bare id, an unambiguous prefix or the copied `vis_session_id#<uuid>` marker. The
+    `introspection` toggle does not apply, because an extension is trusted code.
+
+    Returns the same string-keyed dict: session, current_turn, failures, diagnosis,
+    session_forks, turn_retries, usage and transcript.
+    """
+    return json.loads(_host.read_session(None if target is None else str(target)))
+
+
+def list_sessions(search=None):
+    """List sessions newest first, exactly as the sandbox `list_sessions` does.
+
+    With `search`, it runs the session search of the TUI and the Companion app. The
+    rows come in rank order: title, request, reply, then thinking, newest first in
+    each rank. Keep that order. The `introspection` toggle does not apply.
+
+    Returns string-keyed rows: id, channel, title, goal, turn_count, created_at and
+    modified_at. A match adds rank, the is_in_* flags and optional snippets.
+    """
+    return json.loads(_host.list_sessions(None if search is None else str(search)))
 
 
 # -- Live views ---------------------------------------------------------------

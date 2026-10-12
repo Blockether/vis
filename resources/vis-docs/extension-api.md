@@ -13,8 +13,8 @@ callbacks and host operations.
   [settings](#settings) with their allowed scopes.
 - **Your extension needs a service from Vis**, such as [durable
   state](#durable-state), [environment variables](#environment), [session
-  context](#session-context), [attachments](#attachments) or [another session
-  tool](#call-other-session-tools).
+  context](#session-context), [attachments](#attachments), [another session
+  tool](#call-other-session-tools) or [other sessions](#find-and-read-sessions).
 - **Your own program must read or export Activity history.** Read [Sessions
   API](sessions-api.md#read-activity-history).
 - **Your editor or type checker reports errors for code that runs in Vis.**
@@ -1083,6 +1083,37 @@ directory. A hosted call without a bound session fails and does not use the gate
 
 It does not grant filesystem permissions. The model sandbox uses `project_root_path` for the
 corresponding root. Extension code uses this SDK function.
+
+## Find and read sessions
+
+Call `vis.list_sessions(search=…)` to find a conversation, and `vis.read_session(id)` to read it.
+For example, your extension can turn a failed turn into a test case. Both functions return the
+same string-keyed data as the sandbox tools with the same names.
+
+```python
+import blockether.vis.extension as vis
+
+rows = vis.list_sessions(search="release")
+data = vis.read_session(rows[0]["id"]) if rows else vis.read_session()
+last = data["transcript"]["turns"][-1]
+request, status = last["user_request"], last["status"]
+```
+
+`vis.list_sessions()` lists every session, newest first. With `search`, it runs the session search
+of the TUI and the Companion app. Matches in the title come first, then the request, the reply and
+the thinking. Keep that order. Each row has `id`, `title`, `turn_count`, `created_at` and
+`modified_at`. A match adds `rank`, the `is_in_*` flags and optional snippets.
+
+`vis.read_session()` without an argument reads the session that runs your extension. An argument
+takes a bare id, an unambiguous prefix or the `vis_session_id#<uuid>` marker that a person copies
+from the TUI or the Companion app. The dict has `session`, `current_turn`, `failures`,
+`diagnosis`, `session_forks`, `turn_retries`, `usage` and `transcript`. Each turn has `position`,
+`user_request`, `status`, `content` and `iterations`. Each iteration has `blocks` with `code`,
+`stdout` and `error`.
+
+The `introspection` setting does not apply, because an extension is trusted code. The setting
+controls only the model's own session tools. Outside a Vis process, both functions raise an
+error. There, use the SDK client.
 
 ## Call other session tools
 

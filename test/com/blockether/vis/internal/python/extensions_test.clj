@@ -1034,7 +1034,56 @@
   (it "refuses a hosted call without an owning session"
       (let [root (get (pyx/host-doors nil "test" nil) "__vis_host_workspace_root__")]
         (expect (= :session-not-bound
-                   (try (root) (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))))))
+                   (try (root) (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
+  (it
+    "reads and searches sessions through the canonical session doors"
+    (let [store
+          (ps/db-create-connection! :memory)
+
+          registered?
+          (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions))
+
+          doors
+          (pyx/host-doors nil "test" nil)
+
+          read-door
+          (get doors "__vis_host_read_session__")
+
+          list-door
+          (get doors "__vis_host_list_sessions__")]
+
+      (when-not registered? (foundation/register!))
+      (try (let [sid
+                 (db-test/store-session! store {:channel :tui :title "Door fixture"})
+
+                 other
+                 (db-test/store-session! store {:channel :tui :title "Release notes"})
+
+                 _
+                 (ps/db-store-session-turn!
+                   store
+                   {:parent-session-id sid :user-request "Fix the typo." :status :running})
+
+                 call
+                 (fn [door arg]
+                   (binding [extension/*current-environment* {:session-id sid :db-info store}]
+                     (json/read-json (door arg))))
+
+                 data
+                 (call read-door nil)]
+
+             (expect (= (str sid) (get-in data ["session" "id"])))
+             (expect (= [[1 "Fix the typo."]]
+                        (mapv (juxt #(get % "position") #(get % "user_request"))
+                              (get-in data ["transcript" "turns"]))))
+             (expect (= #{(str sid) (str other)} (set (map #(get % "id") (call list-door nil)))))
+             (expect (= [(str other)] (mapv #(get % "id") (call list-door "Release"))))
+             (expect (= [:session-not-bound :session-not-bound]
+                        (for [door [read-door list-door]]
+                          (try (door nil)
+                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
+           (finally (when-not registered? (extension/deregister-extension! "foundation-core"))
+                    (ps/db-dispose-connection! store))))))
 
 (defdescribe
   dependency-errors-keep-safe-diagnostics-test

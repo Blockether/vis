@@ -49,6 +49,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
+            [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
@@ -557,6 +558,19 @@
   [g n f]
   (vswap! g assoc n f))
 
+(defn- session-read
+  "Run one canonical session read for `vis.<verb>` and answer its data as JSON.
+   It is the sandbox read without the `introspection` toggle: extensions are trusted
+   code, and the toggle gates only the model's tools."
+  [verb read arg]
+  (let [env extension/*current-environment*]
+    (when-not (and (:session-id env) (:db-info env))
+      (throw (ex-info (str "vis." verb " needs a bound Vis session") {:error :session-not-bound})))
+    (let [envelope (read env arg)]
+      (when-not (:success? envelope)
+        (throw (ex-info (str "vis." verb " failed") {:error :session-read-failed})))
+      (wire/json-str (:result envelope)))))
+
 (defn ^:no-doc host-doors
   "The `__vis_host_*` callables an extension context receives as `{name fn}`.
    The bootstrap and inert checker derive their members from these bindings.
@@ -605,6 +619,14 @@
                                                   (:workspace/root env))))
                   (throw (ex-info "vis.workspace_root needs a session workspace"
                                   {:error :workspace-root-unavailable}))))))
+    (put! g
+          "__vis_host_read_session__"
+          (fn [target]
+            (session-read "read_session" introspection/read-session target)))
+    (put! g
+          "__vis_host_list_sessions__"
+          (fn [search]
+            (session-read "list_sessions" introspection/list-sessions search)))
     (put! g
           "__vis_host_council_wake__"
           (fn [opts]

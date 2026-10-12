@@ -82,6 +82,22 @@ def call_tool(tool, args, kwargs):
     )
 
 
+def read_session(target):
+    """Refuse a session read without a bound Vis session and its database."""
+    raise Refused(
+        "vis.read_session needs a bound Vis session. Outside an extension, read the "
+        "session with the SDK client's get_session_transcript(session_id)."
+    )
+
+
+def list_sessions(search):
+    """Refuse a session search without a bound Vis session and its database."""
+    raise Refused(
+        "vis.list_sessions needs a bound Vis session. Outside an extension, list the "
+        "sessions with the SDK client's list_sessions()."
+    )
+
+
 # -- Where the outside host keeps things --------------------------------------
 
 
@@ -1420,6 +1436,8 @@ _IMPLEMENTATIONS = {
     "jailed_shell": jailed_shell,
     "council_wake": council_wake,
     "call_tool": call_tool,
+    "read_session": read_session,
+    "list_sessions": list_sessions,
     "request_input": request_input,
     "live": live,
     "activity": lambda blocks: False,
