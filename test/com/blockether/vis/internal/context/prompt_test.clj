@@ -716,6 +716,7 @@
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
         (doseq [rule ["Unless the user asks for another language"
                       "the reply language is the language of the user's latest request"
+                      "`session[\"reply_language\"]` names it when the host can tell"
                       "each progress note and the final answer, also after tool output"
                       "If that request is short or mixes languages"
                       "keep the language of the user's earlier requests"
@@ -874,7 +875,9 @@
       ;; #349: the shell handle line says that `sh.type` adds Enter and how to omit it.
       ;; It lands at 12 138.
       ;; `ls` gains `is_ignored`, which lists gitignored entries. It lands at 12 183.
-      (expect (< (count text) 12200))
+      ;; §7 names `session["reply_language"]`, which the host sets from the user's requests.
+      ;; It lands at 12 244.
+      (expect (< (count text) 12300))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
                          "`patch(path, edits)`"])]

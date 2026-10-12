@@ -226,6 +226,20 @@
   (it "omits the goal line for a session without a goal"
       (let [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx "session_turn" 4)})]
         (expect (not (str/includes? boundary "session[\"goal\"]")))))
+  ;; Regression: Opus drifted from the user's Polish to German or English notes mid-turn.
+  ;; The host now names the reply language at each turn boundary.
+  (it "renders the reply language of the turn"
+      (let [ctx (ctx-engine/with-reply-language (assoc base-ctx "session_turn" 4) "Polish")]
+        (expect (str/includes? (cr/render-turn-boundary {:ctx ctx})
+                               "session[\"reply_language\"] = \"Polish\""))
+        (expect (= "Polish"
+                   (get (cr/project-ctx (ctx-engine/session-view ctx)) "reply_language")))))
+  (it "omits the reply language when no request showed one"
+      (let [ctx (ctx-engine/with-reply-language (assoc base-ctx
+                                                  "session_turn" 4
+                                                  "session_reply_language" "Polish")
+                                                nil)]
+        (expect (not (str/includes? (cr/render-turn-boundary {:ctx ctx}) "reply_language")))))
   (it "keeps the changing goal after the cached system prefix"
       (let [active
             (assoc base-ctx

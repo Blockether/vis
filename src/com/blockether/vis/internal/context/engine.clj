@@ -91,6 +91,12 @@
       turn-changed?
       (dissoc prompt-cache-status-key))))
 
+(defn with-reply-language
+  "Set the model-facing reply language of the turn, a language name such as
+   `\"Polish\"`. A nil `language` drops the key: no user request showed one."
+  [ctx language]
+  (if language (assoc ctx "session_reply_language" language) (dissoc ctx "session_reply_language")))
+
 ;; Empty-ctx constructor — used by tests + scenario replayer
 (defn empty-ctx
   "A minimal CTX scaffold with all model-facing keys filled by empty /
@@ -214,7 +220,7 @@
    included as an environment-derived value; engine bookkeeping remains hidden."
   ["session_id" "session_turn" "session_scope" "session_workspace" "session_access" "session_env"
    "session_routing" "session_symbols" "session_council" "session_goal" "session_agent"
-   "session_extension_context"])
+   "session_reply_language" "session_extension_context"])
 
 (defn scope-key
   "Ordered key for a scope so ranges can compare scopes: `\"t1/i2\"` or

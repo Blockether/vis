@@ -46,7 +46,7 @@
 (def ^:private reserved-context-keys
   "Core fields cannot be replaced by custom extension keys."
   #{"id" "turn" "scope" "workspace" "access" "env" "routing" "symbols" "council" "agent" "goal"
-    "utilization"})
+    "reply_language" "utilization"})
 
 (defn- extension-context
   [view]
@@ -72,6 +72,9 @@
 
      (get view "session_goal")
      (assoc "goal" (get view "session_goal"))
+
+     (get view "session_reply_language")
+     (assoc "reply_language" (get view "session_reply_language"))
 
      (get view "session_council")
      (assoc "council" (get view "session_council"))
@@ -158,8 +161,8 @@
 
 (defn ctx-delta-map
   "Per-iteration CURRENT map for the structural ctx delta: `ctx-static-map`
-   PLUS the live goal and utilization. Both change during a run, so they ride
-   after the cached prefix rather than being frozen in the system message."
+   PLUS the live goal, reply language and utilization. They change during a run,
+   so they ride after the cached prefix rather than being frozen in the system message."
   [{:keys [ctx warnings]}]
   (let [view
         (eng/session-view ctx warnings)
@@ -171,6 +174,9 @@
       (get view "session_goal")
       (assoc "goal" (get view "session_goal"))
 
+      (get view "session_reply_language")
+      (assoc "reply_language" (get view "session_reply_language"))
+
       (get view "session_utilization")
       (assoc "utilization" (get view "session_utilization")))))
 
@@ -181,7 +187,10 @@
 
    The goal rides here for the same reason: `/goal` persists AFTER the frozen
    standing block was rendered, so without this line the very turn that sets a
-   goal shows the model a session without one."
+   goal shows the model a session without one.
+
+   The reply language rides here too: the host sets it at turn start from the
+   user's requests, so each turn names the language of its notes and answer."
   [{:keys [ctx warnings]}]
   (let [view
         (eng/session-view ctx warnings)
@@ -193,12 +202,17 @@
         (get view "session_utilization")
 
         goal
-        (get view "session_goal")]
+        (get view "session_goal")
+
+        reply-language
+        (get view "session_reply_language")]
 
     (str "session[\"turn\"] = "
          (env/ctx->python-str turn)
          (when utilization (str "\nsession[\"utilization\"] = " (env/ctx->python-str utilization)))
-         (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-str goal))))))
+         (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-str goal)))
+         (when reply-language
+           (str "\nsession[\"reply_language\"] = " (env/ctx->python-str reply-language))))))
 
 (defn- ctx-path-str
   "A key path `[\"env\" \"host\" \"os\"]` → the Python subscript chain
