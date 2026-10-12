@@ -698,7 +698,24 @@
         (let [out (attachments/prepare-inline-attachments
                     [{:filename "report.docx" :media-type docx-media-type :base64 (b64 bytes)}])]
           (expect (empty? (:attached out)))
-          (expect (= "not a supported attachment format" (:reason (first (:skipped out)))))))))
+          (expect (= "not a supported attachment format" (:reason (first (:skipped out))))))))
+  (it "sniffs a Word document on disk whose registry is past the file head"
+      (let [f
+            (File. (temp-dir) "late-registry.docx")
+
+            main-type
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"]
+
+        (Files/write (.toPath f)
+                     (zip-bytes
+                       [["word/document.xml"
+                         (let [rnd (java.util.Random. 7)]
+                           (apply str (repeatedly 20000 #(char (+ 97 (.nextInt rnd 26))))))]
+                        ["[Content_Types].xml"
+                         (str "<Types><Override ContentType=\"" main-type "\"/></Types>")]])
+                     (make-array java.nio.file.OpenOption 0))
+        (expect (< 4100 (.length f)))
+        (expect (= docx-media-type (attachments/sniff-file-mime f))))))
 
 (defdescribe
   markdown-attachment-test

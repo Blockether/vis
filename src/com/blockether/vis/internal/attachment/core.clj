@@ -42,7 +42,7 @@
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.util Arrays Base64]
-           [java.util.zip ZipInputStream]))
+           [java.util.zip ZipFile ZipInputStream]))
 
 ;; Limits
 
@@ -424,6 +424,11 @@
    different one."
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")
 
+(defn- docx-registry?
+  "True when the bytes of a `[Content_Types].xml` registry name a Word document."
+  [^bytes registry]
+  (str/includes? (String. registry StandardCharsets/UTF_8) docx-main-content-type))
+
 (defn detect-docx-mime
   "Sniff a Word document: a ZIP package whose `[Content_Types].xml` registry
    names [[docx-main-content-type]]. The filename and the claimed type are never
@@ -434,10 +439,19 @@
            (loop [entry (.getNextEntry zip)]
              (when entry
                (if (= "[Content_Types].xml" (.getName entry))
-                 (when (str/includes? (String. (.readNBytes zip 65536) StandardCharsets/UTF_8)
-                                      docx-main-content-type)
-                   (:docx document-media-types))
+                 (when (docx-registry? (.readNBytes zip 65536)) (:docx document-media-types))
                  (recur (.getNextEntry zip))))))
+         (catch Exception _ nil))))
+
+(defn- detect-docx-file
+  "Sniff a Word document on disk through the ZIP central directory. The registry
+   can be at any position in the archive, also past the sniffed file head."
+  [^File f ^bytes head]
+  (when (bytes-at? head 0 [0x50 0x4b 0x03 0x04])
+    (try (with-open [zip (ZipFile. f)]
+           (when-let [entry (.getEntry zip "[Content_Types].xml")]
+             (with-open [in (.getInputStream zip entry)]
+               (when (docx-registry? (.readNBytes in 65536)) (:docx document-media-types)))))
          (catch Exception _ nil))))
 
 (defn detect-media-mime
@@ -483,7 +497,7 @@
                buf (byte-array n)]
 
            (.readFully raf buf)
-           (detect-media-mime buf)))
+           (or (detect-media-mime buf) (detect-docx-file f buf))))
        (catch Throwable _ nil)))
 
 ;; Path-candidate extraction

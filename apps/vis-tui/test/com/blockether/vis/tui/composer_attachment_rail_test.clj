@@ -144,3 +144,16 @@
                                                      :size 441
                                                      :transcription "hello there"})
                              "transcript ready"))))
+
+(defdescribe word-document-rail-label
+             (it "labels a staged Word document DOCX"
+                 (let [{:keys [capture]}
+                       (paint-rail
+                         72
+                         false
+                         [{:id "docx-1"
+                           :filename "Tryb.docx"
+                           :media-type
+                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                           :size 2048}])]
+                   (expect (str/includes? (cap/frame-text capture) "DOCX  Tryb.docx  ·  2.0 KB")))))

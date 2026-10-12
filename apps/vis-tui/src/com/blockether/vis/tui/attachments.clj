@@ -11,7 +11,7 @@
 
    What a file IS is sniffed from magic bytes (pi-parity: jpeg / non-animated
    png / gif / webp / bmp, plus MP4/QuickTime clips, mp3/m4a/wav/ogg/flac
-   recordings, PDF/HTML documents and gzip streams) or, for SVG, from the
+   recordings, PDF/HTML/Word documents and gzip streams) or, for SVG, from the
    markup head -- never trusted from the extension alone. A container the model
    cannot consume is still attached: recordings, documents and compressed files
    are kept for the HUMAN and NAMED to the model ([[model-blind-media-type?]]).
@@ -38,10 +38,11 @@
             [com.blockether.vis.tui.image-convert :as image-convert]
             [com.blockether.vis.tui.paths :as paths]
             [com.blockether.vis.tui.util :as util])
-  (:import [java.io File RandomAccessFile]
+  (:import [java.io ByteArrayInputStream File RandomAccessFile]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
-           [java.util Base64]))
+           [java.util Base64]
+           [java.util.zip ZipFile ZipInputStream]))
 
 ;; Limits
 
@@ -324,7 +325,8 @@
   {:pdf "application/pdf"
    :html "text/html"
    :xhtml "application/xhtml+xml"
-   :jsonl "application/x-ndjson"})
+   :jsonl "application/x-ndjson"
+   :docx "application/vnd.openxmlformats-officedocument.wordprocessingml.document"})
 
 (def gzip-media-types
   "MIME spellings file providers use for a gzip stream. Intake sniffs and stores
@@ -383,15 +385,53 @@
           (try (when (map? (json/read-json line)) "application/x-ndjson")
                (catch Exception _ nil)))))))
 
+(def ^:private docx-main-content-type
+  "The content type that the package registry gives the main part of a Word
+   document. A macro-enabled document, a template and a spreadsheet each have a
+   different one."
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")
+
+(defn- docx-registry?
+  "True when the bytes of a `[Content_Types].xml` registry name a Word document."
+  [^bytes registry]
+  (str/includes? (String. registry StandardCharsets/UTF_8) docx-main-content-type))
+
+(defn detect-docx-mime
+  "Sniff a Word document: a ZIP package whose `[Content_Types].xml` registry
+   names [[docx-main-content-type]]. The filename and the claimed type are never
+   asked. A truncated or unrelated archive returns nil."
+  [^bytes b]
+  (when (bytes-at? b 0 [0x50 0x4b 0x03 0x04])
+    (try (with-open [zip (ZipInputStream. (ByteArrayInputStream. b))]
+           (loop [entry (.getNextEntry zip)]
+             (when entry
+               (if (= "[Content_Types].xml" (.getName entry))
+                 (when (docx-registry? (.readNBytes zip 65536)) (:docx document-media-types))
+                 (recur (.getNextEntry zip))))))
+         (catch Exception _ nil))))
+
+(defn- detect-docx-file
+  "Sniff a Word document on disk through the ZIP central directory. The registry
+   can be at any position in the archive, also past the sniffed file head."
+  [^File f ^bytes head]
+  (when (bytes-at? head 0 [0x50 0x4b 0x03 0x04])
+    (try (with-open [zip (ZipFile. f)]
+           (when-let [entry (.getEntry zip "[Content_Types].xml")]
+             (with-open [in (.getInputStream zip entry)]
+               (when (docx-registry? (.readNBytes in 65536)) (:docx document-media-types)))))
+         (catch Exception _ nil))))
+
 (defn detect-media-mime
   "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
-   then audio, video, document and gzip detection. Stills win the ISO-BMFF tie
-   deliberately; recordings are asked about before clips for the same reason."
+   then audio, video, document, Word document and gzip detection. Stills win the
+   ISO-BMFF tie deliberately; recordings are asked about before clips for the same
+   reason."
   [^bytes b]
   (or (detect-image-mime b)
       (detect-audio-mime b)
       (detect-video-mime b)
       (detect-document-mime b)
+      (detect-docx-mime b)
       (detect-gzip-mime b)
       (detect-jsonl-mime b)))
 
@@ -424,7 +464,7 @@
                buf (byte-array n)]
 
            (.readFully raf buf)
-           (detect-media-mime buf)))
+           (or (detect-media-mime buf) (detect-docx-file f buf))))
        (catch Throwable _ nil)))
 
 ;; Path-candidate extraction
@@ -803,6 +843,10 @@
   "Why a PDF or an HTML page is named to the model instead of shown to it."
   "a document for the human — open the file to read it, it is never an image block")
 
+(def ^:private word-document-reason
+  "Why a Word document is named to the model instead of sent as multimodal content."
+  "a Word document — inspect it with read_attachment and a zip/XML reader (word/document.xml); it is never an image block")
+
 (def ^:private compressed-file-reason
   "Why a gzip stream is named to the model instead of sent as multimodal content."
   "a gzip file — inspect it with read_attachment and a gzip/tar reader; it is never an image block")
@@ -1164,6 +1208,7 @@
                                                                    recording-reason
                                                                    transcribed-recording-reason)
                                   (gzip-media-type? media-type) compressed-file-reason
+                                  (= (:docx document-media-types) media-type) word-document-reason
                                   (human-only-media-type? media-type) human-only-doc-reason
                                   :else user-only-reason)
                     :readable-blind? true
