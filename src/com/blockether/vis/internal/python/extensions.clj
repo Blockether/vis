@@ -48,6 +48,7 @@
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
+            [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
@@ -733,6 +734,8 @@
                                    (str/join ", " (sort (keys resolved)))
                                    " resolved")})
               (json/write-json-str resolved))))
+    (doseq [[n f] (shim-attach/extension-host-doors)]
+      (put! g n f))
     @g))
 
 (defn ^:no-doc bind-host!

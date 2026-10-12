@@ -8,6 +8,7 @@ primes prompt values. With `VIS_OUTSIDE_NONINTERACTIVE=1`, prompts return
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import secrets
@@ -210,6 +211,93 @@ def reveal_secret(handle):
 
 def forget_secret(handle):
     return _VAULT.pop(str(handle), None) is not None
+
+
+# -- Attachments ----------------------------------------------------------------
+# Outside Vis, no session stores artifacts. They stay in this process memory, so
+# an extension test can attach an artifact and read it back.
+
+_ARTIFACTS = []
+_ARTIFACT_BYTES = {}
+
+
+def attach(options):
+    """Store one artifact in memory and return its descriptor as JSON."""
+    data = base64.b64decode(options.get("base64") or "")
+    if not data:
+        raise ValueError("vis.attach: empty payload.")
+    name = options.get("filename") or "artifact"
+    media_type = (
+        options.get("media_type")
+        or options.get("media_type_hint")
+        or "application/octet-stream"
+    )
+    with _LOCK:
+        row = {
+            "id": uuid.uuid4().hex,
+            "source": "tool",
+            "filename": name,
+            "version": 1 + sum(1 for r in _ARTIFACTS if r["filename"] == name),
+            "media_type": media_type,
+            "kind": options.get("kind")
+            or ("image" if media_type.startswith("image/") else "file"),
+            "size": len(data),
+            "is_pending": True,
+            "audience": options.get("audience") or "both",
+            "commentable": options.get("commentable") is True,
+        }
+        _ARTIFACTS.append(row)
+        _ARTIFACT_BYTES[row["id"]] = data
+    return json.dumps(row)
+
+
+def list_attachments():
+    """List the in-memory artifact descriptors as JSON, oldest first."""
+    with _LOCK:
+        return json.dumps(_ARTIFACTS)
+
+
+def _artifact(caller, target, version):
+    # The same addressing as the engine: an id, or a filename with an optional
+    # version, where a negative version counts back from the latest one.
+    with _LOCK:
+        if version is None:
+            for row in _ARTIFACTS:
+                if row["id"] == target:
+                    return row
+        versions = sorted(
+            (r for r in _ARTIFACTS if r["filename"] == target),
+            key=lambda r: r["version"],
+        )
+    if versions:
+        if version is None:
+            return versions[-1]
+        if -len(versions) <= version <= -1:
+            return versions[version]
+        for row in versions:
+            if row["version"] == version:
+                return row
+        raise LookupError(f"{caller}: {target!r} has no version {version}.")
+    raise LookupError(f"{caller}: unknown id or filename {target!r}.")
+
+
+def get_attachment(target, version):
+    """Return one in-memory artifact descriptor as JSON."""
+    return json.dumps(_artifact("get_attachment", target, version))
+
+
+def read_attachment(target, version):
+    """Return the bytes of one in-memory artifact as base64 text."""
+    row = _artifact("read_attachment", target, version)
+    return base64.b64encode(_ARTIFACT_BYTES[row["id"]]).decode("ascii")
+
+
+def show_attachment(target, version):
+    """Accept an image. Outside Vis, no model request follows to show it to."""
+    row = _artifact("show_attachment", target, version)
+    if not row["media_type"].startswith("image/"):
+        raise ValueError(f"show_attachment: {row['filename']!r} is not an image.")
+    return [row["id"], row["filename"], row["media_type"], row["size"]]
 
 
 # -- Environment --------------------------------------------------------------
@@ -1338,6 +1426,11 @@ _IMPLEMENTATIONS = {
     "reveal_secret": reveal_secret,
     "forget_secret": forget_secret,
     "declare_env": declare_env,
+    "attach": attach,
+    "list_attachments": list_attachments,
+    "get_attachment": get_attachment,
+    "read_attachment": read_attachment,
+    "show_attachment": show_attachment,
 }
 
 

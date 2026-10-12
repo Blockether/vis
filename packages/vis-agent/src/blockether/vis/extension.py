@@ -9,10 +9,14 @@ from __future__ import annotations
 import __future__
 
 import ast
+import base64
 import builtins
 import inspect
+import io
 import json
 import math
+import mimetypes
+import os
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -136,6 +140,26 @@ class Host(Protocol):
         self, tool: str, args: Sequence[Any], kwargs: Mapping[str, Any]
     ) -> Any:
         """Run one active session tool by the name `python_execution` calls."""
+        ...
+
+    def attach(self, options: Mapping[str, Any]) -> str:
+        """Store one artifact of the running block. Return its descriptor as JSON."""
+        ...
+
+    def list_attachments(self) -> str:
+        """List the session's artifact descriptors as JSON, pending ones included."""
+        ...
+
+    def get_attachment(self, target: str, version: int | None) -> str:
+        """Return the descriptor of one artifact as JSON."""
+        ...
+
+    def read_attachment(self, target: str, version: int | None) -> str:
+        """Return the bytes of one artifact as base64 text."""
+        ...
+
+    def show_attachment(self, target: str, version: int | None) -> Sequence[Any]:
+        """Queue a stored image for the next model request: id, filename, type, size."""
         ...
 
 
@@ -3804,6 +3828,150 @@ def forget(handle):
     if not handle:
         return False
     return bool(_host.forget_secret(str(handle)))
+
+
+# -- Attachments ----------------------------------------------------------------
+# An extension tool stores and reads artifacts like the sandbox `attach` verbs.
+# The engine binds each call to the python_execution block that runs the tool.
+
+_ATTACH_AUDIENCES = ("both", "user", "model")
+
+# Pillow encoders by filename suffix, as in the sandbox `attach` verb.
+_PIL_FORMATS = {
+    ".png": "PNG",
+    ".jpg": "JPEG",
+    ".jpeg": "JPEG",
+    ".gif": "GIF",
+    ".bmp": "BMP",
+    ".webp": "WEBP",
+    ".tif": "TIFF",
+    ".tiff": "TIFF",
+}
+
+
+def _attachment_row(row):
+    # The engine sends kebab-case keys; the SDK returns snake_case keys.
+    return {str(k).replace("-", "_"): v for k, v in dict(row).items()}
+
+
+def _attachment_source(source, filename):
+    """Return `(bytes, filename)` for a path, bytes, a figure or a Pillow image."""
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        return bytes(source), str(filename) if filename else "artifact"
+    if hasattr(source, "savefig"):
+        buffer = io.BytesIO()
+        source.savefig(buffer, format="png")
+        return buffer.getvalue(), str(filename) if filename else "figure.png"
+    if hasattr(source, "save") and hasattr(source, "mode") and hasattr(source, "size"):
+        name = str(filename) if filename else "image.png"
+        buffer = io.BytesIO()
+        source.save(buffer, format=_PIL_FORMATS.get(Path(name).suffix.lower(), "PNG"))
+        return buffer.getvalue(), name
+    if not isinstance(source, (str, PathLike)):
+        raise TypeError(
+            "vis.attach: source must be a path, bytes, an image or a figure object, got "
+            + type(source).__name__
+        )
+    path = Path(os.path.expandvars(os.path.expanduser(os.fspath(source))))
+    if path.is_dir():
+        raise IsADirectoryError(f"vis.attach: {path} is a directory - attach one file")
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"vis.attach: no such file: {path}") from None
+    return data, str(filename) if filename else (path.name or "artifact")
+
+
+def _attachment_target(target, version):
+    if isinstance(target, Mapping):
+        target = target.get("id") or target.get("filename") or ""
+    if version is not None and (type(version) is not int):
+        raise TypeError("attachment version must be an integer")
+    return str(target), version
+
+
+def attach(
+    source,
+    filename=None,
+    *,
+    kind=None,
+    media_type=None,
+    label=None,
+    audience="both",
+    commentable=False,
+):
+    """Store an artifact as a durable attachment of the running block.
+
+    `source` is a path, bytes, a Matplotlib figure or a Pillow image. The engine
+    stores the artifact with the `python_execution` block that called this tool,
+    exactly like the sandbox `attach` verb. A second attachment under the same
+    `filename` is the next version of that artifact. `audience` is `both`, `user`
+    or `model`; a PDF or HTML document is for the user only. Set
+    `commentable=True` to let a person comment on this version.
+
+    Returns the descriptor dict: id, filename, version, media_type, kind, size,
+    audience and commentable. Every read function takes it as its target.
+    """
+    data, name = _attachment_source(source, filename)
+    if audience not in _ATTACH_AUDIENCES:
+        raise ValueError(
+            f"vis.attach: audience must be 'both', 'user' or 'model', got {audience!r}"
+        )
+    if not isinstance(commentable, bool):
+        raise TypeError("vis.attach: commentable must be a boolean")
+    if not data:
+        raise ValueError("vis.attach: empty payload.")
+    options = {
+        "base64": base64.b64encode(data).decode("ascii"),
+        "filename": name,
+        "media_type": media_type,
+        "media_type_hint": mimetypes.guess_type(name)[0],
+        "kind": kind,
+        "audience": audience,
+        "label": label,
+        "commentable": commentable,
+    }
+    payload = _host.attach({k: v for k, v in options.items() if v is not None})
+    return _attachment_row(json.loads(payload))
+
+
+def list_attachments(name=None):
+    """List the artifact descriptors of this session, oldest first.
+
+    The list includes the artifacts that the running block attached. With `name`,
+    it lists the versions of that one artifact.
+    """
+    rows = [_attachment_row(row) for row in json.loads(_host.list_attachments())]
+    if name is None:
+        return rows
+    versions = [row for row in rows if row.get("filename") == str(name)]
+    return sorted(versions, key=lambda row: int(row.get("version") or 1))
+
+
+def get_attachment(target, version=None):
+    """Return the descriptor of one artifact, without its bytes.
+
+    `target` is a filename, an id or a descriptor. A filename means the latest
+    version, unless you give `version`. A negative version counts back.
+    """
+    payload = _host.get_attachment(*_attachment_target(target, version))
+    return _attachment_row(json.loads(payload))
+
+
+def read_attachment(target, version=None):
+    """Return the bytes of one artifact. `target` works as in `get_attachment`."""
+    encoded = _host.read_attachment(*_attachment_target(target, version))
+    return base64.b64decode(encoded) if encoded else b""
+
+
+def show_attachment(target, version=None):
+    """Show a stored image to the model for the next request only.
+
+    `target` works as in `get_attachment`. Returns the id, filename, media_type
+    and size of the queued image.
+    """
+    shown = list(_host.show_attachment(*_attachment_target(target, version)))
+    return dict(zip(("id", "filename", "media_type", "size"), shown, strict=True))
 
 
 # -- Live views ---------------------------------------------------------------

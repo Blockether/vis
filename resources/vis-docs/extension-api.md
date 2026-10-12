@@ -13,7 +13,8 @@ callbacks and host operations.
   [settings](#settings) with their allowed scopes.
 - **Your extension needs a service from Vis**, such as [durable
   state](#durable-state), [environment variables](#environment), [session
-  context](#session-context) or [another session tool](#call-other-session-tools).
+  context](#session-context), [attachments](#attachments) or [another session
+  tool](#call-other-session-tools).
 - **Your own program must read or export Activity history.** Read [Sessions
   API](sessions-api.md#read-activity-history).
 - **Your editor or type checker reports errors for code that runs in Vis.**
@@ -33,6 +34,7 @@ design](extension-design.md) for authoring and test guidance.
 | Add a user command or guard | [Slash commands](#slash-commands) · [Op hooks](#op-hooks) |
 | Add configurable behavior | [Settings](#settings) |
 | Persist data or report status | [Durable state](#durable-state) · [Logging and notifications](#logging-and-notifications) |
+| Store or read files that a tool makes | [Attachments](#attachments) |
 | Read environment or add session context | [Environment](#environment) · [Session context](#session-context) |
 | Access files or start a process | [Filesystem and processes](#filesystem-and-processes) |
 | Resolve the active working copy | [Workspace root](#workspace-root) |
@@ -1129,6 +1131,44 @@ Vis refuses a call back into your own extension, or into another extension that 
 call. Such a call would never return. Call your own functions directly instead. Outside a Vis
 session, for example in plain unit tests, `vis.tools` raises an error. There, import and call the
 other package directly.
+
+## Attachments
+
+Use `vis.attach` to store a file that your tool makes, such as a chart, a CSV table or a PDF
+report. The session keeps the file as a durable attachment of the `python_execution` block that
+called your tool. People see it in the transcript, and an image can also go to the model. The
+functions work like the `attach` functions in `python_execution`:
+
+```python
+import blockether.vis.extension as vis
+
+row = vis.attach("out/totals.png", label="Totals by month")  # a path, bytes, a figure or a Pillow image
+vis.attach(csv_bytes, "totals.csv")                           # bytes need a filename
+versions = vis.list_attachments("totals.csv")                 # every version, oldest first
+latest = vis.get_attachment("totals.csv")                     # the descriptor, without bytes
+data = vis.read_attachment(latest)                            # the bytes
+vis.show_attachment(row)                                      # show the image to the model again
+```
+
+`vis.attach` returns a descriptor dict with `id`, `filename`, `version`, `media_type`, `kind`,
+`size`, `audience` and `commentable`. If you attach again under the same filename, Vis stores the
+next version of that file. Use a new filename only for a different file.
+
+Use `audience` to set who sees the file: `both` (the default), `user` or `model`. A PDF or HTML
+document is for the user only. A CSV or TSV table shows as a table, and its rows do not go to
+the model. Set `commentable=True` to let a person comment on this version.
+
+If you do not give `media_type`, Vis detects the type from the bytes, then from the filename.
+If both fail, Vis uses `application/octet-stream`.
+
+The read functions take the same target: a filename, an `id` or a descriptor. A filename means
+the latest version, unless you give `version`. A negative version counts back from the latest
+version. `read_attachment` is the only function that returns the bytes. `show_attachment` shows a
+stored image to the model for the next request only.
+
+If no `python_execution` block runs your code, for example in a slash command, these functions
+raise an error. Outside Vis, for example in plain unit tests, they keep the files in process
+memory. A test can then attach a file and read it back.
 
 ## Filesystem and processes
 
