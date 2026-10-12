@@ -57,7 +57,7 @@ import unicodedata
 import urllib.request
 import uuid
 from collections import Counter, defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -104,9 +104,6 @@ _EXIT_SCRIPT = (
 _EARLY_STOP_SHARE = 0.25
 _NEAR_MISS_RATIO = 0.8
 _TAIL_LINES = 20
-_MIN_LABELS = 30
-_KAPPA_REVIEW = 0.6
-_KAPPA_TRUST = 0.8
 _NOTE_LIMIT = 500
 _CAUSES = (
     "dead_tools",
@@ -116,16 +113,15 @@ _CAUSES = (
     "unscored",
     "other",
 )
-_STAGES = ("understand", "write", "verify", "other")
 _JUDGE_JOB = "judge"
 _CHILDREN: dict[str, subprocess.Popen] = {}
 _SDK_PACKAGE = "_vis_evals_sdk"
 
 
-def _load_sdk() -> tuple[ModuleType, ModuleType]:
-    """Import the `harbor` and `stats` modules of `blockether.vis.evals` from this repository.
+def _load_sdk() -> tuple[ModuleType, ModuleType, ModuleType]:
+    """Import the `agreement`, `harbor` and `stats` modules of `blockether.vis.evals`.
 
-    An extension context holds only `blockether.vis.extension`. These two modules use
+    An extension context holds only `blockether.vis.extension`. These modules use
     only the standard library, so the extension imports them from the SDK source under
     a private package name. Each load of the extension imports them again.
     """
@@ -137,12 +133,14 @@ def _load_sdk() -> tuple[ModuleType, ModuleType]:
     package.__path__ = [str(SDK_EVALS)]
     sys.modules[_SDK_PACKAGE] = package
     return (
+        importlib.import_module(f"{_SDK_PACKAGE}.agreement"),
         importlib.import_module(f"{_SDK_PACKAGE}.harbor"),
         importlib.import_module(f"{_SDK_PACKAGE}.stats"),
     )
 
 
-_harbor, _stats = _load_sdk()
+_agreement, _harbor, _stats = _load_sdk()
+Agreement = _agreement.Agreement
 
 
 @dataclass(frozen=True)
@@ -397,23 +395,6 @@ class Finding:
 
 
 @dataclass(frozen=True)
-class LabelCheck:
-    """How well the automatic diagnose() causes agree with human labels from label().
-
-    `kappa` is Cohen's kappa over the labelled attempts, or None when it is undefined.
-    `disagreements` names each attempt where the two causes differ. `advice` says if
-    you can trust the automatic causes. Kappa needs at least 30 labels. Use the causes
-    with a human review from 0.6, and without a review from 0.8.
-    """
-
-    labelled: int
-    agreement_percent: float | None
-    kappa: float | None
-    disagreements: tuple[str, ...]
-    advice: str
-
-
-@dataclass(frozen=True)
 class StageLabel:
     """A human failure stage of one scenario trial, kept in stage-labels.json of its run.
 
@@ -435,7 +416,7 @@ class StageAgreement:
     `stages` names the judged stage of each trial: the most common stage of its
     samples. `sample_agreement_percent` is the share of trials whose samples all
     agree, or None with one sample. `kappa` and `advice` follow the limits of
-    LabelCheck: 30 labels, a review from 0.6 and no review from 0.8.
+    blockether.vis.evals.agreement: 30 labels, a review from 0.6 and no review from 0.8.
     """
 
     judge_run_id: str
@@ -463,7 +444,7 @@ class Diagnosis:
     solved_tasks: int
     findings: tuple[Finding, ...]
     estimate: str
-    label_check: LabelCheck
+    label_check: Agreement
 
 
 @dataclass(frozen=True)
@@ -1545,65 +1526,20 @@ def _cause(trial: dict, dead: set[str], limits: dict[str, float]) -> str:
 
 def _label_check(
     data: dict, labels: dict[str, dict], limits: dict[str, float]
-) -> LabelCheck:
+) -> Agreement:
     """Compare the diagnose() causes with the human labels of the same attempts."""
     trials = {str(trial.get("trial")): trial for trial in data.get("trials") or ()}
     dead = _dead_trials(data)
-    pairs = []
-    disagreements = []
-    for name, label in sorted(labels.items()):
-        if name not in trials:
-            continue
-        cause, human = _cause(trials[name], dead, limits), str(label.get("cause"))
-        pairs.append((cause, human))
-        if cause != human:
-            disagreements.append(f"{name}: diagnose() {cause}, label {human}")
-    count = len(pairs)
-    kappa = _stats.cohen_kappa(pairs)
-    kappa = None if kappa is None else round(kappa, 3)
-    advice = _kappa_advice(
-        count, kappa, "causes", "label()", "Correct the diagnose() rules first."
-    )
-    return LabelCheck(
-        labelled=count,
-        agreement_percent=_percent(count - len(disagreements), count)
-        if count
-        else None,
-        kappa=kappa,
-        disagreements=tuple(disagreements),
-        advice=advice,
-    )
-
-
-def _kappa_advice(
-    count: int, kappa: float | None, noun: str, labeller: str, fix: str
-) -> str:
-    """Say if `count` labels with this kappa make the automatic `noun` usable."""
-    if not count:
-        return (
-            f"No labels yet. Label at least {_MIN_LABELS} failed attempts with "
-            f"{labeller} before you trust these {noun}."
-        )
-    if count < _MIN_LABELS:
-        return (
-            f"Label {_MIN_LABELS - count} more failed attempts. Kappa from "
-            f"{_count(count, 'label')} is not stable."
-        )
-    if kappa is None:
-        return (
-            f"Kappa is undefined, because all labels and {noun} are the same. Label "
-            f"failures of other {noun} too."
-        )
-    if kappa < _KAPPA_REVIEW:
-        return f"Kappa {kappa:.2f} is below {_KAPPA_REVIEW}. Do not trust these {noun}. {fix}"
-    if kappa < _KAPPA_TRUST:
-        return (
-            f"Kappa {kappa:.2f} is good enough with a human review. Read the "
-            "disagreements before you act on a finding."
-        )
-    return (
-        f"Kappa {kappa:.2f} is at least {_KAPPA_TRUST}. You can use these {noun} "
-        "without a review."
+    return _agreement.agreement(
+        (
+            (name, _cause(trials[name], dead, limits), str(label.get("cause")))
+            for name, label in sorted(labels.items())
+            if name in trials
+        ),
+        source="diagnose()",
+        noun="causes",
+        labeller="label()",
+        fix="Correct the diagnose() rules first.",
     )
 
 
@@ -1643,11 +1579,6 @@ def _judge_errors(judge_dir: Path) -> int:
     return sum(1 for result in results if result.get("error"))
 
 
-def _majority(found: list[str]) -> str:
-    counts = Counter(found)
-    return max(_STAGES, key=lambda stage: (counts[stage], -_STAGES.index(stage)))
-
-
 def _judge_source(judge_dir: Path) -> Path:
     return _resolve_run(
         (judge_dir / "source_run").read_text(encoding="utf-8").strip(), "scenarios"
@@ -1663,7 +1594,7 @@ def _latest_judged_stage(source: Path, trial: str) -> str | None:
             continue
         found = _judged_samples(judge_dir).get(trial)
         if found:
-            return _majority(found)
+            return _agreement.majority(found)
     return None
 
 
@@ -1676,8 +1607,10 @@ def _stage_labels(source: Path) -> dict[str, dict]:
 
 
 def _save_stage_label(source: Path, trial: str, stage: str, note: str) -> StageLabel:
-    if stage not in _STAGES:
-        raise ValueError(f"stage must be one of {', '.join(_STAGES)}, not {stage!r}")
+    if stage not in _agreement.STAGES:
+        raise ValueError(
+            f"stage must be one of {', '.join(_agreement.STAGES)}, not {stage!r}"
+        )
     if len(note) > _NOTE_LIMIT:
         raise ValueError(
             f"the note has {len(note)} characters; the limit is {_NOTE_LIMIT}"
@@ -1704,40 +1637,28 @@ def _save_stage_label(source: Path, trial: str, stage: str, note: str) -> StageL
 def _stage_agreement(judge_dir: Path) -> StageAgreement:
     source = _judge_source(judge_dir)
     samples = _judged_samples(judge_dir)
-    judged = {trial: _majority(found) for trial, found in sorted(samples.items())}
-    several = [found for found in samples.values() if len(found) > 1]
-    pairs = []
-    disagreements = []
-    for trial, label in sorted(_stage_labels(source).items()):
-        if trial not in judged:
-            continue
-        human = str(label.get("stage"))
-        pairs.append((judged[trial], human))
-        if judged[trial] != human:
-            disagreements.append(f"{trial}: judge {judged[trial]}, label {human}")
-    count = len(pairs)
-    kappa = _stats.cohen_kappa(pairs)
-    kappa = None if kappa is None else round(kappa, 3)
+    judged = {
+        trial: _agreement.majority(found) for trial, found in sorted(samples.items())
+    }
+    found = _agreement.agreement(
+        (
+            (trial, judged[trial], str(label.get("stage")))
+            for trial, label in sorted(_stage_labels(source).items())
+            if trial in judged
+        ),
+        source="judge",
+        noun="stages",
+        labeller="label_stage()",
+        fix="Correct the judge rubric first.",
+    )
     return StageAgreement(
         judge_run_id=judge_dir.name,
         source_run_id=source.name,
         judged=len(judged),
         errors=_judge_errors(judge_dir),
         stages=tuple(f"{trial}: {stage}" for trial, stage in judged.items()),
-        sample_agreement_percent=_percent(
-            sum(1 for found in several if len(set(found)) == 1), len(several)
-        )
-        if several
-        else None,
-        labelled=count,
-        agreement_percent=_percent(count - len(disagreements), count)
-        if count
-        else None,
-        kappa=kappa,
-        disagreements=tuple(disagreements),
-        advice=_kappa_advice(
-            count, kappa, "stages", "label_stage()", "Correct the judge rubric first."
-        ),
+        sample_agreement_percent=_agreement.sample_agreement(samples),
+        **asdict(found),
     )
 
 

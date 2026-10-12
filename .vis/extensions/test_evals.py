@@ -1845,7 +1845,7 @@ def test_activities_stay_within_portable_limits():
         plan=plan,
         summary_path=text,
     )
-    label_check = evals.LabelCheck(30, 50.0, 0.1, (text,) * 30, text)
+    label_check = evals.Agreement(30, 50.0, 0.1, (text,) * 30, text)
     change = evals.CaseChange(text, text, text)
     samples = {
         "scenarios": (scenario,) * 40,
@@ -2058,14 +2058,7 @@ def test_label_stage_refuses_an_unknown_stage_trial_or_long_note(repo):
     assert not (source / "stage-labels.json").exists()
 
 
-def test_kappa_advice_names_the_rater_and_the_fix():
-    advice = evals._kappa_advice(
-        40, 0.4, "stages", "label_stage()", "Correct the judge rubric first."
-    )
-    assert advice == (
-        "Kappa 0.40 is below 0.6. Do not trust these stages. "
-        "Correct the judge rubric first."
-    )
-    assert "with label() before you trust these causes" in evals._kappa_advice(
-        0, None, "causes", "label()", "Correct the diagnose() rules first."
-    )
+def test_label_check_uses_the_sdk_agreement():
+    check = evals._label_check({"trials": ()}, {}, {})
+    assert isinstance(check, evals.Agreement)
+    assert "with label() before you trust these causes" in check.advice
