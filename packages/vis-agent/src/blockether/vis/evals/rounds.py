@@ -64,12 +64,20 @@ def _step_error(step: Step) -> str | None:
     return "step_error" if step.error is not None else None
 
 
-def _route(trajectory: Trajectory) -> set[str]:
-    name = trajectory.model_name
+def _route(name: str | None, provider: str | None) -> set[str]:
     if name is None:
         return set()
-    provider = trajectory.provider
     return {name, f"{provider}/{name}"} if provider else {name}
+
+
+def _harbor_model(result: dict) -> tuple[str | None, str | None]:
+    """Read the model name and provider of `agent_info.model_info` in `result.json`."""
+    info = (result.get("agent_info") or {}).get("model_info") or {}
+    name, provider = info.get("name"), info.get("provider")
+    return (
+        name if isinstance(name, str) else None,
+        provider if isinstance(provider, str) else None,
+    )
 
 
 def _output(trajectory: Trajectory) -> bool:
@@ -160,9 +168,19 @@ def _trial(result_path: Path, root: Path, model: str | None) -> dict:
         status = "unverified"
     exception_type = _kind(exception.get("exception_type")) if exception else None
     trajectory, trace = _trajectory(folder / _TRAJECTORY, root)
-    called = trajectory is not None and (model is None or model in _route(trajectory))
+    # Without a trajectory, the standard Harbor result names the model and its tokens.
+    if trajectory is not None:
+        name, provider = trajectory.model_name, trajectory.provider
+    else:
+        name, provider = _harbor_model(result)
+    called = (trajectory is not None or name is not None) and (
+        model is None or model in _route(name, provider)
+    )
     timeout = exception_type == "AgentTimeoutError"
-    produced = called and trajectory is not None and _output(trajectory)
+    if trajectory is not None:
+        produced = called and _output(trajectory)
+    else:
+        produced = called and bool(agent.get("n_output_tokens"))
     # Harbor verifies a timed-out agent, which can stop before it writes its
     # trajectory. A model that gave no output measured the runner, not the agent.
     scored = (
@@ -198,7 +216,7 @@ def _trial(result_path: Path, root: Path, model: str | None) -> dict:
         "scored": scored,
         "result_path": _relative(result_path, root),
         "trajectory": trace,
-        "model": trajectory.model_name if trajectory else None,
+        "model": name,
         "reward": (verifier.get("rewards") or {}).get("reward"),
         "verifier_tests": _tests(folder / "verifier/ctrf.json"),
         "tokens": tokens,

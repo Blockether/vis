@@ -46,7 +46,18 @@ def trajectory(*, model=MODEL, failing=0, tokens=10):
     }
 
 
-def add_trial(jobs, task, *, reward, tests, atif=None, exception=None, raw=None):
+def add_trial(
+    jobs,
+    task,
+    *,
+    reward,
+    tests,
+    atif=None,
+    exception=None,
+    raw=None,
+    info=None,
+    output=None,
+):
     folder = jobs / "job-1" / f"{task}__abc"
     (folder / "agent").mkdir(parents=True)
     (folder / "verifier").mkdir()
@@ -59,7 +70,12 @@ def add_trial(jobs, task, *, reward, tests, atif=None, exception=None, raw=None)
             "started_at": "2026-01-02T00:00:00Z",
             "finished_at": "2026-01-02T00:05:00Z",
         },
-        "agent_result": {"n_input_tokens": 100, "n_cache_tokens": 40},
+        "agent_result": {
+            "n_input_tokens": 100,
+            "n_cache_tokens": 40,
+            "n_output_tokens": output,
+        },
+        **({"agent_info": {"name": "other", "model_info": info}} if info else {}),
         "verifier_result": {"rewards": {"reward": reward}},
         "exception_info": {"exception_type": exception} if exception else None,
     }
@@ -173,3 +189,22 @@ def test_round_summary_without_trials_is_empty(tmp_path):
     summary = round_summary(tmp_path / "jobs")
     assert summary["attempts"] == 0
     assert summary["task_pass_rate"] is None
+
+
+def test_round_summary_reads_the_harbor_model_without_a_trajectory(tmp_path):
+    # Many Harbor agents write no ATIF trajectory. result.json still names the model.
+    jobs = tmp_path / "jobs"
+    info = {"name": MODEL, "provider": PROVIDER}
+    add_trial(jobs, "solved", reward=1.0, tests=(2, 2), info=info, output=30)
+    add_trial(jobs, "silent", reward=0.0, tests=(0, 2), info=info, output=0)
+    add_trial(jobs, "other", reward=1.0, tests=(2, 2), info={"name": "x"}, output=30)
+
+    summary = round_summary(jobs, model=f"{PROVIDER}/{MODEL}")
+    trials = {trial["task"]: trial for trial in summary["trials"]}
+
+    assert trials["terminal-bench/solved"]["model"] == MODEL
+    assert trials["terminal-bench/solved"]["scored"] is True
+    assert trials["terminal-bench/silent"]["model_attempt"] is True
+    assert trials["terminal-bench/silent"]["scored"] is False
+    assert trials["terminal-bench/other"]["model_attempt"] is False
+    assert summary["solved_tasks"] == ["solved"]

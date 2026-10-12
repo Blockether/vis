@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - The 95% interval of a paired change stays between -100 and 100 points. Before, a large change
   gave an interval below -100 points.
+- `round_summary` scores a trial without an ATIF trajectory. It reads the model from
+  `agent_info.model_info` and the output tokens from `agent_result` in `result.json`.
 
 ## [v0.2.39] - 2026-10-12
 
