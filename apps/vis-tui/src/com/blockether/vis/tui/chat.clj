@@ -1623,9 +1623,9 @@
 (defonce ^:private launch-session-options* (atom {}))
 
 (defn set-launch-session-options!
-  "Send `:sources` and `:extensions` with each new session that this client creates."
+  "Send `:sources`, `:extensions` and `:tools` with each new session that this client creates."
   [opts]
-  (reset! launch-session-options* (select-keys opts [:sources :extensions])))
+  (reset! launch-session-options* (select-keys opts [:sources :extensions :tools])))
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id root group-id]}]

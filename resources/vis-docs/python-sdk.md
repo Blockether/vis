@@ -21,6 +21,8 @@ Use this guide for installation and task examples.
   functions](#give-the-agent-your-functions) without installing an extension.
 - **Conversations must outlive your script or appear in the Vis app.** [Connect to a
   gateway](#connect-to-a-gateway-and-run-a-task).
+- **The agent must not use some tools, such as `py.repl_start`.** Pass `tools` to `Agent()`, as
+  shown in [Let your program own a private agent](#let-your-program-own-a-private-agent).
 - **Your program must work with sessions, Council, automations or settings.** Read [Sessions
   API](sessions-api.md), [Council API](council-api.md), [Automations API](automations-api.md) or
   [Configuration API](configuration-api.md).
@@ -87,6 +89,11 @@ It does not undo file edits or isolate your credentials and configuration.
 You should see a session ID, `Status: completed` and the answer's content blocks.
 By default, `run()` returns a turn record, not a text string. A failed,
 cancelled or suspended turn also returns a record: always check `status`.
+
+To keep the agent away from some tools, pass `tools`. For example,
+`Agent(tools=["-py.repl_start", "-py.repl_stop"])` turns off those two tools of the
+`py` extension. [Choose single tools](configuration.md#choose-single-tools) describes
+the names and rules.
 
 ## Get a validated result
 

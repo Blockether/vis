@@ -176,6 +176,21 @@ every optional extension. An unknown tier or extension raises an error for the 4
 global or project configuration](configuration.md#leave-out-global-or-project-configuration)
 describes each tier.
 
+To turn off single tools of an extension, add `tools`:
+
+```python
+session = client.create_session(
+    **client.session_options(os.environ["VIS_PROJECT_ROOT"]),
+    tools=["-py.lint_code", "-py.repl_stop"],
+)
+```
+
+`tools` keeps only the named tools of the extensions that they name, or turns off each `-name`
+entry. A `*` matches any part of a name, as in `py.repl_*`. An unknown tool, an empty list or a list
+that mixes the two forms raises an error for the 400 answer. `Agent(tools=[...])` sends the same
+list for its conversation. [Choose single tools](configuration.md#choose-single-tools) describes the
+rules.
+
 To continue a saved session, call `client.session(session_id)`. It returns a handle and does not
 create a session.
 
@@ -205,6 +220,18 @@ To continue a saved session, use its `id` in the paths of the next requests.
 `extensions` keeps the named extensions or turns off each `-name` entry. An empty list turns off
 every optional extension. An unknown tier or extension returns 400. [Leave out global or project
 configuration](configuration.md#leave-out-global-or-project-configuration) describes each tier.
+
+To turn off single tools of an extension, add `tools`:
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/json' \
+  --data '{"root": "/srv/projects/shop", "channel": "app", "tools": ["-py.lint_code", "-py.repl_stop"]}'
+```
+
+`tools` keeps only the named tools of the extensions that they name, or turns off each `-name`
+entry. A `*` matches any part of a name, as in `py.repl_*`. An unknown tool, an empty list or a list
+that mixes the two forms returns 400. [Choose single tools](configuration.md#choose-single-tools)
+describes the rules.
 
 </div>
 

@@ -13,6 +13,8 @@ when you want settings shared across projects or checked into a repository.
   the same key.
 - **One session must not use your global or project setup, or some extensions.** Start it with
   the flags in [Leave out global or project configuration](#leave-out-global-or-project-configuration).
+- **One session needs only some tools of an extension, such as `py.lint_code` but not
+  `py.repl_start`.** Start it with the flag in [Choose single tools](#choose-single-tools).
 - **One session or group needs different behavior.** Open its
   [scoped settings](#project-group-and-session-settings) instead of changing the
   gateway defaults.
@@ -158,6 +160,28 @@ extension list. A flag wins over its variable.
 
 A session cannot change the files of a tier that it leaves out. Vis refuses the change with a 409
 error. To start such a session from a program, see [Sessions API](sessions-api.md#create-a-session).
+
+### Choose single tools
+
+Use `--tools` when a session needs an extension, but not all of its tools:
+
+```bash
+vis-agent tui --tools py.lint_code,py.repl_eval   # only these two tools of py
+vis-agent tui --tools -py.repl_stop               # every tool except py.repl_stop
+vis-agent tui --tools 'py.repl_*'                 # only the REPL tools of py
+```
+
+A tool name is the name that the agent calls, such as `py.lint_code`. A list of names keeps only
+those tools of the extensions that they name. Other extensions keep all of their tools. A list of
+`-names` turns only those tools off. Do not mix the two forms in one list. A `*` matches any part
+of a name, as in `py.repl_*`.
+
+Vis refuses an unknown name before the session starts, and the error lists the tools of that
+extension. The rules for new and saved sessions are the same as for `--extensions`. For scripts, set
+`VIS_TOOLS` to a tool list. The `--tools` flag wins over the variable.
+
+The choice applies only to tools of extensions with an Auto/On/Off setting. A tool that is off is not
+in the session's Python sandbox. The extension's prompt text can still name it.
 
 ## Providers and models
 

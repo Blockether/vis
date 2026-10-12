@@ -64,7 +64,9 @@
    An optional `sources` list (`global`, `project`) limits the configuration tiers
    the session reads. An optional `extensions` list keeps only the named
    extensions, turns off `-name` entries, or turns off every optional extension
-   when it is empty. A bad value refuses the create with a 400 answer."
+   when it is empty. An optional `tools` list does the same for the tools of
+   optional extensions (`py.lint_code`, `-py.repl_*`). A bad value refuses the
+   create with a 400 answer."
   [request]
   (let [body
         (http/body-json request)
@@ -82,6 +84,9 @@
         extensions
         (get body "extensions")
 
+        tools
+        (get body "tools")
+
         string-list?
         #(or (nil? %) (and (sequential? %) (every? string? %)))]
 
@@ -92,6 +97,8 @@
           (http/error-response 400 :invalid-request "sources must be a list of global and project")
           (not (string-list? extensions))
           (http/error-response 400 :invalid-request "extensions must be a list of extension names")
+          (not (string-list? tools))
+          (http/error-response 400 :invalid-request "tools must be a list of tool names")
           :else (try (http/json-response 201
                                          (state/create-session!
                                            (cond-> {:channel (some-> (get body "channel")
@@ -101,7 +108,8 @@
                                                     :workspace-id (get body "workspace_id")
                                                     :root (get body "root")
                                                     :sources sources
-                                                    :extensions extensions}
+                                                    :extensions extensions
+                                                    :tools tools}
                                              gid
                                              (assoc :group-id gid))))
                      (catch clojure.lang.ExceptionInfo e

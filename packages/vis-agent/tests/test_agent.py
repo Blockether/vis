@@ -276,6 +276,21 @@ def test_invalid_execution_layer_is_rejected_before_default_engine(local):
     local.assert_not_called()
 
 
+def test_tools_reach_the_new_conversation(local, tmp_path):
+    with engine.Agent(tmp_path, tools=("-py.lint_code", "py.repl_*")) as agent:
+        assert agent.session is agent.execution_layer.create_session.return_value
+        agent.execution_layer.create_session.assert_called_once_with(
+            root=str(tmp_path.resolve()), tools=["-py.lint_code", "py.repl_*"]
+        )
+
+
+@pytest.mark.parametrize("tools", ["py.lint_code", [1]])
+def test_tools_must_be_names(local, tmp_path, tools):
+    with pytest.raises(TypeError, match="tool names"):
+        engine.Agent(tmp_path, tools=tools)
+    local.assert_not_called()
+
+
 class Delivery(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

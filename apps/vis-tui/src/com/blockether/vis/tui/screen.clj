@@ -9687,7 +9687,7 @@
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage
-  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--vanilla] [--extensions LIST]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--vanilla] [--extensions LIST] [--tools LIST]")
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
@@ -9741,6 +9741,10 @@
           (let [v (flag-value arg more tui-usage)]
             (recur (next more) (assoc opts :extensions v)))
 
+          "--tools"
+          (let [v (flag-value arg more tui-usage)]
+            (recur (next more) (assoc opts :tools v)))
+
           (throw (ex-info (str "unknown flag: " arg "\nUsage: " tui-usage)
                           {:vis/user-error true})))))))
 
@@ -9751,18 +9755,19 @@
     (if (= ["none"] names) [] names)))
 
 (defn- launch-session-options
-  "Build the new-session options from the source and extension flags.
-   Without a flag, read `VIS_SOURCES` and `VIS_EXTENSIONS` from `env`. These
-   options apply to each session that this client creates; an existing session
-   keeps the sources and extensions that it started with."
-  [{:keys [no-global no-project extensions session-id resume continue]} env]
-  (when (and (or no-global no-project extensions) (or session-id resume continue))
-    (throw (ex-info
-             (str
-               "--no-global, --no-project, --vanilla and --extensions apply only to a new session."
-               " Do not use them with --session-id, --resume or --continue."
-               "\nUsage: " tui-usage)
-             {:vis/user-error true})))
+  "Build the new-session options from the source, extension and tool flags.
+   Without a flag, read `VIS_SOURCES`, `VIS_EXTENSIONS` and `VIS_TOOLS` from `env`.
+   These options apply to each session that this client creates; an existing
+   session keeps the sources, extensions and tools that it started with."
+  [{:keys [no-global no-project extensions tools session-id resume continue]} env]
+  (when (and (or no-global no-project extensions tools) (or session-id resume continue))
+    (throw
+      (ex-info
+        (str
+          "--no-global, --no-project, --vanilla, --extensions and --tools apply only to a new session."
+          " Do not use them with --session-id, --resume or --continue."
+          "\nUsage: " tui-usage)
+        {:vis/user-error true})))
   (let [env-value
         (fn [k]
           (let [v (get env k)]
@@ -9779,6 +9784,10 @@
 
         extensions
         (some-> (or extensions (env-value "VIS_EXTENSIONS"))
+                name-list)
+
+        tools
+        (some-> (or tools (env-value "VIS_TOOLS"))
                 name-list)]
 
     (cond-> {}
@@ -9786,7 +9795,10 @@
       (assoc :sources sources)
 
       extensions
-      (assoc :extensions extensions))))
+      (assoc :extensions extensions)
+
+      tools
+      (assoc :tools tools))))
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,

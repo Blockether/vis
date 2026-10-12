@@ -942,6 +942,20 @@
     (it "still refuses --extensions followed by a long flag"
         (expect (= ["--extensions needs a value (got --json)"]
                    (:flag-errors (launch ["--extensions" "--json" "task"] {})))))
+    (it "splits --tools, takes a leading-dash list and reads VIS_TOOLS without a flag"
+        (expect (= ["py.lint_code" "py.repl_*"]
+                   (:tools (launch ["--tools" "py.lint_code, py.repl_*" "task"] {}))))
+        (expect (= ["-py.repl_stop"] (:tools (launch ["--tools" "-py.repl_stop" "task"] {}))))
+        (expect (= ["py.repl_eval"] (:tools (launch ["task"] {"VIS_TOOLS" "py.repl_eval"}))))
+        (expect (= ["py.lint_code"]
+                   (:tools (launch ["--tools" "py.lint_code" "task"] {"VIS_TOOLS" "py.repl_eval"})))))
+    (it "refuses --tools followed by a long flag and with --session-id"
+        (expect (= ["--tools needs a value (got --json)"]
+                   (:flag-errors (launch ["--tools" "--json" "task"] {}))))
+        (expect (= 1
+                   (count (:flag-errors
+                           (launch ["--session-id" "abc" "--tools" "py.lint_code" "task"] {})))))
+        (expect (nil? (:tools (launch ["--session-id" "abc" "task"] {"VIS_TOOLS" "py.lint_code"})))))
     (it "reads VIS_SOURCES and VIS_EXTENSIONS without a flag, and a flag wins"
         (expect (= {:sources ["project"] :extensions ["gh"] :prompt "task"}
                    (launch ["task"] {"VIS_SOURCES" "project" "VIS_EXTENSIONS" "gh"})))

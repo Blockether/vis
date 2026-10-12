@@ -2603,7 +2603,10 @@ therapy line 2"
              (it "--extensions captures the list and needs a value"
                  (expect (= {:extensions "gh,clj" :no-global true}
                             (parse-args ["--no-global" "--extensions" "gh,clj"])))
-                 (expect (user-error? #(parse-args ["--extensions"])))))
+                 (expect (user-error? #(parse-args ["--extensions"]))))
+             (it "--tools captures the list, takes a leading dash and needs a value"
+                 (expect (= {:tools "-py.repl_stop"} (parse-args ["--tools" "-py.repl_stop"])))
+                 (expect (user-error? #(parse-args ["--tools"])))))
 
 (def ^:private launch-session-options (deref #'screen/launch-session-options))
 
@@ -2633,14 +2636,27 @@ therapy line 2"
         (expect (= {:extensions []} (launch-session-options {:extensions "none"} {}))))
     (it "VIS_EXTENSIONS applies without a flag"
         (expect (= {:extensions ["gh"]} (launch-session-options {} {"VIS_EXTENSIONS" "gh"})))))
-  (describe "existing sessions"
-            (it "rejects the flags with --session-id, --resume or --continue"
-                (expect (user-error? #(launch-session-options {:no-global true :continue true} {})))
-                (expect (user-error? #(launch-session-options {:extensions "gh" :session-id "x"}
-                                                              {}))))
-            (it "accepts environment values with --continue, because only new sessions use them"
-                (expect (= {:sources ["project"]}
-                           (launch-session-options {:continue true} {"VIS_SOURCES" "project"}))))))
+  (describe "tools"
+            (it "splits the list and keeps exclusions"
+                (expect (= {:tools ["py.lint_code" "py.repl_*"]}
+                           (launch-session-options {:tools "py.lint_code, py.repl_*"} {})))
+                (expect (= {:tools ["-py.repl_stop"]}
+                           (launch-session-options {:tools "-py.repl_stop"} {}))))
+            (it "VIS_TOOLS applies without a flag, and a flag wins"
+                (expect (= {:tools ["py.repl_eval"]}
+                           (launch-session-options {} {"VIS_TOOLS" "py.repl_eval"})))
+                (expect (= {:tools ["py.lint_code"]}
+                           (launch-session-options {:tools "py.lint_code"}
+                                                   {"VIS_TOOLS" "py.repl_eval"})))))
+  (describe
+    "existing sessions"
+    (it "rejects the flags with --session-id, --resume or --continue"
+        (expect (user-error? #(launch-session-options {:no-global true :continue true} {})))
+        (expect (user-error? #(launch-session-options {:extensions "gh" :session-id "x"} {})))
+        (expect (user-error? #(launch-session-options {:tools "py.lint_code" :resume true} {}))))
+    (it "accepts environment values with --continue, because only new sessions use them"
+        (expect (= {:sources ["project"]}
+                   (launch-session-options {:continue true} {"VIS_SOURCES" "project"}))))))
 
 (defdescribe
   typing-diagnostics-test

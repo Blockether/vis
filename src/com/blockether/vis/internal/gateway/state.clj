@@ -5681,7 +5681,7 @@
            not-empty))
 
 (defn- create-session-cold!
-  [{:keys [channel title external-id workspace-id root group-id sources extensions]}]
+  [{:keys [channel title external-id workspace-id root group-id sources extensions tools]}]
   (let [channel
         (or channel :api)
 
@@ -5709,7 +5709,10 @@
                       (assoc :sources sources)
 
                       (some? extensions)
-                      (assoc :extensions extensions)))]
+                      (assoc :extensions extensions)
+
+                      (some? tools)
+                      (assoc :tools tools)))]
 
     (put-session! (:id created) {:next-seq 0 :last-active (util/now-ms)})
     ;; A session STARTED inside a group belongs to it from its first breath. The

@@ -729,7 +729,7 @@
    `(sessions/by-channel :cli)`."
   [agent-def prompt &
    [{:keys [spec model provider reasoning-effort on-chunk debug? config db persist? no-persist?
-            session-id json-schema sources extensions]
+            session-id json-schema sources extensions tools]
      :as _opts}]]
   (let [json-compiled
         ;; The CLI checked its schema already. A direct caller gets the same
@@ -831,8 +831,8 @@
       (let [env (loop-env/create-environment (router-for-run cfg local-router?)
                                              {:db (or db :memory)
                                               :channel :cli
-                                              :sources (workspace/normalize-config-sources
-                                                         sources)})]
+                                              :sources (workspace/normalize-config-sources sources)
+                                              :tools (loop-env/check-tool-selection! tools)})]
         (try (loop-env/turn-off-extensions! env (loop-env/check-extension-selection! extensions))
              (let [submit! (fn [_request turn-messages]
                              (let [result (turn/turn! env turn-messages q-opts)]
@@ -904,7 +904,10 @@
                                                (assoc :sources sources)
 
                                                (some? extensions)
-                                               (assoc :extensions extensions))))
+                                               (assoc :extensions extensions)
+
+                                               (some? tools)
+                                               (assoc :tools tools))))
 
             session-id
             (or resolved-session-id (get created-session "id"))]
@@ -1491,7 +1494,8 @@
    "--session-id" :session-id
    "--json-schema" :json-schema
    "--trajectory" :trajectory
-   "--extensions" :extensions})
+   "--extensions" :extensions
+   "--tools" :tools})
 
 (defn- option-token?
   "True for a bare token SHAPED like a flag (`-v`, `--json`, `--full-trace-stream`).
@@ -1562,11 +1566,11 @@
     (if (= ["none"] names) [] names)))
 
 (defn- check-launch-options
-  "Turn the source and extension flags into `:sources` and `:extensions` name lists.
-   Without a flag, read `VIS_SOURCES` and `VIS_EXTENSIONS` from `env`. A saved
-   session keeps the choice that it started with, so the flags do not work with
-   `--session-id`, and `--session-id` ignores the variables."
-  [{:keys [no-global? no-project? extensions session-id] :as opts} env]
+  "Turn the source, extension and tool flags into `:sources`, `:extensions` and `:tools`
+   name lists. Without a flag, read `VIS_SOURCES`, `VIS_EXTENSIONS` and `VIS_TOOLS` from
+   `env`. A saved session keeps the choice that it started with, so the flags do not work
+   with `--session-id`, and `--session-id` ignores the variables."
+  [{:keys [no-global? no-project? extensions tools session-id] :as opts} env]
   (let [env-value
         (fn [k]
           (let [v (get env k)]
@@ -1588,24 +1592,31 @@
         (some-> (or extensions (when new-session? (env-value "VIS_EXTENSIONS")))
                 comma-names)
 
+        tools
+        (some-> (or tools (when new-session? (env-value "VIS_TOOLS")))
+                comma-names)
+
         source-error
         (try (workspace/normalize-config-sources sources)
              nil
              (catch clojure.lang.ExceptionInfo e (ex-message e)))]
 
-    (cond-> (dissoc opts :no-global? :no-project? :extensions)
+    (cond-> (dissoc opts :no-global? :no-project? :extensions :tools)
       sources
       (assoc :sources sources)
 
       extensions
       (assoc :extensions extensions)
 
-      (and (not new-session?) (or no-global? no-project? (:extensions opts)))
+      tools
+      (assoc :tools tools)
+
+      (and (not new-session?) (or no-global? no-project? (:extensions opts) (:tools opts)))
       (update :flag-errors
               (fnil conj [])
               (str
-                "--no-global, --no-project, --vanilla and --extensions apply only to a new session;"
-                " do not use them with --session-id"))
+                "--no-global, --no-project, --vanilla, --extensions and --tools apply only to a new"
+                " session; do not use them with --session-id"))
 
       source-error
       (update :flag-errors (fnil conj []) source-error))))
@@ -1654,13 +1665,14 @@
               ;; A value flag with no usable value used to vanish: `--model ""`
               ;; ran the DEFAULT model, and `--model --json "task"` ran a model
               ;; literally named "--json". Blank, `--`, and flag-shaped tokens
-              ;; are all "you forgot the value". `--extensions -spel` is an
-              ;; exclusion list, so one leading dash is a value there.
+              ;; are all "you forgot the value". `--extensions -spel` and
+              ;; `--tools -py.lint_code` are exclusion lists, so one leading dash is a value there.
               (let [v (first more)]
                 (if (or (str/blank? v)
                         (= "--" v)
                         (and (option-token? v)
-                             (not (and (= "--extensions" arg) (not (str/starts-with? v "--"))))))
+                             (not (and (#{"--extensions" "--tools"} arg)
+                                       (not (str/starts-with? v "--"))))))
                   (recur more
                          (update
                            opts
@@ -1736,6 +1748,9 @@
   (commandline/stdout! "  --extensions LIST    Use only these extensions (gh,clj), all but these")
   (commandline/stdout! "                       (-spel,-uplink) or none. Env: VIS_EXTENSIONS,")
   (commandline/stdout! "                       VIS_SOURCES=global|project|none.")
+  (commandline/stdout! "  --tools LIST         Keep only these tools of their extensions")
+  (commandline/stdout! "                       (py.lint_code,py.repl_*) or turn these off")
+  (commandline/stdout! "                       (-py.repl_stop). Env: VIS_TOOLS.")
   (commandline/stdout! "  --                   End flag parsing: every later word is prompt")
   (commandline/stdout! "                       text, dashes and all.")
   (commandline/stdout! "")
@@ -1896,7 +1911,7 @@
 
 (defn- run-profile
   "The run options that shape the agent, for the `--trajectory` file."
-  [{:keys [agent-name toggles provider model reasoning-effort extensions db persist?]}]
+  [{:keys [agent-name toggles provider model reasoning-effort extensions tools db persist?]}]
   (cond-> {:name (or agent-name "cli")}
     toggles
     (assoc :toggles (parse-toggle-overrides toggles))
@@ -1912,6 +1927,9 @@
 
     (some? extensions)
     (assoc :extensions extensions)
+
+    (some? tools)
+    (assoc :tools tools)
 
     db
     (assoc :db (if (= db ":memory") "memory" "file"))
@@ -2005,12 +2023,12 @@
         (commandline/stderr! "  Or make it the prompt text:   vis-agent -- <text>"))
       (exit-process! 2))
     (when (or help? (str/blank? prompt)) (print-run-usage!) (exit-process! 0))
-    ;; Check the extension list before any provider spend: a typo is a usage error.
-    (when (some? (:extensions opts))
-      (try (loop-env/check-extension-selection! (:extensions opts))
-           (catch clojure.lang.ExceptionInfo e
-             (commandline/stderr! (str "vis-agent: " (ex-message e)))
-             (exit-process! 2))))
+    ;; Check the extension and tool lists before any provider spend: a typo is a usage error.
+    (try (when (some? (:extensions opts)) (loop-env/check-extension-selection! (:extensions opts)))
+         (when (some? (:tools opts)) (loop-env/check-tool-selection! (:tools opts)))
+         (catch clojure.lang.ExceptionInfo e
+           (commandline/stderr! (str "vis-agent: " (ex-message e)))
+           (exit-process! 2)))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
     ;; Otherwise `vis-agent ... > out.txt` leaves bold/italic ANSI markers in
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
@@ -3048,6 +3066,7 @@
      (help-row "--no-project" "Skip project config, extensions, AGENTS.md and skills.")
      (help-row "--vanilla" "Both --no-global and --no-project. Providers stay.")
      (help-row "--extensions LIST" "Only these (gh,clj), all but these (-spel) or none.")
+     (help-row "--tools LIST" "Only these tools (py.lint_code) or all but these (-py.repl_stop).")
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
      (help-row "--help, -h" "Show help.") "" "RUNTIME"

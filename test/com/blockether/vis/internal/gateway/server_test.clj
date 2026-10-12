@@ -7371,20 +7371,24 @@
         handler
         #'sessions-api/create-session-handler]
 
-    (it "passes sources and extensions to the new session"
+    (it "passes sources, extensions and tools to the new session"
         (let [seen (atom nil)]
           (with-redefs [state/create-session! (fn [opts]
                                                 (reset! seen opts)
                                                 {"id" "s1"})]
             (expect
-              (= 201 (:status (handler (request {"sources" ["project"] "extensions" ["-spel"]})))))
-            (expect (= {:sources ["project"] :extensions ["-spel"]}
-                       (select-keys @seen [:sources :extensions]))))))
+              (= 201
+                 (:status (handler (request {"sources" ["project"]
+                                             "extensions" ["-spel"]
+                                             "tools" ["-py.lint_code"]})))))
+            (expect (= {:sources ["project"] :extensions ["-spel"] :tools ["-py.lint_code"]}
+                       (select-keys @seen [:sources :extensions :tools]))))))
     (it "refuses a value that is not a list of strings"
         (with-redefs [state/create-session! (fn [_]
                                               (throw (ex-info "not called" {})))]
           (expect (= 400 (:status (handler (request {"sources" "project"})))))
-          (expect (= 400 (:status (handler (request {"extensions" [1]})))))))
+          (expect (= 400 (:status (handler (request {"extensions" [1]})))))
+          (expect (= 400 (:status (handler (request {"tools" "py.lint_code"})))))))
     (it "answers an engine selection error with its status and message"
         (with-redefs [state/create-session! (fn [_]
                                               (throw (ex-info "Unknown extension: spell."
