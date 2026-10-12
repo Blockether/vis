@@ -104,7 +104,7 @@ Data:
 
 Acceptance criteria: one canary task each for `vis-solo` and `vis-team` on a build from `main`, with valid ATIF and the profile in it. The second adapter is removed.
 
-Unknowns: which context components have switches today. Phase 8 needs switches for compaction (on, off and thresholds), fold hints, planning and the action space. A missing switch becomes an engine toggle.
+Unknowns: none. The engine has toggles for reasoning, Council, subagents, drafts, introspection and shell commands. It has no switch for compaction, the context budget, fold hints, planning or the action space. Phase 8 adds them as engine toggles.
 
 ## 4. e2e scenarios as a Harbor dataset
 
@@ -178,6 +178,7 @@ Data:
   - all tools or the shell only,
   - solo or Council,
   - effort.
+- New engine toggles give the axes that have no switch today: compaction, the context budget, fold hints, planning and the action space.
 - The tasks are split into a working set and a held-out set.
 - `evals.ablate` plans a run before it starts: cost, time and statistical power.
 - A change needs a paired test on the held-out set and a person's approval. The test must show a gain, or a lower cost without a loss.
@@ -191,6 +192,7 @@ Unknowns: the budget, the number of tasks for enough power and the Podman machin
 
 - Phase 1: done. The benchmark commit `22223a5` stays local until the baseline round is sealed.
 - Phase 2: done. A host run with `--trajectory` passed Harbor's `Trajectory` model, and `harbor view` showed its 3 steps. Its totals equaled the result frame. A planted fake credential did not appear in the file, and the file mode was `0600`.
-- Phase 3: next.
-- Phases 4 to 8: not started.
+- Phase 3: done. Vis `a93089b62` writes the steps of a persisted run. The native-release dry run `38185257847` built it, and `profiles.toml` pins that archive by sha256 (benchmark commit `bf1ae0b`, local). In round `canary-p3b`, `vis-solo` and `vis-team` each wrote valid ATIF v1.8 with 15 steps, mode `0600` and the profile in `agent.extra`. Both trials had reward 0: each one failed 1 of 2 task tests, with no infrastructure error. `terminal_bench/vis_agent.py` is removed.
+- Phase 4: next.
+- Phases 5 to 8: not started.
 - The baseline round (`ctb-baseline`) has no Vis trials. It runs until about 2026-10-13. After its seal, commit `results/baseline.json` in the benchmark repository.
