@@ -1060,7 +1060,7 @@ def test_leaderboard_reads_every_page_and_places_vis(repo, monkeypatch):
     board = tools.leaderboard()
     assert requests == [
         (
-            evals.LEADERBOARD_URL,
+            evals._leaderboard.LEADERBOARD_URL,
             {
                 "package": "terminal-bench/terminal-bench",
                 "name": "4-0-0",
@@ -1098,7 +1098,7 @@ def test_leaderboard_reads_every_page_and_places_vis(repo, monkeypatch):
         "harness effect."
     )
     assert "about 5 trials per task" in standing.caveats[1]
-    assert "run('terminal-bench', attempts=5, round_name=...)" in standing.caveats[1]
+    assert "run 5 attempts per task" in standing.caveats[1]
     view = render("leaderboard", board)
     assert view.summary == (
         "Terminal-Bench 4.0: 3 rows · Vis 28.6% would rank 3 (range 1-4), strict 4"

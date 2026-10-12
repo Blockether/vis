@@ -48,7 +48,6 @@ import re
 import shlex
 import shutil
 import signal
-import statistics
 import subprocess
 import sys
 import time
@@ -78,7 +77,6 @@ HOME = Path(os.environ.get("VIS_EVALS_HOME") or Path.home() / ".vis" / "evals")
 MACHINE = "vis-amd64"
 MIN_FREE_GB = 12.0
 API_KEY_ENV = "ZAI_CODING_API_KEY"
-LEADERBOARD_URL = "https://api.harborframework.com/functions/v1/leaderboard-read"
 
 _SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
 _SCENARIO_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -103,21 +101,13 @@ _EXIT_SCRIPT = (
 )
 _TAIL_LINES = 20
 _NOTE_LIMIT = 500
-_CAUSES = (
-    "dead_tools",
-    "vis_errors",
-    "agent_timeouts",
-    "early_stops",
-    "unscored",
-    "other",
-)
 _JUDGE_JOB = "judge"
 _CHILDREN: dict[str, subprocess.Popen] = {}
 _SDK_PACKAGE = "_vis_evals_sdk"
 
 
 def _load_sdk() -> tuple[ModuleType, ...]:
-    """Import the `bench`, `compare`, `harbor`, `labels`, `repeats` and `stats` SDK modules.
+    """Import the `bench`, `compare`, `harbor`, `labels`, `leaderboard`, `repeats` and `stats` SDK modules.
 
     An extension context holds only `blockether.vis.extension`. These modules use
     only the standard library, so the extension imports them from the SDK source under
@@ -135,12 +125,13 @@ def _load_sdk() -> tuple[ModuleType, ...]:
         importlib.import_module(f"{_SDK_PACKAGE}.compare"),
         importlib.import_module(f"{_SDK_PACKAGE}.harbor"),
         importlib.import_module(f"{_SDK_PACKAGE}.labels"),
+        importlib.import_module(f"{_SDK_PACKAGE}.leaderboard"),
         importlib.import_module(f"{_SDK_PACKAGE}.repeats"),
         importlib.import_module(f"{_SDK_PACKAGE}.stats"),
     )
 
 
-_bench, _compare_sdk, _harbor, _label_sdk, _repeats, _stats = _load_sdk()
+_bench, _compare_sdk, _harbor, _label_sdk, _leaderboard, _repeats, _stats = _load_sdk()
 Agreement = _label_sdk.Agreement
 CaseChange = _compare_sdk.CaseChange
 RouteTest = _compare_sdk.RouteTest
@@ -148,6 +139,10 @@ Diagnosis = _bench.Diagnosis
 Finding = _bench.Finding
 OutcomeCount = _bench.OutcomeCount
 TaskNote = _bench.TaskNote
+TrialLabel = _bench.TrialLabel
+Leaderboard = _leaderboard.Leaderboard
+LeaderboardRow = _leaderboard.LeaderboardRow
+VisStanding = _leaderboard.VisStanding
 
 
 @dataclass(frozen=True)
@@ -402,74 +397,6 @@ class StageAgreement:
 
 
 @dataclass(frozen=True)
-class LeaderboardRow:
-    """One published agent and model result.
-
-    `accuracy_percent` is over all trials of the row. Per-trial values divide the row
-    totals by `trials`, and `cost_per_success_usd` divides the total cost by
-    `successes`. `None` means that the board does not publish the value.
-    """
-
-    rank: int
-    agent: str
-    model: str
-    reasoning_effort: str
-    accuracy_percent: float
-    ci95_half_width: float | None
-    trials: int
-    successes: int
-    total_cost_usd: float | None
-    cost_per_trial_usd: float | None
-    cost_per_success_usd: float | None
-    tokens_per_trial: int | None
-    avg_trial_minutes: float | None
-    date: str
-
-
-@dataclass(frozen=True)
-class VisStanding:
-    """Where the local Vis benchmark result would stand on the board.
-
-    Like the board accuracy, `pass_rate_percent` counts every scored attempt.
-    `strict_pass_rate_percent` also counts each unscored, unattempted and GPU task as
-    `attempts_per_task` failed attempts. Each `_ci95` value is a 95% interval with the
-    attempts of one task as one cluster. The ranks insert the rates among the board
-    rows, and each rank range inserts the ends of its interval. Per-attempt values use
-    model attempts. `caveats` lists the limits of the comparison.
-    """
-
-    model: str
-    round_name: str | None
-    scored_tasks: int
-    total_tasks: int
-    attempts_per_task: int
-    pass_rate_percent: float
-    pass_rate_ci95: tuple[float, float] | None
-    strict_pass_rate_percent: float
-    strict_pass_rate_ci95: tuple[float, float] | None
-    rank_by_pass_rate: int
-    rank_range: tuple[int, int] | None
-    rank_by_strict_rate: int
-    strict_rank_range: tuple[int, int] | None
-    cost_per_attempt_usd: float | None
-    cost_per_solved_usd: float | None
-    tokens_per_attempt: int | None
-    avg_attempt_minutes: float | None
-    caveats: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class Leaderboard:
-    """A Harbor Hub leaderboard. `vis` is None without a local result for its dataset."""
-
-    package: str
-    name: str
-    title: str
-    rows: tuple[LeaderboardRow, ...]
-    vis: VisStanding | None
-
-
-@dataclass(frozen=True)
 class Comparison:
     """A paired comparison of two evaluation results over the cases that both ran.
 
@@ -533,22 +460,6 @@ class TrialView:
     log_tail: tuple[str, ...]
     trace_path: str | None
     label: str | None
-
-
-@dataclass(frozen=True)
-class TrialLabel:
-    """A human cause for one failed attempt, kept in the labels.json of its round.
-
-    `diagnosed_cause` is the automatic diagnose() cause of the same attempt.
-    """
-
-    task: str
-    trial: str
-    round_name: str | None
-    cause: str
-    diagnosed_cause: str
-    note: str
-    labelled_at: str
 
 
 @dataclass(frozen=True)
@@ -1073,11 +984,7 @@ def _labels_path(round_name: str | None) -> Path:
 
 
 def _labels(round_name: str | None) -> dict[str, dict]:
-    try:
-        data = json.loads(_labels_path(round_name).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return _bench.load_labels(_labels_path(round_name))
 
 
 def _vm_free_gb() -> float | None:
@@ -1430,148 +1337,8 @@ def _post_json(url: str, payload: dict) -> dict:
         return json.load(response)
 
 
-def _label(value: object) -> str:
-    return (
-        str(value.get("label") or "") if isinstance(value, dict) else str(value or "")
-    )
-
-
 def _number(value: object) -> float | None:
     return float(value) if isinstance(value, (int, float)) else None
-
-
-def _leaderboard_row(raw: dict) -> LeaderboardRow:
-    meta = raw.get("metadata") or {}
-    metrics = raw.get("metrics") or {}
-    trials = int(metrics.get("n_trials") or 0)
-    successes = int(metrics.get("successes") or 0)
-    cost = _number(metrics.get("total_cost_usd"))
-    tokens = _number(metrics.get("total_tokens"))
-    duration = _number(metrics.get("avg_trial_duration_sec"))
-    return LeaderboardRow(
-        rank=int(raw.get("rank") or 0),
-        agent=_label(meta.get("agent_display")),
-        model=_label(meta.get("model_display")),
-        reasoning_effort=str(meta.get("reasoning_effort") or ""),
-        accuracy_percent=float(metrics.get("accuracy") or 0.0),
-        ci95_half_width=_number(metrics.get("accuracy_ci95_half_width")),
-        trials=trials,
-        successes=successes,
-        total_cost_usd=cost,
-        cost_per_trial_usd=round(cost / trials, 2)
-        if cost is not None and trials
-        else None,
-        cost_per_success_usd=round(cost / successes, 2)
-        if cost is not None and successes
-        else None,
-        tokens_per_trial=int(tokens / trials) if tokens and trials else None,
-        avg_trial_minutes=round(duration / 60, 1) if duration else None,
-        date=str(meta.get("date") or ""),
-    )
-
-
-def _model_key(text: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", text.lower())
-
-
-def _rank(rows: tuple[LeaderboardRow, ...], rate: float) -> int:
-    return 1 + sum(row.accuracy_percent > rate for row in rows)
-
-
-def _rank_range(
-    rows: tuple[LeaderboardRow, ...], interval: tuple[float, float] | None
-) -> tuple[int, int] | None:
-    return (
-        None
-        if interval is None
-        else (_rank(rows, interval[1]), _rank(rows, interval[0]))
-    )
-
-
-def _standing(
-    rows: tuple[LeaderboardRow, ...],
-    data: dict,
-    package: str,
-    name: str,
-    round_name: str | None = None,
-) -> VisStanding | None:
-    dataset_package, _, version = str(data.get("dataset") or "").partition("@")
-    if dataset_package != package or version.replace(".", "-") != name:
-        return None
-    total = int(data.get("total_dataset_tasks") or 0)
-    attempts = _bench.summary_attempts(data)
-    units = [(sum(flags), len(flags)) for flags in attempts.values()]
-    per_task = _mode([len(flags) for flags in attempts.values()]) or 1
-    strict_units = units + [(0, per_task)] * max(0, total - len(units))
-    solved = sum(passed for passed, _ in units)
-    rate = _percent(solved, sum(runs for _, runs in units))
-    strict = _percent(solved, sum(runs for _, runs in strict_units))
-    interval = _percent_interval(_stats.cluster_interval(units))
-    strict_interval = _percent_interval(_stats.cluster_interval(strict_units))
-    usage = data.get("usage_totals") or {}
-    model_attempts = int(usage.get("model_attempts") or 0)
-    tokens = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
-    cost = _number(usage.get("estimated_metered_api_cost_usd"))
-    hours = _number(usage.get("agent_hours"))
-    model = _bench._model(data)
-    same_model = [
-        row
-        for row in rows
-        if _model_key(row.model) and _model_key(row.model) in _model_key(model)
-    ]
-    caveats = [
-        f"The board has {_count(len(same_model), 'row')} with {model}. Compare Vis "
-        "with the same model to see the harness effect."
-        if same_model
-        else f"No board row uses {model}. Model and harness differ together, so this "
-        "is a product-level comparison."
-    ]
-    if total and rows:
-        board = statistics.median(row.trials for row in rows) / total
-        if per_task < round(board):
-            caveats.append(
-                f"Board rows ran about {board:.0f} trials per task. Vis has "
-                f"{_count(per_task, 'scored attempt')} per task, so its interval is "
-                f"wider. For a matched comparison, run run('terminal-bench', "
-                f"attempts={board:.0f}, round_name=...)."
-            )
-    caveats.append(
-        "The rank range places the ends of the Vis 95% interval among the board rows."
-    )
-    caveats.append(
-        f"The pass rate counts {len(units)} scored tasks of {total}. The strict rate "
-        "counts unscored, unattempted and GPU tasks as failures."
-    )
-    caveats.append(
-        "Vis cost is a metered-API price estimate. A Coding Plan subscription charge "
-        "is unknown."
-    )
-    return VisStanding(
-        model=model,
-        round_name=round_name,
-        scored_tasks=len(units),
-        total_tasks=total,
-        attempts_per_task=per_task,
-        pass_rate_percent=rate,
-        pass_rate_ci95=interval,
-        strict_pass_rate_percent=strict,
-        strict_pass_rate_ci95=strict_interval,
-        rank_by_pass_rate=_rank(rows, rate),
-        rank_range=_rank_range(rows, interval),
-        rank_by_strict_rate=_rank(rows, strict),
-        strict_rank_range=_rank_range(rows, strict_interval),
-        cost_per_attempt_usd=round(cost / model_attempts, 2)
-        if cost is not None and model_attempts
-        else None,
-        cost_per_solved_usd=round(cost / solved, 2)
-        if cost is not None and solved
-        else None,
-        tokens_per_attempt=tokens // model_attempts if model_attempts else None,
-        avg_attempt_minutes=round(hours * 60 / model_attempts, 1)
-        if hours is not None and model_attempts
-        else None,
-        caveats=tuple(caveats),
-    )
 
 
 def _failure_line(row: dict) -> str:
@@ -1802,26 +1569,8 @@ def _compare(baseline: str, candidate: str) -> Comparison:
     )
 
 
-def _find_trial(data: dict, task: str) -> dict:
-    """Find an attempt by trial name, or the latest scored attempt of a task."""
-    trials = data.get("trials") or ()
-    if "__" in task:
-        matches = [trial for trial in trials if str(trial.get("trial")) == task]
-    else:
-        matches = [
-            trial for trial in trials if _short(trial.get("task")) == _short(task)
-        ]
-    if not matches:
-        raise LookupError(
-            f"no attempt of {task!r} in the benchmark summary. Use a task name from "
-            "bench() or a trial name such as task__id."
-        )
-    scored = [trial for trial in matches if trial.get("scored")] or matches
-    return max(scored, key=lambda trial: str(trial.get("finished_at") or ""))
-
-
 def _trial_view(data: dict, task: str, round_name: str | None) -> TrialView:
-    trial = _find_trial(data, task)
+    trial = _bench.find_trial(data, task)
     name = str(trial.get("trial"))
     short = _short(trial.get("task"))
     limits = _limits()
@@ -1860,40 +1609,15 @@ def _trial_view(data: dict, task: str, round_name: str | None) -> TrialView:
 def _save_label(
     data: dict, task: str, cause: str, note: str, round_name: str | None
 ) -> TrialLabel:
-    if cause not in _CAUSES:
-        raise ValueError(f"cause must be one of {', '.join(_CAUSES)}, not {cause!r}")
-    if len(note) > _NOTE_LIMIT:
-        raise ValueError(
-            f"the note has {len(note)} characters; the limit is {_NOTE_LIMIT}"
-        )
-    trial = _find_trial(data, task)
-    diagnosed = _bench.attempt_cause(trial, data, _limits())
-    if diagnosed == "solved":
-        raise ValueError(
-            f"{trial.get('trial')} solved its task. Label only failed attempts."
-        )
-    label = TrialLabel(
-        task=_short(trial.get("task")),
-        trial=str(trial.get("trial")),
+    return _bench.save_label(
+        _labels_path(round_name),
+        data,
+        task,
+        cause,
+        note,
+        limits=_limits(),
         round_name=round_name,
-        cause=cause,
-        diagnosed_cause=diagnosed,
-        note=note,
-        labelled_at=_now(),
     )
-    labels = _labels(round_name)
-    labels[label.trial] = {
-        "task": label.task,
-        "cause": cause,
-        "note": note,
-        "labelled_at": label.labelled_at,
-    }
-    path = _labels_path(round_name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    draft = path.with_name(path.name + ".tmp")
-    draft.write_text(json.dumps(labels, indent=2, sort_keys=True) + "\n", "utf-8")
-    draft.replace(path)
-    return label
 
 
 def _elapsed(run: EvalRun) -> int:
@@ -3247,26 +2971,12 @@ class Evals:
         standing before you compare.
         """
         summary = _summary_path(round_name)
-        rows: list[LeaderboardRow] = []
-        board: dict = {}
-        page = pages = 1
-        while page <= min(pages, 50):
-            data = _post_json(
-                LEADERBOARD_URL,
-                {"package": package, "name": name, "page": page, "page_size": 100},
-            )
-            board = data.get("leaderboard") or board
-            rows.extend(_leaderboard_row(raw) for raw in data.get("rows") or ())
-            pages = int((data.get("pagination") or {}).get("total_pages") or 1)
-            page += 1
-        rows.sort(key=lambda row: (row.rank or 10**6, -row.accuracy_percent))
-        standing = None
-        if summary.is_file():
-            standing = _standing(
-                tuple(rows), _summary(False, round_name), package, name, round_name
-            )
-        return Leaderboard(
-            package, name, str(board.get("title") or name), tuple(rows), standing
+        return _leaderboard.read_leaderboard(
+            package,
+            name,
+            _summary(False, round_name) if summary.is_file() else None,
+            round_name,
+            post=_post_json,
         )
 
     @vis.method(

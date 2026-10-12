@@ -9,11 +9,13 @@ from 0 to 100 and are rounded to 0.1.
 
 from __future__ import annotations
 
+import json
 import statistics
 import tomllib
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .labels import Agreement, agreement
@@ -21,6 +23,12 @@ from .repeats import repeat_stats
 from .stats import wilson_interval
 
 __all__ = [
+    "CAUSES",
+    "NOTE_LIMIT",
+    "TrialLabel",
+    "find_trial",
+    "load_labels",
+    "save_label",
     "EARLY_STOP_SHARE",
     "NEAR_MISS_RATIO",
     "BenchReport",
@@ -44,6 +52,19 @@ EARLY_STOP_SHARE = 0.25
 
 NEAR_MISS_RATIO = 0.8
 """A failed attempt that passed at least this share of its verifier tests is a near miss."""
+
+CAUSES = (
+    "dead_tools",
+    "vis_errors",
+    "agent_timeouts",
+    "early_stops",
+    "unscored",
+    "other",
+)
+"""The failure causes of `attempt_cause` that a person can give with `save_label`."""
+
+NOTE_LIMIT = 500
+"""The maximum length in characters of the note of a label."""
 
 
 @dataclass(frozen=True)
@@ -149,6 +170,22 @@ class Diagnosis:
     findings: tuple[Finding, ...]
     estimate: str
     label_check: Agreement
+
+
+@dataclass(frozen=True)
+class TrialLabel:
+    """A human cause for one failed attempt, kept in the labels file of its round.
+
+    `diagnosed_cause` is the automatic `attempt_cause` of the same attempt.
+    """
+
+    task: str
+    trial: str
+    round_name: str | None
+    cause: str
+    diagnosed_cause: str
+    note: str
+    labelled_at: str
 
 
 def _short(task: object) -> str:
@@ -555,3 +592,89 @@ def diagnose(
         estimate,
         cause_check(summary, labels or {}, limits),
     )
+
+
+def find_trial(summary: Mapping, task: str) -> dict:
+    """Find an attempt by trial name, or the latest scored attempt of a task.
+
+    A name with `__` is a trial name, such as `task__id`. Raises `LookupError` when the
+    summary has no such attempt.
+    """
+    trials = summary.get("trials") or ()
+    if "__" in task:
+        matches = [trial for trial in trials if str(trial.get("trial")) == task]
+    else:
+        matches = [
+            trial for trial in trials if _short(trial.get("task")) == _short(task)
+        ]
+    if not matches:
+        raise LookupError(
+            f"no attempt of {task!r} in the benchmark summary. Use a task name or a "
+            "trial name such as task__id."
+        )
+    scored = [trial for trial in matches if trial.get("scored")] or matches
+    return max(scored, key=lambda trial: str(trial.get("finished_at") or ""))
+
+
+def load_labels(path: Path | str) -> dict[str, dict]:
+    """Read the labels file of a round: a map from trial name to its label.
+
+    A file that is missing or is not a JSON object gives an empty map.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_label(
+    path: Path | str,
+    summary: Mapping,
+    task: str,
+    cause: str,
+    note: str = "",
+    *,
+    limits: Mapping[str, float] | None = None,
+    round_name: str | None = None,
+) -> TrialLabel:
+    """Save the human cause of one failed attempt in the labels file at `path`.
+
+    `task` is a task name or a trial name, as in `find_trial`. `cause` is one of
+    `CAUSES`. The write replaces the file at once. Raises `ValueError` for an unknown
+    cause, a note longer than `NOTE_LIMIT` or a solved attempt.
+    """
+    if cause not in CAUSES:
+        raise ValueError(f"cause must be one of {', '.join(CAUSES)}, not {cause!r}")
+    if len(note) > NOTE_LIMIT:
+        raise ValueError(
+            f"the note has {len(note)} characters; the limit is {NOTE_LIMIT}"
+        )
+    trial = find_trial(summary, task)
+    diagnosed = attempt_cause(trial, summary, limits or {})
+    if diagnosed == "solved":
+        raise ValueError(
+            f"{trial.get('trial')} solved its task. Label only failed attempts."
+        )
+    label = TrialLabel(
+        task=_short(trial.get("task")),
+        trial=str(trial.get("trial")),
+        round_name=round_name,
+        cause=cause,
+        diagnosed_cause=diagnosed,
+        note=note,
+        labelled_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
+    labels = load_labels(path)
+    labels[label.trial] = {
+        "task": label.task,
+        "cause": cause,
+        "note": note,
+        "labelled_at": label.labelled_at,
+    }
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    draft = target.with_name(target.name + ".tmp")
+    draft.write_text(json.dumps(labels, indent=2, sort_keys=True) + "\n", "utf-8")
+    draft.replace(target)
+    return label

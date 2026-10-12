@@ -5,26 +5,33 @@ Harbor job or round with `read_trials`, then count them with `case_results` or
 `summarize`. Seal a finished round with `seal_round`. Compare two results with
 `compare_cases`, or test paired changes with `paired_change` and `mcnemar_exact`.
 Score repeated attempts with `task_attempts` and `repeat_stats`. Score and diagnose a
-Terminal-Bench round summary with `bench_report` and `diagnose`. Check automatic
+Terminal-Bench round summary with `bench_report` and `diagnose`, and keep human cause
+labels with `save_label`. Place a round on a Harbor Hub board with `read_leaderboard`. Check automatic
 causes or judge stages against human labels with `agreement`. For installation and sessions, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
 from .bench import (
+    CAUSES,
     EARLY_STOP_SHARE,
     NEAR_MISS_RATIO,
+    NOTE_LIMIT,
     BenchReport,
     Diagnosis,
     Finding,
     OutcomeCount,
     TaskNote,
+    TrialLabel,
     agent_limits,
     attempt_cause,
     attempt_outcome,
     bench_report,
     cause_check,
     diagnose,
+    find_trial,
     latest_trials,
+    load_labels,
+    save_label,
     summary_attempts,
     task_note,
 )
@@ -51,6 +58,15 @@ from .labels import (
     majority,
     sample_agreement,
 )
+from .leaderboard import (
+    LEADERBOARD_URL,
+    Leaderboard,
+    LeaderboardRow,
+    VisStanding,
+    leaderboard_row,
+    read_leaderboard,
+    standing,
+)
 from .repeats import RepeatStats, repeat_stats, task_attempts
 from .stats import (
     benjamini_hochberg,
@@ -74,11 +90,14 @@ from .trajectory import (
 )
 
 __all__ = [
+    "CAUSES",
     "EARLY_STOP_SHARE",
     "KAPPA_REVIEW",
     "KAPPA_TRUST",
+    "LEADERBOARD_URL",
     "MIN_LABELS",
     "NEAR_MISS_RATIO",
+    "NOTE_LIMIT",
     "STAGES",
     "Agreement",
     "BenchReport",
@@ -88,6 +107,8 @@ __all__ = [
     "Finding",
     "FunctionCall",
     "HarborTrial",
+    "Leaderboard",
+    "LeaderboardRow",
     "OutcomeCount",
     "RepeatStats",
     "RouteTest",
@@ -98,6 +119,8 @@ __all__ = [
     "ToolCall",
     "Trajectory",
     "TrajectoryMetrics",
+    "TrialLabel",
+    "VisStanding",
     "agent_limits",
     "agreement",
     "attempt_cause",
@@ -112,20 +135,26 @@ __all__ = [
     "detectable_change",
     "diagnose",
     "effective_size",
+    "find_trial",
     "kappa_advice",
     "latest_trials",
+    "leaderboard_row",
+    "load_labels",
     "load_trajectory",
     "majority",
     "mcnemar_exact",
     "paired_change",
     "parse_trajectory",
+    "read_leaderboard",
     "read_trial",
     "read_trials",
     "repeat_stats",
     "sample_agreement",
+    "save_label",
     "seal_digest",
     "seal_round",
     "seal_rows",
+    "standing",
     "summarize",
     "summary_attempts",
     "task_attempts",

@@ -1,12 +1,17 @@
 """Tests for the Terminal-Bench round score and diagnosis of blockether.vis.evals."""
 
 from blockether.vis.evals import (
+    LEADERBOARD_URL,
     Agreement,
     agent_limits,
     attempt_cause,
     bench_report,
     cause_check,
     diagnose,
+    find_trial,
+    load_labels,
+    read_leaderboard,
+    save_label,
     summary_attempts,
 )
 
@@ -146,3 +151,51 @@ def test_agent_limits_reads_task_toml_files(tmp_path):
     (tmp_path / "beta" / "task.toml").write_text("not toml [")
     assert agent_limits(tmp_path) == {"alpha": 900.0}
     assert agent_limits(tmp_path / "missing") == {}
+
+
+def test_save_label_keeps_one_label_for_each_failed_attempt(tmp_path):
+    path = tmp_path / "runs" / "labels.json"
+    assert load_labels(path) == {}
+    label = save_label(
+        path, summary(), "gamma", "early_stops", "stopped", limits=LIMITS
+    )
+    assert (label.trial, label.diagnosed_cause) == ("gamma__0102", "early_stops")
+    assert load_labels(path)["gamma__0102"]["cause"] == "early_stops"
+    assert find_trial(summary(), "zeta__abc")["task"] == "terminal-bench/zeta"
+    for task, cause, error in (
+        ("alpha", "other", "solved its task"),
+        ("gamma", "bad", "cause must be one of"),
+        ("nothing", "other", "no attempt of"),
+    ):
+        try:
+            save_label(path, summary(), task, cause)
+        except (LookupError, ValueError) as raised:
+            assert error in str(raised)
+        else:
+            raise AssertionError(f"{task} {cause} was saved")
+
+
+def test_read_leaderboard_reads_every_page_and_places_the_round():
+    def row(rank, model, accuracy):
+        return {
+            "rank": rank,
+            "metadata": {"agent_display": {"label": "Agent"}, "model_display": model},
+            "metrics": {"accuracy": accuracy, "n_trials": 50, "successes": 10},
+        }
+
+    pages = {
+        1: [row(2, "Model B", 40.0), row(1, "Model A", 60.0)],
+        2: [row(3, "GLM", 20.0)],
+    }
+    calls = []
+
+    def post(url, payload):
+        calls.append((url, payload["page"]))
+        return {"rows": pages[payload["page"]], "pagination": {"total_pages": 2}}
+
+    data = summary() | {"dataset": "terminal-bench/terminal-bench@4.0.0"}
+    board = read_leaderboard(summary=data, post=post)
+    assert calls == [(LEADERBOARD_URL, 1), (LEADERBOARD_URL, 2)]
+    assert [row.model for row in board.rows] == ["Model A", "Model B", "GLM"]
+    assert board.vis is not None and board.vis.rank_by_pass_rate == 3
+    assert read_leaderboard(summary=summary(), post=post).vis is None
