@@ -2,9 +2,9 @@
 
 Read one Vis run with `load_trajectory` or `parse_trajectory`. Read the trials of a
 Harbor job or round with `read_trials`, then count them with `case_results` or
-`summarize`. Seal a finished round with `seal_round`. Compare paired results with
-`paired_change` and `mcnemar_exact`. Check automatic causes or judge stages against
-human labels with `agreement`. For installation and sessions, use the
+`summarize`. Seal a finished round with `seal_round`. Compare two results with
+`compare_cases`, or test paired changes with `paired_change` and `mcnemar_exact`.
+Check automatic causes or judge stages against human labels with `agreement`. For installation and sessions, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
@@ -19,6 +19,7 @@ from .agreement import (
     majority,
     sample_agreement,
 )
+from .compare import CaseChange, CaseComparison, RouteTest, compare_cases
 from .harbor import (
     HarborTrial,
     RunSummary,
@@ -57,8 +58,11 @@ __all__ = [
     "MIN_LABELS",
     "STAGES",
     "Agreement",
+    "CaseChange",
+    "CaseComparison",
     "FunctionCall",
     "HarborTrial",
+    "RouteTest",
     "RunSummary",
     "Step",
     "StepMetrics",
@@ -70,6 +74,7 @@ __all__ = [
     "case_results",
     "cluster_interval",
     "cohen_kappa",
+    "compare_cases",
     "detectable_change",
     "effective_size",
     "kappa_advice",

@@ -57,7 +57,7 @@ import unicodedata
 import urllib.request
 import uuid
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
@@ -118,8 +118,8 @@ _CHILDREN: dict[str, subprocess.Popen] = {}
 _SDK_PACKAGE = "_vis_evals_sdk"
 
 
-def _load_sdk() -> tuple[ModuleType, ModuleType, ModuleType]:
-    """Import the `agreement`, `harbor` and `stats` modules of `blockether.vis.evals`.
+def _load_sdk() -> tuple[ModuleType, ModuleType, ModuleType, ModuleType]:
+    """Import the `agreement`, `compare`, `harbor` and `stats` modules of the SDK evals.
 
     An extension context holds only `blockether.vis.extension`. These modules use
     only the standard library, so the extension imports them from the SDK source under
@@ -134,13 +134,16 @@ def _load_sdk() -> tuple[ModuleType, ModuleType, ModuleType]:
     sys.modules[_SDK_PACKAGE] = package
     return (
         importlib.import_module(f"{_SDK_PACKAGE}.agreement"),
+        importlib.import_module(f"{_SDK_PACKAGE}.compare"),
         importlib.import_module(f"{_SDK_PACKAGE}.harbor"),
         importlib.import_module(f"{_SDK_PACKAGE}.stats"),
     )
 
 
-_agreement, _harbor, _stats = _load_sdk()
+_agreement, _compare_sdk, _harbor, _stats = _load_sdk()
 Agreement = _agreement.Agreement
+CaseChange = _compare_sdk.CaseChange
+RouteTest = _compare_sdk.RouteTest
 
 
 @dataclass(frozen=True)
@@ -516,32 +519,6 @@ class Leaderboard:
 
 
 @dataclass(frozen=True)
-class CaseChange:
-    """One case whose pass rate changed between the two sides, as passed/runs."""
-
-    case: str
-    baseline: str
-    candidate: str
-
-
-@dataclass(frozen=True)
-class RouteTest:
-    """The exact McNemar test of the paired cases of one route.
-
-    A route is one agent with one model. `worse` and `better` count the cases whose pass
-    rate fell or rose. `p_value` is the two-sided exact p-value. `q_value` is its
-    Benjamini-Hochberg value over all routes of the comparison.
-    """
-
-    route: str
-    paired_cases: int
-    worse: int
-    better: int
-    p_value: float
-    q_value: float
-
-
-@dataclass(frozen=True)
 class Comparison:
     """A paired comparison of two evaluation results over the cases that both ran.
 
@@ -692,6 +669,11 @@ def _percent(part: float, whole: float) -> float:
 
 def _count(number: int, noun: str) -> str:
     return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
+
+
+def _fields(record: object) -> dict:
+    """Give the fields of a dataclass record without a copy of nested records."""
+    return {field.name: getattr(record, field.name) for field in fields(record)}
 
 
 def _short(task: object) -> str:
@@ -1658,7 +1640,7 @@ def _stage_agreement(judge_dir: Path) -> StageAgreement:
         errors=_judge_errors(judge_dir),
         stages=tuple(f"{trial}: {stage}" for trial, stage in judged.items()),
         sample_agreement_percent=_agreement.sample_agreement(samples),
-        **asdict(found),
+        **_fields(found),
     )
 
 
@@ -2183,42 +2165,6 @@ def _side(spec: str) -> _Side:
     return _scenario_side(spec)
 
 
-def _route(key: tuple[str, ...]) -> str:
-    return f"{key[1]} with {key[2]}"
-
-
-def _case_name(key: tuple[str, ...]) -> str:
-    return key[0] if len(key) == 1 else f"{key[0]} ({_route(key)})"
-
-
-def _route_tests(
-    changes: dict[tuple[str, ...], float], crossed: str | None
-) -> tuple[RouteTest, ...]:
-    """Give the exact McNemar test of each route and its Benjamini-Hochberg value.
-
-    `crossed` names the one pair of routes when the sides ran on different routes.
-    """
-    groups: dict[str, list[float]] = defaultdict(list)
-    for key, change in changes.items():
-        groups[crossed or _route(key)].append(change)
-    counts = [
-        (
-            route,
-            len(values),
-            sum(value < 0 for value in values),
-            sum(value > 0 for value in values),
-        )
-        for route, values in sorted(groups.items())
-    ]
-    p_values = [_stats.mcnemar_exact(worse, better) for _, _, worse, better in counts]
-    return tuple(
-        RouteTest(route, cases, worse, better, p_value, q_value)
-        for (route, cases, worse, better), p_value, q_value in zip(
-            counts, p_values, _stats.benjamini_hochberg(p_values), strict=True
-        )
-    )
-
-
 def _compare(baseline: str, candidate: str) -> Comparison:
     base, other = _side(baseline), _side(candidate)
     if base.kind != other.kind:
@@ -2227,47 +2173,10 @@ def _compare(baseline: str, candidate: str) -> Comparison:
         )
     if base.name == other.name:
         raise ValueError(f"both sides are {base.name}; compare two different results")
-    caveats = []
-    base_cases, other_cases = base.cases, other.cases
-    crossed = None
-    if not base_cases.keys() & other_cases.keys():
-        base_routes = {_route(key) for key in base_cases}
-        other_routes = {_route(key) for key in other_cases}
-        if len(base_routes) != 1 or len(other_routes) != 1:
-            raise ValueError(
-                f"{base.name} and {other.name} share no case, and one of them has more "
-                "than one route. Compare results with the same agent and model."
-            )
-        crossed = f"{min(base_routes)} against {min(other_routes)}"
-        base_cases = {key[:1]: value for key, value in base_cases.items()}
-        other_cases = {key[:1]: value for key, value in other_cases.items()}
-        caveats.append(
-            f"The sides used different routes, {min(base_routes)} and "
-            f"{min(other_routes)}. Model and harness differ together."
-        )
-    paired = sorted(base_cases.keys() & other_cases.keys())
-    if not paired:
-        raise ValueError(f"{base.name} and {other.name} share no case")
-    changes = {}
-    changed = []
-    for key in paired:
-        (base_passed, base_runs), (passed, runs) = base_cases[key], other_cases[key]
-        change = passed / runs - base_passed / base_runs
-        changes[key] = change
-        if change:
-            row = CaseChange(
-                _case_name(key), f"{base_passed}/{base_runs}", f"{passed}/{runs}"
-            )
-            changed.append((change, row))
-    (low, high), floor = _stats.paired_change(list(changes.values()))
-    interval = (_points(low), _points(high))
-    verdict = (
-        "better"
-        if interval[0] > 0
-        else "worse"
-        if interval[1] < 0
-        else "no measurable difference"
+    found = _compare_sdk.compare_cases(
+        base.cases, other.cases, baseline_name=base.name, candidate_name=other.name
     )
+    caveats = list(found.caveats)
     if base.version == other.version and base.is_identified:
         caveats.append(
             "Both sides ran the same Vis version, so the difference shows run-to-run "
@@ -2284,47 +2193,13 @@ def _compare(baseline: str, candidate: str) -> Comparison:
                 f"The {label} ran with uncommitted changes, so its commit does not "
                 "identify its code."
             )
-    unpaired = len(base_cases.keys() ^ other_cases.keys())
-    if unpaired:
-        caveats.append(
-            f"{_count(unpaired, 'case')} ran on one side only. The comparison leaves "
-            "them out."
-        )
-    count = len(paired)
-    values = list(changes.values())
     return Comparison(
         kind=base.kind,
         baseline=base.name,
         candidate=other.name,
         baseline_version=base.version,
         candidate_version=other.version,
-        paired_cases=count,
-        baseline_rate_percent=_percent(
-            sum(passed / runs for passed, runs in map(base_cases.get, paired)), count
-        ),
-        candidate_rate_percent=_percent(
-            sum(passed / runs for passed, runs in map(other_cases.get, paired)), count
-        ),
-        difference_points=_percent(sum(values), count),
-        difference_ci95=interval,
-        verdict=verdict,
-        detectable_change_points=_points(floor),
-        p_value=_stats.mcnemar_exact(
-            sum(value < 0 for value in values), sum(value > 0 for value in values)
-        ),
-        routes=_route_tests(changes, crossed),
-        worse=tuple(
-            row
-            for change, row in sorted(changed, key=lambda item: item[0])
-            if change < 0
-        ),
-        better=tuple(
-            row
-            for change, row in sorted(changed, key=lambda item: -item[0])
-            if change > 0
-        ),
-        unpaired=unpaired,
-        caveats=tuple(caveats),
+        **(_fields(found) | {"caveats": tuple(caveats)}),
     )
 
 
