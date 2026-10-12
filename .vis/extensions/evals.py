@@ -141,8 +141,8 @@ def _load_sdk() -> tuple[ModuleType, ...]:
     )
 
 
-_compare_sdk, _harbor, _labels, _repeats, _stats = _load_sdk()
-Agreement = _labels.Agreement
+_compare_sdk, _harbor, _label_sdk, _repeats, _stats = _load_sdk()
+Agreement = _label_sdk.Agreement
 CaseChange = _compare_sdk.CaseChange
 RouteTest = _compare_sdk.RouteTest
 
@@ -1498,7 +1498,7 @@ def _label_check(
     """Compare the diagnose() causes with the human labels of the same attempts."""
     trials = {str(trial.get("trial")): trial for trial in data.get("trials") or ()}
     dead = _dead_trials(data)
-    return _labels.agreement(
+    return _label_sdk.agreement(
         (
             (name, _cause(trials[name], dead, limits), str(label.get("cause")))
             for name, label in sorted(labels.items())
@@ -1562,7 +1562,7 @@ def _latest_judged_stage(source: Path, trial: str) -> str | None:
             continue
         found = _judged_samples(judge_dir).get(trial)
         if found:
-            return _labels.majority(found)
+            return _label_sdk.majority(found)
     return None
 
 
@@ -1575,9 +1575,9 @@ def _stage_labels(source: Path) -> dict[str, dict]:
 
 
 def _save_stage_label(source: Path, trial: str, stage: str, note: str) -> StageLabel:
-    if stage not in _labels.STAGES:
+    if stage not in _label_sdk.STAGES:
         raise ValueError(
-            f"stage must be one of {', '.join(_labels.STAGES)}, not {stage!r}"
+            f"stage must be one of {', '.join(_label_sdk.STAGES)}, not {stage!r}"
         )
     if len(note) > _NOTE_LIMIT:
         raise ValueError(
@@ -1606,9 +1606,9 @@ def _stage_agreement(judge_dir: Path) -> StageAgreement:
     source = _judge_source(judge_dir)
     samples = _judged_samples(judge_dir)
     judged = {
-        trial: _labels.majority(found) for trial, found in sorted(samples.items())
+        trial: _label_sdk.majority(found) for trial, found in sorted(samples.items())
     }
-    found = _labels.agreement(
+    found = _label_sdk.agreement(
         (
             (trial, judged[trial], str(label.get("stage")))
             for trial, label in sorted(_stage_labels(source).items())
@@ -1625,7 +1625,7 @@ def _stage_agreement(judge_dir: Path) -> StageAgreement:
         judged=len(judged),
         errors=_judge_errors(judge_dir),
         stages=tuple(f"{trial}: {stage}" for trial, stage in judged.items()),
-        sample_agreement_percent=_labels.sample_agreement(samples),
+        sample_agreement_percent=_label_sdk.sample_agreement(samples),
         **_fields(found),
     )
 
