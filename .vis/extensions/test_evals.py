@@ -48,6 +48,7 @@ TAGS = {
     "compare": "observation",
     "trial": "observation",
     "label": "mutation",
+    "capture": "observation",
 }
 
 
@@ -242,6 +243,137 @@ def test_new_scenario_refuses_unsafe_or_ungraded_input(repo, changes, error, mes
     with pytest.raises(error, match=message):
         tools.new_scenario(**arguments)
     assert sorted(path.name for path in evals.SCENARIOS.iterdir()) == before
+
+
+SESSION = "6fccb4a2-bf20-448c-ac4f-9d170983c0f3"
+
+
+def session_turn(position, request, code=(), answer=None, status="done"):
+    """One transcript turn in the shape that vis.read_session returns."""
+    content = [{"type": "reasoning", "text": "private"}]
+    if answer is not None:
+        content.append({"type": "prose", "markdown": answer})
+    return {
+        "position": position,
+        "user_request": request,
+        "status": status,
+        "content": content,
+        "iterations": [{"blocks": [{"code": text} for text in code]}],
+    }
+
+
+@pytest.fixture
+def sessions(monkeypatch):
+    """A fake vis.read_session over one session; it records each target."""
+    turns = []
+    targets = []
+
+    def read_session(target=None):
+        targets.append(target)
+        if target not in (SESSION, f"vis_session_id#{SESSION}", SESSION[:8]):
+            raise RuntimeError(f"no session matches {target}")
+        return {
+            "session_id": SESSION,
+            "session": {"id": SESSION},
+            "transcript": {"turns": turns},
+        }
+
+    monkeypatch.setattr(vis, "read_session", read_session)
+    return SimpleNamespace(turns=turns, targets=targets)
+
+
+def test_capture_drafts_a_scenario_from_a_session_turn(
+    repo, tmp_path, monkeypatch, sessions
+):
+    monkeypatch.setenv("EXAMPLE_API_KEY", "sk-fixture-credential")
+    project = tmp_path / "project"
+    write_json(project / "data" / "accounts.csv", {"id": 1})
+    (project / "notes.txt").write_text(
+        "token sk-fixture-credential\n", encoding="utf-8"
+    )
+    (project / "big.log").write_text("x" * 70000, encoding="utf-8")
+    (project / "api_key.txt").write_text("secret\n", encoding="utf-8")
+    sessions.turns.extend(
+        [
+            session_turn(
+                1,
+                "Join project_root_path / 'data' / 'accounts.csv' with the events.",
+                code=[
+                    "open('notes.txt'); open('big.log'); open('api_key.txt'); open('../x.txt')"
+                ],
+                answer="171 failed events, key sk-fixture-credential",
+            ),
+            session_turn(2, "", status="done"),
+            session_turn(3, "Count the lines of notes.txt.", status="running"),
+        ]
+    )
+    first = tools.capture(f"vis_session_id#{SESSION}", turn=1, project=str(project))
+    assert sessions.targets == [f"vis_session_id#{SESSION}"]
+    assert (first.session_id, first.scenario_id, first.turn, first.status) == (
+        SESSION,
+        "join-project-root-path-data",
+        1,
+        "done",
+    )
+    assert first.answer == "171 failed events, key [REDACTED]"
+    assert [item.path for item in first.files] == ["data/accounts.csv", "notes.txt"]
+    assert first.files[1].text == "token [REDACTED]\n"
+    assert first.skipped_files == ("big.log", "api_key.txt")
+    last = tools.capture(
+        SESSION[:8], project=str(project), scenario_id="count-note-lines"
+    )
+    assert (last.scenario_id, last.turn, last.status, last.answer) == (
+        "count-note-lines",
+        3,
+        "running",
+        "",
+    )
+    saved = tools.new_scenario(
+        first.scenario_id,
+        first.prompt,
+        {item.path: item.text for item in first.files},
+        want_answer=["171"],
+    )
+    assert saved.checks == ("want_answer",)
+    workspace = evals.SCENARIOS / first.scenario_id / "files"
+    assert (workspace / "data" / "accounts.csv").is_file()
+
+
+@pytest.mark.parametrize(
+    "arguments, error, message",
+    [
+        ({"session_id": "missing"}, RuntimeError, "no session matches missing"),
+        ({"session_id": SESSION, "turn": 2}, LookupError, "no turn 2 with a request"),
+        ({"session_id": SESSION, "turn": 9}, LookupError, "no turn 9 with a request"),
+        (
+            {"session_id": SESSION, "scenario_id": "Bad Id"},
+            ValueError,
+            "lowercase words",
+        ),
+    ],
+)
+def test_capture_refuses_a_missing_session_or_turn(
+    repo, sessions, arguments, error, message
+):
+    sessions.turns.extend(
+        [session_turn(1, "Fix the typo.", answer="Done."), session_turn(2, "")]
+    )
+    with pytest.raises(error, match=message):
+        tools.capture(**arguments)
+
+
+def test_capture_refuses_a_session_without_requests(repo, sessions):
+    sessions.turns.append(session_turn(1, "  "))
+    with pytest.raises(LookupError, match="no turn with a request"):
+        tools.capture(SESSION)
+
+
+def test_capture_names_a_draft_with_ascii_words_of_the_request(
+    repo, tmp_path, sessions
+):
+    sessions.turns.append(session_turn(1, "Dodać łączenie plików, proszę!"))
+    draft = tools.capture(SESSION, project=str(tmp_path))
+    assert draft.scenario_id == "dodac-laczenie-plikow-prosze"
 
 
 def test_run_scenarios_starts_the_runner_with_its_route(repo, monkeypatch):
@@ -1672,6 +1804,16 @@ def test_activities_stay_within_portable_limits():
             label=text,
         ),
         "label": evals.TrialLabel(text, text, text, text, text, text, text),
+        "capture": evals.CaptureDraft(
+            text,
+            text,
+            1,
+            text,
+            text,
+            text,
+            (evals.CapturedFile(text, text),) * 40,
+            (text,),
+        ),
     }
     assert set(samples) == set(TAGS)
     for name, sample in samples.items():

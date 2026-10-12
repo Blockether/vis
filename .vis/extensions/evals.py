@@ -52,6 +52,7 @@ import subprocess
 import sys
 import time
 import tomllib
+import unicodedata
 import urllib.request
 import uuid
 from collections import Counter, defaultdict
@@ -79,6 +80,10 @@ LEADERBOARD_URL = "https://api.harborframework.com/functions/v1/leaderboard-read
 
 _SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
 _SCENARIO_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_PATH_CHAIN = re.compile(r"project_root_path((?:\s*/\s*['\"][^'\"\n]+['\"])+)")
+_QUOTED_PATH = re.compile(r"['\"]([\w.-]+(?:/[\w.-]+)*\.\w+)['\"]")
+_CAPTURE_FILES = 20
+_CAPTURE_FILE_BYTES = 65536
 _SETUP_KEYS = frozenset(
     {
         "lang",
@@ -594,6 +599,34 @@ class TrialLabel:
     labelled_at: str
 
 
+@dataclass(frozen=True)
+class CapturedFile:
+    """One project file that a captured turn names, with its current text."""
+
+    path: str
+    text: str
+
+
+@dataclass(frozen=True)
+class CaptureDraft:
+    """A scenario draft from one turn of a session. It has no oracle yet.
+
+    `files` holds the project files that the request or the code of the turn names,
+    with their current text. `skipped_files` names files that look secret, are too
+    large or are not text. `status` is the turn status. A person writes the oracle
+    from `answer`, then saves the draft with new_scenario().
+    """
+
+    scenario_id: str
+    session_id: str
+    turn: int
+    status: str
+    prompt: str
+    answer: str
+    files: tuple[CapturedFile, ...]
+    skipped_files: tuple[str, ...]
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -732,6 +765,66 @@ def _scenario(directory: Path) -> Scenario:
         is_measurement=bool(data.get("measurement")),
         path=str(directory),
     )
+
+
+def _session_turn(data: dict, turn: int | None) -> dict:
+    turns = {
+        item["position"]: item
+        for item in (data.get("transcript") or {}).get("turns") or ()
+        if isinstance(item.get("position"), int)
+        and str(item.get("user_request") or "").strip()
+    }
+    if not turns:
+        raise LookupError("the session has no turn with a request")
+    number = max(turns) if turn is None else turn
+    if number not in turns:
+        raise LookupError(f"the session has no turn {turn} with a request")
+    return turns[number]
+
+
+def _named_paths(texts: list[str]) -> list[str]:
+    found = []
+    for text in texts:
+        for chain in _PATH_CHAIN.finditer(text):
+            found.append("/".join(re.findall(r"['\"]([^'\"\n]+)['\"]", chain.group(1))))
+        found.extend(match.group(1) for match in _QUOTED_PATH.finditer(text))
+    return list(dict.fromkeys(found))
+
+
+def _captured_files(
+    project: Path, names: list[str]
+) -> tuple[tuple[CapturedFile, ...], tuple[str, ...]]:
+    root = project.resolve()
+    files: list[CapturedFile] = []
+    skipped: list[str] = []
+    for name in names:
+        relative = Path(name)
+        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+            continue
+        path = (root / relative).resolve()
+        if not path.is_relative_to(root) or not path.is_file():
+            continue
+        upper = relative.name.upper()
+        if relative.name.startswith(".env") or any(m in upper for m in _SECRET_MARKERS):
+            skipped.append(relative.as_posix())
+            continue
+        if len(files) >= _CAPTURE_FILES or path.stat().st_size > _CAPTURE_FILE_BYTES:
+            skipped.append(relative.as_posix())
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            skipped.append(relative.as_posix())
+            continue
+        files.append(CapturedFile(relative.as_posix(), _redact(text)))
+    return tuple(files), tuple(skipped)
+
+
+def _slug(prompt: str) -> str:
+    plain = prompt.translate(str.maketrans("łŁøØđĐ", "lLoOdD"))
+    plain = unicodedata.normalize("NFKD", plain).encode("ascii", "ignore").decode()
+    words = re.findall(r"[a-z0-9]+", plain.lower())[:5]
+    return "-".join(words) or "captured-turn"
 
 
 def _new_run(kind: str) -> tuple[str, Path]:
@@ -2297,6 +2390,32 @@ def _new_scenario_activity(*, phase, result, **_):
     )
 
 
+def _capture_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    rows = [
+        (item.path, _count(len(item.text.splitlines()), "line"))
+        for item in result.files[:30]
+    ]
+    content = [vis.ActivityText(_clip(result.prompt, 1000))]
+    if rows:
+        content.append(vis.ActivityTable(("File", "Size"), rows))
+    if len(result.files) > len(rows):
+        content.append(
+            vis.ActivityText(f"Showing {len(rows)} of {len(result.files)} files.")
+        )
+    if result.skipped_files:
+        content.append(
+            vis.ActivityText(_clip("Skipped: " + ", ".join(result.skipped_files), 1000))
+        )
+    return _presentation(
+        "Capture scenario",
+        f"{result.scenario_id} · turn {result.turn} · {result.status}"
+        f" · {_count(len(result.files), 'file')}",
+        tuple(content),
+    )
+
+
 def _run_content(run: EvalRun) -> tuple:
     return (
         vis.ActivityCode(_clip(run.command, 2000), language="bash"),
@@ -2885,6 +3004,59 @@ class Evals:
         return _scenario(directory)
 
     @vis.method(
+        tag="observation",
+        activity=vis.Activity(
+            label="Capture scenario", show_start=False, render=_capture_activity
+        ),
+    )
+    def capture(
+        self,
+        session_id: str,
+        turn: int | None = None,
+        project: str | None = None,
+        scenario_id: str | None = None,
+    ) -> CaptureDraft:
+        """Draft an e2e scenario from one turn of a session. Writes nothing.
+
+        `session_id` takes what vis.read_session takes: a bare id, an unambiguous
+        prefix or the copied `vis_session_id#<uuid>` marker. `turn` is the turn
+        number; without it, the last turn with a request is used. `project` is the
+        directory of the session's project; without it, the workspace root is used.
+        The draft takes the request as the prompt, and the current text of the project
+        files that the request or the code of the turn names. Known secret values are
+        redacted. Write an oracle from the answer, then save it with new_scenario().
+        """
+        if scenario_id is not None and not _SCENARIO_ID.fullmatch(scenario_id):
+            raise ValueError("scenario_id must be lowercase words joined by hyphens")
+        data = vis.read_session(session_id)
+        item = _session_turn(data, turn)
+        prompt = str(item.get("user_request") or "").strip()
+        code = [
+            str(block.get("code") or "")
+            for iteration in item.get("iterations") or ()
+            for block in iteration.get("blocks") or ()
+        ]
+        root = Path(project).expanduser() if project else vis.workspace_root()
+        files, skipped = _captured_files(root, _named_paths([prompt, *code]))
+        answer = "\n\n".join(
+            str(block.get("markdown") or "")
+            for block in item.get("content") or ()
+            if isinstance(block, dict) and block.get("type") == "prose"
+        )
+        return CaptureDraft(
+            scenario_id=scenario_id or _slug(prompt),
+            session_id=str(
+                (data.get("session") or {}).get("id") or data.get("session_id")
+            ),
+            turn=item["position"],
+            status=str(item.get("status") or ""),
+            prompt=_redact(prompt),
+            answer=_redact(answer.strip()),
+            files=files,
+            skipped_files=skipped,
+        )
+
+    @vis.method(
         tag="mutation",
         activity=vis.Activity(
             label="Start scenario run",
@@ -3325,6 +3497,7 @@ evals = Evals()
 PROMPT = """evals surface active — evaluate Vis with e2e scenarios and Terminal-Bench on Harbor:
   evals.scenarios(pattern=None)                    list e2e scenarios
   evals.new_scenario(id, prompt, files, want=...)  add a scenario under e2e/scenarios
+  evals.capture(session_id, turn=None)             draft a scenario from a session turn
   evals.run_scenarios(ids, models=None, repeats=1) start a paid scenario run in the background
   evals.preflight(round_name=None)                 check Podman, bundle, dataset, key and disk
   evals.run_bench(max_tasks=None, attempts=None, round_name=None)   start the paid queue
