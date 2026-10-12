@@ -12,6 +12,8 @@
             [com.blockether.vis.internal.loop.python-exec :as python-exec]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.worker :as worker]
             [com.blockether.vis.internal.python.worker-peer :as worker-peer]
@@ -338,7 +340,66 @@ print(worker_value)"))))
                            (expect (not (.isAlive first-writer))))))
            (expect (string? @result))
            (finally (doseq [^java.io.File file (reverse (file-seq (.toFile base)))]
-                      (java.nio.file.Files/deleteIfExists (.toPath file))))))))
+                      (java.nio.file.Files/deleteIfExists (.toPath file)))))))
+  (it "keeps a reused generation that a concurrent sweep judges free"
+      ;; Beta Native run 38203546476 lost `vis_sdk` this way. Each CLI start sweeps
+      ;; the store off-thread, and an earlier process leaves its generation with a
+      ;; free claim. The sweep judged that generation free, the publisher found its
+      ;; modules complete, and the delete then removed them before the worker import.
+      (let [temp-dir
+            (fn [prefix]
+              (.toFile (java.nio.file.Files/createTempDirectory
+                         (.toPath (io/file "target"))
+                         prefix
+                         (make-array java.nio.file.attribute.FileAttribute 0))))
+
+            seed
+            (temp-dir "worker-guest-seed-")
+
+            store
+            (temp-dir "worker-guest-store-")
+
+            sources
+            {"vis_results.py" "RESULTS = 1\n" "vis_sdk.py" "SDK = 1\n"}
+
+            generation
+            (io/file store (.getName (io/file (#'worker/materialize-guest-sources! seed sources))))
+
+            judged
+            (promise)
+
+            resume
+            (promise)
+
+            original-claim-state
+            paths/claim-state]
+
+        ;; What an earlier process leaves: complete modules and a claim that nobody holds.
+        (.mkdirs generation)
+        (doseq [[name source] sources]
+          (spit (io/file generation name) source))
+        (spit (io/file generation ".vis-live") "")
+        (try (with-redefs [paths/claim-state (fn [dir]
+                                               (let [state (original-claim-state dir)]
+                                                 (deliver judged state)
+                                                 (deref resume 5000 nil)
+                                                 state))]
+               (let [sweep (future
+                             (#'housekeeping/sweep-guest-store! store (.getCanonicalPath store) 0))]
+                 (expect (= :free (deref judged 5000 ::timeout)))
+                 (let [publish (future (#'worker/materialize-guest-sources! store sources))]
+                   ;; A publisher that ignores the sweep finishes in this window.
+                   (deref publish 500 nil)
+                   (deliver resume true)
+                   (expect (pos? (long (:deleted (deref sweep 5000 {:deleted 0})))))
+                   (expect (= (.getCanonicalPath generation) (deref publish 5000 ::timeout)))
+                   (doseq [[name source] sources]
+                     (let [file (io/file generation name)]
+                       (expect (= source (when (.isFile file) (slurp file)))))))))
+             (finally (deliver resume true)
+                      (doseq [^java.io.File file (concat (reverse (file-seq store))
+                                                         (reverse (file-seq seed)))]
+                        (java.nio.file.Files/deleteIfExists (.toPath file))))))))
 
 (defdescribe
   worker-long-home-test

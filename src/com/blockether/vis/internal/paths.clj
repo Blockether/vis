@@ -251,6 +251,19 @@
 
 (defn- claim-file ^File [^File dir] (File. dir ^String claim-file-name))
 
+(defonce ^:private claim-lock
+  ;; ONE monitor for the claim decisions of this process. See `with-claim-lock`.
+  (Object.))
+
+(defn with-claim-lock
+  "Call `f` while this process holds its claim lock, and answer what `f` answers.
+   A sweep holds the lock while it judges and deletes a directory. A publisher
+   holds it while it creates and claims a directory, before it fills it. So a
+   sweep of this process deletes a directory before the claim or not at all. A
+   sweep in another process can still judge a directory free before the claim."
+  [f]
+  (locking claim-lock (f)))
+
 (defn claim-dir!
   "Claim `dir` as in use by this process for as long as it runs, so cleanup in
    another process can tell a directory that is still served from one a dead

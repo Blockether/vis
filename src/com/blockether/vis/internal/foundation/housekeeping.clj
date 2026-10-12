@@ -389,6 +389,14 @@
 
       {:deleted removed :bytes (if (pos? removed) (long bytes) 0)})))
 
+(defn- reclaim-unused!
+  "Delete `dir` when nobody keeps it, and answer `{:deleted :bytes}`, or nil when
+   the directory stays. The judgement and the delete hold the claim lock, so a
+   publisher of this process cannot claim the directory between them."
+  [^File dir ^long cutoff ^String canon]
+  (paths/with-claim-lock (fn []
+                           (when (reclaimable? dir cutoff) (reclaim-dir! dir canon)))))
+
 (defn- add-counts
   [a b]
   {:deleted (+ (long (:deleted a)) (long (:deleted b)))
@@ -406,28 +414,28 @@
 
    Returns `{:deleted :bytes}`."
   [^File root ^String canon ^long cutoff]
-  (reduce (fn [acc ^File child]
-            (let [dot? (.startsWith (.getName child) ".")]
-              (cond (.isFile child) (if (and (not dot?)
-                                             (< (.lastModified child) cutoff)
-                                             (under? canon (canonical child)))
-                                      (let [size (.length child)]
-                                        (if (delete-quietly! (.toPath child))
-                                          (add-counts acc {:deleted 1 :bytes size})
-                                          acc))
-                                      acc)
-                    (or dot? (not (.isDirectory child))) acc
-                    (reclaimable? child cutoff) (add-counts acc (reclaim-dir! child canon))
-                    :else (reduce (fn [acc ^File snapshot]
-                                    (if (and (.isDirectory snapshot)
-                                             (.startsWith (.getName snapshot) "vis-ext-code")
-                                             (reclaimable? snapshot cutoff))
-                                      (add-counts acc (reclaim-dir! snapshot canon))
-                                      acc))
-                                  acc
-                                  (or (.listFiles child) (make-array File 0))))))
-          {:deleted 0 :bytes 0}
-          (or (.listFiles root) (make-array File 0))))
+  (reduce
+    (fn [acc ^File child]
+      (let [dot? (.startsWith (.getName child) ".")]
+        (cond
+          (.isFile child)
+          (if (and (not dot?) (< (.lastModified child) cutoff) (under? canon (canonical child)))
+            (let [size (.length child)]
+              (if (delete-quietly! (.toPath child)) (add-counts acc {:deleted 1 :bytes size}) acc))
+            acc)
+          (or dot? (not (.isDirectory child))) acc
+          :else (if-let [counts (reclaim-unused! child cutoff canon)]
+                  (add-counts acc counts)
+                  (reduce (fn [acc ^File snapshot]
+                            (if-let [counts (and (.isDirectory snapshot)
+                                                 (.startsWith (.getName snapshot) "vis-ext-code")
+                                                 (reclaim-unused! snapshot cutoff canon))]
+                              (add-counts acc counts)
+                              acc))
+                          acc
+                          (or (.listFiles child) (make-array File 0)))))))
+    {:deleted 0 :bytes 0}
+    (or (.listFiles root) (make-array File 0))))
 
 (defn- pycache-source
   "The source path a bytecode entry mirrors. The prefix mirrors ABSOLUTE source
@@ -509,8 +517,9 @@
                 counts
                 (reduce (fn [acc candidate]
                           (let [^File dir (io/file (:root candidate))]
-                            (if (and (.isDirectory dir) (reclaimable? dir cutoff))
-                              (add-counts acc (reclaim-dir! dir canon))
+                            (if-let [counts (and (.isDirectory dir)
+                                                 (reclaim-unused! dir cutoff canon))]
+                              (add-counts acc counts)
                               acc)))
                         {:deleted 0 :bytes 0}
                         candidates)]
