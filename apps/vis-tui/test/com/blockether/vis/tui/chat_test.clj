@@ -1327,3 +1327,25 @@
             (expect (= 1 (count (get-timeline))))
             (expect (= 2 (:iteration entry)))
             (expect (= rows (:user-input entry))))))))
+
+(defdescribe
+  open-tools-test
+  (it "replaces the tools of the first opened session once, then never again"
+      (let [calls (atom [])]
+        (with-redefs [vis/gateway-set-session-tools! (fn [sid tools]
+                                                       (swap! calls conj [sid tools])
+                                                       {"id" sid})]
+          (chat/set-launch-session-options! {:tools ["-py.repl_stop"]
+                                             :open-tools ["-py.repl_stop"]})
+          (#'chat/apply-open-tools! "first")
+          (#'chat/apply-open-tools! "second")
+          (expect (= [["first" ["-py.repl_stop"]]] @calls)))
+        (chat/set-launch-session-options! {})))
+  (it "turns a refused list into a user error"
+      (with-redefs [vis/gateway-set-session-tools! (fn [& _]
+                                                     (throw (ex-info "Unknown tool: py.lnt."
+                                                                     {:http-status 400})))]
+        (chat/set-launch-session-options! {:open-tools ["py.lnt"]})
+        (let [e (try (#'chat/apply-open-tools! "sid") nil (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= "--tools: Unknown tool: py.lnt." (ex-message e)))
+          (expect (:vis/user-error (ex-data e)))))))

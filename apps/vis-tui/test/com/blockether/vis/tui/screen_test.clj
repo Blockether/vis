@@ -2648,15 +2648,19 @@ therapy line 2"
                 (expect (= {:tools ["py.lint_code"]}
                            (launch-session-options {:tools "py.lint_code"}
                                                    {"VIS_TOOLS" "py.repl_eval"})))))
-  (describe
-    "existing sessions"
-    (it "rejects the flags with --session-id, --resume or --continue"
-        (expect (user-error? #(launch-session-options {:no-global true :continue true} {})))
-        (expect (user-error? #(launch-session-options {:extensions "gh" :session-id "x"} {})))
-        (expect (user-error? #(launch-session-options {:tools "py.lint_code" :resume true} {}))))
-    (it "accepts environment values with --continue, because only new sessions use them"
-        (expect (= {:sources ["project"]}
-                   (launch-session-options {:continue true} {"VIS_SOURCES" "project"}))))))
+  (describe "existing sessions"
+            (it "rejects the flags with --session-id, --resume or --continue"
+                (expect (user-error? #(launch-session-options {:no-global true :continue true} {})))
+                (expect (user-error? #(launch-session-options {:extensions "gh" :session-id "x"}
+                                                              {}))))
+            (it "takes --tools with a resume flag for new sessions and the first opened session"
+                (expect (= {:tools ["-py.repl_stop"] :open-tools ["-py.repl_stop"]}
+                           (launch-session-options {:tools "-py.repl_stop" :resume true} {})))
+                (expect (= {:tools ["py.repl_eval"]}
+                           (launch-session-options {:continue true} {"VIS_TOOLS" "py.repl_eval"}))))
+            (it "accepts environment values with --continue, because only new sessions use them"
+                (expect (= {:sources ["project"]}
+                           (launch-session-options {:continue true} {"VIS_SOURCES" "project"}))))))
 
 (defdescribe
   typing-diagnostics-test

@@ -93,7 +93,7 @@ cancelled or suspended turn also returns a record: always check `status`.
 To keep the agent away from some tools, pass `tools`. For example,
 `Agent(tools=["-py.repl_start", "-py.repl_stop"])` turns off those two tools of the
 `py` extension. [Choose single tools](configuration.md#choose-single-tools) describes
-the names and rules.
+the names and rules. To change the list later, call `agent.session.update(tools=[...])`.
 
 ## Get a validated result
 

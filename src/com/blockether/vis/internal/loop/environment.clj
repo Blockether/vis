@@ -108,7 +108,8 @@
         (set (map :ext/name active-extensions))
 
         selection
-        (:config/tools environment)]
+        (some-> (:config/tools environment)
+                deref)]
 
     (doseq [ext
             installed
@@ -736,7 +737,8 @@
                          :security-policy security-config
                          :config/toggles toggle-values
                          :config/sources sources
-                         :config/tools (tool-selection tools)
+                         ;; An atom, so `set-session-tools!` can change a live session.
+                         :config/tools (atom (tool-selection tools))
                          :security/filesystem-roots configured-rw-roots
                          :security/no-search-roots (security-policy/no-search-roots security-config)
                          :access-view-fn access-view-fn
@@ -1808,6 +1810,40 @@
 
         (turn-off-extensions! env turned-off)
         env))))
+
+(defn set-session-tools!
+  "Replace the tool list of saved session `id` (see [[tool-selection]]). Validate the
+   list against the project and tiers of that session, save it, and rebind the tools of
+   its cached environment: at once when it is idle, at the next iteration when busy.
+   Pass `[\"*\"]` to turn every tool on again. Return the saved list."
+  [id tools]
+  (let [db-info
+        (persistance/db-shared-connection! (config/resolve-db-spec))
+
+        session-id
+        (persistance/db-resolve-session-id db-info id)
+
+        tools
+        (binding [workspace/*workspace-root*
+                  (or (:root (saved-workspace db-info session-id)) workspace/*workspace-root*)
+
+                  workspace/*config-sources*
+                  (workspace/session-config-sources db-info session-id)]
+
+          (python-extensions/prepare-project! (workspace/cwd))
+          (or (check-tool-selection! tools)
+              (throw (ex-info "tools must be a list of tool names"
+                              {:status 400 :type :invalid-request}))))
+
+        entries
+        (select-keys @cache [(cache-key id)])]
+
+    (persistance/db-set-scoped-setting! db-info "session" session-id tool-selection-setting tools)
+    (doseq [{:keys [environment]} (vals entries)]
+      (some-> (:config/tools environment)
+              (reset! (tool-selection tools))))
+    (sync-cached-extension-symbols! entries)
+    tools))
 
 (defn ensure-env!
   [id]

@@ -884,6 +884,12 @@
   [sid title]
   (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:title title}))
 
+(defn set-session-tools!
+  "Replace the tool list of a saved session. The gateway validates the names against the
+   project of the session and returns the updated soul."
+  [sid tools]
+  (send-json! "PATCH" (str "/v1/sessions/" (enc sid)) {:tools (vec tools)}))
+
 (defn set-session-archived!
   "Archive or unarchive a saved session; the gateway refuses busy turns and echoes the soul."
   [sid archived?]
@@ -2536,6 +2542,8 @@
 (def gateway-create-session-group! create-session-group!)
 
 (def gateway-create-session! create-session!)
+
+(def gateway-set-session-tools! set-session-tools!)
 
 (def gateway-current-seq current-seq)
 

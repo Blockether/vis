@@ -7564,6 +7564,12 @@
 
 (defn set-title! [sid title] (when (lp/by-id sid) (lp/set-title! sid title) (soul sid)))
 
+(defn set-tools!
+  "Replace the tool list of `sid` (see `loop-env/set-session-tools!`). Returns the
+   refreshed soul, or nil when no such session exists. A bad list throws a 400 error."
+  [sid tools]
+  (when (lp/by-id sid) (loop-env/set-session-tools! sid tools) (soul sid)))
+
 (defn set-favorite!
   "Star (`true`) or unstar (`false`) `sid`. Returns the refreshed soul (its
    `favorite_rank` is the rank the gateway allocated), or nil when no such

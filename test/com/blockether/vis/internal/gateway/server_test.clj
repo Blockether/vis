@@ -6103,6 +6103,58 @@
         (fn []
           (expect (= 404 (:status (patch-session {:archived true})))))))))
 
+(defdescribe
+  patch-session-tools-test
+  (let [sid
+        (str (random-uuid))
+
+        patch-session
+        (fn [body]
+          (#'sessions-api/patch-session-handler
+           (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
+
+    (it "replaces the tool list of a saved session and answers its soul"
+        (let [seen (atom nil)]
+          (with-redefs [state/session-archived? (constantly false)
+                        state/set-tools! (fn [id tools]
+                                           (reset! seen [id tools])
+                                           {"id" id})]
+
+            (expect (= 200 (:status (patch-session {:tools ["-py.repl_stop"]}))))
+            (expect (= [(parse-uuid sid) ["-py.repl_stop"]] @seen)))))
+    (it "refuses a value that is not a list of strings, and an archived session"
+        (with-redefs [state/session-archived?
+                      (constantly false)
+
+                      state/set-tools!
+                      (fn [& _]
+                        (throw (ex-info "not called" {})))]
+
+          (expect (= 400 (:status (patch-session {:tools "py.lint_code"}))))
+          (expect (= 400 (:status (patch-session {:tools nil})))))
+        (with-redefs [state/session-archived? (constantly true)]
+          (expect (= 409 (:status (patch-session {:tools ["py.lint_code"]}))))))
+    (it "answers an unknown tool with 400 and an unknown session with 404"
+        (with-redefs [state/session-archived?
+                      (constantly false)
+
+                      state/set-tools!
+                      (fn [& _]
+                        (throw (ex-info "Unknown tool: py.lint."
+                                        {:status 400 :type :tool/unknown})))]
+
+          (let [response (patch-session {:tools ["py.lint"]})]
+            (expect (= 400 (:status response)))
+            (expect (= "Unknown tool: py.lint."
+                       (get-in (wire/parse-json (:body response)) ["error" "message"])))))
+        (with-redefs [state/session-archived?
+                      (constantly false)
+
+                      state/set-tools!
+                      (constantly nil)]
+
+          (expect (= 404 (:status (patch-session {:tools ["py.lint_code"]}))))))))
+
 ;; The ONE archive vocabulary every list route of this gateway reads: the view arrives by
   ;; NAME, because a boolean could not say whether the reader wants the active rows, both,
   ;; or the archive alone - which is what a reveal asks for.
@@ -7376,11 +7428,10 @@
           (with-redefs [state/create-session! (fn [opts]
                                                 (reset! seen opts)
                                                 {"id" "s1"})]
-            (expect
-              (= 201
-                 (:status (handler (request {"sources" ["project"]
-                                             "extensions" ["-spel"]
-                                             "tools" ["-py.lint_code"]})))))
+            (expect (= 201
+                       (:status (handler (request {"sources" ["project"]
+                                                   "extensions" ["-spel"]
+                                                   "tools" ["-py.lint_code"]})))))
             (expect (= {:sources ["project"] :extensions ["-spel"] :tools ["-py.lint_code"]}
                        (select-keys @seen [:sources :extensions :tools]))))))
     (it "refuses a value that is not a list of strings"

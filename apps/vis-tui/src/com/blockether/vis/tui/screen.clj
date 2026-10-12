@@ -9758,16 +9758,17 @@
   "Build the new-session options from the source, extension and tool flags.
    Without a flag, read `VIS_SOURCES`, `VIS_EXTENSIONS` and `VIS_TOOLS` from `env`.
    These options apply to each session that this client creates; an existing
-   session keeps the sources, extensions and tools that it started with."
+   session keeps the sources and extensions that it started with. With
+   `--session-id`, `--resume` or `--continue`, the `--tools` flag also replaces the
+   tool list of the first saved session that this client opens (`:open-tools`)."
   [{:keys [no-global no-project extensions tools session-id resume continue]} env]
-  (when (and (or no-global no-project extensions tools) (or session-id resume continue))
-    (throw
-      (ex-info
-        (str
-          "--no-global, --no-project, --vanilla, --extensions and --tools apply only to a new session."
-          " Do not use them with --session-id, --resume or --continue."
-          "\nUsage: " tui-usage)
-        {:vis/user-error true})))
+  (when (and (or no-global no-project extensions) (or session-id resume continue))
+    (throw (ex-info
+             (str
+               "--no-global, --no-project, --vanilla and --extensions apply only to a new session."
+               " Do not use them with --session-id, --resume or --continue."
+               "\nUsage: " tui-usage)
+             {:vis/user-error true})))
   (let [env-value
         (fn [k]
           (let [v (get env k)]
@@ -9786,7 +9787,7 @@
         (some-> (or extensions (env-value "VIS_EXTENSIONS"))
                 name-list)
 
-        tools
+        session-tools
         (some-> (or tools (env-value "VIS_TOOLS"))
                 name-list)]
 
@@ -9797,8 +9798,12 @@
       extensions
       (assoc :extensions extensions)
 
-      tools
-      (assoc :tools tools))))
+      session-tools
+      (assoc :tools session-tools)
+
+      ;; Only the flag changes a saved session; `VIS_TOOLS` stays for new sessions.
+      (and tools (or session-id resume continue))
+      (assoc :open-tools (name-list tools)))))
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,

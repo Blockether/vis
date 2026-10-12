@@ -450,8 +450,8 @@
 
 (defn- patch-session-handler
   "PATCH /v1/sessions/:sid - star (`{is_favorite}`), archive (`{archived}`),
-   rename (`{title}`) OR change project membership (`{project_id}`, null to remove
-   from project)."
+   rename (`{title}`), change project membership (`{project_id}`, null to remove
+   from project) OR replace the tool list (`{tools}`, see `create-session-handler`)."
   [request]
   (let [sid
         (http/path-sid request)
@@ -489,6 +489,21 @@
                                                                 parse-uuid))]
                                           (http/json-response soul)
                                           (http/session-404 (get-in request [:path-params :sid])))
+          ;; READ-ONLY: a tool list is a write, and an archived session takes none.
+          (contains? body "tools")
+          (let [tools (get body "tools")]
+            (cond (state/session-archived? sid) (http/session-archived-409 sid)
+                  (not (and (sequential? tools) (every? string? tools)))
+                  (http/error-response 400 :invalid-request "tools must be a list of tool names")
+                  :else (try (if-let [soul (state/set-tools! sid tools)]
+                               (http/json-response soul)
+                               (http/session-404 (get-in request [:path-params :sid])))
+                             (catch clojure.lang.ExceptionInfo e
+                               (if-let [status (:status (ex-data e))]
+                                 (http/error-response status
+                                                      (or (:type (ex-data e)) :invalid-request)
+                                                      (ex-message e))
+                                 (throw e))))))
           (str/blank? (str (get body "title")))
           (http/error-response 400 :invalid-request "title must be a non-blank string")
           :else (if-let [soul (state/set-title! sid (get body "title"))]

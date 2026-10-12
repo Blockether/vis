@@ -177,8 +177,26 @@ those tools of the extensions that they name. Other extensions keep all of their
 of a name, as in `py.repl_*`.
 
 Vis refuses an unknown name before the session starts, and the error lists the tools of that
-extension. The rules for new and saved sessions are the same as for `--extensions`. For scripts, set
-`VIS_TOOLS` to a tool list. The `--tools` flag wins over the variable.
+extension. For scripts, set `VIS_TOOLS` to a tool list for new sessions. The `--tools` flag wins over
+the variable.
+
+### Change the tools of a saved session
+
+A saved session keeps its tool list when you resume it. To change the list, give `--tools` again
+when you open the session:
+
+```bash
+vis-agent --session-id 6d78b3f2 --tools -py.repl_stop "Run the tests"
+vis-agent tui --continue --tools py.lint_code,py.repl_eval
+vis-agent tui --resume --tools '*'                # every tool on again
+```
+
+The new list replaces the saved list, and the session keeps it for later resumes. In the terminal,
+the list applies to the first saved session that you open. That is the session of `--session-id` or
+`--continue`, or the session that you pick after `--resume`. `VIS_TOOLS` never changes a saved
+session. Programs can change the list at any time, also during a turn, as shown in
+[Sessions API](sessions-api.md#change-the-tools-of-a-session). A busy session gets the new list at
+its next step.
 
 The choice applies only to tools of extensions with an Auto/On/Off setting. A tool that is off is not
 in the session's Python sandbox. The extension's prompt text can still name it.

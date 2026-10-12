@@ -41,7 +41,8 @@
    "  --extensions LIST      new sessions use only these extensions (gh,clj), all but these"
    "                        (-spel,-uplink) or none (env VIS_EXTENSIONS; VIS_SOURCES=project|global|none)"
    "  --tools LIST           new sessions keep only these tools of their extensions (py.lint_code,py.repl_*)"
-   "                        or turn these off (-py.repl_stop) (env VIS_TOOLS)"
+   "                        or turn these off (-py.repl_stop) (env VIS_TOOLS); with --session-id, --resume"
+   "                        or --continue, also the first saved session that you open"
    "  --version, -V          print the version" "  --help, -h             print this help"])
 
 (defn- version

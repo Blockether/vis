@@ -588,6 +588,16 @@
                       ["PATCH" "/v1/sessions/sid" {:archived false}]]
                      @requests))))))
 
+(defdescribe saved-session-tools-use-the-gateway-patch-test
+             (it "saved session tools use the gateway patch"
+                 (let [requests (atom [])]
+                   (with-redefs [client/send-json! (fn [verb path body]
+                                                     (swap! requests conj [verb path body])
+                                                     {"id" "sid"})]
+                     (client/set-session-tools! "sid" '("-py.repl_stop"))
+                     (expect (= [["PATCH" "/v1/sessions/sid" {:tools ["-py.repl_stop"]}]]
+                                @requests))))))
+
 (defdescribe session-group-archive-and-delete-use-distinct-gateway-requests-test
              (it "session group archive and delete use distinct gateway requests"
                  (let [requests (atom [])]

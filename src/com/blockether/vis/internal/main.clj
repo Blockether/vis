@@ -717,6 +717,8 @@
                     session. Default false.
    - :session-id  - Continue an existing persisted session (full UUID or
                     unambiguous prefix). Implies persistent execution.
+   - :tools       - Tool list (see `loop-env/tool-selection`). A new session keeps it;
+                    with `:session-id` it replaces the saved list before the turn.
    - :no-persist? - Backward-compatible override; when true, forces
                     ephemeral execution even if `:persist?` is true.
 
@@ -889,6 +891,13 @@
                                   {:type :vis.cli/session-not-found
                                    :vis/user-error true
                                    :session-id session-id}))))
+
+            ;; `--tools` with `--session-id` replaces the saved list before the turn.
+            _
+            (when (and resolved-session-id (some? tools))
+              (try (gateway-state/set-tools! resolved-session-id tools)
+                   (catch clojure.lang.ExceptionInfo e
+                     (throw (ex-info (ex-message e) (assoc (ex-data e) :vis/user-error true))))))
 
             created-session
             (when-not resolved-session-id
@@ -1568,8 +1577,9 @@
 (defn- check-launch-options
   "Turn the source, extension and tool flags into `:sources`, `:extensions` and `:tools`
    name lists. Without a flag, read `VIS_SOURCES`, `VIS_EXTENSIONS` and `VIS_TOOLS` from
-   `env`. A saved session keeps the choice that it started with, so the flags do not work
-   with `--session-id`, and `--session-id` ignores the variables."
+   `env`. A saved session keeps the sources and extensions that it started with, so only
+   `--tools` works with `--session-id`: it replaces the saved tool list. `--session-id`
+   ignores the variables."
   [{:keys [no-global? no-project? extensions tools session-id] :as opts} env]
   (let [env-value
         (fn [k]
@@ -1611,12 +1621,11 @@
       tools
       (assoc :tools tools)
 
-      (and (not new-session?) (or no-global? no-project? (:extensions opts) (:tools opts)))
+      (and (not new-session?) (or no-global? no-project? (:extensions opts)))
       (update :flag-errors
               (fnil conj [])
-              (str
-                "--no-global, --no-project, --vanilla, --extensions and --tools apply only to a new"
-                " session; do not use them with --session-id"))
+              (str "--no-global, --no-project, --vanilla and --extensions apply only to a new"
+                   " session; do not use them with --session-id"))
 
       source-error
       (update :flag-errors (fnil conj []) source-error))))
@@ -1750,7 +1759,8 @@
   (commandline/stdout! "                       VIS_SOURCES=global|project|none.")
   (commandline/stdout! "  --tools LIST         Keep only these tools of their extensions")
   (commandline/stdout! "                       (py.lint_code,py.repl_*) or turn these off")
-  (commandline/stdout! "                       (-py.repl_stop). Env: VIS_TOOLS.")
+  (commandline/stdout! "                       (-py.repl_stop). Env: VIS_TOOLS. With --session-id,")
+  (commandline/stdout! "                       replace the saved list of that session.")
   (commandline/stdout! "  --                   End flag parsing: every later word is prompt")
   (commandline/stdout! "                       text, dashes and all.")
   (commandline/stdout! "")
@@ -2024,8 +2034,10 @@
       (exit-process! 2))
     (when (or help? (str/blank? prompt)) (print-run-usage!) (exit-process! 0))
     ;; Check the extension and tool lists before any provider spend: a typo is a usage error.
+    ;; A saved session checks its tools against its own project when it applies them.
     (try (when (some? (:extensions opts)) (loop-env/check-extension-selection! (:extensions opts)))
-         (when (some? (:tools opts)) (loop-env/check-tool-selection! (:tools opts)))
+         (when (and (some? (:tools opts)) (not (:session-id opts)))
+           (loop-env/check-tool-selection! (:tools opts)))
          (catch clojure.lang.ExceptionInfo e
            (commandline/stderr! (str "vis-agent: " (ex-message e)))
            (exit-process! 2)))

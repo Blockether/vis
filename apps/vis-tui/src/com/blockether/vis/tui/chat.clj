@@ -1622,10 +1622,23 @@
 
 (defonce ^:private launch-session-options* (atom {}))
 
+(defonce ^:private open-session-tools* (atom nil))
+
 (defn set-launch-session-options!
-  "Send `:sources`, `:extensions` and `:tools` with each new session that this client creates."
+  "Send `:sources`, `:extensions` and `:tools` with each new session that this client
+   creates. Keep `:open-tools` for the first saved session that it opens."
   [opts]
-  (reset! launch-session-options* (select-keys opts [:sources :extensions :tools])))
+  (reset! launch-session-options* (select-keys opts [:sources :extensions :tools]))
+  (reset! open-session-tools* (:open-tools opts)))
+
+(defn- apply-open-tools!
+  "Replace the tool list of `sid` once with the `--tools` list of a resume launch."
+  [sid]
+  (let [[tools] (reset-vals! open-session-tools* nil)]
+    (when tools
+      (try (vis/gateway-set-session-tools! sid tools)
+           (catch clojure.lang.ExceptionInfo e
+             (throw (ex-info (str "--tools: " (ex-message e)) {:vis/user-error true} e)))))))
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id root group-id]}]
@@ -1693,9 +1706,13 @@
    tab mirrors the gateway's server-side queue on open; `:client-id` is the
    submitter's own correlation id, so a channel recognises which rows it submitted
    by id instead of by request text. `:running-client-id` is the
-   same correlation id for the RUNNING turn."
+   same correlation id for the RUNNING turn.
+
+   The first resume after a launch with `--tools` and a resume flag also replaces
+   the saved tool list of that session."
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
+    (apply-open-tools! resolved-id)
     (when-let [soul0 (vis/gateway-soul resolved-id)]
       (let
         ;; READ ORDER MATTERS: queued backlog FIRST, running-turn soul SECOND.

@@ -948,14 +948,13 @@
         (expect (= ["-py.repl_stop"] (:tools (launch ["--tools" "-py.repl_stop" "task"] {}))))
         (expect (= ["py.repl_eval"] (:tools (launch ["task"] {"VIS_TOOLS" "py.repl_eval"}))))
         (expect (= ["py.lint_code"]
-                   (:tools (launch ["--tools" "py.lint_code" "task"] {"VIS_TOOLS" "py.repl_eval"})))))
-    (it "refuses --tools followed by a long flag and with --session-id"
+                   (:tools (launch ["--tools" "py.lint_code" "task"]
+                                   {"VIS_TOOLS" "py.repl_eval"})))))
+    (it "refuses --tools followed by a long flag"
         (expect (= ["--tools needs a value (got --json)"]
                    (:flag-errors (launch ["--tools" "--json" "task"] {}))))
-        (expect (= 1
-                   (count (:flag-errors
-                           (launch ["--session-id" "abc" "--tools" "py.lint_code" "task"] {})))))
-        (expect (nil? (:tools (launch ["--session-id" "abc" "task"] {"VIS_TOOLS" "py.lint_code"})))))
+        (expect (nil? (:tools (launch ["--session-id" "abc" "task"]
+                                      {"VIS_TOOLS" "py.lint_code"})))))
     (it "reads VIS_SOURCES and VIS_EXTENSIONS without a flag, and a flag wins"
         (expect (= {:sources ["project"] :extensions ["gh"] :prompt "task"}
                    (launch ["task"] {"VIS_SOURCES" "project" "VIS_EXTENSIONS" "gh"})))
@@ -967,7 +966,11 @@
     (it "refuses the flags with --session-id and ignores the variables there"
         (expect (= 1 (count (:flag-errors (launch ["--session-id" "abc" "--vanilla" "task"] {})))))
         (expect (= {:session-id "abc" :persist? true :prompt "task"}
-                   (launch ["--session-id" "abc" "task"] {"VIS_SOURCES" "project"}))))))
+                   (launch ["--session-id" "abc" "task"]
+                           {"VIS_SOURCES" "project" "VIS_TOOLS" "x.y"}))))
+    (it "takes --tools with --session-id to replace the saved tool list"
+        (expect (= {:session-id "abc" :persist? true :tools ["-py.repl_stop"] :prompt "task"}
+                   (launch ["--session-id" "abc" "--tools" "-py.repl_stop" "task"] {}))))))
 
 (defdescribe
   json-schema-arg-test

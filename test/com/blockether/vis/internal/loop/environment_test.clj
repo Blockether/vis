@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.loop.environment-test
   "Extension and tool selection for a new session: `--extensions` and `--tools` in the
    CLI and the TUI, and the `extensions` and `tools` fields of `POST /v1/sessions`."
-  (:require [com.blockether.vis.internal.config.scoped :as scoped]
+  (:require [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.python.env :as env]
@@ -163,9 +164,17 @@
 
       (loop-env/sync-extension-symbols-into! ::context
                                              {:extensions (atom [ext])
-                                              :config/tools (loop-env/tool-selection names)}
+                                              :config/tools (atom (loop-env/tool-selection names))}
                                              [ext]))
     {:bound @bound :removed @removed}))
+
+(defn- temp-db-path
+  "A database path in a new temporary directory."
+  []
+  (str (java.io.File. (str (java.nio.file.Files/createTempDirectory
+                             "vis-tools"
+                             (make-array java.nio.file.attribute.FileAttribute 0)))
+                      "vis.mdb")))
 
 (defdescribe
   tool-selection-test
@@ -208,29 +217,62 @@
                            (synced ["-py.repl_stop"] true))))
             (it "never removes a tool of a part of Vis"
                 (expect (= {:bound (set py-tools) :removed #{}} (synced ["-py.repl_stop"] false)))))
-  (describe "a saved session"
-            (it "keeps the tool list that it was created with"
-                (let [path
-                      (str (java.io.File. (str (java.nio.file.Files/createTempDirectory
-                                                 "vis-tools"
-                                                 (make-array java.nio.file.attribute.FileAttribute
-                                                             0)))
-                                          "vis.mdb"))
+  (describe
+    "a saved session"
+    (it "keeps the tool list that it was created with"
+        (let [path
+              (temp-db-path)
 
-                      router
-                      {:providers [{:id :lmstudio}]}
+              router
+              {:providers [{:id :lmstudio}]}
 
-                      created
-                      (loop-env/create-environment router {:db path :tools ["-py.repl_stop"]})
+              created
+              (loop-env/create-environment router {:db path :tools ["-py.repl_stop"]})
 
-                      sid
-                      (:session-id created)
+              sid
+              (:session-id created)
 
-                      _
-                      (loop-env/dispose-environment! created)
+              _
+              (loop-env/dispose-environment! created)
 
-                      resumed
-                      (loop-env/create-environment router {:db path :session sid})]
+              resumed
+              (loop-env/create-environment router {:db path :session sid})]
 
-                  (try (expect (= ["py.repl_stop"] (:names (:config/tools resumed))))
-                       (finally (loop-env/dispose-environment! resumed)))))))
+          (try (expect (= ["py.repl_stop"] (:names @(:config/tools resumed))))
+               (finally (loop-env/dispose-environment! resumed)))))
+    (it
+      "replaces the tool list of a live session and keeps the new list for a resume"
+      (let [path
+            (temp-db-path)
+
+            router
+            {:providers [{:id :lmstudio}]}
+
+            created
+            (loop-env/create-environment router {:db path :tools ["-py.repl_stop"]})
+
+            sid
+            (:session-id created)
+
+            k
+            (loop-env/cache-key sid)
+
+            cache
+            @#'loop-env/cache]
+
+        (swap! cache assoc k {:environment created})
+        (try (with-redefs [config/resolve-db-spec
+                           (constantly path)
+
+                           python-extensions/prepare-project!
+                           (constantly nil)
+
+                           loop-env/check-tool-selection!
+                           vec]
+
+               (expect (= ["py.lint_code"] (loop-env/set-session-tools! sid ["py.lint_code"]))))
+             (expect (= ["py.lint_code"] (:names @(:config/tools created))))
+             (finally (swap! cache dissoc k) (loop-env/dispose-environment! created)))
+        (let [resumed (loop-env/create-environment router {:db path :session sid})]
+          (try (expect (= ["py.lint_code"] (:names @(:config/tools resumed))))
+               (finally (loop-env/dispose-environment! resumed))))))))
