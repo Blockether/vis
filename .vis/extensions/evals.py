@@ -118,8 +118,8 @@ _CHILDREN: dict[str, subprocess.Popen] = {}
 _SDK_PACKAGE = "_vis_evals_sdk"
 
 
-def _load_sdk() -> tuple[ModuleType, ModuleType, ModuleType, ModuleType]:
-    """Import the `agreement`, `compare`, `harbor` and `stats` modules of the SDK evals.
+def _load_sdk() -> tuple[ModuleType, ...]:
+    """Import the `agreement`, `compare`, `harbor`, `repeats` and `stats` SDK modules.
 
     An extension context holds only `blockether.vis.extension`. These modules use
     only the standard library, so the extension imports them from the SDK source under
@@ -136,11 +136,12 @@ def _load_sdk() -> tuple[ModuleType, ModuleType, ModuleType, ModuleType]:
         importlib.import_module(f"{_SDK_PACKAGE}.agreement"),
         importlib.import_module(f"{_SDK_PACKAGE}.compare"),
         importlib.import_module(f"{_SDK_PACKAGE}.harbor"),
+        importlib.import_module(f"{_SDK_PACKAGE}.repeats"),
         importlib.import_module(f"{_SDK_PACKAGE}.stats"),
     )
 
 
-_agreement, _compare_sdk, _harbor, _stats = _load_sdk()
+_agreement, _compare_sdk, _harbor, _repeats, _stats = _load_sdk()
 Agreement = _agreement.Agreement
 CaseChange = _compare_sdk.CaseChange
 RouteTest = _compare_sdk.RouteTest
@@ -1357,15 +1358,8 @@ def _bench_report(
     scored = int(data.get("scored_tasks") or 0)
     total = int(data.get("total_dataset_tasks") or 0)
     input_tokens = int(usage.get("input_tokens") or 0)
-    attempts = _task_attempts(data)
-    units = [(sum(flags), len(flags)) for flags in attempts.values()]
-    scored_attempts = sum(runs for _, runs in units)
-    solved_attempts = sum(passed for passed, _ in units)
-    per_task = _mode([len(flags) for flags in attempts.values()])
-    complete = [
-        flags[:per_task] for flags in attempts.values() if len(flags) >= per_task
-    ]
-    is_repeated = per_task > 1
+    repeats = _repeats.repeat_stats(_task_attempts(data))
+    solved_attempts = repeats.solved_attempts
     cost = round(float(usage.get("estimated_metered_api_cost_usd") or 0), 2)
     return BenchReport(
         dataset=str(data.get("dataset") or ""),
@@ -1378,23 +1372,15 @@ def _bench_report(
         pass_rate_ci95=_percent_interval(_stats.wilson_interval(solved, scored)),
         strict_pass_rate_percent=_percent(solved, total),
         strict_pass_rate_ci95=_percent_interval(_stats.wilson_interval(solved, total)),
-        attempts_per_task=per_task,
-        scored_attempts=scored_attempts,
+        attempts_per_task=repeats.attempts_per_task,
+        scored_attempts=repeats.scored_attempts,
         solved_attempts=solved_attempts,
-        attempt_pass_rate_percent=_percent(solved_attempts, scored_attempts),
-        attempt_pass_rate_ci95=_percent_interval(_stats.cluster_interval(units)),
-        detectable_change_points=_points(_stats.detectable_change(units)),
-        pass_at_k_percent=_percent(sum(map(any, complete)), len(complete))
-        if is_repeated
-        else None,
-        pass_all_k_percent=_percent(sum(map(all, complete)), len(complete))
-        if is_repeated
-        else None,
-        unstable_tasks=tuple(
-            sorted(
-                task for task, flags in attempts.items() if 0 < sum(flags) < len(flags)
-            )
-        ),
+        attempt_pass_rate_percent=_percent(solved_attempts, repeats.scored_attempts),
+        attempt_pass_rate_ci95=_percent_interval(repeats.attempt_pass_rate_ci95),
+        detectable_change_points=_points(repeats.detectable_change),
+        pass_at_k_percent=_points(repeats.pass_at_k),
+        pass_all_k_percent=_points(repeats.pass_all_k),
+        unstable_tasks=repeats.unstable_tasks,
         outcomes=tuple(
             OutcomeCount(outcome, len(tasks), tuple(sorted(map(_short, tasks))))
             for outcome, tasks in outcomes

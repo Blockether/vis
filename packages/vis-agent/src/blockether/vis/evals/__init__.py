@@ -4,7 +4,8 @@ Read one Vis run with `load_trajectory` or `parse_trajectory`. Read the trials o
 Harbor job or round with `read_trials`, then count them with `case_results` or
 `summarize`. Seal a finished round with `seal_round`. Compare two results with
 `compare_cases`, or test paired changes with `paired_change` and `mcnemar_exact`.
-Check automatic causes or judge stages against human labels with `agreement`. For installation and sessions, use the
+Score repeated attempts with `task_attempts` and `repeat_stats`. Check automatic
+causes or judge stages against human labels with `agreement`. For installation and sessions, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
@@ -31,6 +32,7 @@ from .harbor import (
     seal_rows,
     summarize,
 )
+from .repeats import RepeatStats, repeat_stats, task_attempts
 from .stats import (
     benjamini_hochberg,
     cluster_interval,
@@ -62,6 +64,7 @@ __all__ = [
     "CaseComparison",
     "FunctionCall",
     "HarborTrial",
+    "RepeatStats",
     "RouteTest",
     "RunSummary",
     "Step",
@@ -85,10 +88,12 @@ __all__ = [
     "parse_trajectory",
     "read_trial",
     "read_trials",
+    "repeat_stats",
     "sample_agreement",
     "seal_digest",
     "seal_round",
     "seal_rows",
     "summarize",
+    "task_attempts",
     "wilson_interval",
 ]
