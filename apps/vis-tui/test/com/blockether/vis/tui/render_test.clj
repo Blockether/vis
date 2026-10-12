@@ -61,7 +61,7 @@
              {:type "heading" :text "Result"} {:type "code" :text "None"}]
 
             entries
-            (#'render/activity-content-entries blocks 80 2 nil {} false)]
+            (#'render/activity-content-entries blocks 80 2 nil false)]
 
         ;; Regression #230: the first heading needs the same margin as later sections.
         (doseq [heading ["Program" "Stdout" "Result"]]
@@ -80,7 +80,7 @@
                                   :presentation
                                   :content)]
                    (doseq [width [40 80 120]]
-                     (let [entries (#'render/activity-content-entries blocks width 2 nil {} false)
+                     (let [entries (#'render/activity-content-entries blocks width 2 nil false)
                            lines (map :line entries)
                            headers (filter #(str/includes? % "Result") lines)]
 
@@ -103,7 +103,7 @@
                          :rows [["Literal" "<tag>" "**ready**"]]}]
 
                        entries
-                       (#'render/activity-content-entries blocks 80 2 nil {} false)
+                       (#'render/activity-content-entries blocks 80 2 nil false)
 
                        text
                        (str/join "\n" (map :line entries))]
@@ -127,7 +127,6 @@
                         60
                         2
                         nil
-                        {}
                         false)
 
                        pressed
@@ -2199,40 +2198,38 @@
   activity-code-paper-test
   (it
     "paints Activity content on the same themed code surface"
-    (try
-      (doseq [id (shared-theme/available-theme-ids)]
-        (t/apply-theme! (keyword id))
-        (let [entries (vec (concat [{:line (str p/MARKER_ACTIVITY "ACTIVITY_SENTINEL") :meta {}}]
-                                   (#'render/activity-content-entries
-                                    [{:type "text" :text "ACTIVITY_CONTENT"}]
-                                    72
-                                    2
-                                    nil
-                                    {}
-                                    false)))
-              captured (cap/capture! {:cols 80
-                                      :rows 10
-                                      :paint! (fn [{:keys [g]}]
-                                                (render/draw-chat-bubble!
-                                                  g
-                                                  {:role :assistant
-                                                   :prewrapped-lines (mapv :line entries)
-                                                   :line-meta (mapv :meta entries)}
-                                                  0 0
-                                                  76 {:viewport-top 0 :viewport-h 10}))})
-              frame (last (:frames captured))
-              lines (str/split-lines (cap/frame-text captured))
-              row-for (fn [needle]
-                        (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
-              expected-bg (get-in (shared-theme/theme id) [:palette :code-block-bg])]
+    (try (doseq [id (shared-theme/available-theme-ids)]
+           (t/apply-theme! (keyword id))
+           (let [entries (vec (concat [{:line (str p/MARKER_ACTIVITY "ACTIVITY_SENTINEL") :meta {}}]
+                                      (#'render/activity-content-entries
+                                       [{:type "text" :text "ACTIVITY_CONTENT"}]
+                                       72
+                                       2
+                                       nil
+                                       false)))
+                 captured (cap/capture! {:cols 80
+                                         :rows 10
+                                         :paint! (fn [{:keys [g]}]
+                                                   (render/draw-chat-bubble!
+                                                     g
+                                                     {:role :assistant
+                                                      :prewrapped-lines (mapv :line entries)
+                                                      :line-meta (mapv :meta entries)}
+                                                     0 0
+                                                     76 {:viewport-top 0 :viewport-h 10}))})
+                 frame (last (:frames captured))
+                 lines (str/split-lines (cap/frame-text captured))
+                 row-for (fn [needle]
+                           (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
+                 expected-bg (get-in (shared-theme/theme id) [:palette :code-block-bg])]
 
-          (expect (nil? (:error captured)))
-          (doseq [needle ["ACTIVITY_SENTINEL" "ACTIVITY_CONTENT"]]
-            (let [row (row-for needle)]
-              (expect (some? row) (str id " " needle))
-              (when row
-                (expect (= expected-bg (get-in frame [row 20 :bg])) (str id " " needle)))))))
-      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
+             (expect (nil? (:error captured)))
+             (doseq [needle ["ACTIVITY_SENTINEL" "ACTIVITY_CONTENT"]]
+               (let [row (row-for needle)]
+                 (expect (some? row) (str id " " needle))
+                 (when row
+                   (expect (= expected-bg (get-in frame [row 20 :bg])) (str id " " needle)))))))
+         (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 (defmacro ^:private with-raw-code-on
   [& body]
@@ -10275,40 +10272,34 @@ print(paths)"
               "openable and inert rows share the same left edge")
       (expect (= (+ 2 (.indexOf ^String (line-with rich "Listed") "Listed")) content-col)
               "what a step opens sets its words in from the column its words do, like code")))
-  (it
-    "renders headings, Markdown, tables, code, progress and safe media fallback"
-    (let [blocks
-          [{:type "heading" :text "Verification"}
-           {:type "markdown" :text "**Prepared** the workspace"}
-           {:type "table" :columns ["Suite" "Result"] :rows [["unit" "passed"]]}
-           {:type "code" :language "python" :text "print(42)"}
-           {:type "diff" :text "+added\n-removed"}
-           {:type "progress" :label "Checking" :value 1 :total 2}
-           {:type "image" :label "Screenshot" :attachment-id "image-1"}]
+  (it "renders headings, Markdown, tables, code and progress, without attachment references"
+      (let [blocks
+            [{:type "heading" :text "Verification"}
+             {:type "markdown" :text "**Prepared** the workspace"}
+             {:type "table" :columns ["Suite" "Result"] :rows [["unit" "passed"]]}
+             {:type "code" :language "python" :text "print(42)"}
+             {:type "diff" :text "+added\n-removed"}
+             {:type "progress" :label "Checking" :value 1 :total 2}
+             {:type "image" :label "Screenshot" :attachment-id "image-1"}]
 
-          entries
-          (#'render/activity-content-entries
-           blocks
-           60
-           4
-           "s"
-           {"image-1" {:iteration-id "i" :index 0 :filename "screen.png"}}
-           true)
+            entries
+            (#'render/activity-content-entries blocks 60 4 "s" true)
 
-          text
-          (str/join "\n" (map :line entries))]
+            text
+            (str/join "\n" (map :line entries))]
 
-      (doseq [word ["Verification" "Prepared" "Suite" "passed" "print" "Checking" "Screenshot"]]
-        (expect (str/includes? text word)))
-      (expect (some #(= "i" (get-in % [:meta :artifact :iteration-id])) entries))
-      (expect (str/includes? (str (#'render/activity-content-entries
-                                   [{:type "progress" :label "Checking"}]
-                                   40
-                                   4
-                                   "s"
-                                   {}
-                                   false))
-                             "Stopped"))))
+        (doseq [word ["Verification" "Prepared" "Suite" "passed" "print" "Checking"]]
+          (expect (str/includes? text word)))
+        ;; Attachment references show on the attachment card, not in Activity content.
+        (expect (not (str/includes? text "Screenshot")))
+        (expect (not-any? #(get-in % [:meta :artifact]) entries))
+        (expect (str/includes? (str (#'render/activity-content-entries
+                                     [{:type "progress" :label "Checking"}]
+                                     40
+                                     4
+                                     "s"
+                                     false))
+                               "Stopped"))))
   (it "paints a terminal block: bold command, accent operators, stderr ink and omitted lines"
       (let [block
             {:type "terminal"
@@ -10318,7 +10309,7 @@ print(paths)"
              :exit 0}
 
             entries
-            (#'render/activity-content-entries [block] 60 4 "s" {} false)
+            (#'render/activity-content-entries [block] 60 4 "s" false)
 
             segments
             (mapv #(get-in % [:meta :segments]) entries)]
@@ -10363,7 +10354,6 @@ print(paths)"
              60
              4
              "s"
-             {}
              false)
 
             words-col
@@ -10428,10 +10418,62 @@ print(paths)"
                                             :vis.channel-tui/expand-all-details? true}})
 
           artifacts
-          (keep #(get-in % [:meta :artifact]) entries)]
+          (keep #(get-in % [:meta :artifact]) entries)
+
+          clip-row
+          (first (filter #(= "clip.mp4" (get-in % [:meta :artifact :filename])) entries))]
 
       (expect (some #(and (= "clip.mp4" (:filename %)) (= "i" (:iteration-id %)) (= 0 (:index %)))
-                    artifacts)))))
+                    artifacts))
+      ;; The file sits on the attachment card outside the Activity band.
+      (expect (= :file (get-in clip-row [:meta :card-part])))
+      (expect (not (get-in clip-row [:meta :activity-content?])))
+      (expect (not-any? #(and (get-in % [:meta :activity-content?])
+                              (str/includes? (str (:line %)) "Recording"))
+                        entries))
+      (expect (= 1 (count (filter #(= "notes.txt" (get-in % [:meta :card-name])) entries))))))
+  (it
+    "keeps attachment references out of Activity content and its fold"
+    (let [row
+          (fn [id content]
+            {:id id
+             :sequence 0
+             :state "succeeded"
+             :operation "attach"
+             :presentation {:headline "Attached" :summary id :content content}})
+
+          entries
+          (#'render/activity-detail-entries
+           {:node-id "attach"
+            :activity-rows [(row "only"
+                                 [{:type "attachment"
+                                   :attachment-id "a1"
+                                   :name "report.html"
+                                   :media-type "text/html"}])
+                            (row "mixed"
+                                 [{:type "text" :text "BODY_WORDS"}
+                                  {:type "image" :attachment-id "a2" :label "Chart"}])]
+            :activity-expanded? (fn [_ _]
+                                  true)}
+           80
+           "s")
+
+          text
+          (str/join "\n" (map :line entries))
+
+          head
+          (fn [id]
+            (first (filter #(and (= :activity-row (get-in % [:meta :kind]))
+                                 (= id (get-in % [:meta :item-id])))
+                           entries)))]
+
+      (expect (str/includes? text "BODY_WORDS"))
+      (expect (not (str/includes? text "report.html")))
+      (expect (not (str/includes? text "Chart")))
+      (expect (not (str/includes? text "click to open")))
+      ;; A row with only an attachment reference has nothing to open.
+      (expect (nil? (get-in (head "only") [:meta :node-id])))
+      (expect (some? (get-in (head "mixed") [:meta :node-id]))))))
 
 (defdescribe activity-summary-markdown-test
              (it "keeps opted-in root and section links through disclosure (#254)"

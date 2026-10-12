@@ -5475,34 +5475,81 @@
                                             (:rows source))))))
                    sources))))
 
+(defn- artifact-row
+  "One durable artifact row from a gateway attachment descriptor. The row opens at the
+   descriptor's own byte-endpoint `iteration_id` and `index`."
+  [artifact]
+  (cond-> {:filename (str (or (get artifact "filename") "artifact"))
+           :media-type (str (or (get artifact "media_type") "application/octet-stream"))
+           :size (get artifact "size")
+           ;; A summarized run's artifact still opens from its own step.
+           :iteration-id (str (get artifact "iteration_id"))
+           :index (get artifact "index")}
+    (get artifact "view_id")
+    (assoc :view-id (get artifact "view_id"))
+
+    (get artifact "owner")
+    (assoc :owner (wire/->engine (get artifact "owner")))))
+
 (defn- iteration-artifact-rows
-  "Durable document rows from a step's gateway attachment descriptors. Each row
-   opens at the descriptor's own byte-endpoint `iteration_id` and `index`."
+  "Durable document rows from a step's gateway attachment descriptors. Pictures, videos and
+   tables have their own surfaces."
   [attachments]
   (->> attachments
-       (keep
-         (fn [artifact]
-           (let [kind
-                 (str (get artifact "kind"))
+       (keep (fn [artifact]
+               (let [kind
+                     (str (get artifact "kind"))
 
-                 media-type
-                 (str (or (get artifact "media_type") "application/octet-stream"))]
+                     media-type
+                     (str (or (get artifact "media_type") "application/octet-stream"))]
 
-             (when-not (or (#{"image" "table"} kind)
-                           (str/starts-with? media-type "image/")
-                           (str/starts-with? media-type "video/"))
-               (cond-> {:filename (str (or (get artifact "filename") "artifact"))
-                        :media-type media-type
-                        :size (get artifact "size")
-                        ;; A summarized run's artifact still opens from its own step.
-                        :iteration-id (str (get artifact "iteration_id"))
-                        :index (get artifact "index")}
-                 (get artifact "view_id")
-                 (assoc :view-id (get artifact "view_id"))
-
-                 (get artifact "owner")
-                 (assoc :owner (wire/->engine (get artifact "owner"))))))))
+                 (when-not (or (#{"image" "table"} kind)
+                               (str/starts-with? media-type "image/")
+                               (str/starts-with? media-type "video/"))
+                   (artifact-row artifact)))))
        vec))
+
+(def ^:private activity-attachment-types
+  "Activity content block types that point at a step attachment."
+  #{"attachment" "audio" "file" "image" "video"})
+
+(defn- activity-attachment-block?
+  [block]
+  (or (contains? activity-attachment-types (:type block)) (some? (:attachment-id block))))
+
+(defn- activity-content-blocks
+  "Activity content without its attachment references. Their files show on the attachment
+   card below the execution surface, not inside the Activity band."
+  [content]
+  (into [] (remove activity-attachment-block?) content))
+
+(defn- activity-attachment-rows
+  "Durable rows for the files that `activity` content references, in reference order. Files
+   that `shown` already holds and live recordings stay out: they have their own surfaces."
+  [activity attachments shown]
+  (let [blocks
+        (for [row
+              (mapcat #(tree-seq (comp seq :children) :children %) (:rows activity))
+
+              :let [presentation
+                    (:presentation row)]
+              block
+              (concat (:content presentation) (mapcat :content (:sections presentation)))
+
+              :when (activity-attachment-block? block)]
+
+          block)
+
+        shown-keys
+        (set (map (juxt :iteration-id :index) shown))]
+
+    (into []
+          (comp (keep (fn [id]
+                        (some #(when (= (str id) (str (get % "attachment_id"))) %) attachments)))
+                (map artifact-row)
+                (remove attach/live-artifact?)
+                (remove #(contains? shown-keys ((juxt :iteration-id :index) %))))
+          (distinct (keep :attachment-id blocks)))))
 
 (def ^:private display-fence-re
   "One complete picture, table or document fence that `attach` or `plt.show()`
@@ -6336,7 +6383,7 @@
 (defn- activity-row-openable?
   "Disclosure opens content, never the visible headline or summary."
   [{:keys [summary children resources evidence presentation] :as row}]
-  (boolean (or (seq (:content presentation))
+  (boolean (or (seq (activity-content-blocks (:content presentation)))
                (seq (:sections presentation))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
@@ -6546,8 +6593,8 @@
   "Render symbol content through the existing Markdown/table/code painter, set in
    from the paper's edge to `col`, the column its step's words start in.
    Adjacent tables with identical headers share a grid, retaining each header.
-   Media references use the durable artifact opener, not arbitrary paths or URLs."
-  [blocks width col session-id artifacts running?]
+   Attachment references are left out: their files show on the attachment card."
+  [blocks width col session-id running?]
   (vec
     (mapcat
       (fn [group]
@@ -6561,12 +6608,6 @@
 
                 text
                 (:text block)
-
-                artifact
-                (get artifacts (:attachment-id block))
-
-                media?
-                (contains? #{"image" "video" "audio" "file"} kind)
 
                 ast
                 (case kind
@@ -6610,13 +6651,7 @@
                            (str (:value block) " / " (:total block))
                            (if running? "In progress…" "Stopped")))]]
 
-                  [:ast {}
-                   [:p {}
-                    (str (:label block)
-                         " · "
-                         (if artifact
-                           "→ click to open in the system viewer"
-                           "Attachment unavailable"))]])
+                  [:ast {} [:p {} (str (:label block))]])
 
                 ;; Code rows set their words in by `code-block-h-pad` inside the band, and a
                 ;; heading's gutter mark fills that pad. Every other row takes the same inset,
@@ -6643,18 +6678,15 @@
 
             (concat (when (= kind "heading")
                       [{:line "" :meta {:activity-content? true :activity-content-col col}}])
-                    (if (and media? artifact)
-                      (mapv #(update % :meta merge {:artifact artifact :session-id session-id})
-                            entries)
-                      entries)))))
+                    entries))))
       (partition-by (fn [[index block]]
                       (if (= "table" (:type block)) (:columns block) index))
-                    (map-indexed vector blocks)))))
+                    (map-indexed vector (activity-content-blocks blocks))))))
 
 (defn- activity-section-entries
   "Show each section as one closed head line; its body opens only on its own press.
    Sections take the body inset, so they read as part of the opened row."
-  [sections row-id node-id width col session-id artifacts running? expanded?]
+  [sections row-id node-id width col session-id running? expanded?]
   (vec
     (mapcat
       (fn [[index section]]
@@ -6671,7 +6703,7 @@
               (not-empty (:line summary-entry))
 
               content
-              (:content section)
+              (activity-content-blocks (:content section))
 
               section-key
               (str row-id ":section:" index)
@@ -6706,8 +6738,7 @@
                       :operation-label headline}}]
 
           (concat [{:line activity-marker :meta nil} head]
-                  (when open?
-                    (activity-content-entries content width inset session-id artifacts running?)))))
+                  (when open? (activity-content-entries content width inset session-id running?)))))
       (map-indexed vector sections))))
 
 (defn- activity-group-row
@@ -6953,8 +6984,8 @@
 (defn- activity-detail-entries
   "A joined Activity band, closed until the reader explicitly opens it.
    Disclosure choices inside the band remain independent of its outer fold."
-  [{:keys [node-id activity-rows activity-expanded? activity-artifacts activity-histories
-           activity-sources activity-fetch]} max-w session-id]
+  [{:keys [node-id activity-rows activity-expanded? activity-histories activity-sources
+           activity-fetch]} max-w session-id]
   (let [rows
         (identity-memo operation-rows-memo activity-rows #(activity-operation-rows activity-rows))
 
@@ -7151,7 +7182,8 @@
                                                            (activity-step-lead row))
 
                                                        content
-                                                       (:content presentation)
+                                                       (activity-content-blocks (:content
+                                                                                  presentation))
 
                                                        terminal
                                                        (some #(when (= "terminal" (:type %)) %)
@@ -7405,13 +7437,12 @@
                                                                                       3))
 
                                                      (and open? (seq content))
-                                                     (into (activity-content-entries
-                                                             content
-                                                             width
-                                                             col
-                                                             session-id
-                                                             activity-artifacts
-                                                             (= :running state)))
+                                                     (into (activity-content-entries content
+                                                                                     width
+                                                                                     col
+                                                                                     session-id
+                                                                                     (= :running
+                                                                                        state)))
 
                                                      (and detail
                                                           open?
@@ -7427,7 +7458,6 @@
                                                              width
                                                              col
                                                              session-id
-                                                             activity-artifacts
                                                              (= :running state)
                                                              expanded?))
 
@@ -8186,16 +8216,6 @@
                                       :else (activity-row-tone activity))
                    :elapsed-ms duration-ms
                    :activity-rows (:rows activity)
-                   :activity-artifacts (into {}
-                                             (keep (fn [artifact]
-                                                     (when-let [id (get artifact "attachment_id")]
-                                                       [id
-                                                        {:filename (get artifact "filename")
-                                                         :media-type (get artifact "media_type")
-                                                         :iteration-id (str (get artifact
-                                                                                 "iteration_id"))
-                                                         :index (get artifact "index")}])))
-                                             attachments)
                    :activity-histories (vec (or (seq (:histories activity))
                                                 (when-let [history (:history activity)]
                                                   [history])))
@@ -8579,7 +8599,10 @@
                                                  :section :iteration
                                                  :kind :attachments}))]
                   (artifact-disclosure-entries
-                    (cond->> (remove (set nested-artifacts) form-artifacts)
+                    (cond->> (into (vec (remove (set nested-artifacts) form-artifacts))
+                                   (activity-attachment-rows (:activity form)
+                                                             attachments
+                                                             iteration-artifacts))
                       digest-closed?
                       (remove attach/live-artifact?))
                     session-id
