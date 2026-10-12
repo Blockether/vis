@@ -10,7 +10,7 @@
       "properties": {
         "summary": {
           "type": "object",
-          "description": "A Harbor run summary from blockether.vis.evals.summarize."
+          "description": "A Harbor round summary from blockether.vis.evals.round_summary."
         },
         "round_name": {
           "type": [
@@ -30,7 +30,7 @@
       "properties": {
         "summary": {
           "type": "object",
-          "description": "A Harbor run summary from blockether.vis.evals.summarize."
+          "description": "A Harbor round summary from blockether.vis.evals.round_summary."
         },
         "labels": {
           "type": "object",
@@ -66,7 +66,7 @@
       "properties": {
         "summary": {
           "type": "object",
-          "description": "A Harbor run summary from blockether.vis.evals.summarize."
+          "description": "A Harbor round summary from blockether.vis.evals.round_summary."
         },
         "labels": {
           "type": "object",
@@ -218,7 +218,7 @@
         },
         "summary": {
           "type": "object",
-          "description": "A Harbor run summary from blockether.vis.evals.summarize."
+          "description": "A Harbor round summary from blockether.vis.evals.round_summary."
         },
         "round_name": {
           "type": [
@@ -380,9 +380,6 @@
         "output_tokens": {
           "type": "integer"
         },
-        "unparsed_output_tokens_estimate": {
-          "type": "integer"
-        },
         "estimated_metered_cost_usd": {
           "type": "number"
         },
@@ -429,7 +426,6 @@
         "input_tokens",
         "cached_input_percent",
         "output_tokens",
-        "unparsed_output_tokens_estimate",
         "estimated_metered_cost_usd",
         "cost_per_solved_usd",
         "repeated_final_errors"

@@ -31,7 +31,7 @@
    "reward" (if (= passed 5) 1.0 0.0)
    "verifier_tests" {"tests" 5 "passed" passed}
    "agent_seconds" 600
-   "vis_iterations" 12})
+   "iterations" 12})
 
 (def ^:private summary
   {"dataset" "terminal-bench@2.0"

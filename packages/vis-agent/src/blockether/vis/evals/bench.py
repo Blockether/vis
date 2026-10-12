@@ -55,7 +55,7 @@ NEAR_MISS_RATIO = 0.8
 
 CAUSES = (
     "dead_tools",
-    "vis_errors",
+    "agent_errors",
     "agent_timeouts",
     "early_stops",
     "unscored",
@@ -122,7 +122,6 @@ class BenchReport:
     input_tokens: int
     cached_input_percent: float
     output_tokens: int
-    unparsed_output_tokens_estimate: int
     estimated_metered_cost_usd: float
     cost_per_solved_usd: float | None
     repeated_final_errors: tuple[str, ...]
@@ -297,9 +296,6 @@ def bench_report(summary: Mapping, round_name: str | None = None) -> BenchReport
             int(usage.get("cached_input_tokens") or 0), input_tokens
         ),
         output_tokens=int(usage.get("output_tokens") or 0),
-        unparsed_output_tokens_estimate=int(
-            usage.get("unparsed_output_tokens_estimate") or 0
-        ),
         estimated_metered_cost_usd=cost,
         cost_per_solved_usd=round(cost / solved_attempts, 2)
         if cost and solved_attempts
@@ -332,16 +328,23 @@ def agent_limits(dataset: Path | str) -> dict[str, float]:
 
 
 def attempt_outcome(trial: Mapping) -> str:
-    """Name how one attempt ended, with the task outcome rules of the round summary."""
+    """Name how one attempt ended, with the task outcome rules of the round summary.
+
+    A Harbor exception or a failed trajectory gives `agent_error:<type>`.
+    """
     if not trial.get("scored"):
         return "unscored"
     if trial.get("reward") == 1:
         return "solved"
-    if trial.get("exception_type") == "AgentTimeoutError":
+    exception = trial.get("exception_type")
+    if exception == "AgentTimeoutError":
         return "agent_timeout"
-    trace = trial.get("trace") or {}
-    if trace.get("vis_result_status") == "error":
-        return f"vis_error:{trace.get('vis_error_type') or 'unknown'}"
+    if exception:
+        return f"agent_error:{exception}"
+    trace = trial.get("trajectory") or {}
+    if trace.get("is_failed"):
+        streak = trace.get("trailing_errors") or {}
+        return f"agent_error:{streak.get('type') or 'unknown'}"
     return "failed_tests"
 
 
@@ -355,7 +358,7 @@ def _dead_trials(summary: Mapping) -> set[str]:
 def attempt_cause(trial: Mapping, summary: Mapping, limits: Mapping[str, float]) -> str:
     """Give the `diagnose` cause of one attempt, or `solved`.
 
-    The causes are `dead_tools`, `vis_errors`, `agent_timeouts`, `unscored`,
+    The causes are `dead_tools`, `agent_errors`, `agent_timeouts`, `unscored`,
     `early_stops` and `other`.
     """
     outcome = attempt_outcome(trial)
@@ -363,8 +366,8 @@ def attempt_cause(trial: Mapping, summary: Mapping, limits: Mapping[str, float])
         return outcome
     if str(trial.get("trial")) in _dead_trials(summary):
         return "dead_tools"
-    if outcome.startswith("vis_error:"):
-        return "vis_errors"
+    if outcome.startswith("agent_error:"):
+        return "agent_errors"
     if outcome == "agent_timeout":
         return "agent_timeouts"
     if outcome == "unscored":
@@ -415,7 +418,7 @@ def task_note(task: str, outcome: str, trial: Mapping, limit: float | None) -> T
         pass_ratio=round(passed / total, 3) if total else None,
         budget_used=round(seconds / limit, 3) if seconds and limit else None,
         minutes=round(seconds / 60, 1) if seconds else None,
-        iterations=trial.get("vis_iterations"),
+        iterations=trial.get("iterations"),
     )
 
 
@@ -452,15 +455,15 @@ def diagnose(
     errors = [
         note
         for outcome in sorted(outcomes)
-        if outcome.startswith("vis_error:")
+        if outcome.startswith("agent_error:")
         for note in notes(outcome)
     ]
     if errors:
-        kinds = Counter(note.outcome.removeprefix("vis_error:") for note in errors)
+        kinds = Counter(note.outcome.removeprefix("agent_error:") for note in errors)
         findings.append(
             Finding(
-                "vis_errors",
-                f"Vis stopped with an error in {len(errors)} of {scored} scored tasks",
+                "agent_errors",
+                f"The agent stopped with an error in {len(errors)} of {scored} scored tasks",
                 len(errors),
                 share(len(errors)),
                 "By type: "

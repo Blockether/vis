@@ -29,7 +29,7 @@ def trial(task, *, seconds, tests, finished="2026-01-02T00:00:00", name=None, **
         "reward": 1.0 if passed == total else 0.0,
         "verifier_tests": {"tests": total, "passed": passed},
         "agent_seconds": seconds,
-        "vis_iterations": 12,
+        "iterations": 12,
         **extra,
     }
 
@@ -46,7 +46,7 @@ def summary():
         "task_outcomes": {
             "solved": tasks("beta", "alpha"),
             "failed_tests": tasks("gamma", "delta"),
-            "vis_error:http-error": tasks("epsilon"),
+            "agent_error:http-error": tasks("epsilon"),
             "agent_timeout": tasks("zeta"),
         },
         "unscored_model_tasks": tasks("eta"),
@@ -78,7 +78,7 @@ def summary():
                 "epsilon",
                 seconds=50,
                 tests=(8, 10),
-                trace={"vis_result_status": "error", "vis_error_type": "http-error"},
+                exception_type="http-error",
             ),
             trial(
                 "zeta",
@@ -114,7 +114,7 @@ def test_bench_report_scores_the_latest_attempt_with_a_strict_rate():
 def test_diagnose_ranks_the_findings_and_estimates_full_attempts():
     diagnosis = diagnose(summary(), limits=LIMITS)
     assert [finding.kind for finding in diagnosis.findings] == [
-        "vis_errors",
+        "agent_errors",
         "early_stops",
         "near_misses",
         "agent_timeouts",
@@ -136,7 +136,7 @@ def test_attempt_cause_and_cause_check_follow_the_diagnose_rules():
         "alpha__0102": "solved",
         "gamma__0102": "early_stops",
         "zeta__abc": "dead_tools",
-        "epsilon__0102": "vis_errors",
+        "epsilon__0102": "agent_errors",
     }
     check = cause_check(summary(), {"gamma__0102": {"cause": "early_stops"}}, LIMITS)
     assert isinstance(check, Agreement)

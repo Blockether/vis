@@ -68,6 +68,7 @@ from .leaderboard import (
     standing,
 )
 from .repeats import RepeatStats, repeat_stats, task_attempts
+from .rounds import round_summary
 from .stats import (
     benjamini_hochberg,
     cluster_interval,
@@ -149,6 +150,7 @@ __all__ = [
     "read_trial",
     "read_trials",
     "repeat_stats",
+    "round_summary",
     "sample_agreement",
     "save_label",
     "seal_digest",
