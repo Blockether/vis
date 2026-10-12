@@ -29,8 +29,17 @@
                           :finished-at-ms 1500
                           :repaired? false
                           :timeout? false}
-               :activity {:counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}}}]
+               :activity {:state :done
+                          :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                          :rows [{:id "activity-1"
+                                  :operation "cat"
+                                  :state :succeeded
+                                  :evidence [{:kind "arguments" :text "README.md"}
+                                             {:kind "result" :text "# Vis"}]}]
+                          :history {:cursor 4}}}]
      :reasoning-effort {:effective "medium" :selected {:provider "anthropic" :model "claude-test"}}
+     :usage {:tokens {"input" 600 "output" 40 "cached" 450 "cache_created" 100 "reasoning" 12}
+             :cost-usd 0.125}
      :final? false}
     {:iteration 1
      :thinking nil
@@ -42,7 +51,7 @@
    :duration-ms 2500
    :tokens {"input" 1200 "output" 80 "cached" 900 "cache_created" 250 "total" 1280}
    :cost {"total_cost" 0.25 "model" "claude-test" "provider" "anthropic-coding-plan"}
-   :eval {:valid? true :invalid-reasons []}})
+   :eval {:valid? true :invalid-reasons [] :notes ["fixture"]}})
 
 (def ^:private opts {:prompt "What is 1 + 1?" :started-at-ms 500 :profile {:name "cli"}})
 
@@ -74,26 +83,41 @@
         (expect (= "Add the numbers." (:reasoning-content step)))
         (expect (= "I compute it." (:message step)))
         (expect (= "1970-01-01T00:00:01Z" (:timestamp step)))
-        (expect (= {:iteration 0 :is-final false :provider "anthropic"} (:extra step)))))
+        (expect (= {:iteration 0 :is-final false :provider "anthropic"} (:extra step)))
+        (expect (= {:prompt-tokens 600
+                    :completion-tokens 40
+                    :cached-tokens 450
+                    :cost-usd 0.125
+                    :extra {:cache-creation-tokens 100 :reasoning-tokens 12}}
+                   (:metrics step)))))
   (it "maps each code block to one python_execution call and its output"
       (let [step (second (:steps document))]
-        (expect (= [{:tool-call-id "toolu_1"
-                     :function-name "python_execution"
-                     :arguments {"code" "print(1 + 1)"}
-                     :extra {:status "done"
-                             :ref "turn/t1/iteration/1/block/1"
-                             :started-at-ms 1000
-                             :finished-at-ms 1500
-                             :is-repaired false
-                             :is-timeout false
-                             :activity {"running" 0 "succeeded" 1 "failed" 0 "cancelled" 0}}}]
-                   (:tool-calls step)))
+        (expect
+          (= [{:tool-call-id "toolu_1"
+               :function-name "python_execution"
+               :arguments {"code" "print(1 + 1)"}
+               :extra {:status "done"
+                       :ref "turn/t1/iteration/1/block/1"
+                       :started-at-ms 1000
+                       :finished-at-ms 1500
+                       :is-repaired false
+                       :is-timeout false
+                       :activity {"state" "done"
+                                  "counts" {"running" 0 "succeeded" 1 "failed" 0 "cancelled" 0}
+                                  "rows" [{"id" "activity-1"
+                                           "operation" "cat"
+                                           "state" "succeeded"
+                                           "evidence" [{"kind" "arguments" "text" "README.md"}
+                                                       {"kind" "result" "text" "# Vis"}]}]}
+                       :stdout-chars 2}}]
+             (:tool-calls step)))
         (expect (= {:results [{:source-call-id "toolu_1" :content "2\n"}]} (:observation step)))))
   (it "puts the final answer on the final agent step"
       (let [final-step (last (:steps document))]
         (expect (= "The answer is 2." (:message final-step)))
         (expect (= {:iteration 1 :is-final true :provider "anthropic"} (:extra final-step)))
         (expect (nil? (:tool-calls final-step)))
+        (expect (nil? (:metrics final-step)))
         (expect (nil? (:reasoning-content final-step)))))
   (it "copies the token and cost totals of the result"
       (expect
@@ -114,7 +138,25 @@
                  (mapv #(get-in % [:function :name]) (get-in document [:agent :tool-definitions]))))
       (expect (= {:name "cli"} (get-in document [:agent :extra :profile])))
       (expect (= "anthropic-coding-plan" (get-in document [:agent :extra :provider])))
-      (expect (= {"is_valid" true "invalid_reasons" []} (get-in document [:extra :eval]))))
+      (expect (= {"is_valid" true "invalid_reasons" [] "notes" ["fixture"]}
+                 (get-in document [:extra :eval]))))
+  (it "adds the session usage and the saved goal of a persisted run"
+      (let [usage
+            {"turns" 1 "cache_read_share_percent" 75}
+
+            goal
+            {"text" "Add the numbers." "status" "complete"}
+
+            extra
+            (:extra (trajectory/build result
+                                      (assoc opts
+                                        :session-usage usage
+                                        :goal goal)))]
+
+        (expect (= usage (:session-usage extra)))
+        (expect (= goal (:goal extra)))
+        (expect (nil? (:session-usage (:extra document))))
+        (expect (nil? (:goal (:extra document))))))
   (it "takes the agent model and provider from the steps when the cost has none"
       (let [agent (:agent (trajectory/build (update result :cost dissoc "model" "provider") opts))]
         (expect (= "claude-test" (:model-name agent)))
@@ -122,6 +164,11 @@
   (it "reads the snake_case trace of a persisted run the same way"
       (let [persisted (update result :trace wire/canonical)]
         (expect (= (:steps document) (:steps (trajectory/build persisted opts))))))
+  (it "keeps the stdout size and the raw error of a block in its call"
+      (let [extra (get-in (block-step [{:code "x" :stdout "partial" :error {:message "boom"}}])
+                          [:tool-calls 0 :extra])]
+        (expect (= 7 (:stdout-chars extra)))
+        (expect (= {"message" "boom"} (:error extra)))))
   (it "adds the error of a failed block to its observation"
       (expect (= [{:source-call-id "vis-3-1"
                    :content "partial\n✗ runtime error: name 'x' is not defined"}]

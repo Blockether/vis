@@ -12,9 +12,12 @@
      subagents      one embedded trajectory for each Council child
 
    The final agent step carries the final answer. Vis facts without an ATIF
-   field go to `extra`: iteration, block status, Activity counts, repairs,
-   timeouts and the run profile. The run result has no token counts for each
-   iteration, so the steps of the run have no `metrics`.
+   field go to `extra`: iteration, block status, Activity, repairs, timeouts
+   and the run profile. The Activity of a block has one row for each host
+   function call, with its operation, arguments, result, state and duration.
+   Each agent step has the tokens and the cost of its provider call in
+   `metrics`. The `extra` of the document has the run status and evaluation,
+   and for a `--persist` run the session usage and the saved goal.
 
    A Council child comes from its persisted turns, so its steps have the token
    counts and the cost of each iteration. The observation of the step that
@@ -106,6 +109,13 @@
                      (str "vis-" iteration "-" (inc i))))
                  ids)))
 
+(defn- block-activity
+  "The Activity of one code block: its state, counts and rows. Each row is one
+   host function call with its operation, arguments, result, state and
+   duration. The history cursor stays out."
+  [block]
+  (not-empty (select-keys (get block "activity") ["state" "counts" "rows"])))
+
 (defn- tool-call
   "The ATIF tool call and observation result of one code block. A persisted form
    has its code in `src`."
@@ -122,9 +132,25 @@
                                                        (get block "is_repaired")))
                              :is-timeout (boolean (or (get envelope "is_timeout")
                                                       (get block "is_timeout")))
-                             :activity (get-in block ["activity" "counts"])
+                             :activity (block-activity block)
+                             :stdout-chars (some-> (get block "stdout")
+                                                   count)
+                             :error (get block "error")
                              :repaired-source (get block "repaired_source")})}
      :result {:source-call-id call-id :content (observation-text block)}}))
+
+(defn- usage-metrics
+  "ATIF metrics of the provider call of one trace entry. The input count of Vis
+   includes cached tokens, as ATIF prompt tokens do."
+  [usage]
+  (let [tokens (get usage "tokens")]
+    (compact {:prompt-tokens (get tokens "input")
+              :completion-tokens (get tokens "output")
+              :cached-tokens (get tokens "cached")
+              :cost-usd (some-> (get usage "cost_usd")
+                                double)
+              :extra (not-empty (compact {:cache-creation-tokens (get tokens "cache_created")
+                                          :reasoning-tokens (get tokens "reasoning")}))})))
 
 (defn- agent-step
   "The ATIF agent step of one trace entry. The final entry carries `answer`."
@@ -150,6 +176,9 @@
         effort
         (get-in entry ["reasoning_effort" "effective"])
 
+        metrics
+        (usage-metrics (get entry "usage"))
+
         thinking
         (get entry "thinking")]
 
@@ -168,6 +197,9 @@
 
       effort
       (assoc :reasoning-effort effort)
+
+      (seq metrics)
+      (assoc :metrics metrics)
 
       (util/non-blank-string? thinking)
       (assoc :reasoning-content thinking)
@@ -495,8 +527,10 @@
                      run returns no `trace`, so they give its agent steps.
      :subagents      the Council children of the run: agent rows with their
                      `turns`, and each turn with its persisted iterations in
-                     `trace`"
-  [result {:keys [prompt started-at-ms profile iterations subagents]}]
+                     `trace`
+     :session-usage  the usage rollup of a persisted session
+     :goal           the saved goal of a persisted session"
+  [result {:keys [prompt started-at-ms profile iterations subagents session-usage goal]}]
   (let [run
         (wire/canonical (select-keys result
                                      [:session-id :content :trace :iteration-count :duration-ms
@@ -546,9 +580,9 @@
                    :extra (compact {:status (get run "status")
                                     :error (some-> (:error result)
                                                    error/format-error)
-                                    :eval (not-empty (select-keys (get run "eval")
-                                                                  ["is_valid"
-                                                                   "invalid_reasons"]))})}
+                                    :eval (not-empty (get run "eval"))
+                                    :session-usage (not-empty session-usage)
+                                    :goal goal})}
             root
             (assoc :session-id root))
           (get children (or root ""))

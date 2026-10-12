@@ -1964,6 +1964,19 @@
                                      (ex-message e)))
            nil))))
 
+(defn- persisted-session
+  "The usage rollup and the saved goal of the persisted session `sid`, for the
+   `--trajectory` file. A failed read gives a warning and nil, so the file still
+   has the run."
+  [sid]
+  (when sid
+    (try {:session-usage (gateway-state/session-usage-info (str sid))
+          :goal (get (gateway-state/soul (str sid)) "goal")}
+         (catch Exception e
+           (commandline/stderr! (str "vis-agent: the trajectory has no session usage: "
+                                     (ex-message e)))
+           nil))))
+
 (defn- run-one-shot!
   "Run the root one-shot command. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
@@ -2038,18 +2051,19 @@
                                              #(run! agent-def prompt run-opts))
           trajectory-error
           (when trajectory
-            (try (trajectory/export!
-                   trajectory
-                   result
-                   {:prompt prompt
-                    :started-at-ms started-at-ms
-                    :profile (run-profile opts)
-                    :iterations (when (and (:persist? opts) (empty? (:trace result)))
-                                  (persisted-iterations (:session-id result)))
-                    :subagents (when (:persist? opts) (council-subagents (:session-id result)))})
-                 nil
-                 (catch Exception e
-                   (str "vis-agent: cannot write the trajectory: " (ex-message e)))))
+            (try
+              (trajectory/export!
+                trajectory
+                result
+                (merge {:prompt prompt
+                        :started-at-ms started-at-ms
+                        :profile (run-profile opts)
+                        :iterations (when (and (:persist? opts) (empty? (:trace result)))
+                                      (persisted-iterations (:session-id result)))
+                        :subagents (when (:persist? opts) (council-subagents (:session-id result)))}
+                       (when (:persist? opts) (persisted-session (:session-id result)))))
+              nil
+              (catch Exception e (str "vis-agent: cannot write the trajectory: " (ex-message e)))))
           _ (some-> trajectory-error
                     commandline/stderr!)
           exit-code (cond-> (cli-result-exit-code result)

@@ -6459,6 +6459,25 @@
              (finally (loop-env/dispose-environment! env)))))))
 
 (defdescribe
+  trace-usage-test
+  (it "gives each trace entry the tokens of its provider call"
+      (let [env (loop-env/create-environment (svar/make-router [{:id :fixture
+                                                                 :api-key "test"
+                                                                 :base-url "http://127.0.0.1:1/v1"
+                                                                 :models [{:name "model"}]}])
+                                             {:db :memory})]
+        (try (with-redefs [svar/ask-code! (fn [_ _]
+                                            {:stop-reason :end
+                                             :content "The answer."
+                                             :api-usage {:input-tokens 10
+                                                         :output-tokens 5
+                                                         :input-tokens-details {:cache-read 4}}})]
+               (let [result (turn/run-turn! env "Answer the question" {})]
+                 (expect (= {"input" 10 "output" 5 "cached" 4 "cache_created" 0}
+                            (get-in (first (:trace result)) [:usage :tokens])))))
+             (finally (loop-env/dispose-environment! env))))))
+
+(defdescribe
   finalize-answer-test
   "The ANSWER is the model's own prose and NOTHING else: `finalize-answer!` stores
    it verbatim as the turn's best answer — no artifact is ever spliced under it."

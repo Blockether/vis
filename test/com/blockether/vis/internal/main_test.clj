@@ -1445,4 +1445,24 @@
               #(run-cli ["--trajectory" (str file "/run.json") "--" "hi"] {:content []}))]
 
         (expect (= 1 exit))
-        (expect (some #(str/starts-with? % "vis-agent: cannot write the trajectory: ") err)))))
+        (expect (some #(str/starts-with? % "vis-agent: cannot write the trajectory: ") err))))
+  (it "reads the usage and the saved goal of a persisted session"
+      (with-redefs [gateway-state/session-usage-info
+                    (fn [sid]
+                      {"session_id" sid "turns" 1})
+
+                    gateway-state/soul
+                    (fn [_]
+                      {"goal" {"status" "complete"}})]
+
+        (expect (= {:session-usage {"session_id" "session-1" "turns" 1} :goal {"status" "complete"}}
+                   (#'main/persisted-session "session-1")))
+        (expect (nil? (#'main/persisted-session nil)))))
+  (it "warns and gives nil when it cannot read the persisted session"
+      (let [err (atom [])]
+        (with-redefs [gateway-state/session-usage-info (fn [_]
+                                                         (throw (ex-info "no db" {})))
+                      commandline/stderr! #(swap! err conj %)]
+
+          (expect (nil? (#'main/persisted-session "session-1")))
+          (expect (= ["vis-agent: the trajectory has no session usage: no db"] @err))))))
