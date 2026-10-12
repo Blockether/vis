@@ -1875,11 +1875,7 @@
     (cond unsupported? 2
           (or (:error result) (contains? #{:error :cancelled} (:status result))) 1
           ;; A provider failure ends the turn with an error block and no run error.
-          (some #(= "error"
-                    (some-> (or (get % "type") (:type %))
-                            name))
-                (result-content result))
-          1
+          (some #(= "error" (get % "type")) (result-content result)) 1
           (false? (get-in result [:eval :valid?])) 2
           :else 0)))
 
