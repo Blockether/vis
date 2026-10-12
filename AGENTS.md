@@ -6,9 +6,9 @@ tests; do not copy them here.
 
 ## Simplified English
 
-Write prompts, rules, descriptions, docs and commits in Simplified English, so that readers with
-basic English and translation tools get the same meaning. Use the
-[ASD-STE100](https://www.asd-ste100.org/) writing rules, not its dictionary:
+Write tracked text in Simplified English: prompts, rules, descriptions, docs and commits. This rule
+does not apply to chat replies. Readers with basic English and translation tools then get the same
+meaning. Use the [ASD-STE100](https://www.asd-ste100.org/) writing rules, not its dictionary:
 
 - Write one instruction in each sentence, in the imperative and active voice, with any condition first.
 - Use at most 20 words in an instruction, 25 in a description, 6 sentences in a paragraph and 3 words in a noun cluster.

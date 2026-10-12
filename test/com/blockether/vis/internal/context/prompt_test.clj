@@ -696,16 +696,18 @@
         (expect (str/includes? text "text next to a `python_execution` call reaches the user"))
         (expect (str/includes? text "it must stand alone without the progress notes"))))
   ;; #303: §7 owns when, where and how progress notes appear, so a project need not copy that
-  ;; policy into AGENTS.md. Prose defaults to ASD-STE100 unless the user or project asks otherwise.
-  (it "owns progress-note timing and style and the default prose standard"
+  ;; policy into AGENTS.md. The style rule names no standard: "ASD-STE100" is Simplified
+  ;; Technical English, and the name drew Claude Opus 5.5 into English and German notes in
+  ;; Polish turns.
+  (it "owns progress-note timing and style"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (expect (not (str/includes? text "ASD-STE100")))
         (doseq [rule ["Before large work, say the first step. Before an edit, say the change"
                       "when a finding, decision or blocker changes the next step"
                       "one or two sentences of facts" "Group related steps"
                       "Routine reads, searches and repeated code need no note"
-                      "Unless the user or project asks for another style"
-                      "80% of the way to ASD-STE100" "short sentences" "one action for each step"
-                      "a clear actor" "one name for each thing"]]
+                      "Unless the user or project asks for another style" "short sentences"
+                      "one action for each step" "a clear actor" "one name for each thing"]]
           (expect (str/includes? text rule) rule))))
   ;; User reports: Claude Opus 5.5 wrote German, then Russian, notes in Polish conversations.
   ;; After the first fix, 934 of 1 084 mid-turn notes in Polish turns were still English. The
@@ -874,6 +876,8 @@
       ;; #349: the shell handle line says that `sh.type` adds Enter and how to omit it.
       ;; It lands at 12 138.
       ;; `ls` gains `is_ignored`, which lists gitignored entries. It lands at 12 183.
+      ;; User report: the style rule named ASD-STE100 (Simplified Technical English), and Claude
+      ;; Opus 5.5 wrote English and German notes in Polish turns. §7 names no standard now.
       (expect (< (count text) 12200))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
