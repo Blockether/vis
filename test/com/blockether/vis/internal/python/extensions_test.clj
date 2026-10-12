@@ -1036,7 +1036,7 @@
         (expect (= :session-not-bound
                    (try (root) (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
   (it
-    "reads and searches sessions through the canonical session doors"
+    "reads and searches sessions through the canonical doors with the introspection toggle OFF"
     (let [store
           (ps/db-create-connection! :memory)
 
@@ -1053,37 +1053,46 @@
           (get doors "__vis_host_list_sessions__")]
 
       (when-not registered? (foundation/register!))
-      (try (let [sid
-                 (db-test/store-session! store {:channel :tui :title "Door fixture"})
+      (try
+        (let [sid
+              (db-test/store-session! store {:channel :tui :title "Door fixture"})
 
-                 other
-                 (db-test/store-session! store {:channel :tui :title "Release notes"})
+              other
+              (db-test/store-session! store {:channel :tui :title "Release notes"})
 
-                 _
-                 (ps/db-store-session-turn!
-                   store
-                   {:parent-session-id sid :user-request "Fix the typo." :status :running})
+              _
+              (ps/db-store-session-turn!
+                store
+                {:parent-session-id sid :user-request "Fix the typo." :status :running})
 
-                 call
-                 (fn [door arg]
-                   (binding [extension/*current-environment* {:session-id sid :db-info store}]
-                     (json/read-json (door arg))))
+              call
+              (fn [door arg]
+                ;; The `introspection` toggle gates only the model's tools. Extensions
+                ;; read sessions also when it is OFF.
+                (binding [toggles/*overrides*
+                          {"introspection" false}
 
-                 data
-                 (call read-door nil)]
+                          extension/*current-environment*
+                          {:session-id sid :db-info store}]
 
-             (expect (= (str sid) (get-in data ["session" "id"])))
-             (expect (= [[1 "Fix the typo."]]
-                        (mapv (juxt #(get % "position") #(get % "user_request"))
-                              (get-in data ["transcript" "turns"]))))
-             (expect (= #{(str sid) (str other)} (set (map #(get % "id") (call list-door nil)))))
-             (expect (= [(str other)] (mapv #(get % "id") (call list-door "Release"))))
-             (expect (= [:session-not-bound :session-not-bound]
-                        (for [door [read-door list-door]]
-                          (try (door nil)
-                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
-           (finally (when-not registered? (extension/deregister-extension! "foundation-core"))
-                    (ps/db-dispose-connection! store))))))
+                  (expect (false? (toggles/enabled? "introspection")))
+                  (json/read-json (door arg))))
+
+              data
+              (call read-door nil)]
+
+          (expect (= (str sid) (get-in data ["session" "id"])))
+          (expect (= [[1 "Fix the typo."]]
+                     (mapv (juxt #(get % "position") #(get % "user_request"))
+                           (get-in data ["transcript" "turns"]))))
+          (expect (= #{(str sid) (str other)} (set (map #(get % "id") (call list-door nil)))))
+          (expect (= [(str other)] (mapv #(get % "id") (call list-door "Release"))))
+          (expect (= [:session-not-bound :session-not-bound]
+                     (for [door [read-door list-door]]
+                       (try (door nil)
+                            (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
+        (finally (when-not registered? (extension/deregister-extension! "foundation-core"))
+                 (ps/db-dispose-connection! store))))))
 
 (defdescribe
   dependency-errors-keep-safe-diagnostics-test
