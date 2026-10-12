@@ -31,7 +31,7 @@ tools = evals.evals
 
 DATASET = "terminal-bench/terminal-bench@4.0.0"
 MODEL = "zai-coding-plan/glm-5.3-flash"
-SHOW_START = {"preflight", "run", "status", "stop", "bench", "leaderboard"}
+SHOW_START = {"preflight", "run", "status", "watch", "stop", "bench", "leaderboard"}
 TAGS = {
     "scenarios": "observation",
     "new_scenario": "mutation",
@@ -39,6 +39,7 @@ TAGS = {
     "preflight": "verification",
     "runs": "observation",
     "status": "observation",
+    "watch": "observation",
     "stop": "mutation",
     "report": "observation",
     "bench": "observation",
@@ -485,6 +486,55 @@ def test_run_refuses_an_unknown_dataset_or_a_foreign_option(
     with pytest.raises(ValueError, match=re.escape(message)):
         tools.run(dataset, **extra)
     assert not (evals.HOME / "runs").exists()
+
+
+def recorder(monkeypatch):
+    """Record the live view of watch() instead of sending it to a Vis host."""
+    recording = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recording)
+    return recording
+
+
+def test_watch_shows_each_finished_trial_and_ends_with_the_run(repo, monkeypatch):
+    live = recorder(monkeypatch)
+    run, run_dir = launch("scenarios", "raise SystemExit(1)", expected_runs=3)
+    finish(run_dir)
+    job = run_dir / "harbor" / "jobs" / "e2e-1"
+    harbor_trial(job, "edit-config", 1.0)
+    harbor_trial(job, "answer-sum", 0.0)
+    harbor_trial(job, "fix-test", None)
+    status = tools.watch(run.run_id[:12], poll_s=1)
+    assert (status.run.state, status.run.exit_code) == ("finished", 1)
+    assert status.progress == "3 of 3 scenario runs finished, without results.json"
+    rows = {
+        row["cells"][0]: (row["cells"][2], row["tone"])
+        for row in live.node("trials")["rows"]
+    }
+    assert rows == {
+        "edit-config": ("passed", "ok"),
+        "answer-sum": ("failed (reward 0)", "error"),
+        "fix-test": ("unscored", "warn"),
+    }
+    counts = {stat["id"]: stat["value_text"] for stat in live.node("counts")["stats"]}
+    assert counts == {"passed": "1", "failed": "1", "unscored": "1"}
+    assert live.ops()[-1]["ending"]["reason"] == "completed"
+
+
+def test_watch_timeout_ends_only_the_watch(repo, monkeypatch):
+    live = recorder(monkeypatch)
+    running, run_dir = launch("bench", "import time; time.sleep(60)")
+    try:
+        status = tools.watch(running.run_id, timeout_s=1, poll_s=1)
+        assert status.run.state == "running"
+        assert live.ops()[-1]["ending"]["reason"] == "timeout"
+        assert evals._run(run_dir).state == "running"
+    finally:
+        assert tools.stop(running.run_id).state == "stopped"
+
+
+def test_watch_refuses_a_nonpositive_interval(repo):
+    with pytest.raises(ValueError, match="must be positive"):
+        tools.watch(poll_s=0)
 
 
 def test_launched_run_finishes_with_its_exit_code_log_and_progress(repo):
@@ -1787,6 +1837,7 @@ def test_activities_stay_within_portable_limits():
         "run": run,
         "runs": (run,) * 30,
         "status": evals.RunStatus(run, text, 1, (text,) * 20),
+        "watch": evals.RunStatus(run, text, 1, (text,) * 20),
         "stop": run,
         "report": scenario_report(text, (result,) * 30),
         "preflight": evals.Preflight(

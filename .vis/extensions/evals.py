@@ -2351,6 +2351,36 @@ def _progress(run: EvalRun, run_dir: Path) -> str:
     return f"{scored}, {len(plan.live)} running, {len(plan.pending)} pending"
 
 
+def _run_trials(run: EvalRun, run_dir: Path) -> tuple:
+    """Give the finished trials of a run.
+
+    A scenario run has its own Harbor job. A queue writes into the jobs directory of
+    its round, so only the trials that finished after the queue started count.
+    """
+    if run.kind == "scenarios":
+        jobs = run_dir / "harbor" / "jobs"
+    else:
+        jobs = _round_dir(run.round_name) / "jobs"
+    if not jobs.is_dir():
+        return ()
+    trials = _harbor.read_trials(jobs)
+    if run.kind == "scenarios":
+        return trials
+    start = datetime.fromisoformat(run.started_at).timestamp()
+    return tuple(trial for trial in trials if trial.path.stat().st_mtime >= start)
+
+
+def _trial_result(trial) -> tuple[str, str]:
+    """Name the result of one finished trial and its live-view tone."""
+    if trial.error:
+        return f"error: {trial.error}", "error"
+    if not trial.is_scored:
+        return "unscored", "warn"
+    if trial.is_passed:
+        return "passed", "ok"
+    return f"failed (reward {trial.reward:g})", "error"
+
+
 def _presentation(headline: str, summary: str, content, **options):
     # Activity summaries are one line of at most 512 UTF-8 bytes.
     return vis.ActivityPresentation(
@@ -2502,6 +2532,17 @@ def _stop_activity(*, phase, result, **_):
         return None
     return _presentation(
         "Stop evaluation run", f"{result.run_id} · {result.state}", _run_content(result)
+    )
+
+
+def _watch_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    run = result.run
+    return _presentation(
+        "Watch evaluation run",
+        f"{run.run_id} · {run.state} · {_clip(result.progress, 100)}",
+        (vis.ActivityText(_clip(result.progress, 400)),),
     )
 
 
@@ -3369,6 +3410,92 @@ class Evals:
         )
 
     @vis.method(
+        tag="observation",
+        activity=vis.Activity(
+            label="Watch evaluation run", show_start=True, render=_watch_activity
+        ),
+    )
+    def watch(
+        self, run_id: str | None = None, timeout_s: int = 3600, poll_s: int = 10
+    ) -> RunStatus:
+        """Follow one run in a live view until it ends.
+
+        Without `run_id`, follows the newest run. A unique prefix of the id is enough.
+        The view shows the progress, counters of passed, failed and unscored trials and
+        one row for each trial that finished. A person can stop the view, and the watch
+        ends after `timeout_s`. Neither stops the run; stop() does. Reads the run every
+        `poll_s` seconds and returns its status at the end.
+        """
+        if timeout_s < 1 or poll_s < 1:
+            raise ValueError("timeout_s and poll_s must be positive")
+        run_dir = _resolve_run(run_id)
+        run = _run(run_dir)
+        progress = ""
+        seen: set[str] = set()
+        counts = Counter()
+        deadline = time.monotonic() + timeout_s
+        outcome = "timeout"
+        nodes = [
+            vis.status("state", _clip(run.label, 200), tone="running"),
+            vis.stat(
+                "counts",
+                stats=[
+                    {"id": name, "label": name.capitalize(), "value_text": "0"}
+                    for name in ("passed", "failed", "unscored")
+                ],
+            ),
+            vis.table(
+                "trials",
+                columns=[
+                    vis.table_column("task", "Task"),
+                    vis.table_column("model", "Model"),
+                    vis.table_column("result", "Result"),
+                ],
+            ),
+        ]
+        with vis.live(f"Watch {run.run_id}", nodes) as view:
+            try:
+                while True:
+                    run = _run(run_dir)
+                    progress = _progress(run, run_dir)
+                    for trial in _run_trials(run, run_dir):
+                        if trial.trial in seen:
+                            continue
+                        seen.add(trial.trial)
+                        text, tone = _trial_result(trial)
+                        group = {"ok": "passed", "warn": "unscored"}.get(tone, "failed")
+                        counts[group] += 1
+                        view["counts"].set(group, str(counts[group]))
+                        view["trials"].upsert(
+                            trial.trial,
+                            [trial.task, trial.model or "-", text],
+                            tone=tone,
+                        )
+                    is_running = run.state == "running"
+                    view["state"].set(
+                        f"{run.state}: {_clip(progress, 200)}",
+                        tone="running" if is_running else "ok",
+                        detail=_clip(run.label, 200),
+                    )
+                    if not is_running:
+                        outcome = "completed"
+                        break
+                    if view.is_interrupted:
+                        outcome = "interrupted"
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    view.sleep(min(poll_s, remaining))
+            except vis.Interrupted:
+                outcome = "interrupted"
+            view.close(
+                reason=outcome,
+                summary=f"{run.run_id}: {run.state}, {_count(len(seen), 'trial')} finished",
+            )
+        return RunStatus(run, progress, _elapsed(run), _tail(Path(run.log_path)))
+
+    @vis.method(
         tag="mutation",
         activity=vis.Activity(
             label="Stop evaluation run", show_start=True, render=_stop_activity
@@ -3570,6 +3697,7 @@ PROMPT = """evals surface active — evaluate Vis with e2e scenarios and Termina
   evals.run(dataset, ids=None, ...)                start a paid "scenarios" or "terminal-bench" run
   evals.preflight(round_name=None)                 check Podman, bundle, dataset, key and disk
   evals.runs() · evals.status(run_id=None) · evals.stop(run_id)   background runs
+  evals.watch(run_id=None)                         follow a run in a live view; the run continues
   evals.report(run_id=None)                        scenario results with a 95% interval
   evals.bench(round_name=None) · evals.diagnose(round_name=None)   score, then lost tasks
   evals.compare(baseline, candidate)               paired comparison of two runs or rounds

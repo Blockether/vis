@@ -241,6 +241,7 @@ The project extension `.vis/extensions/evals.py` runs this runner from a Vis ses
 - `evals.new_scenario(...)` creates `scenarios/<id>/scenario.json` and its `files/`.
 - `evals.run("scenarios", ids, models=[...])` starts a paid run in the background, with its own `VIS_E2E_RESULTS` directory. `evals.run("terminal-bench", ...)` starts the Terminal-Bench queue in the same way.
 - `evals.status()` and `evals.report()` read the run. The report lists each failed run with credentials redacted.
+- `evals.watch(run_id)` follows a run in a live view in the TUI or the Companion app. When you stop the view, the run continues; `evals.stop(run_id)` stops the run.
 - `evals.compare(baseline, candidate)` compares two scenario runs case by case.
 
 In these results, a case is one scenario on one model. `report()` gives the pass rate with its 95% interval. `detectable_change_points` is the smallest change that a second run of the same size detects. With `repeats` above 1, it also gives `pass_all_percent` (pass^k), the share of cases that passed every repeat. `pass_any_percent` (pass@k) is the share of cases that passed at least one repeat, and `unstable` names the cases that passed only some repeats. The interval allows for the similar results of repeats of one case.

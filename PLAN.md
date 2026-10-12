@@ -143,14 +143,14 @@ Rationale: a person starts, watches and compares evaluations from chat, the TUI 
 Data:
 
 - `evals.run(dataset, agents, profiles, attempts)` starts a Harbor job in the background.
-- The Harbor plugin `VisLive` sends trial events to the gateway.
-- The TUI and the Companion app show runs, live progress and comparisons.
+- `evals.watch(run_id)` follows a run in a live view: its progress, counters and one row for each finished trial. The view reads the run directory, so the run continues when a person stops the view.
+- The TUI and the Companion app show this live view like every other live view.
 - `evals.capture(session, turn)` makes a task draft from a session: instruction, files and rubric. A person approves the rubric.
 - An automation runs the e2e dataset every night and reports a regression.
 
 Acceptance criteria: a run starts from chat, its progress shows live and its result is sealed. `harbor check` accepts a captured task. Each new TUI fold has arrow-key tests.
 
-Unknowns: the gateway route for evaluation events and the Companion screen design.
+Unknowns: none for live progress. Rejected: a Harbor plugin `VisLive` with its own gateway route. The run directory already holds every trial result, and a live view needs no new route, authentication or client code.
 
 ## 7. Trajectory judges
 
@@ -195,6 +195,6 @@ Unknowns: the budget, the number of tasks for enough power and the Podman machin
 - Phase 3: done. Vis `a93089b62` writes the steps of a persisted run. The native-release dry run `38185257847` built it, and `profiles.toml` pins that archive by sha256 (benchmark commit `bf1ae0b`, local). In round `canary-p3b`, `vis-solo` and `vis-team` each wrote valid ATIF v1.8 with 15 steps, mode `0600` and the profile in `agent.extra`. Both trials had reward 0: each one failed 1 of 2 task tests, with no infrastructure error. `terminal_bench/vis_agent.py` is removed.
 - Phase 4: done. One Harbor run graded all 40 scenarios with the old and the new grader on the `anthropic-coding-plan/claude-opus-5-5` route. The verdicts agreed in 40 of 40 trials: 37 passed and 3 failed in both, with no trial exception. `evals.run("scenarios", ...)` starts `e2e/vis_harbor/run.py` as one Harbor job, and `e2e/run.py` is removed.
 - Phase 5: done. Release v0.2.38 ships `blockether.vis.evals` in `vis-agent` 0.2.38 on PyPI. The McNemar and Benjamini-Hochberg tests equal the binomial and statsmodels reference values. `evals.compare` pairs scenario runs and benchmark rounds with the same code (4 tests in `.vis/extensions/test_evals.py`). With the real e2e runs `20261006-005150-scenarios-ec87` and `20261012-085548-scenarios-d4c4`, it paired 5 cases with no measurable difference. The benchmark repository reads and seals rounds with the SDK (commit `812b2d5`, local).
-- Phase 6: in progress. `evals.run(dataset, ...)` replaces `run_scenarios` and `run_bench`. It takes the datasets `scenarios` and `terminal-bench`, and it refuses an option of the other dataset. `evals.capture(session_id, turn)` drafts a scenario from a session turn through `vis.read_session` (commits `513895774` and `f050802a6`). Open: the `VisLive` plugin and its gateway route, the TUI and Companion views, the nightly automation and `harbor check` of a captured task.
+- Phase 6: in progress. `evals.run(dataset, ...)` replaces `run_scenarios` and `run_bench`. It takes the datasets `scenarios` and `terminal-bench`, and it refuses an option of the other dataset. `evals.capture(session_id, turn)` drafts a scenario from a session turn through `vis.read_session` (commits `513895774` and `f050802a6`). `evals.watch(run_id)` follows a run in a live view. On the real run `20261012-085548-scenarios-d4c4`, it showed 40 trials and "39 of 40 runs passed". Open: the nightly automation and `harbor check` of a captured task.
 - Phases 7 and 8: not started.
 - The baseline round (`ctb-baseline`) has no Vis trials. It runs until about 2026-10-13. After its seal, commit `results/baseline.json` in the benchmark repository.
