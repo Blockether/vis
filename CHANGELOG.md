@@ -7,17 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.38] - 2026-10-12
+
 ### Added
+- `vis-agent --trajectory PATH` writes a run as an ATIF trajectory, the format that Harbor tools
+  read. It records each function call with its arguments, result and step cost, and the work of
+  Council children.
+- The Python SDK module `blockether.vis.evals` reads trajectories and Harbor jobs, summarizes
+  trials, seals benchmark rounds and compares two rounds with the McNemar test.
+- The evals extension runs the e2e scenarios as one Harbor 0.24.0 job and grades each trial from
+  its trajectory.
+- `council.run`, `council.wait`, `council.cancel` and `council.ask` run subagents and collect their
+  answers.
+- `vis-agent tui` and one-shot runs accept `--no-global`, `--no-project`, `--vanilla` and
+  `--extensions` for a new session. The session keeps this choice when it resumes. Providers and
+  sign-in always load.
+- `bin/install-vis-agent` selects the optional `tui`, `web` and `desktop` parts with `--components`
+  or `VIS_COMPONENTS`. Later updates keep the selection.
+- Local VibeVoice ONNX engines speak and recognize speech. Each voice plays a sample before the
+  model download. Parakeet and Piper stay the defaults.
 - The D3 decision models `d3-edge` and `d3-lite` from vLLM Semantic Router answer `choice`,
   `score` and `noul` questions with up to 16,384 tokens each. Their FP32 text bundles use memory
   that grows linearly with the question length (#366).
 - D3 Edge and Lite have training checkpoints. Local and gateway training jobs fine-tune them fully or
   with LoRA, and export the result with the same FP32 D3 export.
+- Shell steps show as terminal blocks with the command, its output and an outcome line.
+- The TUI deletes the current session with `C-x Delete`.
+- The TUI shows attachments, also those of Activity rows, as cards with an Open button.
+- The Companion app deletes or archives a Shift-selected batch of sessions in one step.
+- The Companion app has its own calendar and time field.
+- The TUI keeps `/goal` text in the input history, so the up arrow recalls it (#360).
+- `ls` lists gitignored entries with `is_ignored=True`.
+- The sandbox pre-imports `dataclasses` and `inspect` (#358).
 
 ### Changed
 - Decision 2.0 Eos accepts questions of up to 16,384 tokens and Kai up to 8,192 tokens, instead of
   2,048. The new FP32 bundles run attention in blocks, so memory grows linearly with the question
   length (#366).
+- A Council team can have up to 128 children, and 16 can run at the same time, instead of 32 and 8.
+  The iteration budget of a child is 64 by default and at most 600, instead of 32 and 200.
+- Council room wake is Off, Active in the last hour (the default) or Always. Room settings stay
+  hidden until the machine joins a room.
+- The Terminal-Bench harness moved to the curated-terminal-benchmark repository. The evals
+  extension finds it through `VIS_TERMINAL_BENCH`.
+- The TUI Settings show Theme under General View.
+- The TUI Activity band stays fast in turns with thousands of calls (#357).
+- The project uses vis-lang-clojure 1.15.1.
+
+### Fixed
+- One-shot runs write errors to stderr and keep provider errors canonical (#351, #355).
+- A fork stays in the group of its source session, and Council explains why it refuses (#350).
+- The sandbox writes large values to spill files and names the dependents that it loses. It deletes
+  snapshot and spill files with their session (#347).
+- Bulk deletes and pytest runs pass the sandbox scan cap (#362).
+- A sandbox that starts while a cleanup runs keeps its guest modules.
+- A copied project reuses its synced extension packages (#352).
+- A shared sync warns when it re-points an editable project (#353).
+- A reload names the scope and folder of each extension and the scanned folders (#348, #365).
+- Extensions send model properties and `str` text (#367).
+- `/reload` shows as a summary, not as a raw step (#363).
+- The prompt says that `sh.type` adds Enter (#349).
+- Vis prices responses at the rates that the provider declares (#356).
+- Resumed sessions stay in their saved folder, and new sessions start in the project folder (#364).
+- An empty group deletes without the question about its sessions (#361).
+- The gateway keeps running iteration frames in its replay ring, and fails orphaned subagents when
+  it starts.
+- Provider fleet answers keep the last sign-in status.
+- The native image has no reflective calls that fail at run time.
+- The TUI draws the user rail on a queued message that you send now (#354), focuses the project rail
+  on a mouse press (#359) and opens a new session in the project of its source session.
+- The TUI draws images with Kitty graphics in iTerm2 3.6 and later, so iTerm2 3.7 does not ask
+  before each image.
+- The Companion app keeps live views when events arrive before the snapshot, keeps scoped settings
+  still on a slow gateway and keeps a finished turn on screen when the next turn starts.
+- The Companion app keeps HITL answers, paste and the keyboard steady, wraps long banner text and
+  accepts pairing links with spaces.
+- Shell rows write the home directory as `~`.
 
 ## [v0.2.37] - 2026-10-09
 
