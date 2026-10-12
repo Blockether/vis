@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.39] - 2026-10-12
+
+### Added
+- `evals.run(dataset, ...)` starts a paid `scenarios` or `terminal-bench` run. Without `ids`, a
+  scenarios run includes every scenario.
+- `evals.watch(run_id)` follows a run in a live view with counters and one row for each finished
+  trial. The run continues when you stop the view.
+- `evals.capture(session_id, turn)` drafts an e2e scenario from a session turn.
+- `python -m vis_harbor.check` checks a Harbor task with the `harbor check` rubric and the Vis agent.
+- Extensions read sessions with `vis.read_session` and `vis.list_sessions`. They also attach files
+  with `vis.attach` and read attachments.
+- `--tools` and `VIS_TOOLS` turn off single tools for a session. You can change the tools of a
+  session when it resumes and while it runs.
+- A setting can run an `on_change` hook when its value changes (#369).
+- Attachments accept Word documents and the `m4a` type aliases. The TUI accepts dropped Word
+  documents.
+
+### Changed
+- `evals.run` replaces `evals.run_scenarios` and `evals.run_bench`.
+- `Stat.set` and `Steps.set` of a live view require the label, as the View schema does.
+
+### Fixed
+- A turn that ends with a provider error, such as an exhausted quota, exits with code 1. The Harbor
+  agent records it as an infrastructure error, not as a wrong answer.
+- The SDK test hosts replace an appended live item, as the engine does.
+- The TUI and the Companion app fold `vis-paste` blocks in delivered queued messages.
+- The Companion app keeps a recording closed after its live view ends.
+
 ## [v0.2.38] - 2026-10-12
 
 ### Added
