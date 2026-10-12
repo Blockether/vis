@@ -4,6 +4,7 @@
             [charred.api :as json]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.gateway.server.settings :as settings-api]
+            [com.blockether.vis.internal.gateway.server.settings-edit :as settings-edit]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.foundation.harness.core :as harness]
@@ -173,6 +174,94 @@
                       (range 12))]
             (run! deref writes)
             (expect (= 12 (count (store/db-scoped-settings db "session" sid)))))))))
+
+(defdescribe
+  setting-change-hooks
+  ;; #369: a setting had no change hook, so an extension had to poll for a change.
+  (it "calls the hook once for each change of the effective value"
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              sid
+              (h/store-session! db {:title "Hooks"})
+
+              calls
+              (atom [])
+
+              id
+              "change_hook_feature"
+
+              target
+              (scoped/target db "session" sid)]
+
+          (toggles/register-toggle! {:id id
+                                     :label "Hooked"
+                                     :default true
+                                     :scopes contract/scopes
+                                     :on-change-fn #(swap! calls conj
+                                                      (select-keys % [:id :old :new :scope]))})
+          (scoped/set-setting! db target id "value" false)
+          (scoped/set-setting! db target id "value" false)
+          (expect (= [{:id id :old true :new false :scope "session"}] @calls))
+          (expect (nil? (:change-error (scoped/set-setting! db target id "inherit" nil))))
+          (expect (= [{:id id :old true :new false :scope "session"}
+                      {:id id :old false :new true :scope "session"}]
+                     @calls)))))
+  (it
+    "keeps the saved value and reports a failed hook over HTTP"
+    (with-empty-config
+      (let [db
+            (h/store)
+
+            sid
+            (h/store-session! db {:title "Failing hook"})
+
+            id
+            "change_hook_failure"
+
+            body
+            {"scope" "session" "target_id" (str sid) "id" id}
+
+            message
+            "Saved, but the change hook of Failing failed: Disk is full"]
+
+        (toggles/register-toggle! {:id id
+                                   :label "Failing"
+                                   :default true
+                                   :scopes contract/scopes
+                                   :on-change-fn (fn [_]
+                                                   (throw (ex-info "Disk is full" {})))})
+        (with-redefs [lp/db-info
+                      (constantly db)
+
+                      discovery/all-skills
+                      (constantly [])]
+
+          (let [response
+                (#'settings-api/set-setting-handler
+                 {:body (java.io.StringReader. (json/write-json-str (assoc body
+                                                                      "action" "toggle")))})
+
+                row
+                (json/read-json (:body response))]
+
+            (expect (= 200 (:status response)))
+            (expect (document/valid? "gateway" "setting" row))
+            (expect (false? (get row "enabled")))
+            (expect (= message (get row "change_error")))
+            (expect (false? (get (scoped/values db sid) id))))
+          (let [target
+                (scoped/target db "session" sid)
+
+                result
+                (settings-edit/apply! db
+                                      target
+                                      (settings-edit/revision db target)
+                                      [{"id" id "action" "value" "value" true}])]
+
+            (expect (= {id message} (:change-errors result)))
+            (expect (true? (get (scoped/values db sid) id)))))))))
 
 (defdescribe
   scoped-resources

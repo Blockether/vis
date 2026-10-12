@@ -383,6 +383,48 @@
              (expect (not (listed? {:scope "global"}))))
            (finally (binding [workspace/*workspace-root* root]
                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "calls a Python on_change hook and reports its error"
+      ;; #369: a setting had no change hook, so an extension had to poll for a change.
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)
+
+            changes
+            (io/file dir "changes.txt")
+
+            target
+            {:scope "project" :root root}]
+
+        (write-ext! dir
+                    ".vis/extensions/hooks.py"
+                    (str "import blockether.vis.extension as vis\n"
+                         "def record(old, new, scope):\n"
+                         "    if new == 'broken':\n"
+                         "        raise ValueError('cannot apply broken')\n"
+                         "    with open("
+                         (pr-str (.getPath changes))
+                         ", 'a') as f:\n"
+                         "        f.write(f'{old} {new} {scope}\\n')\n"
+                         "vis.register_extension(vis.Extension(name='change-hooks', "
+                         "description='Change hook fixture', "
+                         "settings=[vis.Setting(id='change_hook_mode', label='Mode', type='enum', "
+                         "choices=['vibe', 'control', 'broken'], default='vibe', "
+                         "scopes=['global', 'project'], on_change=record)]))\n"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                      :project-root root})
+               (expect (= [] (pyx/load-failures)))
+               (scoped/set-setting! nil target "change_hook_mode" "value" "control")
+               (scoped/set-setting! nil target "change_hook_mode" "value" "control")
+               (expect (= "vibe control project\n" (slurp changes)))
+               (let [row (scoped/set-setting! nil target "change_hook_mode" "value" "broken")]
+                 (expect (= "broken" (:value row)))
+                 (expect (str/includes? (str (:change-error row)) "cannot apply broken")
+                         (:change-error row))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "reports which setting field broke which rule at load and in doctor"
       ;; #322 and #323: 300 characters load; 301 name the setting, field, rule and limit.
       (let [dir

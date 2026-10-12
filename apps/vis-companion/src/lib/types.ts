@@ -381,6 +381,8 @@ export interface Toggle {
   parent?: string;
   /** Settings that belong under this row, in display order. They can have children too. */
   children?: Toggle[];
+  /** Present after a write when the extension's change hook failed. The value stays saved. */
+  change_error?: string;
 }
 
 /** Where an extension section comes from, and whether its last load worked. */

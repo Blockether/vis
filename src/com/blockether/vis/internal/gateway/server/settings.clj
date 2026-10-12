@@ -21,7 +21,8 @@
 
 (defn- toggle-json
   [{:keys [id label description type choices value experimental? scopes source scope is-override
-           overridden-by inherited-value inherited-source own-value group parent inheritance]}]
+           overridden-by inherited-value inherited-source own-value group parent inheritance
+           change-error]}]
   (cond-> {:id id
            :label label
            :type (name type)
@@ -48,6 +49,9 @@
 
     (= "council_room_wake" id)
     (assoc :choice-labels {"off" "Off" "recent" "Active in the last hour" "always" "Always"})
+
+    change-error
+    (assoc :change-error change-error)
 
     description
     (assoc :description description)
@@ -289,7 +293,8 @@
     (remove #(= other (:id %)) rows)))
 
 (defn- settings-catalog
-  [request target]
+  "The settings of `target`. `change-errors` maps a setting id to its failed change hook."
+  [request target change-errors]
   (let [local?
         (not= "global" (:scope target))
 
@@ -324,7 +329,8 @@
                      (toggles/toggle-visible? %)
                      (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %))))
                    (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
-                (one-thinking-control (scoped/settings (lp/db-info) target)))
+                (map #(if-let [error (get change-errors (:id %))] (assoc % :change-error error) %)
+                     (one-thinking-control (scoped/settings (lp/db-info) target))))
 
         ;; Everything an extension contributes is configured in that extension's section.
         section
@@ -412,7 +418,8 @@
 (defn- list-settings-handler
   "GET /v1/settings; typed catalog, provenance and a concurrency revision."
   [request]
-  (settings-response #(http/json-response (settings-catalog request (request-target request nil)))))
+  (settings-response #(http/json-response
+                        (settings-catalog request (request-target request nil) nil))))
 
 (defn- reload-extensions-handler
   "POST /v1/extensions/reload; load the extension files where a settings target runs again.
@@ -473,8 +480,9 @@
         (doseq [{:strs [id]} (get body "changes")]
           (when (and (#{:skills :mcp} (:group (toggles/toggle-spec id))) (not (resources id)))
             (throw (ex-info "Resource is not available in this target" {:status 400 :id id}))))
-        (settings-edit/apply! (lp/db-info) target (get body "revision") (get body "changes"))
-        (http/json-response (settings-catalog request target))))))
+        (let [{:keys [change-errors]}
+              (settings-edit/apply! (lp/db-info) target (get body "revision") (get body "changes"))]
+          (http/json-response (settings-catalog request target change-errors)))))))
 
 (defn- get-setting-handler
   "Read one setting, including response controls hidden in the global dialog."

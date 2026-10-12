@@ -2732,6 +2732,10 @@
             "type": "string"
           }
         },
+        "change_error": {
+          "type": "string",
+          "description": "Present after a write when the owner's change hook failed. The value stays saved."
+        },
         "parent": {
           "type": "string",
           "description": "Id of the setting that this row belongs under."

@@ -171,6 +171,32 @@ load. The load error names that owner.
 `type` defaults to `"boolean"` with a boolean `default`. For a choice row, use `type="enum"`,
 string `choices` and a `default` from those choices.
 
+To act when a person changes a setting, give `on_change`. Vis calls `on_change(old, new, scope)`
+once after the app or the TUI saves the setting, if the effective value changed. `scope` is the
+level of the change: `global`, `project`, `group` or `session`. Use it for a side effect, such as
+updating a file. The Settings request waits for the hook, so keep it short-running.
+
+```python
+from pathlib import Path
+
+def record_mode(old: str, new: str, scope: str) -> None:
+    Path("steering-mode.txt").write_text(new)
+
+steering_mode = vis.Setting(
+    id="steering_mode",
+    label="Steering mode",
+    type="enum",
+    default="vibe",
+    choices=["vibe", "control"],
+    scopes=["global", "project"],
+    on_change=record_mode,
+)
+```
+
+If the hook raises an error, the value stays saved. The app and the TUI show the error, and the
+gateway log records it. Vis does not call the hook when the extension loads. To read the current
+value at another time, call `value()` in a callback.
+
 The app and the TUI show your settings under **Extensions**, in a group with your extension's
 name. That group also holds the extension's engine choice and its packaged skills. A `project` or
 `global` tag shows where your extension is installed.

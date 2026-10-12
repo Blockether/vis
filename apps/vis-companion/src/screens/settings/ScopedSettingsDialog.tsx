@@ -58,8 +58,10 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     setPending(toggle.id);
     setError(null);
     try {
-      await client.setSetting(toggle.id, action, value, owner);
+      const saved = await client.setSetting(toggle.id, action, value, owner);
       setData(await client.settings(undefined, owner));
+      // The value is saved, but the extension could not act on the change.
+      if (saved.change_error) setError(saved.change_error);
       return true;
     } catch (err) { setError((err as Error).message); return false; }
     finally { saving.current = false; setPending(null); }

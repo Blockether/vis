@@ -471,6 +471,8 @@ export function MachineSettings({
           toggles: replaceSetting(group.toggles, updated),
         })) ?? null,
     );
+    // The value is saved, but the extension could not act on the change.
+    if (updated.change_error) setErr(updated.change_error);
   }
 
   async function flip(toggle: Toggle) {

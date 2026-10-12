@@ -1744,6 +1744,20 @@
                       :data {:extension ext-name :error (ex-message t)}})))
     nil))
 
+(defn- on-change-adapter
+  "Wrap a Python `on_change(old, new, scope)` callable as a setting's `:on-change-fn`.
+   Vis calls it once after a write changes the effective value. An error propagates,
+   so the settings write reports it to the person and logs it."
+  [ext-name ctx pyfn]
+  (fn [{:keys [old new scope]}]
+    (try (call-py-ext ext-name nil ctx pyfn [old new scope])
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::setting-change-failed
+                      :data {:extension ext-name :error (ex-message t)}})
+           (throw t)))
+    nil))
+
 (defn- ->provider-entry
   "`spec` is a Python `vis.Provider(...)` dict — STRING keys. Each callable slot
    is adapted with the field table its own host schema declares."
@@ -1858,7 +1872,11 @@
                                     (assoc :parent (get setting "parent"))
 
                                     (get setting "choices")
-                                    (assoc :choices (vec (get setting "choices")))))
+                                    (assoc :choices (vec (get setting "choices")))
+
+                                    (fn? (get setting "on_change"))
+                                    (assoc :on-change-fn
+                                      (on-change-adapter ext-name ctx (get setting "on_change")))))
                                 (get reg "settings"))
              :ext/source-nses ['com.blockether.vis.internal.python.extensions]
              :ext/engine (cond-> {:ext.engine/symbols symbols :ext.engine/exact-symbol-names? true}

@@ -101,7 +101,7 @@
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
   [{:keys [id label default description owner since persist? group parent type choices visible-fn
-           channels settings? experimental? scopes inheritance]}]
+           on-change-fn channels settings? experimental? scopes inheritance]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -137,6 +137,11 @@
 
       visible-fn
       (assoc :visible-fn visible-fn)
+
+      ;; `:on-change-fn` receives {:id :old :new :scope} once after a scoped write
+      ;; changes the effective value where it was made.
+      on-change-fn
+      (assoc :on-change-fn on-change-fn)
 
       ;; `:channels` (set of channel keywords) scopes a toggle to specific
       ;; channels' settings UIs. Absent = channel-neutral (shown everywhere).

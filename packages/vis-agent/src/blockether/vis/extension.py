@@ -1007,6 +1007,9 @@ class Setting(Generic[_SettingValue]):
     for a choice setting. Outside Vis, it returns the declared default.
     `parent` names another setting of the same section. Settings shows this setting
     under that setting. Settings can nest at any depth.
+    `on_change(old, new, scope)` runs once after a person changes the setting in the
+    app or TUI and its effective value changes. `scope` is `global`, `project`, `group`
+    or `session`. Vis keeps the saved value if the hook raises, and shows the error.
     """
 
     id: str
@@ -1017,6 +1020,7 @@ class Setting(Generic[_SettingValue]):
     scopes: Sequence[str] | None = None
     description: str | None = None
     parent: str | None = None
+    on_change: Callable[[Any, Any, str], Any] | None = None
 
     def __post_init__(self):
         for name, value in (("scopes", self.scopes), ("choices", self.choices)):
@@ -1025,7 +1029,11 @@ class Setting(Generic[_SettingValue]):
             if not isinstance(value, (list, tuple)):
                 raise TypeError(f"Setting {name} must be a list or tuple")
             object.__setattr__(self, name, tuple(value))
-        spec = _host.setting_declaration(self._spec())
+        if self.on_change is not None and not callable(self.on_change):
+            raise TypeError("Setting on_change must be callable")
+        declaration = self._spec()
+        declaration.pop("on_change", None)
+        spec = _host.setting_declaration(declaration)
         object.__setattr__(self, "scopes", tuple(spec["scopes"]))
         if self.type == "boolean" and type(self.default) is not bool:
             raise ValueError("A boolean setting requires a boolean default")
@@ -1054,6 +1062,8 @@ class Setting(Generic[_SettingValue]):
             spec["description"] = self.description
         if self.parent is not None:
             spec["parent"] = self.parent
+        if self.on_change is not None:
+            spec["on_change"] = self.on_change
         return spec
 
     def value(self) -> _SettingValue:

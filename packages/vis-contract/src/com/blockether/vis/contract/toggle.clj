@@ -56,8 +56,9 @@
        (<= (count value) (long max-description-length))))
 
 (defn- semantic-contribution?
-  [{:keys [type choices default visible-fn] :as value}]
+  [{:keys [type choices default visible-fn on-change-fn] :as value}]
   (and (or (not (contains? value :visible-fn)) (ifn? visible-fn))
+       (or (not (contains? value :on-change-fn)) (ifn? on-change-fn))
        (case (or type default-type)
          :boolean
          (boolean? default)
@@ -119,8 +120,10 @@
       (str field ": " error " (" keyword ")."))))
 
 (defn- semantic-problem
-  [{:keys [type visible-fn] :as value}]
+  [{:keys [type visible-fn on-change-fn] :as value}]
   (cond (and (contains? value :visible-fn) (not (ifn? visible-fn))) "visible-fn must be a function."
+        (and (contains? value :on-change-fn) (not (ifn? on-change-fn)))
+        "on-change-fn must be a function."
         (= :enum (or type default-type)) "default must be one of the choices."
         :else "default must be true or false for a boolean setting."))
 

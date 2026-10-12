@@ -4245,6 +4245,13 @@
 
     (nth choices (mod (inc (long (if (neg? idx) 0 idx))) (count choices)))))
 
+(defn- notify-change-error!
+  "Show the failed change hook of a saved setting `row`, then return the row."
+  [row]
+  (when-let [error (get row "change_error")]
+    (vis/notify! error :level :error :ttl-ms 8000))
+  row)
+
 (defn- apply-registry-toggle
   [values {:keys [toggle-id toggle-type value]}]
   (try
@@ -4280,7 +4287,7 @@
       ;; preference the session runtime did not receive: into the catalog every
       ;; row renders from, and into the process registry when this binary reads
       ;; that toggle itself.
-      (cache-setting-row! remote-row)
+      (cache-setting-row! (notify-change-error! remote-row))
       (when (and (not *settings-target*) (vis/toggle-spec toggle-id))
         (vis/toggle-set-value! toggle-id remote-value))
       values)
@@ -4991,7 +4998,7 @@
 (defn- save-setting-value!
   "Save one value for the open owner, then show the row the gateway confirmed."
   [screen g region id value]
-  (try (cache-setting-row! (vis/set-setting-value! id value *settings-target*))
+  (try (cache-setting-row! (notify-change-error! (vis/set-setting-value! id value *settings-target*)))
        (load-settings-inventory!)
        (catch Exception e (mini-note! screen g region "Setting not saved" (ex-message e)))))
 
@@ -5123,7 +5130,7 @@
       (save-setting-value! screen g region (:toggle-id row) value))
 
     :inherit
-    (try (cache-setting-row! (vis/inherit-setting! (:toggle-id row) *settings-target*))
+    (try (cache-setting-row! (notify-change-error! (vis/inherit-setting! (:toggle-id row) *settings-target*)))
          (load-settings-inventory!)
          (catch Exception e (mini-note! screen g region "Setting not reset" (ex-message e))))
 
