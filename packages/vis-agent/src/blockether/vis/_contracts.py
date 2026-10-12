@@ -41,6 +41,27 @@ def definition(name: str, key: str) -> dict[str, Any]:
     return schema(name)["$defs"][key]
 
 
+# An appended live item replaces the item with its id. The host fills these keys
+# when the item leaves them out; every other required key must come with it.
+_LIVE_ITEM_DEFAULTS = {"step": {"tone": "idle"}, "link": {"target_kind": "url"}}
+_LIVE_ITEMS = {"stats": "stat", "steps": "step", "rows": "row", "links": "link"}
+
+
+def live_items(key: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return appended live items as the host keeps them; refuse a missing key."""
+    item = _LIVE_ITEMS[key]
+    required = definition("view", item)["required"]
+    result = []
+    for one in items:
+        one = {**_LIVE_ITEM_DEFAULTS.get(item, {}), **one}
+        if missing := [name for name in required if name not in one]:
+            raise ValueError(
+                f"{item} {one.get('id')}: {', '.join(missing)} is missing (required)"
+            )
+        result.append(one)
+    return result
+
+
 @lru_cache(maxsize=64)
 def _validator(name: str, definition: str):
     from jsonschema import Draft202012Validator, FormatChecker

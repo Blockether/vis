@@ -4120,8 +4120,9 @@ class Progress(_Node):
 
 
 class Stat(_Node):
-    def set(self, stat_id, value_text, label=None, tone=None):
-        # One counter of the strip, upserted by id.
+    def set(self, stat_id, value_text, label, tone=None):
+        # One counter of the strip, upserted by id. The View schema requires
+        # the label in each update.
         return self._op(
             "append",
             stats=[
@@ -4140,9 +4141,10 @@ class Stat(_Node):
 
 
 class Steps(_Node):
-    def set(self, step_id, tone=None, label=None, detail=None, value=None):
+    def set(self, step_id, label, tone=None, detail=None, value=None):
         # One step of the checklist, upserted by id: the same call marks it
-        # running and later done.
+        # running and later done. The View schema requires the label in each
+        # update.
         return self._op(
             "append",
             steps=[
@@ -4580,14 +4582,12 @@ class LiveView:
             value=value, done=done, total=total
         )
 
-    def stat(self, stat_id, value_text, label=None, tone=None):
-        return self._only("stat", "stat").set(
-            stat_id, value_text, label=label, tone=tone
-        )
+    def stat(self, stat_id, value_text, label, tone=None):
+        return self._only("stat", "stat").set(stat_id, value_text, label, tone=tone)
 
-    def step(self, step_id, tone=None, label=None, detail=None, value=None):
+    def step(self, step_id, label, tone=None, detail=None, value=None):
         return self._only("steps", "step").set(
-            step_id, tone=tone, label=label, detail=detail, value=value
+            step_id, label, tone=tone, detail=detail, value=value
         )
 
     def write(self, *lines: str | Sequence[str], tone: LogTone | None = None):
@@ -4809,7 +4809,7 @@ class _LiveRecorder:
             item = _LiveRecorder._copy(item)
             if item["id"] in positions:
                 at = positions[item["id"]]
-                result[at] = {**result[at], **item}
+                result[at] = item
             else:
                 positions[item["id"]] = len(result)
                 result.append(item)
@@ -4909,9 +4909,9 @@ class _LiveRecorder:
         elif action == "append":
             key = self._COLLECTION[node["type"]]
             incoming = self._copy(op.get(key) or [])
-            if node["type"] == "link":
-                for item in incoming:
-                    item.setdefault("target_kind", "url")
+            from blockether.vis import _contracts
+
+            incoming = _contracts.live_items(key, incoming)
             node[key] = self._upsert(node[key], incoming)
             if "groups" in op:
                 # `live/apply-append`: a group already declared KEEPS the keys the

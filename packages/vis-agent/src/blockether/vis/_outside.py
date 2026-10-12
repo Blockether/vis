@@ -1141,9 +1141,10 @@ def _live_find(nodes, node_id):
     return None
 
 
-def _live_upsert(held, incoming):
+def _live_upsert(held, incoming, *, is_merged=False):
     # An item keeps the position it was first given: a row that updates in place
-    # is what makes a table readable while it fills.
+    # is what makes a table readable while it fills. The host replaces an item;
+    # only a group declaration merges onto the one before it.
     merged = list(held or [])
     for item in incoming or []:
         item_id = item.get("id") if isinstance(item, dict) else None
@@ -1155,7 +1156,7 @@ def _live_upsert(held, incoming):
         if at is None:
             merged.append(item)
         else:
-            merged[at] = {**merged[at], **item}
+            merged[at] = {**merged[at], **item} if is_merged else item
     return merged
 
 
@@ -1248,12 +1249,18 @@ def _live_apply(view, op):
             )
             node[key] = list(node.get(key) or []) + payload
         else:
+            try:
+                payload = _contracts.live_items(key, payload)
+            except ValueError as error:
+                raise Refused(str(error)) from None
             node[key] = _live_upsert(node.get(key), payload)
         if "groups" in op:
             # A table upserts its group DECLARATIONS in the same append that
             # carries the rows hanging under them, and a second declaration
             # merges onto the first: re-toning a head keeps its label.
-            node["groups"] = _live_upsert(node.get("groups"), op["groups"])
+            node["groups"] = _live_upsert(
+                node.get("groups"), op["groups"], is_merged=True
+            )
     elif name == "clear":
         node[_live_items_key(node, "clear")] = []
         if node.get("type") == "log":
