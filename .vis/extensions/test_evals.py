@@ -434,6 +434,10 @@ def test_run_scenarios_starts_the_runner_with_its_route(repo, monkeypatch):
     assert "VIS_MODELS" not in call["env"] and "VIS_PROVIDER" not in call["env"]
     assert call["label"] == "2 scenarios on default provider / default model"
     assert call["expected_runs"] == 2
+    tools.run("scenarios")
+    call = launches[-1][1]
+    assert call["argv"][-2:] == ["answer-sum", "edit-config"]
+    assert call["label"] == "2 scenarios on default provider / default model"
 
 
 @pytest.mark.parametrize(

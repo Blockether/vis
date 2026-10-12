@@ -3139,7 +3139,8 @@ class Evals:
         options; an option of the other dataset is an error.
 
         "scenarios" runs the e2e scenarios `ids` as one Harbor job: one agent run for
-        each scenario, model and repeat. Options: models, provider, repeats (default 1),
+        each scenario, model and repeat. Without `ids`, it runs every scenario. Options:
+        models, provider, repeats (default 1),
         workers (default 2), reasoning_effort, timeout_s, native_bin and
         python_native_path. Without `models` and `provider`, the runner's default route
         applies. `native_bin` is the absolute path of a raw native executable, not the
@@ -3188,7 +3189,7 @@ class Evals:
             raise ValueError(f"dataset {dataset} does not take: {', '.join(foreign)}")
         if dataset == "scenarios":
             return self._run_scenarios(
-                ids or [],
+                ids,
                 models,
                 provider,
                 1 if repeats is None else repeats,
@@ -3202,7 +3203,7 @@ class Evals:
 
     def _run_scenarios(
         self,
-        ids: list[str],
+        ids: list[str] | None,
         models: list[str] | None,
         provider: str | None,
         repeats: int,
@@ -3214,6 +3215,7 @@ class Evals:
     ) -> EvalRun:
         """Start the scenarios dataset of run() as one Harbor job."""
         known = _scenario_dirs()
+        ids = list(known) if ids is None else ids
         if not ids:
             raise ValueError("name at least one scenario id; scenarios() lists them")
         if unknown := [scenario for scenario in ids if scenario not in known]:
@@ -3465,7 +3467,9 @@ class Evals:
                         text, tone = _trial_result(trial)
                         group = {"ok": "passed", "warn": "unscored"}.get(tone, "failed")
                         counts[group] += 1
-                        view["counts"].set(group, str(counts[group]))
+                        view["counts"].set(
+                            group, str(counts[group]), group.capitalize()
+                        )
                         view["trials"].upsert(
                             trial.trial,
                             [trial.task, trial.model or "-", text],
