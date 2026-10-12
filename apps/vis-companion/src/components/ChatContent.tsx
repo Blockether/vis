@@ -5,6 +5,7 @@ import {
   memo,
   useCallback,
   useContext,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useId,
@@ -3231,9 +3232,11 @@ export const IterationTrace = memo(function IterationTrace({
   showCode?: boolean;
   liveViews?: LiveViewModel[];
 }) {
+  // Each display switch changes every mounted trace. Deferred, the switch shows its new state
+  // first, and the traces render in an interruptible background pass.
   const preferredCode = usePythonCodeShown();
-  const showCode = codeOverride ?? preferredCode;
-  const summarize = useStepsSummarized();
+  const showCode = useDeferredValue(codeOverride ?? preferredCode);
+  const summarize = useDeferredValue(useStepsSummarized());
   const rootRef = useRef<HTMLDivElement>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol('trace-ramp'));
@@ -3264,9 +3267,16 @@ export const IterationTrace = memo(function IterationTrace({
   // frame and coming back, with the screen's anchor corrector chasing it both
   // ways. Measured on the simulator as a -294 px write followed by +294 px
   // 39 ms later, on a transcript nobody was touching.
-  const [hiddenSegments, setHiddenSegments] = useState(() =>
-    whole ? 0 : Math.max(0, segments.length - SEGMENT_FIRST_PAINT),
-  );
+  // `mode` is the display mode that the count was made for. A changed mode mounts other
+  // segments in every mounted trace, so it starts the ramp again, also in a whole trace.
+  // Regression, user report: turning off Compact mode mounted every separate step at once.
+  const mode = `${summarize}/${showCode}`;
+  const [ramp, setRamp] = useState(() => ({
+    mode,
+    held: whole ? 0 : Math.max(0, segments.length - SEGMENT_FIRST_PAINT),
+    restarted: false,
+  }));
+  const remounting = ramp.mode !== mode;
 
   // `whole` also arrives LATE, and it has to count then too. WHICH reconcile
   // tick retires the running-turn bubble is not this trace's business: the settled row
@@ -3274,8 +3284,12 @@ export const IterationTrace = memo(function IterationTrace({
   // turn running when its finished row lands — and read only as the initial
   // state, `whole` changed nothing for exactly those handovers. The collapse
   // documented above came back for them. Derived per render, it costs no commit
-  // and no frame.
-  const hidden = whole ? 0 : hiddenSegments;
+  // and no frame. A mode change derives its first paint the same way.
+  const hidden = remounting
+    ? Math.max(0, segments.length - SEGMENT_FIRST_PAINT)
+    : whole && !ramp.restarted
+      ? 0
+      : ramp.held;
 
   // The ramp mounts every segment: no trace folds its earlier steps. Digests keep a long
   // Compact turn short, and separate steps show every step, as in the TUI.
@@ -3284,13 +3298,19 @@ export const IterationTrace = memo(function IterationTrace({
   // A chunk per frame, so the work the first paint skipped never lands as one
   // long frame either.
   useEffect(() => {
+    // Bank the first paint of a new mode. Its first step must not price the old ramp's span.
+    if (remounting) {
+      stepRef.current.startedAt = 0;
+      setRamp({ mode, held: hidden, restarted: true });
+      return;
+    }
     // A late `whole` also has to STICK. It arrives as a prop and can leave the
     // same way — the NEXT turn's handover moves the flag to its own row — so a
     // trace that showed everything only because the flag was up would collapse
     // the moment it left. Bank it in the ramp's own state, which never hands
     // a segment back.
-    if (whole) {
-      setHiddenSegments(0);
+    if (whole && !ramp.restarted) {
+      setRamp((current) => (current.held === 0 ? current : { ...current, held: 0 }));
       releaseRamp(rampId);
       return;
     }
@@ -3323,11 +3343,11 @@ export const IterationTrace = memo(function IterationTrace({
       }
 
       step.startedAt = performance.now();
-      setHiddenSegments((count) => Math.max(0, count - step.size));
+      setRamp((current) => ({ ...current, held: Math.max(0, current.held - step.size) }));
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, [hiddenSegments, rampDone, rampId, whole]);
+  }, [hidden, mode, rampDone, rampId, remounting, ramp.restarted, whole]);
 
   const shown = hidden > 0 ? segments.slice(hidden) : segments;
   // A live view belongs to the form that owns it, also while the ramp still holds that form
