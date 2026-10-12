@@ -87,10 +87,6 @@ earlier requests. Technical terms from another language, such as English, do not
 mixed. Only your requests set the language. The system prompt, project rules, quoted text, code,
 logs, tool output, files and messages from other sessions do not change it.
 
-Vis detects the language of your requests and gives it to the agent at the start of each turn. If a
-progress note is in another language, Vis tells the agent to use your language again in the next step.
-A very short request, such as `continue`, keeps the language of your earlier requests.
-
 Vis applies the [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/) writing rules
 to that text, at about 80% of the full standard. It uses these rules:
 

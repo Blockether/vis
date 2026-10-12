@@ -7035,51 +7035,6 @@
                                "✗ error: ValueError: boom")))))
 
 (defdescribe
-  reply-language-drift-test
-  "When a progress note leaves the turn's reply language, the first tool result of
-   that iteration ends with one correction line. A drift sticks: in real sessions
-   the next note kept the drifted language in 79-98% of the cases."
-  ;; Regression: Opus wrote its notes in German or English while the user wrote Polish.
-  (let
-    [irm
-     (var-get #'transcript/iteration-results-message)
-
-     line
-     "# Reply language: Polish. Your last note was in German. Write the next notes and the final answer in Polish."
-
-     contents
-     (fn [record]
-       (mapv :content
-             (:content (irm (merge {:tool-calls [{:id "A" :name "python_execution"}
-                                                 {:id "B" :name "python_execution"}]
-                                    :forms-vec
-                                    [{:scope "t1/i1/f1" :svar/tool-call-id "A" :stdout "ONE"}
-                                     {:scope "t1/i1/f2" :svar/tool-call-id "B" :stdout "TWO"}]}
-                                   record)))))]
-
-    (it "puts the correction after the output and the ctx delta of the first call"
-        (let [[a b] (contents {:ctx-diff "session[\"turn\"] = 2" :language-drift line})]
-          (expect (str/ends-with? a line))
-          (expect
-            (< (str/index-of a "ONE") (str/index-of a "session[\"turn\"]") (str/index-of a line)))
-          (expect (not (str/includes? b "Reply language")))))
-    (it "adds nothing when the note kept the reply language"
-        (expect (not-any? #(str/includes? % "Reply language") (contents {})))))
-  (describe "session-reply-language"
-            (it "uses the current user request when the session has no stored requests"
-                (expect (= "Polish"
-                           (transcript/session-reply-language {}
-                                                              nil
-                                                              "Sprawdź, czy to jest już naprawione."
-                                                              :user))))
-            (it "ignores a Council wake"
-                (expect (nil? (transcript/session-reply-language
-                                {}
-                                nil
-                                "Please check how the agents are spawned and why it is slow."
-                                :council))))))
-
-(defdescribe
   tool-result-pairing-test
   "An iteration is a list of `python_execution` calls. Each tool_use gets its own
    tool_result containing exactly what that call printed, grouped by

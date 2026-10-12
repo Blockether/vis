@@ -16,7 +16,6 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as ctx-engine]
-            [com.blockether.vis.internal.context.language :as language]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
@@ -271,39 +270,6 @@
                         :error (ex-message t)}}
                 "Could not load previous request usage; first iteration will omit utilization")
       nil)))
-
-(defn session-reply-language
-  "Reply language of the current turn, as a language name or nil. It folds the
-   user's own requests of the session, oldest first, and ends with
-   `user-request` when the current turn is a user request. Council wakes and
-   other non-user requests do not count. The requests come from the database, so
-   the language survives a process restart and a short `continue` keeps it."
-  [environment current-turn-id user-request request-kind]
-  (let [user?
-        #(= :user (or % :user))
-
-        prior
-        (try
-          (when-let [session-id (:session-id environment)]
-            (let [current-id (str current-turn-id)]
-              (into []
-                    (comp (remove #(= (str (:id %)) current-id))
-                          (filter #(user? (:request-kind %)))
-                          (map :user-request))
-                    (persistance/db-list-session-turns (:db-info environment) session-id))))
-          (catch Throwable t
-            (tel/log!
-              {:level :warn
-               :id ::session-reply-language-failed
-               :data {:session-id (:session-id environment)
-                      :session-turn-id current-turn-id
-                      :error (ex-message t)}}
-              "Could not load earlier requests; the reply language uses the current request only")
-            nil))]
-
-    (language/reply-language (cond-> (vec prior)
-                               (user? request-kind)
-                               (conj user-request)))))
 
 (defn stamp-utilization!
   "Monotonic update of `\"engine_utilization\"` on the ctx-atom. UPGRADES when a
@@ -1424,11 +1390,6 @@
                            str
                            str/trim))
 
-        ;; One correction line when the iteration's progress note left the turn's
-        ;; reply language. A drift sticks: the next note copies the last one.
-        language-drift
-        (not-empty (:language-drift iter-record))
-
         ;; A semantic live view may close on a gateway thread AFTER its block returned.
         ;; Its record is then appended to the iteration, not to the already-frozen form
         ;; output. Reintroduce that durable descriptor into later model context so the
@@ -1478,9 +1439,7 @@
                 body
                 (when (seq body-ls) (str/join "\n" body-ls))]
 
-            (str/join "\n\n"
-                      (remove str/blank?
-                        (if (zero? (long idx)) [body ctx-diff language-drift] [body])))))
+            (str/join "\n\n" (remove str/blank? [body (when (zero? (long idx)) ctx-diff)]))))
 
         ;; Text-only iteration with no tool calls: join its forms.
         fallback-content
@@ -1499,9 +1458,7 @@
               body
               (when (seq body-ls) (str/join "\n" body-ls))]
 
-          (str/join "\n\n"
-                    (remove str/blank?
-                      [body (:goal-continuation iter-record) ctx-diff language-drift])))]
+          (str/join "\n\n" (remove str/blank? [body (:goal-continuation iter-record) ctx-diff])))]
 
     (cond
       ;; Collapsed by summarize/drop: the whole iteration is gone — emit ONLY the

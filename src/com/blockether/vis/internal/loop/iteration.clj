@@ -20,7 +20,6 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as ctx-engine]
-            [com.blockether.vis.internal.context.language :as language]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
@@ -1835,8 +1834,7 @@
            ;; The limit feeds pressure hints and the pre-request budget gate;
            ;; canonical history itself is never trimmed.
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
-           reasoning-effort preferred-reasoning-effort turn-features workspace-overrides
-           request-kind]
+           reasoning-effort preferred-reasoning-effort turn-features workspace-overrides]
     trace-store ::trace-store}]
   (let [system-prompt
         (str (voice-system-prompt system-prompt turn-features)
@@ -1935,17 +1933,10 @@
 
         ;; Turn identity must be current before the frozen context and the first
         ;; user message are assembled. This makes every turn boundary explicit on
-        ;; iteration 1 rather than waiting for the first tool-result delta. The
-        ;; reply language rides on the same boundary.
+        ;; iteration 1 rather than waiting for the first tool-result delta.
         _turn-sync
         (when-let [ctx-atom (:ctx-atom environment)]
-          (let [reply-language (transcript/session-reply-language environment
-                                                                  session-turn-id
-                                                                  user-request
-                                                                  request-kind)]
-            (swap! ctx-atom #(-> %
-                                 (ctx-engine/enter-turn (or turn-position 1))
-                                 (ctx-engine/with-reply-language reply-language)))))
+          (swap! ctx-atom ctx-engine/enter-turn (or turn-position 1)))
 
         ;; Standing session context (workspace/env/routing/tools) baked into the
         ;; cached system prefix ONCE PER PROCESS and FROZEN (`:standing-ctx-atom`).
@@ -3498,12 +3489,6 @@
                                   :attachments iteration-attachments
                                   :reinspect-attachments reinspection-attachments
                                   :ctx-diff iter-ctx-diff
-                                  ;; Correction line when this note left the reply language.
-                                  :language-drift (language/drift-line
-                                                    (some-> (:ctx-atom environment)
-                                                            deref
-                                                            (get "session_reply_language"))
-                                                    assistant-prose)
                                   :llm-provider (:llm-provider iteration-result)
                                   :llm-model (:llm-model iteration-result)
                                   ;; svar's canonical replay handle for this
