@@ -1,8 +1,9 @@
 """Evals: run and read Vis evaluations, from e2e scenarios to Terminal-Bench on Harbor.
 
-This extension drives two runners. It does not copy them:
+This extension drives three runners. It does not copy them:
 
     e2e/vis_harbor/run.py        editing scenarios under e2e/scenarios/<id>/ as one Harbor job
+    e2e/vis_harbor/judge.py      failure stages of the failed trials of one scenario run
     terminal_bench/              Harbor queue (run_suite.py) and summary (summarize.py) in the
                                  curated-terminal-benchmark repository (VIS_TERMINAL_BENCH)
 
@@ -67,6 +68,7 @@ REPO = Path(__file__).resolve().parents[2]
 SCENARIOS = REPO / "e2e" / "scenarios"
 E2E_PROJECT = REPO / "e2e"
 E2E_RUNNER = "vis_harbor.run"
+JUDGE_RUNNER = "vis_harbor.judge"
 SDK_EVALS = REPO / "packages" / "vis-agent" / "src" / "blockether" / "vis" / "evals"
 BENCH = Path(
     os.environ.get("VIS_TERMINAL_BENCH")
@@ -114,6 +116,8 @@ _CAUSES = (
     "unscored",
     "other",
 )
+_STAGES = ("understand", "write", "verify", "other")
+_JUDGE_JOB = "judge"
 _CHILDREN: dict[str, subprocess.Popen] = {}
 _SDK_PACKAGE = "_vis_evals_sdk"
 
@@ -402,6 +406,44 @@ class LabelCheck:
     with a human review from 0.6, and without a review from 0.8.
     """
 
+    labelled: int
+    agreement_percent: float | None
+    kappa: float | None
+    disagreements: tuple[str, ...]
+    advice: str
+
+
+@dataclass(frozen=True)
+class StageLabel:
+    """A human failure stage of one scenario trial, kept in stage-labels.json of its run.
+
+    `judged_stage` is the stage of the latest judge() run of that trial, or None.
+    """
+
+    run_id: str
+    trial: str
+    stage: str
+    judged_stage: str | None
+    note: str
+    labelled_at: str
+
+
+@dataclass(frozen=True)
+class StageAgreement:
+    """How well the failure stages of one judge() run agree with label_stage() labels.
+
+    `stages` names the judged stage of each trial: the most common stage of its
+    samples. `sample_agreement_percent` is the share of trials whose samples all
+    agree, or None with one sample. `kappa` and `advice` follow the limits of
+    LabelCheck: 30 labels, a review from 0.6 and no review from 0.8.
+    """
+
+    judge_run_id: str
+    source_run_id: str
+    judged: int
+    errors: int
+    stages: tuple[str, ...]
+    sample_agreement_percent: float | None
     labelled: int
     agreement_percent: float | None
     kappa: float | None
@@ -1519,36 +1561,9 @@ def _label_check(
     count = len(pairs)
     kappa = _stats.cohen_kappa(pairs)
     kappa = None if kappa is None else round(kappa, 3)
-    if not count:
-        advice = (
-            f"No labels yet. Label at least {_MIN_LABELS} failed attempts with "
-            "label() before you trust these causes."
-        )
-    elif count < _MIN_LABELS:
-        advice = (
-            f"Label {_MIN_LABELS - count} more failed attempts. Kappa from "
-            f"{_count(count, 'label')} is not stable."
-        )
-    elif kappa is None:
-        advice = (
-            "Kappa is undefined, because all labels and causes are the same. Label "
-            "failures of other causes too."
-        )
-    elif kappa < _KAPPA_REVIEW:
-        advice = (
-            f"Kappa {kappa:.2f} is below {_KAPPA_REVIEW}. Do not trust these causes. "
-            "Correct the diagnose() rules first."
-        )
-    elif kappa < _KAPPA_TRUST:
-        advice = (
-            f"Kappa {kappa:.2f} is good enough with a human review. Read the "
-            "disagreements before you act on a finding."
-        )
-    else:
-        advice = (
-            f"Kappa {kappa:.2f} is at least {_KAPPA_TRUST}. You can use these causes "
-            "without a review."
-        )
+    advice = _kappa_advice(
+        count, kappa, "causes", "label()", "Correct the diagnose() rules first."
+    )
     return LabelCheck(
         labelled=count,
         agreement_percent=_percent(count - len(disagreements), count)
@@ -1557,6 +1572,172 @@ def _label_check(
         kappa=kappa,
         disagreements=tuple(disagreements),
         advice=advice,
+    )
+
+
+def _kappa_advice(
+    count: int, kappa: float | None, noun: str, labeller: str, fix: str
+) -> str:
+    """Say if `count` labels with this kappa make the automatic `noun` usable."""
+    if not count:
+        return (
+            f"No labels yet. Label at least {_MIN_LABELS} failed attempts with "
+            f"{labeller} before you trust these {noun}."
+        )
+    if count < _MIN_LABELS:
+        return (
+            f"Label {_MIN_LABELS - count} more failed attempts. Kappa from "
+            f"{_count(count, 'label')} is not stable."
+        )
+    if kappa is None:
+        return (
+            f"Kappa is undefined, because all labels and {noun} are the same. Label "
+            f"failures of other {noun} too."
+        )
+    if kappa < _KAPPA_REVIEW:
+        return f"Kappa {kappa:.2f} is below {_KAPPA_REVIEW}. Do not trust these {noun}. {fix}"
+    if kappa < _KAPPA_TRUST:
+        return (
+            f"Kappa {kappa:.2f} is good enough with a human review. Read the "
+            "disagreements before you act on a finding."
+        )
+    return (
+        f"Kappa {kappa:.2f} is at least {_KAPPA_TRUST}. You can use these {noun} "
+        "without a review."
+    )
+
+
+def _scenario_job(run_dir: Path) -> Path:
+    """Give the one Harbor job directory of a scenario run."""
+    jobs_root = run_dir / "harbor" / "jobs"
+    jobs = (
+        sorted(path for path in jobs_root.iterdir() if (path / "job.log").is_file())
+        if jobs_root.is_dir()
+        else []
+    )
+    if len(jobs) != 1:
+        raise LookupError(
+            f"{run_dir.name} has {_count(len(jobs), 'Harbor job')}; judge() needs one"
+        )
+    return jobs[0]
+
+
+def _judged_samples(judge_dir: Path) -> dict[str, list[str]]:
+    """Read the stage of each judged sample, grouped by trial, of one judge() run."""
+    path = judge_dir / _JUDGE_JOB / _JUDGE_JOB / "judge_stages.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {
+        str(trial): [str(stage) for stage in found] for trial, found in data.items()
+    }
+
+
+def _judge_errors(judge_dir: Path) -> int:
+    path = judge_dir / _JUDGE_JOB / _JUDGE_JOB / "judge_report.json"
+    try:
+        results = json.loads(path.read_text(encoding="utf-8")).get("results") or ()
+    except (OSError, ValueError):
+        return 0
+    return sum(1 for result in results if result.get("error"))
+
+
+def _majority(found: list[str]) -> str:
+    counts = Counter(found)
+    return max(_STAGES, key=lambda stage: (counts[stage], -_STAGES.index(stage)))
+
+
+def _judge_source(judge_dir: Path) -> Path:
+    return _resolve_run(
+        (judge_dir / "source_run").read_text(encoding="utf-8").strip(), "scenarios"
+    )
+
+
+def _latest_judged_stage(source: Path, trial: str) -> str | None:
+    for judge_dir in reversed(_run_dirs()):
+        if _meta(judge_dir)["kind"] != "judge":
+            continue
+        source_file = judge_dir / "source_run"
+        if not source_file.is_file() or source_file.read_text().strip() != source.name:
+            continue
+        found = _judged_samples(judge_dir).get(trial)
+        if found:
+            return _majority(found)
+    return None
+
+
+def _stage_labels(source: Path) -> dict[str, dict]:
+    try:
+        data = json.loads((source / "stage-labels.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_stage_label(source: Path, trial: str, stage: str, note: str) -> StageLabel:
+    if stage not in _STAGES:
+        raise ValueError(f"stage must be one of {', '.join(_STAGES)}, not {stage!r}")
+    if len(note) > _NOTE_LIMIT:
+        raise ValueError(
+            f"the note has {len(note)} characters; the limit is {_NOTE_LIMIT}"
+        )
+    if not (_scenario_job(source) / trial / "trial.log").is_file():
+        raise LookupError(f"{source.name} has no trial {trial!r}")
+    label = StageLabel(
+        run_id=source.name,
+        trial=trial,
+        stage=stage,
+        judged_stage=_latest_judged_stage(source, trial),
+        note=note,
+        labelled_at=_now(),
+    )
+    data = _stage_labels(source)
+    data[trial] = {"stage": stage, "note": note, "labelled_at": label.labelled_at}
+    path = source / "stage-labels.json"
+    draft = path.with_name(path.name + ".tmp")
+    draft.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", "utf-8")
+    draft.replace(path)
+    return label
+
+
+def _stage_agreement(judge_dir: Path) -> StageAgreement:
+    source = _judge_source(judge_dir)
+    samples = _judged_samples(judge_dir)
+    judged = {trial: _majority(found) for trial, found in sorted(samples.items())}
+    several = [found for found in samples.values() if len(found) > 1]
+    pairs = []
+    disagreements = []
+    for trial, label in sorted(_stage_labels(source).items()):
+        if trial not in judged:
+            continue
+        human = str(label.get("stage"))
+        pairs.append((judged[trial], human))
+        if judged[trial] != human:
+            disagreements.append(f"{trial}: judge {judged[trial]}, label {human}")
+    count = len(pairs)
+    kappa = _stats.cohen_kappa(pairs)
+    kappa = None if kappa is None else round(kappa, 3)
+    return StageAgreement(
+        judge_run_id=judge_dir.name,
+        source_run_id=source.name,
+        judged=len(judged),
+        errors=_judge_errors(judge_dir),
+        stages=tuple(f"{trial}: {stage}" for trial, stage in judged.items()),
+        sample_agreement_percent=_percent(
+            sum(1 for found in several if len(set(found)) == 1), len(several)
+        )
+        if several
+        else None,
+        labelled=count,
+        agreement_percent=_percent(count - len(disagreements), count)
+        if count
+        else None,
+        kappa=kappa,
+        disagreements=tuple(disagreements),
+        advice=_kappa_advice(
+            count, kappa, "stages", "label_stage()", "Correct the judge rubric first."
+        ),
     )
 
 
@@ -2325,6 +2506,16 @@ def _elapsed(run: EvalRun) -> int:
 
 
 def _progress(run: EvalRun, run_dir: Path) -> str:
+    if run.kind == "judge":
+        judged = _judged_samples(run_dir)
+        if judged:
+            return (
+                f"{_count(len(judged), 'trial')} judged, "
+                f"{_judge_errors(run_dir)} without a valid result"
+            )
+        return f"judge {run.state}" + (
+            f" with exit code {run.exit_code}" if run.exit_code is not None else ""
+        )
     if run.kind == "scenarios":
         results = Path(run.results_path) if run.results_path else None
         if results and results.is_file():
@@ -2359,12 +2550,14 @@ def _run_trials(run: EvalRun, run_dir: Path) -> tuple:
     """
     if run.kind == "scenarios":
         jobs = run_dir / "harbor" / "jobs"
+    elif run.kind == "judge":
+        jobs = run_dir / _JUDGE_JOB
     else:
         jobs = _round_dir(run.round_name) / "jobs"
     if not jobs.is_dir():
         return ()
     trials = _harbor.read_trials(jobs)
-    if run.kind == "scenarios":
+    if run.kind != "bench":
         return trials
     start = datetime.fromisoformat(run.started_at).timestamp()
     return tuple(trial for trial in trials if trial.path.stat().st_mtime >= start)
@@ -2454,6 +2647,7 @@ def _run_content(run: EvalRun) -> tuple:
     )
 
 
+_DATASET_NAMES = {"scenarios": "scenarios", "bench": "terminal-bench", "judge": "judge"}
 _DATASET_OPTIONS = {
     "scenarios": frozenset(
         {
@@ -2479,7 +2673,7 @@ def _start_run_activity(*, phase, result, **_):
         return None
     return _presentation(
         "Start evaluation run",
-        f"{'scenarios' if result.kind == 'scenarios' else 'terminal-bench'} · "
+        f"{_DATASET_NAMES.get(result.kind, result.kind)} · "
         f"{result.run_id} · {_clip(result.label, 120)}",
         _run_content(result),
     )
@@ -2938,6 +3132,43 @@ def _trial_activity(*, phase, result, **_):
     return _presentation(
         "Read benchmark trial",
         f"{result.trial} · {result.outcome} · {result.cause} · tests {result.checks}",
+        tuple(content),
+    )
+
+
+def _stage_label_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    if result.judged_stage is None:
+        relation = "The trial has no judged stage yet."
+    elif result.judged_stage == result.stage:
+        relation = f"It agrees with the judge stage {result.judged_stage}."
+    else:
+        relation = f"It differs from the judge stage {result.judged_stage}."
+    return _presentation(
+        "Label trial stage",
+        f"{result.trial} · {result.stage}",
+        (vis.ActivityText(relation),),
+    )
+
+
+def _agreement_activity(*, phase, result, **_):
+    if phase != "success":
+        return None
+    kappa = "undefined" if result.kappa is None else f"{result.kappa:.2f}"
+    content = [
+        vis.ActivityText(
+            f"{_count(result.judged, 'trial')} judged, "
+            f"{_count(result.errors, 'judgement')} without a valid result, "
+            f"{_count(result.labelled, 'label')}, kappa {kappa}."
+        ),
+        vis.ActivityText(result.advice),
+    ]
+    if result.disagreements:
+        content.append(vis.ActivityText("\n".join(result.disagreements[:20])))
+    return _presentation(
+        "Check judge agreement",
+        f"{result.judge_run_id} · {result.source_run_id}",
         tuple(content),
     )
 
@@ -3691,6 +3922,106 @@ class Evals:
         """
         return _save_label(_summary(False, round_name), task, cause, note, round_name)
 
+    @vis.method(
+        tag="mutation",
+        activity=vis.Activity(
+            label="Start evaluation run", show_start=True, render=_start_run_activity
+        ),
+    )
+    def judge(
+        self,
+        run_id: str | None = None,
+        samples: int = 1,
+        workers: int | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> EvalRun:
+        """Start a paid judge run over the failed trials of one scenario run.
+
+        The Vis agent reads each trajectory with the rubric of e2e/vis_harbor/judge.py
+        and names the failure stage: understand, write, verify or other. Without
+        `run_id`, it judges the latest scenario run. `samples` judges each trial that
+        many times, so agreement() can show if the judge is stable. Without `provider`
+        and `model`, the runner's default route applies. Needs uv on PATH.
+
+        Returns at once; read progress with status() and the stages with agreement().
+        """
+        if samples < 1 or (workers is not None and workers < 1):
+            raise ValueError("samples and workers must be positive")
+        source = _resolve_run(run_id, "scenarios")
+        job = _scenario_job(source)
+        uv = shutil.which("uv")
+        if not uv:
+            raise FileNotFoundError("uv is not on PATH")
+        judge_id, judge_dir = _new_run("judge")
+        (judge_dir / "source_run").write_text(source.name + "\n", "utf-8")
+        options = {"--workers": workers, "--provider": provider, "--model": model}
+        return _launch(
+            judge_id,
+            judge_dir,
+            kind="judge",
+            label=f"failed trials of {source.name}"
+            + (f", {samples} samples" if samples > 1 else ""),
+            argv=[
+                uv,
+                "run",
+                "--frozen",
+                "--project",
+                str(E2E_PROJECT),
+                "python",
+                "-m",
+                JUDGE_RUNNER,
+                str(job),
+                "--jobs-dir",
+                str(judge_dir / _JUDGE_JOB),
+                "--job-name",
+                _JUDGE_JOB,
+                "--samples",
+                str(samples),
+                *(
+                    part
+                    for flag, value in options.items()
+                    if value is not None
+                    for part in (flag, str(value))
+                ),
+            ],
+            cwd=REPO,
+            env=dict(os.environ),
+            results_path=judge_dir / _JUDGE_JOB / _JUDGE_JOB / "judge_report.json",
+        )
+
+    @vis.method(
+        tag="mutation",
+        activity=vis.Activity(
+            label="Label trial stage", show_start=False, render=_stage_label_activity
+        ),
+    )
+    def label_stage(
+        self, run_id: str, trial: str, stage: str, note: str = ""
+    ) -> StageLabel:
+        """Record your failure stage of one scenario trial in stage-labels.json.
+
+        `stage` is understand, write, verify or other. `trial` is the trial directory
+        name in the Harbor job of scenario run `run_id`, as in agreement().stages. A
+        new label of the same trial replaces the old one. agreement() compares the
+        labels with the judge.
+        """
+        return _save_stage_label(_resolve_run(run_id, "scenarios"), trial, stage, note)
+
+    @vis.method(
+        tag="observation",
+        activity=vis.Activity(
+            label="Check judge agreement", show_start=False, render=_agreement_activity
+        ),
+    )
+    def agreement(self, judge_run_id: str | None = None) -> StageAgreement:
+        """Compare the stages of one judge() run with your label_stage() labels.
+
+        Without `judge_run_id`, it reads the latest judge run. Reads the saved files
+        only. Kappa needs at least 30 labels before you trust the judge.
+        """
+        return _stage_agreement(_resolve_run(judge_run_id, "judge"))
+
 
 evals = Evals()
 
@@ -3706,6 +4037,9 @@ PROMPT = """evals surface active — evaluate Vis with e2e scenarios and Termina
   evals.bench(round_name=None) · evals.diagnose(round_name=None)   score, then lost tasks
   evals.compare(baseline, candidate)               paired comparison of two runs or rounds
   evals.trial(task) · evals.label(task, cause)     read one attempt, record its real cause
+  evals.judge(run_id=None, samples=1)              start a paid judge of failed scenario trials
+  evals.label_stage(run_id, trial, stage)          record the real failure stage of one trial
+  evals.agreement(judge_run_id=None)               judge stages against your labels, with kappa
   evals.leaderboard(round_name=None)               Harbor Hub board and where Vis stands
 Start paid runs only on request. Judge a change with compare(), not with two pass rates.
 Results are typed frozen objects."""

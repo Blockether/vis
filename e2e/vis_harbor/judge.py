@@ -10,13 +10,14 @@ judgement in the host environment, so it needs no Docker and no Anthropic key.
 The judged trial is in ``trial/`` and its task in ``task/`` of the workspace.
 The rubric checks the stages of the run in order: understand, write and verify.
 The first failed stage is the failure stage of the trial. The job directory
-holds ``judge_report.json``.
+holds ``judge_report.json`` and the stage of each sample in ``judge_stages.json``.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import shutil
 import sys
 import tempfile
@@ -42,6 +43,7 @@ STAGES = ("understand", "write", "verify")
 OTHER_STAGE = "other"
 DEFAULT_JOBS = "/tmp/vis_e2e/judge"
 REPORT_FILE = "judge_report.json"
+STAGES_FILE = "judge_stages.json"
 CONTAINER_WORKDIR = "/app/"
 TEST_SCRIPT = """#!/usr/bin/env bash
 # Validate the analysis. The host environment sets the VIS_E2E_* paths.
@@ -99,13 +101,15 @@ def assemble(trial_dir: Path, rubric, response_model, dest: Path) -> Path:
     return wrapper
 
 
-def stages(report: AnalyzeReport) -> dict[str, str]:
-    """Return the failure stage of each trial with a valid judgement."""
-    return {
-        result.trial_name: failure_stage(result.checks)
-        for result in report.results
-        if result.trial_name and not result.error
-    }
+def stages(report: AnalyzeReport) -> dict[str, list[str]]:
+    """Return the failure stage of each valid sample, grouped by trial."""
+    grouped: dict[str, list[str]] = {}
+    for result in report.results:
+        if result.trial_name and not result.error:
+            grouped.setdefault(result.trial_name, []).append(
+                failure_stage(result.checks)
+            )
+    return grouped
 
 
 async def judge(
@@ -164,6 +168,7 @@ async def judge(
         results.sort(key=lambda result: result.trial_name or "")
         report = AnalyzeReport(results=results)
         (job.job_dir / REPORT_FILE).write_text(report.model_dump_json(indent=2))
+        (job.job_dir / STAGES_FILE).write_text(json.dumps(stages(report), indent=2))
         return report, job.job_dir
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

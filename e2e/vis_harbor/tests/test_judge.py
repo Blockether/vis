@@ -7,7 +7,12 @@ import json
 from pathlib import Path
 
 import pytest
-from harbor.analyze.models import build_analyze_response_model, load_rubric
+from harbor.analyze.models import (
+    AnalyzeReport,
+    AnalyzeReportResult,
+    build_analyze_response_model,
+    load_rubric,
+)
 from harbor.cli.quality_checker.models import QualityCheckModel
 from harbor.models.task.task import Task
 from harbor.models.trial.paths import TrialPaths
@@ -122,3 +127,20 @@ def test_the_verifier_refuses_an_incomplete_judgement(wrapper, tmp_path):
     result = {"summary": "Only one check.", "checks": _checks(understand="pass")}
     assert _verify(wrapper, tmp_path, result)[0] == "0"
     assert _verify(wrapper, tmp_path / "missing", None)[0] == "0"
+
+
+def test_stages_group_the_samples_of_each_trial():
+    def result(name, error=None, **outcomes):
+        return AnalyzeReportResult(
+            trial_name=name, checks=_checks(**outcomes), error=error
+        )
+
+    report = AnalyzeReport(
+        results=[
+            result("a__1", understand="pass", write="fail"),
+            result("a__1", understand="fail"),
+            result("b__2", understand="pass", write="pass", verify="pass"),
+            result("c__3", error="no valid result"),
+        ]
+    )
+    assert judge.stages(report) == {"a__1": ["write", "understand"], "b__2": ["other"]}

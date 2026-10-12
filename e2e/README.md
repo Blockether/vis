@@ -254,6 +254,41 @@ valid result. A failed criterion does not change the exit code.
 A draft from `evals.capture` has no oracle. Expect a fail for anti-cheating
 measures if the oracle only repeats a word of the prompt.
 
+## Find where a run failed
+
+A pass rate does not tell you why a run failed. The judge reads the trajectory of each
+failed trial and names the first stage that went wrong:
+
+- `understand`: the agent misread the task.
+- `write`: a change of the agent is wrong.
+- `verify`: the agent stopped without a valid check.
+- `other`: none of these stages failed.
+
+```bash
+uv run --project e2e python -m vis_harbor.judge <job-dir> \
+  --provider anthropic-coding-plan --model claude-opus-5-5 --samples 2
+```
+
+`<job-dir>` is the Harbor job of a scenario run. The rubric is
+`vis_harbor/judge-rubric.toml`. It also has the `reward_hacking` check of `harbor
+analyze`. The Vis agent runs each judgement in the host environment, and each
+judgement makes paid model calls. `--samples` judges each trial more than once, so
+you can see if the judge is stable. The job directory holds `judge_report.json` and
+the stage of each sample in `judge_stages.json`. With one sample, each judged trial
+also gets the `analysis.json` that `harbor view` shows.
+
+Do not trust the judge before you compare it with people. Label at least 30 failed
+trials, then read the agreement:
+
+```python
+judged = evals.judge(run_id, samples=2)
+evals.label_stage(run_id, "<trial>", "write", note="It changed the wrong key.")
+evals.agreement(judged.run_id)
+```
+
+`agreement()` gives Cohen's kappa of the judge and your labels. Use the judge with a
+review of the disagreements from a kappa of 0.6. Use it without a review from 0.8.
+
 ## Run scenarios from Vis
 
 The project extension `.vis/extensions/evals.py` runs this runner from a Vis session:
@@ -264,6 +299,7 @@ The project extension `.vis/extensions/evals.py` runs this runner from a Vis ses
 - `evals.status()` and `evals.report()` read the run. The report lists each failed run with credentials redacted.
 - `evals.watch(run_id)` follows a run in a live view in the TUI or the Companion app. When you stop the view, the run continues; `evals.stop(run_id)` stops the run.
 - `evals.compare(baseline, candidate)` compares two scenario runs case by case.
+- `evals.judge(run_id)`, `evals.label_stage(...)` and `evals.agreement()` find the failure stage of each failed trial. See [Find where a run failed](#find-where-a-run-failed).
 
 In these results, a case is one scenario on one model. `report()` gives the pass rate with its 95% interval. `detectable_change_points` is the smallest change that a second run of the same size detects. With `repeats` above 1, it also gives `pass_all_percent` (pass^k), the share of cases that passed every repeat. `pass_any_percent` (pass@k) is the share of cases that passed at least one repeat, and `unstable` names the cases that passed only some repeats. The interval allows for the similar results of repeats of one case.
 

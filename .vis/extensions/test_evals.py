@@ -31,7 +31,16 @@ tools = evals.evals
 
 DATASET = "terminal-bench/terminal-bench@4.0.0"
 MODEL = "zai-coding-plan/glm-5.3-flash"
-SHOW_START = {"preflight", "run", "status", "watch", "stop", "bench", "leaderboard"}
+SHOW_START = {
+    "preflight",
+    "run",
+    "judge",
+    "status",
+    "watch",
+    "stop",
+    "bench",
+    "leaderboard",
+}
 TAGS = {
     "scenarios": "observation",
     "new_scenario": "mutation",
@@ -49,6 +58,9 @@ TAGS = {
     "trial": "observation",
     "label": "mutation",
     "capture": "observation",
+    "judge": "mutation",
+    "label_stage": "mutation",
+    "agreement": "observation",
 }
 
 
@@ -1905,6 +1917,11 @@ def test_activities_stay_within_portable_limits():
             (evals.CapturedFile(text, text),) * 40,
             (text,),
         ),
+        "judge": run,
+        "label_stage": evals.StageLabel(text, text, text, text, text, text),
+        "agreement": evals.StageAgreement(
+            text, text, 30, 2, (text,) * 30, 50.0, 30, 50.0, 0.1, (text,) * 30, text
+        ),
     }
     assert set(samples) == set(TAGS)
     for name, sample in samples.items():
@@ -1917,3 +1934,138 @@ def test_slash_command_lists_the_newest_runs(repo):
     run, run_dir = launch("scenarios", "raise SystemExit(0)")
     finish(run_dir)
     assert f"{run.run_id}  finished (exit 0)  scenarios probe" in str(command({}))
+
+
+def harbor_scenario_run(
+    name="20260101-000000-scenarios-abcd", trials=("edit-config__a1",)
+):
+    """A finished scenario run with one Harbor job and the named trials."""
+    run_dir = evals.HOME / "runs" / name
+    write_json(
+        run_dir / "run.json",
+        {
+            "run_id": name,
+            "kind": "scenarios",
+            "label": "probe",
+            "command": "uv run",
+            "cwd": "/",
+            "pid": 0,
+            "started_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    job = run_dir / "harbor" / "jobs" / "e2e-20260101T000000Z"
+    job.mkdir(parents=True)
+    (job / "job.log").write_text("")
+    for trial in trials:
+        (job / trial).mkdir()
+        (job / trial / "trial.log").write_text("")
+    (run_dir / "exit_code").write_text("0\n")
+    return run_dir
+
+
+def judge_run(source, samples, errors=0, name="20260101-000100-judge-abcd"):
+    """A finished judge run of `source` with the stages of each sample."""
+    run_dir = evals.HOME / "runs" / name
+    meta = json.loads((source / "run.json").read_text())
+    write_json(run_dir / "run.json", {**meta, "run_id": name, "kind": "judge"})
+    (run_dir / "source_run").write_text(source.name + "\n")
+    job = run_dir / "judge" / "judge"
+    write_json(job / "judge_stages.json", samples)
+    results = [{"trial_name": trial} for trial in samples]
+    results += [
+        {"trial_name": f"broken__{index}", "error": "x"} for index in range(errors)
+    ]
+    write_json(job / "judge_report.json", {"results": results})
+    (run_dir / "exit_code").write_text("0\n")
+    return run_dir
+
+
+def test_judge_starts_the_judge_runner_on_the_job_of_a_scenario_run(repo, monkeypatch):
+    source = harbor_scenario_run()
+    started = {}
+    monkeypatch.setattr(evals.shutil, "which", lambda name: "/usr/bin/uv")
+    monkeypatch.setattr(
+        evals, "_launch", lambda run_id, run_dir, **kwargs: started.update(kwargs)
+    )
+    tools.judge(source.name, samples=3, model="claude-opus-5-5")
+    argv = started["argv"]
+    assert started["kind"] == "judge"
+    assert argv[argv.index("-m") + 1] == evals.JUDGE_RUNNER
+    assert argv[argv.index("-m") + 2] == str(
+        source / "harbor" / "jobs" / "e2e-20260101T000000Z"
+    )
+    assert argv[argv.index("--samples") + 1] == "3"
+    assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
+    assert "--provider" not in argv and "--workers" not in argv
+    assert "3 samples" in started["label"]
+    [judge_dir] = (evals.HOME / "runs").glob("*-judge-*")
+    assert (judge_dir / "source_run").read_text().strip() == source.name
+    with pytest.raises(ValueError, match="samples and workers must be positive"):
+        tools.judge(source.name, samples=0)
+
+
+def test_judge_needs_a_scenario_run_with_one_harbor_job(repo):
+    source = harbor_scenario_run()
+    (source / "harbor" / "jobs" / "second").mkdir()
+    (source / "harbor" / "jobs" / "second" / "job.log").write_text("")
+    with pytest.raises(LookupError, match="has 2 Harbor jobs; judge\\(\\) needs one"):
+        tools.judge(source.name)
+
+
+def test_label_stage_and_agreement_compare_people_with_the_judge(repo):
+    trials = ("edit-config__a1", "answer-sum__b2", "answer-sum__c3")
+    source = harbor_scenario_run(trials=trials)
+    judge_dir = judge_run(
+        source,
+        {
+            "edit-config__a1": ["write", "write"],
+            "answer-sum__b2": ["verify", "understand"],
+            "answer-sum__c3": ["understand", "understand"],
+        },
+        errors=1,
+    )
+    label = tools.label_stage(source.name, "edit-config__a1", "write", "Wrong key.")
+    assert (label.stage, label.judged_stage) == ("write", "write")
+    assert render("label_stage", label).summary == "edit-config__a1 · write"
+    tools.label_stage(source.name, "answer-sum__b2", "write")
+    saved = json.loads((source / "stage-labels.json").read_text())
+    assert saved["edit-config__a1"]["note"] == "Wrong key."
+    result = tools.agreement()
+    assert result.judge_run_id == judge_dir.name
+    assert result.source_run_id == source.name
+    assert (result.judged, result.errors, result.labelled) == (3, 1, 2)
+    # A tie takes the earlier stage, so b2 is judged as understand.
+    assert "answer-sum__b2: understand" in result.stages
+    assert result.sample_agreement_percent == pytest.approx(200 / 3, abs=0.1)
+    assert result.agreement_percent == 50.0
+    assert result.disagreements == ("answer-sum__b2: judge understand, label write",)
+    assert result.advice.startswith("Label 28 more failed attempts.")
+    assert "kappa" in words(render("agreement", result))
+    assert (
+        tools.status(judge_dir.name).progress
+        == "3 trials judged, 1 without a valid result"
+    )
+
+
+def test_label_stage_refuses_an_unknown_stage_trial_or_long_note(repo):
+    source = harbor_scenario_run()
+    with pytest.raises(ValueError, match="stage must be one of understand"):
+        tools.label_stage(source.name, "edit-config__a1", "plan")
+    with pytest.raises(LookupError, match="has no trial 'missing__x'"):
+        tools.label_stage(source.name, "missing__x", "write")
+    with pytest.raises(ValueError, match="the limit is 500"):
+        tools.label_stage(source.name, "edit-config__a1", "write", "x" * 501)
+    assert not (source / "stage-labels.json").exists()
+
+
+def test_kappa_advice_names_the_rater_and_the_fix():
+    advice = evals._kappa_advice(
+        40, 0.4, "stages", "label_stage()", "Correct the judge rubric first."
+    )
+    assert advice == (
+        "Kappa 0.40 is below 0.6. Do not trust these stages. "
+        "Correct the judge rubric first."
+    )
+    assert "with label() before you trust these causes" in evals._kappa_advice(
+        0, None, "causes", "label()", "Correct the diagnose() rules first."
+    )
