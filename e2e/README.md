@@ -233,6 +233,27 @@ VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash VIS_E2E_REPEATS=2 VIS_E2E_W
 Create `<root>/scenarios/<id>/scenario.json` and `files/...` under the `e2e/`
 directory. The runner discovers scenario folders automatically.
 
+## Check a task
+
+Before you add a scenario, check the quality of its task. The check uses the
+`harbor check` rubric. A model reads the instruction and the tests and reports each
+criterion as pass, fail or not applicable. It does not run the task itself.
+
+```bash
+uv run --project e2e python -m vis_harbor.dataset --out /tmp/vis_tasks --scenario <id>
+uv run --project e2e python -m vis_harbor.check /tmp/vis_tasks/<id> \
+  --provider anthropic-coding-plan --model claude-opus-5-5
+```
+
+`harbor check` runs Claude Code in Docker. `vis_harbor.check` runs the Vis agent in
+the host environment, so it needs no Docker and no Anthropic key. Each check makes
+paid model calls. The command prints the criteria table and writes
+`check_report.json` in the job directory. It exits with 1 when a check has no
+valid result. A failed criterion does not change the exit code.
+
+A draft from `evals.capture` has no oracle. Expect a fail for anti-cheating
+measures if the oracle only repeats a word of the prompt.
+
 ## Run scenarios from Vis
 
 The project extension `.vis/extensions/evals.py` runs this runner from a Vis session:
