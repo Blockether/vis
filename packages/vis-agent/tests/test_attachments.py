@@ -63,17 +63,18 @@ def test_attach_sends_one_options_map_to_the_host(monkeypatch):
 
     monkeypatch.setattr(vis, "_host", Host())
 
-    assert vis.attach(b"data", "notes.md", media_type="text/markdown") == {
+    # `.txt` maps to text/plain on every Python version; `.md` does not before 3.13.
+    assert vis.attach(b"data", "notes.txt", media_type="text/markdown") == {
         "id": "a1",
-        "filename": "notes.md",
+        "filename": "notes.txt",
         "media_type": "x/y",
     }
     assert sent == [
         {
             "base64": base64.b64encode(b"data").decode("ascii"),
-            "filename": "notes.md",
+            "filename": "notes.txt",
             "media_type": "text/markdown",
-            "media_type_hint": "text/markdown",
+            "media_type_hint": "text/plain",
             "audience": "both",
             "commentable": False,
         }
