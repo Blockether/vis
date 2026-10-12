@@ -1,8 +1,10 @@
 """Evaluation tools: read Vis runs and Harbor jobs, and compare their results.
 
-For the reader of one Vis run, see `blockether.vis.evals.trajectory`. For Harbor jobs
-and round seals, see `blockether.vis.evals.harbor`. For the statistics, see
-`blockether.vis.evals.stats`.
+Read one Vis run with `load_trajectory` or `parse_trajectory`. Read the trials of a
+Harbor job or round with `read_trials`, then count them with `case_results` or
+`summarize`. Seal a finished round with `seal_round`. Compare paired results with
+`paired_change` and `mcnemar_exact`. For installation and sessions, use the
+[Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
 from .harbor import (

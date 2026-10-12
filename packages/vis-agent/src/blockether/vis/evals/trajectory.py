@@ -486,8 +486,8 @@ class Trajectory:
     """One Vis run read from an ATIF trajectory.
 
     The typed fields hold what evaluations check. `document` keeps the whole input,
-    also the keys that this reader does not know. Child runs of Council subagents
-    are in `subagents`.
+    also the keys that this reader does not know. Child runs are in
+    `subagent_trajectories`.
     """
 
     schema_version: str
@@ -497,7 +497,7 @@ class Trajectory:
     steps: tuple[Step, ...]
     final_metrics: TrajectoryMetrics | None
     extra: Mapping[str, Any]
-    subagents: tuple[Trajectory, ...]
+    subagent_trajectories: tuple[Trajectory, ...]
     document: Mapping[str, Any]
 
     @property
@@ -603,7 +603,7 @@ class Trajectory:
             operation: Keep only calls of this function, for example `grep`.
             state: Keep only calls with this outcome, for example `failed`.
 
-        The calls of subagents are in `subagents`, not here.
+        The calls of child runs are in `subagent_trajectories`, not here.
         """
         return tuple(
             call
@@ -633,7 +633,9 @@ class Trajectory:
                 self.final_metrics.to_dict() if self.final_metrics is not None else None
             ),
             "steps": [step.to_dict() for step in self.steps],
-            "subagents": [child.to_dict() for child in self.subagents],
+            "subagent_trajectories": [
+                child.to_dict() for child in self.subagent_trajectories
+            ],
         }
 
 
@@ -739,7 +741,7 @@ def _trajectory(
         steps=tuple(_step(step, index, strict) for index, step in enumerate(steps)),
         final_metrics=TrajectoryMetrics._from_atif(document.get("final_metrics")),
         extra=_map(document.get("extra")),
-        subagents=tuple(
+        subagent_trajectories=tuple(
             _trajectory(child, strict, version)
             for child in (children if isinstance(children, tuple) else ())
             if isinstance(child, Mapping)

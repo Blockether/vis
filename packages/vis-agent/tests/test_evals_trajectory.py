@@ -302,9 +302,9 @@ def test_a_step_without_metrics_or_blocks_has_empty_values():
     assert final.function_calls == () and final.is_final
 
 
-def test_subagents_are_separate_trajectories():
+def test_child_runs_are_separate_trajectories():
     run = parse_trajectory(_document())
-    (child,) = run.subagents
+    (child,) = run.subagent_trajectories
     assert (child.session_id, child.schema_version, child.status) == (
         "child-1",
         "ATIF-v1.8",
