@@ -6218,12 +6218,11 @@
           (try (let [{:keys [text line-meta]} (render/format-answer-markdown-data ast 76 (opts {}))
                      links (filter :doc line-meta)]
 
-                 (expect (str/includes? text "[Image #1: shot.png 1200×800, 245KB]"))
-                 (expect (str/includes? text "→ click to open in the system viewer"))
+                 (expect (str/includes? text "shot.png  PNG · 1200x800 · 245KB"))
+                 (expect (not (str/includes? text "system viewer")))
                  (expect (not (str/includes? text "▸ [Image #1")))
-                 ;; The caption shows once, inside the link card.
-                 (expect (= 1 (count (re-seq #"\[Image #1" text))))
-                 (expect (seq links))
+                 ;; Only the file row of the card opens the picture.
+                 (expect (= 1 (count links)))
                  (expect (every? #(= "/tmp/shot.png" (:path (:doc %))) links))
                  (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta)))
                (finally (render/invalidate-cache!)))))))
@@ -6940,12 +6939,12 @@ h = 8"
                    docs
                    (into #{} (keep :doc) (:line-meta data))]
 
-               (it "paints the headline and the open hint, not the raw fence"
-                   (expect (some #(str/includes? % "[Document: report.pdf PDF, 1.2 MB]") lines))
-                   (expect (some #(str/includes? % "click to open in the system viewer") lines))
+               (it "paints one card with the file name, type and size, not the raw fence"
+                   (expect (some #(str/ends-with? % "report.pdf  PDF · 1.2 MB") lines))
+                   (expect (not-any? #(str/includes? % "system viewer") lines))
                    (expect (not-any? #(str/includes? % "application/pdf") lines))
                    (expect (not-any? #(str/includes? % "/tmp/vis-python/report.pdf") lines)))
-               (it "carries one and the same host file on every row of the card"
+               (it "carries the host file on the file row only"
                    (expect (= 1 (count docs)))
                    (expect (= {:path "/tmp/vis-python/report.pdf"
                                :mime "application/pdf"
@@ -6953,9 +6952,8 @@ h = 8"
                                :size-label "1.2 MB"
                                :title "report.pdf"}
                               (first docs)))
-                   ;; every painted row of the card is clickable, blanks included: a card
-                   ;; whose middle row does nothing is a card that swallows a click.
-                   (expect (= (count (filter :doc (:line-meta data))) (dec (count lines)))))))
+                   ;; The frame rows open nothing; the file row and its Open button do.
+                   (expect (= [:file] (mapv :card-part (filter :doc (:line-meta data))))))))
 
 ;; Regression, issue td-75dad4: a produced document was hidden behind an unnamed
 ;; RESULT disclosure and its pending transport descriptor leaked when expanded.
@@ -7010,9 +7008,170 @@ h = 8"
                            :index 0}
                           (get-in % [:meta :artifact]))
                       expanded))
-        (expect (str/includes? expanded-text "click to open in the system viewer"))
+        (expect (str/includes? expanded-text "report.html  HTML · 2.0 KB"))
         (expect (not (str/includes? expanded-text "is_pending")))
         (expect (not (str/includes? expanded-text "vis-doc"))))))
+
+;; The attachment card replaces the hint rows under a step with one framed card: the file name,
+;; its type and size, and an Open button. More than one file starts folded behind the title.
+(defdescribe
+  attachment-card-test
+  (let [artifact
+        (fn [i filename media-type size]
+          {"index" i
+           "iteration_id" "iteration-1"
+           "tool_call_id" "call-1"
+           "kind" "doc"
+           "media_type" media-type
+           "filename" filename
+           "size" size})
+
+        render-card
+        (fn [attachments expansions]
+          (format-iteration-entry-entries {:iteration-id "iteration-1"
+                                           :attachments attachments
+                                           :forms [{:code "attach(page)"
+                                                    :svar-tool-call-id "call-1"
+                                                    :stdout ""
+                                                    :success? true
+                                                    :duration-ms 25}]}
+                                          80
+                                          1
+                                          {:session-id "session-1"
+                                           :session-turn-id "turn-1"
+                                           :detail-expansions
+                                           (merge {:vis.channel-tui/expand-execution-details? true}
+                                                  expansions)}))
+
+        card-rows
+        (fn [entries]
+          (filterv #(get-in % [:meta :card-part]) entries))
+
+        parts
+        (fn [rows]
+          (mapv #(get-in % [:meta :card-part]) rows))
+
+        paint
+        (fn [entries cols]
+          (.reset interactions/hit-map)
+          (.beginFrame interactions/hit-map)
+          (let [captured (cap/capture!
+                           {:cols cols
+                            :rows 12
+                            :paint! (fn [{:keys [screen]}]
+                                      (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                        (render/draw-chat-bubble! (.newTextGraphics s)
+                                                                  {:role :assistant
+                                                                   :prewrapped-lines (mapv :line
+                                                                                           entries)
+                                                                   :line-meta (mapv :meta entries)}
+                                                                  0
+                                                                  0
+                                                                  cols
+                                                                  {:viewport-h 12})
+                                        (.refresh s)))})]
+            (.commitFrame interactions/hit-map)
+            {:text (cap/frame-text captured)
+             :error (:error captured)
+             :regions (vec (.current interactions/hit-map))}))
+
+        two
+        [(artifact 0 "report.html" "text/html" 2048)
+         (artifact 1 "build-log.txt" "text/plain" 4096)]]
+
+    (it "frames one file as one card with its name, type, size and file target"
+        (let [rows (card-rows (render-card [(artifact 0 "report.html" "text/html" 2048)] {}))]
+          (expect (= [:top :file :bottom] (parts rows)))
+          (expect (= "report.html" (get-in rows [1 :meta :card-name])))
+          (expect (= "HTML · 2.0 KB" (get-in rows [1 :meta :card-label])))
+          (expect (= "report.html" (get-in rows [1 :meta :artifact :filename])))
+          (expect (nil? (get-in rows [0 :meta :card-toggle])))))
+    (it "folds more than one file behind the title in the top border"
+        (let [rows
+              (card-rows (render-card two {}))
+
+              toggle
+              (get-in rows [0 :meta :card-toggle])]
+
+          (expect (= [:top :bottom] (parts rows)))
+          (expect (= "▸ 2 files · 6.0 KB" (get-in rows [0 :meta :card-title])))
+          (expect (= :toggle-details (:kind toggle)))
+          (expect (true? (:collapsed? toggle)))))
+    (it "opens the folded card with a line between the files"
+        (let [node-id
+              (get-in (card-rows (render-card two {})) [0 :meta :card-toggle :node-id])
+
+              rows
+              (card-rows (render-card two {["session-1" node-id] true}))]
+
+          (expect (= [:top :file :separator :file :bottom] (parts rows)))
+          (expect (= "▾ 2 files · 6.0 KB" (get-in rows [0 :meta :card-title])))
+          (expect (false? (get-in rows [0 :meta :card-toggle :collapsed?])))
+          (expect (= ["report.html" "build-log.txt"] (keep #(get-in % [:meta :card-name]) rows)))))
+    (it "paints the frame, the file row and an Open button that opens the file"
+        (let [rows
+              (card-rows (render-card [(artifact 0 "report.html" "text/html" 2048)] {}))
+
+              {:keys [text error regions]}
+              (paint rows 60)
+
+              artifacts
+              (filterv #(= :artifact (:kind %)) regions)
+
+              button
+              (first (filter #(= 6 (get-in % [:bounds :width])) artifacts))]
+
+          (expect (nil? error))
+          (expect (str/includes? text "┌──"))
+          (expect (str/includes? text "│ report.html"))
+          (expect (str/includes? text "HTML · 2.0 KB"))
+          (expect (str/includes? text " Open  │"))
+          (expect (str/includes? text "└──"))
+          (expect (not (str/includes? text "system viewer")))
+          ;; One region for the whole row and one for the button, both on the file.
+          (expect (= 2 (count artifacts)))
+          (expect (some? button))
+          (expect (= "report.html" (get-in button [:artifact :filename])))))
+    (it "registers the folded title as the fold control"
+        (let [rows
+              (card-rows (render-card two {}))
+
+              {:keys [text regions]}
+              (paint rows 60)
+
+              toggle
+              (first (filter #(= :toggle-details (:kind %)) regions))]
+
+          (expect (str/includes? text "┌─ ▸ 2 files · 6.0 KB ─"))
+          (expect (= (get-in rows [0 :meta :card-toggle :node-id]) (:node-id toggle)))
+          (expect (true? (:collapsed? toggle)))
+          (expect (empty? (filter #(= :artifact (:kind %)) regions)))))
+    (it "cuts the middle of a long name on a narrow terminal and keeps the button"
+        (let [rows
+              (card-rows (render-card [(artifact 0 "dev-env-status-DEV04-with-a-long-name.html"
+                                                 "text/html" 2048)]
+                                      {}))
+
+              {:keys [text]}
+              (paint rows 40)]
+
+          (expect (str/includes? text "…"))
+          (expect (str/includes? text ".html"))
+          (expect (str/includes? text " Open  │"))))
+    (it "marks a document without a host file as unavailable, without a button"
+        (let [entries
+              (:line-meta (render/format-answer-markdown-data*
+                            [:ast {}
+                             [:code {:lang "vis-doc"}
+                              "[Document: gone.pdf PDF]\n\napplication/pdf\ngone.pdf\n"]]
+                            76
+                            {}))
+
+              file
+              (first (filter #(= :file (:card-part %)) entries))]
+
+          (expect (= "PDF · Unavailable" (:card-label file)))
+          (expect (nil? (:doc file)))))))
 
 (defdescribe
   shown-picture-test
@@ -7080,7 +7239,7 @@ h = 8"
           (expect (empty? (picture-rows entries)))
           (expect (seq links))
           (expect (every? #(= "/tmp/chart.png" (get-in % [:meta :doc :path])) links))
-          (expect (str/includes? (text-of entries) "click to open in the system viewer"))))
+          (expect (str/includes? (text-of entries) "chart.png  PNG · 1200x800 · 245KB"))))
     (it "shows a printed document without an attachment row as a link"
         (let [entries (render-step
                         {:iteration-id "iteration-1"
@@ -7103,8 +7262,7 @@ h = 8"
                           {:code "print(1)" :stdout "1" :success? true :duration-ms 5}]}
                         :kitty
                         {})]
-          (expect (= 1
-                     (count (re-seq #"click to open in the system viewer" (text-of entries)))))))))
+          (expect (= 1 (count (re-seq #"report\.html  HTML" (text-of entries)))))))))
 
 (defdescribe produced-attachment-inline-dedup-test
              (it "keeps inline images out of the durable document card without shifting indexes"

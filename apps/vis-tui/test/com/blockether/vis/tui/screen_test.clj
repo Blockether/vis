@@ -3186,8 +3186,8 @@ therapy line 2"
          :session {:id "s1"}}
 
         ;; One live tick against a real virtual terminal: what the tick
-        ;; handed the graphics painter, and where the caption the picture
-        ;; hangs under actually landed on screen.
+        ;; handed the graphics painter, and where the card's file row the
+        ;; picture hangs under actually landed on screen.
         live-tick!
         (fn [previous-layout]
           (let [{terminal :terminal ^TerminalScreen scr :screen}
@@ -3213,7 +3213,7 @@ therapy line 2"
                 {:painted @painted
                  :layout layout
                  :caption-row (first (keep-indexed (fn [i line]
-                                                     (when (str/includes? line "Image #1") i))
+                                                     (when (str/includes? line "shot.png") i))
                                                    (term/grid terminal)))}))))]
 
     (it "a follow-mode tick re-places the picture on the rows it just painted"
@@ -3225,10 +3225,10 @@ therapy line 2"
 
           (expect (some? caption-row))
           (expect (= 1 (count painted)))
-          ;; The reserved box opens on the row under the `[Image #1: …]`
-          ;; caption this very tick painted — not where the last full
-          ;; frame left it.
-          (expect (= (inc (long caption-row)) (long (:row placement))))
+          ;; The reserved box opens under the card's file row, its separator and
+          ;; its padding row, as this very tick painted them — not where the
+          ;; last full frame left it.
+          (expect (= (+ 3 (long caption-row)) (long (:row placement))))
           (expect (= 5 (long (:rows (:img placement)))))
           (expect (= "/tmp/shot.png" (:path (:img placement))))))
     (it "a tick that did not shift the transcript leaves the graphics layer alone"
