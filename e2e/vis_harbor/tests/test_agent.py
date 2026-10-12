@@ -305,6 +305,22 @@ def test_context_gets_the_trajectory_totals(tmp_path, clean_settings):
     ) == (120, 100, 30, 0.01)
 
 
+def test_a_failed_trajectory_read_does_not_stop_the_job(
+    tmp_path, clean_settings, monkeypatch
+):
+    # Harbor runs this hook outside the error handling of a trial.
+    def broken_reader(path, *, strict):
+        raise TypeError("unexpected keyword argument")
+
+    agent = make_agent(tmp_path)
+    agent.logs_dir.mkdir()
+    (agent.logs_dir / TRAJECTORY_FILE).write_text(json.dumps(TRAJECTORY))
+    monkeypatch.setattr(agent_module, "load_vis_trajectory", broken_reader)
+    context = AgentContext()
+    agent.populate_context_post_run(context)
+    assert context.is_empty()
+
+
 def test_harbor_runs_one_trial_on_the_host(tmp_path):
     instruction = "Read /logs/agent/notes.txt and /tests/scenario.json.\n"
     result, trial = run_harbor(tmp_path, write_task(tmp_path, instruction))

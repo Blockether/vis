@@ -262,9 +262,12 @@ class VisSourceAgent(BaseAgent):
         path = self.logs_dir / TRAJECTORY_FILE
         if not path.is_file():
             return
+        # Harbor calls this hook outside the error handling of a trial. An exception
+        # here stops the whole job, so a trajectory that cannot be read only loses
+        # its totals.
         try:
             trajectory = load_vis_trajectory(path, strict=False)
-        except (OSError, ValueError) as error:
+        except Exception as error:
             self.logger.warning("Cannot read %s: %s", path, error)
             return
         metrics = trajectory.final_metrics
