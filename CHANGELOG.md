@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- The SDK module `blockether.vis.evals` scores and diagnoses Terminal-Bench rounds from standard
+  Harbor files: `round_summary`, `bench_report`, `diagnose`, `agent_limits` and the label
+  functions `save_label` and `load_labels`.
+- `compare_cases` compares two runs case by case, with a paired 95% interval and a McNemar test
+  for each route.
+- `agreement`, `kappa_advice` and `stage_agreement` check automatic causes and judge stages
+  against human labels. `save_stage_label` keeps a person's stage of a trial.
+- `read_leaderboard` and `standing` place a round on a Harbor Hub board.
+- The gateway serves the evaluation functions under `/v1/evals`, and `GatewayClient` calls them.
+- The manual has the Evaluations and Evaluations API pages.
+
+### Changed
+- An agent failure outcome is `agent_error:<type>`, and its failure cause is `agent_errors`.
+
+### Removed
+- The `evals` project extension. Use the SDK functions and the `vis_harbor` commands in `e2e/`.
+
 ## [v0.2.39] - 2026-10-12
 
 ### Added

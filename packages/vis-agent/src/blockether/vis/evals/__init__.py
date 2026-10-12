@@ -8,7 +8,7 @@ Score repeated attempts with `task_attempts` and `repeat_stats`. Summarize a
 Terminal-Bench round from its Harbor job folders with `round_summary`, then score and
 diagnose it with `bench_report` and `diagnose`, and keep human cause
 labels with `save_label`. Place a round on a Harbor Hub board with `read_leaderboard`. Check automatic
-causes or judge stages against human labels with `agreement`. For installation and sessions, use the
+causes against human labels with `agreement`, and judge stages with `stage_agreement`. For installation and sessions, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
@@ -70,6 +70,15 @@ from .leaderboard import (
 )
 from .repeats import RepeatStats, repeat_stats, task_attempts
 from .rounds import round_summary
+from .stages import (
+    StageAgreement,
+    StageLabel,
+    judge_errors,
+    judged_samples,
+    load_stage_labels,
+    save_stage_label,
+    stage_agreement,
+)
 from .stats import (
     benjamini_hochberg,
     cluster_interval,
@@ -115,6 +124,8 @@ __all__ = [
     "RepeatStats",
     "RouteTest",
     "RunSummary",
+    "StageAgreement",
+    "StageLabel",
     "Step",
     "StepMetrics",
     "TaskNote",
@@ -138,10 +149,13 @@ __all__ = [
     "diagnose",
     "effective_size",
     "find_trial",
+    "judge_errors",
+    "judged_samples",
     "kappa_advice",
     "latest_trials",
     "leaderboard_row",
     "load_labels",
+    "load_stage_labels",
     "load_trajectory",
     "majority",
     "mcnemar_exact",
@@ -154,9 +168,11 @@ __all__ = [
     "round_summary",
     "sample_agreement",
     "save_label",
+    "save_stage_label",
     "seal_digest",
     "seal_round",
     "seal_rows",
+    "stage_agreement",
     "standing",
     "summarize",
     "summary_attempts",

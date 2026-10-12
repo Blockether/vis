@@ -251,7 +251,7 @@ paid model calls. The command prints the criteria table and writes
 `check_report.json` in the job directory. It exits with 1 when a check has no
 valid result. A failed criterion does not change the exit code.
 
-A draft from `evals.capture` has no oracle. Expect a fail for anti-cheating
+A draft scenario has no oracle until you add one. Expect a fail for anti-cheating
 measures if the oracle only repeats a word of the prompt.
 
 ## Find where a run failed
@@ -278,38 +278,47 @@ the stage of each sample in `judge_stages.json`. With one sample, each judged tr
 also gets the `analysis.json` that `harbor view` shows.
 
 Do not trust the judge before you compare it with people. Label at least 30 failed
-trials, then read the agreement:
+trials, then read the agreement with the SDK:
 
 ```python
-judged = evals.judge(run_id, samples=2)
-evals.label_stage(run_id, "<trial>", "write", note="It changed the wrong key.")
-evals.agreement(judged.run_id)
+from blockether.vis.evals import (
+    judge_errors,
+    judged_samples,
+    load_stage_labels,
+    save_stage_label,
+    stage_agreement,
+)
+
+labels = "<job-dir>/stage-labels.json"
+save_stage_label(labels, "<trial>", "write", note="It changed the wrong key.")
+found = stage_agreement(
+    judged_samples("<judge-job-dir>"),
+    load_stage_labels(labels),
+    errors=judge_errors("<judge-job-dir>"),
+)
+print(found.kappa, found.advice)
 ```
 
-`agreement()` gives Cohen's kappa of the judge and your labels. Use the judge with a
-review of the disagreements from a kappa of 0.6. Use it without a review from 0.8.
+`<judge-job-dir>` is the directory that holds `judge_stages.json`. `stage_agreement`
+gives Cohen's kappa of the judge and your labels. Use the judge with a review of the
+disagreements from a kappa of 0.6. Use it without a review from 0.8.
 
-## Run scenarios from Vis
+## Compare two runs
 
-The project extension `.vis/extensions/evals.py` runs this runner from a Vis session:
-
-- `evals.scenarios()` lists the scenarios and their checks.
-- `evals.new_scenario(...)` creates `scenarios/<id>/scenario.json` and its `files/`.
-- `evals.run("scenarios", ids, models=[...])` starts a paid run in the background, with its own `VIS_E2E_RESULTS` directory. `evals.run("terminal-bench", ...)` starts the Terminal-Bench queue in the same way.
-- `evals.status()` and `evals.report()` read the run. The report lists each failed run with credentials redacted.
-- `evals.watch(run_id)` follows a run in a live view in the TUI or the Companion app. When you stop the view, the run continues; `evals.stop(run_id)` stops the run.
-- `evals.compare(baseline, candidate)` compares two scenario runs case by case.
-- `evals.judge(run_id)`, `evals.label_stage(...)` and `evals.agreement()` find the failure stage of each failed trial. See [Find where a run failed](#find-where-a-run-failed).
-
-In these results, a case is one scenario on one model. `report()` gives the pass rate with its 95% interval. `detectable_change_points` is the smallest change that a second run of the same size detects. With `repeats` above 1, it also gives `pass_all_percent` (pass^k), the share of cases that passed every repeat. `pass_any_percent` (pass@k) is the share of cases that passed at least one repeat, and `unstable` names the cases that passed only some repeats. The interval allows for the similar results of repeats of one case.
-
-To find out if a change helps, run the same scenarios on the same models before and after the change. Then compare the two runs, not their pass rates:
+To find out if a change helps, run the same scenarios on the same models before and
+after the change. Then compare the two runs, not their pass rates. Each run prints the
+`job_dir` of its Harbor job and writes it in `results.json`.
 
 ```python
-before = evals.run("scenarios", ids, provider="zai-coding-plan", models=["glm-5.3-flash"], repeats=3)
-# When this run ends, make the change and build Vis again.
-after = evals.run("scenarios", ids, provider="zai-coding-plan", models=["glm-5.3-flash"], repeats=3)
-evals.compare(before.run_id, after.run_id)
+from blockether.vis.evals import case_results, compare_cases, read_trials
+
+before = case_results(read_trials("<before-job-dir>"))
+after = case_results(read_trials("<after-job-dir>"))
+print(compare_cases(before, after, baseline_name="before", candidate_name="after"))
 ```
 
-`compare()` pairs the cases that both runs measured. The verdict is `better` or `worse` only when the paired 95% interval of the change excludes zero. Each run records the Vis commit. With `native_bin`, it also records the sha256 of that executable. This digest names the code, also when the checkout has uncommitted changes. The caveats tell you when both runs used the same version, or when a version is unclear.
+A case is one scenario on one agent and model. `compare_cases` pairs the cases that
+both runs measured. The verdict is `better` or `worse` only when the paired 95%
+interval of the change excludes zero. With repeats above 1, `repeat_stats(task_attempts(...))`
+gives pass@k, pass^k and the cases that passed only some repeats. The
+[Evaluations](https://vis.blockether.com/evals.html) page explains the results.
