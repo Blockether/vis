@@ -184,6 +184,22 @@ def test_activity_event_uses_the_shared_fixture_and_named_records():
             )
 
 
+def test_activity_rows_carry_every_field_of_the_row_schema():
+    # Regression: the engine writes `read_key`, and the SDK row rejected it.
+    from dataclasses import fields
+
+    from blockether.vis.activity import ActivityProjection, ActivityRow
+
+    properties = _contracts.definition("activity", "row")["properties"]
+    assert {field.name for field in fields(ActivityRow)} == set(properties)
+    fixture = json.loads((_contracts._DATA / "fixtures/activity.json").read_text())
+    row = dict(fixture["rows"][0], read_key="a" * 64)
+    wire = dict(fixture, rows=[row, *fixture["rows"][1:]])
+    projection = ActivityProjection.from_wire(wire)
+    assert projection.rows[0].read_key == "a" * 64
+    assert projection.to_wire() == wire
+
+
 @pytest.mark.parametrize(
     "sample",
     json.loads((_contracts._DATA / "fixtures/activity-cases.json").read_text()),
