@@ -101,8 +101,6 @@ _EXIT_SCRIPT = (
     'trap "" HUP; "$@"; code=$?; '
     'printf "%s\\n" "$code" > "$VIS_EVALS_EXIT_FILE"; exit "$code"'
 )
-_EARLY_STOP_SHARE = 0.25
-_NEAR_MISS_RATIO = 0.8
 _TAIL_LINES = 20
 _NOTE_LIMIT = 500
 _CAUSES = (
@@ -119,7 +117,7 @@ _SDK_PACKAGE = "_vis_evals_sdk"
 
 
 def _load_sdk() -> tuple[ModuleType, ...]:
-    """Import the `compare`, `harbor`, `labels`, `repeats` and `stats` SDK modules.
+    """Import the `bench`, `compare`, `harbor`, `labels`, `repeats` and `stats` SDK modules.
 
     An extension context holds only `blockether.vis.extension`. These modules use
     only the standard library, so the extension imports them from the SDK source under
@@ -133,6 +131,7 @@ def _load_sdk() -> tuple[ModuleType, ...]:
     package.__path__ = [str(SDK_EVALS)]
     sys.modules[_SDK_PACKAGE] = package
     return (
+        importlib.import_module(f"{_SDK_PACKAGE}.bench"),
         importlib.import_module(f"{_SDK_PACKAGE}.compare"),
         importlib.import_module(f"{_SDK_PACKAGE}.harbor"),
         importlib.import_module(f"{_SDK_PACKAGE}.labels"),
@@ -141,10 +140,14 @@ def _load_sdk() -> tuple[ModuleType, ...]:
     )
 
 
-_compare_sdk, _harbor, _label_sdk, _repeats, _stats = _load_sdk()
+_bench, _compare_sdk, _harbor, _label_sdk, _repeats, _stats = _load_sdk()
 Agreement = _label_sdk.Agreement
 CaseChange = _compare_sdk.CaseChange
 RouteTest = _compare_sdk.RouteTest
+Diagnosis = _bench.Diagnosis
+Finding = _bench.Finding
+OutcomeCount = _bench.OutcomeCount
+TaskNote = _bench.TaskNote
 
 
 @dataclass(frozen=True)
@@ -306,15 +309,6 @@ class QueuePlan:
 
 
 @dataclass(frozen=True)
-class OutcomeCount:
-    """Tasks whose latest scored attempt ended the same way."""
-
-    outcome: str
-    count: int
-    tasks: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class BenchReport:
     """The Terminal-Bench score of one round, with usage and the queue state.
 
@@ -370,35 +364,6 @@ class BenchReport:
 
 
 @dataclass(frozen=True)
-class TaskNote:
-    """One task in a finding.
-
-    `checks` is passed/total verifier tests, or empty. `budget_used` is the share of
-    the task's agent time limit that Vis used.
-    """
-
-    task: str
-    outcome: str
-    checks: str
-    pass_ratio: float | None
-    budget_used: float | None
-    minutes: float | None
-    iterations: int | None
-
-
-@dataclass(frozen=True)
-class Finding:
-    """One problem class. `share` is the fraction of scored tasks it affects."""
-
-    kind: str
-    title: str
-    task_count: int
-    share: float
-    detail: str
-    tasks: tuple[TaskNote, ...]
-
-
-@dataclass(frozen=True)
 class StageLabel:
     """A human failure stage of one scenario trial, kept in stage-labels.json of its run.
 
@@ -434,21 +399,6 @@ class StageAgreement:
     kappa: float | None
     disagreements: tuple[str, ...]
     advice: str
-
-
-@dataclass(frozen=True)
-class Diagnosis:
-    """Where the benchmark loses tasks, largest lever first.
-
-    `estimate` projects the effect of full attempts on Vis-error tasks. It is an
-    estimate, not a measurement. `label_check` compares the causes with human labels.
-    """
-
-    scored_tasks: int
-    solved_tasks: int
-    findings: tuple[Finding, ...]
-    estimate: str
-    label_check: Agreement
 
 
 @dataclass(frozen=True)
@@ -1337,177 +1287,17 @@ def _summary(refresh: bool, round_name: str | None = None) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _trial_model(data: dict) -> str:
-    models = Counter(
-        str(trial.get("model"))
-        for trial in data.get("trials") or ()
-        if trial.get("model")
-    )
-    return models.most_common(1)[0][0] if models else ""
+def _limits() -> dict[str, float]:
+    return _bench.agent_limits(BENCH / "artifacts" / "datasets" / "terminal-bench")
 
 
 def _bench_report(
     data: dict, plan: QueuePlan | None, round_name: str | None = None
 ) -> BenchReport:
-    usage = data.get("usage_totals") or {}
-    outcomes = sorted(
-        (data.get("task_outcomes") or {}).items(),
-        key=lambda item: (-len(item[1]), item[0]),
-    )
-    solved = len(data.get("solved_tasks") or ())
-    scored = int(data.get("scored_tasks") or 0)
-    total = int(data.get("total_dataset_tasks") or 0)
-    input_tokens = int(usage.get("input_tokens") or 0)
-    repeats = _repeats.repeat_stats(_task_attempts(data))
-    solved_attempts = repeats.solved_attempts
-    cost = round(float(usage.get("estimated_metered_api_cost_usd") or 0), 2)
     return BenchReport(
-        dataset=str(data.get("dataset") or ""),
-        round_name=round_name,
-        model=_trial_model(data),
-        total_tasks=total,
-        scored_tasks=scored,
-        solved_tasks=solved,
-        pass_rate_percent=_percent(solved, scored),
-        pass_rate_ci95=_percent_interval(_stats.wilson_interval(solved, scored)),
-        strict_pass_rate_percent=_percent(solved, total),
-        strict_pass_rate_ci95=_percent_interval(_stats.wilson_interval(solved, total)),
-        attempts_per_task=repeats.attempts_per_task,
-        scored_attempts=repeats.scored_attempts,
-        solved_attempts=solved_attempts,
-        attempt_pass_rate_percent=_percent(solved_attempts, repeats.scored_attempts),
-        attempt_pass_rate_ci95=_percent_interval(repeats.attempt_pass_rate_ci95),
-        detectable_change_points=_points(repeats.detectable_change),
-        pass_at_k_percent=_points(repeats.pass_at_k),
-        pass_all_k_percent=_points(repeats.pass_all_k),
-        unstable_tasks=repeats.unstable_tasks,
-        outcomes=tuple(
-            OutcomeCount(outcome, len(tasks), tuple(sorted(map(_short, tasks))))
-            for outcome, tasks in outcomes
-        ),
-        unscored_tasks=tuple(map(_short, data.get("unscored_model_tasks") or ())),
-        gpu_tasks=tuple(map(_short, data.get("gpu_required_tasks") or ())),
-        unattempted_tasks=len(data.get("unattempted_tasks") or ()),
-        attempts=int(data.get("attempts") or 0),
-        model_attempts=int(usage.get("model_attempts") or 0),
-        agent_hours=round(float(usage.get("agent_hours") or 0), 1),
-        input_tokens=input_tokens,
-        cached_input_percent=_percent(
-            int(usage.get("cached_input_tokens") or 0), input_tokens
-        ),
-        output_tokens=int(usage.get("output_tokens") or 0),
-        unparsed_output_tokens_estimate=int(
-            usage.get("unparsed_output_tokens_estimate") or 0
-        ),
-        estimated_metered_cost_usd=cost,
-        cost_per_solved_usd=round(cost / solved_attempts, 2)
-        if cost and solved_attempts
-        else None,
-        repeated_final_errors=tuple(
-            f"{error.get('trial')}: {error.get('type')} for "
-            f"{error.get('iterations')} iterations"
-            for error in data.get("repeated_final_errors") or ()
-        ),
+        **_fields(_bench.bench_report(data, round_name)),
         plan=plan,
         summary_path=str(_summary_path(round_name)),
-    )
-
-
-def _agent_limits() -> dict[str, float]:
-    limits = {}
-    dataset = BENCH / "artifacts" / "datasets" / "terminal-bench"
-    for path in dataset.glob("*/task.toml") if dataset.is_dir() else ():
-        try:
-            info = tomllib.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        limit = (info.get("agent") or {}).get("timeout_sec")
-        if limit:
-            limits[path.parent.name] = float(limit)
-    return limits
-
-
-def _latest_trials(data: dict) -> dict[str, dict]:
-    latest: dict[str, dict] = {}
-    for trial in data.get("trials") or ():
-        if not trial.get("scored"):
-            continue
-        task = _short(trial.get("task"))
-        if str(trial.get("finished_at") or "") >= str(
-            latest.get(task, {}).get("finished_at") or ""
-        ):
-            latest[task] = trial
-    return latest
-
-
-def _task_attempts(data: dict) -> dict[str, list[bool]]:
-    """List the scored attempts of each task in finish order, True when solved."""
-    attempts: dict[str, list[bool]] = defaultdict(list)
-    trials = sorted(
-        (trial for trial in data.get("trials") or () if trial.get("scored")),
-        key=lambda trial: str(trial.get("finished_at") or ""),
-    )
-    for trial in trials:
-        attempts[_short(trial.get("task"))].append(trial.get("reward") == 1)
-    return dict(attempts)
-
-
-def _attempt_outcome(trial: dict) -> str:
-    """Name how one attempt ended, with the task outcome rules of summarize.py."""
-    if not trial.get("scored"):
-        return "unscored"
-    if trial.get("reward") == 1:
-        return "solved"
-    if trial.get("exception_type") == "AgentTimeoutError":
-        return "agent_timeout"
-    trace = trial.get("trace") or {}
-    if trace.get("vis_result_status") == "error":
-        return f"vis_error:{trace.get('vis_error_type') or 'unknown'}"
-    return "failed_tests"
-
-
-def _dead_trials(data: dict) -> set[str]:
-    return {
-        _short(error.get("trial")) for error in data.get("repeated_final_errors") or ()
-    }
-
-
-def _cause(trial: dict, dead: set[str], limits: dict[str, float]) -> str:
-    """Give the diagnose() cause of one attempt, or `solved`."""
-    outcome = _attempt_outcome(trial)
-    if outcome == "solved":
-        return outcome
-    if str(trial.get("trial")) in dead:
-        return "dead_tools"
-    if outcome.startswith("vis_error:"):
-        return "vis_errors"
-    if outcome == "agent_timeout":
-        return "agent_timeouts"
-    if outcome == "unscored":
-        return "unscored"
-    seconds = trial.get("agent_seconds")
-    limit = limits.get(_short(trial.get("task")))
-    if seconds and limit and seconds / limit <= _EARLY_STOP_SHARE:
-        return "early_stops"
-    return "other"
-
-
-def _label_check(
-    data: dict, labels: dict[str, dict], limits: dict[str, float]
-) -> Agreement:
-    """Compare the diagnose() causes with the human labels of the same attempts."""
-    trials = {str(trial.get("trial")): trial for trial in data.get("trials") or ()}
-    dead = _dead_trials(data)
-    return _label_sdk.agreement(
-        (
-            (name, _cause(trials[name], dead, limits), str(label.get("cause")))
-            for name, label in sorted(labels.items())
-            if name in trials
-        ),
-        source="diagnose()",
-        noun="causes",
-        labeller="label()",
-        fix="Correct the diagnose() rules first.",
     )
 
 
@@ -1630,183 +1420,6 @@ def _stage_agreement(judge_dir: Path) -> StageAgreement:
     )
 
 
-def _task_note(task: str, outcome: str, trial: dict, limit: float | None) -> TaskNote:
-    tests = trial.get("verifier_tests") or {}
-    total = int(tests.get("tests") or 0) if isinstance(tests, dict) else 0
-    passed = int(tests.get("passed") or 0) if total else 0
-    seconds = trial.get("agent_seconds")
-    return TaskNote(
-        task=task,
-        outcome=outcome,
-        checks=f"{passed}/{total}" if total else "",
-        pass_ratio=round(passed / total, 3) if total else None,
-        budget_used=round(seconds / limit, 3) if seconds and limit else None,
-        minutes=round(seconds / 60, 1) if seconds else None,
-        iterations=trial.get("vis_iterations"),
-    )
-
-
-def _diagnosis(data: dict, labels: dict[str, dict]) -> Diagnosis:
-    outcomes = {
-        outcome: sorted(map(_short, tasks))
-        for outcome, tasks in (data.get("task_outcomes") or {}).items()
-    }
-    scored = int(data.get("scored_tasks") or 0)
-    solved = len(outcomes.get("solved", ()))
-    latest = _latest_trials(data)
-    limits = _agent_limits()
-
-    def notes(outcome: str) -> list[TaskNote]:
-        return [
-            _task_note(task, outcome, latest.get(task, {}), limits.get(task))
-            for task in outcomes.get(outcome, ())
-        ]
-
-    def share(count: int) -> float:
-        return round(count / scored, 3) if scored else 0.0
-
-    findings = []
-    errors = [
-        note
-        for outcome in sorted(outcomes)
-        if outcome.startswith("vis_error:")
-        for note in notes(outcome)
-    ]
-    if errors:
-        kinds = Counter(note.outcome.removeprefix("vis_error:") for note in errors)
-        findings.append(
-            Finding(
-                "vis_errors",
-                f"Vis stopped with an error in {len(errors)} of {scored} scored tasks",
-                len(errors),
-                share(len(errors)),
-                "By type: "
-                + ", ".join(f"{kind} {count}" for kind, count in kinds.most_common())
-                + ". These tasks did not get a full attempt. Provider failures that a "
-                "retry can survive, such as a dropped stream or an output-token "
-                "limit, are the cheapest score to recover.",
-                tuple(errors),
-            )
-        )
-    failed = notes("failed_tests")
-    used = [note.budget_used for note in failed if note.budget_used is not None]
-    early = sorted(
-        (
-            note
-            for note in failed
-            if note.budget_used is not None and note.budget_used <= _EARLY_STOP_SHARE
-        ),
-        key=lambda note: note.budget_used,
-    )
-    if early:
-        findings.append(
-            Finding(
-                "early_stops",
-                f"Vis finished early and failed the tests in {_count(len(early), 'task')}",
-                len(early),
-                share(len(early)),
-                f"Vis ended these runs itself, without an error, after at most "
-                f"{_EARLY_STOP_SHARE:.0%} of the agent time limit. The median "
-                f"failed-tests run used {statistics.median(used):.0%}. Vis did not "
-                "check its work against the task before it finished.",
-                tuple(early),
-            )
-        )
-    timeouts = notes("agent_timeout")
-    near = sorted(
-        (
-            note
-            for note in [*failed, *errors, *timeouts]
-            if note.pass_ratio is not None
-            and note.pass_ratio >= _NEAR_MISS_RATIO
-            and note.pass_ratio < 1
-        ),
-        key=lambda note: -note.pass_ratio,
-    )
-    if near:
-        findings.append(
-            Finding(
-                "near_misses",
-                f"{_count(len(near), 'failed task')} passed at least "
-                f"{_NEAR_MISS_RATIO:.0%} of their verifier tests",
-                len(near),
-                share(len(near)),
-                "Rewards are all or nothing, so these close runs score zero. Read "
-                "their traces first. They overlap the other findings.",
-                tuple(near),
-            )
-        )
-    if timeouts:
-        findings.append(
-            Finding(
-                "agent_timeouts",
-                f"{_count(len(timeouts), 'task')} reached the agent time limit",
-                len(timeouts),
-                share(len(timeouts)),
-                "Harbor verified them after the timeout. Look in the trace for a loop "
-                "or a dead tool.",
-                tuple(timeouts),
-            )
-        )
-    repeated = data.get("repeated_final_errors") or ()
-    if repeated:
-        findings.append(
-            Finding(
-                "dead_tools",
-                f"{_count(len(repeated), 'attempt')} repeated one error until the end",
-                len(repeated),
-                share(len(repeated)),
-                "All last iterations failed the same way, for example "
-                "python-worker-retired after the sandbox Python worker exited. The "
-                "model kept calling a tool that could not work, for hours.",
-                tuple(
-                    TaskNote(
-                        _short(error.get("trial")).split("__", 1)[0],
-                        str(error.get("type")),
-                        "",
-                        None,
-                        None,
-                        None,
-                        error.get("iterations"),
-                    )
-                    for error in repeated
-                ),
-            )
-        )
-    unscored = tuple(map(_short, data.get("unscored_model_tasks") or ()))
-    if unscored:
-        findings.append(
-            Finding(
-                "unscored",
-                f"{_count(len(unscored), 'model attempt')} ended without a verifier result",
-                len(unscored),
-                share(len(unscored)),
-                "Infrastructure stopped these attempts, for example an out-of-memory "
-                "kill. Retry them with run('terminal-bench', retry_tasks=[...]). A "
-                "strict score counts them as failures.",
-                tuple(
-                    TaskNote(task, "unscored", "", None, None, None, None)
-                    for task in unscored
-                ),
-            )
-        )
-    full = solved + len(failed) + len(timeouts)
-    estimate = ""
-    if errors and full:
-        rate = solved / full
-        extra = rate * len(errors)
-        estimate = (
-            f"{solved} of {full} tasks with a full attempt passed ({rate:.0%}). At that "
-            f"rate, full attempts on the {_count(len(errors), 'Vis-error task')} would "
-            f"add about {extra:.1f} solved tasks: {_percent(solved + extra, scored)}% "
-            f"instead of {_percent(solved, scored)}%. This is an estimate, not a "
-            "measurement."
-        )
-    return Diagnosis(
-        scored, solved, tuple(findings), estimate, _label_check(data, labels, limits)
-    )
-
-
 def _post_json(url: str, payload: dict) -> dict:
     request = urllib.request.Request(
         url,
@@ -1886,7 +1499,7 @@ def _standing(
     if dataset_package != package or version.replace(".", "-") != name:
         return None
     total = int(data.get("total_dataset_tasks") or 0)
-    attempts = _task_attempts(data)
+    attempts = _bench.summary_attempts(data)
     units = [(sum(flags), len(flags)) for flags in attempts.values()]
     per_task = _mode([len(flags) for flags in attempts.values()]) or 1
     strict_units = units + [(0, per_task)] * max(0, total - len(units))
@@ -1900,7 +1513,7 @@ def _standing(
     tokens = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
     cost = _number(usage.get("estimated_metered_api_cost_usd"))
     hours = _number(usage.get("agent_hours"))
-    model = _trial_model(data)
+    model = _bench._model(data)
     same_model = [
         row
         for row in rows
@@ -2211,8 +1824,10 @@ def _trial_view(data: dict, task: str, round_name: str | None) -> TrialView:
     trial = _find_trial(data, task)
     name = str(trial.get("trial"))
     short = _short(trial.get("task"))
-    limits = _agent_limits()
-    note = _task_note(short, _attempt_outcome(trial), trial, limits.get(short))
+    limits = _limits()
+    note = _bench.task_note(
+        short, _bench.attempt_outcome(trial), trial, limits.get(short)
+    )
     result_path = Path(str(trial.get("result_path") or "result.json"))
     directory = _round_dir(round_name) / result_path.parent
     traces = [
@@ -2227,7 +1842,7 @@ def _trial_view(data: dict, task: str, round_name: str | None) -> TrialView:
         trial=name,
         round_name=round_name,
         outcome=note.outcome,
-        cause=_cause(trial, _dead_trials(data), limits),
+        cause=_bench.attempt_cause(trial, data, limits),
         reward=_number(trial.get("reward")),
         checks=note.checks,
         minutes=note.minutes,
@@ -2252,7 +1867,7 @@ def _save_label(
             f"the note has {len(note)} characters; the limit is {_NOTE_LIMIT}"
         )
     trial = _find_trial(data, task)
-    diagnosed = _cause(trial, _dead_trials(data), _agent_limits())
+    diagnosed = _bench.attempt_cause(trial, data, _limits())
     if diagnosed == "solved":
         raise ValueError(
             f"{trial.get('trial')} solved its task. Label only failed attempts."
@@ -3606,7 +3221,9 @@ class Evals:
         with your label() causes. With fewer than 30 labels or a kappa below 0.6,
         review the findings yourself.
         """
-        return _diagnosis(_summary(refresh, round_name), _labels(round_name))
+        return _bench.diagnose(
+            _summary(refresh, round_name), _labels(round_name), _limits()
+        )
 
     @vis.method(
         tag="external",

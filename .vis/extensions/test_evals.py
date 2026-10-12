@@ -1716,7 +1716,7 @@ def scenario_report(text, results):
 def test_activities_describe_empty_results():
     assert "No evaluation runs yet." in words(render("runs", ()))
     assert "No scenario matched." in words(render("scenarios", (), pattern="zzz"))
-    diagnosis = evals.Diagnosis(0, 0, (), "", evals._label_check({}, {}, {}))
+    diagnosis = evals.Diagnosis(0, 0, (), "", evals._bench.cause_check({}, {}, {}))
     view = render("diagnose", diagnosis)
     assert "No problem class found" in words(view)
     assert "0 labelled attempts. No labels yet." in words(view)
@@ -2056,9 +2056,3 @@ def test_label_stage_refuses_an_unknown_stage_trial_or_long_note(repo):
     with pytest.raises(ValueError, match="the limit is 500"):
         tools.label_stage(source.name, "edit-config__a1", "write", "x" * 501)
     assert not (source / "stage-labels.json").exists()
-
-
-def test_label_check_uses_the_sdk_agreement():
-    check = evals._label_check({"trials": ()}, {}, {})
-    assert isinstance(check, evals.Agreement)
-    assert "with label() before you trust these causes" in check.advice
