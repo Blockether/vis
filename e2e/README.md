@@ -125,12 +125,12 @@ Print only the completion status if you need confirmation.
 
 Run named cases with the command below; each model call incurs provider costs.
 The generator scripts are deterministic and run when the runner compiles the
-dataset. Read `results.json` and the per-case traces under `VIS_E2E_TRACES`
-for failures, not just the command's exit status. Passing cases demonstrate
+dataset. Read `results.json` under `VIS_E2E_RESULTS` and the trial files of the
+Harbor job for failures, not just the command's exit status. Passing cases demonstrate
 those tasks and routes, not universal reliability across models or prompts.
 
 ```sh
-VIS_E2E_TRACES=/tmp/vis_large_stdout VIS_PROVIDER=zai-coding-plan \
+VIS_E2E_RESULTS=/tmp/vis_large_stdout VIS_PROVIDER=zai-coding-plan \
 VIS_MODELS=glm-5.3-flash,glm-5.3 VIS_E2E_WORKERS=2 \
 uv run --project e2e python -m vis_harbor.run \
   stdout-goal-cache stdout-lookup-middle stdout-ledger-reduce stdout-jsonl-filter \
@@ -172,12 +172,12 @@ uv run --project e2e python -m vis_harbor.run
 Environment variables: `VIS_MODELS` (comma-separated models, default
 `VIS_MODEL`), `VIS_E2E_TIMEOUT` (agent timeout in seconds for each scenario),
 `VIS_E2E_WORKERS` (trials at the same time, default 5), `VIS_E2E_REPEATS` (positive
-repetitions per scenario/model, default 1) and `VIS_E2E_TRACES` (trace and
-measurement directory). Multiple-model trace names include `__<model>`; repeated
-runs add `__run<N>`. The Harbor dataset and jobs are in the `harbor` directory next
-to `VIS_E2E_TRACES`; each trial directory keeps the agent logs and the grade. Use a
-fresh trace directory for each comparison; a later invocation replaces its
-`results.json`.
+repetitions per scenario/model, default 1) and `VIS_E2E_RESULTS` (the directory
+of `results.json`). The Harbor dataset and jobs are in the `harbor` directory next
+to `VIS_E2E_RESULTS`. Each trial directory keeps the grade and the agent files:
+`trajectory.json` (the ATIF trajectory that the grader reads), `trace.jsonl` (the
+raw event stream), `stderr.txt` and `run.json`. Use a fresh results directory for
+each comparison; a later invocation replaces its `results.json`.
 
 `VIS_REASONING_EFFORT` optionally forwards an exact provider-native effort to
 `--reasoning-effort`. With it set, every run must report valid evaluation evidence
@@ -239,7 +239,7 @@ The project extension `.vis/extensions/evals.py` runs this runner from a Vis ses
 
 - `evals.scenarios()` lists the scenarios and their checks.
 - `evals.new_scenario(...)` creates `scenarios/<id>/scenario.json` and its `files/`.
-- `evals.run_scenarios(ids, models=[...])` starts a paid run in the background, with its own `VIS_E2E_TRACES` directory.
+- `evals.run_scenarios(ids, models=[...])` starts a paid run in the background, with its own `VIS_E2E_RESULTS` directory.
 - `evals.status()` and `evals.report()` read the run. The report lists each failed run with credentials redacted.
 - `evals.compare(baseline, candidate)` compares two scenario runs case by case.
 

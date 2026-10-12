@@ -5,7 +5,7 @@ Without ids, it runs every scenario. Each trial makes paid model calls.
 
 These variables set a run:
 
-    VIS_E2E_TRACES    directory for traces and results.json (default /tmp/vis_e2e/traces)
+    VIS_E2E_RESULTS   directory for results.json (default /tmp/vis_e2e/results)
     VIS_E2E_REPEATS   runs of each scenario on each model (default 1)
     VIS_E2E_WORKERS   trials that run at the same time (default 5)
     VIS_PROVIDER      provider of the models (default zai-coding-plan)
@@ -15,14 +15,16 @@ These variables set a run:
 
 The agent reads ``VIS_REASONING_EFFORT``, ``VIS_E2E_NATIVE_BIN``, ``VIS_E2E_CLOJURE``
 and ``VIS_PYTHON_NATIVE_PATH`` itself. The Harbor dataset and jobs are in the
-``harbor`` directory next to the trace directory. When a trial finishes, its trace
-goes to ``<traces>/<id>[__<model>][__run<n>].jsonl``. At the end,
-``<traces>/results.json`` holds the grade record of each run and the summaries.
+``harbor`` directory next to the results directory. Each trial directory of the job
+keeps the agent files, with the ATIF ``trajectory.json``, and the grade. At the end,
+``<results>/results.json`` holds the job directory, the grade record of each run and
+the summaries. ``seal.json`` in the job directory seals the run.
 """
 
 from __future__ import annotations
 
 import collections
+import hashlib
 import json
 import os
 import shutil
@@ -33,19 +35,23 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+from blockether.vis.evals import HarborTrial, read_trials, seal_round
+
 from vis_harbor import dataset
-from vis_harbor.agent import DEFAULT_MODEL, DEFAULT_PROVIDER, TRACE_FILE
+from vis_harbor.agent import DEFAULT_MODEL, DEFAULT_PROVIDER
 from vis_harbor.environment import VIS_ROOT
 from vis_harbor.grade import GRADE_FILE
 
 AGENT = "vis_harbor.agent:VisSourceAgent"
 ENVIRONMENT = "vis_harbor.environment:HostEnvironment"
-DEFAULT_TRACES = "/tmp/vis_e2e/traces"
+DEFAULT_RESULTS = "/tmp/vis_e2e/results"
 DEFAULT_WORKERS = 5
 RESULTS_FILE = "results.json"
+SEAL_FILE = "seal.json"
 POLL_SEC = 2.0
 
 
@@ -53,7 +59,7 @@ POLL_SEC = 2.0
 class Settings:
     """The settings of one run."""
 
-    traces: Path
+    results: Path
     repeats: int
     workers: int
     provider: str
@@ -81,7 +87,7 @@ def read_settings(env: Mapping[str, str]) -> Settings:
     model = (env.get("VIS_MODEL") or "").strip() or DEFAULT_MODEL
     models = env.get("VIS_MODELS") or model
     return Settings(
-        traces=Path(env.get("VIS_E2E_TRACES") or DEFAULT_TRACES),
+        results=Path(env.get("VIS_E2E_RESULTS") or DEFAULT_RESULTS),
         repeats=_positive_int(env, "VIS_E2E_REPEATS", 1),
         workers=_positive_int(env, "VIS_E2E_WORKERS", DEFAULT_WORKERS),
         provider=(env.get("VIS_PROVIDER") or "").strip() or DEFAULT_PROVIDER,
@@ -133,46 +139,13 @@ def harbor_command(
     ]
 
 
-def trace_tag(settings: Settings, scenario_id: str, model: str, repeat: int) -> str:
-    """Return the trace file name of one run, without ``.jsonl``."""
-    tag = scenario_id + (f"__{model}" if len(settings.models) > 1 else "")
-    return tag + (f"__run{repeat}" if settings.repeats > 1 else "")
-
-
-@dataclass(frozen=True, slots=True)
-class Trial:
-    """One finished Harbor trial."""
-
-    directory: Path
-    scenario_id: str
-    model: str
-    finished_at: str
-    exception_type: str | None
-
-
-def finished_trials(job_dir: Path) -> list[Trial]:
+def finished_trials(job_dir: Path) -> list[HarborTrial]:
     """Return the finished trials of the Harbor job in ``job_dir``, in finish order."""
-    trials = []
-    for result_path in job_dir.glob("*/result.json"):
-        try:
-            result = json.loads(result_path.read_text())
-        except (OSError, ValueError):
-            continue
-        if not result.get("finished_at"):
-            continue
-        agent = (result.get("config") or {}).get("agent") or {}
-        route = agent.get("model_name") or ""
-        exception = result.get("exception_info") or {}
-        trials.append(
-            Trial(
-                directory=result_path.parent,
-                scenario_id=result.get("task_name") or "",
-                model=route.partition("/")[2] or route,
-                finished_at=str(result["finished_at"]),
-                exception_type=exception.get("exception_type"),
-            )
-        )
-    return sorted(trials, key=lambda trial: (trial.finished_at, trial.directory.name))
+    try:
+        trials = read_trials(job_dir)
+    except FileNotFoundError:
+        return []
+    return sorted(trials, key=lambda trial: (trial.finished_at or "", trial.trial))
 
 
 def failure_record(
@@ -219,7 +192,7 @@ def failure_record(
 
 
 class Collector:
-    """Keep the trace and the grade record of each finished trial of a job."""
+    """Keep the grade record of each finished trial of a job."""
 
     def __init__(
         self,
@@ -234,35 +207,27 @@ class Collector:
         self._runs: collections.Counter[tuple[str, str]] = collections.Counter()
 
     def collect(self) -> None:
-        """Copy the trace and read the grade of each newly finished trial."""
+        """Read the grade of each newly finished trial."""
         for trial in finished_trials(self.job_dir):
-            scenario = self.scenarios.get(trial.scenario_id)
-            if trial.directory in self.records or scenario is None:
+            directory = trial.path.parent
+            scenario = self.scenarios.get(trial.task)
+            if directory in self.records or scenario is None:
                 continue
-            self._runs[trial.scenario_id, trial.model] += 1
-            repeat = self._runs[trial.scenario_id, trial.model]
-            self.settings.traces.mkdir(parents=True, exist_ok=True)
-            tag = trace_tag(self.settings, trial.scenario_id, trial.model, repeat)
-            trace = trial.directory / "agent" / TRACE_FILE
-            target = self.settings.traces / f"{tag}.jsonl"
-            if trace.is_file():
-                shutil.copyfile(trace, target)
-            else:
-                target.write_text("")
+            model = trial.model.partition("/")[2] or trial.model
+            self._runs[trial.task, model] += 1
+            repeat = self._runs[trial.task, model]
             try:
-                record = json.loads(
-                    (trial.directory / "verifier" / GRADE_FILE).read_text()
-                )
+                record = json.loads((directory / "verifier" / GRADE_FILE).read_text())
             except (OSError, ValueError):
-                cause = trial.exception_type or "no verifier result"
+                cause = trial.error or "no verifier result"
                 message = f"Harbor trial has no grade: {cause}"
                 record = failure_record(
-                    scenario, self.settings.provider, trial.model, message
+                    scenario, self.settings.provider, model, message
                 )
             record["provider"] = record.get("provider") or self.settings.provider
-            record["model"] = record.get("model") or trial.model
+            record["model"] = record.get("model") or model
             record["repeat"] = repeat
-            self.records[trial.directory] = record
+            self.records[directory] = record
 
     def results(self) -> list[dict[str, Any]]:
         """Return all records, with a failure record for each run without a trial."""
@@ -421,8 +386,66 @@ def print_table(
             print(
                 f"    aggregate cached-input share={summary['cached_input_percent']}%; wall median={summary['wall']['median']}s"
             )
-    print(f"Full measurements: {settings.traces / RESULTS_FILE}")
+    print(f"Full measurements: {settings.results / RESULTS_FILE}")
     return gated == len(by_scn)
+
+
+def _git(*args: str) -> str:
+    """Return the output of a git command in the Vis repository, or "" on failure."""
+    result = subprocess.run(
+        ["git", "-C", str(VIS_ROOT), *args], capture_output=True, text=True, check=False
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def run_record(
+    settings: Settings, scenario_ids: Sequence[str], started_at: str
+) -> dict[str, Any]:
+    """Return the run record of the seal: commit, pins, profile and artifact digests."""
+    native = Path(settings.native_bin) if settings.native_bin else None
+    return {
+        "started_at": started_at,
+        "commit": _git("rev-parse", "HEAD") or None,
+        "dirty": bool(_git("status", "--porcelain")),
+        "pins": {
+            "harbor": metadata.version("harbor"),
+            "vis_agent": metadata.version("vis-agent"),
+        },
+        "profiles": {
+            "agent": AGENT,
+            "provider": settings.provider,
+            "models": list(settings.models),
+            "reasoning_effort": settings.reasoning_effort,
+            "timeout_sec": settings.timeout_sec,
+            "repeats": settings.repeats,
+        },
+        "artifacts": (
+            {native.name: _file_sha256(native)} if native and native.is_file() else {}
+        ),
+        "tasks": list(scenario_ids),
+        "parallel": settings.workers,
+    }
+
+
+def write_seal(job_dir: Path, record: Mapping[str, Any]) -> Path | None:
+    """Write the seal of a Harbor job once: its run record and one row for each trial.
+
+    Return the seal file, or None when the job has no directory or a seal already.
+    """
+    path = job_dir / SEAL_FILE
+    if not job_dir.is_dir() or path.exists():
+        return None
+    seal = seal_round(job_dir.name, [record], read_trials(job_dir), job_dir)
+    path.write_text(json.dumps(seal, indent=2) + "\n")
+    return path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -437,7 +460,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not scenarios:
         print(f"no scenarios found under {dataset.SCENARIO_ROOT}", file=sys.stderr)
         return 2
-    harbor_dir = settings.traces.parent / "harbor"
+    harbor_dir = settings.results.parent / "harbor"
     dataset_dir = harbor_dir / "dataset"
     shutil.rmtree(dataset_dir, ignore_errors=True)
     dataset.compile_dataset(dataset_dir, ids, agent_timeout_sec=settings.timeout_sec)
@@ -461,15 +484,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"(repeats={settings.repeats}, workers={settings.workers}, {timeout})\n",
         flush=True,
     )
+    record = run_record(
+        settings,
+        [scenario.scenario_id for scenario in scenarios],
+        datetime.now(UTC).isoformat(),
+    )
     collector = Collector(settings, scenarios, jobs_dir / job_name)
     code = run_job(command, collector)
     if code:
         print(f"warning: harbor exited {code}", file=sys.stderr)
+    write_seal(jobs_dir / job_name, record)
     results = collector.results()
     summaries = summarize_results(results)
-    settings.traces.mkdir(parents=True, exist_ok=True)
-    (settings.traces / RESULTS_FILE).write_text(
-        json.dumps({"runs": results, "summaries": summaries}, indent=2) + "\n"
+    settings.results.mkdir(parents=True, exist_ok=True)
+    (settings.results / RESULTS_FILE).write_text(
+        json.dumps(
+            {
+                "job_dir": str(jobs_dir / job_name),
+                "runs": results,
+                "summaries": summaries,
+            },
+            indent=2,
+        )
+        + "\n"
     )
     return 0 if print_table(settings, results, summaries) else 1
 

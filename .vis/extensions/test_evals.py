@@ -129,7 +129,7 @@ def launch(kind, code, *, with_results=False, expected_runs=None):
         argv=[sys.executable, "-c", code],
         cwd=run_dir,
         env=dict(os.environ),
-        results_path=run_dir / "traces" / "results.json" if with_results else None,
+        results_path=run_dir / "results" / "results.json" if with_results else None,
         expected_runs=expected_runs,
     )
     return run, run_dir
@@ -285,9 +285,9 @@ def test_run_scenarios_starts_the_runner_with_its_route(repo, monkeypatch):
         4,
     )
     assert call["label"] == "1 scenario on zai-coding-plan / glm-a, glm-b, 2 repeats"
-    assert call["results_path"] == run_dir / "traces" / "results.json"
+    assert call["results_path"] == run_dir / "results" / "results.json"
     route = {
-        "VIS_E2E_TRACES": str(run_dir / "traces"),
+        "VIS_E2E_RESULTS": str(run_dir / "results"),
         "VIS_E2E_REPEATS": "2",
         "VIS_E2E_WORKERS": "1",
         "VIS_PROVIDER": "zai-coding-plan",
@@ -336,10 +336,15 @@ def test_launched_run_finishes_with_its_exit_code_log_and_progress(repo):
         3,
         True,
     )
+    assert tools.status(run.run_id).progress == (
+        "0 of 2 scenario runs finished, without results.json"
+    )
+    trial = {"task_name": "a", "trial_name": "a__1", "finished_at": "2026-10-12T00:00Z"}
+    write_json(run_dir / "harbor" / "jobs" / "e2e-1" / "a__1" / "result.json", trial)
     status = tools.status(run.run_id[:-2])
     assert status.run == done
     assert status.log_tail == ("hello from the runner",)
-    assert status.progress == "0 of 2 scenario runs finished, without results.json"
+    assert status.progress == "1 of 2 scenario runs finished, without results.json"
     assert [item.run_id for item in tools.runs()] == [run.run_id]
     assert render("status", status).summary.startswith(f"{run.run_id} · finished")
 
@@ -454,7 +459,7 @@ def test_report_reads_a_finished_run_and_redacts_failures(repo, monkeypatch):
     finish(run_dir)
     with pytest.raises(FileNotFoundError, match="finished and has no results yet"):
         tools.report()
-    write_json(run_dir / "traces" / "results.json", RESULTS)
+    write_json(run_dir / "results" / "results.json", RESULTS)
     report = tools.report()
     assert (report.run_id, report.total_runs, report.passed_runs, report.is_passed) == (
         run.run_id,
@@ -1172,21 +1177,14 @@ def test_redaction_hides_credentials_but_keeps_short_numbers(monkeypatch):
     assert evals._redact(text) == "key [REDACTED], delay 35 ms, short"
 
 
-def test_statistics_match_known_values():
-    # Wilson intervals of 2/6 and 0/10, as statistics tables give them.
-    assert evals._wilson(2, 6) == (9.7, 70.0)
-    assert evals._wilson(0, 10) == (0.0, 27.8)
-    assert evals._wilson(0, 0) is None
-    # Repeats that always agree count as one run; mixed repeats count in full.
-    assert evals._effective_size([(2, 2), (0, 2)]) == 2.0
-    assert evals._effective_size([(1, 2), (1, 2)]) == 4.0
-    # 100 independent runs at 50% detect a change of about 20 points with 80% power.
-    assert evals._detectable_change([(1, 1)] * 50 + [(0, 1)] * 50) == 19.4
-    assert evals._detectable_change([]) is None
-    # 3 of 10 paired cases broke, but the interval still includes zero.
-    assert evals._paired_change([-1.0] * 3 + [0.0] * 7) == ((-54.4, 4.4), 42.1)
-    assert evals._kappa([("a", "a"), ("a", "a"), ("b", "b"), ("a", "b")]) == 0.5
-    assert evals._kappa([("a", "a"), ("a", "a")]) is None
+def test_the_extension_imports_the_sdk_statistics_from_the_repository():
+    assert Path(evals._stats.__file__) == evals.SDK_EVALS / "stats.py"
+    assert Path(evals._harbor.__file__) == evals.SDK_EVALS / "harbor.py"
+    # Reference values: SciPy binomtest and statsmodels multipletests.
+    assert evals._stats.mcnemar_exact(1, 8) == 0.0390625
+    assert evals._stats.benjamini_hochberg([0.01, 0.04, 0.03, 0.005]) == pytest.approx(
+        [0.02, 0.04, 0.04, 0.02]
+    )
 
 
 def scenario_results(outcomes):
@@ -1210,18 +1208,51 @@ def scenario_results(outcomes):
     }
 
 
+def harbor_trial(job, task, reward, *, agent="vis-source", model="zai/glm", index=0):
+    """Write one Harbor trial result into a job directory."""
+    name = f"{task.rpartition('/')[2]}__{agent}__{index}"
+    write_json(
+        job / name / "result.json",
+        {
+            "task_name": task,
+            "trial_name": name,
+            "config": {"agent": {"model_name": model}},
+            "agent_info": {"name": agent},
+            "verifier_result": None
+            if reward is None
+            else {"rewards": {"reward": reward}},
+            "started_at": "2026-01-01T00:00:00Z",
+            "finished_at": "2026-01-01T00:01:00Z",
+        },
+    )
+
+
+def scenario_run(outcomes, model="glm"):
+    """Finish a scenario run whose Harbor job has {scenario: (passed, runs)} on zai."""
+    run, run_dir = launch("scenarios", "raise SystemExit(0)", with_results=True)
+    finish(run_dir)
+    job = run_dir / "harbor" / "jobs" / "e2e-1"
+    for name, (passed, runs) in outcomes.items():
+        for index in range(runs):
+            harbor_trial(
+                job, name, float(index < passed), model=f"zai/{model}", index=index
+            )
+    write_json(
+        run_dir / "results" / "results.json",
+        scenario_results(outcomes) | {"job_dir": str(job)},
+    )
+    return run, run_dir
+
+
 def test_compare_pairs_scenario_runs_case_by_case(repo):
     names = [f"case-{index:02d}" for index in range(12)]
     baseline = dict.fromkeys(names, (2, 2))
     # The candidate breaks 8 cases and adds one case that the baseline did not run.
     candidate = {name: (0, 2) if name < "case-08" else (2, 2) for name in names}
     candidate["case-12"] = (1, 2)
-    run_ids = []
-    for outcomes in (baseline, candidate, baseline):
-        run, run_dir = launch("scenarios", "raise SystemExit(0)", with_results=True)
-        finish(run_dir)
-        write_json(run_dir / "traces" / "results.json", scenario_results(outcomes))
-        run_ids.append(run.run_id)
+    run_ids = [
+        scenario_run(outcomes)[0].run_id for outcomes in (baseline, candidate, baseline)
+    ]
     comparison = tools.compare(*run_ids[:2])
     assert (comparison.kind, comparison.paired_cases, comparison.unpaired) == (
         "scenarios",
@@ -1238,17 +1269,26 @@ def test_compare_pairs_scenario_runs_case_by_case(repo):
         comparison.detectable_change_points,
         comparison.verdict,
     ) == ((-86.6, -27.7), 42.1, "worse")
-    assert comparison.worse[0] == evals.CaseChange("case-00 (zai/glm)", "2/2", "0/2")
+    route = "vis-source with zai/glm"
+    assert comparison.worse[0] == evals.CaseChange(f"case-00 ({route})", "2/2", "0/2")
     assert (len(comparison.worse), comparison.better) == (8, ())
+    # 8 cases broke and none got better: the exact McNemar p-value is 2 / 2**8.
+    assert comparison.p_value == 2 / 2**8
+    assert comparison.routes == (evals.RouteTest(route, 12, 8, 0, 2 / 2**8, 2 / 2**8),)
     assert comparison.baseline_version == "unknown"
     assert "1 case ran on one side only." in " ".join(comparison.caveats)
     view = render("compare", comparison)
     assert view.verdict == "failed"
     assert view.summary.endswith(": worse (-66.7 points)")
     assert "95% interval -86.6 to -27.7" in words(view)
+    assert "Exact McNemar test: p = 0.00781." in words(view)
     # A rerun of the baseline shows no measurable difference.
     same = tools.compare(run_ids[0], run_ids[2])
-    assert (same.verdict, same.difference_points) == ("no measurable difference", 0.0)
+    assert (same.verdict, same.difference_points, same.p_value) == (
+        "no measurable difference",
+        0.0,
+        1.0,
+    )
     assert render("compare", same).verdict == "passed"
     with pytest.raises(ValueError, match="compare two different results"):
         tools.compare(run_ids[0], run_ids[0])
@@ -1263,13 +1303,29 @@ def test_compare_pairs_scenario_runs_case_by_case(repo):
     assert "(pass^2)" in words(render("report", report))
 
 
+def test_compare_pairs_runs_on_two_routes_by_scenario(repo):
+    outcomes = {f"case-{index:02d}": (1, 1) for index in range(4)}
+    first = scenario_run(outcomes)[0].run_id
+    second = scenario_run(outcomes | {"case-00": (0, 1)}, model="glm-next")[0].run_id
+    comparison = tools.compare(first, second)
+    assert (comparison.paired_cases, comparison.unpaired) == (4, 0)
+    assert comparison.worse == (evals.CaseChange("case-00", "1/1", "0/1"),)
+    assert [test.route for test in comparison.routes] == [
+        "vis-source with zai/glm against vis-source with zai/glm-next"
+    ]
+    assert "The sides used different routes" in " ".join(comparison.caveats)
+    # A run from before the Harbor runner has no Harbor job to compare.
+    run, run_dir = launch("scenarios", "raise SystemExit(0)", with_results=True)
+    finish(run_dir)
+    write_json(run_dir / "results" / "results.json", scenario_results(outcomes))
+    with pytest.raises(FileNotFoundError, match="has no Harbor job"):
+        tools.compare(first, run.run_id)
+
+
 def test_compare_names_one_version_only_when_a_build_or_clean_commit_names_it(repo):
     run_ids = []
     for build in (None, None, "b" * 64, "b" * 64):
-        run, run_dir = launch("scenarios", "raise SystemExit(0)", with_results=True)
-        finish(run_dir)
-        outcomes = {f"case-{index:02d}": (1, 1) for index in range(4)}
-        write_json(run_dir / "traces" / "results.json", scenario_results(outcomes))
+        run, run_dir = scenario_run({f"case-{index:02d}": (1, 1) for index in range(4)})
         meta = evals._meta(run_dir)
         meta.update(vis_commit="a" * 40, is_dirty=True, build_sha256=build)
         write_json(run_dir / "run.json", meta)
@@ -1282,49 +1338,78 @@ def test_compare_names_one_version_only_when_a_build_or_clean_commit_names_it(re
     assert "same Vis version" in " ".join(tools.compare(*run_ids[2:]).caveats)
 
 
-def test_compare_pairs_benchmark_rounds_by_task(repo):
-    runs = evals.BENCH / "runs"
-    write_json(runs / "summary.json", summary_data())
+def bench_round(name, outcomes, build):
+    """Write a benchmark round with {(agent, task): reward} and its run record."""
+    directory = evals.BENCH.parent / "jobs" / name
+    for (agent, task), reward in outcomes.items():
+        job = directory / f"{agent}__openai__{task}"
+        harbor_trial(
+            job, f"terminal-bench/{task}", reward, agent=agent, model="openai/gpt"
+        )
     write_json(
-        runs / "provenance.json", {"bundle_sha256": "a" * 64, "source_commit": "b" * 40}
+        directory / "ctb-runs.json",
+        [{"commit": "h" * 40, "dirty": False, "vis": {"build": build}}],
     )
-    round_runs = evals.BENCH / "rounds" / "glm-k2" / "runs"
-    write_json(
-        round_runs / "provenance.json",
-        {"bundle_sha256": "c" * 64, "vis_commit": "d" * 40, "is_dirty": True},
-    )
-    later = "2026-01-03T00:00:00"
-    trials = [
-        trial("alpha", seconds=60, tests=(5, 5)),
-        trial("alpha", seconds=60, tests=(5, 5), finished=later),
-        trial("gamma", seconds=60, tests=(10, 10)),
-        trial("gamma", seconds=60, tests=(9, 10), finished=later),
-        trial("kappa", seconds=60, tests=(1, 1)),
-    ]
-    write_json(round_runs / "summary.json", summary_data() | {"trials": trials})
-    comparison = tools.compare("bench", "bench:glm-k2")
-    # alpha and gamma ran in both rounds; five tasks ran in one round only.
-    assert (comparison.kind, comparison.paired_cases, comparison.unpaired) == (
-        "bench",
-        2,
-        5,
-    )
+    return directory
+
+
+def test_compare_pairs_benchmark_rounds_by_task_and_route(repo):
+    tasks = ("alpha", "beta", "gamma", "delta", "omega")
+    # vis-solo starts to pass all five tasks, and vis-team breaks beta.
+    first = {("vis-solo", task): 0.0 for task in tasks}
+    first |= {("vis-team", task): 1.0 for task in tasks}
+    second = dict.fromkeys(first, 1.0) | {("vis-team", "beta"): 0.0}
+    # kappa ran in the first round only. A trial without a reward does not count.
+    first[("vis-solo", "kappa")] = 1.0
+    second[("vis-team", "lambda")] = None
+    old = bench_round("r1", first, {"commit": "b" * 40, "sha256": "a" * 64})
+    bench_round("r2", second, {"commit": "d" * 40, "sha256": "c" * 64})
+    os.utime(old, (1, 1))
+    # `bench` is the newest round.
+    comparison = tools.compare("bench:r1", "bench")
+    assert (
+        comparison.kind,
+        comparison.candidate,
+        comparison.paired_cases,
+        comparison.unpaired,
+    ) == ("bench", "bench:r2", 10, 1)
     assert (
         comparison.baseline_rate_percent,
         comparison.candidate_rate_percent,
         comparison.difference_points,
-        comparison.verdict,
-    ) == (50.0, 75.0, 25.0, "no measurable difference")
-    assert comparison.better == (evals.CaseChange("gamma", "0/2", "1/2"),)
-    assert comparison.baseline_version == f"commit {'b' * 12}, build {'a' * 12}"
-    assert comparison.candidate_version == (
-        f"commit {'d' * 12} with uncommitted changes, build {'c' * 12}"
+    ) == (50.0, 90.0, 40.0)
+    # Five cases got better and one got worse: p = 2 * (1 + 6) / 2**6.
+    assert comparison.p_value == 14 / 64
+    solo, team = comparison.routes
+    assert (solo.route, solo.paired_cases, solo.worse, solo.better, solo.p_value) == (
+        "vis-solo with openai/gpt",
+        5,
+        0,
+        5,
+        2 / 2**5,
     )
-    assert any("candidate ran with uncommitted" in note for note in comparison.caveats)
+    assert (team.route, team.worse, team.better, team.p_value) == (
+        "vis-team with openai/gpt",
+        1,
+        0,
+        1.0,
+    )
+    # Benjamini-Hochberg over the two routes doubles the smaller p-value.
+    assert (solo.q_value, team.q_value) == (2 * 2 / 2**5, 1.0)
+    assert comparison.worse == (
+        evals.CaseChange(
+            "terminal-bench/beta (vis-team with openai/gpt)", "1/1", "0/1"
+        ),
+    )
+    assert comparison.baseline_version == f"commit {'b' * 12}, build {'a' * 12}"
+    assert comparison.candidate_version == f"commit {'d' * 12}, build {'c' * 12}"
+    assert "Routes: 2" in words(render("compare", comparison))
     with pytest.raises(LookupError, match="Name a benchmark round as 'bench'"):
         tools.compare("bench", "missing")
     with pytest.raises(LookupError, match="no benchmark round"):
         tools.compare("bench", "bench:other")
+    with pytest.raises(ValueError, match="not one of each"):
+        tools.compare("bench", scenario_run({"alpha": (1, 1)})[0].run_id)
 
 
 def test_trial_shows_an_attempt_and_label_records_its_cause(repo):
@@ -1561,6 +1646,8 @@ def test_activities_stay_within_portable_limits():
             difference_ci95=(-50.0, 50.0),
             verdict=text,
             detectable_change_points=90.0,
+            p_value=1.0,
+            routes=(evals.RouteTest(text, 1, 0, 0, 1.0, 1.0),) * 30,
             worse=(change,) * 30,
             better=(change,) * 30,
             unpaired=1,

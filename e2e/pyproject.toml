@@ -11,7 +11,7 @@ name = "vis-e2e"
 version = "0.0.0"
 description = "Run the Vis e2e scenarios as a Harbor dataset on the host."
 requires-python = ">=3.12"
-dependencies = ["harbor==0.23.0", "vis-agent"]
+dependencies = ["harbor==0.24.0", "vis-agent"]
 
 [dependency-groups]
 dev = ["pytest>=8"]

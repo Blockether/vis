@@ -31,7 +31,8 @@ The first Terminal-Bench 4.0 run of Vis taught these rules, and the code enforce
   TOKEN, SECRET, PASSWORD or CREDENTIAL, with at least 8 characters, not only digits.
 
 Run records live in ~/.vis/evals/runs/<run_id>/, or under VIS_EVALS_HOME: run.json,
-output.log, exit_code and, for scenario runs, traces/results.json. A named round keeps
+output.log, exit_code and, for scenario runs, results/results.json and the Harbor job
+under harbor/jobs/. A named round keeps
 its jobs/ and runs/ in terminal_bench/rounds/<round>/. Its runs/ holds
 summary.json, provenance.json and the human labels in labels.json.
 """
@@ -39,8 +40,8 @@ summary.json, provenance.json and the human labels in labels.json.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
-import math
 import os
 import re
 import shlex
@@ -48,6 +49,7 @@ import shutil
 import signal
 import statistics
 import subprocess
+import sys
 import time
 import tomllib
 import urllib.request
@@ -56,6 +58,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 
 import blockether.vis.extension as vis
 
@@ -63,6 +66,7 @@ REPO = Path(__file__).resolve().parents[2]
 SCENARIOS = REPO / "e2e" / "scenarios"
 E2E_PROJECT = REPO / "e2e"
 E2E_RUNNER = "vis_harbor.run"
+SDK_EVALS = REPO / "packages" / "vis-agent" / "src" / "blockether" / "vis" / "evals"
 BENCH = Path(
     os.environ.get("VIS_TERMINAL_BENCH")
     or Path.home() / "curated-terminal-benchmark" / "terminal_bench"
@@ -93,9 +97,6 @@ _EXIT_SCRIPT = (
 _EARLY_STOP_SHARE = 0.25
 _NEAR_MISS_RATIO = 0.8
 _TAIL_LINES = 20
-# A two-sided 5% test, and the normal quantile for 80% power.
-_Z95 = 1.959964
-_Z_POWER = 0.841621
 _MIN_LABELS = 30
 _KAPPA_REVIEW = 0.6
 _KAPPA_TRUST = 0.8
@@ -109,6 +110,30 @@ _CAUSES = (
     "other",
 )
 _CHILDREN: dict[str, subprocess.Popen] = {}
+_SDK_PACKAGE = "_vis_evals_sdk"
+
+
+def _load_sdk() -> tuple[ModuleType, ModuleType]:
+    """Import the `harbor` and `stats` modules of `blockether.vis.evals` from this repository.
+
+    An extension context holds only `blockether.vis.extension`. These two modules use
+    only the standard library, so the extension imports them from the SDK source under
+    a private package name. Each load of the extension imports them again.
+    """
+    for name in [
+        name for name in sys.modules if name.partition(".")[0] == _SDK_PACKAGE
+    ]:
+        del sys.modules[name]
+    package = ModuleType(_SDK_PACKAGE)
+    package.__path__ = [str(SDK_EVALS)]
+    sys.modules[_SDK_PACKAGE] = package
+    return (
+        importlib.import_module(f"{_SDK_PACKAGE}.harbor"),
+        importlib.import_module(f"{_SDK_PACKAGE}.stats"),
+    )
+
+
+_harbor, _stats = _load_sdk()
 
 
 @dataclass(frozen=True)
@@ -471,16 +496,36 @@ class CaseChange:
 
 
 @dataclass(frozen=True)
+class RouteTest:
+    """The exact McNemar test of the paired cases of one route.
+
+    A route is one agent with one model. `worse` and `better` count the cases whose pass
+    rate fell or rose. `p_value` is the two-sided exact p-value. `q_value` is its
+    Benjamini-Hochberg value over all routes of the comparison.
+    """
+
+    route: str
+    paired_cases: int
+    worse: int
+    better: int
+    p_value: float
+    q_value: float
+
+
+@dataclass(frozen=True)
 class Comparison:
     """A paired comparison of two evaluation results over the cases that both ran.
 
-    A case is a scenario on one route, or a benchmark task. The rates are the mean pass
-    rates of the paired cases, in percent. `difference_ci95` is the Agresti-Min 95%
-    interval of the paired difference, in points. `verdict` is `better` or `worse` only
-    when that interval excludes zero, else `no measurable difference`. At this case
-    count, a true change of `detectable_change_points` or more shows with 80% power.
-    `worse` and `better` list the changed cases, largest change first. `unpaired`
-    counts cases on one side only; the comparison leaves them out.
+    Each side is a Harbor job or a round of jobs. A case is a scenario or a benchmark
+    task with one agent and one model. The rates are the mean pass rates of the paired
+    cases, in percent. `difference_ci95` is the Agresti-Min 95% interval of the paired
+    difference, in points. `verdict` is `better` or `worse` only when that interval
+    excludes zero, else `no measurable difference`. At this case count, a true change of
+    `detectable_change_points` or more shows with 80% power. `p_value` is the two-sided
+    exact McNemar p-value of the changed cases. With repeats, it is the exact sign test
+    of the case changes. `routes` holds this test for each route. `worse` and `better`
+    list the changed cases, largest change first. `unpaired` counts cases on one side
+    only; the comparison leaves them out.
     """
 
     kind: str
@@ -495,6 +540,8 @@ class Comparison:
     difference_ci95: tuple[float, float]
     verdict: str
     detectable_change_points: float
+    p_value: float
+    routes: tuple[RouteTest, ...]
     worse: tuple[CaseChange, ...]
     better: tuple[CaseChange, ...]
     unpaired: int
@@ -594,112 +641,19 @@ def _short(task: object) -> str:
     return str(task).rsplit("/", 1)[-1]
 
 
-def _wilson(
-    passed: int, runs: int, size: float | None = None
+def _percent_interval(
+    interval: tuple[float, float] | None,
 ) -> tuple[float, float] | None:
-    """Give the 95% Wilson interval of a pass rate, in percent, or None without runs.
-
-    `size` replaces the run count when the runs are not independent.
-    """
-    size = runs if size is None else size
-    if not runs or size <= 0:
+    """Give an interval of fractions in percent, rounded to 0.1."""
+    if interval is None:
         return None
-    rate = passed / runs
-    spread = _Z95**2 / size
-    center = (rate + spread / 2) / (1 + spread)
-    half = _Z95 * math.sqrt(rate * (1 - rate) / size + spread / size / 4) / (1 + spread)
-    return round(max(0.0, center - half) * 100, 1), round(
-        min(1.0, center + half) * 100, 1
-    )
+    low, high = interval
+    return round(low * 100, 1), round(high * 100, 1)
 
 
-def _effective_size(units: list[tuple[int, int]]) -> float:
-    """Shrink the run count of clustered pass/fail results by their design effect.
-
-    Each unit is (passed, runs) of one task or scenario route. The repeats of one unit
-    are not independent, so the size stays between the unit count and the run count.
-    Without any variation, it is the unit count.
-    """
-    units = [(passed, runs) for passed, runs in units if runs]
-    count = len(units)
-    total = sum(runs for _, runs in units)
-    if count < 2 or total == count:
-        return float(total)
-    rate = sum(passed for passed, _ in units) / total
-    if rate in (0, 1):
-        return float(count)
-    spread = sum((passed - rate * runs) ** 2 for passed, runs in units)
-    variance = count / (count - 1) * spread / total**2
-    if not variance:
-        return float(total)
-    return min(float(total), max(float(count), rate * (1 - rate) / variance))
-
-
-def _interval(units: list[tuple[int, int]]) -> tuple[float, float] | None:
-    """Give the 95% interval of the pooled pass rate of clustered units, in percent."""
-    passed = sum(passed for passed, _ in units)
-    return _wilson(passed, sum(runs for _, runs in units), _effective_size(units))
-
-
-def _detectable_change(units: list[tuple[int, int]]) -> float | None:
-    """Give the smallest change, in points, that a second run of this size detects.
-
-    The test compares two independent runs of the same size, two-sided at the 5% level
-    with 80% power. None means that no change within 0-100% is detectable.
-    """
-    total = sum(runs for _, runs in units)
-    if not total:
-        return None
-    rate = sum(passed for passed, _ in units) / total
-    size = _effective_size(units)
-
-    def detects(other: float) -> bool:
-        pooled = (rate + other) / 2
-        noise = _Z95 * math.sqrt(2 * pooled * (1 - pooled) / size)
-        power = _Z_POWER * math.sqrt((rate * (1 - rate) + other * (1 - other)) / size)
-        return abs(other - rate) >= noise + power
-
-    smallest = None
-    for sign in (1, -1):
-        for step in range(1, 1001):
-            other = rate + sign * step / 1000
-            if not 0 <= other <= 1:
-                break
-            if detects(other):
-                smallest = step if smallest is None else min(smallest, step)
-                break
-    return round(smallest / 10, 1) if smallest is not None else None
-
-
-def _paired_change(changes: list[float]) -> tuple[tuple[float, float], float]:
-    """Give the Agresti-Min 95% interval of a mean paired change and its floor.
-
-    Each change is the candidate pass rate of one case minus its baseline pass rate.
-    The floor is the smallest true change that this many cases detect with 80% power.
-    Both are in points.
-    """
-    count = len(changes)
-    mean = sum(changes) / (count + 2)
-    square = (sum(change * change for change in changes) + 1) / (count + 2)
-    error = math.sqrt(max(0.0, square - mean * mean) / (count + 2))
-    low, high = mean - _Z95 * error, mean + _Z95 * error
-    return (round(low * 100, 1), round(high * 100, 1)), round(
-        (_Z95 + _Z_POWER) * error * 100, 1
-    )
-
-
-def _kappa(pairs: list[tuple[str, str]]) -> float | None:
-    """Give Cohen's kappa of two raters over the same items, or None when undefined."""
-    if not pairs:
-        return None
-    count = len(pairs)
-    observed = sum(first == second for first, second in pairs) / count
-    firsts = Counter(first for first, _ in pairs)
-    seconds = Counter(second for _, second in pairs)
-    expected = sum(firsts[cause] * seconds[cause] for cause in firsts) / count**2
-    if expected >= 1:
-        return None
-    return round((observed - expected) / (1 - expected), 3)
+def _points(change: float | None) -> float | None:
+    """Give a change of a fraction in points, rounded to 0.1."""
+    return None if change is None else round(change * 100, 1)
 
 
 def _mode(values: list[int]) -> int:
@@ -1322,15 +1276,15 @@ def _bench_report(
         scored_tasks=scored,
         solved_tasks=solved,
         pass_rate_percent=_percent(solved, scored),
-        pass_rate_ci95=_wilson(solved, scored),
+        pass_rate_ci95=_percent_interval(_stats.wilson_interval(solved, scored)),
         strict_pass_rate_percent=_percent(solved, total),
-        strict_pass_rate_ci95=_wilson(solved, total),
+        strict_pass_rate_ci95=_percent_interval(_stats.wilson_interval(solved, total)),
         attempts_per_task=per_task,
         scored_attempts=scored_attempts,
         solved_attempts=solved_attempts,
         attempt_pass_rate_percent=_percent(solved_attempts, scored_attempts),
-        attempt_pass_rate_ci95=_interval(units),
-        detectable_change_points=_detectable_change(units),
+        attempt_pass_rate_ci95=_percent_interval(_stats.cluster_interval(units)),
+        detectable_change_points=_points(_stats.detectable_change(units)),
         pass_at_k_percent=_percent(sum(map(any, complete)), len(complete))
         if is_repeated
         else None,
@@ -1469,7 +1423,8 @@ def _label_check(
         if cause != human:
             disagreements.append(f"{name}: diagnose() {cause}, label {human}")
     count = len(pairs)
-    kappa = _kappa(pairs)
+    kappa = _stats.cohen_kappa(pairs)
+    kappa = None if kappa is None else round(kappa, 3)
     if not count:
         advice = (
             f"No labels yet. Label at least {_MIN_LABELS} failed attempts with "
@@ -1774,8 +1729,8 @@ def _standing(
     solved = sum(passed for passed, _ in units)
     rate = _percent(solved, sum(runs for _, runs in units))
     strict = _percent(solved, sum(runs for _, runs in strict_units))
-    interval = _interval(units)
-    strict_interval = _interval(strict_units)
+    interval = _percent_interval(_stats.cluster_interval(units))
+    strict_interval = _percent_interval(_stats.cluster_interval(strict_units))
     usage = data.get("usage_totals") or {}
     model_attempts = int(usage.get("model_attempts") or 0)
     tokens = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
@@ -1900,8 +1855,8 @@ def _scenario_report(path: Path, run_id: str | None) -> ScenarioReport:
         passed_runs=passed,
         is_passed=bool(total) and passed == total,
         pass_rate_percent=_percent(passed, total),
-        pass_rate_ci95=_interval(units),
-        detectable_change_points=_detectable_change(units),
+        pass_rate_ci95=_percent_interval(_stats.cluster_interval(units)),
+        detectable_change_points=_points(_stats.detectable_change(units)),
         repeats=repeats,
         pass_all_percent=_percent(
             sum(result.passed == result.runs for result in measured), len(measured)
@@ -1941,9 +1896,10 @@ def _is_identified(commit: object, is_dirty: object, build: object) -> bool:
 
 @dataclass(frozen=True)
 class _Side:
-    """One side of a comparison: its cases as (passed, runs), and its version.
+    """One side of a comparison: its Harbor cases as (passed, runs), and its version.
 
-    `is_identified` is true when a build digest or a clean commit names the code.
+    A case key is (task, agent, model). `is_identified` is true when a build digest or
+    a clean commit names the code.
     """
 
     kind: str
@@ -1951,31 +1907,53 @@ class _Side:
     version: str
     is_dirty: bool
     is_identified: bool
-    routes: frozenset[str]
     cases: dict[tuple[str, ...], tuple[int, int]]
 
 
-def _side(spec: str) -> _Side:
-    """Read a scenario run id, `bench` for the main round, or `bench:<round>`."""
-    if spec == "bench" or spec.startswith("bench:"):
-        round_name = spec.partition(":")[2] or None
-        data = _summary(False, round_name)
-        pins = _provenance(round_name)
-        is_dirty = bool(pins.get("is_dirty"))
-        commit = pins.get("source_commit") or pins.get("vis_commit")
-        build = pins.get("bundle_sha256")
-        return _Side(
-            "bench",
-            spec,
-            _version_text(commit, is_dirty, build),
-            is_dirty,
-            _is_identified(commit, is_dirty, build),
-            frozenset({_trial_model(data)}),
-            {
-                (task,): (sum(flags), len(flags))
-                for task, flags in _task_attempts(data).items()
-            },
+def _rounds_dir() -> Path:
+    """Give the directory of the benchmark rounds in the benchmark repository."""
+    return BENCH.parent / "jobs"
+
+
+def _bench_side(spec: str) -> _Side:
+    """Read `bench` for the newest benchmark round, or `bench:<round>`."""
+    rounds = _rounds_dir()
+    name = spec.partition(":")[2]
+    if not name:
+        found = sorted(
+            (path for path in rounds.glob("*") if path.is_dir()),
+            key=lambda path: path.stat().st_mtime,
         )
+        if not found:
+            raise LookupError(f"no benchmark round in {rounds}")
+        name = found[-1].name
+    directory = rounds / name
+    if not directory.is_dir():
+        raise LookupError(f"no benchmark round {name} in {rounds}")
+    records_path = directory / "ctb-runs.json"
+    records = json.loads(records_path.read_text()) if records_path.is_file() else []
+    builds = {
+        (build.get("commit"), build.get("sha256"))
+        for build in (
+            ((record.get("vis") or {}).get("build") or {}) for record in records
+        )
+    }
+    return _Side(
+        "bench",
+        f"bench:{name}",
+        "; ".join(
+            sorted(_version_text(commit, False, build) for commit, build in builds)
+        )
+        or "unknown",
+        False,
+        bool(builds)
+        and all(_is_identified(commit, False, build) for commit, build in builds),
+        _harbor.case_results(_harbor.read_trials(directory)),
+    )
+
+
+def _scenario_side(spec: str) -> _Side:
+    """Read the Harbor job of a scenario run."""
     try:
         run = _run(_resolve_run(spec, "scenarios"))
     except LookupError as error:
@@ -1984,27 +1962,65 @@ def _side(spec: str) -> _Side:
         ) from None
     if not run.results_path or not Path(run.results_path).is_file():
         raise FileNotFoundError(f"scenario run {run.run_id} has no results.json yet")
-    report = _scenario_report(Path(run.results_path), run.run_id)
+    job = json.loads(Path(run.results_path).read_text()).get("job_dir")
+    if not job:
+        raise FileNotFoundError(
+            f"scenario run {run.run_id} has no Harbor job. Run its scenarios again."
+        )
     return _Side(
         "scenarios",
         run.run_id,
         _version_text(run.vis_commit, run.is_dirty, run.build_sha256),
         bool(run.is_dirty),
         _is_identified(run.vis_commit, run.is_dirty, run.build_sha256),
-        frozenset(f"{result.provider}/{result.model}" for result in report.results),
-        {
-            (result.scenario, result.provider, result.model): (
-                result.passed,
-                result.runs,
-            )
-            for result in report.results
-            if result.runs
-        },
+        _harbor.case_results(_harbor.read_trials(job)),
     )
 
 
+def _side(spec: str) -> _Side:
+    """Read a scenario run id, `bench` for the newest benchmark round, or `bench:<round>`.
+
+    Both kinds are Harbor jobs, so the same reader gives the cases of each side.
+    """
+    if spec == "bench" or spec.startswith("bench:"):
+        return _bench_side(spec)
+    return _scenario_side(spec)
+
+
+def _route(key: tuple[str, ...]) -> str:
+    return f"{key[1]} with {key[2]}"
+
+
 def _case_name(key: tuple[str, ...]) -> str:
-    return key[0] if len(key) == 1 else f"{key[0]} ({key[1]}/{key[2]})"
+    return key[0] if len(key) == 1 else f"{key[0]} ({_route(key)})"
+
+
+def _route_tests(
+    changes: dict[tuple[str, ...], float], crossed: str | None
+) -> tuple[RouteTest, ...]:
+    """Give the exact McNemar test of each route and its Benjamini-Hochberg value.
+
+    `crossed` names the one pair of routes when the sides ran on different routes.
+    """
+    groups: dict[str, list[float]] = defaultdict(list)
+    for key, change in changes.items():
+        groups[crossed or _route(key)].append(change)
+    counts = [
+        (
+            route,
+            len(values),
+            sum(value < 0 for value in values),
+            sum(value > 0 for value in values),
+        )
+        for route, values in sorted(groups.items())
+    ]
+    p_values = [_stats.mcnemar_exact(worse, better) for _, _, worse, better in counts]
+    return tuple(
+        RouteTest(route, cases, worse, better, p_value, q_value)
+        for (route, cases, worse, better), p_value, q_value in zip(
+            counts, p_values, _stats.benjamini_hochberg(p_values), strict=True
+        )
+    )
 
 
 def _compare(baseline: str, candidate: str) -> Comparison:
@@ -2017,38 +2033,38 @@ def _compare(baseline: str, candidate: str) -> Comparison:
         raise ValueError(f"both sides are {base.name}; compare two different results")
     caveats = []
     base_cases, other_cases = base.cases, other.cases
-    if base.kind == "scenarios" and not base_cases.keys() & other_cases.keys():
-        if len(base.routes) != 1 or len(other.routes) != 1:
+    crossed = None
+    if not base_cases.keys() & other_cases.keys():
+        base_routes = {_route(key) for key in base_cases}
+        other_routes = {_route(key) for key in other_cases}
+        if len(base_routes) != 1 or len(other_routes) != 1:
             raise ValueError(
-                "the runs share no scenario route, and one of them has more than one "
-                "route. Compare runs with the same provider and model."
+                f"{base.name} and {other.name} share no case, and one of them has more "
+                "than one route. Compare results with the same agent and model."
             )
+        crossed = f"{min(base_routes)} against {min(other_routes)}"
         base_cases = {key[:1]: value for key, value in base_cases.items()}
         other_cases = {key[:1]: value for key, value in other_cases.items()}
         caveats.append(
-            f"The runs used different routes, {min(base.routes)} and "
-            f"{min(other.routes)}. Model and harness differ together."
-        )
-    if base.kind == "bench" and base.routes != other.routes:
-        caveats.append(
-            f"The rounds used different models, {min(base.routes)} and "
-            f"{min(other.routes)}. Model and harness differ together."
+            f"The sides used different routes, {min(base_routes)} and "
+            f"{min(other_routes)}. Model and harness differ together."
         )
     paired = sorted(base_cases.keys() & other_cases.keys())
     if not paired:
         raise ValueError(f"{base.name} and {other.name} share no case")
-    changes = []
+    changes = {}
     changed = []
     for key in paired:
         (base_passed, base_runs), (passed, runs) = base_cases[key], other_cases[key]
         change = passed / runs - base_passed / base_runs
-        changes.append(change)
+        changes[key] = change
         if change:
             row = CaseChange(
                 _case_name(key), f"{base_passed}/{base_runs}", f"{passed}/{runs}"
             )
             changed.append((change, row))
-    interval, floor = _paired_change(changes)
+    (low, high), floor = _stats.paired_change(list(changes.values()))
+    interval = (_points(low), _points(high))
     verdict = (
         "better"
         if interval[0] > 0
@@ -2079,6 +2095,7 @@ def _compare(baseline: str, candidate: str) -> Comparison:
             "them out."
         )
     count = len(paired)
+    values = list(changes.values())
     return Comparison(
         kind=base.kind,
         baseline=base.name,
@@ -2092,10 +2109,14 @@ def _compare(baseline: str, candidate: str) -> Comparison:
         candidate_rate_percent=_percent(
             sum(passed / runs for passed, runs in map(other_cases.get, paired)), count
         ),
-        difference_points=_percent(sum(changes), count),
+        difference_points=_percent(sum(values), count),
         difference_ci95=interval,
         verdict=verdict,
-        detectable_change_points=floor,
+        detectable_change_points=_points(floor),
+        p_value=_stats.mcnemar_exact(
+            sum(value < 0 for value in values), sum(value > 0 for value in values)
+        ),
+        routes=_route_tests(changes, crossed),
         worse=tuple(
             row
             for change, row in sorted(changed, key=lambda item: item[0])
@@ -2215,7 +2236,8 @@ def _progress(run: EvalRun, run_dir: Path) -> str:
         if results and results.is_file():
             report = _scenario_report(results, run.run_id)
             return f"results ready: {report.passed_runs} of {report.total_runs} runs passed"
-        done = len(list((run_dir / "traces").glob("*.jsonl")))
+        jobs = run_dir / "harbor" / "jobs"
+        done = len(_harbor.read_trials(jobs)) if jobs.is_dir() else 0
         expected = _meta(run_dir).get("expected_runs") or "?"
         if run.state == "running":
             return f"{done} of {expected} scenario runs finished"
@@ -2658,10 +2680,29 @@ def _compare_activity(*, phase, result, **_):
         vis.ActivityText(
             f"{_count(result.paired_cases, 'paired case')}. Difference "
             f"{result.difference_points:+g} points, 95% interval {low:+g} to "
-            f"{high:+g}. At this case count, a true change of "
-            f"{result.detectable_change_points:g} points or more shows with 80% power."
+            f"{high:+g}. Exact McNemar test: p = {result.p_value:.3g}. At this case "
+            f"count, a true change of {result.detectable_change_points:g} points or "
+            "more shows with 80% power."
         ),
     ]
+    if len(result.routes) > 1:
+        content.append(vis.ActivityHeading(f"Routes: {len(result.routes)}"))
+        content.append(
+            vis.ActivityTable(
+                ("Route", "Cases", "Worse", "Better", "p", "q"),
+                [
+                    (
+                        _clip(test.route, 80),
+                        str(test.paired_cases),
+                        str(test.worse),
+                        str(test.better),
+                        f"{test.p_value:.3g}",
+                        f"{test.q_value:.3g}",
+                    )
+                    for test in result.routes[:15]
+                ],
+            )
+        )
     for title, changes in (("Worse", result.worse), ("Better", result.better)):
         if changes:
             content.append(
@@ -2869,7 +2910,7 @@ class Evals:
         Without `models` and `provider`, the runner's default route applies.
         `native_bin` is the absolute path of a raw native executable, not the
         vis-agent launcher, and `python_native_path` is its Python sidecar. Each run
-        writes traces and results.json into its own directory. It records the Vis
+        writes its Harbor job and results.json into its own directory. It records the Vis
         commit and the sha256 of `native_bin`, so that compare() can name the versions.
         Returns at once; read progress with status() and results with report().
         It needs uv on PATH, because it runs the locked uv project in e2e/.
@@ -2890,10 +2931,10 @@ class Evals:
         if not uv:
             raise FileNotFoundError("uv is not on PATH")
         run_id, run_dir = _new_run("scenarios")
-        traces = run_dir / "traces"
+        results = run_dir / "results"
         env = {
             **os.environ,
-            "VIS_E2E_TRACES": str(traces),
+            "VIS_E2E_RESULTS": str(results),
             "VIS_E2E_REPEATS": str(repeats),
             "VIS_E2E_WORKERS": str(workers),
         }
@@ -2928,7 +2969,7 @@ class Evals:
             ],
             cwd=REPO,
             env=env,
-            results_path=traces / "results.json",
+            results_path=results / "results.json",
             expected_runs=len(ids) * len(models or [None]) * repeats,
             build_sha256=_sha256(Path(native_bin)) if native_bin else None,
         )
@@ -3128,7 +3169,7 @@ class Evals:
         """Read the results of a scenario run.
 
         Without arguments, reads the newest scenario run. `results_path` reads any
-        results.json that the e2e runner wrote, for example an older trace directory.
+        results.json that the e2e runner wrote, for example in an older run directory.
         Fails while the run has not written results yet.
         """
         if results_path:

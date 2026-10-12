@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from blockether.vis.evals import seal_digest
 
 from vis_harbor import dataset, run
 
@@ -31,15 +32,16 @@ for task in sorted(Path(options["--path"]).iterdir()):
         for attempt in range(int(options["--n-attempts"])):
             trial = job / f"{{task.name}}__{{model.replace('/', '-')}}{{attempt}}"
             (trial / "agent").mkdir(parents=True)
-            (trial / "agent" / "trace.jsonl").write_text(f"trace of {{trial.name}}\\n")
             if grade.is_file():
                 (trial / "verifier").mkdir()
                 (trial / "verifier" / "grade.json").write_text(grade.read_text())
             result = {{
                 "task_name": task.name,
+                "trial_name": trial.name,
                 "finished_at": f"2026-10-12T00:00:0{{attempt}}Z",
                 "config": {{"agent": {{"model_name": model}}}},
                 "exception_info": None if grade.is_file() else {{"exception_type": "AgentTimeoutError"}},
+                "verifier_result": {{"rewards": {{"reward": 1.0}}}} if grade.is_file() else None,
             }}
             (trial / "result.json").write_text(json.dumps(result))
 """
@@ -47,7 +49,7 @@ for task in sorted(Path(options["--path"]).iterdir()):
 
 def _settings(**changes) -> run.Settings:
     values = {
-        "traces": Path("/tmp/traces"),
+        "results": Path("/tmp/results"),
         "repeats": 1,
         "workers": 5,
         "provider": "p",
@@ -71,17 +73,16 @@ def _passed(**changes) -> dict:
     return {**record, **changes}
 
 
-def _trial(job, name, *, finished_at, trace=None, grade_text=None, model="p/m"):
+def _trial(job, name, *, finished_at, grade_text=None, model="p/m"):
     trial = job / name
     (trial / "agent").mkdir(parents=True)
-    if trace is not None:
-        (trial / "agent" / run.TRACE_FILE).write_text(trace)
     if grade_text is not None:
         (trial / "verifier").mkdir()
         (trial / "verifier" / run.GRADE_FILE).write_text(grade_text)
     exception = None if grade_text else {"exception_type": "AgentTimeoutError"}
     result = {
         "task_name": name.split(".")[0],
+        "trial_name": name,
         "finished_at": finished_at,
         "config": {"agent": {"model_name": model}},
         "exception_info": exception,
@@ -91,7 +92,7 @@ def _trial(job, name, *, finished_at, trace=None, grade_text=None, model="p/m"):
 
 def test_settings_keep_the_e2e_defaults():
     assert run.read_settings({}) == run.Settings(
-        traces=Path("/tmp/vis_e2e/traces"),
+        results=Path("/tmp/vis_e2e/results"),
         repeats=1,
         workers=5,
         provider="zai-coding-plan",
@@ -105,7 +106,7 @@ def test_settings_keep_the_e2e_defaults():
 def test_settings_read_the_models_and_the_numbers():
     settings = run.read_settings(
         {
-            "VIS_E2E_TRACES": "/data/traces",
+            "VIS_E2E_RESULTS": "/data/results",
             "VIS_E2E_REPEATS": "3",
             "VIS_E2E_WORKERS": "2",
             "VIS_PROVIDER": "openai-codex",
@@ -117,7 +118,7 @@ def test_settings_read_the_models_and_the_numbers():
         }
     )
     assert settings == _settings(
-        traces=Path("/data/traces"),
+        results=Path("/data/results"),
         repeats=3,
         workers=2,
         provider="openai-codex",
@@ -160,32 +161,27 @@ def test_one_harbor_job_runs_every_model(monkeypatch):
     ]  # fmt: skip
 
 
-def test_trace_names_add_the_model_and_the_run_only_when_needed():
-    one = _settings()
-    assert run.trace_tag(one, "s", "m", 1) == "s"
-    assert run.trace_tag(_settings(models=("m", "n")), "s", "m", 1) == "s__m"
-    assert run.trace_tag(_settings(repeats=2), "s", "m", 2) == "s__run2"
-    both = _settings(models=("m", "n"), repeats=2)
-    assert run.trace_tag(both, "s", "n", 2) == "s__n__run2"
+def test_finished_trials_read_the_job_in_finish_order(tmp_path):
+    job = tmp_path / "job"
+    assert run.finished_trials(job) == []
+    _trial(job, f"{SCENARIO}.b", finished_at="2026-10-12T00:00:02Z")
+    _trial(job, f"{SCENARIO}.a", finished_at="2026-10-12T00:00:03Z")
+    _trial(job, f"{SCENARIO}.c", finished_at=None)
+    trials = run.finished_trials(job)
+    assert [trial.trial for trial in trials] == [f"{SCENARIO}.b", f"{SCENARIO}.a"]
+    assert [trial.error for trial in trials] == ["AgentTimeoutError"] * 2
 
 
-def test_collector_copies_traces_and_numbers_runs_in_finish_order(tmp_path):
+def test_collector_reads_grades_and_numbers_runs_in_finish_order(tmp_path):
     job = tmp_path / "job"
     grade_text = json.dumps(_passed(model="m"))
     graded = f"{SCENARIO}.b"
     _trial(job, graded, finished_at="2026-10-12T00:00:02Z", grade_text=grade_text)
-    _trial(job, f"{SCENARIO}.a", finished_at="2026-10-12T00:00:01Z", trace="first\n")
-    _trial(job, f"{SCENARIO}.c", finished_at=None, trace="running\n")
-    traces = tmp_path / "traces"
-    collector = run.Collector(_settings(traces=traces, repeats=2), [_scenario()], job)
+    _trial(job, f"{SCENARIO}.a", finished_at="2026-10-12T00:00:01Z")
+    _trial(job, f"{SCENARIO}.c", finished_at=None)
+    collector = run.Collector(_settings(repeats=2), [_scenario()], job)
     collector.collect()
     collector.collect()
-    assert sorted(path.name for path in traces.iterdir()) == [
-        f"{SCENARIO}__run1.jsonl",
-        f"{SCENARIO}__run2.jsonl",
-    ]
-    assert (traces / f"{SCENARIO}__run1.jsonl").read_text() == "first\n"
-    assert (traces / f"{SCENARIO}__run2.jsonl").read_text() == ""
     first, second = collector.results()
     assert (first["repeat"], first["passed"], first["err_msgs"]) == (
         1,
@@ -197,7 +193,7 @@ def test_collector_copies_traces_and_numbers_runs_in_finish_order(tmp_path):
 
 def test_each_missing_run_gets_a_failure_record(tmp_path):
     collector = run.Collector(
-        _settings(traces=tmp_path / "traces", repeats=2), [_scenario()], tmp_path
+        _settings(results=tmp_path / "results", repeats=2), [_scenario()], tmp_path
     )
     records = collector.results()
     assert [(r["id"], r["model"], r["repeat"]) for r in records] == [
@@ -220,41 +216,47 @@ def _run_main(monkeypatch, tmp_path, grade_record, **env):
     fake.chmod(0o755)
     monkeypatch.setattr(run, "harbor_executable", lambda: str(fake))
     monkeypatch.setattr(run, "POLL_SEC", 0.05)
-    traces = tmp_path / "out" / "traces"
-    monkeypatch.setenv("VIS_E2E_TRACES", str(traces))
+    results = tmp_path / "out" / "results"
+    monkeypatch.setenv("VIS_E2E_RESULTS", str(results))
     monkeypatch.setenv("VIS_PROVIDER", "p")
     monkeypatch.delenv("VIS_MODEL", raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     code = run.main([SCENARIO])
-    return code, traces
+    return code, results
 
 
-def test_main_writes_traces_results_and_passes_the_gate(monkeypatch, tmp_path, capsys):
-    code, traces = _run_main(
+def test_main_writes_the_results_and_passes_the_gate(monkeypatch, tmp_path, capsys):
+    code, directory = _run_main(
         monkeypatch, tmp_path, _passed(model="m"), VIS_MODELS="m", VIS_E2E_TIMEOUT="7"
     )
     assert code == 0
-    assert (traces / f"{SCENARIO}.jsonl").read_text().startswith("trace of ")
-    results = json.loads((traces / "results.json").read_text())
+    assert sorted(path.name for path in directory.iterdir()) == ["results.json"]
+    results = json.loads((directory / "results.json").read_text())
     assert [(r["id"], r["model"], r["repeat"]) for r in results["runs"]] == [
         (SCENARIO, "m", 1)
     ]
     assert results["summaries"][0]["passed"] == 1
-    task = traces.parent / "harbor" / "dataset" / SCENARIO
+    task = directory.parent / "harbor" / "dataset" / SCENARIO
     assert json.loads((task / "tests" / "scenario.json").read_text())["timeout_s"] == 7
+    job = Path(results["job_dir"])
+    assert job.parent == directory.parent / "harbor" / "jobs"
+    seal = json.loads((job / run.SEAL_FILE).read_text())
+    assert (seal["round"], seal["digest"]) == (job.name, seal_digest(seal))
+    assert [(row["task"], row["reward"]) for row in seal["rows"]] == [(SCENARIO, 1.0)]
+    record = seal["runs"][0]
+    assert (record["profiles"]["models"], record["tasks"]) == (["m"], [SCENARIO])
+    assert sorted(record["pins"]) == ["harbor", "vis_agent"]
+    # A job gets one seal only.
+    assert run.write_seal(job, record) is None
     out = capsys.readouterr().out
     assert "GATE (scenario passes iff ALL 1 model(s) pass cleanly): 1/1" in out
 
 
 def test_main_fails_the_gate_when_one_model_fails(monkeypatch, tmp_path, capsys):
-    code, traces = _run_main(monkeypatch, tmp_path, None, VIS_MODELS="m,n")
+    code, directory = _run_main(monkeypatch, tmp_path, None, VIS_MODELS="m,n")
     assert code == 1
-    assert sorted(path.name for path in traces.glob("*.jsonl")) == [
-        f"{SCENARIO}__m.jsonl",
-        f"{SCENARIO}__n.jsonl",
-    ]
-    runs = json.loads((traces / "results.json").read_text())["runs"]
+    runs = json.loads((directory / "results.json").read_text())["runs"]
     assert [(r["model"], r["passed"]) for r in runs] == [("m", False), ("n", False)]
     assert "GATE (scenario passes iff ALL 2 model(s) pass cleanly): 0/1" in (
         capsys.readouterr().out

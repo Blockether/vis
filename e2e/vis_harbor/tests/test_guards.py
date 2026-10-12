@@ -1,5 +1,4 @@
 import collections
-import copy
 import csv
 import hashlib
 import json
@@ -11,6 +10,7 @@ from pathlib import Path
 
 from vis_harbor import dataset, grade, run
 from vis_harbor.grade import cache_metric_failures, usage_percent
+from vis_harbor.tests import atif
 
 PROVIDER = "test-provider"
 
@@ -30,27 +30,12 @@ def seed_files(sc, work):
     dataset.seed_workspace(scenario, Path(work))
 
 
-def grade_events(
-    sc,
-    events,
-    *,
-    provider=PROVIDER,
-    model="test-model",
-    reasoning_effort=None,
-    session_usage=None,
-    goal=None,
+def grade_run(
+    sc, document, *, provider=PROVIDER, model="test-model", reasoning_effort=None
 ):
-    """Grade the trace ``events`` in a seeded workspace, like one Harbor trial."""
-    trial = grade.TrialFiles(
-        trace="\n".join(json.dumps(event) for event in events),
-        exit_code=0,
-        wall_s=1.0,
-        is_cancelled=False,
-        provider=provider,
-        model=model,
-        reasoning_effort=reasoning_effort,
-        session_usage=session_usage,
-        goal=goal,
+    """Grade the ATIF ``document`` of one run in a seeded workspace, like one trial."""
+    trial = atif.trial(
+        document, provider=provider, model=model, reasoning_effort=reasoning_effort
     )
     with tempfile.TemporaryDirectory() as work:
         if "_dir" in sc:
@@ -547,26 +532,14 @@ class ContextBudgetTest(unittest.TestCase):
             "['model_input_limit']}, sort_keys=True))"
         )
         printed = json.dumps(self.CODEX, sort_keys=True)
-        form = {"scope": "t1/i1/f1", "iteration": 1}
-        events = [
-            {"phase": "provider-call", "iteration": 1, **route},
-            {"phase": "form-start", "code": code, **form},
-            {"phase": "form-result", "stdout": printed + "\n", **form},
-        ]
-        result = {
-            "answer": printed,
-            "session-id": "00000000-0000-0000-0000-000000000000",
-            "cost": route,
-        }
-        return grade_events(
-            scenario,
-            [
-                *({"event": "trace-chunk", "payload": event} for event in events),
-                {"event": "result", "payload": result},
-            ],
+        document = atif.trajectory(
+            atif.step(1, atif.block("t1/i1/f1", code, stdout=printed + "\n"), **route),
+            answer=printed,
+            session_id="00000000-0000-0000-0000-000000000000",
             session_usage={"health": health},
             **route,
         )
+        return grade_run(scenario, document, **route)
 
     def test_printed_answered_and_persisted_budgets_agree(self):
         self.assertEqual([], self.failures())
@@ -810,23 +783,16 @@ class StdoutGoalRecoveryTest(unittest.TestCase):
 
 
 class ActivityToolEvidenceTest(unittest.TestCase):
-    def test_ls_is_detected_from_end_only_activity_snapshots(self):
-        # ls emits form-activity, not the obsolete tool-start trace event.
+    def test_ls_is_detected_from_the_activity_receipt(self):
         scenario = load_scenarios(["ls-source-root-discovery"])[0].copy()
         scenario.update(want_answer=[], want_forms=[])
-        activity = {
-            "event": "trace-chunk",
-            "payload": {
-                "phase": "form-activity",
-                "activity": {
-                    "rows": [{"id": "ls-1", "operation": "ls", "state": "succeeded"}]
-                },
-            },
-        }
-        result_event = {"event": "result", "payload": {"answer": "Listed directory"}}
-        for snapshots, expected in [([], False), ([activity, activity], True)]:
-            with self.subTest(snapshots=len(snapshots)):
-                result = grade_events(scenario, [*snapshots, result_event])
+        listing = atif.block("t1/i1/f1", activity=atif.receipt(atif.row("ls-1", "ls")))
+        for blocks, expected in [((), False), ((listing,), True)]:
+            with self.subTest(blocks=len(blocks)):
+                document = atif.trajectory(
+                    atif.step(1, *blocks), answer="Listed directory"
+                )
+                result = grade_run(scenario, document)
                 self.assertEqual(expected, result["correct"])
                 if expected:
                     self.assertIn("tools=ls×1", result["detail"])
@@ -842,7 +808,7 @@ class FormOutputBudgetTest(unittest.TestCase):
             (6000, 24757, None, False),
             (0, 0, None, True),
             (0, 1, None, False),
-            (6000, 6001, {"message": "recorded failure"}, False),
+            (6000, 6001, "recorded failure", False),
             (-1, 0, None, False),
             ("6000", 0, None, False),
             (True, 0, None, False),
@@ -855,23 +821,13 @@ class FormOutputBudgetTest(unittest.TestCase):
             if limit is not None:
                 scenario["max_form_output_chars"] = limit
             output = "x" * size
-            events = [
-                {
-                    "event": "trace-chunk",
-                    "payload": {
-                        "phase": "form-result",
-                        "stdout": output,
-                        "error": error,
-                    },
-                },
-                {
-                    "event": "trace-chunk",
-                    "payload": {"phase": "form-result", "stdout": ""},
-                },
-                {"event": "result", "payload": {"answer": "Ready"}},
+            blocks = [
+                atif.block("t1/i1/f1", stdout=output, error=error),
+                atif.block("t1/i1/f2"),
             ]
+            document = atif.trajectory(atif.step(1, *blocks), answer="Ready")
             with self.subTest(limit=limit, size=size, error=error):
-                result = grade_events(scenario, events)
+                result = grade_run(scenario, document)
                 self.assertEqual(expected, result["correct"])
                 if not expected:
                     self.assertIn("max_form_output_chars", " ".join(result["detail"]))
@@ -899,27 +855,19 @@ class ReasoningEffortTest(unittest.TestCase):
         *,
         session_usage=None,
         provider=None,
-        content=None,
+        error=None,
     ):
         scenario = load_scenarios([scenario_id])[0].copy()
         scenario.update(want={}, wantnot={})
-        route = {"provider": provider or PROVIDER, "model": "test-model"}
-        events = [
-            {"event": "trace-chunk", "payload": {"phase": "provider-call", **route}},
-            {
-                "event": "result",
-                "payload": {
-                    "answer": "done",
-                    "content": content,
-                    "session-id": "00000000-0000-0000-0000-000000000000",
-                    "cost": route,
-                    "eval": evaluation,
-                },
-            },
-        ]
-        return grade_events(
-            scenario, events, reasoning_effort=effort, session_usage=session_usage
+        document = atif.trajectory(
+            answer="done",
+            provider=provider or PROVIDER,
+            session_id="00000000-0000-0000-0000-000000000000",
+            eval=evaluation,
+            session_usage=session_usage,
+            error=error,
         )
+        return grade_run(scenario, document, reasoning_effort=effort)
 
     def evaluation(self):
         return {
@@ -990,11 +938,9 @@ class ReasoningEffortTest(unittest.TestCase):
         self.assertFalse(result["correct"])
         self.assertIn("the trajectory has no session usage", result["detail"])
 
-    def test_provider_error_content_is_counted_and_not_converged(self):
+    def test_a_provider_error_is_counted_and_not_converged(self):
         result = self.run_scenario(
-            "low",
-            self.evaluation(),
-            content=[{"type": "error", "message": "Provider model unavailable"}],
+            "low", self.evaluation(), error="Provider model unavailable"
         )
         self.assertFalse(result["converged"])
         self.assertEqual(1, result["errors"])
@@ -1086,67 +1032,58 @@ class HelperReuseEvidenceTest(unittest.TestCase):
 
 class DiscoveryEvaluationTest(unittest.TestCase):
     # #232/#234: syntactic markers and tool presence hid incorrect workflows.
-    def run_events(self, events, **checks):
+    def run_document(self, document, **checks):
         scenario = {"id": "evaluation", "lang": "python", "prompt": "test", **checks}
-        return grade_events(scenario, events)
+        return grade_run(scenario, document)
 
-    def activity(self, state, operation="probe.read", row_id="call-1"):
-        return {
-            "event": "trace-chunk",
-            "payload": {
-                "phase": "form-activity",
-                "scope": "t1/i1/f1",
-                "activity": {
-                    "rows": [{"id": row_id, "operation": operation, "state": state}]
-                },
-            },
-        }
+    def run_blocks(self, *blocks, answer="ready", tokens=atif.TOKENS, **checks):
+        """Grade a run that runs each block in its own iteration, then answers."""
+        steps = [atif.step(index, block) for index, block in enumerate(blocks, 1)]
+        document = atif.trajectory(*steps, answer=answer, tokens=tokens)
+        return self.run_document(document, **checks)
+
+    def activity(
+        self,
+        state,
+        operation="probe.read",
+        row_id="call-1",
+        *,
+        ref="t1/i1/f1",
+        error=None,
+    ):
+        """Return one block whose Activity receipt holds one row."""
+        receipt = atif.receipt(atif.row(row_id, operation, state))
+        return atif.block(ref, activity=receipt, error=error)
 
     def test_caught_activity_failure_cannot_pass(self):
-        result = self.run_events(
-            [
-                self.activity("running"),
-                self.activity("failed"),
-                self.activity("failed"),
-                {"event": "result", "payload": {"answer": "ready"}},
-            ],
-            want_tools=["probe.read"],
-        )
+        result = self.run_blocks(self.activity("failed"), want_tools=["probe.read"])
         self.assertEqual(1, result["errors"])
         self.assertEqual(1, result["activity_failures"])
         self.assertEqual(1, result["caught_activity_failures"])
         self.assertEqual(0, result["surfaced_errors"])
         self.assertFalse(result["correct"])
 
-    def test_group_row_supersedes_the_rows_it_collapsed(self):
-        # A finished form collapses its per-call rows into ONE group row, so the
-        # last snapshot no longer lists the row it replaced. That row finished with
-        # the group; only a row the final snapshot still shows as running is work
-        # the session abandoned.
-        result = self.run_events(
-            [
-                self.activity("running", operation="shell"),
-                self.activity("succeeded", operation="shell", row_id="group-call-1"),
-                {"event": "result", "payload": {"answer": "ready"}},
-            ],
-            want_tools=["shell"],
+    def test_a_group_row_holds_the_calls_that_it_collapsed(self):
+        # A finished block collapses its per-call rows into ONE group row. The
+        # receipt keeps those calls as children of the group row.
+        calls = [atif.row("call-1", "shell"), atif.row("call-2", "shell", sequence=2)]
+        group = atif.row("group-call-1", "shell", children=calls)
+        result = self.run_blocks(
+            atif.block("t1/i1/f1", activity=atif.receipt(group)), want_tools=["shell"]
         )
         self.assertEqual(0, result["incomplete_activities"])
         self.assertEqual(0, result["errors"])
-        self.assertTrue(result["correct"])
+        self.assertTrue(result["correct"], result["detail"])
 
-    def test_collapsing_a_scope_keeps_its_failed_row_and_other_scopes(self):
-        stale = self.activity("running", operation="shell")
-        stale["payload"]["scope"] = "t1/i2/f1"
-        failed = self.activity("failed", operation="shell", row_id="call-2")
-        group = self.activity("succeeded", operation="shell", row_id="group-call-2")
-        result = self.run_events(
-            [
-                stale,
-                failed,
-                group,
-                {"event": "result", "payload": {"answer": "ready"}},
-            ],
+    def test_each_block_keeps_its_own_failed_and_running_rows(self):
+        failed = atif.receipt(
+            atif.row("call-2", "shell", "failed"),
+            atif.row("group-call-2", "shell", sequence=2),
+        )
+        stale = atif.receipt(atif.row("call-1", "shell", "running"))
+        result = self.run_blocks(
+            atif.block("t1/i1/f1", activity=failed),
+            atif.block("t1/i2/f1", activity=stale),
             want_tools=["shell"],
         )
         self.assertEqual(1, result["activity_failures"])
@@ -1156,24 +1093,15 @@ class DiscoveryEvaluationTest(unittest.TestCase):
     def test_running_or_cancelled_activity_is_not_success(self):
         for state in ("running", "cancelled"):
             with self.subTest(state=state):
-                result = self.run_events(
-                    [
-                        self.activity(state),
-                        {"event": "result", "payload": {"answer": "ready"}},
-                    ],
-                    want_tools=["probe.read"],
+                result = self.run_blocks(
+                    self.activity(state), want_tools=["probe.read"]
                 )
                 self.assertFalse(result["correct"])
                 self.assertGreater(result["errors"], 0)
 
-    def test_success_updates_running_once_and_duplicate_snapshots_are_ignored(self):
-        result = self.run_events(
-            [
-                self.activity("running"),
-                self.activity("succeeded"),
-                self.activity("succeeded"),
-                {"event": "result", "payload": {"answer": "ready"}},
-            ],
+    def test_a_succeeded_row_counts_once(self):
+        result = self.run_blocks(
+            self.activity("succeeded"),
             want_tools=["probe.read"],
             want_activity_sequence=["probe.read"],
         )
@@ -1182,19 +1110,8 @@ class DiscoveryEvaluationTest(unittest.TestCase):
         self.assertEqual(1, result["activity_successes"])
 
     def test_surfaced_failure_is_not_labelled_caught(self):
-        result = self.run_events(
-            [
-                self.activity("failed"),
-                {
-                    "event": "trace-chunk",
-                    "payload": {
-                        "phase": "form-result",
-                        "scope": "t1/i1/f1",
-                        "error": {"message": "failed"},
-                    },
-                },
-                {"event": "result", "payload": {"answer": "recovered"}},
-            ]
+        result = self.run_blocks(
+            self.activity("failed", error="failed"), answer="recovered"
         )
         self.assertEqual(1, result["activity_failures"])
         self.assertEqual(0, result["caught_activity_failures"])
@@ -1209,15 +1126,9 @@ class DiscoveryEvaluationTest(unittest.TestCase):
             '{"cards":2,"active_jobs":7,"elapsed":750,"collector":"collector-40"}',
         ):
             with self.subTest(answer=answer):
-                result = self.run_events(
-                    [{"event": "result", "payload": {"answer": answer}}],
-                    want_answer_json=expected,
-                )
+                result = self.run_blocks(answer=answer, want_answer_json=expected)
                 self.assertFalse(result["correct"])
-        result = self.run_events(
-            [{"event": "result", "payload": {"answer": json.dumps(expected)}}],
-            want_answer_json=expected,
-        )
+        result = self.run_blocks(answer=json.dumps(expected), want_answer_json=expected)
         self.assertTrue(result["correct"], result["detail"])
         self.assertEqual(
             [],
@@ -1265,36 +1176,27 @@ class DiscoveryEvaluationTest(unittest.TestCase):
         expected = ["probe.cards", "probe.cards", "probe.monitor"]
         for operations in (expected[:2], expected[::-1], expected + ["probe.monitor"]):
             with self.subTest(operations=operations):
-                events = [
-                    self.activity("succeeded", op, str(i))
-                    for i, op in enumerate(operations)
+                rows = [
+                    atif.row(str(index), operation, sequence=index + 1)
+                    for index, operation in enumerate(operations)
                 ]
-                result = self.run_events(
-                    [*events, {"event": "result", "payload": {"answer": "done"}}],
-                    want_activity_sequence=expected,
+                block = atif.block("t1/i1/f1", activity=atif.receipt(*rows))
+                result = self.run_blocks(
+                    block, answer="done", want_activity_sequence=expected
                 )
                 self.assertFalse(result["correct"])
 
     def test_total_output_is_separate_from_peak_and_tokens_are_reported(self):
-        events = [
-            {
-                "event": "trace-chunk",
-                "payload": {"phase": "form-result", "stdout": "x" * 6},
-            },
-            {
-                "event": "trace-chunk",
-                "payload": {"phase": "form-result", "stdout": "y" * 5},
-            },
-            {
-                "event": "result",
-                "payload": {
-                    "answer": "done",
-                    "tokens": {"input": 100, "cached": 75, "output": 20, "total": 120},
-                },
-            },
+        blocks = [
+            atif.block("t1/i1/f1", stdout="x" * 6),
+            atif.block("t1/i2/f1", stdout="y" * 5),
         ]
-        result = self.run_events(
-            events, max_form_output_chars=6, max_total_output_chars=10
+        result = self.run_blocks(
+            *blocks,
+            answer="done",
+            tokens={"input": 100, "cached": 75, "output": 20, "total": 120},
+            max_form_output_chars=6,
+            max_total_output_chars=10,
         )
         self.assertFalse(result["correct"])
         self.assertEqual(6, result["max_form_output_chars"])
@@ -1580,18 +1482,8 @@ class DiscoveryEvidenceEdgeTest(unittest.TestCase):
 
     def test_missing_scope_is_unknown_not_misclassified_as_caught(self):
         helper = DiscoveryEvaluationTest()
-        activity = helper.activity("failed")
-        activity["payload"].pop("scope")
-        result = helper.run_events(
-            [
-                activity,
-                {
-                    "event": "trace-chunk",
-                    "payload": {"phase": "form-result", "error": "failure"},
-                },
-                {"event": "result", "payload": {"answer": "done"}},
-            ]
-        )
+        block = helper.activity("failed", ref=None, error="failure")
+        result = helper.run_blocks(block, answer="done")
         self.assertFalse(result["correct"])
         self.assertEqual(0, result["caught_activity_failures"])
         self.assertEqual(1, result["unscoped_activity_failures"])
@@ -1600,32 +1492,26 @@ class DiscoveryEvidenceEdgeTest(unittest.TestCase):
 class EvaluationIntegrationEdgeTest(unittest.TestCase):
     def test_forbidden_fast_read_does_not_need_an_activity_row(self):
         helper = DiscoveryEvaluationTest()
-        result = helper.run_events(
-            [
-                {
-                    "event": "trace-chunk",
-                    "payload": {"phase": "form-start", "code": 'cat("source.py")'},
-                },
-                {"event": "result", "payload": {"answer": "done"}},
-            ],
+        result = helper.run_blocks(
+            atif.block("t1/i1/f1", 'cat("source.py")'),
+            answer="done",
             discovery={"known": True},
             forbid_tools=["cat"],
         )
         self.assertFalse(result["correct"])
 
-    def test_malformed_provider_tokens_are_a_failure_not_a_crash(self):
+    def test_malformed_run_metrics_are_a_failure_not_a_crash(self):
         helper = DiscoveryEvaluationTest()
-        for tokens in ([1], "tokens", {"input": "bad", "cached": 1, "output": 2}):
-            with self.subTest(tokens=tokens):
-                result = helper.run_events(
-                    [
-                        {
-                            "event": "result",
-                            "payload": {"answer": "done", "tokens": tokens},
-                        }
-                    ],
-                    want_cache_read=True,
-                )
+        malformed = {
+            "total_prompt_tokens": "bad",
+            "total_cached_tokens": 1,
+            "total_completion_tokens": 2,
+        }
+        for metrics in ([1], "tokens", malformed):
+            with self.subTest(metrics=metrics):
+                document = atif.trajectory(answer="done")
+                document["final_metrics"] = metrics
+                result = helper.run_document(document, want_cache_read=True)
                 self.assertFalse(result["correct"])
 
     def test_partial_read_activities_do_not_hide_duplicate_syntax(self):
@@ -1645,95 +1531,87 @@ class CouncilRecoveryTest(unittest.TestCase):
             seed_files(scenario, work)
             self.assertEqual([], grade.structured_failures(scenario, work, "", []))
 
-    def events(self):
+    def parts(self):
+        """Return the rows and the error of a run that repairs one reply-ID read."""
         expected = load_scenarios(["council-thread-recovery"])[0][
             "want_council_recovery"
         ]
 
-        def activity(row_id, scope, operation, state, entries, body=None, sequence=1):
+        def row(row_id, operation, state, entries, body=None, sequence=1):
             resources = [{"type": "council-thread", "id": "42"}] + [
                 {"type": "council-entry", "id": str(entry)} for entry in entries
             ]
             presentation = {
+                "headline": operation,
+                "summary": state,
                 "content": [{"type": "markdown", "text": body}] if body else [],
             }
             if operation == "council.read" and state == "succeeded":
                 presentation["sections"] = [
-                    {"content": [{"type": "markdown", "text": text}]}
-                    for text in expected.values()
+                    {
+                        "headline": name,
+                        "summary": "Message",
+                        "content": [{"type": "markdown", "text": text}],
+                    }
+                    for name, text in expected.items()
                 ]
-            return {
-                "event": "trace-chunk",
-                "payload": {
-                    "phase": "form-activity",
-                    "scope": scope,
-                    "activity": {
-                        "rows": [
-                            {
-                                "id": row_id,
-                                "sequence": sequence,
-                                "operation": operation,
-                                "state": state,
-                                "resources": resources,
-                                "presentation": presentation,
-                            }
-                        ],
-                    },
-                },
-            }
+            return atif.row(
+                row_id,
+                operation,
+                state,
+                sequence=sequence,
+                resources=resources,
+                presentation=presentation,
+            )
 
-        def result(scope, error=None):
-            return {
-                "event": "trace-chunk",
-                "payload": {
-                    "phase": "form-result",
-                    "scope": scope,
-                    "stdout": "",
-                    "error": error,
-                },
-            }
-
-        error = {
-            "message": "Council entry_id=43 is a reply in thread_id=42. "
-            "Use thread_id=42 to read or continue this thread.",
-            "data": {"error": "invalid-thread", "entry_id": 43, "thread_id": 42},
-        }
-        return [
-            activity(
-                "root",
-                "t1/i1/f1",
-                "council.publish",
-                "succeeded",
-                [42],
-                expected["root_content"],
+        return {
+            "root": row(
+                "root", "council.publish", "succeeded", [42], expected["root_content"]
             ),
-            activity(
+            "reply": row(
                 "reply",
-                "t1/i1/f1",
                 "council.publish",
                 "succeeded",
                 [43],
                 expected["reply_content"],
                 sequence=2,
             ),
-            result("t1/i1/f1"),
-            activity("mistake", "t1/i2/f1", "council.read", "failed", []),
-            result("t1/i2/f1", error),
-            activity("repair", "t1/i3/f1", "council.read", "succeeded", [42, 43]),
-            result("t1/i3/f1"),
-            {"event": "result", "payload": {"answer": "council-thread-recovery-ok"}},
+            "mistake": row("mistake", "council.read", "failed", []),
+            "error": {
+                "type": "error",
+                "message": "Council entry_id=43 is a reply in thread_id=42. "
+                "Use thread_id=42 to read or continue this thread.",
+                "data": {"error": "invalid-thread", "entry_id": 43, "thread_id": 42},
+            },
+            "repair": row("repair", "council.read", "succeeded", [42, 43]),
+        }
+
+    def blocks(self, parts):
+        """Return the publish, mistake and repair blocks of the run, in that order."""
+        return [
+            atif.block(
+                "t1/i1/f1", activity=atif.receipt(parts["root"], parts["reply"])
+            ),
+            atif.block(
+                "t1/i2/f1",
+                error=parts["error"],
+                activity=atif.receipt(parts["mistake"]),
+            ),
+            atif.block("t1/i3/f1", activity=atif.receipt(parts["repair"])),
         ]
 
-    def evaluate(self, events, recovery=True):
+    def evaluate(self, blocks, recovery=True):
         checks = {}
         if recovery:
             checks["want_council_recovery"] = load_scenarios(
                 ["council-thread-recovery"]
             )[0]["want_council_recovery"]
-        return DiscoveryEvaluationTest().run_events(events, **checks)
+        return DiscoveryEvaluationTest().run_blocks(
+            *blocks, answer="council-thread-recovery-ok", **checks
+        )
 
     def test_only_a_verified_repair_accepts_the_expected_error(self):
-        result = self.evaluate(self.events())
+        result = self.evaluate(self.blocks(self.parts()))
         self.assertTrue(result["correct"], result["detail"])
         self.assertEqual(0, result["errors"])
         self.assertEqual(1, result["surfaced_errors"])
@@ -1753,38 +1631,37 @@ class CouncilRecoveryTest(unittest.TestCase):
             {"entry_id": 43, "thread_id": 42.0},
         ):
             with self.subTest(data=data):
-                events = self.events()
-                events[4]["payload"]["error"]["data"] = {
-                    "error": "invalid-thread",
-                    **data,
-                }
-                result = self.evaluate(events)
+                parts = self.parts()
+                parts["error"]["data"] = {"error": "invalid-thread", **data}
+                result = self.evaluate(self.blocks(parts))
                 self.assertFalse(result["correct"], result["detail"])
 
     def test_normal_scenarios_still_reject_the_same_failure(self):
-        result = self.evaluate(self.events(), recovery=False)
+        result = self.evaluate(self.blocks(self.parts()), recovery=False)
         self.assertFalse(result["correct"])
         self.assertGreater(result["errors"], 0)
 
     def test_incomplete_repeated_or_unrelated_repairs_cannot_pass(self):
-        events = self.events()
+        publish, mistake, repair = self.blocks(self.parts())
         cases = {
-            "no mistake": events[:3] + events[5:],
-            "no repair": events[:5] + events[-1:],
-            "repair before mistake": events[:3]
-            + events[5:7]
-            + events[3:5]
-            + events[-1:],
+            "no mistake": [publish, repair],
+            "no repair": [publish, mistake],
+            "repair before mistake": [publish, repair, mistake],
         }
-        repeated = copy.deepcopy(events)
-        repeated[5]["payload"]["activity"]["rows"][0].update(
-            id="mistake-again", state="failed"
-        )
-        repeated[6]["payload"]["error"] = copy.deepcopy(events[4]["payload"]["error"])
-        cases["repeated mistake"] = repeated
+        repeated = self.parts()
+        repeated["repair"].update(id="mistake-again", state="failed")
+        cases["repeated mistake"] = [
+            publish,
+            mistake,
+            atif.block(
+                "t1/i3/f1",
+                error=repeated["error"],
+                activity=atif.receipt(repeated["repair"]),
+            ),
+        ]
         for name in ("wrong thread", "missing reply", "wrong body", "other failure"):
-            changed = copy.deepcopy(events)
-            row = changed[5]["payload"]["activity"]["rows"][0]
+            parts = self.parts()
+            row = parts["repair"]
             if name == "wrong thread":
                 row["resources"][0]["id"] = "99"
             elif name == "missing reply":
@@ -1792,18 +1669,18 @@ class CouncilRecoveryTest(unittest.TestCase):
             elif name == "wrong body":
                 row["presentation"]["sections"][1]["content"][0]["text"] = "Other"
             else:
-                changed[3]["payload"]["activity"]["rows"][0]["operation"] = "probe.read"
-            cases[name] = changed
-        for name, trace in cases.items():
+                parts["mistake"]["operation"] = "probe.read"
+            cases[name] = self.blocks(parts)
+        for name, blocks in cases.items():
             with self.subTest(case=name):
-                result = self.evaluate(trace)
+                result = self.evaluate(blocks)
                 self.assertFalse(result["correct"], result["detail"])
 
     def test_an_extra_failure_is_not_hidden_by_a_valid_repair(self):
-        events = self.events()
-        extra = DiscoveryEvaluationTest().activity("failed", row_id="other-failure")
-        events.insert(-1, extra)
-        result = self.evaluate(events)
+        extra = DiscoveryEvaluationTest().activity(
+            "failed", row_id="other-failure", ref="t1/i4/f1"
+        )
+        result = self.evaluate([*self.blocks(self.parts()), extra])
         self.assertFalse(result["correct"])
         self.assertGreater(result["errors"], 0)
 

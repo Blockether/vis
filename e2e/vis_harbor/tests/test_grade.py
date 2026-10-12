@@ -1,10 +1,12 @@
 """Tests for the grader of one Vis e2e trial."""
 
+import dataclasses
 import json
 
 import pytest
 
 from vis_harbor import grade
+from vis_harbor.tests import atif
 
 PROVIDER, MODEL = "zai-coding-plan", "glm-5.3-flash"
 SCENARIO = {
@@ -28,78 +30,30 @@ PASSING_GUARDS = {
 }
 
 
-def _line(payload, event="progress"):
-    return json.dumps({"event": event, "payload": payload})
-
-
-def _provider_call(iteration):
-    return _line(
-        {
-            "phase": "provider-call",
-            "provider": PROVIDER,
-            "model": MODEL,
-            "iteration": iteration,
-        }
+def _form(ref, code, *, operation="patch", state="succeeded", iteration=1):
+    """Return one agent step that runs ``code`` as a block with one Activity row."""
+    activity = atif.receipt(atif.row(f"row-{ref}", operation, state))
+    return atif.step(
+        iteration,
+        atif.block(ref, code, stdout="ok\n", activity=activity),
+        provider=PROVIDER,
+        model=MODEL,
     )
 
 
-def _form(scope, code, *, operation="patch", state="succeeded", iteration=1):
-    """Return the trace lines of one provider call and its executed form."""
-    row = {"id": f"row-{scope}", "operation": operation, "state": state}
-    return [
-        _provider_call(iteration),
-        _line(
-            {
-                "phase": "form-start",
-                "scope": scope,
-                "code": code,
-                "iteration": iteration,
-            }
-        ),
-        _line({"phase": "form-activity", "scope": scope, "activity": {"rows": [row]}}),
-        _line(
-            {
-                "phase": "form-result",
-                "scope": scope,
-                "iteration": iteration,
-                "stdout": "ok\n",
-                "tool-call-id": f"call-{scope}",
-            }
-        ),
-    ]
+def _run(*steps, **more):
+    """Return the ATIF document of a run on the test route."""
+    return atif.trajectory(*steps, provider=PROVIDER, model=MODEL, **more)
 
 
-def _result(answer="Done.", **more):
-    payload = {
-        "answer": {"answer": answer},
-        "session-id": "session-1",
-        "tokens": {"input": 100, "cached": 40, "output": 10, "total": 110},
-        "cost": {"provider": PROVIDER, "model": MODEL},
-        **more,
-    }
-    return _line(payload, event="result")
-
-
-def _trial(lines, **more):
-    fields = {
-        "trace": "\n".join(lines) + "\n",
-        "exit_code": 0,
-        "wall_s": 1.25,
-        "is_cancelled": False,
-        "provider": PROVIDER,
-        "model": MODEL,
-        "reasoning_effort": None,
-        "session_usage": None,
-        "goal": None,
-        **more,
-    }
-    return grade.TrialFiles(**fields)
+def _trial(document, **more):
+    return atif.trial(document, wall_s=1.25, provider=PROVIDER, model=MODEL, **more)
 
 
 def _grade(work, *, text="fixed\n", answer="Done.", code=PATCH_CODE, operation="patch"):
     (work / "notes.txt").write_text(text)
-    lines = [*_form("t1/i1", code, operation=operation), _result(answer)]
-    return grade.grade_trial(SCENARIO, work, _trial(lines))
+    document = _run(_form("t1/i1/f1", code, operation=operation), answer=answer)
+    return grade.grade_trial(SCENARIO, work, _trial(document))
 
 
 def test_a_complete_trial_passes_every_guard(tmp_path):
@@ -119,7 +73,7 @@ def test_a_complete_trial_passes_every_guard(tmp_path):
     assert result.result["provider"] == PROVIDER
     assert result.result["model"] == MODEL
     assert result.result["forms"] == 1
-    assert result.result["provider_calls"] == 1
+    assert result.result["provider_calls"] == 2
     assert result.result["edit_path"] == "patch"
     assert result.result["wall"] == 1.2
 
@@ -152,8 +106,8 @@ def test_each_failed_guard_fails_only_its_own_reward(tmp_path, guard, change, me
     [("failed", "activity_failures"), ("running", "incomplete_activities")],
 )
 def test_a_failed_or_unfinished_activity_is_an_error(tmp_path, state, count):
-    lines = [*_form("t1/i1", "cat(path)", operation="cat", state=state), _result()]
-    result = grade.grade_trial({"want_answer": ["Done"]}, tmp_path, _trial(lines))
+    document = _run(_form("t1/i1/f1", "cat(path)", operation="cat", state=state))
+    result = grade.grade_trial({"want_answer": ["Done"]}, tmp_path, _trial(document))
 
     assert not result.is_passed
     assert result.result["guards"]["activities"] is False
@@ -171,8 +125,12 @@ def test_a_failed_or_unfinished_activity_is_an_error(tmp_path, state, count):
     ],
 )
 def test_a_timeout_or_a_failed_exit_is_an_error(tmp_path, scenario, exit_code, message):
-    lines = ["engine stopped", *_form("t1/i1", PATCH_CODE), _result()]
-    result = grade.grade_trial(scenario, tmp_path, _trial(lines, exit_code=exit_code))
+    trial = _trial(
+        _run(_form("t1/i1/f1", PATCH_CODE)),
+        exit_code=exit_code,
+        stderr="\nengine stopped\nmore detail\n",
+    )
+    result = grade.grade_trial(scenario, tmp_path, trial)
 
     assert not result.is_passed
     assert result.result["converged"] is True
@@ -180,10 +138,9 @@ def test_a_timeout_or_a_failed_exit_is_an_error(tmp_path, scenario, exit_code, m
     assert result.rewards["no_errors"] == 0.0
 
 
-def test_an_error_block_in_the_result_does_not_converge(tmp_path):
-    error = {"type": "error", "message": "provider failed"}
-    lines = [*_form("t1/i1", PATCH_CODE), _result(content=[error])]
-    result = grade.grade_trial({}, tmp_path, _trial(lines))
+def test_a_run_error_does_not_converge(tmp_path):
+    document = _run(_form("t1/i1/f1", PATCH_CODE), answer=None, error="provider failed")
+    result = grade.grade_trial({}, tmp_path, _trial(document))
 
     assert not result.is_passed
     assert result.result["converged"] is False
@@ -192,35 +149,33 @@ def test_an_error_block_in_the_result_does_not_converge(tmp_path):
 
 def test_a_requested_route_needs_every_call_and_the_bill_on_that_route(tmp_path):
     scenario = {"want_requested_route": True}
-    lines = [*_form("t1/i1", PATCH_CODE), _result()]
-    assert grade.grade_trial(scenario, tmp_path, _trial(lines)).is_passed
+    document = _run(_form("t1/i1/f1", PATCH_CODE))
+    assert grade.grade_trial(scenario, tmp_path, _trial(document)).is_passed
 
-    billed = {"provider": PROVIDER, "model": "other-model"}
-    lines = [*_form("t1/i1", PATCH_CODE), _result(cost=billed)]
-    result = grade.grade_trial(scenario, tmp_path, _trial(lines))
+    document["agent"]["model_name"] = "other-model"
+    result = grade.grade_trial(scenario, tmp_path, _trial(document))
 
     assert result.result["guards"]["requested_route"] is False
 
 
-def _fold_lines():
-    return [
-        *_form("t1/i1", "x = 1", operation="cat"),
-        *_form(
-            "t1/i2",
+def _fold_run(**more):
+    return _run(
+        _form("t1/i1/f1", "x = 1", operation="cat"),
+        _form(
+            "t1/i2/f1",
             'print(fold_session("-t1/i1", "gist"))',
             operation="cat",
             iteration=2,
         ),
-        _provider_call(3),
-        _result(),
-    ]
+        **more,
+    )
 
 
 @pytest.mark.parametrize(("fold_count", "is_passed"), [(1, True), (2, False)])
 def test_a_prefix_fold_needs_one_recorded_fold_in_the_session_usage(
     tmp_path, fold_count, is_passed
 ):
-    trial = _trial(_fold_lines(), session_usage={"fold_count": fold_count})
+    trial = _trial(_fold_run(session_usage={"fold_count": fold_count}))
     result = grade.grade_trial({"want_folded_prefix": True}, tmp_path, trial)
 
     assert result.result["guards"]["folded_prefix"] is True
@@ -236,8 +191,10 @@ def test_a_prefix_fold_needs_one_recorded_fold_in_the_session_usage(
     ],
 )
 def test_usage_guards_fail_without_a_session_or_its_usage(tmp_path, session_id, detail):
-    lines = [*_form("t1/i1", PATCH_CODE), _result(**{"session-id": session_id})]
-    result = grade.grade_trial({"want_context_budget": True}, tmp_path, _trial(lines))
+    document = _run(_form("t1/i1/f1", PATCH_CODE), session_id=session_id)
+    result = grade.grade_trial(
+        {"want_context_budget": True}, tmp_path, _trial(document)
+    )
 
     assert result.result["guards"]["context_budget"] is False
     assert detail in result.result["detail"]
@@ -251,18 +208,15 @@ def test_usage_guards_fail_without_a_session_or_its_usage(tmp_path, session_id, 
     ],
 )
 def test_a_goal_scenario_reads_the_goal_of_the_trajectory(tmp_path, goal, is_passed):
-    lines = [*_form("t1/i1", PATCH_CODE), _result()]
-    result = grade.grade_trial(
-        {"want_goal_complete": True}, tmp_path, _trial(lines, goal=goal)
-    )
+    document = _run(_form("t1/i1/f1", PATCH_CODE), goal=goal)
+    result = grade.grade_trial({"want_goal_complete": True}, tmp_path, _trial(document))
 
     assert result.result["guards"]["goal_complete"] is is_passed
     assert result.is_passed is is_passed
 
 
-def _write_agent_logs(logs, lines, *, reasoning_effort=None):
+def _write_agent_logs(logs, document, *, reasoning_effort=None, stderr=""):
     logs.mkdir(parents=True, exist_ok=True)
-    (logs / grade.TRACE_FILE).write_text("\n".join(lines) + "\n")
     record = {
         "provider": PROVIDER,
         "model": MODEL,
@@ -272,56 +226,87 @@ def _write_agent_logs(logs, lines, *, reasoning_effort=None):
         "is_cancelled": False,
     }
     (logs / grade.RUN_FILE).write_text(json.dumps(record))
-    trajectory = {
-        "schema_version": "ATIF-v1.6",
-        "session_id": "session-1",
-        "agent": {"name": "vis", "version": "dev"},
-        "steps": [],
-        "extra": {"session_usage": SESSION_USAGE, "goal": GOAL},
-    }
-    (logs / grade.TRAJECTORY_FILE).write_text(json.dumps(trajectory))
+    (logs / grade.STDERR_FILE).write_text(stderr)
+    (logs / grade.TRAJECTORY_FILE).write_text(json.dumps(document))
 
 
-def test_load_trial_reads_the_trace_the_run_record_and_the_trajectory(tmp_path):
-    _write_agent_logs(tmp_path, ["line"], reasoning_effort="high")
+def test_load_trial_reads_the_run_record_the_stderr_and_the_trajectory(tmp_path):
+    document = _run(
+        _form("t1/i1/f1", PATCH_CODE), session_usage=SESSION_USAGE, goal=GOAL
+    )
+    _write_agent_logs(tmp_path, document, reasoning_effort="high", stderr="warning\n")
 
     loaded = grade.load_trial(tmp_path)
 
-    assert loaded == grade.TrialFiles(
-        trace="line\n",
+    assert dataclasses.replace(loaded, trajectory=None) == grade.TrialFiles(
+        trajectory=None,
+        trajectory_problem=None,
+        stderr="warning\n",
         exit_code=0,
         wall_s=2.5,
         is_cancelled=False,
         provider=PROVIDER,
         model=MODEL,
         reasoning_effort="high",
-        session_usage=SESSION_USAGE,
-        goal=GOAL,
     )
-    assert type(loaded.session_usage) is dict
-    assert type(loaded.session_usage["samples"]) is list
-    assert type(loaded.session_usage["samples"][0]) is dict
-    assert type(loaded.goal) is dict
+    assert loaded.trajectory.session_id == "session-1"
+    assert loaded.trajectory.final_answer == "Done."
+    assert [call.ref for call in loaded.trajectory.tool_calls] == ["t1/i1/f1"]
+    assert loaded.trajectory.session_usage["fold_count"] == 1
+    assert loaded.trajectory.goal["status"] == "complete"
 
 
-@pytest.mark.parametrize("trajectory", [None, "not json", "{}"])
-def test_load_trial_gives_empty_values_for_missing_or_invalid_files(
-    tmp_path, trajectory
+@pytest.mark.parametrize(
+    ("trajectory", "problem"),
+    [
+        (None, "no trajectory.json"),
+        (
+            "not json",
+            "an invalid trajectory.json: invalid trajectory: the file is not JSON",
+        ),
+        ("{}", "an invalid trajectory.json: invalid trajectory: schema_version"),
+    ],
+)
+def test_load_trial_gives_empty_values_and_the_problem_for_missing_or_invalid_files(
+    tmp_path, trajectory, problem
 ):
     if trajectory is not None:
         (tmp_path / grade.TRAJECTORY_FILE).write_text(trajectory)
 
-    assert grade.load_trial(tmp_path) == grade.TrialFiles(
-        trace="",
+    loaded = grade.load_trial(tmp_path)
+
+    assert loaded.trajectory_problem.startswith(problem)
+    assert dataclasses.replace(loaded, trajectory_problem=None) == grade.TrialFiles(
+        trajectory=None,
+        trajectory_problem=None,
+        stderr="",
         exit_code=None,
         wall_s=0.0,
         is_cancelled=False,
         provider=None,
         model=None,
         reasoning_effort=None,
-        session_usage=None,
-        goal=None,
     )
+
+
+def test_a_finished_run_without_a_trajectory_is_an_error(tmp_path):
+    trial = _trial(_run(), trajectory=None, trajectory_problem="no trajectory.json")
+    result = grade.grade_trial({}, tmp_path, trial)
+
+    assert not result.is_passed
+    assert result.result["converged"] is False
+    assert result.result["err_msgs"] == ["vis-agent wrote no trajectory.json"]
+
+
+def test_an_invalid_activity_receipt_is_an_error(tmp_path):
+    activity = atif.receipt(atif.row("row-1", "cat"))
+    del activity["rows"][0]["summary"]
+    block = atif.block("t1/i1/f1", "cat(path)", activity=activity)
+    document = _run(atif.step(1, block, provider=PROVIDER, model=MODEL))
+    result = grade.grade_trial({}, tmp_path, _trial(document, strict=False))
+
+    assert not result.is_passed
+    assert result.result["err_msgs"][0].startswith("invalid Activity in t1/i1/f1: ")
 
 
 def test_main_writes_the_grade_and_the_rewards(tmp_path, capsys):
@@ -331,7 +316,7 @@ def test_main_writes_the_grade_and_the_rewards(tmp_path, capsys):
     workspace.mkdir()
     (workspace / "notes.txt").write_text("fixed\n")
     agent_logs = tmp_path / "agent"
-    _write_agent_logs(agent_logs, [*_form("t1/i1", PATCH_CODE), _result()])
+    _write_agent_logs(agent_logs, _run(_form("t1/i1/f1", PATCH_CODE), goal=GOAL))
     verifier_logs = tmp_path / "verifier"
 
     exit_code = grade.main(

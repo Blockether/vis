@@ -1,16 +1,17 @@
 """Grade one Vis e2e trial from its saved files and write Harbor rewards.
 
 The verifier of each compiled task runs this module. It reads the scenario, the
-workspace after the run and the agent logs (``trace.jsonl``, ``run.json`` and
-``trajectory.json``). It writes two files to the verifier logs:
+workspace after the run and the agent logs (``trajectory.json``, ``run.json`` and
+``stderr.txt``). It writes two files to the verifier logs:
 
 - ``reward.json``: named rewards. ``reward`` is the verdict. ``converged``,
   ``correct`` and ``no_errors`` are its parts. Each other key is one guard that
   the scenario asks for, with 1.0 for a pass and 0.0 for a failure.
 - ``grade.json``: the full result record with the details and the evidence.
 
-The checks come from the old e2e runner. Persisted usage and the saved goal come
-from the trajectory, not from a gateway request.
+The checks come from the old e2e runner. The SDK reads all evidence of the run
+from its ATIF trajectory: code blocks, output, Activity, provider calls, answer,
+token totals, persisted usage and the saved goal.
 """
 
 from __future__ import annotations
@@ -27,9 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from blockether.vis.evals import load_trajectory
+from blockether.vis.evals import Trajectory, load_trajectory
 
-from vis_harbor.agent import RUN_FILE, TRACE_FILE, TRAJECTORY_FILE
+from vis_harbor.agent import RUN_FILE, STDERR_FILE, TRAJECTORY_FILE
 
 DEFAULT_TIMEOUT_SEC = 300
 REWARD_FILE = "reward.json"
@@ -690,7 +691,7 @@ def discovery_evidence(forms, activities, rules):
         except SyntaxError:
             failures.append("cannot audit discovery in an invalid Python form")
     lookups = [
-        (row["operation"], row.get("argument-key", row["id"]))
+        (row["operation"], row.get("argument_key", row["id"]))
         for row in activities
         if row["operation"] in {"doc", "apropos"}
     ]
@@ -889,17 +890,21 @@ def stdout_recovery_failures(form_outputs, form_events, expected):
 
 @dataclass(frozen=True)
 class TrialFiles:
-    """The saved output of one agent run."""
+    """The saved output of one agent run.
 
-    trace: str
+    ``trajectory`` is the ATIF trajectory of the run. It is None when the file is
+    missing or invalid, and ``trajectory_problem`` then tells why.
+    """
+
+    trajectory: Trajectory | None
+    trajectory_problem: str | None
+    stderr: str
     exit_code: int | None
     wall_s: float
     is_cancelled: bool
     provider: str | None
     model: str | None
     reasoning_effort: str | None
-    session_usage: Any
-    goal: Any
 
 
 def _json_data(value: Any) -> Any:
@@ -914,31 +919,46 @@ def _json_data(value: Any) -> Any:
 def load_trial(agent_logs: str | os.PathLike[str]) -> TrialFiles:
     """Read the files of the agent. A missing or invalid file gives empty values."""
     logs = Path(agent_logs)
-    trace_path = logs / TRACE_FILE
-    trace = trace_path.read_text(errors="replace") if trace_path.is_file() else ""
     run_path = logs / RUN_FILE
     record = json.loads(run_path.read_text()) if run_path.is_file() else {}
-    session_usage = goal = None
+    stderr_path = logs / STDERR_FILE
+    stderr = stderr_path.read_text(errors="replace") if stderr_path.is_file() else ""
+    trajectory = problem = None
     trajectory_path = logs / TRAJECTORY_FILE
-    if trajectory_path.is_file():
+    if not trajectory_path.is_file():
+        problem = f"no {TRAJECTORY_FILE}"
+    else:
         try:
             trajectory = load_trajectory(trajectory_path, strict=False)
-        except ValueError:
-            pass
-        else:
-            session_usage = _json_data(trajectory.session_usage)
-            goal = _json_data(trajectory.goal)
+        except ValueError as failure:
+            problem = f"an invalid {TRAJECTORY_FILE}: {failure}"
     return TrialFiles(
-        trace=trace,
+        trajectory=trajectory,
+        trajectory_problem=problem,
+        stderr=stderr,
         exit_code=record.get("exit_code"),
         wall_s=float(record.get("wall_s") or 0.0),
         is_cancelled=bool(record.get("is_cancelled")),
         provider=record.get("provider"),
         model=record.get("model"),
         reasoning_effort=record.get("reasoning_effort"),
-        session_usage=session_usage,
-        goal=goal,
     )
+
+
+def _result_tokens(run: Trajectory) -> dict[str, int]:
+    """The token totals of the run, with the keys of a Vis result."""
+    totals = run.final_metrics
+    if totals is None:
+        return {}
+    values = {
+        "input": totals.total_prompt_tokens,
+        "output": totals.total_completion_tokens,
+        "cached": totals.total_cached_tokens,
+        "cache_created": totals.cache_creation_tokens,
+        "reasoning": totals.reasoning_tokens,
+        "total": totals.total_tokens,
+    }
+    return {key: value for key, value in values.items() if value is not None}
 
 
 class _Checks:
@@ -1001,121 +1021,75 @@ def grade_trial(
     activities = {}
     surfaced_scopes = set()
     errs = []
-    unparsed = []
     done = False
     answer = ""
     result_tokens = {}
     result_cost = {}
     result_session_id = None
     result_eval = {}
-    out = trial.trace
-    for line in out.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            o = json.loads(line)
-        except ValueError:
-            unparsed.append(line)
-            continue
-        ev = o.get("event")
-        pl = o.get("payload", {})
-        if ev == "result":
-            result_tokens = pl.get("tokens") or {}
-            if not isinstance(result_tokens, dict):
-                errs.append("provider tokens are not an object")
-                result_tokens = {}
-            result_cost = pl.get("cost") or {}
-            result_session_id = pl.get("session-id")
-            result_eval = pl.get("eval") or {}
-            content_errors = [
-                block.get("message") or block.get("title") or "Provider error"
-                for block in pl.get("content") or []
-                if isinstance(block, dict) and block.get("type") == "error"
-            ]
-            errs.extend(content_errors)
-            a = pl.get("answer")
-            if isinstance(a, dict):
-                answer = a.get("answer", "")
-            elif a is not None:
-                answer = str(a)
-            elif isinstance(pl.get("content"), list):
-                answer = "\n".join(
-                    str(block.get("markdown") or block.get("text") or "")
-                    if isinstance(block, dict)
-                    else str(block)
-                    for block in pl["content"]
-                )
-            if answer and not pl.get("error") and not content_errors:
-                done = True
-            continue
-        ph = pl.get("phase")
-        if ph == "provider-call":
-            provider_calls.append(
-                {
-                    "provider": pl.get("provider"),
-                    "model": pl.get("model"),
-                    "iteration": pl.get("iteration"),
-                }
-            )
-        elif ph == "form-start":
-            code = pl.get("code", "")
+    session_usage = saved_goal = None
+    run = trial.trajectory
+    if run is None and exit_code == 0:
+        errs.append(f"vis-agent wrote {trial.trajectory_problem}")
+    for step in run.agent_steps if run is not None else ():
+        provider_calls.append(
+            {
+                "provider": step.provider,
+                "model": step.model_name,
+                "iteration": step.iteration,
+            }
+        )
+        for call in step.tool_calls:
+            scope = call.ref or ""
+            code = call.code or ""
             forms.append(code)
             form_events.append(
-                {
-                    "code": code,
-                    "scope": pl.get("scope", ""),
-                    "iteration": pl.get("iteration"),
-                }
+                {"code": code, "scope": scope, "iteration": step.iteration}
             )
-        elif ph == "form-activity":
-            scope = pl.get("scope", "")
-            rows = [
-                row
-                for row in (pl.get("activity") or {}).get("rows", [])
-                if row.get("id") and row.get("operation")
-            ]
-            present = {row["id"] for row in rows}
-            # A later snapshot of the SAME form collapses finished rows into one
-            # group row. A non-terminal row that snapshot no longer lists was
-            # superseded, not abandoned; terminal rows stay as evidence.
-            for row_id, previous in list(activities.items()):
-                if (
-                    previous.get("scope") == scope
-                    and row_id not in present
-                    and previous.get("state") not in TERMINAL_ACTIVITY_STATES
-                ):
-                    del activities[row_id]
-            for row in rows:
-                previous = activities.get(row["id"], {})
-                if previous.get("state") not in TERMINAL_ACTIVITY_STATES:
-                    activities[row["id"]] = {**row, "scope": scope}
-                elif row.get("state") in {"failed", "cancelled"}:
-                    activities[row["id"]] = {**row, "scope": scope}
-        elif ph == "form-result":
-            stdout = pl.get("stdout") or ""
+            stdout = call.stdout
+            error = _json_data(call.error)
             form_outputs.append(
                 {
-                    "scope": pl.get("scope", ""),
-                    "iteration": pl.get("iteration"),
+                    "scope": scope,
+                    "iteration": step.iteration,
                     "stdout": stdout,
-                    "tool_call_id": pl.get("tool-call-id"),
-                    "error": pl.get("error"),
+                    "tool_call_id": call.tool_call_id,
+                    "error": error,
                 }
             )
             largest_form_output = max(largest_form_output, len(stdout))
             total_form_output += len(stdout)
-            if pl.get("error"):
-                surfaced_scopes.add(pl.get("scope", ""))
-                e = pl.get("error")
-                errs.append(e.get("message", "?") if isinstance(e, dict) else str(e))
-        elif ph == "iteration-final" and pl.get("done?"):
-            done = True
+            if error:
+                surfaced_scopes.add(scope)
+                errs.append(error.get("message", "?"))
+            if call.activity_problem:
+                errs.append(
+                    f"invalid Activity in {scope or call.tool_call_id}: "
+                    f"{call.activity_problem}"
+                )
+            # The receipt of a block holds the final state of each top-level row.
+            # Child rows are parts of their parent, as in the live snapshots.
+            receipt = _json_data(call.extra.get("activity")) if call.activity else {}
+            for row in receipt.get("rows") or []:
+                if row.get("id") and row.get("operation"):
+                    activities[row["id"]] = {**row, "scope": scope}
+    if run is not None:
+        if run.error:
+            errs.append(str(run.error))
+        result_tokens = _result_tokens(run)
+        result_cost = {"provider": run.provider, "model": run.model_name}
+        result_session_id = run.session_id
+        result_eval = _json_data(run.evaluation) or {}
+        session_usage = _json_data(run.session_usage)
+        saved_goal = _json_data(run.goal)
+        answer = run.final_answer or ""
+        done = run.final_step is not None and not run.error
 
     if exit_code is None:
         errs.append(f"vis-agent timed out after {timeout}s")
     elif exit_code:
-        suffix = f": {unparsed[0][:120]}" if unparsed else ""
+        first = next((line for line in trial.stderr.splitlines() if line.strip()), "")
+        suffix = f": {first.strip()[:120]}" if first else ""
         errs.append(f"vis-agent exited {exit_code}{suffix}")
     activity_rows = list(activities.values())
     failed_activities = [
@@ -1333,12 +1307,12 @@ def grade_trial(
         for name in usage_guards:
             checks.fail(name)
         checks.detail.append("persistent run returned no session id")
-    elif usage_guards and not isinstance(trial.session_usage, dict):
+    elif usage_guards and not isinstance(session_usage, dict):
         for name in usage_guards:
             checks.fail(name)
         checks.detail.append("the trajectory has no session usage")
     elif usage_guards:
-        cache_usage = trial.session_usage
+        cache_usage = session_usage
         if sc.get("want_cache_metrics"):
             metric_failures = cache_metric_failures(
                 cache_usage,
@@ -1374,7 +1348,7 @@ def grade_trial(
         if not result_session_id:
             checks.fail("goal_complete", "goal run returned no persisted session id")
         else:
-            goal_state = trial.goal
+            goal_state = saved_goal
             if (
                 not isinstance(goal_state, dict)
                 or goal_state.get("status") != "complete"
