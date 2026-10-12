@@ -632,24 +632,29 @@
                              ["--provider" "zai-coding-plan" "--model" "glm-5.2"
                               "--reasoning-effort" "max" "--json" "task"])))))
 
-(defdescribe eval-exit-code-test
-             (it "uses 0 for valid eval evidence"
-                 (expect (= 0 (#'main/cli-result-exit-code {:eval {:valid? true}}))))
-             (it "uses 2 for a completed run invalidated by fallback"
-                 (expect (= 2
-                            (#'main/cli-result-exit-code
-                             {:answer {:answer "done"}
-                              :eval {:valid? false
-                                     :invalid-reasons [{:type :provider-model-fallback}]}}))))
-             (it "uses 2 for unsupported preflight even though the result carries an error"
-                 (expect (= 2
-                            (#'main/cli-result-exit-code
-                             {:error "unsupported"
-                              :eval {:valid? false
-                                     :invalid-reasons [{:type :unsupported-reasoning-effort}]}}))))
-             (it "uses 1 for execution failure"
-                 (expect (= 1 (#'main/cli-result-exit-code {:status :error})))
-                 (expect (= 1 (#'main/cli-result-exit-code {:error "boom"})))))
+(defdescribe
+  eval-exit-code-test
+  (it "uses 0 for valid eval evidence"
+      (expect (= 0 (#'main/cli-result-exit-code {:eval {:valid? true}}))))
+  (it "uses 2 for a completed run invalidated by fallback"
+      (expect (= 2
+                 (#'main/cli-result-exit-code
+                  {:answer {:answer "done"}
+                   :eval {:valid? false :invalid-reasons [{:type :provider-model-fallback}]}}))))
+  (it "uses 2 for unsupported preflight even though the result carries an error"
+      (expect (= 2
+                 (#'main/cli-result-exit-code
+                  {:error "unsupported"
+                   :eval {:valid? false
+                          :invalid-reasons [{:type :unsupported-reasoning-effort}]}}))))
+  (it "uses 1 for execution failure"
+      (expect (= 1 (#'main/cli-result-exit-code {:status :error})))
+      (expect (= 1 (#'main/cli-result-exit-code {:error "boom"}))))
+  (it "uses 1 when the turn ends with a provider error block"
+      (expect (= 1
+                 (#'main/cli-result-exit-code
+                  {:content [{"type" "error" "code" "provider_quota_exhausted" "status" 429}]})))
+      (expect (= 0 (#'main/cli-result-exit-code {:content [{"type" "text" "text" "done"}]})))))
 
 (defdescribe toggle-overrides-test
              (it "parses NAME=VALUE pairs against the registry"

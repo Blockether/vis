@@ -26,6 +26,7 @@ from vis_harbor.agent import (
     TRAJECTORY_FILE,
     VisSourceAgent,
     check_native_binary,
+    provider_failure,
     source_classpath,
 )
 from vis_harbor.environment import VIS_ROOT
@@ -90,6 +91,9 @@ seen = {
     "gateway_url": os.environ.get("VIS_GATEWAY_URL"),
 }
 print(json.dumps(seen))
+if arguments[-1].startswith("quota"):
+    block = {"type": "error", "code": "provider_quota_exhausted", "title": "Quota"}
+    print(json.dumps({"event": "result", "payload": {"content": [block]}}))
 """
 VERIFIER = """\
 #!/usr/bin/env bash
@@ -356,6 +360,36 @@ def test_harbor_runs_one_trial_on_the_host(tmp_path):
     assert seen["gateway_url"] is None
     assert seen["db_path"].endswith("vis.mdb")
     assert not Path(seen["db_path"]).parent.exists()
+
+
+def test_a_provider_refusal_is_an_agent_error_not_a_wrong_answer(tmp_path):
+    # The nightly run of 2026-10-12 scored an exhausted provider quota as a wrong
+    # answer. Harbor must record it as an exception of the agent.
+    result, trial = run_harbor(tmp_path, write_task(tmp_path, "quota\n"))
+    exception = result["exception_info"]
+    assert exception["exception_type"] == "ProviderUnavailableError"
+    assert "provider_quota_exhausted" in exception["exception_message"]
+    record = json.loads((trial / "agent" / RUN_FILE).read_text())
+    assert record["exit_code"] == 0
+
+
+def test_provider_failure_reads_only_provider_error_blocks(tmp_path):
+    trace = tmp_path / TRACE_FILE
+    assert provider_failure(trace) is None
+
+    def result(*blocks):
+        frame = {"event": "result", "payload": {"content": list(blocks)}}
+        return json.dumps(frame) + "\n"
+
+    trace.write_text(result({"type": "text", "text": "done"}))
+    assert provider_failure(trace) is None
+    trace.write_text(result({"type": "error", "code": "tool_failed"}))
+    assert provider_failure(trace) is None
+    trace.write_text(
+        "not json\n"
+        + result({"type": "error", "code": "provider_unavailable", "title": "Down"})
+    )
+    assert provider_failure(trace) == "provider_unavailable: Down"
 
 
 def test_agent_timeout_stops_the_engine(tmp_path):

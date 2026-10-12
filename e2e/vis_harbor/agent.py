@@ -107,6 +107,40 @@ def source_commit() -> str | None:
     return completed.stdout.strip() or None
 
 
+class ProviderUnavailableError(RuntimeError):
+    """The provider refused the turn, so the trial measures nothing about Vis."""
+
+
+def provider_failure(trace: Path) -> str | None:
+    """Return the provider error that ended the turn in ``trace``, or None.
+
+    A provider quota or outage ends the turn with an error block whose code
+    starts with ``provider_``. Such a trial is an infrastructure error, not a
+    wrong answer.
+    """
+    try:
+        lines = trace.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            frame = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(frame, dict) or frame.get("event") != "result":
+            continue
+        payload = frame.get("payload")
+        content = payload.get("content") if isinstance(payload, dict) else None
+        for block in content if isinstance(content, list) else ():
+            if not isinstance(block, dict) or block.get("type") != "error":
+                continue
+            code = str(block.get("code"))
+            if code.startswith("provider_"):
+                return f"{code}: {block.get('title') or 'provider error'}"
+        return None
+    return None
+
+
 def check_native_binary(path: str) -> None:
     """Refuse a launcher script: the measurement must use the native image."""
     with open(path, "rb") as executable:
@@ -256,6 +290,8 @@ class VisSourceAgent(BaseAgent):
             (self.logs_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
             shutil.rmtree(runtime, ignore_errors=True)
             self.populate_context_post_run(context)
+        if failure := provider_failure(self.logs_dir / TRACE_FILE):
+            raise ProviderUnavailableError(failure)
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Copy the token and cost totals of the trajectory into ``context``."""
