@@ -113,12 +113,15 @@ def paired_change(changes: Sequence[float]) -> tuple[tuple[float, float], float]
 
     Each change is the candidate pass rate of one case minus its baseline pass rate.
     The floor is the smallest true change that this many cases detect with 80% power.
+    The interval stays inside the possible changes, from -1 to 1.
     """
     count = len(changes)
     mean = sum(changes) / (count + 2)
     square = (sum(change * change for change in changes) + 1) / (count + 2)
     error = math.sqrt(max(0.0, square - mean * mean) / (count + 2))
-    return (mean - Z95 * error, mean + Z95 * error), (Z95 + Z_POWER) * error
+    low = max(-1.0, mean - Z95 * error)
+    high = min(1.0, mean + Z95 * error)
+    return (low, high), (Z95 + Z_POWER) * error
 
 
 def cohen_kappa(pairs: Sequence[tuple[Hashable, Hashable]]) -> float | None:

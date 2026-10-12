@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Removed
 - The `evals` project extension. Use the SDK functions and the `vis_harbor` commands in `e2e/`.
 
+### Fixed
+- The 95% interval of a paired change stays between -100 and 100 points. Before, a large change
+  gave an interval below -100 points.
+
 ## [v0.2.39] - 2026-10-12
 
 ### Added

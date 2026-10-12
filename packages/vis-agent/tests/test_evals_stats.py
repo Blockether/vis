@@ -51,6 +51,17 @@ def test_paired_change_gives_the_agresti_min_interval_and_its_floor():
     assert _points((low, high, floor)) == (-54.4, 4.4, 42.1)
 
 
+def test_paired_change_keeps_the_interval_inside_the_possible_changes():
+    # 39 of 40 paired cases broke in a real e2e comparison. The unbounded interval
+    # started at -101.9 points, below the smallest possible change.
+    (low, high), _ = paired_change([-1.0] * 39 + [0.0])
+    assert low == -1.0
+    assert -1.0 < high < 0.0
+    (low, high), _ = paired_change([1.0] * 40)
+    assert high == 1.0
+    assert 0.0 < low < 1.0
+
+
 def test_cohen_kappa():
     assert cohen_kappa([("a", "a"), ("a", "a"), ("b", "b"), ("a", "b")]) == 0.5
     assert cohen_kappa([("a", "a"), ("a", "a")]) is None
