@@ -88,7 +88,7 @@ def repo(tmp_path, monkeypatch):
     paths = {
         "REPO": root,
         "SCENARIOS": scenarios,
-        "E2E_RUNNER": root / "e2e" / "run.py",
+        "E2E_PROJECT": root / "e2e",
         "BENCH": bench,
         "HOME": tmp_path / "home",
     }
@@ -269,7 +269,16 @@ def test_run_scenarios_starts_the_runner_with_its_route(repo, monkeypatch):
     )
     assert re.fullmatch(r"\d{8}-\d{6}-scenarios-[0-9a-f]{4}", run_id)
     ((run_dir, call),) = launches
-    assert call["argv"][1:] == [str(evals.E2E_RUNNER), "edit-config"]
+    assert call["argv"][1:] == [
+        "run",
+        "--frozen",
+        "--project",
+        str(evals.E2E_PROJECT),
+        "python",
+        "-m",
+        "vis_harbor.run",
+        "edit-config",
+    ]
     assert (call["cwd"], call["kind"], call["expected_runs"]) == (
         evals.REPO,
         "scenarios",
@@ -1407,7 +1416,7 @@ def test_activities_describe_empty_results():
         1,
         "2026-01-01T00:00:00+00:00",
         None,
-        "python3 e2e/run.py edit-config",
+        "uv run --frozen --project e2e python -m vis_harbor.run edit-config",
         "/tmp/output.log",
         None,
         None,

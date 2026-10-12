@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +86,17 @@ def load_scenarios(
     if missing:
         raise ValueError(f"unknown scenario: {', '.join(sorted(missing))}")
     return scenarios
+
+
+def with_agent_timeout(scenario: Scenario, timeout_sec: int) -> Scenario:
+    """Return ``scenario`` with the agent timeout ``timeout_sec`` in its data.
+
+    The task copy of ``scenario.json`` gets the same value, so the grade reports the
+    timeout that the agent had.
+    """
+    data = {**scenario.data, "timeout_s": timeout_sec}
+    source = (json.dumps(data, indent=2) + "\n").encode()
+    return replace(scenario, source=source, data=data)
 
 
 def fixture_directory(scenario: Scenario) -> Path:
@@ -163,14 +174,23 @@ def compile_task(scenario: Scenario, out: Path) -> Path:
 
 
 def compile_dataset(
-    out: Path, scenario_ids: Sequence[str] | None = None, *, root: Path = SCENARIO_ROOT
+    out: Path,
+    scenario_ids: Sequence[str] | None = None,
+    *,
+    root: Path = SCENARIO_ROOT,
+    agent_timeout_sec: int | None = None,
 ) -> list[Path]:
-    """Compile the scenarios into task directories under ``out``."""
+    """Compile the scenarios into task directories under ``out``.
+
+    ``agent_timeout_sec`` replaces the agent timeout of each scenario.
+    """
     out.mkdir(parents=True, exist_ok=True)
-    return [
-        compile_task(scenario, out)
-        for scenario in load_scenarios(scenario_ids, root=root)
-    ]
+    scenarios = load_scenarios(scenario_ids, root=root)
+    if agent_timeout_sec is not None:
+        scenarios = [
+            with_agent_timeout(scenario, agent_timeout_sec) for scenario in scenarios
+        ]
+    return [compile_task(scenario, out) for scenario in scenarios]
 
 
 def main(argv: Sequence[str] | None = None) -> int:

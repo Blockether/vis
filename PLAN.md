@@ -193,6 +193,7 @@ Unknowns: the budget, the number of tasks for enough power and the Podman machin
 - Phase 1: done. The benchmark commit `22223a5` stays local until the baseline round is sealed.
 - Phase 2: done. A host run with `--trajectory` passed Harbor's `Trajectory` model, and `harbor view` showed its 3 steps. Its totals equaled the result frame. A planted fake credential did not appear in the file, and the file mode was `0600`.
 - Phase 3: done. Vis `a93089b62` writes the steps of a persisted run. The native-release dry run `38185257847` built it, and `profiles.toml` pins that archive by sha256 (benchmark commit `bf1ae0b`, local). In round `canary-p3b`, `vis-solo` and `vis-team` each wrote valid ATIF v1.8 with 15 steps, mode `0600` and the profile in `agent.extra`. Both trials had reward 0: each one failed 1 of 2 task tests, with no infrastructure error. `terminal_bench/vis_agent.py` is removed.
-- Phase 4: next.
-- Phases 5 to 8: not started.
+- Phase 4: done. One Harbor run graded all 40 scenarios with the old and the new grader on the `anthropic-coding-plan/claude-opus-5-5` route. The verdicts agreed in 40 of 40 trials: 37 passed and 3 failed in both, with no trial exception. `evals.run_scenarios` starts `e2e/vis_harbor/run.py` as one Harbor job, and `e2e/run.py` is removed.
+- Phase 5: next.
+- Phases 6 to 8: not started.
 - The baseline round (`ctb-baseline`) has no Vis trials. It runs until about 2026-10-13. After its seal, commit `results/baseline.json` in the benchmark repository.

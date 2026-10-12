@@ -1,14 +1,13 @@
 # e2e
 
-End-to-end tests run `vis-agent` on editing tasks and check completion, file
-contents, errors and use of anchored `patch` edits. See `run.py`'s module
-docstring for the full contract. Each invocation starts a gateway from the
-current classpath with a temporary database, independent of installed daemons.
-The gateway also gets an empty global extension directory, so extensions in
-`~/.vis/extensions` do not change the measured runs. To include them, set
-`VIS_EXTENSIONS_DIR="$HOME/.vis/extensions"`.
-Every scenario passes `--persist` to use gateway session/turn handling rather than
-the ephemeral CLI engine path. Sessions stay in that temporary database.
+End-to-end tests run the Vis CLI of this checkout on editing tasks and check
+completion, file contents, errors and use of anchored `patch` edits. The runner
+compiles the scenarios to a Harbor dataset and runs them as one Harbor job on
+this host. See the module docstrings in `vis_harbor/` for the full contract.
+Each trial starts one CLI process with `--persist` and its own temporary
+database, independent of installed daemons. The trial also gets an empty global
+extension directory, so extensions in `~/.vis/extensions` do not change the
+measured runs. To include them, set `VIS_EXTENSIONS_DIR="$HOME/.vis/extensions"`.
 These tests use real model calls and incur provider costs.
 
 ## Layout
@@ -18,7 +17,8 @@ alongside Clojure (`clj-*`) and Python (`py-*`) tests.
 
 ```
 e2e/
-  run.py                                              the runner
+  pyproject.toml                                      the locked uv project with Harbor
+  vis_harbor/                                         dataset compiler, host environment, agent, grader and runner
   scenarios/<id>/                                     foundation editing, clj-* (repair/format hook), py-* (managed REPL)
 
   <id>/
@@ -67,19 +67,19 @@ e2e/
 - **want_folded_prefix** — exactly one direct `fold_session("-tN/iK", ...)` must target
   the immediately prior iteration and a provider call must continue after it.
 - **want_cache_read** — the real provider result must report nonzero aggregate cached input tokens.
-- **want_cache_metrics** — persist the run, read `/v1/sessions/:sid/usage` through the
-  canonical gateway client, and independently reconcile provider totals, both percentages,
+- **want_cache_metrics** — persist the run, read the session usage from the trial's
+  `trajectory.json`, and independently reconcile provider totals, both percentages,
   sample counts, and (with `want_folded_prefix`) the one estimated rebuild.
   Invalid, missing or impossible token counts fail; a cold cache does not. This
   does not require a particular cache rate or report a request-level hit percentage.
-- **want_context_budget** — persist the run, read the request health from
-  `/v1/sessions/:sid/usage`, and require the `auto_compress_above` and
+- **want_context_budget** — persist the run, read the request health from the session
+  usage in `trajectory.json`, and require the `auto_compress_above` and
   `model_input_limit` values the model printed from `session['utilization']` and
   answered to match it. The soft budget must be positive, at most 90% of the input
   limit, with its reminder at 75% of the budget. An object keyed by `provider/model`
   also pins both values for those routes; other routes check only these rules.
-- **want_goal_complete** — require the persisted gateway goal to be complete after
-  the scenario, not just a model claim or a tool-call attempt.
+- **want_goal_complete** — require the persisted session goal in `trajectory.json`
+  to be complete after the scenario, not just a model claim or a tool-call attempt.
 - **want_stdout_recovery** — require an oversized raw stdout, then a later
   `read_session()` block that selects its original scope and tool-call ID. Check
   a later proof block (which may be the same block as the read) against the raw
@@ -94,9 +94,10 @@ e2e/
   contract. It tests recovered-contract reuse, not cross-turn memory retention.
 - **fixture_generator** — a checked-in Python script basename at the fixture root,
   run once during seeding with the workspace path as its argument. It writes
-  deterministic large inputs into the temporary workspace before the fixture
-  git commit; the script itself is not copied. Combine with `files_from` to
-  share generated inputs without tracking bulky data.
+  deterministic large inputs into the task workspace when the runner compiles the
+  dataset, before the fixture git commit of each trial. The script itself is not
+  copied. Combine with `files_from` to share generated inputs without tracking
+  bulky data.
 
 - **workspace_filesystem** — `{id: fixture-relative directory}` registrations.
   Setup writes absolute paths and allowed ids to `vis.yml`; omit a fixture copy
@@ -123,14 +124,15 @@ full `update_goal` result can exceed them because it repeats the goal objective.
 Print only the completion status if you need confirmation.
 
 Run named cases with the command below; each model call incurs provider costs.
-The generator scripts are deterministic and run inside temporary fixture
-workspaces. Read `results.json` and the per-case traces under `VIS_E2E_TRACES`
+The generator scripts are deterministic and run when the runner compiles the
+dataset. Read `results.json` and the per-case traces under `VIS_E2E_TRACES`
 for failures, not just the command's exit status. Passing cases demonstrate
 those tasks and routes, not universal reliability across models or prompts.
 
 ```sh
 VIS_E2E_TRACES=/tmp/vis_large_stdout VIS_PROVIDER=zai-coding-plan \
-VIS_MODELS=glm-5.3-flash,glm-5.3 VIS_E2E_WORKERS=2 python3 e2e/run.py \
+VIS_MODELS=glm-5.3-flash,glm-5.3 VIS_E2E_WORKERS=2 \
+uv run --project e2e python -m vis_harbor.run \
   stdout-goal-cache stdout-lookup-middle stdout-ledger-reduce stdout-jsonl-filter \
   stdout-unicode stdout-dual-source stdout-incident-join stdout-natural-lookup \
   stdout-natural-ledger large-csv-groups large-crossfile-join \
@@ -139,39 +141,43 @@ VIS_MODELS=glm-5.3-flash,glm-5.3 VIS_E2E_WORKERS=2 python3 e2e/run.py \
 
 ## Run
 
+Start the runner with `uv` from the repository root. `uv run --project e2e` uses the
+locked Harbor project in `e2e/`.
+
 ```sh
-python3 e2e/run.py                              # every scenario across all roots
-python3 e2e/run.py clj-rename py-add-func       # a subset by id
-VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash python3 e2e/run.py
+uv run --project e2e python -m vis_harbor.run                         # every scenario
+uv run --project e2e python -m vis_harbor.run clj-rename py-add-func  # a subset by id
+VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash uv run --project e2e python -m vis_harbor.run
 
 # Run each scenario on multiple models. The command succeeds only if every
 # model passes every selected scenario:
-VIS_MODELS=glm-5.3-flash,glm-5.3 python3 e2e/run.py
+VIS_MODELS=glm-5.3-flash,glm-5.3 uv run --project e2e python -m vis_harbor.run
 
 # Pin exact native effort and reject missing evidence or a changed route:
-VIS_PROVIDER=openai-codex VIS_MODEL=gpt-6-sol VIS_REASONING_EFFORT=low python3 e2e/run.py py-fix-body py-add-param
+VIS_PROVIDER=openai-codex VIS_MODEL=gpt-6-sol VIS_REASONING_EFFORT=low uv run --project e2e python -m vis_harbor.run py-fix-body py-add-param
 ```
 
 To run the same scenarios against a built native engine, set
 `VIS_E2E_NATIVE_BIN` to the absolute raw native executable path, not the
-`vis-agent` launcher. Both agent turns and isolated fixture gateways then use
-that binary; the JVM only runs the canonical gateway client for startup,
-usage queries and cleanup. Missing binaries and launcher scripts fail the run
-rather than falling back to source. Also supply the matching Python sidecar.
+`vis-agent` launcher. Each trial then runs that binary instead of the source CLI.
+A missing binary or a launcher script fails the trial rather than falling back to
+source. Also supply the matching Python sidecar.
 
 ```sh
 VIS_E2E_NATIVE_BIN=/path/to/vis-agent-native \
 VIS_PYTHON_NATIVE_PATH=/path/to/vis-agent-python/libvispython.dylib \
-python3 e2e/run.py
+uv run --project e2e python -m vis_harbor.run
 ```
 
 Environment variables: `VIS_MODELS` (comma-separated models, default
-`VIS_MODEL`), `VIS_E2E_TIMEOUT` (explicit whole-scenario budget in seconds),
-`VIS_E2E_WORKERS` (parallel runs, default 5), `VIS_E2E_REPEATS` (positive repetitions
-per scenario/model, default 1), `VIS_E2E_TRACES` (trace and measurement directory),
-and `VIS_E2E_KEEP=1` (retain temporary working directories). Multiple-model trace
-names include `__<model>`; repeated runs add `__run<N>`. Use a fresh trace directory
-for each comparison; a later invocation replaces its `results.json`.
+`VIS_MODEL`), `VIS_E2E_TIMEOUT` (agent timeout in seconds for each scenario),
+`VIS_E2E_WORKERS` (trials at the same time, default 5), `VIS_E2E_REPEATS` (positive
+repetitions per scenario/model, default 1) and `VIS_E2E_TRACES` (trace and
+measurement directory). Multiple-model trace names include `__<model>`; repeated
+runs add `__run<N>`. The Harbor dataset and jobs are in the `harbor` directory next
+to `VIS_E2E_TRACES`; each trial directory keeps the agent logs and the grade. Use a
+fresh trace directory for each comparison; a later invocation replaces its
+`results.json`.
 
 `VIS_REASONING_EFFORT` optionally forwards an exact provider-native effort to
 `--reasoning-effort`. With it set, every run must report valid evaluation evidence
@@ -219,7 +225,7 @@ changes these costs. One passing run is not proof of optimal discovery or univer
 cache savings. For a small repeated GLM comparison:
 
 ```sh
-VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash VIS_E2E_REPEATS=2 VIS_E2E_WORKERS=1 python3 e2e/run.py extension-contract-discovery extension-schema-discovery extension-known-contract
+VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.3-flash VIS_E2E_REPEATS=2 VIS_E2E_WORKERS=1 uv run --project e2e python -m vis_harbor.run extension-contract-discovery extension-schema-discovery extension-known-contract
 ```
 
 ## Add a scenario

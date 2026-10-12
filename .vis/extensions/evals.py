@@ -2,7 +2,7 @@
 
 This extension drives two runners. It does not copy them:
 
-    e2e/run.py                   editing scenarios under e2e/scenarios/<id>/ in this repository
+    e2e/vis_harbor/run.py        editing scenarios under e2e/scenarios/<id>/ as one Harbor job
     terminal_bench/              Harbor queue (run_suite.py) and summary (summarize.py) in the
                                  curated-terminal-benchmark repository (VIS_TERMINAL_BENCH)
 
@@ -61,7 +61,8 @@ import blockether.vis.extension as vis
 
 REPO = Path(__file__).resolve().parents[2]
 SCENARIOS = REPO / "e2e" / "scenarios"
-E2E_RUNNER = REPO / "e2e" / "run.py"
+E2E_PROJECT = REPO / "e2e"
+E2E_RUNNER = "vis_harbor.run"
 BENCH = Path(
     os.environ.get("VIS_TERMINAL_BENCH")
     or Path.home() / "curated-terminal-benchmark" / "terminal_bench"
@@ -2862,7 +2863,7 @@ class Evals:
         native_bin: str | None = None,
         python_native_path: str | None = None,
     ) -> EvalRun:
-        """Start e2e/run.py for the named scenarios in a background process.
+        """Run the named scenarios as one Harbor job in a background process.
 
         Makes paid model calls: one agent run for each scenario, model and repeat.
         Without `models` and `provider`, the runner's default route applies.
@@ -2871,6 +2872,7 @@ class Evals:
         writes traces and results.json into its own directory. It records the Vis
         commit and the sha256 of `native_bin`, so that compare() can name the versions.
         Returns at once; read progress with status() and results with report().
+        It needs uv on PATH, because it runs the locked uv project in e2e/.
         """
         known = _scenario_dirs()
         if not ids:
@@ -2884,9 +2886,9 @@ class Evals:
         for path in (native_bin, python_native_path):
             if path and not (Path(path).is_absolute() and Path(path).is_file()):
                 raise ValueError(f"not an absolute path to a file: {path}")
-        python = shutil.which("python3")
-        if not python:
-            raise FileNotFoundError("python3 is not on PATH")
+        uv = shutil.which("uv")
+        if not uv:
+            raise FileNotFoundError("uv is not on PATH")
         run_id, run_dir = _new_run("scenarios")
         traces = run_dir / "traces"
         env = {
@@ -2913,7 +2915,17 @@ class Evals:
             run_dir,
             kind="scenarios",
             label=label,
-            argv=[python, str(E2E_RUNNER), *ids],
+            argv=[
+                uv,
+                "run",
+                "--frozen",
+                "--project",
+                str(E2E_PROJECT),
+                "python",
+                "-m",
+                E2E_RUNNER,
+                *ids,
+            ],
             cwd=REPO,
             env=env,
             results_path=traces / "results.json",
@@ -3116,7 +3128,7 @@ class Evals:
         """Read the results of a scenario run.
 
         Without arguments, reads the newest scenario run. `results_path` reads any
-        results.json that e2e/run.py wrote, for example an older trace directory.
+        results.json that the e2e runner wrote, for example an older trace directory.
         Fails while the run has not written results yet.
         """
         if results_path:

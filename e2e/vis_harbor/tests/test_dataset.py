@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import stat
 from pathlib import Path
@@ -11,15 +10,6 @@ import pytest
 from harbor.models.task.task import Task
 
 from vis_harbor import dataset
-
-
-def _run_module():
-    spec = importlib.util.spec_from_file_location(
-        "vis_e2e_run", dataset.E2E_ROOT / "run.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _tree(root: Path) -> dict[str, tuple[bytes, bool]]:
@@ -49,34 +39,42 @@ def compiled(tmp_path_factory) -> Path:
     return out
 
 
-def test_tasks_match_the_e2e_runner(compiled, tmp_path):
-    run = _run_module()
-    scenarios = run.load_scenarios(None)
+def test_tasks_match_the_scenario_files(compiled):
+    directories = sorted(
+        meta.parent for meta in dataset.SCENARIO_ROOT.glob("*/scenario.json")
+    )
     assert sorted(path.name for path in compiled.iterdir()) == [
-        sc["id"] for sc in scenarios
+        directory.name for directory in directories
     ]
-    for sc in scenarios:
-        task_dir = compiled / sc["id"]
+    for directory in directories:
+        source = (directory / "scenario.json").read_bytes()
+        sc = json.loads(source)
+        task_dir = compiled / directory.name
         task = Task(task_dir)
         assert task.instruction == sc["prompt"]
         expected_timeout = sc.get("timeout_s", dataset.DEFAULT_AGENT_TIMEOUT_SEC)
         assert task.config.agent.timeout_sec == expected_timeout
         assert task.config.verifier.timeout_sec == dataset.VERIFIER_TIMEOUT_SEC
-        assert task.config.metadata["scenario_id"] == sc["id"]
+        assert task.config.metadata["scenario_id"] == directory.name
         assert task.config.metadata["lang"] == sc["lang"]
-        source = Path(sc["_dir"], "scenario.json").read_bytes()
         assert (task_dir / "tests" / "scenario.json").read_bytes() == source
-        work = tmp_path / sc["id"]
-        work.mkdir()
-        run.seed_files(sc, str(work))
-        registrations = sc.get("workspace_filesystem")
-        expected = {
+        fixtures = directory.parent / sc.get("files_from", directory.name) / "files"
+        seeded = {
             name: content
-            for name, content in _tree(work).items()
-            if "__pycache__" not in Path(name).parts
-            and not (registrations and name == "vis.yml")
+            for name, (content, _) in _tree(fixtures).items()
+            if not dataset.SKIPPED_DIRECTORIES.intersection(Path(name).parts)
         }
-        assert _tree(task_dir / "environment" / "workspace") == expected, sc["id"]
+        workspace = {
+            name: content
+            for name, (content, _) in _tree(
+                task_dir / "environment" / "workspace"
+            ).items()
+        }
+        if sc.get("fixture_generator"):
+            assert seeded.items() <= workspace.items(), directory.name
+        else:
+            assert workspace == seeded, directory.name
+        registrations = sc.get("workspace_filesystem")
         registrations_file = (
             task_dir / "environment" / dataset.WORKSPACE_FILESYSTEM_FILE
         )
@@ -84,6 +82,18 @@ def test_tasks_match_the_e2e_runner(compiled, tmp_path):
             assert json.loads(registrations_file.read_text()) == registrations
         else:
             assert not registrations_file.exists()
+
+
+def test_agent_timeout_override_reaches_the_task_and_the_grader(tmp_path):
+    root = _scenario_root(tmp_path, {"short": {}, "long": {"timeout_s": 900}})
+    out = tmp_path / "out"
+    dataset.compile_dataset(out, root=root, agent_timeout_sec=720)
+    for name in ("short", "long"):
+        task = Task(out / name)
+        assert task.config.agent.timeout_sec == 720
+        source = json.loads((root / name / "scenario.json").read_text())
+        graded = json.loads((out / name / "tests" / "scenario.json").read_text())
+        assert graded == {**source, "timeout_s": 720}
 
 
 def test_test_script_is_exact_and_executable(compiled):

@@ -1,6 +1,6 @@
 # Vis e2e scenarios as a Harbor dataset: a host environment, a source agent,
-# a dataset compiler and a grader. Run its tools from the repository root with
-# `uv run --project e2e ...`.
+# a dataset compiler, a grader and the e2e runner. Run its tools from the
+# repository root with `uv run --project e2e ...`.
 
 [build-system]
 requires = ["hatchling>=1.27"]

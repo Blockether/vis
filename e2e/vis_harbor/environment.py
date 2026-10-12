@@ -1,9 +1,9 @@
 """Run Harbor trials on this host, without containers.
 
-Each trial gets a new git repository with the seed files of its task, as the old
-``e2e/run.py`` runner made. Harbor's container paths map to host directories,
-and the trial log directories are the ``/logs`` directories. Select this class
-with the Harbor environment import path ``vis_harbor.environment:HostEnvironment``.
+Each trial gets a new git repository with the seed files of its task. Harbor's
+container paths map to host directories, and the trial log directories are the
+``/logs`` directories. Select this class with the Harbor environment import path
+``vis_harbor.environment:HostEnvironment``.
 """
 
 from __future__ import annotations

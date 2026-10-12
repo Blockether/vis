@@ -209,7 +209,7 @@ included:
 - Passing JVM tests or a successful native build do not prove that the binary runs. Interop changes need the relevant `test-native/` coverage against the built image (`-M:test-native`).
 - Reachability metadata is inside jars under `META-INF/native-image/`; `native_reachability_test` pins the engine metadata.
 - Read `.graalvm-version` before you change the locked GraalVM CE pin, and use `bin/require-graalvm` for setup. Never substitute Oracle GraalVM. Companion Android Gradle uses stock JDK 21.
-- `e2e/run.py` makes paid model calls. Use it for editing tools and workflows, not for routine docs.
+- `e2e/vis_harbor/run.py` makes paid model calls. Use it for editing tools and workflows, not for routine docs.
 - Delimiter (Parinfer) repair fixes syntax only.
 - A host, bootstrap or extension boundary change needs coverage across that boundary. Do not drop required keys or validation because one consumer ignores them.
 

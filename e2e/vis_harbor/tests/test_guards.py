@@ -3,39 +3,78 @@ import copy
 import csv
 import hashlib
 import json
-import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import mock_open, patch
 
-from e2e import run
-from e2e.run import cache_metric_failures, decode_usage_body, usage_percent
+from vis_harbor import dataset, grade, run
+from vis_harbor.grade import cache_metric_failures, usage_percent
+
+PROVIDER = "test-provider"
+
+
+def load_scenarios(scenario_ids):
+    """Load scenarios as the dicts that the guards read, with their directory."""
+    return [
+        {**scenario.data, "id": scenario.scenario_id, "_dir": str(scenario.directory)}
+        for scenario in dataset.load_scenarios(scenario_ids)
+    ]
+
+
+def seed_files(sc, work):
+    """Seed ``work`` with the fixture files of the scenario dict ``sc``."""
+    directory = Path(sc["_dir"])
+    scenario = dataset.Scenario(sc.get("id", directory.name), directory, b"", sc)
+    dataset.seed_workspace(scenario, Path(work))
+
+
+def grade_events(
+    sc,
+    events,
+    *,
+    provider=PROVIDER,
+    model="test-model",
+    reasoning_effort=None,
+    session_usage=None,
+    goal=None,
+):
+    """Grade the trace ``events`` in a seeded workspace, like one Harbor trial."""
+    trial = grade.TrialFiles(
+        trace="\n".join(json.dumps(event) for event in events),
+        exit_code=0,
+        wall_s=1.0,
+        is_cancelled=False,
+        provider=provider,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        session_usage=session_usage,
+        goal=goal,
+    )
+    with tempfile.TemporaryDirectory() as work:
+        if "_dir" in sc:
+            seed_files(sc, work)
+        return grade.grade_trial(sc, work, trial).result
 
 
 class ScenarioFilesTest(unittest.TestCase):
-    def test_registers_fixture_directories_with_absolute_paths(self):
-        scenario = run.load_scenarios(["py-project-paths"])[0]
+    def test_seeds_the_registered_fixture_directory(self):
+        # HostEnvironment writes the vis.yml registration; test_environment covers it.
+        scenario = load_scenarios(["py-project-paths"])[0]
+        self.assertEqual({"library": "library"}, scenario["workspace_filesystem"])
         with tempfile.TemporaryDirectory() as work:
-            run.seed_files(scenario, work)
-            config = json.loads((Path(work) / "vis.yml").read_text())
-            self.assertEqual(
-                [{"id": "library", "path": str((Path(work) / "library").resolve())}],
-                config["workspace"]["filesystem"],
-            )
-            self.assertEqual(["library"], config["jail"]["filesystem"]["allow"])
+            seed_files(scenario, work)
             self.assertIn("return 0", (Path(work) / "library/value.py").read_text())
 
     def test_helper_reuse_scenario_repeats_one_audit_across_blocks(self):
-        scenario = run.load_scenarios(["session-helper-reuse"])[0]
+        scenario = load_scenarios(["session-helper-reuse"])[0]
         self.assertEqual(2, scenario["want_helper_reuse"])
         self.assertIs(True, scenario["measurement"])
         self.assertIn("one log per python_execution block", scenario["prompt"])
         self.assertEqual(["187", "23", "charlie", "18.5"], scenario["want_answer"])
         with tempfile.TemporaryDirectory() as work:
-            run.seed_files(scenario, work)
+            seed_files(scenario, work)
             logs = sorted((Path(work) / "reports").glob("*.log"))
             events = [
                 [
@@ -68,8 +107,8 @@ class ScenarioFilesTest(unittest.TestCase):
                 "Path(sys.argv[1], 'generated.txt').write_text('large input')\n"
             )
             scenario = {"_dir": source, "fixture_generator": "generate.py"}
-            run.seed_files(scenario, first)
-            run.seed_files(scenario, second)
+            seed_files(scenario, first)
+            seed_files(scenario, second)
             self.assertEqual("large input", (Path(first) / "generated.txt").read_text())
             self.assertEqual(
                 (Path(first) / "generated.txt").read_bytes(),
@@ -77,18 +116,16 @@ class ScenarioFilesTest(unittest.TestCase):
             )
             self.assertFalse((fixture / "generated.txt").exists())
             with self.assertRaisesRegex(ValueError, "fixture_generator"):
-                run.seed_files(
-                    {**scenario, "fixture_generator": "../generate.py"}, first
-                )
+                seed_files({**scenario, "fixture_generator": "../generate.py"}, first)
 
     def test_namespace_rename_uses_anchored_edits_and_checks_the_moved_source(self):
-        scenario = run.load_scenarios(["clj-ns-rename"])[0]
+        scenario = load_scenarios(["clj-ns-rename"])[0]
         self.assertEqual(["patch"], scenario["want_tools"])
         self.assertNotIn("symbol_rename", scenario["prompt"])
         self.assertIn("(ns foo.core)", scenario["want"]["src/foo/core.clj"])
 
     def test_extension_probe_scenario_requires_the_registered_extension_tools(self):
-        scenario = run.load_scenarios(["extension-contract-discovery"])[0]
+        scenario = load_scenarios(["extension-contract-discovery"])[0]
         self.assertEqual(
             ["contract_probe.record", "contract_probe.status"], scenario["want_tools"]
         )
@@ -106,12 +143,12 @@ class LargeStdoutScenariosTest(unittest.TestCase):
             "stdout-dual-source": ("alpha", "beta"),
             "stdout-incident-join": ("incident",),
         }
-        scenarios = {sc["id"]: sc for sc in run.load_scenarios(set(cases))}
+        scenarios = {sc["id"]: sc for sc in load_scenarios(set(cases))}
         self.assertEqual(set(cases), set(scenarios))
         for sid, modes in cases.items():
             with self.subTest(scenario=sid), tempfile.TemporaryDirectory() as work:
                 sc = scenarios[sid]
-                run.seed_files(sc, work)
+                seed_files(sc, work)
                 script = Path(work) / "emit.py"
                 self.assertTrue(script.is_file())
                 expected_outputs = sc["want_stdout_recovery"]
@@ -137,7 +174,7 @@ class LargeStdoutScenariosTest(unittest.TestCase):
                     self.assertLess(position, 0.8)
                     self.assertIsNone(expected["goal_status"])
                     self.assertTrue(
-                        run.stdout_recovery_failures(
+                        grade.stdout_recovery_failures(
                             [
                                 {
                                     "scope": "t1/i1/f1",
@@ -156,7 +193,7 @@ class LargeStdoutScenariosTest(unittest.TestCase):
                 for key in sc["want_answer_json"]:
                     self.assertIn(key, sc["prompt"])
                 self.assertTrue(sc["want_requested_route"])
-                self.assertTrue(run.structured_failures(sc, work, "{}", []))
+                self.assertTrue(grade.structured_failures(sc, work, "{}", []))
                 rows = next(iter(saved.values())).splitlines()[1:-1]
                 if sid == "stdout-lookup-middle":
                     self.assertIn(
@@ -209,7 +246,7 @@ class LargeStdoutScenariosTest(unittest.TestCase):
                     )
                     self.assertIn(
                         "answer is not a single JSON value",
-                        run.structured_failures(
+                        grade.structured_failures(
                             sc,
                             work,
                             "Proof:\n" + json.dumps(sc["want_answer_json"]),
@@ -260,7 +297,7 @@ class NaturalStdoutScenariosTest(unittest.TestCase):
             "stdout-natural-ledger": "stdout-ledger-reduce",
         }
         scenarios = {
-            sc["id"]: sc for sc in run.load_scenarios(set(cases.values()) | set(cases))
+            sc["id"]: sc for sc in load_scenarios(set(cases.values()) | set(cases))
         }
         for sid, source in cases.items():
             with self.subTest(scenario=sid), tempfile.TemporaryDirectory() as work:
@@ -277,13 +314,13 @@ class NaturalStdoutScenariosTest(unittest.TestCase):
                     answer = json.dumps(sc["want_answer_json"])
                     self.assertIn(
                         "answer is not a single JSON value",
-                        run.structured_failures(
+                        grade.structured_failures(
                             sc, work, f"```json\n{answer}\n```\n\nExplanation", []
                         ),
                     )
                 self.assertNotIn("want_stdout_recovery", sc)
                 self.assertTrue(sc["want_requested_route"])
-                run.seed_files(sc, work)
+                seed_files(sc, work)
                 self.assertEqual(
                     (Path(work) / "emit.py").read_bytes(),
                     (
@@ -300,12 +337,12 @@ class LargeInputScenariosTest(unittest.TestCase):
             "large-jsonl-integrity": ("audit.jsonl",),
             "large-two-ledgers": ("reconcile-left.csv", "reconcile-right.csv"),
         }
-        scenarios = {sc["id"]: sc for sc in run.load_scenarios(set(inputs))}
+        scenarios = {sc["id"]: sc for sc in load_scenarios(set(inputs))}
         self.assertEqual(set(inputs), set(scenarios))
         for sid, names in inputs.items():
             with self.subTest(scenario=sid), tempfile.TemporaryDirectory() as work:
                 sc = scenarios[sid]
-                run.seed_files(sc, work)
+                seed_files(sc, work)
                 data = Path(work) / "data"
                 self.assertFalse((Path(work) / "generate.py").exists())
                 self.assertEqual("generate.py", sc["fixture_generator"])
@@ -314,7 +351,7 @@ class LargeInputScenariosTest(unittest.TestCase):
                 self.assertLess(sc["max_form_output_chars"], 1200)
                 self.assertLess(sc["max_total_output_chars"], 2300)
                 self.assertTrue(sc["want_requested_route"])
-                self.assertTrue(run.structured_failures(sc, work, "{}", []))
+                self.assertTrue(grade.structured_failures(sc, work, "{}", []))
 
                 def csv_rows(name, root=data):
                     with (root / name).open(newline="") as stream:
@@ -462,11 +499,11 @@ class CacheMetricValidationTest(unittest.TestCase):
         self.assertTrue(any("recorded folds" in failure for failure in failures))
 
     def test_fold_count_ignores_printed_receipts(self):
-        self.assertEqual([], run.fold_count_failures({"fold_count": 1}))
+        self.assertEqual([], grade.fold_count_failures({"fold_count": 1}))
         for count in (None, False, True, 0, 2):
             with self.subTest(count=count):
                 self.assertTrue(
-                    run.fold_count_failures(
+                    grade.fold_count_failures(
                         {"fold_count": count, "stdout": "folded through t1/i2"}
                     )
                 )
@@ -475,28 +512,6 @@ class CacheMetricValidationTest(unittest.TestCase):
         self.assertEqual(13, usage_percent(1, 8))
         self.assertEqual(0, usage_percent(0, 0))
         self.assertEqual(100, usage_percent(9, 8))
-
-    def test_usage_query_timeout_does_not_expose_the_command(self):
-        with patch.object(
-            run,
-            "gateway_eval",
-            side_effect=run.subprocess.TimeoutExpired(
-                ["clojure", "-Scp", "/deps.jar"], 60
-            ),
-        ):
-            with self.assertRaisesRegex(
-                RuntimeError, "^usage query timed out after 60s$"
-            ):
-                run.fetch_session_usage(
-                    {}, "00000000-0000-0000-0000-000000000000", 12344
-                )
-
-    def test_decodes_public_usage_envelope(self):
-        self.assertEqual(
-            {"input_tokens": 12}, decode_usage_body('{"usage":{"input_tokens":12}}')
-        )
-        with self.assertRaisesRegex(ValueError, "no usage object"):
-            decode_usage_body('{"usage":null}')
 
 
 class ContextBudgetTest(unittest.TestCase):
@@ -516,7 +531,7 @@ class ContextBudgetTest(unittest.TestCase):
             if printed is None
             else [{"stdout": json.dumps(printed, sort_keys=True) + "\n"}]
         )
-        return run.context_budget_failures(
+        return grade.context_budget_failures(
             self.usage() if usage is None else usage,
             outputs,
             json.dumps(self.CODEX) if answer is None else answer,
@@ -524,7 +539,7 @@ class ContextBudgetTest(unittest.TestCase):
         )
 
     def run_scenario(self, health):
-        scenario = run.load_scenarios(["context-budget"])[0]
+        scenario = load_scenarios(["context-budget"])[0]
         route = {"provider": "openai-codex", "model": "gpt-6-sol"}
         code = (
             "print(json.dumps({'auto_compress_above': session['utilization']"
@@ -543,28 +558,15 @@ class ContextBudgetTest(unittest.TestCase):
             "session-id": "00000000-0000-0000-0000-000000000000",
             "cost": route,
         }
-        with (
-            tempfile.TemporaryDirectory() as traces,
-            patch.object(run, "TRACES", traces),
-            patch.object(run, "PROVIDER", "openai-codex"),
-            patch.object(run, "REASONING_EFFORT", None),
-            patch.object(run, "source_classpath", return_value="/checkout/src"),
-            patch.object(
-                run, "fetch_session_usage", return_value=(200, {"health": health})
-            ),
-            patch.object(run.subprocess, "run") as invoke,
-        ):
-            invoke.return_value.returncode = 0
-            invoke.return_value.stdout = "\n".join(
-                [
-                    *(
-                        json.dumps({"event": "trace-chunk", "payload": event})
-                        for event in events
-                    ),
-                    json.dumps({"event": "result", "payload": result}),
-                ]
-            )
-            return run.run_one((scenario, "gpt-6-sol", {}, 12344))
+        return grade_events(
+            scenario,
+            [
+                *({"event": "trace-chunk", "payload": event} for event in events),
+                {"event": "result", "payload": result},
+            ],
+            session_usage={"health": health},
+            **route,
+        )
 
     def test_printed_answered_and_persisted_budgets_agree(self):
         self.assertEqual([], self.failures())
@@ -615,7 +617,7 @@ class ContextBudgetTest(unittest.TestCase):
             self.failures(self.usage(model_input_limit=None)),
         )
 
-    def test_scenario_checks_the_pinned_route_through_run_one(self):
+    def test_scenario_checks_the_pinned_route_through_the_grader(self):
         result = self.run_scenario(self.usage()["health"])
         self.assertTrue(result["correct"], result["detail"])
         self.assertIn(
@@ -632,7 +634,7 @@ class ContextBudgetTest(unittest.TestCase):
 
 class StdoutGoalRecoveryTest(unittest.TestCase):
     def test_scenario_requires_goal_cache_and_exact_read_back(self):
-        scenario = run.load_scenarios(["stdout-goal-cache"])[0]
+        scenario = load_scenarios(["stdout-goal-cache"])[0]
         self.assertTrue(scenario["prompt"].startswith("/goal "))
         self.assertTrue(scenario["want_goal_complete"])
         self.assertTrue(scenario["want_cache_metrics"])
@@ -679,24 +681,24 @@ class StdoutGoalRecoveryTest(unittest.TestCase):
                 ),
             }
         ]
-        self.assertEqual([], run.stdout_recovery_failures(outputs, readers, expected))
+        self.assertEqual([], grade.stdout_recovery_failures(outputs, readers, expected))
         proof_later = {**outputs[1], "scope": "t1/i3/f1", "iteration": 3}
         staged = [
             outputs[0],
             {**outputs[1], "stdout": "saved for next block"},
             proof_later,
         ]
-        self.assertEqual([], run.stdout_recovery_failures(staged, readers, expected))
+        self.assertEqual([], grade.stdout_recovery_failures(staged, readers, expected))
         self.assertTrue(
-            run.stdout_recovery_failures(
+            grade.stdout_recovery_failures(
                 staged, [{**readers[0], "iteration": 4}], expected
             )
         )
-        self.assertTrue(run.stdout_recovery_failures(outputs[:1], readers, expected))
-        self.assertTrue(run.stdout_recovery_failures(outputs, [], expected))
-        self.assertTrue(run.stdout_recovery_failures(outputs[1:], readers, expected))
+        self.assertTrue(grade.stdout_recovery_failures(outputs[:1], readers, expected))
+        self.assertTrue(grade.stdout_recovery_failures(outputs, [], expected))
+        self.assertTrue(grade.stdout_recovery_failures(outputs[1:], readers, expected))
         self.assertTrue(
-            run.stdout_recovery_failures(
+            grade.stdout_recovery_failures(
                 outputs,
                 [
                     {
@@ -708,14 +710,14 @@ class StdoutGoalRecoveryTest(unittest.TestCase):
             )
         )
         self.assertTrue(
-            run.stdout_recovery_failures(
+            grade.stdout_recovery_failures(
                 outputs,
                 [{**readers[0], "code": readers[0]["code"].replace("t1/i1", "t1/i9")}],
                 expected,
             )
         )
         self.assertTrue(
-            run.stdout_recovery_failures(
+            grade.stdout_recovery_failures(
                 [
                     outputs[0],
                     {
@@ -776,13 +778,13 @@ class StdoutGoalRecoveryTest(unittest.TestCase):
             for index in (1, 2)
         ]
         self.assertEqual(
-            [], run.stdout_recovery_failures(originals + readbacks, readers, expected)
+            [], grade.stdout_recovery_failures(originals + readbacks, readers, expected)
         )
         self.assertTrue(
-            run.stdout_recovery_failures(originals + readbacks[:1], readers, expected)
+            grade.stdout_recovery_failures(originals + readbacks[:1], readers, expected)
         )
         self.assertTrue(
-            run.stdout_recovery_failures(
+            grade.stdout_recovery_failures(
                 originals + readbacks,
                 [
                     readers[0],
@@ -795,7 +797,7 @@ class StdoutGoalRecoveryTest(unittest.TestCase):
             )
         )
         self.assertTrue(
-            run.stdout_recovery_failures(
+            grade.stdout_recovery_failures(
                 originals
                 + [readbacks[0], {**readbacks[1], "stdout": readbacks[0]["stdout"]}],
                 readers,
@@ -803,260 +805,14 @@ class StdoutGoalRecoveryTest(unittest.TestCase):
             )
         )
         self.assertTrue(
-            run.stdout_recovery_failures(originals + readbacks, readers, expected * 2)
+            grade.stdout_recovery_failures(originals + readbacks, readers, expected * 2)
         )
-
-    def test_goal_status_is_read_from_canonical_gateway_client(self):
-        sid = "00000000-0000-0000-0000-000000000000"
-        fake = type(
-            "Response",
-            (),
-            {
-                "returncode": 0,
-                "stdout": 'VIS_E2E_SOUL\t200\t{"goal":{"status":"complete"}}\n',
-            },
-        )()
-        with patch.object(run, "gateway_eval", return_value=fake) as query:
-            self.assertEqual(
-                (200, {"status": "complete"}), run.fetch_session_goal({}, sid, 12344)
-            )
-        command = query.call_args.args[1]
-        self.assertIn("gateway-client/request!", command)
-        self.assertIn("/v1/sessions/" + sid, command)
-
-
-class SourceClasspathTest(unittest.TestCase):
-    def test_source_classpath_remains_absolute_when_user_dir_changes(self):
-        run.source_classpath.cache_clear()
-        try:
-            with patch.object(
-                run.subprocess,
-                "check_output",
-                return_value="src" + os.pathsep + "/tmp/dependency.jar\n",
-            ) as resolve:
-                expected = (
-                    os.path.join(run.REPO, "src") + os.pathsep + "/tmp/dependency.jar"
-                )
-                self.assertEqual(expected, run.source_classpath())
-                self.assertEqual(expected, run.source_classpath())
-                self.assertEqual(1, resolve.call_count)
-        finally:
-            run.source_classpath.cache_clear()
-
-
-class NativeEngineTest(unittest.TestCase):
-    def test_native_agent_uses_the_requested_binary_and_workspace(self):
-        for magic in (
-            b"\x7fELF",
-            b"\xcf\xfa\xed\xfe",
-            b"\xfe\xed\xfa\xcf",
-            b"\xca\xfe\xba\xbe",
-        ):
-            with (
-                self.subTest(magic=magic),
-                patch.object(run, "NATIVE_BIN", "/release/vis"),
-                patch("builtins.open", mock_open(read_data=magic)),
-            ):
-                self.assertEqual(
-                    ["/release/vis", "-Duser.dir=/tmp/fixture"],
-                    run.agent_prefix("/tmp/fixture"),
-                )
-
-    def test_native_gateway_still_uses_the_canonical_client(self):
-        with (
-            patch.object(run, "NATIVE_BIN", "/release/vis"),
-            patch("builtins.open", mock_open(read_data=b"\x7fELF")),
-            patch.object(run, "source_classpath", return_value="/checkout/src"),
-            patch.object(run.subprocess, "run") as invoke,
-        ):
-            run.gateway_eval({}, "(gateway-client/status)", 20, cwd="/tmp/fixture")
-        form = invoke.call_args.args[0][-1]
-        self.assertIn("gateway.discovery", form)
-        self.assertIn("with-redefs [gateway-discovery/base-argv", form)
-        self.assertIn('["/release/vis" "-Duser.dir=/tmp/fixture"]', form)
-        self.assertIn("(gateway-client/status)", form)
-
-    def test_native_mode_rejects_a_launcher_that_could_select_the_jvm(self):
-        with tempfile.TemporaryDirectory() as work:
-            launcher = Path(work) / "vis-agent"
-            launcher.write_text('#!/bin/sh\nexec clojure -M:vis "$@"\n')
-            with (
-                patch.object(run, "NATIVE_BIN", str(launcher)),
-                self.assertRaisesRegex(RuntimeError, "raw native executable"),
-            ):
-                run.agent_prefix(work)
-
-    def test_jvm_agent_keeps_the_source_classpath(self):
-        with (
-            patch.object(run, "NATIVE_BIN", None, create=True),
-            patch.object(run, "source_classpath", return_value="/checkout/src"),
-        ):
-            self.assertEqual(
-                [
-                    run.CLOJURE,
-                    "-Scp",
-                    "/checkout/src",
-                    "-J-Duser.dir=/tmp/fixture",
-                    "-M:vis",
-                ],
-                run.agent_prefix("/tmp/fixture"),
-            )
-
-
-class ExtensionGatewayTest(unittest.TestCase):
-    # Issue #187: a gateway started before fixture seeding has no local extension.
-    def test_gateway_eval_uses_source_classpath_in_fixture_workspace(self):
-        with (
-            patch.object(
-                run, "source_classpath", return_value="/checkout/src:/deps.jar"
-            ),
-            patch.object(run.subprocess, "run") as invoke,
-        ):
-            run.gateway_eval(
-                {"VIS_DB_PATH": "/tmp/isolated.mdb"}, "(+ 1 2)", 20, cwd="/tmp/fixture"
-            )
-        args, kwargs = invoke.call_args
-        self.assertEqual(run.CLOJURE, args[0][0])
-        self.assertEqual(["-Scp", "/checkout/src:/deps.jar"], args[0][1:3])
-        self.assertEqual("/tmp/fixture", kwargs["cwd"])
-        self.assertEqual(20, kwargs["timeout"])
-
-    def test_source_gateway_starts_in_the_seeded_workspace(self):
-        with patch.object(run, "gateway_eval") as evaluate:
-            evaluate.return_value.returncode = 0
-            gateway = run.start_source_gateway(cwd="/tmp/fixture")
-        try:
-            self.assertEqual("/tmp/fixture", evaluate.call_args.kwargs["cwd"])
-            self.assertTrue(
-                gateway["env"]["VIS_DB_PATH"].startswith(gateway["runtime"])
-            )
-            self.assertNotIn("VIS_GATEWAY_URL", gateway["env"])
-        finally:
-            run.shutil.rmtree(gateway["runtime"])
-
-    def test_source_gateway_keeps_global_extensions_out_unless_asked(self):
-        for explicit in (None, "/tmp/operator-extensions"):
-            with (
-                self.subTest(explicit=explicit),
-                patch.dict(os.environ, {}),
-                patch.object(run, "gateway_eval") as evaluate,
-            ):
-                os.environ.pop("VIS_EXTENSIONS_DIR", None)
-                if explicit:
-                    os.environ["VIS_EXTENSIONS_DIR"] = explicit
-                evaluate.return_value.returncode = 0
-                gateway = run.start_source_gateway(cwd="/tmp/fixture")
-                try:
-                    directory = gateway["env"]["VIS_EXTENSIONS_DIR"]
-                    if explicit:
-                        self.assertEqual(explicit, directory)
-                    else:
-                        self.assertTrue(directory.startswith(gateway["runtime"]))
-                        self.assertFalse(os.path.exists(directory))
-                finally:
-                    run.shutil.rmtree(gateway["runtime"])
-
-    def test_local_extension_gateway_is_seeded_isolated_and_always_stopped(self):
-        scenario = run.load_scenarios(["extension-watchdog"])[0]
-        shared_env = {"VIS_DB_PATH": "/tmp/shared.mdb"}
-        for fail in (False, True):
-            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as traces:
-                local = {"env": {"VIS_DB_PATH": "/tmp/local.mdb"}, "port": 12345}
-                workspaces = []
-
-                def start(*, cwd, workspaces=workspaces, local=local):
-                    workspaces.append(cwd)
-                    self.assertTrue(
-                        (Path(cwd) / ".vis/extensions/watchdog_probe.py").is_file()
-                    )
-                    return local
-
-                with (
-                    patch.object(run, "TRACES", traces),
-                    patch.dict(os.environ, {"VIS_E2E_KEEP": ""}),
-                    patch.object(run, "source_classpath", return_value="/checkout/src"),
-                    patch.object(run, "start_source_gateway", side_effect=start),
-                    patch.object(run, "stop_source_gateway", return_value=0) as stop,
-                    patch.object(run.subprocess, "run") as invoke,
-                ):
-                    invoke.return_value.returncode = 0
-                    invoke.return_value.stdout = ""
-                    if fail:
-
-                        def execute(command, **kwargs):
-                            if "--full-trace-json-stream" in command:
-                                raise RuntimeError("model process failed")
-                            return invoke.return_value
-
-                        invoke.side_effect = execute
-                        with self.assertRaisesRegex(
-                            RuntimeError, "model process failed"
-                        ):
-                            run.run_one((scenario, "test-model", shared_env, 12344))
-                    else:
-                        run.run_one((scenario, "test-model", shared_env, 12344))
-                    stop.assert_called_once_with(local)
-                    model_call = invoke.call_args_list[-1]
-                    self.assertEqual(local["env"], model_call.kwargs["env"])
-                self.assertEqual(1, len(workspaces))
-                self.assertFalse(Path(workspaces[0]).exists())
-                self.assertEqual({"VIS_DB_PATH": "/tmp/shared.mdb"}, shared_env)
-
-
-class ScenarioTimeoutTest(unittest.TestCase):
-    # Issue #187: a >300s watchdog probe needs a separate whole-scenario budget.
-    def run_scenario(self, timeout_s=None, override=None, expire=False):
-        scenario = run.load_scenarios(["extension-watchdog"])[0].copy()
-        scenario.pop("timeout_s", None)
-        if timeout_s is not None:
-            scenario["timeout_s"] = timeout_s
-        env = {} if override is None else {"VIS_E2E_TIMEOUT": str(override)}
-        with (
-            tempfile.TemporaryDirectory() as traces,
-            patch.dict(os.environ, env, clear=True),
-            patch.object(run, "TIMEOUT", 300),
-            patch.object(run, "TRACES", traces),
-            patch.object(run, "source_classpath", return_value="/checkout/src"),
-            patch.object(
-                run, "start_source_gateway", return_value={"env": {}, "port": 12345}
-            ),
-            patch.object(run, "stop_source_gateway", return_value=0),
-            patch.object(run.subprocess, "run") as invoke,
-        ):
-            invoke.return_value.returncode = 0
-            invoke.return_value.stdout = ""
-            if expire:
-
-                def execute(command, **kwargs):
-                    if "--full-trace-json-stream" in command:
-                        raise run.subprocess.TimeoutExpired(command, kwargs["timeout"])
-                    return invoke.return_value
-
-                invoke.side_effect = execute
-            result = run.run_one((scenario, "test-model", {}, 12344))
-            return invoke.call_args_list[-1].kwargs["timeout"], result
-
-    def test_ordinary_scenarios_keep_the_default(self):
-        timeout, _ = self.run_scenario()
-        self.assertEqual(300, timeout)
-
-    def test_long_scenario_uses_its_own_budget(self):
-        timeout, _ = self.run_scenario(timeout_s=900)
-        self.assertEqual(900, timeout)
-
-    def test_explicit_environment_budget_wins(self):
-        timeout, _ = self.run_scenario(timeout_s=900, override=720)
-        self.assertEqual(720, timeout)
-
-    def test_timeout_reports_the_effective_budget(self):
-        _, result = self.run_scenario(timeout_s=900, expire=True)
-        self.assertIn("vis-agent timed out after 900s", result["err_msgs"])
 
 
 class ActivityToolEvidenceTest(unittest.TestCase):
     def test_ls_is_detected_from_end_only_activity_snapshots(self):
         # ls emits form-activity, not the obsolete tool-start trace event.
-        scenario = run.load_scenarios(["ls-source-root-discovery"])[0].copy()
+        scenario = load_scenarios(["ls-source-root-discovery"])[0].copy()
         scenario.update(want_answer=[], want_forms=[])
         activity = {
             "event": "trace-chunk",
@@ -1069,18 +825,8 @@ class ActivityToolEvidenceTest(unittest.TestCase):
         }
         result_event = {"event": "result", "payload": {"answer": "Listed directory"}}
         for snapshots, expected in [([], False), ([activity, activity], True)]:
-            with (
-                self.subTest(snapshots=len(snapshots)),
-                tempfile.TemporaryDirectory() as traces,
-                patch.object(run, "TRACES", traces),
-                patch.object(run, "source_classpath", return_value="/checkout/src"),
-                patch.object(run.subprocess, "run") as invoke,
-            ):
-                invoke.return_value.returncode = 0
-                invoke.return_value.stdout = "\n".join(
-                    json.dumps(event) for event in [*snapshots, result_event]
-                )
-                result = run.run_one((scenario, "test-model", {}, 12344))
+            with self.subTest(snapshots=len(snapshots)):
+                result = grade_events(scenario, [*snapshots, result_event])
                 self.assertEqual(expected, result["correct"])
                 if expected:
                     self.assertIn("tools=ls×1", result["detail"])
@@ -1102,7 +848,7 @@ class FormOutputBudgetTest(unittest.TestCase):
             (True, 0, None, False),
         ]
         for limit, size, error, expected in cases:
-            scenario = run.load_scenarios(["ls-source-root-discovery"])[0].copy()
+            scenario = load_scenarios(["ls-source-root-discovery"])[0].copy()
             scenario.update(
                 want={}, wantnot={}, want_answer=[], want_forms=[], want_tools=[]
             )
@@ -1124,18 +870,8 @@ class FormOutputBudgetTest(unittest.TestCase):
                 },
                 {"event": "result", "payload": {"answer": "Ready"}},
             ]
-            with (
-                self.subTest(limit=limit, size=size, error=error),
-                tempfile.TemporaryDirectory() as traces,
-                patch.object(run, "TRACES", traces),
-                patch.object(run, "source_classpath", return_value="/checkout/src"),
-                patch.object(run.subprocess, "run") as invoke,
-            ):
-                invoke.return_value.returncode = 0
-                invoke.return_value.stdout = "\n".join(
-                    json.dumps(event) for event in events
-                )
-                result = run.run_one((scenario, "test-model", {}, 12344))
+            with self.subTest(limit=limit, size=size, error=error):
+                result = grade_events(scenario, events)
                 self.assertEqual(expected, result["correct"])
                 if not expected:
                     self.assertIn("max_form_output_chars", " ".join(result["detail"]))
@@ -1145,8 +881,13 @@ class FormOutputBudgetTest(unittest.TestCase):
                     )
                 if error:
                     self.assertIn("recorded failure", result["err_msgs"])
-                trace = (Path(traces) / f"{scenario['id']}.jsonl").read_text()
-                self.assertIn(output, trace)
+                self.assertTrue(
+                    any(
+                        item.startswith(f"stdout={size} total chars;")
+                        for item in result["evidence"]
+                    ),
+                    result["evidence"],
+                )
 
 
 class ReasoningEffortTest(unittest.TestCase):
@@ -1156,13 +897,13 @@ class ReasoningEffortTest(unittest.TestCase):
         evaluation=None,
         scenario_id="py-fix-body",
         *,
-        usage_error=None,
+        session_usage=None,
         provider=None,
         content=None,
     ):
-        scenario = run.load_scenarios([scenario_id])[0].copy()
+        scenario = load_scenarios([scenario_id])[0].copy()
         scenario.update(want={}, wantnot={})
-        route = {"provider": provider or run.PROVIDER, "model": "test-model"}
+        route = {"provider": provider or PROVIDER, "model": "test-model"}
         events = [
             {"event": "trace-chunk", "payload": {"phase": "provider-call", **route}},
             {
@@ -1176,20 +917,9 @@ class ReasoningEffortTest(unittest.TestCase):
                 },
             },
         ]
-        with (
-            tempfile.TemporaryDirectory() as traces,
-            patch.object(run, "TRACES", traces),
-            patch.object(run, "REASONING_EFFORT", effort),
-            patch.object(run, "source_classpath", return_value="/checkout/src"),
-            patch.object(run, "fetch_session_usage", side_effect=usage_error),
-            patch.object(run.subprocess, "run") as invoke,
-        ):
-            invoke.return_value.returncode = 0
-            invoke.return_value.stdout = "\n".join(
-                json.dumps(event) for event in events
-            )
-            result = run.run_one((scenario, "test-model", {}, 12344))
-            return invoke.call_args.args[0], result
+        return grade_events(
+            scenario, events, reasoning_effort=effort, session_usage=session_usage
+        )
 
     def evaluation(self):
         return {
@@ -1201,40 +931,32 @@ class ReasoningEffortTest(unittest.TestCase):
                     {
                         "requested": "low",
                         "effective": "low",
-                        "provider": run.PROVIDER,
+                        "provider": PROVIDER,
                         "model": "test-model",
-                        "selected": {"provider": run.PROVIDER, "model": "test-model"},
+                        "selected": {"provider": PROVIDER, "model": "test-model"},
                         "is_fallback": False,
                     }
                 ],
             },
         }
 
-    def test_ordinary_editing_scenarios_use_persistent_gateway_sessions(self):
-        for scenario_id in ("py-fix-body", "js-rename-var"):
-            with self.subTest(scenario_id=scenario_id):
-                command, _ = self.run_scenario(scenario_id=scenario_id)
-                self.assertEqual(1, command.count("--persist"))
-
-    def test_unset_effort_preserves_default_command_and_validation(self):
-        command, result = self.run_scenario()
-        self.assertNotIn("--reasoning-effort", command)
+    def test_unset_effort_keeps_the_default_validation(self):
+        result = self.run_scenario()
         self.assertTrue(result["correct"])
+        self.assertNotIn("reasoning-effort", " ".join(result["evidence"]))
 
-    def test_low_is_forwarded_exactly_and_reported_with_route(self):
-        command, result = self.run_scenario("low", self.evaluation())
-        index = command.index("--reasoning-effort")
-        self.assertEqual("low", command[index + 1])
+    def test_low_is_reported_with_route(self):
+        result = self.run_scenario("low", self.evaluation())
         self.assertTrue(result["correct"], result["detail"])
         self.assertIn("reasoning-effort=low", result["evidence"])
         self.assertIn(
-            f"requested-route={run.PROVIDER}/test-model calls=1", result["evidence"]
+            f"requested-route={PROVIDER}/test-model calls=1", result["evidence"]
         )
 
     def test_missing_or_invalid_evaluation_fails_even_with_zero_exit(self):
         for evaluation in (None, {"is_valid": False, "invalid_reasons": []}):
             with self.subTest(evaluation=evaluation):
-                _, result = self.run_scenario("low", evaluation)
+                result = self.run_scenario("low", evaluation)
                 self.assertFalse(result["correct"])
                 self.assertTrue(any("reasoning" in item for item in result["detail"]))
 
@@ -1250,34 +972,26 @@ class ReasoningEffortTest(unittest.TestCase):
             with self.subTest(change=change):
                 evaluation = self.evaluation()
                 evaluation["reasoning_effort"]["iterations"][0].update(change)
-                _, result = self.run_scenario("low", evaluation)
+                result = self.run_scenario("low", evaluation)
                 self.assertFalse(result["correct"])
 
     def test_requested_route_is_not_presented_as_an_observed_route(self):
-        _, result = self.run_scenario(
-            "low", self.evaluation(), provider="other-provider"
-        )
+        result = self.run_scenario("low", self.evaluation(), provider="other-provider")
         self.assertFalse(result["correct"])
         self.assertIn(
-            f"requested-route={run.PROVIDER}/test-model calls=1", result["evidence"]
+            f"requested-route={PROVIDER}/test-model calls=1", result["evidence"]
         )
         self.assertTrue(any("other-provider" in item for item in result["detail"]))
 
-    def test_usage_failure_preserves_the_scenario_result(self):
-        _, result = self.run_scenario(
-            "low",
-            self.evaluation(),
-            scenario_id="context-folding",
-            usage_error=RuntimeError("usage query timed out after 60s"),
+    def test_missing_usage_preserves_the_scenario_result(self):
+        result = self.run_scenario(
+            "low", self.evaluation(), scenario_id="context-folding"
         )
         self.assertFalse(result["correct"])
-        self.assertIn(
-            "could not read persisted usage metrics: usage query timed out after 60s",
-            result["detail"],
-        )
+        self.assertIn("the trajectory has no session usage", result["detail"])
 
     def test_provider_error_content_is_counted_and_not_converged(self):
-        _, result = self.run_scenario(
+        result = self.run_scenario(
             "low",
             self.evaluation(),
             content=[{"type": "error", "message": "Provider model unavailable"}],
@@ -1294,7 +1008,7 @@ class HelperReuseEvidenceTest(unittest.TestCase):
             "print(summarize('b'))",
             "print([summarize(name) for name in ('c', 'd')])",
         ]
-        metrics, failures = run.helper_reuse_evidence(forms, 2)
+        metrics, failures = grade.helper_reuse_evidence(forms, 2)
         self.assertEqual([], failures)
         self.assertEqual(1, metrics["helpers_defined"])
         self.assertEqual(2, metrics["reuse_forms"])
@@ -1307,7 +1021,7 @@ class HelperReuseEvidenceTest(unittest.TestCase):
             "print(audit('b'))",
             "print(audit('c'))",
         ]
-        metrics, failures = run.helper_reuse_evidence(forms, 2)
+        metrics, failures = grade.helper_reuse_evidence(forms, 2)
         self.assertEqual([], failures)
         self.assertEqual(1, metrics["helpers_defined"])
         self.assertEqual(1, metrics["lambda_helpers"])
@@ -1316,7 +1030,7 @@ class HelperReuseEvidenceTest(unittest.TestCase):
     def test_retyped_lambda_helper_fails_like_a_retyped_def(self):
         body = "audit = lambda name: name.strip()\n"
         forms = [body + "print(audit('a'))", body + "print(audit('b'))"]
-        metrics, failures = run.helper_reuse_evidence(forms, 1)
+        metrics, failures = grade.helper_reuse_evidence(forms, 1)
         self.assertEqual(1, metrics["retyped_helpers"])
         self.assertEqual(
             ["helper 'audit' was retyped in a later form instead of called"],
@@ -1325,14 +1039,14 @@ class HelperReuseEvidenceTest(unittest.TestCase):
 
     def test_defining_and_calling_inside_one_form_is_not_reuse(self):
         forms = ["def summarize(path):\n    return path\nprint(summarize('a'))"]
-        metrics, failures = run.helper_reuse_evidence(forms, True)
+        metrics, failures = grade.helper_reuse_evidence(forms, True)
         self.assertEqual(0, metrics["reuse_forms"])
         self.assertIn("reused in 0 later form(s)", failures[0])
 
     def test_retyped_definition_fails_even_when_a_later_form_calls_it(self):
         body = "def summarize(path):\n    return path.strip()\n"
         forms = [body + "print(summarize('a'))", body + "print(summarize('b'))"]
-        metrics, failures = run.helper_reuse_evidence(forms, 1)
+        metrics, failures = grade.helper_reuse_evidence(forms, 1)
         self.assertEqual(1, metrics["retyped_helpers"])
         self.assertEqual(1, metrics["reuse_forms"])
         self.assertEqual(
@@ -1345,7 +1059,7 @@ class HelperReuseEvidenceTest(unittest.TestCase):
             "def summarize(path):\n    return path\n",
             "summarize = 3\nprint(summarize)",
         ]
-        metrics, failures = run.helper_reuse_evidence(forms, True)
+        metrics, failures = grade.helper_reuse_evidence(forms, True)
         self.assertEqual(0, metrics["reused_helpers"])
         self.assertTrue(failures)
 
@@ -1355,15 +1069,15 @@ class HelperReuseEvidenceTest(unittest.TestCase):
             "print(summarize(",
             "print(summarize('b'))",
         ]
-        _, failures = run.helper_reuse_evidence(forms, 1)
+        _, failures = grade.helper_reuse_evidence(forms, 1)
         self.assertEqual([], failures)
 
     def test_missing_helper_and_invalid_requirements_are_reported(self):
-        _, failures = run.helper_reuse_evidence(["print(1)"], True)
+        _, failures = grade.helper_reuse_evidence(["print(1)"], True)
         self.assertEqual(["no sandbox form defined a helper to reuse"], failures)
         for want in (0, -1, "2", False, None):
             with self.subTest(want=want):
-                metrics, failures = run.helper_reuse_evidence([], want)
+                metrics, failures = grade.helper_reuse_evidence([], want)
                 self.assertEqual({}, metrics)
                 self.assertEqual(
                     ["want_helper_reuse must be true or a positive integer"], failures
@@ -1374,18 +1088,7 @@ class DiscoveryEvaluationTest(unittest.TestCase):
     # #232/#234: syntactic markers and tool presence hid incorrect workflows.
     def run_events(self, events, **checks):
         scenario = {"id": "evaluation", "lang": "python", "prompt": "test", **checks}
-        with (
-            tempfile.TemporaryDirectory() as traces,
-            patch.object(run, "TRACES", traces),
-            patch.object(run, "seed_files"),
-            patch.object(run, "source_classpath", return_value="/checkout/src"),
-            patch.object(run.subprocess, "run") as invoke,
-        ):
-            invoke.return_value.returncode = 0
-            invoke.return_value.stdout = "\n".join(
-                json.dumps(event) for event in events
-            )
-            return run.run_one((scenario, "test-model", {}, 12344))
+        return grade_events(scenario, events)
 
     def activity(self, state, operation="probe.read", row_id="call-1"):
         return {
@@ -1518,7 +1221,7 @@ class DiscoveryEvaluationTest(unittest.TestCase):
         self.assertTrue(result["correct"], result["detail"])
         self.assertEqual(
             [],
-            run.structured_failures(
+            grade.structured_failures(
                 {
                     "want_answer_json": {
                         "paid_count": 10909,
@@ -1536,7 +1239,7 @@ class DiscoveryEvaluationTest(unittest.TestCase):
         goal_answer = f"Goal complete: {json.dumps(expected)}"
         self.assertEqual(
             [],
-            run.structured_failures(
+            grade.structured_failures(
                 {"want_answer_json": expected, "want_goal_complete": True},
                 ".",
                 goal_answer,
@@ -1550,7 +1253,7 @@ class DiscoveryEvaluationTest(unittest.TestCase):
         ):
             with self.subTest(answer=answer, goal=goal):
                 self.assertTrue(
-                    run.structured_failures(
+                    grade.structured_failures(
                         {"want_answer_json": expected, "want_goal_complete": goal},
                         ".",
                         answer,
@@ -1605,16 +1308,16 @@ class DiscoveryEvaluationTest(unittest.TestCase):
             scenario = {
                 "want_json_files": {"calls.jsonl": [{"key": "atlas"}, {"key": None}]}
             }
-            self.assertTrue(run.structured_failures(scenario, work, "", []))
+            self.assertTrue(grade.structured_failures(scenario, work, "", []))
             for records in (
                 [{"key": "wrong"}, {"key": None}],
                 [{"key": "atlas"}],
                 [{"key": "atlas"}, {"key": None}, {"key": None}],
             ):
                 path.write_text("\n".join(json.dumps(row) for row in records))
-                self.assertTrue(run.structured_failures(scenario, work, "", []))
+                self.assertTrue(grade.structured_failures(scenario, work, "", []))
             path.write_text('{"key":"atlas"}\n{"key":null}\n')
-            self.assertEqual([], run.structured_failures(scenario, work, "", []))
+            self.assertEqual([], grade.structured_failures(scenario, work, "", []))
 
     def test_aliases_count_but_comments_strings_and_uninvoked_functions_do_not(self):
         rules = {"signatures": ["probe.read"]}
@@ -1624,9 +1327,9 @@ class DiscoveryEvaluationTest(unittest.TestCase):
             "def unused():\n    return inspect.signature(probe.read)",
         ):
             with self.subTest(code=code):
-                _, failures = run.discovery_evidence([code], [], rules)
+                _, failures = grade.discovery_evidence([code], [], rules)
                 self.assertTrue(failures)
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             ["from inspect import signature as sig\nf = probe.read\nprint(sig(f))"],
             [],
             rules,
@@ -1636,14 +1339,14 @@ class DiscoveryEvaluationTest(unittest.TestCase):
 
     def test_duplicate_and_known_contract_discovery_are_rejected(self):
         code = "import inspect\nprint(inspect.signature(probe.read))"
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             [code, code], [], {"signatures": ["probe.read"]}
         )
         self.assertEqual(1, metrics["redundant_discovery"])
         self.assertTrue(failures)
-        _, failures = run.discovery_evidence([code], [], {"known": True})
+        _, failures = grade.discovery_evidence([code], [], {"known": True})
         self.assertTrue(failures)
-        _, failures = run.discovery_evidence(
+        _, failures = grade.discovery_evidence(
             ["print(probe.read())"], [], {"known": True}
         )
         self.assertEqual([], failures)
@@ -1656,7 +1359,7 @@ class DiscoveryEvaluationTest(unittest.TestCase):
             'exec("print(1)")',
         ):
             with self.subTest(code=code):
-                _, failures = run.discovery_evidence([code], [], {"known": True})
+                _, failures = grade.discovery_evidence([code], [], {"known": True})
                 self.assertTrue(failures)
 
     def test_missing_impossible_and_noninteger_token_counts_fail(self):
@@ -1669,9 +1372,9 @@ class DiscoveryEvaluationTest(unittest.TestCase):
             {"input": 8, "cached": 0, "output": 1, "total": 100},
         ):
             with self.subTest(tokens=tokens):
-                _, failures = run.token_summary(tokens)
+                _, failures = grade.token_summary(tokens)
                 self.assertTrue(failures)
-        summary, failures = run.token_summary({"input": 8, "cached": 0, "output": 1})
+        summary, failures = grade.token_summary({"input": 8, "cached": 0, "output": 1})
         self.assertEqual([], failures)
         self.assertEqual(8, summary["uncached"])
         self.assertIsNone(summary["reasoning"])
@@ -1693,7 +1396,7 @@ class DiscoveryEvaluationTest(unittest.TestCase):
 class EvaluationSummaryTest(unittest.TestCase):
     def test_discovery_looks_through_literal_loop_aliases(self):
         code = 'import inspect as i\nfor name in ("cards", "monitor"):\n    fn = getattr(probe, name)\n    print(i.signature(fn))'
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             [code], [], {"signatures": ["probe.cards", "probe.monitor"]}
         )
         self.assertEqual([], failures)
@@ -1706,9 +1409,9 @@ class EvaluationSummaryTest(unittest.TestCase):
             'print(getattr(probe.read, "contract"))',
         ):
             with self.subTest(code=code):
-                _, failures = run.discovery_evidence([code], [], {"known": True})
+                _, failures = grade.discovery_evidence([code], [], {"known": True})
                 self.assertTrue(failures)
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             ['print(doc("probe.read"))', 'print(doc("probe.read"))'], [], {}
         )
         self.assertEqual(2, metrics["doc_calls"])
@@ -1716,7 +1419,7 @@ class EvaluationSummaryTest(unittest.TestCase):
         self.assertTrue(failures)
 
     def test_read_activity_does_not_double_count_syntax(self):
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             ['doc("probe.read")'],
             [{"id": "1", "operation": "doc", "argument-key": "a"}],
             {},
@@ -1728,13 +1431,13 @@ class EvaluationSummaryTest(unittest.TestCase):
         # `doc(name)` is the registered contract itself: signature, defaults and
         # schema. Demanding inspect.signature on top of it would be the redundant
         # lookup this same audit counts against a run.
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             ['print(doc("probe.read"))'], [], {"signatures": ["probe.read"]}
         )
         self.assertEqual([], failures)
         self.assertEqual(0, metrics["signature_calls"])
         self.assertEqual(1, metrics["doc_calls"])
-        _, failures = run.discovery_evidence(
+        _, failures = grade.discovery_evidence(
             ['print(doc("probe.other"))'], [], {"signatures": ["probe.read"]}
         )
         self.assertEqual(["no signature or doc call found for probe.read"], failures)
@@ -1750,12 +1453,12 @@ class EvaluationSummaryTest(unittest.TestCase):
             "else:\n"
             "    print(probe.read())"
         )
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             [guard], [], {"known": True, "symbols": ["probe.read"]}
         )
         self.assertEqual([], failures)
         self.assertEqual(0, metrics["other_inspection_calls"])
-        _, failures = run.discovery_evidence(
+        _, failures = grade.discovery_evidence(
             ["print(dir(probe))"], [], {"known": True, "symbols": ["probe.read"]}
         )
         self.assertEqual(["known contracts were unnecessarily rediscovered"], failures)
@@ -1763,11 +1466,11 @@ class EvaluationSummaryTest(unittest.TestCase):
     def test_nonobject_token_payload_fails_without_crashing(self):
         for payload in (None, [], "100"):
             with self.subTest(payload=payload):
-                _, failures = run.token_summary(payload)
+                _, failures = grade.token_summary(payload)
                 self.assertTrue(failures)
 
     def test_json_duplicate_keys_are_not_silently_overwritten(self):
-        failures = run.structured_failures(
+        failures = grade.structured_failures(
             {"want_answer_json": {"count": 2}}, ".", '{"count":7,"count":2}', []
         )
         self.assertTrue(failures)
@@ -1777,7 +1480,7 @@ class EvaluationSummaryTest(unittest.TestCase):
         for index, (input_tokens, cached, output) in enumerate(
             ((100, 75, 20), (300, 125, 40)), 1
         ):
-            tokens, _ = run.token_summary(
+            tokens, _ = grade.token_summary(
                 {"input": input_tokens, "cached": cached, "output": output}
             )
             rows.append(
@@ -1836,15 +1539,15 @@ class EvaluationSummaryTest(unittest.TestCase):
         self.assertEqual(1, summary["behavior_passed"])
 
     def test_reuse_seeds_one_canonical_fixture_and_rejects_path_escape(self):
-        scenario = run.load_scenarios(["extension-known-contract"])[0]
+        scenario = load_scenarios(["extension-known-contract"])[0]
         with tempfile.TemporaryDirectory() as work:
-            run.seed_files(scenario, work)
+            seed_files(scenario, work)
             self.assertTrue(
                 (Path(work) / ".vis/extensions/contract_probe.py").is_file()
             )
             for name in ("../extension-contract-discovery", "not-a-scenario"):
                 with self.subTest(name=name), self.assertRaises(ValueError):
-                    run.seed_files({**scenario, "files_from": name}, work)
+                    seed_files({**scenario, "files_from": name}, work)
 
 
 class DiscoveryEvidenceEdgeTest(unittest.TestCase):
@@ -1855,9 +1558,9 @@ class DiscoveryEvidenceEdgeTest(unittest.TestCase):
             'class Refresh:\n    def __init__(self):\n        doc("probe.read")\nRefresh()',
         ):
             with self.subTest(code=code):
-                _, failures = run.discovery_evidence([code], [], {"known": True})
+                _, failures = grade.discovery_evidence([code], [], {"known": True})
                 self.assertTrue(failures)
-        _, failures = run.discovery_evidence(
+        _, failures = grade.discovery_evidence(
             ["def count(rows):\n    return len(rows)\nprint(count([]))"],
             [],
             {"known": True},
@@ -1865,7 +1568,7 @@ class DiscoveryEvidenceEdgeTest(unittest.TestCase):
         self.assertEqual([], failures)
 
     def test_literal_comprehension_matches_direct_inspection(self):
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             [
                 "import inspect\nprint([inspect.signature(fn) for fn in (probe.cards, probe.monitor)])"
             ],
@@ -1926,7 +1629,7 @@ class EvaluationIntegrationEdgeTest(unittest.TestCase):
                 self.assertFalse(result["correct"])
 
     def test_partial_read_activities_do_not_hide_duplicate_syntax(self):
-        metrics, failures = run.discovery_evidence(
+        metrics, failures = grade.discovery_evidence(
             ['doc("probe.read")', 'doc("probe.read")'],
             [{"id": "1", "operation": "doc", "argument-key": "a"}],
             {},
@@ -1937,13 +1640,13 @@ class EvaluationIntegrationEdgeTest(unittest.TestCase):
 
 class CouncilRecoveryTest(unittest.TestCase):
     def test_seeded_handoff_matches_exact_evidence(self):
-        scenario = run.load_scenarios(["council-thread-recovery"])[0]
+        scenario = load_scenarios(["council-thread-recovery"])[0]
         with tempfile.TemporaryDirectory() as work:
-            run.seed_files(scenario, work)
-            self.assertEqual([], run.structured_failures(scenario, work, "", []))
+            seed_files(scenario, work)
+            self.assertEqual([], grade.structured_failures(scenario, work, "", []))
 
     def events(self):
-        expected = run.load_scenarios(["council-thread-recovery"])[0][
+        expected = load_scenarios(["council-thread-recovery"])[0][
             "want_council_recovery"
         ]
 
@@ -2024,7 +1727,7 @@ class CouncilRecoveryTest(unittest.TestCase):
     def evaluate(self, events, recovery=True):
         checks = {}
         if recovery:
-            checks["want_council_recovery"] = run.load_scenarios(
+            checks["want_council_recovery"] = load_scenarios(
                 ["council-thread-recovery"]
             )[0]["want_council_recovery"]
         return DiscoveryEvaluationTest().run_events(events, **checks)
