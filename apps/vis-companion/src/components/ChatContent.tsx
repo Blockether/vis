@@ -88,7 +88,7 @@ import 'prismjs/components/prism-yaml';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
-import { parseUserMessage } from '../lib/paste';
+import { parseUserMessage, type UserMessagePart } from '../lib/paste';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
@@ -2901,7 +2901,7 @@ function DeliveredMessage({
     <div
       className={`min-w-0 whitespace-pre-wrap break-words ${PROSE} ${index > 0 ? 'mt-2 border-t border-code-edge pt-2' : ''}`}
     >
-      <UserRequestText text={deliveredText(message)} />
+      <UserMessageParts parts={parseUserMessage(deliveredText(message))} />
       {pictures.length > 0 && (
         <div className="mt-2 min-w-0 whitespace-normal">
           {layout === 'grid' ? (
@@ -4632,6 +4632,53 @@ function UserRequestText({ text }: { text: string }) {
   });
 }
 
+/**
+ * The parts of one user message: prose, image chips and collapsed pastes. The request
+ * bubble and a queued message that a running turn received paint them the same way.
+ */
+function UserMessageParts({ parts }: { parts: UserMessagePart[] }) {
+  // Inline image chips must stay in their authored position within the text.
+  const hasInlineImage = parts.some((part) => part.type === 'image');
+  return (
+    <>
+      {parts.map((part) =>
+        part.type === 'text' ? (
+          hasInlineImage || !part.text ? (
+            <span key={part.key}>{part.text}</span>
+          ) : (
+            <UserRequestText key={part.key} text={part.text} />
+          )
+        ) : part.type === 'image' ? (
+          <span
+            key={part.key}
+            className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
+          >
+            {part.summary}
+          </span>
+        ) : (
+          // Full-bleed to the bubble's own `px-3`: the rules then read as the
+          // bubble's dividers instead of a stray box hairline-close to the
+          // sentence above and below it. Vertical margin is the paste's ONLY
+          // separation from that prose, so it stays wider than the block's own
+          // padding.
+          <details
+            key={part.key}
+            className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
+          >
+            <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
+              <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
+              {part.summary}
+            </summary>
+            <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
+              <code>{part.content}</code>
+            </pre>
+          </details>
+        ),
+      )}
+    </>
+  );
+}
+
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
@@ -4648,8 +4695,6 @@ export const UserMessage = memo(function UserMessage({
   createdAt?: number;
 }) {
   const parts = parseUserMessage(children);
-  // Inline image chips must stay in their authored position within the text.
-  const hasInlineImage = parts.some((part) => part.type === 'image');
   const words = parts.some((part) => part.type !== 'text' || part.text.trim() !== '');
   // Persisted user images re-render from DB-owned base64 (survives a restart even
   // after the original clipboard/temp source file is gone). Tool artifacts render
@@ -4718,40 +4763,7 @@ export const UserMessage = memo(function UserMessage({
           {requestKind === 'council' ? (
             <CouncilRequestBody>{council?.content ?? children}</CouncilRequestBody>
           ) : (
-            parts.map((part) =>
-              part.type === 'text' ? (
-                hasInlineImage || !part.text ? (
-                  <span key={part.key}>{part.text}</span>
-                ) : (
-                  <UserRequestText key={part.key} text={part.text} />
-                )
-              ) : part.type === 'image' ? (
-                <span
-                  key={part.key}
-                  className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
-                >
-                  {part.summary}
-                </span>
-              ) : (
-                // Full-bleed to the bubble's own `px-3`: the rules then read as the
-                // bubble's dividers instead of a stray box hairline-close to the
-                // sentence above and below it. Vertical margin is the paste's ONLY
-                // separation from that prose, so it stays wider than the block's own
-                // padding.
-                <details
-                  key={part.key}
-                  className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
-                >
-                  <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
-                    <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
-                    {part.summary}
-                  </summary>
-                  <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
-                    <code>{part.content}</code>
-                  </pre>
-                </details>
-              ),
-            )
+            <UserMessageParts parts={parts} />
           )}
         </div>
       ) : null}

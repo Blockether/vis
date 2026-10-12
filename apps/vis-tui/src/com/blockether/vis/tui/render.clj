@@ -2837,7 +2837,9 @@
                                             t/user-bubble-fg
                                             t/user-bubble-bg
                                             t/code-block-fg
-                                            t/code-block-bg))
+                                            t/code-block-bg)
+                      ;; A paste in the message folds; its summary row is the toggle.
+                      (register-toggle-region! meta viewport-top y x iw))
                     ;; Activity continues the Code surface, with independent disclosure.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
@@ -7932,6 +7934,66 @@
                  [])
          (mapv execution-group))))
 
+(def ^:private delivered-fence-re
+  "One collapsed fence in a delivered message: kind, summary token and payload."
+  #"(?s)(?:^|\n)````vis-(paste|transcript|image)\n([^\n]*)\n(.*?)\n````(?=\n|\z)")
+
+(defn- delivered-message-entries
+  "The bubble rows of one queued message that a running turn received (`→ Send now`).
+   Prose wraps on the bubble paper. A `vis-paste` or `vis-transcript` fence becomes a
+   collapsed disclosure, like a paste in the request bubble. A `vis-image` fence keeps
+   only its `[Image #N: ...]` token, because the step paints the picture itself."
+  [^String text message-index fill-w
+   {:keys [session-id session-turn-id detail-expansions iteration-number]}]
+  (let [fill-w
+        (max 1 (long fill-w))
+
+        row
+        (fn [line]
+          {:line (str user-input-marker line) :meta nil})
+
+        prose
+        (fn [s]
+          (let [s (str/replace s #"\A\n" "")]
+            (when-not (str/blank? s) (mapv row (wrap-text s fill-w)))))
+
+        fence
+        (fn [[_ kind summary payload]]
+          (let [summary (str/trim summary)]
+            (if (= "image" kind)
+              [(row summary)]
+              (let [id (or (second (re-find #"#(\d+)" summary)) "0")
+                    node-id (detail-node-id {:section :user-input
+                                             :session-turn-id session-turn-id
+                                             :iteration-number iteration-number
+                                             :kind (keyword kind)
+                                             :details-path [message-index id]})
+                    expanded? (detail-expanded? detail-expansions session-id node-id false)]
+
+                (into [{:line (str user-input-marker (if expanded? "▾ " "▸ ") summary)
+                        :meta {:kind :toggle-details
+                               :session-id (str session-id)
+                               :node-id node-id
+                               :collapsed? (not expanded?)}}]
+                      (when expanded?
+                        (mapv #(row (str "  " %)) (wrap-text payload (max 1 (- fill-w 2))))))))))
+
+        matcher
+        (re-matcher delivered-fence-re text)]
+
+    (loop [at
+           0
+
+           out
+           []]
+
+      (if (.find matcher)
+        (recur (.end matcher)
+               (-> out
+                   (into (prose (subs text at (.start matcher))))
+                   (into (fence (re-groups matcher)))))
+        (into out (prose (subs text at)))))))
+
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?
@@ -8768,8 +8830,14 @@
                      (str user-input-hdr-marker "You · Queued · sent now · iter " iteration-number))
                    {:line (str user-input-marker "") :meta {:user-input-pad? true}}]
                   (into (mapcat (fn [i text]
-                                  (cond->> (mapv #(line-entry (str user-input-marker %))
-                                                 (wrap-text text (max 1 (long fill-w))))
+                                  (cond->> (delivered-message-entries
+                                             text
+                                             i
+                                             fill-w
+                                             {:session-id session-id
+                                              :session-turn-id session-turn-id
+                                              :detail-expansions detail-expansions
+                                              :iteration-number iteration-number})
                                     (pos? (long i))
                                     (into [(line-entry (str user-input-marker ""))])))
                                 (range)

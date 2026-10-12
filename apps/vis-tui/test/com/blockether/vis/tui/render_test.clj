@@ -12448,6 +12448,65 @@ print(paths)"
           (expect (not= (fingerprint entry) (fingerprint (dissoc entry :user-input))))))))
 
 (defdescribe
+  delivered-paste-test
+  ;; User report: a paste sent with `→ Send now` showed its raw ````vis-paste fence in the
+  ;; `You · Queued` band. The band folds the paste like the request bubble does.
+  (let [entry
+        (iteration/canonicalize {:iteration 39
+                                 :forms []
+                                 :user-input [{:request "The SDK is missing.\n PIN THE SDK!"
+                                               :display-request
+                                               (str "\n````vis-paste\n[Pasted #1: 1 line, 19B]\n"
+                                                    "The SDK is missing.\n````\n PIN THE SDK!")}]})
+
+        entries-of
+        (fn [expansions]
+          (#'render/format-iteration-entry-entries
+           entry
+           60
+           39
+           {:session-id "s1" :session-turn-id "turn-1" :detail-expansions expansions}))
+
+        band-lines
+        (fn [entries]
+          (into [] (comp (map :line) (filter #(str/starts-with? % p/MARKER_USER_INPUT))) entries))
+
+        folded
+        (entries-of {})
+
+        toggle
+        (first (filter #(= :toggle-details (get-in % [:meta :kind])) folded))]
+
+    (it "hides the fence and shows the paste as one folded summary row"
+        (expect (not-any? #(str/includes? % "````") (band-lines folded)))
+        (expect (not-any? #(str/includes? % "vis-paste") (band-lines folded)))
+        (expect (= (str p/MARKER_USER_INPUT "▸ [Pasted #1: 1 line, 19B]") (:line toggle)))
+        (expect (true? (get-in toggle [:meta :collapsed?])))
+        (expect (not-any? #(str/includes? % "The SDK is missing.") (band-lines folded)))
+        (expect (some #(str/includes? % "PIN THE SDK!") (band-lines folded))))
+    (it "opens the paste body when its summary row is toggled"
+        (let [opened (band-lines (entries-of {["s1" (get-in toggle [:meta :node-id])] true}))]
+          (expect (some #{(str p/MARKER_USER_INPUT "▾ [Pasted #1: 1 line, 19B]")} opened))
+          (expect (some #{(str p/MARKER_USER_INPUT "  The SDK is missing.")} opened))))
+    (it "registers the summary row as the click target of the fold"
+        (.reset interactions/hit-map)
+        (.beginFrame interactions/hit-map)
+        (render/draw-chat-bubble! (dummy-text-graphics)
+                                  {:role :assistant
+                                   :text ""
+                                   :prewrapped-lines (mapv :line folded)
+                                   :line-meta (mapv :meta folded)}
+                                  0 2
+                                  80 {:viewport-top 0 :viewport-h 60})
+        (.commitFrame interactions/hit-map)
+        (let [hits (into []
+                         (keep #(.lookup interactions/hit-map 7 (long %)))
+                         (range 0 (+ 2 (count folded) 4)))]
+          (expect (= 1 (count hits)))
+          (expect (= (get-in toggle [:meta :node-id]) (:node-id (first hits))))
+          (expect (true? (:collapsed? (first hits))))))))
+
+(defdescribe
   queued-message-rail-test
   ;; Issue #354: a message sent from the queue had no left rail, so it did not look like a
   ;; user message. Every delivery path paints the rail of a normal user bubble: `│` in the
