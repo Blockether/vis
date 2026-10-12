@@ -31,13 +31,12 @@ tools = evals.evals
 
 DATASET = "terminal-bench/terminal-bench@4.0.0"
 MODEL = "zai-coding-plan/glm-5.3-flash"
-SHOW_START = {"preflight", "run_bench", "status", "stop", "bench", "leaderboard"}
+SHOW_START = {"preflight", "run", "status", "stop", "bench", "leaderboard"}
 TAGS = {
     "scenarios": "observation",
     "new_scenario": "mutation",
-    "run_scenarios": "mutation",
+    "run": "mutation",
     "preflight": "verification",
-    "run_bench": "mutation",
     "runs": "observation",
     "status": "observation",
     "stop": "mutation",
@@ -390,7 +389,8 @@ def test_run_scenarios_starts_the_runner_with_its_route(repo, monkeypatch):
         "_launch",
         lambda run_id, run_dir, **call: launches.append((run_dir, call)) or run_id,
     )
-    run_id = tools.run_scenarios(
+    run_id = tools.run(
+        "scenarios",
         ["edit-config"],
         models=["glm-a", "glm-b"],
         provider="zai-coding-plan",
@@ -428,7 +428,7 @@ def test_run_scenarios_starts_the_runner_with_its_route(repo, monkeypatch):
         "VIS_E2E_TIMEOUT": "60",
     }
     assert {name: call["env"].get(name) for name in route} == route
-    tools.run_scenarios(["answer-sum", "edit-config"])
+    tools.run("scenarios", ["answer-sum", "edit-config"])
     call = launches[-1][1]
     assert "VIS_MODELS" not in call["env"] and "VIS_PROVIDER" not in call["env"]
     assert call["label"] == "2 scenarios on default provider / default model"
@@ -451,7 +451,39 @@ def test_run_scenarios_refuses_before_any_paid_call(
         evals, "_launch", lambda *args, **kwargs: pytest.fail("launched")
     )
     with pytest.raises(ValueError, match=message):
-        tools.run_scenarios(ids, **extra)
+        tools.run("scenarios", ids, **extra)
+    assert not (evals.HOME / "runs").exists()
+
+
+@pytest.mark.parametrize(
+    "dataset, extra, message",
+    [
+        (
+            "swe-bench",
+            {},
+            "unknown dataset 'swe-bench'; use one of: scenarios, terminal-bench",
+        ),
+        (
+            "scenarios",
+            {"ids": ["edit-config"], "max_tasks": 1},
+            "does not take: max_tasks",
+        ),
+        (
+            "terminal-bench",
+            {"ids": ["edit-config"], "repeats": 2},
+            "does not take: ids, repeats",
+        ),
+    ],
+)
+def test_run_refuses_an_unknown_dataset_or_a_foreign_option(
+    repo, monkeypatch, dataset, extra, message
+):
+    monkeypatch.setattr(evals, "_preflight", lambda *_: pytest.fail("preflight ran"))
+    monkeypatch.setattr(
+        evals, "_launch", lambda *args, **kwargs: pytest.fail("launched")
+    )
+    with pytest.raises(ValueError, match=re.escape(message)):
+        tools.run(dataset, **extra)
     assert not (evals.HOME / "runs").exists()
 
 
@@ -1000,7 +1032,7 @@ def test_leaderboard_reads_every_page_and_places_vis(repo, monkeypatch):
         "harness effect."
     )
     assert "about 5 trials per task" in standing.caveats[1]
-    assert "run_bench(attempts=5, round_name=...)" in standing.caveats[1]
+    assert "run('terminal-bench', attempts=5, round_name=...)" in standing.caveats[1]
     view = render("leaderboard", board)
     assert view.summary == (
         "Terminal-Bench 4.0: 3 rows · Vis 28.6% would rank 3 (range 1-4), strict 4"
@@ -1016,7 +1048,7 @@ BUNDLE_SHA256 = hashlib.sha256(b"bundle").hexdigest()
 
 @pytest.fixture
 def bench_launches(repo, monkeypatch):
-    """run_bench() with a passing preflight, a fake queue plan and a recording launcher."""
+    """run("terminal-bench") with a passing preflight, a fake queue plan and a recording launcher."""
     launches = []
     monkeypatch.setattr(evals, "_preflight", lambda round_name=None: READY)
     monkeypatch.setattr(
@@ -1042,8 +1074,13 @@ def bench_launches(repo, monkeypatch):
 
 
 def test_run_bench_starts_the_queue_with_its_options(bench_launches):
-    tools.run_bench(max_tasks=2, retry_tasks=["music-harmony"], job_prefix="retry-oom")
-    tools.run_bench()
+    tools.run(
+        "terminal-bench",
+        max_tasks=2,
+        retry_tasks=["music-harmony"],
+        job_prefix="retry-oom",
+    )
+    tools.run("terminal-bench")
     first, full = bench_launches
     queue = ["uv", "run", "--locked", "python", "run_suite.py", "--attempts", "1"]
     assert first["argv"] == [
@@ -1074,7 +1111,7 @@ def test_run_bench_pins_a_named_round_with_its_attempts(bench_launches, monkeypa
         return queue_plan(completed=0, attempts=attempts)
 
     monkeypatch.setattr(evals, "_queue_plan", plan)
-    tools.run_bench(max_tasks=1, attempts=3, round_name="glm-k3")
+    tools.run("terminal-bench", max_tasks=1, attempts=3, round_name="glm-k3")
     round_dir = evals.BENCH / "rounds" / "glm-k3"
     (call,) = bench_launches
     assert call["argv"] == [
@@ -1110,8 +1147,8 @@ def test_run_bench_pins_a_named_round_with_its_attempts(bench_launches, monkeypa
     assert pins["source_commit"] == "e" * 40
     # The round keeps its attempt count; another count needs a new round.
     with pytest.raises(ValueError, match="round glm-k3 pins 3 attempts for each task"):
-        tools.run_bench(max_tasks=1, attempts=2, round_name="glm-k3")
-    tools.run_bench(max_tasks=1, round_name="glm-k3")
+        tools.run("terminal-bench", max_tasks=1, attempts=2, round_name="glm-k3")
+    tools.run("terminal-bench", max_tasks=1, round_name="glm-k3")
     assert (bench_launches[-1]["attempts"], plans[-1]) == (3, ("glm-k3", 3))
 
 
@@ -1120,9 +1157,9 @@ def test_run_bench_needs_a_canary_before_the_first_scored_trial(
 ):
     monkeypatch.setattr(evals, "_queue_plan", lambda *_: queue_plan(completed=0))
     with pytest.raises(ValueError, match="canary with max_tasks=1"):
-        tools.run_bench(max_tasks=5)
+        tools.run("terminal-bench", max_tasks=5)
     assert bench_launches == []
-    tools.run_bench(max_tasks=1)
+    tools.run("terminal-bench", max_tasks=1)
     assert bench_launches[-1]["argv"][-2:] == ["--max-tasks", "1"]
     assert bench_launches[-1]["label"] == f"1 Terminal-Bench task on {MODEL}"
 
@@ -1132,7 +1169,7 @@ def test_run_bench_needs_a_canary_before_the_first_scored_trial(
     [
         ({"max_tasks": 0}, "max_tasks must be positive"),
         ({"attempts": 0}, "attempts must be positive"),
-        ({"attempts": 3}, r"needs a named round: run_bench\(attempts=3, round_name"),
+        ({"attempts": 3}, r"needs a named round: run\('terminal-bench', attempts=3"),
         ({"round_name": "Glm K3"}, "round name 'Glm K3' must be lowercase"),
         ({"job_prefix": "Retry OOM"}, "job_prefix"),
         (
@@ -1143,7 +1180,7 @@ def test_run_bench_needs_a_canary_before_the_first_scored_trial(
 )
 def test_run_bench_refuses_invalid_options(bench_launches, arguments, message):
     with pytest.raises(ValueError, match=message):
-        tools.run_bench(**arguments)
+        tools.run("terminal-bench", **arguments)
     assert bench_launches == []
 
 
@@ -1160,7 +1197,7 @@ def test_run_bench_refuses_a_failed_preflight(bench_launches, monkeypatch):
         RuntimeError,
         match=r"preflight failed: Podman machine: vis-amd64: stopped\. Start it\.$",
     ):
-        tools.run_bench(max_tasks=1)
+        tools.run("terminal-bench", max_tasks=1)
     assert bench_launches == []
 
 
@@ -1171,7 +1208,7 @@ def test_run_bench_refuses_a_second_queue(repo, monkeypatch):
         with pytest.raises(
             RuntimeError, match=f"a benchmark queue already runs: {running.run_id}"
         ):
-            tools.run_bench(max_tasks=1)
+            tools.run("terminal-bench", max_tasks=1)
     finally:
         assert tools.stop(running.run_id).state == "stopped"
 
@@ -1747,8 +1784,7 @@ def test_activities_stay_within_portable_limits():
     samples = {
         "scenarios": (scenario,) * 40,
         "new_scenario": scenario,
-        "run_scenarios": run,
-        "run_bench": run,
+        "run": run,
         "runs": (run,) * 30,
         "status": evals.RunStatus(run, text, 1, (text,) * 20),
         "stop": run,

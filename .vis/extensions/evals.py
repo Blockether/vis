@@ -8,20 +8,20 @@ This extension drives two runners. It does not copy them:
 
 The first Terminal-Bench 4.0 run of Vis taught these rules, and the code enforces them:
 
-- Paid runs start only through run_scenarios() and run_bench(). Both start a detached
-  process and return at once, so a benchmark of many hours never blocks a turn.
-- run_bench() needs a passing preflight(): uv, the Podman machine, a Compose v2
+- Paid runs start only through run(dataset). It starts a detached process and returns
+  at once, so a benchmark of many hours never blocks a turn.
+- run("terminal-bench") needs a passing preflight(): uv, the Podman machine, a Compose v2
   provider, the pinned Linux amd64 bundle, the dataset, the API key, zstd, 12 GB free
   on the host and in the Podman VM, and no other queue.
-- Without a scored trial, run_bench() runs a canary of one task first.
+- Without a scored trial, run("terminal-bench") runs a canary of one task first.
 - A zero exit code is not a score. bench() reads the verifier results, scores each task
   once by its latest verified attempt and keeps Vis errors, timeouts and unscored
   attempts apart.
 - Every rate has a 95% interval. The repeats of one task or scenario count as one
   cluster, not as independent samples.
-- A round is one Vis build in its own jobs directory: run_bench(round_name=...,
-  attempts=k). compare() pairs two rounds or two scenario runs case by case. It calls a
-  change real only when the interval of the difference excludes zero.
+- A round is one Vis build in its own jobs directory: run("terminal-bench",
+  round_name=..., attempts=k). compare() pairs two rounds or two scenario runs case by
+  case. It calls a change real only when the interval of the difference excludes zero.
 - diagnose() finds causes automatically. label() records human causes, and diagnose()
   measures the agreement with Cohen's kappa before you trust the automatic causes.
 - Costs are metered-API price estimates. A Coding Plan subscription charge is unknown.
@@ -280,8 +280,9 @@ class QueuePlan:
 
     `attempts` is the number of scored attempts that each task needs in the round.
     `completed` counts CPU tasks with all of them, and `scored` counts CPU tasks with at
-    least one. `retryable` lists failed model attempts that run_bench(retry_tasks=...)
-    accepts. `live` lists trials without a result. Without a running queue, these are
+    least one. `retryable` lists failed model attempts that
+    run('terminal-bench', retry_tasks=...) accepts. `live` lists trials without a
+    result. Without a running queue, these are
     interrupted trials: `stale_live`.
     """
 
@@ -1098,7 +1099,7 @@ def _start_round(round_name: str, attempts: int, model: str, digest: str) -> Non
     data = {
         "round": round_name,
         "created_at": _now(),
-        "created_by": "evals.run_bench",
+        "created_by": "evals.run",
         "attempts": attempts,
         "model": model,
         "bundle_sha256": digest,
@@ -1222,7 +1223,7 @@ def _preflight(round_name: str | None = None) -> Preflight:
                 same,
                 detail,
                 "Restore the pinned bundle, or start a new round with "
-                "run_bench(round_name=...). Do not mix builds in one round.",
+                "run('terminal-bench', round_name=...). Do not mix builds in one round.",
             )
         )
     else:
@@ -1318,7 +1319,7 @@ def _summary(refresh: bool, round_name: str | None = None) -> dict:
     if not _round_dir(round_name).is_dir():
         raise LookupError(
             f"no benchmark round {round_name!r}. Start it with "
-            f"run_bench(round_name={round_name!r})."
+            f"run('terminal-bench', round_name={round_name!r})."
         )
     if refresh:
         _refresh_summary(round_name)
@@ -1711,8 +1712,8 @@ def _diagnosis(data: dict, labels: dict[str, dict]) -> Diagnosis:
                 len(unscored),
                 share(len(unscored)),
                 "Infrastructure stopped these attempts, for example an out-of-memory "
-                "kill. Retry them with run_bench(retry_tasks=[...]). A strict score "
-                "counts them as failures.",
+                "kill. Retry them with run('terminal-bench', retry_tasks=[...]). A "
+                "strict score counts them as failures.",
                 tuple(
                     TaskNote(task, "unscored", "", None, None, None, None)
                     for task in unscored
@@ -1848,8 +1849,8 @@ def _standing(
             caveats.append(
                 f"Board rows ran about {board:.0f} trials per task. Vis has "
                 f"{_count(per_task, 'scored attempt')} per task, so its interval is "
-                f"wider. For a matched comparison, run run_bench(attempts={board:.0f}, "
-                "round_name=...)."
+                f"wider. For a matched comparison, run run('terminal-bench', "
+                f"attempts={board:.0f}, round_name=...)."
             )
     caveats.append(
         "The rank range places the ends of the Vis 95% interval among the board rows."
@@ -2423,21 +2424,32 @@ def _run_content(run: EvalRun) -> tuple:
     )
 
 
-def _start_scenarios_activity(*, phase, result, **_):
+_DATASET_OPTIONS = {
+    "scenarios": frozenset(
+        {
+            "ids",
+            "models",
+            "provider",
+            "repeats",
+            "workers",
+            "reasoning_effort",
+            "timeout_s",
+            "native_bin",
+            "python_native_path",
+        }
+    ),
+    "terminal-bench": frozenset(
+        {"max_tasks", "retry_tasks", "job_prefix", "attempts", "round_name"}
+    ),
+}
+
+
+def _start_run_activity(*, phase, result, **_):
     if phase != "success":
         return None
     return _presentation(
-        "Start scenario run",
-        f"{result.run_id} · {_clip(result.label, 120)}",
-        _run_content(result),
-    )
-
-
-def _start_bench_activity(*, phase, result, **_):
-    if phase != "success":
-        return None
-    return _presentation(
-        "Start benchmark queue",
+        "Start evaluation run",
+        f"{'scenarios' if result.kind == 'scenarios' else 'terminal-bench'} · "
         f"{result.run_id} · {_clip(result.label, 120)}",
         _run_content(result),
     )
@@ -2915,10 +2927,10 @@ def _label_activity(*, phase, result, **_):
 class Evals:
     """Run and read Vis evaluations: e2e scenarios and Terminal-Bench on Harbor.
 
-    Reads are free. run_scenarios() and run_bench() make paid model calls in a
-    background process. Use them only on request, and read the result with status(),
-    report() and bench(). compare() judges a change between two results. label() only
-    writes the labels.json of a benchmark round.
+    Reads are free. run() makes paid model calls in a background process. Use it only
+    on request, and read the result with status(), report() and bench(). compare()
+    judges a change between two results. label() only writes the labels.json of a
+    benchmark round.
     """
 
     @vis.method(
@@ -3059,34 +3071,107 @@ class Evals:
     @vis.method(
         tag="mutation",
         activity=vis.Activity(
-            label="Start scenario run",
-            show_start=False,
-            render=_start_scenarios_activity,
+            label="Start evaluation run", show_start=True, render=_start_run_activity
         ),
     )
-    def run_scenarios(
+    def run(
         self,
-        ids: list[str],
+        dataset: str,
+        ids: list[str] | None = None,
         models: list[str] | None = None,
         provider: str | None = None,
-        repeats: int = 1,
-        workers: int = 2,
+        repeats: int | None = None,
+        workers: int | None = None,
         reasoning_effort: str | None = None,
         timeout_s: int | None = None,
         native_bin: str | None = None,
         python_native_path: str | None = None,
+        max_tasks: int | None = None,
+        retry_tasks: list[str] | None = None,
+        job_prefix: str | None = None,
+        attempts: int | None = None,
+        round_name: str | None = None,
     ) -> EvalRun:
-        """Run the named scenarios as one Harbor job in a background process.
+        """Start a paid evaluation of one dataset in a background process.
 
-        Makes paid model calls: one agent run for each scenario, model and repeat.
-        Without `models` and `provider`, the runner's default route applies.
-        `native_bin` is the absolute path of a raw native executable, not the
-        vis-agent launcher, and `python_native_path` is its Python sidecar. Each run
-        writes its Harbor job and results.json into its own directory. It records the Vis
-        commit and the sha256 of `native_bin`, so that compare() can name the versions.
-        Returns at once; read progress with status() and results with report().
-        It needs uv on PATH, because it runs the locked uv project in e2e/.
+        `dataset` is "scenarios" or "terminal-bench". Each dataset takes only its own
+        options; an option of the other dataset is an error.
+
+        "scenarios" runs the e2e scenarios `ids` as one Harbor job: one agent run for
+        each scenario, model and repeat. Options: models, provider, repeats (default 1),
+        workers (default 2), reasoning_effort, timeout_s, native_bin and
+        python_native_path. Without `models` and `provider`, the runner's default route
+        applies. `native_bin` is the absolute path of a raw native executable, not the
+        vis-agent launcher, and `python_native_path` is its Python sidecar. The run
+        records the Vis commit and the sha256 of `native_bin` for compare(). It needs
+        uv on PATH. Read the results with report().
+
+        "terminal-bench" starts the Terminal-Bench queue (run_suite.py) for hours.
+        Options: max_tasks, retry_tasks, job_prefix, attempts and round_name. Without
+        `max_tasks`, the queue runs every pending CPU task. `retry_tasks` reruns failed
+        model attempts first; bench() lists them in `plan.retryable`. `round_name` keeps
+        a separate round in rounds/<round_name>/. Its first queue pins the bundle, the
+        model and `attempts`, the scored attempts for each task. More than one attempt
+        needs a named round. Refuses to start when preflight() fails, when a queue
+        already runs, or, before the first scored attempt of a round, without
+        max_tasks=1. Read the score with bench().
+
+        Returns at once; read progress with status().
         """
+        options = {
+            "ids": ids,
+            "models": models,
+            "provider": provider,
+            "repeats": repeats,
+            "workers": workers,
+            "reasoning_effort": reasoning_effort,
+            "timeout_s": timeout_s,
+            "native_bin": native_bin,
+            "python_native_path": python_native_path,
+            "max_tasks": max_tasks,
+            "retry_tasks": retry_tasks,
+            "job_prefix": job_prefix,
+            "attempts": attempts,
+            "round_name": round_name,
+        }
+        own = _DATASET_OPTIONS.get(dataset)
+        if own is None:
+            raise ValueError(
+                f"unknown dataset {dataset!r}; use one of: {', '.join(_DATASET_OPTIONS)}"
+            )
+        if foreign := [
+            name
+            for name, value in options.items()
+            if value is not None and name not in own
+        ]:
+            raise ValueError(f"dataset {dataset} does not take: {', '.join(foreign)}")
+        if dataset == "scenarios":
+            return self._run_scenarios(
+                ids or [],
+                models,
+                provider,
+                1 if repeats is None else repeats,
+                2 if workers is None else workers,
+                reasoning_effort,
+                timeout_s,
+                native_bin,
+                python_native_path,
+            )
+        return self._run_bench(max_tasks, retry_tasks, job_prefix, attempts, round_name)
+
+    def _run_scenarios(
+        self,
+        ids: list[str],
+        models: list[str] | None,
+        provider: str | None,
+        repeats: int,
+        workers: int,
+        reasoning_effort: str | None,
+        timeout_s: int | None,
+        native_bin: str | None,
+        python_native_path: str | None,
+    ) -> EvalRun:
+        """Start the scenarios dataset of run() as one Harbor job."""
         known = _scenario_dirs()
         if not ids:
             raise ValueError("name at least one scenario id; scenarios() lists them")
@@ -3164,31 +3249,15 @@ class Evals:
         """
         return _preflight(round_name)
 
-    @vis.method(
-        tag="mutation",
-        activity=vis.Activity(
-            label="Start benchmark queue", show_start=True, render=_start_bench_activity
-        ),
-    )
-    def run_bench(
+    def _run_bench(
         self,
-        max_tasks: int | None = None,
-        retry_tasks: list[str] | None = None,
-        job_prefix: str | None = None,
-        attempts: int | None = None,
-        round_name: str | None = None,
+        max_tasks: int | None,
+        retry_tasks: list[str] | None,
+        job_prefix: str | None,
+        attempts: int | None,
+        round_name: str | None,
     ) -> EvalRun:
-        """Start the Terminal-Bench queue (run_suite.py) in a background process.
-
-        Makes paid model calls for hours. Without `max_tasks`, the queue runs every
-        pending CPU task. `retry_tasks` reruns failed model attempts first; bench()
-        lists them in `plan.retryable`. `round_name` keeps a separate round in
-        rounds/<round_name>/. Its first queue pins the bundle, the model and
-        `attempts`, the scored attempts for each task. More than one attempt needs a
-        named round. Refuses to start when preflight() fails, when a queue already
-        runs, or, before the first scored attempt of a round, without max_tasks=1.
-        Returns at once; read progress with status() and the score with bench().
-        """
+        """Start the terminal-bench dataset of run(): the queue of run_suite.py."""
         if max_tasks is not None and max_tasks < 1:
             raise ValueError("max_tasks must be positive")
         if attempts is not None and attempts < 1:
@@ -3198,7 +3267,7 @@ class Evals:
         if round_name is None and (attempts or 1) > 1:
             raise ValueError(
                 "more than one attempt for each task needs a named round: "
-                f"run_bench(attempts={attempts}, round_name=...)"
+                f"run('terminal-bench', attempts={attempts}, round_name=...)"
             )
         pins = _provenance(round_name)
         is_new = round_name is not None and not pins
@@ -3498,9 +3567,8 @@ PROMPT = """evals surface active — evaluate Vis with e2e scenarios and Termina
   evals.scenarios(pattern=None)                    list e2e scenarios
   evals.new_scenario(id, prompt, files, want=...)  add a scenario under e2e/scenarios
   evals.capture(session_id, turn=None)             draft a scenario from a session turn
-  evals.run_scenarios(ids, models=None, repeats=1) start a paid scenario run in the background
+  evals.run(dataset, ids=None, ...)                start a paid "scenarios" or "terminal-bench" run
   evals.preflight(round_name=None)                 check Podman, bundle, dataset, key and disk
-  evals.run_bench(max_tasks=None, attempts=None, round_name=None)   start the paid queue
   evals.runs() · evals.status(run_id=None) · evals.stop(run_id)   background runs
   evals.report(run_id=None)                        scenario results with a 95% interval
   evals.bench(round_name=None) · evals.diagnose(round_name=None)   score, then lost tasks

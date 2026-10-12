@@ -239,7 +239,7 @@ The project extension `.vis/extensions/evals.py` runs this runner from a Vis ses
 
 - `evals.scenarios()` lists the scenarios and their checks.
 - `evals.new_scenario(...)` creates `scenarios/<id>/scenario.json` and its `files/`.
-- `evals.run_scenarios(ids, models=[...])` starts a paid run in the background, with its own `VIS_E2E_RESULTS` directory.
+- `evals.run("scenarios", ids, models=[...])` starts a paid run in the background, with its own `VIS_E2E_RESULTS` directory. `evals.run("terminal-bench", ...)` starts the Terminal-Bench queue in the same way.
 - `evals.status()` and `evals.report()` read the run. The report lists each failed run with credentials redacted.
 - `evals.compare(baseline, candidate)` compares two scenario runs case by case.
 
@@ -248,9 +248,9 @@ In these results, a case is one scenario on one model. `report()` gives the pass
 To find out if a change helps, run the same scenarios on the same models before and after the change. Then compare the two runs, not their pass rates:
 
 ```python
-before = evals.run_scenarios(ids, provider="zai-coding-plan", models=["glm-5.3-flash"], repeats=3)
+before = evals.run("scenarios", ids, provider="zai-coding-plan", models=["glm-5.3-flash"], repeats=3)
 # When this run ends, make the change and build Vis again.
-after = evals.run_scenarios(ids, provider="zai-coding-plan", models=["glm-5.3-flash"], repeats=3)
+after = evals.run("scenarios", ids, provider="zai-coding-plan", models=["glm-5.3-flash"], repeats=3)
 evals.compare(before.run_id, after.run_id)
 ```
 
