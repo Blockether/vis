@@ -15,6 +15,8 @@ SCENARIO = {
     "want_tools": ["patch"],
 }
 PATCH_CODE = 'patch("notes.txt", edits)'
+SESSION_USAGE = {"fold_count": 1, "samples": [{"tokens": 3}]}
+GOAL = {"status": "complete", "iterations_used": 2}
 PASSING_GUARDS = {
     "activities": True,
     "files": True,
@@ -275,7 +277,7 @@ def _write_agent_logs(logs, lines, *, reasoning_effort=None):
         "session_id": "session-1",
         "agent": {"name": "vis", "version": "dev"},
         "steps": [],
-        "extra": {"session_usage": {"fold_count": 1}, "goal": {"status": "complete"}},
+        "extra": {"session_usage": SESSION_USAGE, "goal": GOAL},
     }
     (logs / grade.TRAJECTORY_FILE).write_text(json.dumps(trajectory))
 
@@ -283,7 +285,9 @@ def _write_agent_logs(logs, lines, *, reasoning_effort=None):
 def test_load_trial_reads_the_trace_the_run_record_and_the_trajectory(tmp_path):
     _write_agent_logs(tmp_path, ["line"], reasoning_effort="high")
 
-    assert grade.load_trial(tmp_path) == grade.TrialFiles(
+    loaded = grade.load_trial(tmp_path)
+
+    assert loaded == grade.TrialFiles(
         trace="line\n",
         exit_code=0,
         wall_s=2.5,
@@ -291,9 +295,13 @@ def test_load_trial_reads_the_trace_the_run_record_and_the_trajectory(tmp_path):
         provider=PROVIDER,
         model=MODEL,
         reasoning_effort="high",
-        session_usage={"fold_count": 1},
-        goal={"status": "complete"},
+        session_usage=SESSION_USAGE,
+        goal=GOAL,
     )
+    assert type(loaded.session_usage) is dict
+    assert type(loaded.session_usage["samples"]) is list
+    assert type(loaded.session_usage["samples"][0]) is dict
+    assert type(loaded.goal) is dict
 
 
 @pytest.mark.parametrize("trajectory", [None, "not json", "{}"])
@@ -318,7 +326,7 @@ def test_load_trial_gives_empty_values_for_missing_or_invalid_files(
 
 def test_main_writes_the_grade_and_the_rewards(tmp_path, capsys):
     scenario = tmp_path / "scenario.json"
-    scenario.write_text(json.dumps(SCENARIO))
+    scenario.write_text(json.dumps({**SCENARIO, "want_goal_complete": True}))
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "notes.txt").write_text("fixed\n")
@@ -346,5 +354,6 @@ def test_main_writes_the_grade_and_the_rewards(tmp_path, capsys):
     rewards = json.loads((verifier_logs / grade.REWARD_FILE).read_text())
     assert record["id"] == "fix-notes"
     assert record["passed"] is True
+    assert record["guards"]["goal_complete"] is True
     assert rewards["reward"] == 1.0
     assert capsys.readouterr().out.startswith("PASS reward=1 ")

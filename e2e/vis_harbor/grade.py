@@ -902,6 +902,15 @@ class TrialFiles:
     goal: Any
 
 
+def _json_data(value: Any) -> Any:
+    """Return frozen trajectory data as plain JSON data: dicts and lists."""
+    if isinstance(value, Mapping):
+        return {key: _json_data(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_data(item) for item in value]
+    return value
+
+
 def load_trial(agent_logs: str | os.PathLike[str]) -> TrialFiles:
     """Read the files of the agent. A missing or invalid file gives empty values."""
     logs = Path(agent_logs)
@@ -917,7 +926,8 @@ def load_trial(agent_logs: str | os.PathLike[str]) -> TrialFiles:
         except ValueError:
             pass
         else:
-            session_usage, goal = trajectory.session_usage, trajectory.goal
+            session_usage = _json_data(trajectory.session_usage)
+            goal = _json_data(trajectory.goal)
     return TrialFiles(
         trace=trace,
         exit_code=record.get("exit_code"),
