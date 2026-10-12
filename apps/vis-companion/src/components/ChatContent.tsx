@@ -2787,14 +2787,44 @@ function DigestLive({
 }) {
   const view = views.at(-1);
   const record = records.at(-1);
-  // Keyed by the view or the record, not by this row: a settling turn re-mounts the row,
-  // and an opened run must stay open.
-  const [opened, setOpened] = useStickyOverlay(
-    view ? `live:${view.id}` : `run:${record?.iteration_id ?? ''}:${record?.index ?? 0}`,
-  );
-  const close = useCallback(() => setOpened(false), [setOpened]);
-  const count = views.length + records.length;
   if (!view && !record) return null;
+  // Keyed by the view or the record, not by this row: a settling turn re-mounts the row,
+  // and an opened run must stay open. A new target mounts a closed control: an interrupted
+  // or finished view hands the control its recording, and only a click opens that.
+  const target = view
+    ? `live:${view.id}`
+    : `run:${record?.iteration_id ?? ''}:${record?.index ?? 0}`;
+  return (
+    <DigestLiveControl
+      key={target}
+      target={target}
+      view={view}
+      record={record}
+      count={views.length + records.length}
+      client={client}
+      sid={sid}
+    />
+  );
+}
+
+/** The `live` control of one target, and the dialog that it opens. */
+function DigestLiveControl({
+  target,
+  view,
+  record,
+  count,
+  client,
+  sid,
+}: {
+  target: string;
+  view?: LiveViewModel;
+  record?: IterationAttachment;
+  count: number;
+  client: GatewayClient;
+  sid: string;
+}) {
+  const [opened, setOpened] = useStickyOverlay(target);
+  const close = useCallback(() => setOpened(false), [setOpened]);
   return (
     <>
       {/* A flex item drops a plain leading space, so the separator uses no-break spaces. */}

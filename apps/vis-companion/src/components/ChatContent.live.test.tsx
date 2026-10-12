@@ -10,6 +10,7 @@ import type { GatewayClient } from '../lib/gateway';
 import { liveOwnerMatches, liveRecordFromText, liveViewFromWire } from '../lib/live-view';
 import { dismissTopLayer, EDGE_BACK_PX, EDGE_SETTLE_MS } from '../lib/edge-back';
 import { drag } from '../lib/pull-to-search.fixture';
+import { dropOverlayHandovers } from '../lib/sticky-overlay';
 
 // Regression #222: ACTIVITY and RUN remain independent sibling sections.
 // User report (screenshot): the embedded run stood in a box of its own. It is a BAND now, the
@@ -522,6 +523,48 @@ it('keeps the hidden owner view one click away in the last digest', () => {
   expect(within(dialog).getByRole('progressbar')).toBeVisible();
   // An opened run stays open across mounts, so close it before the next test.
   fireEvent.click(within(dialog).getByRole('button', { name: `Close ${liveView.title}` }));
+});
+
+// Regression, user report: interrupting a live view opened from the digest closed it, and its
+// recording then opened by itself. Only a click opens a run, also after the view ends.
+it('does not open the recording by itself after the opened live view ends', () => {
+  const { liveView, iterations: held } = heldOwnerTrace(true);
+  const iterations = held.map((iteration, at) => ({ ...iteration, id: `iteration-${at}` }));
+  const last = iterations.length - 1;
+  const client = {
+    retainAttachment: () => () => undefined,
+    attachmentUrl: () => new Promise<string>(() => undefined),
+  } as unknown as GatewayClient;
+  const props = { client, sid: 'session' };
+  const mounted = renderOpenSteps(
+    <IterationTrace iterations={iterations} liveViews={[liveView]} {...props} />,
+  );
+  fireEvent.click(
+    mounted.getByRole('button', { name: `Open running live view: ${liveView.title}` }),
+  );
+  expect(mounted.getByRole('dialog', { name: liveView.title })).toBeVisible();
+
+  const recorded = iterations.map((iteration, at) =>
+    at === last
+      ? {
+          ...iteration,
+          attachments: [
+            {
+              filename: 'monitor.live.ndjson',
+              media_type: 'application/vnd.vis.live+ndjson',
+              iteration_id: iteration.id,
+              index: 0,
+              owner: liveView.owner,
+            },
+          ],
+        }
+      : iteration,
+  );
+  mounted.rerender(<IterationTrace iterations={recorded} liveViews={[]} {...props} />);
+  expect(mounted.getByRole('button', { name: 'Open live recording: monitor' })).toBeVisible();
+  expect(mounted.queryByRole('dialog')).toBeNull();
+  // The ended view offered its open dialog to a remount. Later tests reuse its id.
+  dropOverlayHandovers();
 });
 
 it('shows the ramped owner view only once its owner mounts', () => {
