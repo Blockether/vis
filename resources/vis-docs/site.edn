@@ -46,7 +46,11 @@
     {:blurb
      "Run a prompt on a schedule or from a webhook, and get each result in a session, on your phone or at your address."
      :page "automations"
-     :title "Automations"}
+      :title "Automations"}
+     {:blurb
+      "Score a Harbor benchmark round, find why tasks fail and check if a change makes the agent better."
+      :page "evals"
+      :title "Evaluations"}
     {:blurb
      "Build a form that asks for a choice, credential or confirmation, and handle the answer."
      :page "human-input"
@@ -116,7 +120,12 @@
        "Create, change, start and delete automations, and read their runs from Python or with HTTP requests."
        :label "Automations"
        :page "automations-api"
-       :title "Automations API"}
+        :title "Automations API"}
+       {:blurb
+        "Summarize, score, diagnose and compare benchmark rounds from Python or with HTTP requests."
+        :label "Evaluations"
+        :page "evals-api"
+        :title "Evaluations API"}
       {:blurb
        "Read and change settings for the gateway, a project, a group or a session from Python or with HTTP requests."
        :label "Configuration"

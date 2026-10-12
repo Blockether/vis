@@ -4,8 +4,9 @@ Read one Vis run with `load_trajectory` or `parse_trajectory`. Read the trials o
 Harbor job or round with `read_trials`, then count them with `case_results` or
 `summarize`. Seal a finished round with `seal_round`. Compare two results with
 `compare_cases`, or test paired changes with `paired_change` and `mcnemar_exact`.
-Score repeated attempts with `task_attempts` and `repeat_stats`. Score and diagnose a
-Terminal-Bench round summary with `bench_report` and `diagnose`, and keep human cause
+Score repeated attempts with `task_attempts` and `repeat_stats`. Summarize a
+Terminal-Bench round from its Harbor job folders with `round_summary`, then score and
+diagnose it with `bench_report` and `diagnose`, and keep human cause
 labels with `save_label`. Place a round on a Harbor Hub board with `read_leaderboard`. Check automatic
 causes or judge stages against human labels with `agreement`. For installation and sessions, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).

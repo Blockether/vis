@@ -57,8 +57,8 @@ Read the manual at [vis.blockether.com](https://vis.blockether.com/). The same p
   [Reporting a bug](resources/vis-docs/reporting-bugs.md) shows how to report a problem safely.
 - **Concepts** — one page for each feature, for example [Sessions](resources/vis-docs/sessions.md),
   [Context management](resources/vis-docs/context-management.md), [Drafts](resources/vis-docs/drafts.md),
-  [Council](resources/vis-docs/council.md), [Automations](resources/vis-docs/automations.md) and
-  [Live views](resources/vis-docs/live-views.md).
+  [Council](resources/vis-docs/council.md), [Automations](resources/vis-docs/automations.md),
+  [Evaluations](resources/vis-docs/evals.md) and [Live views](resources/vis-docs/live-views.md).
 - **Programmatic access** — the same concepts from your own code. Start with
   [Python SDK basics](resources/vis-docs/python-sdk.md) or [HTTP API basics](resources/vis-docs/http-api.md). Then
   read the API page for each concept, for example [Sessions API](resources/vis-docs/sessions-api.md).

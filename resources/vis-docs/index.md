@@ -294,6 +294,7 @@ Each concept page explains one feature: what it does, when to use it and how to 
 - [Drafts](drafts.md) — review changes in a separate working copy.
 - [Council](council.md) — ask another session for help or a second review.
 - [Automations](automations.md) — run a prompt on a schedule or from a webhook.
+- [Evaluations](evals.md) — score benchmark rounds, find failure causes and compare runs.
 - [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
@@ -320,6 +321,7 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 - [Drafts API](drafts-api.md) — draft settings and draft state from Python or HTTP.
 - [Council API](council-api.md) — Council messages, wakes and rooms from Python or HTTP.
 - [Automations API](automations-api.md) — automations, runs, secrets and webhooks from Python or HTTP.
+- [Evaluations API](evals-api.md) — benchmark scores, failure causes and comparisons from Python or HTTP.
 - [Configuration API](configuration-api.md) — settings and extension reloads from Python or HTTP.
 
 <span id="put-your-expertise-into-code"></span>

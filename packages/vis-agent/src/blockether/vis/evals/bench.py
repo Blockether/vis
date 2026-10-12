@@ -1,7 +1,7 @@
 """Score a Terminal-Bench round and find where it loses tasks.
 
-The Terminal-Bench queue writes a round summary, `summary.json`, with the trials, the
-task outcomes and the usage of the round. Give its parsed data to `bench_report` for
+`round_summary` reads a round summary from Harbor job folders: the trials, the task
+outcomes and the usage of the round. Give that summary to `bench_report` for
 the score with 95% intervals, or to `diagnose` for the failure causes, largest lever
 first. Read the agent time limits of the tasks with `agent_limits`. Percent values go
 from 0 to 100 and are rounded to 0.1.
@@ -132,7 +132,7 @@ class TaskNote:
     """One task in a finding.
 
     `checks` is passed/total verifier tests, or empty. `budget_used` is the share of
-    the task's agent time limit that Vis used.
+    the task's agent time limit that the agent used.
     """
 
     task: str
@@ -160,7 +160,7 @@ class Finding:
 class Diagnosis:
     """Where the benchmark loses tasks, largest lever first.
 
-    `estimate` projects the effect of full attempts on Vis-error tasks. It is an
+    `estimate` projects the effect of full attempts on agent-error tasks. It is an
     estimate, not a measurement. `label_check` compares the causes with human labels.
     """
 
@@ -248,7 +248,7 @@ def latest_trials(summary: Mapping) -> dict[str, dict]:
 
 
 def bench_report(summary: Mapping, round_name: str | None = None) -> BenchReport:
-    """Score one round from its `summary.json` data."""
+    """Score one round from its `round_summary` data."""
     usage = summary.get("usage_totals") or {}
     outcomes = sorted(
         (summary.get("task_outcomes") or {}).items(),
@@ -427,7 +427,7 @@ def diagnose(
     labels: Mapping[str, Mapping] | None = None,
     limits: Mapping[str, float] | None = None,
 ) -> Diagnosis:
-    """Find where a round loses tasks, from its `summary.json` data.
+    """Find where a round loses tasks, from its `round_summary` data.
 
     `limits` gives the agent time limit of each task, from `agent_limits`. Without
     limits, no attempt counts as an early stop. `labels` maps a trial name to a human
@@ -488,12 +488,12 @@ def diagnose(
         findings.append(
             Finding(
                 "early_stops",
-                f"Vis finished early and failed the tests in {_count(len(early), 'task')}",
+                f"The agent finished early and failed the tests in {_count(len(early), 'task')}",
                 len(early),
                 share(len(early)),
-                f"Vis ended these runs itself, without an error, after at most "
+                f"The agent ended these runs itself, without an error, after at most "
                 f"{EARLY_STOP_SHARE:.0%} of the agent time limit. The median "
-                f"failed-tests run used {statistics.median(used):.0%}. Vis did not "
+                f"failed-tests run used {statistics.median(used):.0%}. The agent did not "
                 "check its work against the task before it finished.",
                 tuple(early),
             )
@@ -583,7 +583,7 @@ def diagnose(
         extra = rate * len(errors)
         estimate = (
             f"{solved} of {full} tasks with a full attempt passed ({rate:.0%}). At that "
-            f"rate, full attempts on the {_count(len(errors), 'Vis-error task')} would "
+            f"rate, full attempts on the {_count(len(errors), 'agent-error task')} would "
             f"add about {extra:.1f} solved tasks: {_percent(solved + extra, scored)}% "
             f"instead of {_percent(solved, scored)}%. This is an estimate, not a "
             "measurement."

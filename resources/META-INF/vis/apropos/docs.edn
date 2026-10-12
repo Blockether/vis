@@ -16,6 +16,7 @@
  {:kind "doc" :name "drafts-api" :resource "vis-docs/drafts-api.md"}
  {:kind "doc" :name "council-api" :resource "vis-docs/council-api.md"}
  {:kind "doc" :name "automations-api" :resource "vis-docs/automations-api.md"}
+ {:kind "doc" :name "evals-api" :resource "vis-docs/evals-api.md"}
  {:kind "doc" :name "configuration-api" :resource "vis-docs/configuration-api.md"}
  {:kind "doc" :name "decision-models" :resource "vis-docs/decision-models.md"}
  {:kind "doc" :name "gateway-service" :resource "vis-docs/gateway-service.md"}
@@ -26,6 +27,7 @@
  {:kind "doc" :name "keyboard-shortcuts" :resource "vis-docs/keyboard-shortcuts.md"}
  {:kind "doc" :name "council" :resource "vis-docs/council.md"}
  {:kind "doc" :name "automations" :resource "vis-docs/automations.md"}
+ {:kind "doc" :name "evals" :resource "vis-docs/evals.md"}
  {:kind "doc" :name "reporting-bugs" :resource "vis-docs/reporting-bugs.md"}
  {:kind "doc" :name "logging" :resource "vis-docs/logging.md"}
  {:kind "doc" :name "extending" :resource "vis-docs/extending.md"}
