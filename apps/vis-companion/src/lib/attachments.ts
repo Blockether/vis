@@ -69,6 +69,7 @@ const DEFAULT_DOCUMENT_MEDIA_TYPES = [
   'text/x-markdown',
   'text/csv',
   'text/tab-separated-values',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
 
 const DEFAULT_MEDIA_TYPES = [
@@ -286,6 +287,7 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   mkd: 'text/markdown',
   csv: 'text/csv',
   tsv: 'text/tab-separated-values',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   gz: 'application/gzip',
   jsonl: 'application/x-ndjson',
   ndjson: 'application/x-ndjson',
@@ -334,11 +336,12 @@ const LOOSE_TEXT_MEDIA_TYPES = [
   'text/x-tsv',
 ];
 
-// One table, MANY spellings: a download server answers `application/csv`, an
-// Excel export says `text/x-csv`, a Markdown provider says `text/x-markdown`.
-// The gateway stores one canonical name for each, so a file that names itself
-// with a variant is admitted under the name the gate and the shelf both know.
-const CANONICAL_TEXT_MEDIA_TYPES: Record<string, string> = {
+// One format, MANY spellings: a download server answers `application/csv`, an
+// Excel export says `text/x-csv`, a Markdown provider says `text/x-markdown`, and
+// macOS names a voice memo `audio/x-m4a`. The gateway stores one canonical name
+// for each, so a file that names itself with a variant is admitted under the
+// name the gate and the shelf both know.
+const CANONICAL_MEDIA_TYPES: Record<string, string> = {
   'text/x-markdown': 'text/markdown',
   'application/csv': 'text/csv',
   'text/x-csv': 'text/csv',
@@ -346,6 +349,15 @@ const CANONICAL_TEXT_MEDIA_TYPES: Record<string, string> = {
   'text/comma-separated-values': 'text/csv',
   'text/tsv': 'text/tab-separated-values',
   'text/x-tsv': 'text/tab-separated-values',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/m4a': 'audio/mp4',
+  'audio/x-wav': 'audio/wav',
+  'audio/wave': 'audio/wav',
+  'audio/vnd.wave': 'audio/wav',
+  'audio/mp3': 'audio/mpeg',
+  'audio/x-aiff': 'audio/aiff',
+  'audio/x-flac': 'audio/flac',
+  'audio/x-aac': 'audio/aac',
 };
 
 /** What a picked file CLAIMS to be: the platform's word, else its extension. */
@@ -360,7 +372,7 @@ export function candidateMediaType(name: string, declared: string | null | undef
   ) {
     return inferred;
   }
-  const canonical = CANONICAL_TEXT_MEDIA_TYPES[claim];
+  const canonical = CANONICAL_MEDIA_TYPES[claim];
   if (canonical) return canonical;
   if (claim && !UNNAMED_MEDIA_TYPES.includes(claim)) return claim;
   return inferred ?? claim;

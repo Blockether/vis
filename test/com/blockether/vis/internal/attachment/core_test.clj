@@ -9,9 +9,10 @@
             [com.blockether.vis.internal.attachment.image-convert :as image-convert]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [java.awt.image BufferedImage]
-           [java.io ByteArrayInputStream File]
+           [java.io ByteArrayInputStream ByteArrayOutputStream File]
            [java.nio.file Files]
            [java.util Base64]
+           [java.util.zip ZipEntry ZipOutputStream]
            [javax.imageio ImageIO]))
 
 (def ^:private tiny-png-b64 fixtures/tiny-png-b64)
@@ -641,6 +642,63 @@
   (it "does not accept prose or malformed JSON as a log container"
       (doseq [text ["ordinary log text\n" "{broken}\n" "[1,2]\n"]]
         (expect (nil? (attachments/detect-media-mime (.getBytes text "UTF-8")))))))
+
+(defn- zip-bytes
+  "A ZIP archive with the given `[name text]` entries, in that order."
+  ^bytes [entries]
+  (let [out (ByteArrayOutputStream.)]
+    (with-open [zip (ZipOutputStream. out)]
+      (doseq [[entry-name text] entries]
+        (.putNextEntry zip (ZipEntry. ^String entry-name))
+        (.write zip (.getBytes ^String text "UTF-8"))
+        (.closeEntry zip)))
+    (.toByteArray out)))
+
+(def ^:private docx-media-type
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+(defn- office-bytes
+  "An Office package whose content-type registry names `main-type`."
+  ^bytes [main-type]
+  (zip-bytes [["[Content_Types].xml"
+               (str "<Types><Override PartName=\"/word/document.xml\" ContentType=\""
+                    main-type
+                    "\"/></Types>")] ["word/document.xml" "<w:document/>"]]))
+
+;; Regression: the companion refused a Word document as an unsupported format.
+(defdescribe
+  docx-attachment-test
+  (it "sniffs and stores an inline Word document as a readable human-only file"
+      (let [bytes
+            (office-bytes
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")
+
+            out
+            (attachments/prepare-inline-attachments
+              [{:base64 (b64 bytes) :filename "Tryb.docx" :media-type "application/octet-stream"}])
+
+            attachment
+            (first (:attached out))
+
+            blind
+            (first (:skipped (attachments/wire-images (:attached out))))]
+
+        (expect (empty? (:skipped out)))
+        (expect (= docx-media-type (:media-type attachment)))
+        (expect (= (b64 bytes) (:base64 attachment)))
+        (expect (attachments/hidden-from-model? attachment))
+        (expect (true? (:readable-blind? blind)))
+        (expect (str/includes? (:reason blind) "read_attachment"))))
+  (it "refuses a ZIP archive that is not a Word document, whatever its name"
+      (doseq [bytes [(zip-bytes [["notes.txt" "plain"]])
+                     (office-bytes "application/vnd.ms-word.document.macroEnabled.main+xml")
+                     (office-bytes
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")
+                     (byte-array [0x50 0x4b 0x03 0x04 0 0 0 0])]]
+        (let [out (attachments/prepare-inline-attachments
+                    [{:filename "report.docx" :media-type docx-media-type :base64 (b64 bytes)}])]
+          (expect (empty? (:attached out)))
+          (expect (= "not a supported attachment format" (:reason (first (:skipped out)))))))))
 
 (defdescribe
   markdown-attachment-test

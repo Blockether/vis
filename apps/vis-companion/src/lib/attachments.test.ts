@@ -215,6 +215,29 @@ describe('naming a candidate', () => {
   });
 });
 
+// Regression: a desktop drop refused a macOS voice memo typed `audio/x-m4a` and a
+// Word document, though the gateway stores both.
+describe('what a desktop drop names a memo and a Word document', () => {
+  const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  it('admits each under the name the gateway stores', async () => {
+    const files = [
+      new File([new Uint8Array(16)], 'audio1407418942.m4a', { type: 'audio/x-m4a' }),
+      new File([new Uint8Array(16)], 'Tryb.docx', { type: docx }),
+    ];
+
+    const result = await attachmentsFromFiles(files, {});
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mp4', docx]);
+  });
+
+  it('names an unnamed .docx by its extension', () => {
+    expect(candidateMediaType('Tryb.docx', '')).toBe(docx);
+    expect(candidateMediaType('memo.m4a', 'audio/m4a')).toBe('audio/mp4');
+  });
+});
+
 // Regression: an Android voice memo arrives from the document provider with the
 // MIME type `application/octet-stream` — `ContentResolver.getType` answers that
 // for every URI its table does not know. Believed, that word cost the user the
