@@ -18,6 +18,7 @@ _SCHEMA_NAMES = (
     "content",
     "council",
     "diff",
+    "evals",
     "gateway",
     "improve",
     "provider",

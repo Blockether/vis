@@ -2091,6 +2091,37 @@
          (run-in ctx expression)
          (finally (discard-context! ctx)))))
 
+(def ^:no-doc evals-modules
+  "The modules of the bundled SDK package `blockether.vis.evals` that its
+   `_gateway` module uses, by file name. The native image has no resource
+   listing, so this vector names each file."
+  ["_gateway" "bench" "compare" "harbor" "labels" "leaderboard" "repeats" "stats"])
+
+(defn evals-call
+  "Run evaluation `operation` of the bundled SDK on the JSON data `body`.
+   Answer the envelope of `blockether.vis.evals._gateway.handle`: a map with
+   `\"result\"`, or with `\"error\"` when the body is not valid."
+  [operation body]
+  (let [sources
+        (into {}
+              (map (fn [module]
+                     [module (classpath-src (str "blockether/vis/evals/" module ".py"))]))
+              evals-modules)
+
+        ctx
+        (build-context "evals")]
+
+    (try (exec-in! ctx (classpath-src "vis-guest/vis_evals.py"))
+         (run-in ctx
+                 (str "evals_call("
+                      (python-string-literal (json/write-json-str sources))
+                      ", "
+                      (python-string-literal operation)
+                      ", "
+                      (python-string-literal (json/write-json-str body))
+                      ")"))
+         (finally (discard-context! ctx)))))
+
 (defn- package-version
   []
   (some-> (io/resource "vis/VERSION")

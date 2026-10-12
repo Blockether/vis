@@ -479,7 +479,7 @@ def diagnose(
             for note in failed
             if note.budget_used is not None and note.budget_used <= EARLY_STOP_SHARE
         ),
-        key=lambda note: note.budget_used,
+        key=lambda note: note.budget_used or 0.0,
     )
     if early:
         findings.append(
@@ -504,7 +504,7 @@ def diagnose(
             and note.pass_ratio >= NEAR_MISS_RATIO
             and note.pass_ratio < 1
         ),
-        key=lambda note: -note.pass_ratio,
+        key=lambda note: -(note.pass_ratio or 0.0),
     )
     if near:
         findings.append(

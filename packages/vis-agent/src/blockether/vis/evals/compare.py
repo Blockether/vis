@@ -172,7 +172,9 @@ def compare_cases(
     values = list(changes.values())
 
     def rate(cases: Cases) -> float:
-        return round(100 * sum(p / r for p, r in map(cases.get, paired)) / count, 1)
+        return round(
+            100 * sum(cases[key][0] / cases[key][1] for key in paired) / count, 1
+        )
 
     return CaseComparison(
         paired_cases=count,

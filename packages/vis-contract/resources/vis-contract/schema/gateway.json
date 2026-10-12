@@ -1739,6 +1739,78 @@
       }
     },
     {
+      "audience": "sdk",
+      "path": "/v1/evals/agreement",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "evals_agreement",
+          "request_schema": "evals_agreement_input"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/evals/compare",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "evals_case_comparison",
+          "request_schema": "evals_compare_input"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/evals/diagnose",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "evals_diagnosis",
+          "request_schema": "evals_diagnose_input"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/evals/labels",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "evals_agreement",
+          "request_schema": "evals_labels_input"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/evals/leaderboard",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "evals_leaderboard",
+          "request_schema": "evals_leaderboard_input"
+        }
+      }
+    },
+    {
+      "audience": "sdk",
+      "path": "/v1/evals/report",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "response_schema": "evals_bench_report",
+          "request_schema": "evals_report_input"
+        }
+      }
+    },
+    {
       "audience": "public",
       "path": "/v1/hooks/:automation-id",
       "operations": {
@@ -3111,6 +3183,39 @@
     },
     "automations_run_event": {
       "$ref": "automations.json#/$defs/run_event"
+    },
+    "evals_agreement_input": {
+      "$ref": "evals.json#/$defs/agreement_input"
+    },
+    "evals_compare_input": {
+      "$ref": "evals.json#/$defs/compare_input"
+    },
+    "evals_diagnose_input": {
+      "$ref": "evals.json#/$defs/diagnose_input"
+    },
+    "evals_labels_input": {
+      "$ref": "evals.json#/$defs/labels_input"
+    },
+    "evals_leaderboard_input": {
+      "$ref": "evals.json#/$defs/leaderboard_input"
+    },
+    "evals_report_input": {
+      "$ref": "evals.json#/$defs/report_input"
+    },
+    "evals_agreement": {
+      "$ref": "evals.json#/$defs/agreement"
+    },
+    "evals_bench_report": {
+      "$ref": "evals.json#/$defs/bench_report"
+    },
+    "evals_case_comparison": {
+      "$ref": "evals.json#/$defs/case_comparison"
+    },
+    "evals_diagnosis": {
+      "$ref": "evals.json#/$defs/diagnosis"
+    },
+    "evals_leaderboard": {
+      "$ref": "evals.json#/$defs/leaderboard"
     }
   }
 }
