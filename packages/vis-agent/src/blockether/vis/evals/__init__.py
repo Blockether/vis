@@ -9,7 +9,7 @@ causes or judge stages against human labels with `agreement`. For installation a
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
-from .agreement import (
+from .labels import (
     KAPPA_REVIEW,
     KAPPA_TRUST,
     MIN_LABELS,

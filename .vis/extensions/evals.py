@@ -119,7 +119,7 @@ _SDK_PACKAGE = "_vis_evals_sdk"
 
 
 def _load_sdk() -> tuple[ModuleType, ...]:
-    """Import the `agreement`, `compare`, `harbor`, `repeats` and `stats` SDK modules.
+    """Import the `compare`, `harbor`, `labels`, `repeats` and `stats` SDK modules.
 
     An extension context holds only `blockether.vis.extension`. These modules use
     only the standard library, so the extension imports them from the SDK source under
@@ -133,16 +133,16 @@ def _load_sdk() -> tuple[ModuleType, ...]:
     package.__path__ = [str(SDK_EVALS)]
     sys.modules[_SDK_PACKAGE] = package
     return (
-        importlib.import_module(f"{_SDK_PACKAGE}.agreement"),
         importlib.import_module(f"{_SDK_PACKAGE}.compare"),
         importlib.import_module(f"{_SDK_PACKAGE}.harbor"),
+        importlib.import_module(f"{_SDK_PACKAGE}.labels"),
         importlib.import_module(f"{_SDK_PACKAGE}.repeats"),
         importlib.import_module(f"{_SDK_PACKAGE}.stats"),
     )
 
 
-_agreement, _compare_sdk, _harbor, _repeats, _stats = _load_sdk()
-Agreement = _agreement.Agreement
+_compare_sdk, _harbor, _labels, _repeats, _stats = _load_sdk()
+Agreement = _labels.Agreement
 CaseChange = _compare_sdk.CaseChange
 RouteTest = _compare_sdk.RouteTest
 
@@ -420,7 +420,7 @@ class StageAgreement:
     `stages` names the judged stage of each trial: the most common stage of its
     samples. `sample_agreement_percent` is the share of trials whose samples all
     agree, or None with one sample. `kappa` and `advice` follow the limits of
-    blockether.vis.evals.agreement: 30 labels, a review from 0.6 and no review from 0.8.
+    blockether.vis.evals.labels: 30 labels, a review from 0.6 and no review from 0.8.
     """
 
     judge_run_id: str
@@ -1498,7 +1498,7 @@ def _label_check(
     """Compare the diagnose() causes with the human labels of the same attempts."""
     trials = {str(trial.get("trial")): trial for trial in data.get("trials") or ()}
     dead = _dead_trials(data)
-    return _agreement.agreement(
+    return _labels.agreement(
         (
             (name, _cause(trials[name], dead, limits), str(label.get("cause")))
             for name, label in sorted(labels.items())
@@ -1562,7 +1562,7 @@ def _latest_judged_stage(source: Path, trial: str) -> str | None:
             continue
         found = _judged_samples(judge_dir).get(trial)
         if found:
-            return _agreement.majority(found)
+            return _labels.majority(found)
     return None
 
 
@@ -1575,9 +1575,9 @@ def _stage_labels(source: Path) -> dict[str, dict]:
 
 
 def _save_stage_label(source: Path, trial: str, stage: str, note: str) -> StageLabel:
-    if stage not in _agreement.STAGES:
+    if stage not in _labels.STAGES:
         raise ValueError(
-            f"stage must be one of {', '.join(_agreement.STAGES)}, not {stage!r}"
+            f"stage must be one of {', '.join(_labels.STAGES)}, not {stage!r}"
         )
     if len(note) > _NOTE_LIMIT:
         raise ValueError(
@@ -1606,9 +1606,9 @@ def _stage_agreement(judge_dir: Path) -> StageAgreement:
     source = _judge_source(judge_dir)
     samples = _judged_samples(judge_dir)
     judged = {
-        trial: _agreement.majority(found) for trial, found in sorted(samples.items())
+        trial: _labels.majority(found) for trial, found in sorted(samples.items())
     }
-    found = _agreement.agreement(
+    found = _labels.agreement(
         (
             (trial, judged[trial], str(label.get("stage")))
             for trial, label in sorted(_stage_labels(source).items())
@@ -1625,7 +1625,7 @@ def _stage_agreement(judge_dir: Path) -> StageAgreement:
         judged=len(judged),
         errors=_judge_errors(judge_dir),
         stages=tuple(f"{trial}: {stage}" for trial, stage in judged.items()),
-        sample_agreement_percent=_agreement.sample_agreement(samples),
+        sample_agreement_percent=_labels.sample_agreement(samples),
         **_fields(found),
     )
 
