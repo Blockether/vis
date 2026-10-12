@@ -244,7 +244,7 @@ export function Calendar({
                     aria-current={isToday ? 'date' : undefined}
                     aria-disabled={isUnavailable || undefined}
                     onClick={() => choose(day)}
-                    className={`relative grid h-10 place-items-center text-body tabular-nums leading-none outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset motion-reduce:transition-none mouse:h-8 mouse:text-ui ${
+                    className={`relative grid h-10 place-items-center text-body tabular-nums outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset motion-reduce:transition-none mouse:h-8 mouse:text-ui ${
                       isChosen ? 'focus-visible:ring-accent-foreground' : 'focus-visible:ring-accent'
                     } ${tone}`}
                   >
@@ -346,7 +346,7 @@ function TimeSegment({
         // A full segment, or a digit that no second digit can follow, moves on.
         if (digits.length === 2 || Number(digits) * 10 > max) nextRef?.current?.focus();
       }}
-      className="h-8 w-9 rounded-none border border-edge bg-input text-center font-mono text-body tabular-nums leading-none text-white transition-[border-color,box-shadow] duration-150 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted motion-reduce:transition-none mouse:h-7 mouse:text-ui"
+      className="h-8 w-9 rounded-none border border-edge bg-input text-center font-mono text-body tabular-nums text-white transition-[border-color,box-shadow] duration-150 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted motion-reduce:transition-none mouse:h-7 mouse:text-ui"
     />
   );
 }

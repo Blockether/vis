@@ -825,7 +825,9 @@ describe('a queued turn that starts before the finished row lands', () => {
     expect(await screen.findByText('the queued question')).toBeInTheDocument();
     expect(screen.getByText('The first answer.')).toBeInTheDocument();
     expect(screen.getByText('the first question')).toBeInTheDocument();
-    expect(document.querySelector('[data-settling][data-turn-id="t-done"]')).not.toBeNull();
+    expect(document.querySelector('[data-settling][data-turn-id="t-done"]')).toHaveTextContent(
+      'The first answer.',
+    );
 
     persisted = [
       {

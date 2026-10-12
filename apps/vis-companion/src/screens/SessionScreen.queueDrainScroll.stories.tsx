@@ -115,7 +115,6 @@ async function paint() {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   );
 }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const QueuedTurnStartsBeforeTheRow: Story = {
   play: async ({ canvasElement }) => {
@@ -135,9 +134,9 @@ export const QueuedTurnStartsBeforeTheRow: Story = {
       block_id: `${FINISHED_ID}:answer`,
       cumulative: finalAnswer,
     });
-    await sleep(500);
+    await new Promise((resolve) => setTimeout(resolve, 500));
     viewport.scrollTop = viewport.scrollHeight;
-    await sleep(500);
+    await new Promise((resolve) => setTimeout(resolve, 500));
     await paint();
     const gap = () => viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
     await expect(gap()).toBeLessThan(2);
