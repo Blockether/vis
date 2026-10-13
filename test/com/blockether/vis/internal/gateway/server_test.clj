@@ -1369,8 +1369,9 @@
           ;; Every sniffable file is advertised to the picker. Recordings, tables,
           ;; JSONL and gzip diagnostics ride beside documents: their bytes stay in
           ;; session storage, and the model is told it can inspect them on demand.
-          (expect (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp"
-                      "application/csv" "application/gzip" "application/pdf"
+          (expect (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "image/heic"
+                      "image/heif" "image/avif" "application/csv" "application/gzip"
+                      "application/pdf"
                       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                       "application/x-csv" "application/x-gzip" "application/x-ndjson"
                       "application/xhtml+xml" "text/comma-separated-values" "text/csv" "text/html"
