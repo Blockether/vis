@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.40] - 2026-10-13
+
 ### Added
 - The SDK module `blockether.vis.evals` scores and diagnoses Terminal-Bench rounds from standard
   Harbor files: `round_summary`, `bench_report`, `diagnose`, `agent_limits` and the label
@@ -16,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `agreement`, `kappa_advice` and `stage_agreement` check automatic causes and judge stages
   against human labels. `save_stage_label` keeps a person's stage of a trial.
 - `read_leaderboard` and `standing` place a round on a Harbor Hub board.
+- `task_attempts` and `repeat_stats` give pass@k, pass^k and the unstable tasks of repeated
+  attempts.
+- `python -m vis_harbor.judge` names the failure stage of each failed scenario trial with the Vis
+  agent and the `harbor analyze` prompt.
 - The gateway serves the evaluation functions under `/v1/evals`, and `GatewayClient` calls them.
 - The manual has the Evaluations and Evaluations API pages.
 
@@ -30,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   gave an interval below -100 points.
 - `round_summary` scores a trial without an ATIF trajectory. It reads the model from
   `agent_info.model_info` and the output tokens from `agent_result` in `result.json`.
+- The Companion app ramps its steps again after a display mode change, and its header logo is
+  larger.
 
 ## [v0.2.39] - 2026-10-12
 
