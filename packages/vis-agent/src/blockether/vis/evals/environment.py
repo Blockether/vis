@@ -29,7 +29,7 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.environments.capabilities import EnvironmentCapabilities
 from harbor.models.trial.paths import EnvironmentPaths
 
-from .grade import WORKSPACE_FILESYSTEM_FILE
+from .harbor import WORKSPACE_FILESYSTEM_FILE
 
 WORKSPACE_DIRECTORY = "workspace"
 GIT_SETUP = (

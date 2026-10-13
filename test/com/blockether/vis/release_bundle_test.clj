@@ -4049,7 +4049,7 @@
              (it "installs SDK dependencies without assuming the hosted runner Python directory"
                  (let [action (slurp ".github/actions/test-native-python-sdk/action.yml")]
                    (expect (not (str/includes? action "actions/setup-python")))
-                   (expect (str/includes? action "uv venv --python 3.11"))
+                   (expect (str/includes? action "uv venv --python 3.12"))
                    (expect (str/includes? action "uv pip install --python"))
                    (expect (str/includes? action "RUNNER_TEMP/vis-native-sdk-venv/bin/python"))
                    (expect (str/includes? action "subprocess.run([sys.executable")))))
@@ -4402,11 +4402,11 @@
             installed
             (filter #(str/includes? (get % "run" "") "VIS_TEST_INSTALLED=1") steps)]
 
-        (expect (= ["matrix.os == 'ubuntu-latest' && matrix.python == '3.11'"]
+        (expect (= ["matrix.os == 'ubuntu-latest' && matrix.python == '3.12'"]
                    (mapv #(get % "if") lint)))
         ;; Only lint is deduplicated: every interpreter still builds and tests its wheel.
         (expect (= [nil] (mapv #(get % "if") installed)))
-        (expect (= ["3.11" "3.12" "3.13" "3.14" "pypy3.11"]
+        (expect (= ["3.12" "3.13" "3.14"]
                    (get-in jobs ["distribution" "strategy" "matrix" "python"])))))))
 
 (defn- sdk-checkout!
@@ -4697,7 +4697,7 @@
           sha
           (apply str (repeat 40 "a"))]
 
-      (expect (= 10 (count (legs []))))
+      (expect (= 6 (count (legs []))))
       (doseq [[overrides reduced? record?]
               [[{} true false] [{"VERIFIED" "false"} false true]
                ;; The cache service returned no answer.
@@ -4724,7 +4724,7 @@
                      (into {} (map #(vec (str/split % #"=" 2))) (str/split-lines (slurp outputs)))]
 
                  (expect (zero? (long exit)) output)
-                 (expect (= (if reduced? [{"os" "ubuntu-latest" "python" "3.11"}] (legs []))
+                 (expect (= (if reduced? [{"os" "ubuntu-latest" "python" "3.12"}] (legs []))
                             (legs (yaml/load (get selected "exclude"))))
                          (pr-str overrides))
                  (expect (= (str record?) (get selected "record")) (pr-str overrides)))
@@ -4752,7 +4752,7 @@
       (expect (= "${{ fromJSON(needs.interpreters.outputs.exclude) }}"
                  (get-in jobs ["distribution" "strategy" "matrix" "exclude"])))
       ;; The engine job installs the wheel that the one remaining leg uploads.
-      (expect (= "matrix.os == 'ubuntu-latest' && matrix.python == '3.11'" (get upload "if")))
+      (expect (= "matrix.os == 'ubuntu-latest' && matrix.python == '3.12'" (get upload "if")))
       (expect (str/starts-with? (get lookup "uses" "") "actions/cache/restore@"))
       (expect (= true (get-in lookup ["with" "lookup-only"])))
       (expect (= "${{ steps.inputs.outputs.key }}" (get-in lookup ["with" "key"])))
@@ -5016,7 +5016,7 @@
             ["import copy, json, runpy" "from unittest.mock import patch"
              "m = runpy.run_path('bin/verify-release-assets.py')"
              "repo, tag, sha = 'example/project', 'v9.8.7', 'a' * 40"
-             "names = m['required_recovery_checks']()" "assert len(names) == 31, names"
+             "names = m['required_recovery_checks']()" "assert len(names) == 27, names"
              "windows = 'desktop / Package Windows x64'" "assert windows in names, names"
              "replaced = {f'native / native / vis-agent-linux-{arch}.tar.gz' for arch in ('x64', 'arm64')}"
              "publisher = 'Verify complete assets, deploy libraries and publish stable'"

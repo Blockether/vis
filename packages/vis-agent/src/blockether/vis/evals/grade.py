@@ -37,7 +37,6 @@ STDERR_FILE = "stderr.txt"
 TRAJECTORY_FILE = "trajectory.json"
 RUN_FILE = "run.json"
 REWARD_FILE = "reward.json"
-WORKSPACE_FILESYSTEM_FILE = "workspace_filesystem.json"
 GRADE_FILE = "grade.json"
 
 

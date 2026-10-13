@@ -11,11 +11,8 @@ from pathlib import Path
 
 import evals_atif as atif
 from blockether.vis.evals import grade
-from blockether.vis.evals.grade import (
-    WORKSPACE_FILESYSTEM_FILE,
-    cache_metric_failures,
-    usage_percent,
-)
+from blockether.vis.evals.grade import cache_metric_failures, usage_percent
+from blockether.vis.evals.harbor import WORKSPACE_FILESYSTEM_FILE
 
 PROVIDER = "test-provider"
 TASKS = Path(__file__).resolve().parents[3] / "e2e"

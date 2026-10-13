@@ -23,7 +23,6 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
-from .grade import WORKSPACE_FILESYSTEM_FILE
 from .stats import cluster_interval
 
 __all__ = [
@@ -47,6 +46,7 @@ TASK_FILE = "task.toml"
 INSTRUCTION_FILE = "instruction.md"
 CHECKS_FILE = "checks.json"
 TEST_SCRIPT_FILE = "test.sh"
+WORKSPACE_FILESYSTEM_FILE = "workspace_filesystem.json"
 WORKSPACE_DIRECTORY = "workspace"
 TASK_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 AGENT = "blockether.vis.evals.agent:VisAgent"

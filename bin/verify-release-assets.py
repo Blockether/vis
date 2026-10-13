@@ -85,7 +85,7 @@ def required_recovery_checks() -> set[str]:
         )
         checks.update(
             f"Verify release source / python-package / {system} / {version}"
-            for version in ("3.11", "3.12", "3.13", "3.14", "pypy3.11")
+            for version in ("3.12", "3.13", "3.14")
         )
     checks.update(
         f"native / native / vis-agent-linux-{arch}.tar.gz" for arch in ("x64", "arm64")

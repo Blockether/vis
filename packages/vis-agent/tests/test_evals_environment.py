@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from blockether.vis.evals.environment import HostEnvironment
-from blockether.vis.evals.grade import WORKSPACE_FILESYSTEM_FILE
+from blockether.vis.evals.harbor import WORKSPACE_FILESYSTEM_FILE
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
 
