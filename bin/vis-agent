@@ -66,6 +66,8 @@ vis_track_file="$vis_install_dir/track"
 # The optional parts that an update installs beside the engine and Python.
 vis_components_file="$vis_install_dir/components"
 vis_default_components="tui,web"
+# macOS copies of the desktop app go here when the user can write it. Empty turns them off.
+vis_applications_dir="${VIS_APPLICATIONS_DIR-/Applications}"
 
 # Show each path under $HOME as ~ in messages. Bash 3.2 needs this loop, not ${//}.
 tilde_home() {
@@ -1471,6 +1473,9 @@ first, and older copies of the track it opens are removed.
 Supports macOS (Apple silicon and Intel) and Linux (x64 and ARM64).
 Files live in ${VIS_HOME:-~/.vis}/install/desktop; no administrator access needed
 for the app itself. Dev build prerequisites may need administrator installation.
+On macOS, the app is also copied to /Applications when you can write there:
+Vis.app, Vis Beta.app or Vis Dev.app. Another app with that name is kept.
+VIS_APPLICATIONS_DIR selects another folder; an empty value turns the copy off.
 The desktop uses Companion pairing. This command also starts the local gateway in
 the background when none runs, and keeps it up while the app runs. In the app, add
 this machine once with http://127.0.0.1:7890. --no-gateway, --gateway HOST or
@@ -1631,12 +1636,19 @@ vis_close_other_desktops() {
       *"$keep"/*) continue ;;
       # An `open -W` waiter or the engine that started it ends with its app.
       open\ *|*/open\ *|*" gateway desktop -- "*) continue ;;
-      *"$vis_install_dir"/desktop/*) ;;
+      *"$vis_install_dir"/desktop/*)
+        other="${command#*"$vis_install_dir"/desktop/}"
+        other="${other%%/Vis.*}" ;;
+      # A copy in Applications is another desktop too.
+      *"$vis_applications_dir"/Vis.app/*|*"$vis_applications_dir"/Vis\ Beta.app/*|\
+      *"$vis_applications_dir"/Vis\ Dev.app/*)
+        [[ -n "$vis_applications_dir" ]] || continue
+        other="${command#*"$vis_applications_dir"/}"
+        other="$vis_applications_dir/${other%%.app/*}.app" ;;
       *) continue ;;
     esac
     kill "$pid" 2>/dev/null || continue
-    other="${command#*"$vis_install_dir"/desktop/}"
-    say "closed the desktop app still running (${other%%/Vis.*})"
+    say "closed the desktop app still running ($other)"
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
       kill -0 "$pid" 2>/dev/null || break
       sleep 0.5
@@ -1669,6 +1681,55 @@ vis_prune_desktops() {
     fi
   done
   return 0
+}
+
+# Launchpad, Spotlight and the Dock find macOS apps in /Applications, not in Vis
+# state. Keep one copy for each track there when the user can write that folder,
+# so those launchers open the version that this command installed. A bundle with
+# another identifier is never ours to replace. A failed copy only warns: the app
+# in Vis state still opens.
+vis_desktop_app_name() {
+  case "$1" in
+    beta) printf 'Vis Beta.app\n' ;;
+    dev) printf 'Vis Dev.app\n' ;;
+    *) printf 'Vis.app\n' ;;
+  esac
+}
+
+vis_copy_desktop_to_applications() {
+  local app="$1" track="$2" dir="$vis_applications_dir" target staging id
+  [[ "$app" == *.app && -d "$app" && -n "$dir" && -d "$dir" && -w "$dir" ]] || return 0
+  target="$dir/$(vis_desktop_app_name "$track")"
+  if [[ -e "$target" ]]; then
+    id="$(plutil -extract CFBundleIdentifier raw -o - "$target/Contents/Info.plist" 2>/dev/null)" || id=""
+    if [[ "$id" != com.blockether.viscompanion.desktop* ]]; then
+      warn "desktop: $target is another app, so it was not replaced"
+      return 0
+    fi
+    ! diff -rq "$app" "$target" >/dev/null 2>&1 || return 0
+  fi
+  if ! staging="$(mktemp -d "$dir/.vis-desktop.XXXXXX" 2>/dev/null)"; then
+    warn "desktop: could not copy the app to $dir"
+    return 0
+  fi
+  if ! ditto "$app" "$staging/new.app"; then
+    rm -rf "$staging"
+    warn "desktop: could not copy the app to $target"
+    return 0
+  fi
+  if [[ -e "$target" ]] && ! mv "$target" "$staging/previous.app"; then
+    rm -rf "$staging"
+    warn "desktop: could not replace $target"
+    return 0
+  fi
+  if ! mv "$staging/new.app" "$target"; then
+    [[ ! -e "$staging/previous.app" ]] || mv "$staging/previous.app" "$target"
+    rm -rf "$staging"
+    warn "desktop: could not replace $target"
+    return 0
+  fi
+  rm -rf "$staging"
+  say "copied the $track desktop app to $target"
 }
 
 # The engine starts the local gateway with the app when none runs, and keeps it
@@ -1759,6 +1820,7 @@ vis_do_desktop() {
   fi
   vis_close_other_desktops "$desktop_dir/$version"
   vis_prune_desktops "$desktop_dir" "$version" "$desktop_executable"
+  vis_copy_desktop_to_applications "$desktop_dir/$version/Vis.app" "$track"
   say "opening $track desktop $version"
   if [[ "$os" == Darwin ]]; then
     # Nothing else answers to the track's bundle id now, so this opens the
@@ -1811,6 +1873,7 @@ vis_update_desktop() {
   else
     say "updated the desktop app: $installed → $version"
   fi
+  vis_copy_desktop_to_applications "$desktop_dir/$version/Vis.app" "$track"
 }
 
 # `vis-agent web` from a source checkout: the gateway serves the Companion's static

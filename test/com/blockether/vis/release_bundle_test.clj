@@ -34,6 +34,8 @@
     ;; The launching Vis process can export its own web app path.
     ;; Each fixture selects its installation unless it explicitly supplies an override.
     (.remove env "VIS_WEB_DIR")
+    ;; A macOS desktop test must never copy its fake app into the real /Applications.
+    (.put env "VIS_APPLICATIONS_DIR" "")
     (.redirectErrorStream pb true)
     (doseq [[k v] env-extra]
       (.put env (str k) (str v)))
@@ -3045,20 +3047,25 @@
         (str
           "#!/usr/bin/env bash\necho \"hdiutil $*\" >> \"$DESKTOP_CALLS\"\n"
           "if [[ ${DESKTOP_FAIL:-} == busy && $1 == detach && $* != *-force* ]]; then exit 1; fi\n"
-          "[[ ${DESKTOP_FAIL:-} != $1 ]] || exit 1\n"
-          "[[ $1 == attach ]] || exit 0\n" "image=$2\n"
+          "[[ ${DESKTOP_FAIL:-} != $1 ]] || exit 1\n" "[[ $1 == attach ]] || exit 0\n"
+          "image=$2\n"
           "while (($#)); do if [[ $1 == -mountpoint ]]; then mount=$2; shift; fi; shift; done\n"
           "[[ ${DESKTOP_FAIL:-} != bundle ]] || exit 0\n"
           "mkdir -p \"$mount/Vis.app/Contents/MacOS\"\n"
           ;; The released Pake bundle names its executable pake-vis, not Vis.
-          "cp \"$image\" \"$mount/Vis.app/Contents/MacOS/pake-vis\"\nchmod +x \"$mount/Vis.app/Contents/MacOS/pake-vis\"\n"))
+          "cp \"$image\" \"$mount/Vis.app/Contents/MacOS/pake-vis\"\nchmod +x \"$mount/Vis.app/Contents/MacOS/pake-vis\"\n"
+          "printf 'com.blockether.viscompanion.desktop\\n' > \"$mount/Vis.app/Contents/Info.plist\"\n"))
       (write-executable!
         (io/file bin "ditto")
         "#!/usr/bin/env bash\n[[ ${DESKTOP_FAIL:-} != copy ]] || exit 1\ncp -R \"$1\" \"$2\"\n")
+      ;; Test bundles keep only the bundle identifier in Info.plist.
+      (write-executable! (io/file bin "plutil") "#!/usr/bin/env bash\nexec cat \"${@: -1}\"\n")
       (write-executable!
         (io/file bin "open")
         "#!/usr/bin/env bash\necho \"open $*\" >> \"$DESKTOP_CALLS\"\nprintf 'desktop-open<%s>\\n' \"$@\"\nexit ${DESKTOP_OPEN_EXIT:-0}\n")
       (f {:desktop desktop
+          :applications (io/file dir "Applications")
+          :payload payload
           :calls calls
           :release release
           :publish! publish!
@@ -3252,6 +3259,107 @@
                  (finally (.destroyForcibly stale)
                           (.destroyForcibly waiting)
                           (when selected (.destroyForcibly selected)))))))))
+  ;; The Dock, Launchpad and Spotlight open the copy in /Applications, so each
+  ;; install or build of a track also refreshes that copy.
+  (it
+    "copies each macOS track to Applications and keeps another app with that name"
+    (with-desktop-fixture
+      "Darwin"
+      "arm64"
+      (fn [{:keys [applications desktop payload track publish! publish-beta! run!]}]
+        (.mkdirs ^java.io.File applications)
+        (let [env
+              {"VIS_APPLICATIONS_DIR" (.getAbsolutePath ^java.io.File applications)}
+
+              copy
+              #(io/file applications % "Contents/MacOS/pake-vis")
+
+              {:keys [exit output]}
+              (run! [] env)]
+
+          (expect (zero? exit) output)
+          (expect (str/includes? output "copied the release desktop app to") output)
+          (expect (= (slurp (io/file desktop "9.8.7/Vis.app/Contents/MacOS/pake-vis"))
+                     (slurp (copy "Vis.app"))))
+          (expect (= "com.blockether.viscompanion.desktop\n"
+                     (slurp (io/file applications "Vis.app/Contents/Info.plist"))))
+          (let [{:keys [exit output]} (run! [] env)]
+            (expect (zero? exit) output)
+            (expect (not (str/includes? output "copied")) output))
+          (spit payload "#!/usr/bin/env bash\necho release-two\n")
+          (publish! "9.8.8")
+          (let [{:keys [exit output]} (run! ["--update"] env)]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "copied the release desktop app") output)
+            (expect (str/includes? (slurp (copy "Vis.app")) "release-two")))
+          (spit track "dev\n")
+          (let [{:keys [exit output]} (run! [] env)]
+            (expect (zero? exit) output)
+            (expect (str/includes? output "copied the dev desktop app") output)
+            (expect (str/includes? (slurp (copy "Vis Dev.app")) "dev-source-one"))
+            (expect (str/includes? (slurp (copy "Vis.app")) "release-two")))
+          (let [other (io/file applications "Vis Beta.app/Contents/Info.plist")]
+            (.mkdirs (.getParentFile other))
+            (spit other "org.example.other\n")
+            (publish-beta! "9.8.9" (apply str (repeat 40 "a")) true)
+            (let [{:keys [exit output]} (run! ["--track" "beta"] env)]
+              (expect (zero? exit) output)
+              (expect (str/includes? output "is another app, so it was not replaced") output)
+              (expect (= "org.example.other\n" (slurp other)))
+              (expect (not (.exists ^java.io.File (copy "Vis Beta.app"))))))))))
+  (it "copies nothing without a writable Applications folder, with an empty setting or on Linux"
+      (doseq [os ["Darwin" "Linux"]]
+        (with-desktop-fixture os
+                              "x86_64"
+                              (fn [{:keys [applications run!]}]
+                                (.mkdirs ^java.io.File applications)
+                                (let [path (.getAbsolutePath ^java.io.File applications)]
+                                  (doseq [[env writable?] [[{"VIS_APPLICATIONS_DIR" path}
+                                                            (= os "Linux")] [{} true]]]
+                                    (.setWritable ^java.io.File applications writable?)
+                                    (let [{:keys [exit output]} (run! [] env)]
+                                      (expect (zero? exit) output)
+                                      (expect (not (str/includes? output "copied")) output)
+                                      (expect (empty? (.list ^java.io.File applications)) output))))
+                                (.setWritable ^java.io.File applications true)))))
+  (it
+    "closes a copy that runs from Applications before it opens the selected app"
+    (with-desktop-fixture
+      "Darwin"
+      "arm64"
+      (fn [{:keys [applications checkout run!]}]
+        (let [bundle
+              (io/file applications "Vis.app")
+
+              app
+              (io/file bundle "Contents/MacOS/pake-vis")
+
+              started
+              (io/file checkout "started-applications")]
+
+          (.mkdirs (.getParentFile app))
+          (spit (io/file bundle "Contents/Info.plist") "com.blockether.viscompanion.desktop\n")
+          (write-executable! app "#!/usr/bin/env bash\ntouch \"$1\"\nsleep 120\n")
+          (let [^Process process (.start (ProcessBuilder. ^java.util.List
+                                                          [(.getAbsolutePath app)
+                                                           (.getAbsolutePath started)]))]
+            (loop [attempt 0]
+              (when (and (not (.exists started)) (< attempt 400))
+                (Thread/sleep 25)
+                (recur (inc attempt))))
+            (try (let [{:keys [exit output]} (run! []
+                                                   {"VIS_APPLICATIONS_DIR"
+                                                    (.getAbsolutePath ^java.io.File applications)})]
+                   (expect (zero? exit) output)
+                   (expect (str/includes? output
+                                          (str "closed the desktop app still running ("
+                                               (.getAbsolutePath bundle)
+                                               ")"))
+                           output)
+                   (expect (.waitFor process 10 java.util.concurrent.TimeUnit/SECONDS) output)
+                   (expect (str/includes? output "copied the release desktop app") output)
+                   (expect (str/includes? (slurp app) "desktop-app extract") output))
+                 (finally (.destroyForcibly process))))))))
   (it
     "removes the versions a launch supersedes and leaves the other track alone"
     (with-desktop-fixture
