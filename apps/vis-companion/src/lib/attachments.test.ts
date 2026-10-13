@@ -135,6 +135,17 @@ describe('the FILES door', () => {
     expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mpeg']);
   });
 
+  it('takes an iPhone photo, with or without a platform type', async () => {
+    filePicker.pickFiles.mockResolvedValue({
+      files: [picked('IMG_0001.HEIC', ''), picked('IMG_0002.heif', 'image/heif')],
+    });
+
+    const result = await pickDocumentAttachments();
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments.map((a) => a.media_type)).toEqual(['image/heic', 'image/heif']);
+  });
+
   it('takes back the gzip diagnostics bundle this app exports', async () => {
     filePicker.pickFiles.mockResolvedValue({
       files: [picked('vis-diagnostics-20260501.jsonl.gz', '')],

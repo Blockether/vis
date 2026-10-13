@@ -86,24 +86,28 @@
 
              (quot (long x) (long block-px))))))
 
-(defdescribe mp4-sniffing-test
-             (it "accepts an ISO base-media video and rejects still-image containers"
-                 (let [head (byte-array 32)]
-                   (with-open [in (java.io.FileInputStream. (reference-clip))]
-                     (.read in head))
-                   (expect (true? (video/mp4? head))))
-                 ;; `ftyp` alone is NOT enough: HEIC/AVIF are ISO-BMFF too, and treating one as
-                 ;; a video would send a still photo down the decoder.
-                 (let [heic (byte-array (map unchecked-byte
-                                             [0 0 0 24 0x66 0x74 0x79 0x70 0x68 0x65 0x69 0x63 0 0 0
-                                              0]))]
-                   (expect (false? (video/mp4? heic))))
-                 (expect (false? (video/mp4? (byte-array (map unchecked-byte
-                                                              [0x89 0x50 0x4e 0x47 13 10 26 10])))))
-                 (expect (false? (video/mp4? (byte-array (map unchecked-byte
-                                                              [0x47 0x49 0x46 0x38 0x39 0x61])))))
-                 (expect (false? (video/mp4? (byte-array 3))))
-                 (expect (false? (video/mp4? nil)))))
+(defdescribe
+  mp4-sniffing-test
+  (it "accepts an ISO base-media video and rejects still-image containers"
+      (let [head (byte-array 32)]
+        (with-open [in (java.io.FileInputStream. (reference-clip))]
+          (.read in head))
+        (expect (true? (video/mp4? head))))
+      ;; `ftyp` alone is NOT enough: HEIC/AVIF are ISO-BMFF too, and treating one as
+      ;; a video would send a still photo down the decoder.
+      (let [heic (byte-array (map unchecked-byte
+                                  [0 0 0 24 0x66 0x74 0x79 0x70 0x68 0x65 0x69 0x63 0 0 0 0]))]
+        (expect (false? (video/mp4? heic)))
+        (expect (= "image/heic" (att/detect-image-mime heic))))
+      (expect (nil? (att/detect-image-mime (byte-array (map unchecked-byte
+                                                            [0 0 0 16 0x66 0x74 0x79 0x70 0x61 0x76
+                                                             0x69 0x66 0 0 0 0])))))
+      (expect (false? (video/mp4? (byte-array (map unchecked-byte
+                                                   [0x89 0x50 0x4e 0x47 13 10 26 10])))))
+      (expect (false? (video/mp4? (byte-array (map unchecked-byte
+                                                   [0x47 0x49 0x46 0x38 0x39 0x61])))))
+      (expect (false? (video/mp4? (byte-array 3))))
+      (expect (false? (video/mp4? nil)))))
 
 (defdescribe probe-test
              (it "reads codec, geometry and timing without decoding pixels"

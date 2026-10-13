@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- You can attach HEIC and HEIF photos, such as iPhone photos, from the terminal, the Companion app
+  and `attach`. Vis keeps the original file and sends a PNG to the model. AVIF is still refused.
+
 ## [v0.2.42] - 2026-10-13
 
 ### Fixed

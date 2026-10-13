@@ -253,6 +253,46 @@
         (expect (empty? (:attached out)))
         (expect (str/includes? (:reason (first (:skipped out))) "exceeds")))))
 
+(defn- ftyp-brands
+  "An `ftyp` box with major brand `major` and the `compatible` brands after it."
+  ^bytes [^String major & compatible]
+  (byte-array (concat [0 0 0 (+ 16 (* 4 (count compatible)))]
+                      (.getBytes "ftyp" "US-ASCII")
+                      (.getBytes major "US-ASCII")
+                      [0 0 0 0]
+                      (mapcat #(.getBytes ^String % "US-ASCII") compatible))))
+
+(defdescribe
+  heic-test
+  "An iPhone photo is HEIC. Intake keeps it as sent; the wire gets a PNG."
+  (describe "the sniff"
+            (it "names a real HEIC still image/heic, never a clip"
+                (expect (= "image/heic" (attachments/detect-image-mime fixtures/tiny-heic-bytes)))
+                (expect (= "image/heic" (attachments/detect-media-mime fixtures/tiny-heic-bytes)))
+                (expect (nil? (attachments/detect-video-mime fixtures/tiny-heic-bytes))))
+            (it "accepts the generic MIAF major brand"
+                (expect (= "image/heic" (attachments/detect-image-mime (ftyp-head "mif1")))))
+            (it "finds a HEIF brand among the compatible brands"
+                (expect (= "image/heic"
+                           (attachments/detect-image-mime (ftyp-brands "miaf" "heic")))))
+            (it "keeps AVIF out, also when it lists a HEIF brand"
+                (expect (nil? (attachments/detect-image-mime (ftyp-head "avif"))))
+                (expect (nil? (attachments/detect-image-mime (ftyp-brands "avif" "mif1" "miaf"))))))
+  (describe "intake"
+            (it
+              "attaches a dropped .HEIC path byte for byte"
+              (let [dir
+                    (temp-dir)
+
+                    f
+                    (write-file dir "IMG_0001.HEIC" fixtures/tiny-heic-bytes)
+
+                    res
+                    (attachments/collect-user-images (str "what is this? " (.getAbsolutePath f)))]
+
+                (expect (= ["image/heic"] (mapv :media-type (:attached res))))
+                (expect (= fixtures/tiny-heic-b64 (:base64 (first (:attached res)))))))))
+
 (defdescribe
   collect-user-videos-test
   "A dropped clip path is collected by the SAME scanner as a picture — content
@@ -1190,7 +1230,9 @@
                 {:base64 (b64 (.getBytes svg-doc "UTF-8")) :media-type "image/svg+xml"} [120 60]]
                ["bmp re-containered"
                 {:base64 (b64 (imaging/encode (imaging/blank 21 13 "white") :bmp))
-                 :media-type "image/bmp"} [21 13]]]]
+                 :media-type "image/bmp"} [21 13]]
+               ["heic re-containered" {:base64 fixtures/tiny-heic-b64 :media-type "image/heic"}
+                [32 24]]]]
         (let [wired (attachments/wire-image att)]
           (expect (= "image/png" (:media-type wired)) label)
           (expect (= expected (decoded-size wired)) label))))
@@ -1205,6 +1247,27 @@
             (decoded wired)]
 
         (expect (= "333333" (format "%06x" (bit-and (.getRGB img 60 30) 0xffffff))))))
+  (it "keeps the colours of a HEIC photo"
+      ;; The fixture has red, green, blue and white quarters. HEVC is lossy, so
+      ;; each channel may move a little, but never to another colour.
+      (let [^BufferedImage img
+            (decoded (attachments/wire-image {:base64 fixtures/tiny-heic-b64
+                                              :media-type "image/heic"}))
+
+            rgb
+            (fn [x y]
+              (let [c (.getRGB img (int x) (int y))]
+                [(bit-and 0xff (bit-shift-right c 16)) (bit-and 0xff (bit-shift-right c 8))
+                 (bit-and 0xff c)]))
+
+            near?
+            (fn [want got]
+              (every? true? (map #(<= (abs (- (long %1) (long %2))) 24) want got)))]
+
+        (expect (near? [220 30 30] (rgb 4 4)))
+        (expect (near? [30 160 40] (rgb 27 4)))
+        (expect (near? [30 60 220] (rgb 4 19)))
+        (expect (near? [240 240 240] (rgb 27 19)))))
   (it "refuses precisely what the foreign decoder also refuses"
       (let [bad {:base64 (b64 (corrupt-png)) :media-type "image/png"}]
         (expect (nil? (:base64 (attachments/wire-image bad))))

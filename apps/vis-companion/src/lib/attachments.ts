@@ -34,6 +34,8 @@ const DEFAULT_IMAGE_MEDIA_TYPES = [
   'image/gif',
   'image/webp',
   'image/bmp',
+  'image/heic',
+  'image/heif',
 ];
 
 // A clip attaches everywhere a picture does. The engine is what makes that
@@ -277,6 +279,8 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   gif: 'image/gif',
   webp: 'image/webp',
   bmp: 'image/bmp',
+  heic: 'image/heic',
+  heif: 'image/heif',
   pdf: 'application/pdf',
   html: 'text/html',
   htm: 'text/html',

@@ -40,3 +40,19 @@
     "Z8wDJmZ6GE35UTOhw3axgA=="))
 
 (def tiny-mp4-bytes (.decode (Base64/getDecoder) ^String tiny-mp4-b64))
+
+;; A real 603-byte HEIC still from macOS `sips`: 32x24, with red, green, blue
+;; and white quarters. Major brand `heic`, compatible brand `mif1`.
+(def tiny-heic-b64
+  (str
+    "AAAAJGZ0eXBoZWljAAAAAG1pZjFNaVBybWlhZk1pSEJoZWljAAABhm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAHBpY3QAAAAA"
+    "AAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAADnBpdG0AAAAAAAEAAAAjaWluZgAAAAAA"
+    "AQAAABVpbmZlAgAAAAABAABodmMxAAAAAOZpcHJwAAAAxWlwY28AAAATY29scm5jbHgAAgACAAaAAAAADGNsbGkAywBAAAAA"
+    "FGlzcGUAAAAAAAAAIAAAABgAAAAJaXJvdAAAAAAQcGl4aQAAAAADCAgIAAAAcWh2Y0MBA3AAAACwAAAAAAAe8AD8/fj4AAAL"
+    "A6AAAQAXQAEMAf//A3AAAAMAsAAAAwAAAwAecCShAAEAI0IBAQNwAAADALAAAAMAAAMAHqAUIEHAgwriHuRZVNwICBgCogAB"
+    "AAlEAcBhcshEU2QAAAAZaXBtYQAAAAAAAAABAAEGgQIDBYaEAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAAboAAAChAAAAAW1k"
+    "YXQAAAAAAAAAsQAAAJ0oAa+j4IAqmDHB9ItxqkDw/kQ2tvHbzpP4/10D7qxcWPGiQ53wUeeylWn6nAtudmyoLTjz3/lDScLs"
+    "Uuc+HcvHUnIBlfj4/8j2o3RrCIxIvv/+//+tzQoYYf/+dJIPBP//ARa1GWP9OU9cv/hr+vC61DZ/h5lrXcCNp9/vNi2C8ig3"
+    "vmYKxuQHxKqksAa76xWUL+IrafDZPEZ85Unw"))
+
+(def tiny-heic-bytes (.decode (Base64/getDecoder) ^String tiny-heic-b64))

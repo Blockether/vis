@@ -46,6 +46,24 @@ def __vis_install_attach__():
             return "image/gif"
         if starts([0x42, 0x4D]):
             return "image/bmp"
+        # HEIF (an iPhone photo): a HEIF brand as the major or a compatible brand.
+        # AVIF uses the same container, and its major brand keeps it out.
+        box = bytes(data[:256])
+        if box[4:8] == b"ftyp" and box[8:12].lower() not in (b"avif", b"avis"):
+            end = max(16, min(len(box), int.from_bytes(box[:4], "big")))
+            brands = [box[8:12]] + [box[i : i + 4] for i in range(16, end - 3, 4)]
+            heif = (
+                b"heic",
+                b"heix",
+                b"heim",
+                b"heis",
+                b"hevc",
+                b"hevx",
+                b"mif1",
+                b"msf1",
+            )
+            if any(b.lower() in heif for b in brands):
+                return "image/heic"
         if starts([0x25, 0x50, 0x44, 0x46]):
             return "application/pdf"
         if starts([0x50, 0x4B, 0x03, 0x04]) or starts([0x50, 0x4B, 0x05, 0x06]):

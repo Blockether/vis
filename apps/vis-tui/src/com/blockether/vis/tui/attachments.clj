@@ -24,7 +24,7 @@
        is skipped with a reason the prompt assembler surfaces.
      * SEND — [[wire-image]] is the one gate every image crosses on its way to
        a provider: it decodes the payload to prove it is pixels, re-containers
-       what no wire accepts (BMP/SVG -> PNG via `image-convert`, on
+       what no wire accepts (BMP/HEIC/SVG -> PNG via `image-convert`, on
        `com.blockether/imaging`, so it behaves identically in the native image)
        and REFUSES what it cannot turn into a picture.
 
@@ -200,12 +200,45 @@
 
     (and (str/starts-with? start "<") (str/includes? head "<svg"))))
 
+(defn- brand-at
+  "The 4-char ASCII box brand at `off`, lower-cased, or nil when the head is
+   too short."
+  [^bytes b ^long off]
+  (when (>= (alength b) (+ off 4))
+    (str/lower-case (String. b (int off) 4 StandardCharsets/US_ASCII))))
+
+(def ^:private heif-brands
+  "`ftyp` brands of a HEVC-coded HEIF picture: the still and sequence brands and
+   the generic MIAF ones that many encoders put first. Mirrors `HEIF_BRANDS` in
+   the imaging cdylib, so the sniff and the decoder agree on the same bytes."
+  #{"heic" "heix" "heim" "heis" "hevc" "hevx" "mif1" "msf1"})
+
+(defn- heif?
+  "True when the head is a HEIF container (an iPhone photo). A [[heif-brands]]
+   brand can be the major brand or any compatible brand. An AVIF major brand
+   keeps the file out: AVIF uses the same container, and no decoder here reads it."
+  [^bytes b]
+  (and (>= (alength b) 16)
+       (ascii-at? b 4 "ftyp")
+       (not (#{"avif" "avis"} (brand-at b 8)))
+       (let [box-size
+             (bit-or (bit-shift-left (u8 b 0) 24)
+                     (bit-shift-left (u8 b 1) 16)
+                     (bit-shift-left (u8 b 2) 8)
+                     (u8 b 3))
+
+             end
+             (min (alength b) (max 16 box-size))]
+
+         (boolean (some heif-brands
+                        (cons (brand-at b 8) (map #(brand-at b %) (range 16 (- end 3) 4))))))))
+
 (defn detect-image-mime
   "Sniff a supported image MIME type from the leading bytes of a file.
    Returns \"image/png\" | \"image/jpeg\" | \"image/gif\" | \"image/webp\" |
-   \"image/bmp\" | \"image/svg+xml\", or nil when the bytes are not a supported
-   still image. BMP and SVG are not wire-legal themselves — they are readable,
-   and `image-convert` turns them into PNG before they are sent.
+   \"image/bmp\" | \"image/heic\" | \"image/svg+xml\", or nil when the bytes are
+   not a supported still image. BMP, HEIC and SVG are not wire-legal themselves —
+   they are readable, and `image-convert` turns them into PNG before they are sent.
    Animated PNGs and JPEG-LS return nil (provider-rejected shapes)."
   [^bytes b]
   (cond (bytes-at? b 0 [0xff 0xd8 0xff]) (when-not (and (>= (alength b) 4) (= 0xf7 (u8 b 3)))
@@ -214,6 +247,7 @@
         (ascii-at? b 0 "GIF8") "image/gif"
         (and (ascii-at? b 0 "RIFF") (ascii-at? b 8 "WEBP")) "image/webp"
         (and (ascii-at? b 0 "BM") (bmp? b)) "image/bmp"
+        (heif? b) "image/heic"
         (svg-markup? b) "image/svg+xml"
         :else nil))
 
@@ -224,13 +258,6 @@
    Mirrors `TerminalImage/STILL_IMAGE_BRANDS` in the Lanterna fork so the
    terminal and the engine classify the same bytes identically."
   #{"heic" "heix" "heim" "heis" "hevc" "hevx" "mif1" "msf1" "avif" "avis"})
-
-(defn- brand-at
-  "The 4-char ASCII box brand at `off`, lower-cased, or nil when the head is
-   too short."
-  [^bytes b ^long off]
-  (when (>= (alength b) (+ off 4))
-    (str/lower-case (String. b (int off) 4 StandardCharsets/US_ASCII))))
 
 (def audio-brands
   "ISO-BMFF major brands that are a RECORDING, not a clip. A voice memo is an
@@ -473,7 +500,7 @@
   "Cheap pre-filter before any filesystem access: only tokens that END in
    an image, video or audio extension are stat'd. The magic-byte sniff still
    owns the final verdict."
-  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)$")
+  #"(?i)\.(png|jpe?g|gif|webp|bmp|heic|heif|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)$")
 
 (def ^:private media-extension-present-pattern
   "Whole-text fast path: a single unanchored scan that answers \"could this
@@ -484,7 +511,7 @@
    (no end anchor): a hit only means \"keep looking\", the anchored per-token
    pattern and the magic-byte sniff still own the real verdict, so the
    loose match can never let a non-media file through."
-  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)")
+  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|heic|heif|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)")
 
 (def ^:private quoted-span-pattern
   "Single- or double-quoted spans — several terminals quote dropped paths
@@ -522,7 +549,7 @@
    whitespace-delimited token ending in an image, video or audio extension.
    Non-capturing throughout so `str/replace` hands the matcher fn a plain
    string."
-  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)'|\S+\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr))")
+  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp|heic|heif|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp|heic|heif|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)'|\S+\.(?:png|jpe?g|gif|webp|bmp|heic|heif|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr))")
 
 (defn- path-candidates
   "Raw path-shaped candidates from user text, drop-pattern aware:
@@ -576,7 +603,7 @@
    `upload-rescue-factor` x the per-image cap ([[max-upload-image-bytes]] by
    default): the per-image cap is a PROVIDER limit, and an oversize still is
    squeezed under it at SEND time rather than refused at intake. A container
-   that is rasterized on the way OUT (BMP, SVG) is allowed
+   that is rasterized on the way OUT (BMP, HEIC, SVG) is allowed
    `oversize-rescue-factor` x that cap, because rendering it routinely lands far
    under it -- and the cap that decides is the one applied to the bytes that
    actually go on the wire (see [[wire-image]]).
@@ -595,7 +622,7 @@
   "Read one image file and keep it EXACTLY as it sits on disk: original bytes,
    sniffed media type, no conversion, no resample, no re-compression.
 
-   Container adaptation (BMP/SVG -> PNG) and decode verification happen at SEND
+   Container adaptation (BMP/HEIC/SVG -> PNG) and decode verification happen at SEND
    time (see [[wire-image]]), never here: a stored row must not be frozen into
    one provider's shape, and a row that turns out to be unsendable has to be
    droppable on the way out — a bad row baked into the DB replays forever.
@@ -1059,7 +1086,7 @@
       {:reason "the attachment carries no readable image bytes"}
       (let [;; The BYTES decide the container; a declared type is a claim, and the
             ;; sniff covers everything vis stores. A type the sniff does not know
-            ;; (tiff, heic, an inline upload's own label) still reaches the decoder
+            ;; (tiff, avif, an inline upload's own label) still reaches the decoder
             ;; below, which sniffs for itself.
             mt (or (detect-media-mime raw) declared)
             ;; A clip takes its own path: no wire reads a video container, and
@@ -1125,8 +1152,8 @@
        BYTE-IDENTICAL (a header sniff is not a picture)
      * SVG / SVGZ            — rasterized to PNG (no wire reads markup)
      * MP4 / QuickTime       — sampled into an animated GIF (no wire takes a clip)
-     * BMP, TIFF, anything else the decoder reads — re-containered to PNG
-     * HEIC/AVIF, a corrupt raster, an image past the decoder's limits —
+     * BMP, TIFF, HEIC, anything else the decoder reads — re-containered to PNG
+     * AVIF, a corrupt raster, an image past the decoder's limits —
        refused, with the decoder's own words
      * any side over `max-dimension` — DOWNSCALED to fit, because a provider
        refuses an oversized picture outright once a request carries many images
