@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.41] - 2026-10-13
+
 ### Added
 - `read_tasks` reads the tasks of a Harbor dataset as `HarborTask` objects, with their
   instructions and time limits.
