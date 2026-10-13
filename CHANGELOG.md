@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.43] - 2026-10-13
+
 ### Added
 - You can attach HEIC and HEIF photos, such as iPhone photos, from the terminal, the Companion app
   and `attach`. Vis keeps the original file and sends a PNG to the model.
@@ -20,11 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `ProviderModel(is_vision_supported=...)` in a provider extension, tells Vis if that model reads
   images. `true` sends attached pictures to a model that the catalog does not know. `false` sends
   a text description of each picture.
+- `write_task` writes a Vis task for Harbor, and `run_tasks` runs a folder of tasks and returns
+  the job folder. `artifacts` keeps workspace files, such as the call record of a mock extension,
+  in the trial folder. `filesystem_roots` registers filesystem roots for the trial.
+- The Evaluations guide shows each step from an empty folder to a score, and how a mock extension
+  replaces your real extension in a task. The Evaluations API page shows each example in Python
+  first.
+- `vis-agent desktop` and `vis-agent update` copy the macOS app to `/Applications`, so Launchpad,
+  Spotlight and the Dock open the new version. Set `VIS_APPLICATIONS_DIR` to change the folder, or
+  set it empty to stop the copy.
+- `vis-agent doctor` reports each `vis-agent` in the project `.venv` or the shared packages that
+  differs from the SDK bundled with Vis, and names the fix (#375).
 
 ### Changed
 - The configuration keys `is_tool_call` and `is_image_input` are now `is_tool_calls_supported` and
   `is_vision_supported`. The `ProviderModel` arguments have the same new names. The old names
   still work. When both are set, the new name wins.
+- The SDK always installs Harbor 0.24.0, and needs Python 3.12 or later. The `vis-agent[harbor]`
+  extra is removed.
+- The e2e tasks keep the call records of their mock extensions as trial artifacts.
+- Vis pins vis-lang-clojure 1.15.3. `clj.repl_eval` no longer hangs in delimiter repair.
 
 ### Removed
 - The model key `is_vision` is no longer accepted in the configuration. Vis never read it. Use
@@ -33,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - The model keys `is_reasoning` and `is_parallel_tool_calls` in the configuration now reach the
   model router. Before, Vis accepted them but did not use them.
+- The Harbor host environment accepts relative task and job folders. Before, the verifier wrote
+  no reward and every trial failed.
+- Settings show the inherited extension settings of each scope (#373).
+- Skill discovery skips dependencies and ignored nested projects (#374).
+- The Companion app never saves a machine without its gateway token.
+- A finished goal no longer stays in the context of later turns, and a goal status change keeps
+  the cached system prompt.
+
 ## [v0.2.42] - 2026-10-13
 
 ### Fixed
