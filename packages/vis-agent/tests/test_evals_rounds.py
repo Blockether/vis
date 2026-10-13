@@ -208,3 +208,45 @@ def test_round_summary_reads_the_harbor_model_without_a_trajectory(tmp_path):
     assert trials["terminal-bench/silent"]["scored"] is False
     assert trials["terminal-bench/other"]["model_attempt"] is False
     assert summary["solved_tasks"] == ["solved"]
+
+
+def test_round_summary_reads_one_e2e_job_folder(tmp_path):
+    # An e2e run writes one Harbor job. Its tasks have no dataset prefix, and the job
+    # writes its own result.json next to the trial folders.
+    job = tmp_path / "e2e-job"
+    (job / "quick__1" / "agent").mkdir(parents=True)
+    (job / "result.json").write_text(json.dumps({"id": "job", "stats": {}}))
+    result = {
+        "task_name": "quick",
+        "trial_name": "quick__1",
+        "source": "vis-e2e",
+        "started_at": "2026-01-02T00:00:00Z",
+        "finished_at": "2026-01-02T00:02:00Z",
+        "agent_execution": {
+            "started_at": "2026-01-02T00:00:00Z",
+            "finished_at": "2026-01-02T00:01:00Z",
+        },
+        "agent_info": {
+            "name": "vis",
+            "model_info": {"name": MODEL, "provider": PROVIDER},
+        },
+        "agent_result": {"n_input_tokens": 10, "n_output_tokens": 5},
+        "verifier_result": {"rewards": {"reward": 0.0}},
+    }
+    (job / "quick__1" / "result.json").write_text(json.dumps(result))
+    tasks = tmp_path / "dataset"
+    for name in ("quick", "unrun"):
+        (tasks / name).mkdir(parents=True)
+        (tasks / name / "task.toml").write_text("[agent]\ntimeout_sec = 600\n")
+
+    summary = round_summary(job, tasks)
+
+    assert summary["dataset"] == "vis-e2e"
+    assert summary["attempts"] == 1
+    assert summary["scored_tasks"] == 1
+    assert summary["unattempted_tasks"] == ["unrun"]
+    assert summary["agent_limits"] == {"quick": 600.0, "unrun": 600.0}
+    assert summary["trials"][0]["dataset"] == "vis-e2e"
+    finding = next(f for f in diagnose(summary).findings if f.kind == "early_stops")
+    assert finding.tasks[0].budget_used == 0.1
+    assert round_summary(job, dataset="scenarios")["dataset"] == "scenarios"

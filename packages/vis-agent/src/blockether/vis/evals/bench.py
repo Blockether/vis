@@ -359,7 +359,7 @@ def attempt_cause(trial: Mapping, summary: Mapping, limits: Mapping[str, float])
     """Give the `diagnose` cause of one attempt, or `solved`.
 
     The causes are `dead_tools`, `agent_errors`, `agent_timeouts`, `unscored`,
-    `early_stops` and `other`.
+    `early_stops` and `other`. Empty `limits` use the `agent_limits` of the summary.
     """
     outcome = attempt_outcome(trial)
     if outcome == "solved":
@@ -373,7 +373,7 @@ def attempt_cause(trial: Mapping, summary: Mapping, limits: Mapping[str, float])
     if outcome == "unscored":
         return "unscored"
     seconds = trial.get("agent_seconds")
-    limit = limits.get(_short(trial.get("task")))
+    limit = (limits or summary.get("agent_limits") or {}).get(_short(trial.get("task")))
     if seconds and limit and seconds / limit <= EARLY_STOP_SHARE:
         return "early_stops"
     return "other"
@@ -430,7 +430,8 @@ def diagnose(
     """Find where a round loses tasks, from its `round_summary` data.
 
     `limits` gives the agent time limit of each task, from `agent_limits`. Without
-    limits, no attempt counts as an early stop. `labels` maps a trial name to a human
+    limits, it uses the `agent_limits` of the summary, and without those no attempt
+    counts as an early stop. `labels` maps a trial name to a human
     label with a `cause` value.
     """
     outcomes = {
@@ -440,7 +441,7 @@ def diagnose(
     scored = int(summary.get("scored_tasks") or 0)
     solved = len(outcomes.get("solved", ()))
     latest = latest_trials(summary)
-    limits = limits or {}
+    limits = limits or summary.get("agent_limits") or {}
 
     def notes(outcome: str) -> list[TaskNote]:
         return [

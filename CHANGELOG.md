@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `read_tasks` reads the tasks of a Harbor dataset as `HarborTask` objects, with their
+  instructions and time limits.
+- A round summary keeps the agent time limit of each task in `agent_limits`. `diagnose` uses
+  them when you give no limits.
+
+### Changed
+- The e2e runner compiles the scenarios into the `harbor/vis-e2e` dataset. Harbor results name
+  the dataset `vis-e2e`.
+
+### Fixed
+- `round_summary` reads one e2e job folder. It names the dataset from the Harbor results, not
+  with a fixed Terminal-Bench name.
+
 ## [v0.2.40] - 2026-10-13
 
 ### Added

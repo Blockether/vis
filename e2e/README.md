@@ -173,11 +173,11 @@ Environment variables: `VIS_MODELS` (comma-separated models, default
 `VIS_MODEL`), `VIS_E2E_TIMEOUT` (agent timeout in seconds for each scenario),
 `VIS_E2E_WORKERS` (trials at the same time, default 5), `VIS_E2E_REPEATS` (positive
 repetitions per scenario/model, default 1) and `VIS_E2E_RESULTS` (the directory
-of `results.json`). The Harbor dataset and jobs are in the `harbor` directory next
-to `VIS_E2E_RESULTS`. Each trial directory keeps the grade and the agent files:
-`trajectory.json` (the ATIF trajectory that the grader reads), `trace.jsonl` (the
-raw event stream), `stderr.txt` and `run.json`. Use a fresh results directory for
-each comparison; a later invocation replaces its `results.json`.
+of `results.json`). The Harbor dataset is in `harbor/vis-e2e` and the jobs are in
+`harbor/jobs`, next to `VIS_E2E_RESULTS`. Each trial directory keeps the grade and
+the agent files: `trajectory.json` (the ATIF trajectory that the grader reads),
+`trace.jsonl` (the raw event stream), `stderr.txt` and `run.json`. Use a fresh results
+directory for each comparison; a later invocation replaces its `results.json`.
 
 `VIS_REASONING_EFFORT` optionally forwards an exact provider-native effort to
 `--reasoning-effort`. With it set, every run must report valid evaluation evidence
@@ -302,6 +302,24 @@ print(found.kappa, found.advice)
 `<judge-job-dir>` is the directory that holds `judge_stages.json`. `stage_agreement`
 gives Cohen's kappa of the judge and your labels. Use the judge with a review of the
 disagreements from a kappa of 0.6. Use it without a review from 0.8.
+
+## Read the cases and the score
+
+The SDK reads the compiled dataset and a finished job. It uses the same functions as
+for a Terminal-Bench round.
+
+```python
+from blockether.vis.evals import bench_report, read_tasks, round_summary
+
+dataset = "<results-parent>/harbor/vis-e2e"
+print([task.name for task in read_tasks(dataset)])
+summary = round_summary("<job-dir>", dataset)
+print(bench_report(summary))
+```
+
+`read_tasks` gives one `HarborTask` for each scenario, with its instruction and time
+limits. `round_summary` reads one job folder or a folder of jobs. The summary names the
+dataset `vis-e2e` and keeps the agent time limit of each task in `agent_limits`.
 
 ## Compare two runs
 

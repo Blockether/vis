@@ -461,7 +461,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"no scenarios found under {dataset.SCENARIO_ROOT}", file=sys.stderr)
         return 2
     harbor_dir = settings.results.parent / "harbor"
-    dataset_dir = harbor_dir / "dataset"
+    dataset_dir = harbor_dir / dataset.DATASET_NAME
     shutil.rmtree(dataset_dir, ignore_errors=True)
     dataset.compile_dataset(dataset_dir, ids, agent_timeout_sec=settings.timeout_sec)
     job_name = "e2e-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")

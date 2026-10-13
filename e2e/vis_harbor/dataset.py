@@ -29,6 +29,8 @@ from harbor.models.task.config import AgentConfig, TaskConfig, VerifierConfig
 
 E2E_ROOT = Path(__file__).resolve().parents[1]
 SCENARIO_ROOT = E2E_ROOT / "scenarios"
+# Harbor records the dataset folder name as the `source` of each trial.
+DATASET_NAME = "vis-e2e"
 DEFAULT_AGENT_TIMEOUT_SEC = 300
 VERIFIER_TIMEOUT_SEC = 300
 GENERATOR_TIMEOUT_SEC = 30

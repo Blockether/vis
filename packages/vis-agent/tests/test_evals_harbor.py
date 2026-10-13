@@ -6,6 +6,7 @@ import json
 import pytest
 from blockether.vis.evals import (
     case_results,
+    read_tasks,
     read_trial,
     read_trials,
     seal_digest,
@@ -226,3 +227,29 @@ def test_seal_round_has_one_row_for_each_trial_and_a_digest(tmp_path):
     assert seal["digest"] == seal_digest(seal) == expected
     seal["rows"][0]["reward"] = 0.0
     assert seal_digest(seal) != seal["digest"]
+
+
+def test_read_tasks_reads_the_task_folders_of_a_dataset(tmp_path):
+    task = tmp_path / "dataset" / "fix-git"
+    task.mkdir(parents=True)
+    (task / "task.toml").write_text(
+        '[metadata]\nlang = "py"\n[agent]\ntimeout_sec = 600\n'
+        "[verifier]\ntimeout_sec = 300.0\n[environment]\ngpus = 1\n"
+    )
+    (task / "instruction.md").write_text("Fix the repository.")
+    bare = tmp_path / "dataset" / "bare"
+    bare.mkdir()
+    (bare / "task.toml").write_text("")
+    (tmp_path / "dataset" / "notes").mkdir()
+
+    found = {task.name: task for task in read_tasks(tmp_path / "dataset")}
+
+    assert sorted(found) == ["bare", "fix-git"]
+    assert found["fix-git"].instruction == "Fix the repository."
+    assert found["fix-git"].agent_timeout_sec == 600.0
+    assert found["fix-git"].verifier_timeout_sec == 300.0
+    assert found["fix-git"].gpus == 1
+    assert found["fix-git"].metadata == {"lang": "py"}
+    assert (found["bare"].instruction, found["bare"].agent_timeout_sec) == ("", None)
+    with pytest.raises(FileNotFoundError):
+        read_tasks(tmp_path / "missing")

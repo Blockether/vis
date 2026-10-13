@@ -237,7 +237,7 @@ def test_main_writes_the_results_and_passes_the_gate(monkeypatch, tmp_path, caps
         (SCENARIO, "m", 1)
     ]
     assert results["summaries"][0]["passed"] == 1
-    task = directory.parent / "harbor" / "dataset" / SCENARIO
+    task = directory.parent / "harbor" / dataset.DATASET_NAME / SCENARIO
     assert json.loads((task / "tests" / "scenario.json").read_text())["timeout_s"] == 7
     job = Path(results["job_dir"])
     assert job.parent == directory.parent / "harbor" / "jobs"

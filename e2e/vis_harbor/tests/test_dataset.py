@@ -7,6 +7,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from blockether.vis.evals import read_tasks
 from harbor.models.task.task import Task
 
 from vis_harbor import dataset
@@ -156,3 +157,18 @@ def test_seed_files_skip_python_caches(tmp_path):
     (task_dir,) = dataset.compile_dataset(tmp_path / "out", root=root)
     workspace = task_dir / "environment" / "workspace"
     assert sorted(_tree(workspace)) == ["pkg/module.py"]
+
+
+def test_the_sdk_reads_every_scenario_as_a_harbor_case(compiled):
+    # The SDK reads the compiled scenarios as standard Harbor tasks, without Harbor.
+    scenarios = {
+        meta.parent.name: json.loads(meta.read_text())
+        for meta in dataset.SCENARIO_ROOT.glob("*/scenario.json")
+    }
+    tasks = {task.name: task for task in read_tasks(compiled)}
+    assert sorted(tasks) == sorted(scenarios)
+    for name, task in tasks.items():
+        assert task.instruction == scenarios[name]["prompt"]
+        assert task.agent_timeout_sec == Task(task.path).config.agent.timeout_sec
+        assert task.verifier_timeout_sec == dataset.VERIFIER_TIMEOUT_SEC
+        assert task.metadata["lang"] == scenarios[name]["lang"]

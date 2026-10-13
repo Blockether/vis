@@ -1,14 +1,15 @@
 """Evaluation tools: read Vis runs and Harbor jobs, and compare their results.
 
-Read one Vis run with `load_trajectory` or `parse_trajectory`. Read the trials of a
-Harbor job or round with `read_trials`, then count them with `case_results` or
-`summarize`. Seal a finished round with `seal_round`. Compare two results with
-`compare_cases`, or test paired changes with `paired_change` and `mcnemar_exact`.
-Score repeated attempts with `task_attempts` and `repeat_stats`. Summarize a
-Terminal-Bench round from its Harbor job folders with `round_summary`, then score and
-diagnose it with `bench_report` and `diagnose`, and keep human cause
-labels with `save_label`. Place a round on a Harbor Hub board with `read_leaderboard`. Check automatic
-causes against human labels with `agreement`, and judge stages with `stage_agreement`. For installation and sessions, use the
+Read one Vis run with `load_trajectory` or `parse_trajectory`. Read the cases of a
+Harbor dataset with `read_tasks`, and the trials of a job or round with `read_trials`.
+Count the trials with `case_results` or `summarize`. Seal a finished round with
+`seal_round`. Compare two results with `compare_cases`, or test paired changes with
+`paired_change` and `mcnemar_exact`. Score repeated attempts with `task_attempts` and
+`repeat_stats`. Summarize a round from its Harbor job folders with `round_summary`,
+then score and diagnose it with `bench_report` and `diagnose`. Keep human cause labels
+with `save_label`. Place a round on a Harbor Hub board with `read_leaderboard`. Check
+automatic causes against human labels with `agreement`, and judge stages with
+`stage_agreement`. For installation and sessions, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
@@ -38,9 +39,11 @@ from .bench import (
 )
 from .compare import CaseChange, CaseComparison, RouteTest, compare_cases
 from .harbor import (
+    HarborTask,
     HarborTrial,
     RunSummary,
     case_results,
+    read_tasks,
     read_trial,
     read_trials,
     seal_digest,
@@ -117,6 +120,7 @@ __all__ = [
     "Diagnosis",
     "Finding",
     "FunctionCall",
+    "HarborTask",
     "HarborTrial",
     "Leaderboard",
     "LeaderboardRow",
@@ -162,6 +166,7 @@ __all__ = [
     "paired_change",
     "parse_trajectory",
     "read_leaderboard",
+    "read_tasks",
     "read_trial",
     "read_trials",
     "repeat_stats",

@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,9 +22,11 @@ from typing import Any
 from .stats import cluster_interval
 
 __all__ = [
+    "HarborTask",
     "HarborTrial",
     "RunSummary",
     "case_results",
+    "read_tasks",
     "read_trial",
     "read_trials",
     "seal_digest",
@@ -33,6 +36,8 @@ __all__ = [
 ]
 
 RESULT_FILE = "result.json"
+TASK_FILE = "task.toml"
+INSTRUCTION_FILE = "instruction.md"
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,3 +306,66 @@ def seal_round(
     }
     body["digest"] = seal_digest(body)
     return body
+
+
+@dataclass(frozen=True, slots=True)
+class HarborTask:
+    """One Harbor task, read from its `task.toml` and `instruction.md`.
+
+    `name` is the task folder name, as in `case_results`. `instruction` is the prompt
+    that the agent gets. The timeouts are in seconds, or None when `task.toml` gives
+    none. `gpus` is the GPU count that the environment needs. `metadata` holds the
+    `[metadata]` table, for example the `lang` of an e2e scenario.
+    """
+
+    name: str
+    instruction: str
+    agent_timeout_sec: float | None
+    verifier_timeout_sec: float | None
+    gpus: int
+    metadata: Mapping[str, Any]
+    path: Path
+
+
+def _seconds(table: object) -> float | None:
+    value = table.get("timeout_sec") if isinstance(table, Mapping) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def read_tasks(dataset: Path | str) -> tuple[HarborTask, ...]:
+    """Read the tasks of a Harbor dataset directory, sorted by name.
+
+    Each task is a folder with a `task.toml`. Other folders do not count. A directory
+    that does not exist raises `FileNotFoundError`. Compile the e2e scenarios into a
+    dataset with `python -m vis_harbor.dataset --out DIR`, then read it here.
+    """
+    root = Path(dataset)
+    if not root.is_dir():
+        raise FileNotFoundError(f"no Harbor dataset directory at {root}")
+    tasks = []
+    for config in sorted(root.glob(f"*/{TASK_FILE}")):
+        info = tomllib.loads(config.read_text(encoding="utf-8"))
+        instruction = config.parent / INSTRUCTION_FILE
+        environment = info.get("environment")
+        gpus = environment.get("gpus") if isinstance(environment, dict) else None
+        metadata = info.get("metadata")
+        tasks.append(
+            HarborTask(
+                name=config.parent.name,
+                instruction=instruction.read_text(encoding="utf-8")
+                if instruction.is_file()
+                else "",
+                agent_timeout_sec=_seconds(info.get("agent")),
+                verifier_timeout_sec=_seconds(info.get("verifier")),
+                gpus=gpus
+                if isinstance(gpus, int) and not isinstance(gpus, bool)
+                else 0,
+                metadata=MappingProxyType(
+                    dict(metadata) if isinstance(metadata, dict) else {}
+                ),
+                path=config.parent,
+            )
+        )
+    return tuple(tasks)

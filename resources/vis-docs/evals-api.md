@@ -75,6 +75,7 @@ The package functions give the same results as typed objects.
 
 | Task | Method | Package function |
 |---|---|---|
+| List the tasks of a dataset | None | `read_tasks(dataset_dir)` |
 | Summarize a round | None | `round_summary(jobs_dir, dataset_dir, model=...)` |
 | Score a round | `post_evals_report(body=...)` | `bench_report(summary)` |
 | Find the failure causes | `post_evals_diagnose(body=...)` | `diagnose(summary, labels, limits)` |
@@ -115,10 +116,14 @@ with open("summary.json", "w") as stream:
     json.dump(summary, stream)
 ```
 
-`jobs_dir` holds one folder for each Harbor job. `dataset_dir` holds one folder with a `task.toml`
-for each task. It is optional, but without it the total counts only the attempted tasks. `model`
-is the model name or the `provider/model` route in the trajectories. An attempt of another model
-does not count.
+`jobs_dir` holds one Harbor job folder or one folder for each Harbor job. `dataset_dir` holds one
+folder with a `task.toml` for each task. It is optional, but without it the total counts only the
+attempted tasks. `model` is the model name or the `provider/model` route in the trajectories. An
+attempt of another model does not count.
+
+The summary names the dataset with the Harbor `source` of the trials. It keeps the agent time
+limit of each task in `agent_limits`. `read_tasks(dataset_dir)` gives the same tasks as
+`HarborTask` objects, with their instructions and time limits.
 
 </div>
 
@@ -194,8 +199,9 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/diagnose" \
 </div>
 
 Each finding has a `kind`, a `title`, a `task_count`, a `share` of the scored tasks, a `detail` and
-the `tasks`. `limits` maps each task to its agent time limit in seconds. Without limits, no attempt
-counts as an [early stop](evals.md#failure-causes). `labels` is optional. With labels, the answer
+the `tasks`. `limits` maps each task to its agent time limit in seconds. Without `limits`, the
+answer uses the `agent_limits` of the summary. Without both, no attempt counts as an
+[early stop](evals.md#failure-causes). `labels` is optional. With labels, the answer
 also has a `label_check`.
 
 ## Check the labels
