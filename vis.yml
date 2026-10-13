@@ -97,7 +97,7 @@ extensions:
   vis-lang-clojure:
     source: https://github.com/Blockether/vis-lang-clojure
     subdirectory: extension
-    version: "1.15.2"
+    version: "1.15.3"
   vis-lang-python:
     source: https://github.com/Blockether/vis-lang-python
     version: "1.10.0"
