@@ -7868,3 +7868,57 @@ vis.register_extension(vis.Extension(
               (expect (= 1 (:loaded loaded)) (pr-str (pyx/load-failures)))
               (expect (= "coexists"
                          (:result ((symbol-fn (registered "decision-fixture") 'identity))))))))))))
+
+(defdescribe
+  editor-sdk-version-doctor-test
+  ;; #375: the project `.venv` locked an old vis-agent, so editors showed old SDK types
+  ;; while Vis ran its bundled SDK. Doctor now names each wheel that differs.
+  (let [project-with-wheel
+        (fn [version]
+          (let [root (temp-dir)]
+            (.mkdirs (io/file root
+                              ".venv/lib/python3.12/site-packages"
+                              (str "vis_agent-" version ".dist-info")))
+            (.mkdirs (io/file root ".venv/lib/python3.12/site-packages/other-1.0.dist-info"))
+            root))
+
+        project-messages
+        (fn [bundled root]
+          (vec (#'pyx/sdk-version-messages bundled (butlast (#'pyx/editor-sdk-dirs root)))))]
+
+    (it "lists the project site-packages first and the shared packages last"
+        (let [root
+              (project-with-wheel "0.2.29")
+
+              dirs
+              (#'pyx/editor-sdk-dirs root)]
+
+          (expect (= 2 (count dirs)))
+          (expect (= (io/file root ".venv/lib/python3.12/site-packages") (first dirs)))
+          (expect (= 1 (count (#'pyx/editor-sdk-dirs (temp-dir)))))))
+    (it "reports an older wheel as info with the exact version to install"
+        (let [[message :as messages] (project-messages "0.2.42" (project-with-wheel "0.2.29"))]
+          (expect (= 1 (count messages)) (pr-str messages))
+          (expect (= :info (:level message)))
+          (expect (= ::pyx/editor-sdk (:check-id message)))
+          (expect (str/includes? (:message message) "vis-agent 0.2.29 in "))
+          (expect (str/includes? (:message message) "bundled SDK 0.2.42."))
+          (expect (str/includes? (:remediation message) "vis-agent==0.2.42"))))
+    (it "warns about a newer wheel, because editors accept missing APIs"
+        (let [[message] (project-messages "0.2.42" (project-with-wheel "0.2.50"))]
+          (expect (= :warn (:level message)))
+          (expect (str/includes? (:message message) "does not have"))))
+    (it "reports a development version that has no order as info"
+        (expect (= [:info]
+                   (mapv :level
+                         (project-messages "0.2.31.dev7292" (project-with-wheel "0.2.29"))))))
+    (it "stays silent for the same version and for builds without a published SDK"
+        (let [root (project-with-wheel "0.2.42")]
+          (expect (= [] (project-messages "0.2.42" root)))
+          (expect (= [] (project-messages "dev" root)))
+          (expect (= [] (project-messages "0.2.42+dirty" (project-with-wheel "0.2.29"))))
+          (expect (= [] (project-messages "0.2.42" (temp-dir))))))
+    (it "adds no SDK message to doctor in a source run"
+        (expect (not-any? #(= ::pyx/editor-sdk (:check-id %))
+                          (#'pyx/doctor-fn
+                           {:workspace/root (str (project-with-wheel "0.2.29"))}))))))

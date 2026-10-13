@@ -72,6 +72,11 @@ arrives on PyPI some minutes after the beta. Without an exact version, pip ignor
 development releases. Pin the exact version in your development environment, not in
 the dependencies of an extension that you publish.
 
+A lock file keeps the old SDK when you update Vis. Your editor then shows old types, but your
+extension still runs with the bundled SDK. `vis-agent doctor` reports each `vis-agent` in the
+project `.venv` or the shared packages that differs from the bundled SDK. To update a uv project,
+set the new version in `pyproject.toml`. Then run `uv lock --upgrade-package vis-agent` and `uv sync`.
+
 A `dev` value, or a value that ends in `+dirty`, comes from a source run or a local
 build. A local build of a commit without a published beta is also not on PyPI. For
 these builds, install `packages/vis-agent` from the same checkout.

@@ -53,6 +53,8 @@
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -3322,6 +3324,49 @@
          :slash/body (render-probe parsed report)
          :slash/data report}))))
 
+(defn- editor-sdk-dirs
+  "Package directories where editors read SDK types: each `site-packages` of the project
+   `.venv`, then the shared Vis packages."
+  [project-root]
+  (concat (when project-root
+            (keep (fn [^File lib]
+                    (let [packages (io/file lib "site-packages")]
+                      (when (.isDirectory packages) packages)))
+                  (sort (.listFiles (io/file project-root ".venv" "lib")))))
+          [(io/file (runtime/packages-dir))]))
+
+(defn- sdk-version-messages
+  "Doctor messages for each `vis-agent` wheel in `dirs` that is not the `bundled` SDK.
+   Vis runs its bundled SDK, so only editor types differ (#375). A build without a
+   published SDK (`dev` or a `+dirty` local version) gets no messages."
+  [bundled dirs]
+  (when (and (re-find #"^\d" (str bundled)) (not (str/includes? bundled "+")))
+    (for [^File dir
+          dirs
+
+          :when (.isDirectory dir)
+          ^File info
+          (sort (.listFiles dir))
+
+          :let [installed
+                (second (re-matches #"vis_agent-(.+)\.dist-info" (.getName info)))]
+          :when (and installed (not= installed bundled))
+          :let [newer?
+                (gateway-contract/newer-release? installed bundled)]]
+
+      {:level (if newer? :warn :info)
+       :check-id ::editor-sdk
+       :message (str "Editor types come from vis-agent " installed
+                     " in " (.getPath dir)
+                     ", but Vis runs its bundled SDK " bundled
+                     "." (when newer? " Editors accept SDK APIs that this Vis does not have."))
+       :remediation (str
+                      "Install vis-agent=="
+                      bundled
+                      " in that environment. In a uv project, set this version in pyproject.toml, "
+                      "then run `uv lock --upgrade-package vis-agent` and `uv sync`. "
+                      "See extension-api.md#editor-types.")})))
+
 (defn- doctor-fn
   [env]
   (extension/with-context
@@ -3337,7 +3382,9 @@
 
                      {:level :info
                       :check-id ::load
-                      :message (str "Python extension '" ext-name "' loaded from " path)}))))))
+                      :message (str "Python extension '" ext-name "' loaded from " path)})
+                   (sdk-version-messages (gateway-runtime/sdk-version)
+                                         (editor-sdk-dirs (workspace/cwd-root))))))))
 
 (defonce ^:private loader-registered? (atom false))
 
