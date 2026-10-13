@@ -1838,7 +1838,7 @@
     trace-store ::trace-store}]
   (let [system-prompt
         (str (voice-system-prompt system-prompt turn-features)
-             (when (goals/check-goal environment) (str "\n\n" goals/prompt)))
+             (when (goals/active-goal environment) (str "\n\n" goals/prompt)))
 
         environment
         (cond-> environment

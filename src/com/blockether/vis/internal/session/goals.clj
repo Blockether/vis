@@ -23,6 +23,13 @@
   ([env] (check-goal (:db-info env) (:session-id env)))
   ([db sid] (when (and db sid) (persistence/db-get-session-goal db sid))))
 
+(defn active-goal
+  "The goal that still directs the model, or nil. Model context and goal rules show only an
+   active goal. A finished or stopped goal stays in the store and the UI, not in later turns."
+  [env]
+  (let [goal (check-goal env)]
+    (when (= "active" (get goal "status")) goal)))
+
 (defn- fail! [message] (throw (ex-info message {:type :goal/invalid})))
 
 (defn- change!

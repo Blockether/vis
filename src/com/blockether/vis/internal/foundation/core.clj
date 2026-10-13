@@ -85,7 +85,7 @@
         council-context
         (council-host/context env)]
 
-    (cond-> {"session_goal" (goals/check-goal env) "session_agent" (agents/context env)}
+    (cond-> {"session_goal" (goals/active-goal env) "session_agent" (agents/context env)}
       council-context
       (assoc "session_council" council-context)
 

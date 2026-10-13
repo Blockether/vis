@@ -224,6 +224,37 @@
              (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
+  finished-goal-leaves-later-turns-test
+  (it "finished goal leaves later turns"
+      ;; User report: a completed goal still showed its rules and state in later turns, so the
+      ;; model treated a question as progress and kept working.
+      (doseq [status ["complete" "cancelled"]]
+        (let [{:keys [db-info session-id] :as env} (environment)
+              requests (atom [])]
+
+          (try (let [goal (goals/set-goal! db-info session-id "Ship the finished objective" nil)]
+                 (if (= "complete" status)
+                   (goals/update-goal env
+                                      (get goal "id")
+                                      (get goal "version")
+                                      "complete"
+                                      "All checks passed.")
+                   (goals/control! db-info session-id :cancel))
+                 (with-redefs [svar/ask-code! (fn [_ opts]
+                                                (swap! requests conj (str (:messages opts)))
+                                                {:stop-reason :end
+                                                 :content "Do you want a local fix only?"})]
+                   (let [result (turn/run-turn! env "fix" {})
+                         messages (first @requests)]
+
+                     (expect (= "Do you want a local fix only?" (get-in result [:answer :answer])))
+                     (expect (= 1 (count @requests)))
+                     (expect (not (str/includes? messages "Explicit session goals")))
+                     (expect (not (str/includes? messages "Ship the finished objective")))
+                     (expect (= status (get (goals/check-goal env) "status"))))))
+               (finally (loop-env/dispose-environment! env)))))))
+
+(defdescribe
   user-message-resumes-goal-before-model-request-test
   (it
     "user message resumes goal before model request"

@@ -884,6 +884,12 @@
                          "`patch(path, edits)`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
+      ;; User report: a model asked the user a question in a progress note and kept working.
+      ;; A question now ends the turn.
+      (expect
+        (str/includes?
+          text
+          "Ask one question only when the ambiguity changes the result. Then end the turn: reply without a tool call."))
       ;; Regression, user report: a section that ORDERS a verb has to say how it is CALLED.
       ;; Every code verb §3 names carries its literal call shape, and the options-dict ones
       ;; name the keys inside it — the shape is read, never remembered or looked up.

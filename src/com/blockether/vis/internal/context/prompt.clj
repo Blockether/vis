@@ -409,7 +409,7 @@
     "- Commit and push need an explicit request or explicit permission in the project instructions. A narrower "
     "user request wins.\n"
     "- Releases, messages, deployments and live service restarts also need an explicit request.\n"
-    "- Ask one question only when the ambiguity changes the result.\n"
+    "- Ask one question only when the ambiguity changes the result. Then end the turn: reply without a tool call.\n"
     "- When a call fails, read the error and change the approach. Decide from the results that you have.\n"
     "\n"
     "## 6. Context budget\n"
