@@ -127,6 +127,26 @@ export async function upsertConnection(conn: GatewayConn): Promise<GatewayConn[]
 }
 
 /**
+ * Change fields of one saved machine, keyed by its URL; returns the new list.
+ *
+ * Background upkeep (advertised addresses, the address pin, the gateway id) uses
+ * this, never `upsertConnection`. When the URL is no longer saved, nothing is
+ * written: a partial record is not a pairing, and adding it would save a machine
+ * without its token, which the gateway refuses on every request.
+ */
+export async function updateConnection(
+  url: string,
+  patch: Partial<Omit<GatewayConn, 'url'>>,
+): Promise<GatewayConn[]> {
+  const conns = await loadConnections();
+  const idx = conns.findIndex((c) => c.url === url);
+  if (idx < 0) return conns;
+  conns[idx] = { ...conns[idx], ...patch, url };
+  await saveConnections(conns);
+  return conns;
+}
+
+/**
  * Forget one machine — and keep what it takes to stop it notifying this device.
  *
  * Deleting the pairing is the local half. The machine still holds this device's

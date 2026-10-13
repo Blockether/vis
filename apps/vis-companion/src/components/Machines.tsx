@@ -847,6 +847,10 @@ interface PairRun {
  * `health()` rather than `ping()` because `ping` swallows the reason: an address
  * that fails must be able to say WHY on its row. The verdicts are identical —
  * only a 2xx `/healthz` is a pairable address, a 401 is reachable-but-refused.
+ *
+ * `/healthz` answers without the token, so it cannot prove the token. A gateway
+ * that demands one also guards `/v1/capabilities`, and a 401 there means the
+ * token is missing or wrong. Any other failure keeps the `/healthz` verdict.
  */
 async function probeCandidate(
   base: Omit<GatewayConn, 'alts'>,
@@ -859,7 +863,13 @@ async function probeCandidate(
   const giveUp = () => deadline.abort();
   signal.addEventListener('abort', giveUp, { once: true });
   try {
-    await new GatewayClient({ ...base, url }).health(deadline.signal);
+    const client = new GatewayClient({ ...base, url });
+    await client.health(deadline.signal);
+    try {
+      await client.capabilities(deadline.signal, { force: true });
+    } catch (e) {
+      if (e instanceof GatewayError && e.status === 401) throw e;
+    }
     return { state: 'online', ms: Date.now() - started };
   } catch (e) {
     const ms = Date.now() - started;
