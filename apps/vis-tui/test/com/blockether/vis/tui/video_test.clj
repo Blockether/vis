@@ -99,6 +99,10 @@
                                   [0 0 0 24 0x66 0x74 0x79 0x70 0x68 0x65 0x69 0x63 0 0 0 0]))]
         (expect (false? (video/mp4? heic)))
         (expect (= "image/heic" (att/detect-image-mime heic))))
+      (expect (= "image/heif"
+                 (att/detect-image-mime (byte-array (map unchecked-byte
+                                                         [0 0 0 16 0x66 0x74 0x79 0x70 0x6d 0x69
+                                                          0x66 0x31 0 0 0 0])))))
       (expect (nil? (att/detect-image-mime (byte-array (map unchecked-byte
                                                             [0 0 0 16 0x66 0x74 0x79 0x70 0x61 0x76
                                                              0x69 0x66 0 0 0 0])))))

@@ -262,22 +262,37 @@
                       [0 0 0 0]
                       (mapcat #(.getBytes ^String % "US-ASCII") compatible))))
 
+(defn- generic-heif
+  "The HEIC fixture, re-stamped as a generic HEIF file: major brand `mif1`, as a
+   `.heif` writer that is not an iPhone puts it. The picture is unchanged."
+  ^bytes []
+  (let [b (aclone ^bytes fixtures/tiny-heic-bytes)]
+    (System/arraycopy (.getBytes "mif1" "US-ASCII") 0 b 8 4)
+    b))
+
 (defdescribe
   heic-test
-  "An iPhone photo is HEIC. Intake keeps it as sent; the wire gets a PNG."
-  (describe "the sniff"
-            (it "names a real HEIC still image/heic, never a clip"
-                (expect (= "image/heic" (attachments/detect-image-mime fixtures/tiny-heic-bytes)))
-                (expect (= "image/heic" (attachments/detect-media-mime fixtures/tiny-heic-bytes)))
-                (expect (nil? (attachments/detect-video-mime fixtures/tiny-heic-bytes))))
-            (it "accepts the generic MIAF major brand"
-                (expect (= "image/heic" (attachments/detect-image-mime (ftyp-head "mif1")))))
-            (it "finds a HEIF brand among the compatible brands"
-                (expect (= "image/heic"
-                           (attachments/detect-image-mime (ftyp-brands "miaf" "heic")))))
-            (it "keeps AVIF out, also when it lists a HEIF brand"
-                (expect (nil? (attachments/detect-image-mime (ftyp-head "avif"))))
-                (expect (nil? (attachments/detect-image-mime (ftyp-brands "avif" "mif1" "miaf"))))))
+  "An iPhone photo is HEIC, and HEIC is one kind of HEIF. Intake keeps either as
+   sent; the wire gets a PNG."
+  (describe
+    "the sniff"
+    (it "names a real HEIC still image/heic, never a clip"
+        (expect (= "image/heic" (attachments/detect-image-mime fixtures/tiny-heic-bytes)))
+        (expect (= "image/heic" (attachments/detect-media-mime fixtures/tiny-heic-bytes)))
+        (expect (nil? (attachments/detect-video-mime fixtures/tiny-heic-bytes))))
+    (it "names a generic HEIF file image/heif, by its major brand"
+        (expect (= "image/heif" (attachments/detect-image-mime (generic-heif))))
+        (expect (= "image/heif" (attachments/detect-image-mime (ftyp-head "mif1"))))
+        (expect (= "image/heif" (attachments/detect-image-mime (ftyp-head "msf1"))))
+        (expect (nil? (attachments/detect-video-mime (generic-heif)))))
+    (it "keeps image/heic for every HEVC major brand, also a camera .HIF"
+        (doseq [brand ["heic" "heix" "heim" "heis" "hevc" "hevx"]]
+          (expect (= "image/heic" (attachments/detect-image-mime (ftyp-head brand))) brand)))
+    (it "finds a HEIF brand among the compatible brands"
+        (expect (= "image/heif" (attachments/detect-image-mime (ftyp-brands "miaf" "heic")))))
+    (it "keeps AVIF out, also when it lists a HEIF brand"
+        (expect (nil? (attachments/detect-image-mime (ftyp-head "avif"))))
+        (expect (nil? (attachments/detect-image-mime (ftyp-brands "avif" "mif1" "miaf"))))))
   (describe "intake"
             (it
               "attaches a dropped .HEIC path byte for byte"
@@ -291,7 +306,22 @@
                     (attachments/collect-user-images (str "what is this? " (.getAbsolutePath f)))]
 
                 (expect (= ["image/heic"] (mapv :media-type (:attached res))))
-                (expect (= fixtures/tiny-heic-b64 (:base64 (first (:attached res)))))))))
+                (expect (= fixtures/tiny-heic-b64 (:base64 (first (:attached res)))))))
+            (it "attaches dropped .heif and camera .HIF paths"
+                (let [dir
+                      (temp-dir)
+
+                      heif
+                      (write-file dir "photo.heif" (generic-heif))
+
+                      hif
+                      (write-file dir "DSC_0001.HIF" fixtures/tiny-heic-bytes)
+
+                      res
+                      (attachments/collect-user-images (str "compare " (.getAbsolutePath heif)
+                                                            " and " (.getAbsolutePath hif)))]
+
+                  (expect (= ["image/heif" "image/heic"] (mapv :media-type (:attached res))))))))
 
 (defdescribe
   collect-user-videos-test
@@ -1232,7 +1262,9 @@
                 {:base64 (b64 (imaging/encode (imaging/blank 21 13 "white") :bmp))
                  :media-type "image/bmp"} [21 13]]
                ["heic re-containered" {:base64 fixtures/tiny-heic-b64 :media-type "image/heic"}
-                [32 24]]]]
+                [32 24]]
+               ["generic heif re-containered"
+                {:base64 (b64 (generic-heif)) :media-type "image/heif"} [32 24]]]]
         (let [wired (attachments/wire-image att)]
           (expect (= "image/png" (:media-type wired)) label)
           (expect (= expected (decoded-size wired)) label))))

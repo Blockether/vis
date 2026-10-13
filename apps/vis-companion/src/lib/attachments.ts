@@ -281,6 +281,7 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   bmp: 'image/bmp',
   heic: 'image/heic',
   heif: 'image/heif',
+  hif: 'image/heif',
   pdf: 'application/pdf',
   html: 'text/html',
   htm: 'text/html',
