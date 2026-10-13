@@ -145,20 +145,28 @@
                                           (perr/provider-error-explanation error)))
                          (expect (nil? (:max-input-tokens (ex-data error))))))))))
 
-(defdescribe copilot-config-capabilities
-             (it "retains explicit false capabilities through the config and schema boundaries"
-                 (let [model
-                       {:name "claude-sonnet-future"
-                        :vision? false
-                        :reasoning? false
-                        :parallel-tool-calls? false
-                        :tool-call? false}
+(defdescribe
+  copilot-config-capabilities
+  (it "retains explicit false capabilities through the config and schema boundaries"
+      (let [model
+            {:name "claude-sonnet-future"
+             :vision? false
+             :reasoning? false
+             :parallel-tool-calls? false
+             :tool-call? false}
 
-                       provider
-                       {"id" "github-copilot" "models" [(wire/->wire model)]}]
+            declared
+            (-> model
+                (dissoc :vision?)
+                (assoc :image-input? false))
 
-                   (expect (= model (config/->svar-model model)))
-                   (expect (validation/valid? {"providers" [provider]}))
-                   (expect (not (validation/valid? {"providers" [(assoc-in provider
-                                                                   ["models" 0 "is_vision"]
-                                                                   "false")]}))))))
+            provider
+            {"id" "github-copilot" "models" [(wire/->wire declared)]}]
+
+        (expect (= model (config/->svar-model model)))
+        (expect (= model (config/->svar-model declared)))
+        (expect (validation/valid? {"providers" [provider]}))
+        (expect (not (validation/valid?
+                       {"providers" [(assoc-in provider ["models" 0 "is_image_input"] "false")]})))
+        (expect (not (validation/valid? {"providers"
+                                         [(assoc-in provider ["models" 0 "is_vision"] false)]}))))))

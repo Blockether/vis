@@ -1730,9 +1730,17 @@
                            m)))
                      (decode {:pricing as-pricing} row)
                      config/svar-wire->runtime)]
-    (if-let [pricing (:pricing m)]
-      (assoc m :declared-pricing pricing)
-      (dissoc m :pricing))))
+    (cond-> m
+      ;; svar reads image input on a model as `:vision?`.
+      (contains? m :image-input?)
+      (-> (assoc :vision? (boolean (:image-input? m)))
+          (dissoc :image-input?))
+
+      (:pricing m)
+      (assoc :declared-pricing (:pricing m))
+
+      (not (:pricing m))
+      (dissoc :pricing))))
 
 (defn- enrich-models-fn-adapter
   "Wrap a Python `enrich_models(provider, router_opts)` callable as

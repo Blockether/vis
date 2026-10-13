@@ -90,6 +90,11 @@ credential, which overrides the preset. A credential can therefore supply an
 endpoint discovered during authentication while still allowing a user override.
 Header maps replace the entire field at each level.
 
+`ProviderModel.is_image_input` tells Vis if a model reads images. With `True`,
+Vis sends attached pictures to the model. With `False`, Vis sends a text
+description of each picture. With `None`, the model catalog decides. This field
+works like `is_image_input` on a model in [configuration](configuration.md#images).
+
 Token and header fields are excluded from a record's `repr`. Never log
 credentials or put them in status metadata. A missing credential is `None`,
 not a record with an empty token.

@@ -1359,7 +1359,24 @@
                                                                                   "is_image_input"
                                                                                   false}]}))))))
       (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
-                              :image-input?)))))
+                              :image-input?))))
+  (it "turns `is_image_input` on a model into svar's image verdict for that model"
+      ;; A local or private model is missing from the catalog, so only config knows
+      ;; that it reads images. `false` also overrides a catalog that says yes.
+      (let [models (:models (config/->svar-provider
+                              (first (:providers (config/runtime-config
+                                                   {"providers"
+                                                    [{"id" "gw"
+                                                      "models"
+                                                      [{"name" "local-vl" "is_image_input" true}
+                                                       {"name" "gpt-4o" "is_image_input" false}
+                                                       {"name" "plain"}]}]})))))]
+        (expect (= [{:name "local-vl" :vision? true} {:name "gpt-4o" :vision? false}
+                    {:name "plain"}]
+                   models))
+        (expect (= [true false false]
+                   (mapv #(contains? (:capabilities (svar/provider-model-metadata :gw %)) :vision)
+                         models))))))
 
 ;; Regression, issue #152: a provider whose extension ISSUES the credential could
 ;; answer a `responses_path` but had no way to name the wire it speaks, so the

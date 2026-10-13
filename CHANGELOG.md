@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   pictures. Vis sends them to the model as PNG.
 - In the Companion app, ↑ in the message box shows your previous message in the session, and ↓
   goes forward again to your draft, like the terminal app (#372).
+- `is_image_input` on a model in the configuration, or `ProviderModel(is_image_input=...)` in a
+  provider extension, tells Vis if that model reads images. `true` sends attached pictures to a
+  model that the catalog does not know. `false` sends a text description of each picture.
+
+### Removed
+- The model key `is_vision` is no longer accepted in the configuration. Vis never read it. Use
+  `is_image_input` instead.
 
 ## [v0.2.42] - 2026-10-13
 

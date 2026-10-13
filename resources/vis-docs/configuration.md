@@ -238,8 +238,9 @@ Provider keys: `compatibility`, `base_url`, `api_key`, `api_key_command`,
 `is_image_input`. Providers with managed sign-in (Copilot, coding plans) need
 no `api_key`.
 
-Model keys: `context`, `output_limit`, `is_tool_call`, `api_style`. Filling in
-the limits makes context checks and output capping accurate.
+Model keys: `context`, `output_limit`, `is_tool_call`, `is_image_input`,
+`api_style`. Filling in the limits makes context checks and output capping
+accurate.
 
 Models are offered in the order you list them. Models discovered from the
 provider are appended after them.
@@ -335,9 +336,30 @@ whole-value reference remains `${NAME}`, not the resolved secret.
 
 ### Images
 
-Images produced in a session — matplotlib figures and `image/*` attachments —
-are replayed to the model only when its name is known to support vision. A
-text-only or unknown model gets the text results and no image block.
+Attached pictures, matplotlib figures and other `image/*` attachments go to the
+model only when it reads images. The model catalog decides this for known
+models. Set `is_image_input` on a model to decide it yourself:
+
+```yaml
+providers:
+  - id: my-gateway
+    compatibility: openai
+    base_url: https://gateway.example.com/v1
+    models:
+      - name: qwen2.5-vl-72b
+        is_image_input: true     # reads images
+      - name: qwen3-coder-30b
+        is_image_input: false    # gets a text description of each picture
+```
+
+- `true`: Vis sends the pictures. Use it for a local or private model that the
+  catalog does not know.
+- `false`: Vis sends a text description of each picture.
+- Not set: the model catalog decides.
+
+`is_image_input: false` on a provider blocks images for all its models, also
+when a model says `true`. A provider extension sets the same value with
+`ProviderModel(is_image_input=...)`.
 
 ### GitHub Copilot
 

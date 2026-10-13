@@ -1176,53 +1176,53 @@
                 (python-tool-body code n stream?)
                 ((if stream? original-stream original-whole) text))))]
 
-      (try (io/copy (io/file "test-native/com/blockether/vis/fixtures/grid-alpha.heic")
-                    (io/file dir "photo.heic"))
-           (io/copy (io/file "test-native/com/blockether/vis/fixtures/grid.avif")
-                    (io/file dir "grid.avif"))
-           (with-redefs-fn {#'stream-body #(reply true %) #'whole-body #(reply false %)}
-             (fn []
-               (let [{:keys [server asked port]} (start-stub-provider! "NATIVE_HEIF_COMPLETE")]
-                 (try (overlay! dir port)
-                      ;; A model name that the catalog knows takes images. With `stub-model`,
-                      ;; Vis sends a text description of each picture instead of its pixels.
-                      (let [config (io/file dir ".vis/config.yml")]
-                        (spit config (str/replace (slurp config) "stub-model" "gpt-4o")))
-                      (let [{:keys [finished? exit output]}
-                            (run-binary dir
-                                        [(.getAbsolutePath (require-binary))
-                                         (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
-                                         (.getAbsolutePath (io/file dir "sessions")) "--raw"
-                                         "Attach the supplied pictures and finish."]
-                                        300)
-                            tools (provider-result-messages @asked)
-                            images (for [{:keys [body]} @asked
-                                         message (get (json/read-json body) "messages")
-                                         :let [content (get message "content")]
-                                         part (when (sequential? content) content)
-                                         :let [url (get-in part ["image_url" "url"])]
-                                         :when url]
+      (try
+        (io/copy (io/file "test-native/com/blockether/vis/fixtures/grid-alpha.heic")
+                 (io/file dir "photo.heic"))
+        (io/copy (io/file "test-native/com/blockether/vis/fixtures/grid.avif")
+                 (io/file dir "grid.avif"))
+        (with-redefs-fn {#'stream-body #(reply true %) #'whole-body #(reply false %)}
+          (fn []
+            (let [{:keys [server asked port]} (start-stub-provider! "NATIVE_HEIF_COMPLETE")]
+              (try
+                (overlay! dir port)
+                ;; The catalog does not know `stub-model`. Without this declaration
+                ;; Vis sends a text description of each picture, not its pixels.
+                (spit (io/file dir ".vis/config.yml") "        is_image_input: true\n" :append true)
+                (let [{:keys [finished? exit output]}
+                      (run-binary dir
+                                  [(.getAbsolutePath (require-binary))
+                                   (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                   (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                   "Attach the supplied pictures and finish."]
+                                  300)
+                      tools (provider-result-messages @asked)
+                      images (for [{:keys [body]} @asked
+                                   message (get (json/read-json body) "messages")
+                                   :let [content (get message "content")]
+                                   part (when (sequential? content) content)
+                                   :let [url (get-in part ["image_url" "url"])]
+                                   :when url]
 
-                                     (rest (re-matches #"data:([^;]+);base64,(.+)" url)))
-                            sizes (set (for [[_ data] images
-                                             :let [img (imaging/decode (.decode (Base64/getDecoder)
-                                                                                ^String data))]]
+                               (rest (re-matches #"data:([^;]+);base64,(.+)" url)))
+                      sizes (set (for [[_ data] images
+                                       :let [img (imaging/decode (.decode (Base64/getDecoder)
+                                                                          ^String data))]]
 
-                                         [(imaging/width img) (imaging/height img)]))]
+                                   [(imaging/width img) (imaging/height img)]))]
 
-                        (expect finished? output)
-                        (expect (= 0 exit) output)
-                        (expect (some #(str/includes? % "NATIVE_HEIF photo.heic image/heic") tools)
-                                (pr-str tools))
-                        (expect (some #(str/includes? % "NATIVE_HEIF grid.avif image/avif") tools)
-                                (pr-str tools))
-                        (expect (seq images) "the provider never received a picture")
-                        (expect (every? #(= "image/png" (first %)) images)
-                                (pr-str (map first images)))
-                        (expect (= #{[1100 600] [64 48]} sizes) (pr-str sizes))
-                        (expect (str/includes? output "NATIVE_HEIF_COMPLETE") output))
-                      (finally (.stop server 0))))))
-           (finally (delete-tree! dir))))))
+                  (expect finished? output)
+                  (expect (= 0 exit) output)
+                  (expect (some #(str/includes? % "NATIVE_HEIF photo.heic image/heic") tools)
+                          (pr-str tools))
+                  (expect (some #(str/includes? % "NATIVE_HEIF grid.avif image/avif") tools)
+                          (pr-str tools))
+                  (expect (seq images) "the provider never received a picture")
+                  (expect (every? #(= "image/png" (first %)) images) (pr-str (map first images)))
+                  (expect (= #{[1100 600] [64 48]} sizes) (pr-str sizes))
+                  (expect (str/includes? output "NATIVE_HEIF_COMPLETE") output))
+                (finally (.stop server 0))))))
+        (finally (delete-tree! dir))))))
 
 (defdescribe
   native-python-hang-evidence-test

@@ -405,6 +405,11 @@
          (some? (:vision? m))
          (assoc :vision? (:vision? m))
 
+         ;; `is_image_input` on a model says whether it takes images. It beats the
+         ;; catalog, so a local or private model can declare image input itself.
+         (some? (:image-input? m))
+         (assoc :vision? (boolean (:image-input? m)))
+
          (some? (:reasoning? m))
          (assoc :reasoning? (:reasoning? m))
 
