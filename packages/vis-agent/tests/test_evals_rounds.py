@@ -250,3 +250,22 @@ def test_round_summary_reads_one_e2e_job_folder(tmp_path):
     finding = next(f for f in diagnose(summary).findings if f.kind == "early_stops")
     assert finding.tasks[0].budget_used == 0.1
     assert round_summary(job, dataset="scenarios")["dataset"] == "scenarios"
+
+
+def test_round_summary_counts_only_task_folders_of_the_dataset(tmp_path):
+    # The repository e2e directory is the dataset, and it also holds tool caches.
+    tasks = tmp_path / "e2e"
+    for name in ("one", "two"):
+        (tasks / name).mkdir(parents=True)
+        (tasks / name / "task.toml").write_text("[environment]\ngpus = 0\n")
+    (tasks / "two" / "task.toml").write_text("[environment]\ngpus = 1\n")
+    for cache in (".pytest_cache", "__pycache__", ".venv"):
+        (tasks / cache).mkdir()
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+
+    summary = round_summary(jobs, tasks)
+
+    assert summary["total_dataset_tasks"] == 2
+    assert summary["unattempted_tasks"] == ["one", "two"]
+    assert summary["gpu_required_tasks"] == ["two"]

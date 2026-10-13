@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 from .bench import agent_limits, attempt_outcome
+from .harbor import read_tasks
 from .trajectory import Step, Trajectory, load_trajectory
 
 __all__ = ["round_summary"]
@@ -306,13 +306,9 @@ def round_summary(
     if dataset_dir is None:
         tasks, gpu_tasks = sorted(attempted), []
     else:
-        folders = sorted(path for path in Path(dataset_dir).iterdir() if path.is_dir())
-        tasks = [folder.name for folder in folders]
-        gpu_tasks = []
-        for folder in folders:
-            info = tomllib.loads((folder / "task.toml").read_text(encoding="utf-8"))
-            if (info.get("environment", {}).get("gpus") or 0) > 0:
-                gpu_tasks.append(folder.name)
+        dataset_tasks = read_tasks(dataset_dir)
+        tasks = [task.name for task in dataset_tasks]
+        gpu_tasks = [task.name for task in dataset_tasks if task.gpus > 0]
     verified = [trial for trial in trials if trial["status"] == "verified"]
     rewards = [
         trial["reward"]
