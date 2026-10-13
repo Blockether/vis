@@ -410,13 +410,16 @@ def write_task(
     agent_timeout_sec: float = 300.0,
     verifier_timeout_sec: float = 300.0,
     metadata: Mapping[str, str | int | float | bool] | None = None,
+    artifacts: Sequence[str] = (),
 ) -> HarborTask:
     """Write the Vis task `name` in the folder `dataset` and return it.
 
     `name` is lowercase words joined by hyphens. `instruction` is the prompt of the
     agent. `checks` is the `tests/checks.json` object that the Vis grader reads, for
     example `{"want": {"m.py": ["def c("]}}`. `files` maps each seed file path to its
-    text. The paths are relative to `environment/workspace/`. The task gets
+    text. The paths are relative to `environment/workspace/`. `artifacts` lists the
+    workspace files that Harbor copies to `artifacts/` in the trial folder after the
+    check, for example the call record of a mock extension. The task gets
     `tests/test.sh`, which runs the grader. An existing task folder, an invalid name,
     empty checks or a path outside the workspace raise an error.
     """
@@ -429,9 +432,12 @@ def write_task(
     if not instruction.strip():
         raise ValueError("instruction must not be empty")
     seeds = {_seed_path(path): text for path, text in (files or {}).items()}
+    kept = [str(_seed_path(path)) for path in artifacts]
     lines = [
         f"{key} = {_toml_value(key, value)}" for key, value in (metadata or {}).items()
     ]
+    # Harbor reads `artifacts` only as a root key, so it comes before every table.
+    root = f"artifacts = {json.dumps(kept)}\n\n" if kept else ""
     tables = [
         ("metadata", lines),
         ("agent", [f"timeout_sec = {float(agent_timeout_sec)!r}"]),
@@ -440,7 +446,8 @@ def write_task(
     task = Path(dataset) / name
     task.mkdir(parents=True, exist_ok=False)
     (task / TASK_FILE).write_text(
-        "\n".join(
+        root
+        + "\n".join(
             f"[{table}]\n" + "".join(f"{line}\n" for line in rows)
             for table, rows in tables
         ),

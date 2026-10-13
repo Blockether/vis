@@ -13,6 +13,8 @@ compare two runs. This page shows each step from an empty folder to a score.
 - **You ran a benchmark, for example Terminal-Bench, and want the score with its uncertainty.**
   Read [Scores and intervals](#scores-and-intervals).
 - **You want to know why the agent failed tasks.** Read [Failure causes](#failure-causes).
+- **The agent must call a function of your extension, but the real function must not run.**
+  [Replace the extension with a mock](#replace-an-extension-with-a-mock).
 - **You want to know how Vis and Harbor share the work.** Read [Vis and
   Harbor](#vis-and-harbor).
 - **Your own program must do these steps.** Read [Evaluations API](evals-api.md).
@@ -145,6 +147,91 @@ repository has 40 tasks that use these checks. Read them for more examples.
 To test a project with its own test suite, write a standard Harbor verifier instead. Read the
 Harbor guide [Create a task](https://docs.harborframework.com/tutorials/create-a-task).
 
+### Replace an extension with a mock
+
+A task can test an agent that uses a function of your own extension, for example
+`mylib.send_some_huge_payload`. In an evaluation, you usually do not want the real function to
+send data. Put a mock extension in the seed files instead. The mock returns a made-up answer and
+writes one line for each call.
+
+Vis loads the extensions of the project from `.vis/extensions/` in the workspace. A project
+extension replaces a global extension with the same `name`, so the agent calls the mock and the
+real function does not run. The mock replaces the whole extension, so copy each function that
+the agent needs. Keep the names, the parameters and the docstrings the same as in the real
+extension. The agent then sees the same contract.
+
+This mock writes the target, the size and the SHA-256 hash of each payload, not the payload:
+
+```python
+"""Mock of mylib for evaluations: it records each call and sends nothing."""
+
+import hashlib
+import json
+from pathlib import Path
+
+import blockether.vis.extension as sdk
+
+# The workspace root is two folders above .vis/extensions/.
+LEDGER = Path(__file__).resolve().parents[2] / "payload-calls.jsonl"
+
+
+class Payloads:
+    @sdk.method(
+        tag="mutation", activity=sdk.Activity(label="Send payload", show_start=False)
+    )
+    def send_some_huge_payload(self, target: str, payload: str) -> dict:
+        """Send one payload to a named target. Returns the status and the job id."""
+        calls = LEDGER.read_text().count("\n") if LEDGER.exists() else 0
+        row = {
+            "target": target,
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload.encode()).hexdigest(),
+        }
+        with LEDGER.open("a") as stream:
+            stream.write(json.dumps(row, sort_keys=True) + "\n")
+        return {"status": "accepted", "id": f"job-{calls + 1}"}
+
+
+sdk.register_extension(
+    sdk.Extension(
+        name="mylib",
+        alias="mylib",
+        description="Send payloads to the report service.",
+        symbols=[sdk.Symbol(Payloads(), name="mylib")],
+    )
+)
+```
+
+Save it as `environment/workspace/.vis/extensions/mylib.py`. Then check the calls in
+`tests/checks.json`:
+
+```json
+{
+  "want_tools": ["mylib.send_some_huge_payload"],
+  "want": {
+    "payload-calls.jsonl": ["\"target\": \"north\"", "\"target\": \"south\""]
+  },
+  "want_answer": ["job-1", "job-2"]
+}
+```
+
+- `want_tools` passes when the agent called the function at least once without an error.
+- `want` checks each call in the record. Add one text for each call that you expect.
+- `want_answer` shows that the agent used the answers of the mock.
+
+The record must also stay after the trial, because the workspace of a trial is temporary. Name
+it in `artifacts` at the start of `task.toml`, before the first table:
+
+```toml
+artifacts = ["payload-calls.jsonl"]
+
+[metadata]
+```
+
+After the check, Harbor copies the file to `artifacts/payload-calls.jsonl` in the trial folder.
+`artifacts/manifest.json` gives the status of each file: `ok`, or `failed` when the file is
+missing. A missing file does not change the reward. `write_task` writes this line when you give
+[`artifacts`](evals-api.md#write-a-task).
 ## Step 3: Check the tasks
 
 A bad task gives wrong scores. For example, its instruction does not name a file that its checks

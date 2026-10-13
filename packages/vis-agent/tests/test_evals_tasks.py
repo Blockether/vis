@@ -131,6 +131,56 @@ def test_write_task_refuses_an_invalid_task(tmp_path, name, files, checks, messa
     assert not any(tmp_path.iterdir())
 
 
+def test_write_task_refuses_an_artifact_outside_the_workspace(tmp_path):
+    with pytest.raises(ValueError, match="inside the workspace"):
+        write_task(tmp_path, "add-c", "Do it.", {"want": {}}, artifacts=["/etc/hosts"])
+    assert not any(tmp_path.iterdir())
+
+
+def test_artifacts_keep_the_call_record_of_a_mock(tmp_path, monkeypatch):
+    # A mock extension writes one line for each call into the workspace. The trial
+    # workspace is temporary, so only `artifacts` keeps the record in the job.
+    for name in ("VIS_PROVIDER", "VIS_MODEL", "VIS_REASONING_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
+    dataset = tmp_path / "tasks"
+    record = '{"target": "north"}\n{"target": "south"}\n'
+    task = write_task(
+        dataset,
+        "send-reports",
+        "Send each report.",
+        {"want": {"payload-calls.jsonl": ['"target": "north"', '"target": "south"']}},
+        files={".vis/extensions/mylib.py": "# The mock extension.\n"},
+        artifacts=["payload-calls.jsonl", "missing.jsonl"],
+    )
+    assert (
+        (task.path / "task.toml")
+        .read_text()
+        .startswith(
+            'artifacts = ["payload-calls.jsonl", "missing.jsonl"]\n\n[metadata]\n'
+        )
+    )
+    engine = tmp_path / "engine.py"
+    stub_engine(engine)
+    engine.write_text(
+        f"from pathlib import Path\nPath('payload-calls.jsonl').write_text({record!r})\n"
+        + engine.read_text()
+    )
+    job = run_tasks(
+        dataset,
+        MODEL,
+        jobs_dir=tmp_path / "jobs",
+        job_name="mock",
+        agent_options={"command": f"{sys.executable} {engine}"},
+    )
+    (trial,) = read_trials(job)
+    assert trial.reward == 1.0
+    folder = next(path for path in job.iterdir() if path.is_dir())
+    assert (folder / "artifacts/payload-calls.jsonl").read_text() == record
+    manifest = json.loads((folder / "artifacts/manifest.json").read_text())
+    status = {row["source"]: row["status"] for row in manifest}
+    assert (status["payload-calls.jsonl"], status["missing.jsonl"]) == ("ok", "failed")
+
+
 def test_write_task_keeps_an_existing_task(tmp_path):
     write_add_c(tmp_path, "add-c", "First.")
     with pytest.raises(FileExistsError):
@@ -195,6 +245,56 @@ def variant_blocks(page: str, variant: str, language: str) -> list[str]:
         elif inside and line.startswith(f"```{language}"):
             fence = []
     return blocks
+
+
+def section_blocks(page: str, heading: str) -> dict[str, list[str]]:
+    """The fenced blocks of one docs page section, keyed by their language."""
+    lines = (DOCS / page).read_text().split(f"{heading}\n", 1)[1].splitlines()
+    blocks: dict[str, list[str]] = {}
+    fence, language = None, ""
+    for line in lines:
+        if fence is None and line.startswith("#"):
+            break
+        if fence is not None and line.startswith("```"):
+            blocks.setdefault(language, []).append("\n".join(fence) + "\n")
+            fence = None
+        elif fence is not None:
+            fence.append(line)
+        elif line.startswith("```"):
+            fence, language = [], line[3:]
+    return blocks
+
+
+def test_the_mock_extension_of_the_guide_records_each_call(tmp_path, monkeypatch):
+    # The guide mock was also checked with a real model run: the project mock replaced
+    # a global extension of the same name, and the real function did not run.
+    import blockether.vis.extension as sdk
+
+    blocks = section_blocks("evals.md", "### Replace an extension with a mock")
+    registered = []
+    monkeypatch.setattr(sdk, "register_extension", registered.append)
+    extensions = tmp_path / "workspace/.vis/extensions"
+    extensions.mkdir(parents=True)
+    mock = extensions / "mylib.py"
+    mock.write_text(blocks["python"][0])
+    code = compile(mock.read_text(), str(mock), "exec")
+    exec(code, {"__file__": str(mock), "__name__": "mylib"})
+    (extension,) = registered
+    assert (extension.name, extension.alias) == ("mylib", "mylib")
+    payloads = extension.symbols[0].fn
+    answers = [
+        payloads.send_some_huge_payload(target, "region,sales\n" * 100)
+        for target in ("north", "south")
+    ]
+    assert answers == [
+        {"status": "accepted", "id": "job-1"},
+        {"status": "accepted", "id": "job-2"},
+    ]
+    record = (tmp_path / "workspace/payload-calls.jsonl").read_text()
+    checks = json.loads(blocks["json"][0])
+    assert all(text in record for text in checks["want"]["payload-calls.jsonl"])
+    assert all(json.loads(line)["size"] == 1300 for line in record.splitlines())
+    assert blocks["toml"][0].startswith('artifacts = ["payload-calls.jsonl"]\n')
 
 
 def test_the_python_examples_of_the_api_page_run(tmp_path, monkeypatch):
