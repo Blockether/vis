@@ -645,7 +645,7 @@ project/
 ```python
 # .vis/extensions/einmal_tools.py
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12"
 # dependencies = ["httpx==0.28.1"]
 # [tool.vis]
 # source_paths = ["../../einmal/src"]

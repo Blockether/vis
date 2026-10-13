@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "description": "Work with issues, pull requests and repository code without leaving Vis.",
     "category": "tools",
-    "requires_python": ">=3.11",
+    "requires_python": ">=3.12",
     "dependencies": [
       "vis-agent>=0.1.0"
     ],
@@ -40,7 +40,7 @@
     "version": "1.0.0",
     "description": "Search the web and bring cited sources into your conversation.",
     "category": "tools",
-    "requires_python": ">=3.11",
+    "requires_python": ">=3.12",
     "dependencies": [
       "vis-agent>=0.1.0"
     ],
@@ -75,7 +75,7 @@
     "version": "1.0.0",
     "description": "Run a repeatable review of your changes before you open a pull request.",
     "category": "workflows",
-    "requires_python": ">=3.11",
+    "requires_python": ">=3.12",
     "dependencies": [
       "vis-agent>=0.1.0"
     ],
@@ -110,7 +110,7 @@
     "version": "1.0.0",
     "description": "Connect Vis to models running on your own machine.",
     "category": "providers",
-    "requires_python": ">=3.11",
+    "requires_python": ">=3.12",
     "dependencies": [
       "vis-agent>=0.1.0"
     ],
@@ -145,7 +145,7 @@
     "version": "1.0.0",
     "description": "Inspect pages, test interactions and automate browser workflows.",
     "category": "tools",
-    "requires_python": ">=3.11",
+    "requires_python": ">=3.12",
     "dependencies": [
       "vis-agent>=0.1.0"
     ],
@@ -180,7 +180,7 @@
     "version": "1.0.0",
     "description": "A small, runnable example for your first Vis extension.",
     "category": "tools",
-    "requires_python": ">=3.11",
+    "requires_python": ">=3.12",
     "dependencies": [
       "vis-agent>=0.1.0"
     ],

@@ -426,7 +426,7 @@ test.each([
     'description = "Small greeting tools for Vis."',
     'Description',
   ],
-  ['missing Python requirement', 'manifest', 'requires-python = ">=3.11"', 'requires-python'],
+  ['missing Python requirement', 'manifest', 'requires-python = ">=3.12"', 'requires-python'],
   ['missing SDK dependency', 'manifest', 'dependencies = ["vis-agent>=0.1.45"]', 'dependencies'],
   ['invalid category', 'append', 'category = "other"', 'category'],
   ['source paths are not an array', 'append', 'source_paths = false', 'source_paths'],
