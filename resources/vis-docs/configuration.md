@@ -773,7 +773,13 @@ switchable here.
 
 Provider setup, credentials, OAuth and shared MCP start/stop operations stay
 global. Theme and other device preferences remain local to the app or terminal.
-Only settings declared for the selected scope appear in its catalog.
+Only settings declared for the selected scope appear in its catalog, with one
+exception.
+
+An extension setting that a wider scope decides shows read-only. Its row names
+that scope and opens its settings, for example Machine settings. Machine
+settings also name the project extensions of the current session. Reload them
+in Project settings.
 
 ### Scoped MCP servers
 

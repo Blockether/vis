@@ -361,8 +361,14 @@
         head-w
         (reduce max
                 0
-                (map #(long (p/display-width (str (:text %))))
-                     (filter #(= :header (:kind %)) pane)))]
+                (for [r
+                      pane
+
+                      :when (= :header (:kind r))
+                      line
+                      (str/split-lines (str (:text r)))]
+
+                  (long (p/display-width line))))]
 
     (max (+ (long pane-lead)
             (long item-indent)
@@ -470,17 +476,20 @@
    URL). Cut to the pane with an ellipsis, that sentence lost exactly the part
    worth reading. The lanterna fork wraps by the same rule the screen paints by
    ([[p/word-wrap]]), so an over-wide heading costs extra ROWS instead of words.
-   A heading that already fits comes back untouched — no band that fitted before
-   changes shape."
+   A line break in a heading starts a new row, so a report keeps one fact on each
+   line (#373). A heading that already fits on one line comes back untouched — no
+   band that fitted before changes shape."
   [pane ^long pane-w]
   (let [w (max 1 (- pane-w (long pane-lead)))]
     (into []
           (mapcat (fn [r]
-                    (if (and (= :header (:kind r)) (> (long (p/display-width (str (:text r)))) w))
-                      (mapv (fn [line]
-                              {:kind :header :text line})
-                            (p/word-wrap (str (:text r)) w))
-                      [r])))
+                    (let [text (str (:text r))]
+                      (if (and (= :header (:kind r))
+                               (or (str/includes? text "\n") (> (long (p/display-width text)) w)))
+                        (mapv (fn [line]
+                                {:kind :header :text line})
+                              (p/word-wrap text w))
+                        [r]))))
           pane)))
 
 (defn pane-grid
@@ -489,7 +498,8 @@
 
    The widths are measured on the DEALT panes, before wrapping: a heading that
    wraps must not then shrink the column it was wrapped to. No region => no width
-   is known, so nothing wraps and the deal is the single column."
+   is known, so a heading breaks only at its own line breaks and the deal is the
+   single column."
   [spec region]
   (let [dealt
         (panes spec (pane-count spec region))
@@ -497,7 +507,10 @@
         ws
         (when region (pane-widths region dealt))]
 
-    {:panes (if ws (pad-to-tallest (mapv wrap-headings dealt ws)) dealt) :pane-ws ws}))
+    {:panes (if ws
+              (pad-to-tallest (mapv wrap-headings dealt ws))
+              (mapv #(wrap-headings % Integer/MAX_VALUE) dealt))
+     :pane-ws ws}))
 
 (def ^:private chrome-rows
   "Rows of the popup's OWN chrome above its body: the opening separator, and

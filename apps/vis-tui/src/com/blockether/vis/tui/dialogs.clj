@@ -3434,6 +3434,8 @@
                        :groups (vec (get response "groups"))
                        ;; The gateway names a group or project; the caller only has its id.
                        :label (get response "label")
+                       ;; Machine settings name the project extensions of the session (#373).
+                       :project-extensions (get response "project_extensions")
                        :error nil})
                     (catch Exception e {:status :error :error (ex-message e)}))]
     (if (= :ok (:status answer))
@@ -3638,17 +3640,51 @@
            where
            "."))))
 
+(defn- scope-title
+  "The settings dialog name of a scope: global settings are Machine settings."
+  [scope]
+  (if (= "global" (str scope)) "Machine" (str/capitalize (str scope))))
+
+(defn- decided-note
+  "Why a wider scope decides this inherited extension row, or nil (#373)."
+  [row]
+  (when-let [{:strs [scope]} (get row "decided_in")]
+    (str "Set in "
+         (scope-title scope)
+         " settings. You cannot change it per "
+         (or (get row "scope") "scope")
+         ".")))
+
 (defn- lock-overridden-rows
-  "Lock each catalog row that a more specific scope decides for the session
-   Settings opened from; its description says where to change it instead."
+  "Lock each catalog row that another scope decides: a wider scope for an inherited
+   extension row, or a more specific scope for the session Settings opened from. Its
+   description says where to change it instead."
   [groups rows]
-  (let [notes (into {}
-                    (keep #(when-let [note (override-note %)] [(get % "id") note]))
-                    (map first (setting-tree (mapcat #(get % "toggles") groups))))]
+  (let [catalog
+        (map first (setting-tree (mapcat #(get % "toggles") groups)))
+
+        notes
+        (into {}
+              (keep #(when-let [note (or (decided-note %) (override-note %))] [(get % "id") note]))
+              catalog)
+
+        decided
+        (into {}
+              (keep #(when-let [{:strs [scope target_id label]} (get % "decided_in")] [(get % "id")
+                                                                                       {:scope scope
+                                                                                        :target-id
+                                                                                        target_id
+                                                                                        :label
+                                                                                        label}]))
+              catalog)]
+
     (mapv (fn [{:keys [toggle-id] :as row}]
-            (if-let [note (get notes toggle-id)]
-              (assoc row :locked note)
-              row))
+            (cond-> row
+              (get notes toggle-id)
+              (assoc :locked (get notes toggle-id))
+
+              (get decided toggle-id)
+              (assoc :decided-in (get decided toggle-id))))
           rows)))
 
 (defn- registry-toggle-rows
@@ -4047,7 +4083,12 @@
   []
   (let [groups (filterv extension-group? (:groups @(settings-inventory-atom)))]
     (vec (concat (extension-action-rows)
-                 (when (seq groups) [{:type :subsection :label "Extensions"}])
+                 [{:type :subsection :label "Extensions"}]
+                 (when (empty? groups)
+                   [{:type :info
+                     :label (str "No extension settings for this "
+                                 (if *settings-target* (name (:scope *settings-target*)) "machine")
+                                 ".")}])
                  (lock-overridden-rows groups (catalog-toggle-rows groups))
                  (mcp-settings-rows)))))
 
@@ -4998,7 +5039,8 @@
 (defn- save-setting-value!
   "Save one value for the open owner, then show the row the gateway confirmed."
   [screen g region id value]
-  (try (cache-setting-row! (notify-change-error! (vis/set-setting-value! id value *settings-target*)))
+  (try (cache-setting-row! (notify-change-error!
+                             (vis/set-setting-value! id value *settings-target*)))
        (load-settings-inventory!)
        (catch Exception e (mini-note! screen g region "Setting not saved" (ex-message e)))))
 
@@ -5011,10 +5053,11 @@
           (when (Double/isFinite (double number)) number)))))
 
 (defn- extension-reload-note
-  "The title and body that report one extension reload. Each scope names its directory;
-   an empty scope says that it found nothing there. A machine reload says that project
-   extensions need their own reload. Issue #348: a bare `0 loaded` hid all of this."
-  [{:strs [loaded failed scopes]} global? settings-error]
+  "The title and body that report one extension reload, one line each. Each scope names
+   its directory; an empty scope says that it found nothing there. A machine reload names
+   the project extensions of the session, which reload in Project settings. Issues #348
+   and #373: a bare `0 loaded` hid all of this."
+  [{:strs [loaded failed scopes]} global? settings-error project]
   (let [failed
         (long (or failed 0))
 
@@ -5052,42 +5095,69 @@
                    ", "
                    (or failed 0)
                    " failed.")
-              (str "No " label " found in " dir "."))))
+              (str "No " label " in " dir "."))))
 
-        body
+        lines
         (if (seq scopes)
-          (str/join " " (map scope-line scopes))
-          (str (or loaded 0) " loaded, " failed " failed."))]
+          (mapv scope-line scopes)
+          [(str (or loaded 0) " loaded, " failed " failed.")])
+
+        project-count
+        (long (or (get project "count") 0))]
 
     [(cond (not (and (seq scopes) (not-any? found? scopes))) "Extensions reloaded"
            global? "No machine extensions found"
            :else "No extensions found")
-     (cond-> body
-       global?
-       (str " Project extensions were not reloaded. Use Project settings → Reload or /reload.")
+     (str/join "\n"
+               (cond-> lines
+                 (and global? (pos? project-count))
+                 (conj (str "This project has "
+                            project-count
+                            (if (= 1 project-count) " extension (" " extensions (")
+                            (str/join ", " (get project "names"))
+                            ")."))
 
-       settings-error
-       (str " Settings unavailable: " settings-error)
+                 global?
+                 (conj "Project extensions reload in Project settings.")
 
-       (and (not settings-error) (pos? failed))
-       (str " Each failed extension shows its error."))]))
+                 settings-error
+                 (conj (str "Settings unavailable: " settings-error))
+
+                 (and (not settings-error) (pos? failed))
+                 (conj "Each failed extension shows its error.")))]))
 
 (defn- settings-extension-action!
   "Run trusted extension code again, then read the settings catalog again, and report the
-   result."
-  [^TerminalScreen screen g region]
+   result. A machine report opens Project settings of the session when it has project
+   extensions (#373)."
+  [^TerminalScreen screen g region callbacks]
   (let [region (host-band-region screen region)]
     (band-question-frame! g region "Reloading extensions…" [])
     (frame/refresh! screen)
     (try
       (let [result (vis/gateway-reload-extensions! *settings-target*)
-            {:keys [status error]} (load-settings-inventory!)
-            [title body] (extension-reload-note result
-                                                (or (nil? *settings-target*)
-                                                    (= "global" (name (:scope *settings-target*))))
-                                                (when (= :error status) error))]
+            {:keys [status error project-extensions]} (load-settings-inventory!)
+            global? (or (nil? *settings-target*) (= "global" (name (:scope *settings-target*))))
+            project (when global? project-extensions)
+            open! (:open-settings callbacks)
+            [title body]
+            (extension-reload-note result global? (when (= :error status) error) project)]
 
-        (mini-note! screen g region title body))
+        (if (and project open!)
+          (when (= :open
+                   (:action (embed-transient!
+                              screen
+                              g
+                              region
+                              {:title title
+                               :groups
+                               [{:title body
+                                 :items
+                                 [{:key "o" :type :action :id :open :label "Open Project settings"}
+                                  {:key "q" :type :action :id :dismiss :label "Dismiss"}]}]})))
+            (open!
+              {:scope "project" :target-id (get project "target_id") :label (get project "label")}))
+          (mini-note! screen g region title body)))
       (catch Exception e
         (mini-note! screen
                     g
@@ -5130,7 +5200,8 @@
       (save-setting-value! screen g region (:toggle-id row) value))
 
     :inherit
-    (try (cache-setting-row! (notify-change-error! (vis/inherit-setting! (:toggle-id row) *settings-target*)))
+    (try (cache-setting-row! (notify-change-error! (vis/inherit-setting! (:toggle-id row)
+                                                                         *settings-target*)))
          (load-settings-inventory!)
          (catch Exception e (mini-note! screen g region "Setting not reset" (ex-message e))))
 
@@ -5168,7 +5239,7 @@
     :action
     (case (:id row)
       :extensions-reload
-      (settings-extension-action! screen g region)
+      (settings-extension-action! screen g region callbacks)
 
       (when-let [f (get callbacks (:id row))]
         ;; An action paints its transient in the current Settings frame.
@@ -5208,12 +5279,34 @@
            (notify-settings-change! callbacks)))))
 
 (defn- activate-settings-row!
-  "Activate one Settings row. A row that a more specific scope decides for the
-   session Settings opened from explains where to change it instead."
+  "Activate one Settings row. A locked row explains where to change it instead. An
+   inherited extension row also opens the settings that decide it (#373)."
   [^TerminalScreen screen g region values callbacks row]
-  (if-let [note (:locked row)]
-    (mini-note! screen g region "Locked" note)
-    (activate-unlocked-row! screen g region values callbacks row)))
+  (let [{:keys [locked decided-in]}
+        row
+
+        open!
+        (:open-settings callbacks)]
+
+    (cond (and locked decided-in open!)
+          (when (= :open
+                   (:action (embed-transient!
+                              screen
+                              g
+                              (host-band-region screen region)
+                              {:title "Locked"
+                               :groups
+                               [{:title locked
+                                 :items
+                                 [{:key "o"
+                                   :type :action
+                                   :id :open
+                                   :label
+                                   (str "Open " (scope-title (:scope decided-in)) " settings")}
+                                  {:key "q" :type :action :id :dismiss :label "Dismiss"}]}]})))
+            (open! decided-in))
+          locked (mini-note! screen g region "Locked" locked)
+          :else (activate-unlocked-row! screen g region values callbacks row))))
 
 (defn- settings-section-text
   [label inner-w]

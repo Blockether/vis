@@ -358,6 +358,13 @@ export interface SettingOverride {
   value?: SettingValue;
 }
 
+/** The closest wider scope that decides an inherited setting. The row is read-only here. */
+export interface SettingDecidedIn {
+  scope: SettingsScope;
+  target_id?: string;
+  label?: string;
+}
+
 export interface Toggle {
   id: string;
   label: string;
@@ -377,6 +384,8 @@ export interface Toggle {
   is_override?: boolean;
   /** Present only when the request named a session whose own scopes decide this row. */
   overridden_by?: SettingOverride;
+  /** Present only when a wider scope decides this inherited row. */
+  decided_in?: SettingDecidedIn;
   editor?: SettingEditor;
   schema?: string;
   /** Id of the setting that this row belongs under. */
@@ -428,6 +437,15 @@ export interface SettingsResponse {
   target_id?: string;
   label?: string;
   revision: string;
+  /** Project extensions of the context session; only Machine settings receive them. */
+  project_extensions?: SettingsProjectExtensions;
+}
+
+export interface SettingsProjectExtensions {
+  target_id: string;
+  label?: string;
+  count: number;
+  names: string[];
 }
 
 /** Sanitized MCP inventory served by one gateway. Secret values never travel here. */

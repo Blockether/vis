@@ -2718,6 +2718,24 @@
         "is_override": {
           "type": "boolean"
         },
+        "decided_in": {
+          "type": "object",
+          "description": "The closest wider scope that decides this inherited row. The row is read-only here.",
+          "required": [
+            "scope"
+          ],
+          "properties": {
+            "scope": {
+              "$ref": "https://contract.blockether.com/vis/schema/toggle.json#/$defs/scope"
+            },
+            "target_id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
         "overridden_by": {
           "type": "object",
           "required": [
@@ -2850,6 +2868,33 @@
           "type": "array",
           "items": {
             "type": "object"
+          }
+        },
+        "project_extensions": {
+          "type": "object",
+          "description": "Project extensions of the context session. Only Machine settings show them.",
+          "required": [
+            "target_id",
+            "count",
+            "names"
+          ],
+          "properties": {
+            "target_id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "groups": {

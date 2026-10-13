@@ -4069,7 +4069,115 @@
                                                                                {}
                                                                                row))))
              (expect (= [["Locked" shell-note] ["Locked" shell-note] [:changed "improve"]] @events))
-             (finally (reset! inventory original))))))
+             (finally (reset! inventory original)))))
+  ;; Issue #373: a project could not change an inherited machine extension setting, and
+  ;; Settings did not say which settings decide it. Both clients now name and open them.
+  (it
+    "opens the settings that decide an inherited extension row"
+    (let [registry-toggle-rows
+          (var-get #'dlg/registry-toggle-rows)
+
+          activate-settings-row!
+          (var-get #'dlg/activate-settings-row!)
+
+          inventory
+          (var-get #'dlg/settings-inventory)
+
+          original
+          @inventory
+
+          spec
+          (atom nil)
+
+          opened
+          (atom [])
+
+          note
+          "Set in Machine settings. You cannot change it per project."]
+
+      (try (reset! inventory {:status :ok
+                              :error nil
+                              :groups [{"id" "tools"
+                                        "title" "Tools"
+                                        "toggles" [{"id" "memo_enabled"
+                                                    "label" "Memo"
+                                                    "type" "boolean"
+                                                    "enabled" true
+                                                    "scope" "project"
+                                                    "decided_in" {"scope" "global"}}]}]})
+           (let [[_ memo] (registry-toggle-rows)]
+             (expect (= note (:locked memo)))
+             (expect (= {:scope "global" :target-id nil :label nil} (:decided-in memo)))
+             (with-redefs-fn {#'dlg/host-band-region (fn [_ region]
+                                                       region)
+                              #'dlg/embed-transient! (fn [_ _ _ s]
+                                                       (reset! spec s)
+                                                       {:action :open})}
+               #(activate-settings-row! nil
+                                        nil
+                                        nil
+                                        (atom {})
+                                        {:open-settings (fn [where]
+                                                          (swap! opened conj where))}
+                                        memo)))
+           (expect (= ["Locked" note ["Open Machine settings" "Dismiss"]]
+                      [(:title @spec) (:title (first (:groups @spec)))
+                       (mapv :label (:items (first (:groups @spec))))]))
+           (expect (= [{:scope "global" :target-id nil :label nil}] @opened))
+           (finally (reset! inventory original)))))
+  (it "says when a scope has no extension settings"
+      (let [inventory
+            (var-get #'dlg/settings-inventory)
+
+            original
+            @inventory
+
+            info
+            (fn []
+              (:label (first (filter #(= :info (:type %)) (#'dlg/tools-settings-rows)))))]
+
+        (try (reset! inventory {:status :ok :error nil :groups []})
+             (expect (= "No extension settings for this machine." (info)))
+             (binding [dlg/*settings-target* {:scope "project" :target-id "p1"}]
+               (expect (= "No extension settings for this project." (info))))
+             (finally (reset! inventory original)))))
+  (it
+    "offers Project settings after a machine reload when the project has extensions"
+    (let [spec
+          (atom nil)
+
+          opened
+          (atom [])]
+
+      (with-redefs-fn {#'dlg/host-band-region (fn [_ region]
+                                                region)
+                       #'dlg/band-question-frame! (fn [& _]
+                                                    nil)
+                       #'frame/refresh! (fn [& _]
+                                          nil)
+                       #'vis/gateway-reload-extensions! (fn [_]
+                                                          {"loaded" 0 "failed" 0})
+                       #'dlg/load-settings-inventory!
+                       (fn []
+                         {:status :ok
+                          :project-extensions
+                          {"target_id" "p1" "label" "app" "count" 1 "names" ["clj"]}})
+                       #'dlg/embed-transient! (fn [_ _ _ s]
+                                                (reset! spec s)
+                                                {:action :open})}
+        #(#'dlg/settings-extension-action!
+           nil
+           nil
+           nil
+           {:open-settings (fn [where]
+                             (swap! opened conj where))}))
+      (expect (= (str "0 loaded, 0 failed.\n"
+                      "This project has 1 extension (clj).\n"
+                      "Project extensions reload in Project settings.")
+                 (:title (first (:groups @spec)))))
+      (expect (= ["Open Project settings" "Dismiss"]
+                 (mapv :label (:items (first (:groups @spec))))))
+      (expect (= [{:scope "project" :target-id "p1" :label "app"}] @opened)))))
 
 (defn- back-buffer-text
   "What the last paint asked the terminal to show, one line per screen row."

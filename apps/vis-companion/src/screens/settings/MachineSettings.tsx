@@ -16,7 +16,10 @@ import type {
   McpServer,
   McpServerInput,
   McpTestResult,
+  SettingDecidedIn,
   SettingValue,
+  SettingsProjectExtensions,
+  SettingsScope,
   SpeechPrefs,
   Toggle,
   ToggleGroup,
@@ -277,11 +280,20 @@ export function ValueSetting({
   );
 }
 
+/** The settings dialog name of a scope: global settings are Machine settings. */
+export function scopeTitle(scope: SettingsScope): string {
+  return scope === 'global' ? 'Machine' : `${scope.charAt(0).toUpperCase()}${scope.slice(1)}`;
+}
+
 /**
- * Why a more specific scope decides this row for the open session, or null. Such a
- * row stays locked: changing it here would not change what that session uses.
+ * Why this row is read-only here, or null. A wider scope decides an inherited extension
+ * setting (#373). A more specific scope can also decide the row for the open session:
+ * changing it here would not change what that session uses.
  */
 export function lockNote(toggle: Toggle): string | null {
+  if (toggle.decided_in) {
+    return `Set in ${scopeTitle(toggle.decided_in.scope)} settings. You cannot change it per ${toggle.scope ?? 'scope'}.`;
+  }
   // A restricted boolean denies with false, a restricted enum with its first choice.
   const denied = toggle.type === 'enum' ? toggle.value === toggle.choices?.[0] : toggle.enabled === false;
   if (toggle.inheritance === 'restrict' && denied && toggle.source
@@ -328,7 +340,7 @@ export function settingTree(
  * The same value row is used for gateway and scoped settings. Only scoped settings pass
  * `onInherit`: global settings are the root scope, so their rows show no provenance or reset.
  */
-export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: {
+export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit, onOpenSettings }: {
   toggle: Toggle;
   busy: boolean;
   /** Only on the row that names an extension: the label is its heading, with its scope beside it. */
@@ -336,6 +348,8 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: 
   onToggle: () => void;
   onPick: (value: SettingValue) => Promise<boolean>;
   onInherit?: () => void;
+  /** Opens the settings that decide a read-only inherited row. */
+  onOpenSettings?: (where: SettingDecidedIn) => void;
 }) {
   const lock = lockNote(toggle);
   return (
@@ -362,11 +376,17 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: 
         </div>
       )}
       {lock && (
-        <div className="px-3 pb-2 sm:px-4">
-          <Text as="p" variant="description" className="break-words">{lock}</Text>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
+          <Text as="p" variant="description" className="min-w-0 break-words">{lock}</Text>
+          {toggle.decided_in && onOpenSettings && (
+            <Button variant="secondary" density="panel" onClick={() => onOpenSettings(toggle.decided_in!)}>
+              Open {scopeTitle(toggle.decided_in.scope)} settings
+            </Button>
+          )}
         </div>
       )}
-      {onInherit && (
+      {/* The lock note of an inherited extension row already names the scope that decides it. */}
+      {onInherit && !toggle.decided_in && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
           <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
           {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy || (lock !== null && toggle.inheritance !== 'restrict')} onClick={onInherit}>Use inherited value</Button>}
@@ -415,6 +435,8 @@ export function MachineSettings({
     () => client.cachedSettings()?.groups ?? null,
   );
   const [err, setErr] = useState<string | null>(null);
+  // The project extensions of the open session; a machine reload report names them (#373).
+  const [projectExtensions, setProjectExtensions] = useState<SettingsProjectExtensions | undefined>();
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<'unreachable' | 'unauthorized' | 'incompatible' | null>(
     null,
@@ -430,6 +452,7 @@ export function MachineSettings({
         setErr(null);
         setFailure(null);
         setGroups(settings.groups ?? []);
+        setProjectExtensions(settings.project_extensions);
       } catch (e) {
         if (signal?.aborted) return;
         // A token-gated gateway that's actually up answers /healthz (so the list
@@ -637,8 +660,8 @@ export function MachineSettings({
           <SettingsSection title={tools?.title ?? 'Tools'}>
             {tools && settingRows(tools)}
             <McpServersPanel client={client} />
-            <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} onRefresh={load}
-              renderSetting={settingRow} />
+            <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} projectExtensions={projectExtensions}
+              onRefresh={load} renderSetting={settingRow} />
           </SettingsSection>
           <AutomationsPanel client={client} gatewayUrl={gateway.url} />
         </>

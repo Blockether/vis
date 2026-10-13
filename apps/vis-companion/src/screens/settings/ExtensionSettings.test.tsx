@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GatewayClient, GatewayError } from '../../lib/gateway';
 import { DEFAULT_SPEECH_PREFS } from '../../lib/storage';
 import type { SettingsResponse, SettingsTarget, Toggle } from '../../lib/types';
+import { OpenScopedSettings } from '../../lib/open-settings';
 import { MachineSettings } from './MachineSettings';
 import { ScopedSettingsDialog } from './ScopedSettingsDialog';
 
@@ -103,9 +104,10 @@ it('keeps a failed project extension visible and runs its code only on request',
 
   const reads = read.mock.calls.length;
   await user.click(button);
-  // The result stands as plain text in the header band, not in a box below it.
+  // #373: the result stands as a left-aligned note below the header, not beside its button.
   const header = band.querySelector('header')!;
-  expect(within(header).getByRole('status')).toHaveTextContent('Reloading…');
+  expect(within(header).queryByRole('status')).toBeNull();
+  expect(within(band).getByText('Reloading…').closest('[role="status"]')).toHaveClass('text-left');
   // #348: the report names each scanned scope and its directory, not only the counts.
   finishReload({
     loaded: 1,
@@ -115,12 +117,14 @@ it('keeps a failed project extension visible and runs its code only on request',
       { scope: 'project', dirs: ['/work/app/.vis/extensions'], loaded: 1, failed: 1, extensions: ['notifier'] },
     ],
   });
-  expect(
-    await within(header).findByText(
-      'No machine extensions found in ~/.vis/extensions. Project extensions (/work/app/.vis/extensions): ' +
-        '1 loaded (notifier), 1 failed. Each failed extension shows its error.',
-    ),
-  ).toHaveAttribute('role', 'status');
+  const note = (await within(band).findByText('No machine extensions in ~/.vis/extensions.')).closest('[role="status"]')!;
+  const lines = [...note.querySelectorAll('p')].map((line) => line.textContent);
+  expect(lines).toEqual([
+    'No machine extensions in ~/.vis/extensions.',
+    'Project extensions (/work/app/.vis/extensions): 1 loaded (notifier), 1 failed.',
+    'Each failed extension shows its error.',
+  ]);
+  expect(note).toHaveClass('text-left');
   expect(reload).toHaveBeenCalledWith({ scope: 'project', target_id: 'p1' });
   expect(read.mock.calls.length).toBeGreaterThan(reads);
 });
@@ -176,20 +180,15 @@ it('reloads machine extensions from machine settings and explains an older gatew
   expect(scope('language-clojure')).toBeNull();
   expect(band).not.toHaveTextContent('Machine extension');
   expect(band).not.toContainElement(screen.getByRole('heading', { name: 'Agent' }));
-  const header = band.querySelector('header')!;
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
-  // #348: an empty machine reload says where it looked and points to the project reload.
-  expect(
-    await within(header).findByText(
-      'No machine extensions found in ~/.vis/extensions. ' +
-        'Project extensions were not reloaded. Use Project settings → Reload or /reload.',
-    ),
-  ).toBeInTheDocument();
+  // #348, #373: an empty machine reload says where it looked and where project extensions reload.
+  expect(await within(band).findByText('No machine extensions in ~/.vis/extensions.')).toBeInTheDocument();
+  expect(within(band).getByText('Project extensions reload in Project settings.')).toBeInTheDocument();
   expect(reload).toHaveBeenLastCalledWith(undefined);
 
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
   expect(
-    await within(header).findByText('This gateway does not support extension reload. Update Vis on that machine.'),
+    await within(band).findByText('This gateway does not support extension reload. Update Vis on that machine.'),
   ).toBeInTheDocument();
 });
 it('names each extension once, on the row of its Auto/On/Off choice', async () => {
@@ -248,4 +247,42 @@ it('names each extension once, on the row of its Auto/On/Off choice', async () =
   expect(band).not.toHaveTextContent('vis-spel/browser');
   // The Auto/On/Off explanation is not shown: neither above the extensions nor on each one.
   expect(within(band).queryByText(/^Auto detects applicability/)).toBeNull();
+});
+
+// #373: a machine reload names the project extensions of the open session and opens Project settings.
+it('names project extensions after a machine reload and opens Project settings', async () => {
+  const user = userEvent.setup();
+  vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
+  vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
+    ...catalog('global', '~/.vis/extensions'),
+    project_extensions: { target_id: 'p1', label: 'Workspace', count: 1, names: ['notifier'] },
+  });
+  vi.spyOn(GatewayClient.prototype, 'reloadExtensions').mockResolvedValue({
+    loaded: 0,
+    failed: 0,
+    scopes: [{ scope: 'global', dirs: ['~/.vis/extensions'], loaded: 0, failed: 0, extensions: [] }],
+  });
+  const openScoped = vi.fn();
+  renderOpenBands(
+    <OpenScopedSettings.Provider value={openScoped}>
+      <MachineSettings
+        gateway={{ id: 'extensions-test', url: 'http://127.0.0.1:7890', token: 'test' }}
+        speechPrefs={DEFAULT_SPEECH_PREFS}
+        onSpeechChange={async () => DEFAULT_SPEECH_PREFS}
+        contextSessionId="s1"
+      />
+    </OpenScopedSettings.Provider>,
+  );
+
+  await screen.findByText(/Extension failed to load/);
+  expect(screen.queryByRole('button', { name: 'Open Project settings' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
+  const note = (await screen.findByText('This project has 1 extension (notifier).')).closest('[role="status"]')!;
+  expect([...note.querySelectorAll('p')].map((line) => line.textContent)).toEqual([
+    'No machine extensions in ~/.vis/extensions.',
+    'This project has 1 extension (notifier).',
+    'Project extensions reload in Project settings.',
+  ]);
+  await user.click(within(note as HTMLElement).getByRole('button', { name: 'Open Project settings' }));
+  expect(openScoped).toHaveBeenCalledWith(expect.any(GatewayClient), { scope: 'project', target_id: 'p1', label: 'Workspace' });
 });
