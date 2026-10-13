@@ -222,7 +222,7 @@ providers:
       - name: qwen3-coder-30b
         context: 262144          # input window
         output_limit: 32768      # max output tokens
-        is_tool_call: true
+        is_tool_calls_supported: true
   - id: my-responses-gateway
     compatibility: openai-responses
     base_url: https://gateway.example.com/v1
@@ -235,12 +235,16 @@ providers:
 
 Provider keys: `compatibility`, `base_url`, `api_key`, `api_key_command`,
 `responses_path`, `api_style`, `llm_headers`, `extra_body`, `is_stateless`,
-`is_image_input`. Providers with managed sign-in (Copilot, coding plans) need
-no `api_key`.
+`is_vision_supported`. Providers with managed sign-in (Copilot, coding plans)
+need no `api_key`.
 
-Model keys: `context`, `output_limit`, `is_tool_call`, `is_image_input`,
-`api_style`. Filling in the limits makes context checks and output capping
-accurate.
+Model keys: `context`, `output_limit`, `is_tool_calls_supported`,
+`is_vision_supported`, `api_style`. Filling in the limits makes context checks
+and output capping accurate.
+
+Vis also reads the old names `is_tool_call` and `is_image_input`. When a file
+has the old name and the new name, the new name wins. Vis writes only the new
+names.
 
 Models are offered in the order you list them. Models discovered from the
 provider are appended after them.
@@ -338,7 +342,7 @@ whole-value reference remains `${NAME}`, not the resolved secret.
 
 Attached pictures, matplotlib figures and other `image/*` attachments go to the
 model only when it reads images. The model catalog decides this for known
-models. Set `is_image_input` on a model to decide it yourself:
+models. Set `is_vision_supported` on a model to decide it yourself:
 
 ```yaml
 providers:
@@ -347,9 +351,9 @@ providers:
     base_url: https://gateway.example.com/v1
     models:
       - name: qwen2.5-vl-72b
-        is_image_input: true     # reads images
+        is_vision_supported: true     # reads images
       - name: qwen3-coder-30b
-        is_image_input: false    # gets a text description of each picture
+        is_vision_supported: false    # gets a text description of each picture
 ```
 
 - `true`: Vis sends the pictures. Use it for a local or private model that the
@@ -357,9 +361,9 @@ providers:
 - `false`: Vis sends a text description of each picture.
 - Not set: the model catalog decides.
 
-`is_image_input: false` on a provider blocks images for all its models, also
-when a model says `true`. A provider extension sets the same value with
-`ProviderModel(is_image_input=...)`.
+`is_vision_supported: false` on a provider blocks images for all its models,
+also when a model says `true`. A provider extension sets the same value with
+`ProviderModel(is_vision_supported=...)`.
 
 ### GitHub Copilot
 

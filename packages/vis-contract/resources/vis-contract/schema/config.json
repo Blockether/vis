@@ -158,7 +158,13 @@
           "type": "integer",
           "minimum": 1
         },
+        "is_tool_calls_supported": {
+          "type": "boolean"
+        },
         "is_tool_call": {
+          "type": "boolean"
+        },
+        "is_vision_supported": {
           "type": "boolean"
         },
         "is_image_input": {
@@ -253,6 +259,9 @@
           "$ref": "#/$defs/networkTimeout"
         },
         "is_stateless": {
+          "type": "boolean"
+        },
+        "is_vision_supported": {
           "type": "boolean"
         },
         "is_image_input": {

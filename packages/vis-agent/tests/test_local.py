@@ -61,7 +61,7 @@ def test_real_local_engine(tmp_path, monkeypatch):
                                 "name": "lifecycle-model",
                                 "context": 32000,
                                 "output_limit": 4096,
-                                "is_tool_call": True,
+                                "is_tool_calls_supported": True,
                             }
                         ],
                     }

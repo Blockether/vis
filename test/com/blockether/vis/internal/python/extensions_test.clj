@@ -4622,8 +4622,8 @@ def _auth_prompt():
 def _enrich(provider, router_opts):
     # provider crosses in as a plain string-keyed dict (stringify-deep) so the
     # hook can read model names; return an enriched model list.
-    return [vis.ProviderModel(m['name'], context=262144, is_tool_call=True,
-                              is_image_input=m['name'] == 'acme-large')
+    return [vis.ProviderModel(m['name'], context=262144, is_tool_calls_supported=True,
+                              is_vision_supported=m['name'] == 'acme-large')
             for m in provider['models']]
 
 
@@ -4763,8 +4763,8 @@ vis.register_extension(vis.Extension(
                      ((:provider/refresh-token-fn oauth) "old-rejected-token")))
           ;; enrich-models-fn: host provider + router-opts marshal INTO Python as
           ;; plain string-keyed dicts; the return keywordizes and the snake
-          ;; `is_tool_call` becomes the `:tool-call?` key the router reads, and
-          ;; `is_image_input` becomes svar's model `:vision?`.
+          ;; `is_tool_calls_supported` becomes the `:tool-call?` key the router reads,
+          ;; and `is_vision_supported` becomes svar's model `:vision?`.
           (expect (= [{:name "acme-large" :context 262144 :tool-call? true :vision? true}
                       {:name "acme-small" :context 262144 :tool-call? true :vision? false}]
                      ((:provider/enrich-models-fn p)

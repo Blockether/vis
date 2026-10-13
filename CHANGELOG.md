@@ -16,14 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   pictures. Vis sends them to the model as PNG.
 - In the Companion app, ↑ in the message box shows your previous message in the session, and ↓
   goes forward again to your draft, like the terminal app (#372).
-- `is_image_input` on a model in the configuration, or `ProviderModel(is_image_input=...)` in a
-  provider extension, tells Vis if that model reads images. `true` sends attached pictures to a
-  model that the catalog does not know. `false` sends a text description of each picture.
+- `is_vision_supported` on a model in the configuration, or
+  `ProviderModel(is_vision_supported=...)` in a provider extension, tells Vis if that model reads
+  images. `true` sends attached pictures to a model that the catalog does not know. `false` sends
+  a text description of each picture.
+
+### Changed
+- The configuration keys `is_tool_call` and `is_image_input` are now `is_tool_calls_supported` and
+  `is_vision_supported`. The `ProviderModel` arguments have the same new names. The old names
+  still work. When both are set, the new name wins.
 
 ### Removed
 - The model key `is_vision` is no longer accepted in the configuration. Vis never read it. Use
-  `is_image_input` instead.
+  `is_vision_supported` instead.
 
+### Fixed
+- The model keys `is_reasoning` and `is_parallel_tool_calls` in the configuration now reach the
+  model router. Before, Vis accepted them but did not use them.
 ## [v0.2.42] - 2026-10-13
 
 ### Fixed

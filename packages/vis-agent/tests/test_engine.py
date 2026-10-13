@@ -72,7 +72,7 @@ def credential():
         llm_headers=__CREDENTIAL_HEADERS__)
 
 def enrich(provider, router_opts):
-    return [vis.ProviderModel(m["name"], context=200000, is_tool_call=True)
+    return [vis.ProviderModel(m["name"], context=200000, is_tool_calls_supported=True)
             for m in provider["models"]]
 
 vis.register_extension(vis.Extension(name="sdk-provider", description="Typed provider integration",

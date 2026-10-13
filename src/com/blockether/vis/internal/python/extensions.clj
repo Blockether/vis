@@ -1716,7 +1716,7 @@
   "One enriched model row from Python -> the shape svar's router reads. Keys take
    the mechanical `wire/engine-key` inverse; the handful svar itself spells with a
    trailing `?` then move through `config/svar-wire->runtime`, svar's OWN named
-   table (`is_tool_call` -> `:tool-call?`). A foreign contract gets an explicit
+   table (`is_tool_calls_supported` -> `:tool-call?`). A foreign contract gets an explicit
    table at one seam — it never gets a convention applied to every other key.
 
    A declared `pricing` is also kept as `:declared-pricing`. svar's catalog gives
@@ -1728,7 +1728,7 @@
                          (if (contains? m mechanical)
                            (assoc (dissoc m mechanical) runtime-k (get m mechanical))
                            m)))
-                     (decode {:pricing as-pricing} row)
+                     (config/canonical-wire-keys (decode {:pricing as-pricing} row) wire/engine-key)
                      config/svar-wire->runtime)]
     (cond-> m
       ;; svar reads image input on a model as `:vision?`.

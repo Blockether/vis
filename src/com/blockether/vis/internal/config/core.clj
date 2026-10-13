@@ -405,8 +405,8 @@
          (some? (:vision? m))
          (assoc :vision? (:vision? m))
 
-         ;; `is_image_input` on a model says whether it takes images. It beats the
-         ;; catalog, so a local or private model can declare image input itself.
+         ;; `is_vision_supported` on a model says whether it takes images. It beats
+         ;; the catalog, so a local or private model can declare image input itself.
          (some? (:image-input? m))
          (assoc :vision? (boolean (:image-input? m)))
 
@@ -632,7 +632,7 @@
         explicit-stateless
         (:stateless-items? provider)
 
-        ;; `is_image_input: false` — this endpoint refuses image content parts
+        ;; `is_vision_supported: false` — this endpoint refuses image content parts
         ;; outright (a gateway answering `unknown variant image_url, expected text`
         ;; with HTTP 400), whatever image input the catalog claims for its models.
         explicit-image-input
@@ -754,21 +754,50 @@
    `wire/engine-key` mirror does not apply, so they map through this table
    EXPLICITLY, at whatever seam decodes them. A foreign contract earns a named
    table; it never earns a convention that rewrites every other key with it."
-  {"is_tool_call" :tool-call?
+  {"is_tool_calls_supported" :tool-call?
    "is_check_context" :check-context?
    "is_respect_retry_after" :respect-retry-after?
    "is_fallback_provider" :fallback-provider?
    "is_stateless" :stateless-items?
-   "is_image_input" :image-input?})
+   "is_vision_supported" :image-input?
+   "is_reasoning" :reasoning?
+   "is_parallel_tool_calls" :parallel-tool-calls?})
+
+(def wire-key-aliases
+  "Old spellings of `svar-wire->runtime` keys. Vis still reads them, so existing
+   configuration and extensions keep working. The new key wins when both are set."
+  {"is_tool_call" "is_tool_calls_supported" "is_image_input" "is_vision_supported"})
+
+(defn canonical-wire-keys
+  "`m` with each old key of `wire-key-aliases` renamed to its new key. `key-fn`
+   turns a wire key into the key spelling that `m` uses."
+  ([m] (canonical-wire-keys m identity))
+  ([m key-fn]
+   (reduce-kv (fn [m old new]
+                (let [old-key
+                      (key-fn old)
+
+                      new-key
+                      (key-fn new)]
+
+                  (if (contains? m old-key)
+                    (cond-> (dissoc m old-key)
+                      (not (contains? m new-key))
+                      (assoc new-key (get m old-key)))
+                    m)))
+              m
+              wire-key-aliases)))
 
 (def ^:private runtime->svar-yaml
   "Write-path inverse of `svar-wire->runtime`."
-  {:tool-call? "is_tool_call"
+  {:tool-call? "is_tool_calls_supported"
    :check-context? "is_check_context"
    :respect-retry-after? "is_respect_retry_after"
    :fallback-provider? "is_fallback_provider"
    :stateless-items? "is_stateless"
-   :image-input? "is_image_input"})
+   :image-input? "is_vision_supported"
+   :reasoning? "is_reasoning"
+   :parallel-tool-calls? "is_parallel_tool_calls"})
 
 (def ^:private runtime-keywords
   "Finite YAML key vocabulary used by internal keyword-keyed domain maps.
@@ -806,7 +835,7 @@
                                        (and (string? val) (contains? keyword-valued-keys k))
                                        (keyword val)
                                        :else (runtime-config val))])))
-                       v)
+                       (canonical-wire-keys v))
         (sequential? v) (mapv runtime-config v)
         :else v))
 

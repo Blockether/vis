@@ -138,6 +138,8 @@ def test_provider_limits_match_the_shared_schema():
         lambda: vis.ProviderModel("example", context=True),
         lambda: vis.ProviderModel("example", context=0),
         lambda: vis.ProviderModel("example", is_tool_call="true"),
+        lambda: vis.ProviderModel("example", is_tool_calls_supported="true"),
+        lambda: vis.ProviderModel("example", is_vision_supported=1),
         lambda: vis.ProviderLimitWindow("unknown"),
         lambda: vis.ProviderLimitWindow("rolling", size=0),
         lambda: vis.ProviderLimitWindow("rolling", resets_at_ms=True),
@@ -190,7 +192,7 @@ def test_typed_callback_results_cross_only_at_registration_boundary(monkeypatch)
         status_fn=lambda: vis.ProviderStatus(True),
         limits_fn=lambda: vis.ProviderLimits(),
         enrich_models_fn=lambda provider, opts: [
-            vis.ProviderModel("example", context=200000, is_tool_call=True)
+            vis.ProviderModel("example", context=200000, is_tool_calls_supported=True)
         ],
     )
     assert invoked == []
@@ -211,8 +213,26 @@ def test_typed_callback_results_cross_only_at_registration_boundary(monkeypatch)
     assert spec["status_fn"]() == {"is_authenticated": True}
     assert spec["limits_fn"]() == vis.ProviderLimits().to_wire()
     assert spec["enrich_models_fn"]({}, {}) == [
-        {"name": "example", "context": 200000, "is_tool_call": True}
+        {"name": "example", "context": 200000, "is_tool_calls_supported": True}
     ]
+
+
+def test_provider_model_old_names_still_work():
+    old = vis.ProviderModel("example", is_tool_call=True, is_image_input=False)
+    assert old == vis.ProviderModel(
+        "example", is_tool_calls_supported=True, is_vision_supported=False
+    )
+    assert old.to_wire() == {
+        "name": "example",
+        "is_tool_calls_supported": True,
+        "is_vision_supported": False,
+    }
+    # Positional calls keep their meaning: tool calls third, images fourth.
+    assert vis.ProviderModel("example", 1000, True, False) == vis.ProviderModel(
+        "example", 1000, is_tool_calls_supported=True, is_vision_supported=False
+    )
+    both = vis.ProviderModel("example", is_vision_supported=True, is_image_input=False)
+    assert both.to_wire() == {"name": "example", "is_vision_supported": True}
 
 
 @pytest.mark.parametrize(

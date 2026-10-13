@@ -147,26 +147,41 @@
 
 (defdescribe
   copilot-config-capabilities
-  (it "retains explicit false capabilities through the config and schema boundaries"
-      (let [model
-            {:name "claude-sonnet-future"
-             :vision? false
-             :reasoning? false
-             :parallel-tool-calls? false
-             :tool-call? false}
+  (it
+    "retains explicit false capabilities through the config and schema boundaries"
+    (let [model
+          {:name "claude-sonnet-future"
+           :vision? false
+           :reasoning? false
+           :parallel-tool-calls? false
+           :tool-call? false}
 
-            declared
-            (-> model
-                (dissoc :vision?)
-                (assoc :image-input? false))
+          declared
+          (-> model
+              (dissoc :vision?)
+              (assoc :image-input? false))
 
-            provider
-            {"id" "github-copilot" "models" [(wire/->wire declared)]}]
+          provider
+          {"id" "github-copilot"
+           "models" [{"name" "claude-sonnet-future"
+                      "is_vision_supported" false
+                      "is_reasoning" false
+                      "is_parallel_tool_calls" false
+                      "is_tool_calls_supported" false}]}
 
-        (expect (= model (config/->svar-model model)))
-        (expect (= model (config/->svar-model declared)))
-        (expect (validation/valid? {"providers" [provider]}))
-        (expect (not (validation/valid?
-                       {"providers" [(assoc-in provider ["models" 0 "is_image_input"] "false")]})))
-        (expect (not (validation/valid? {"providers"
-                                         [(assoc-in provider ["models" 0 "is_vision"] false)]}))))))
+          ;; `wire/->wire` spells the old names `is_tool_call` and `is_image_input`.
+          old-provider
+          {"id" "github-copilot" "models" [(wire/->wire declared)]}]
+
+      (expect (= model (config/->svar-model model)))
+      (expect (= model (config/->svar-model declared)))
+      (expect (= model
+                 (config/->svar-model (get-in (config/runtime-config {"providers" [provider]})
+                                              [:providers 0 :models 0]))))
+      (expect (validation/valid? {"providers" [provider]}))
+      (expect (validation/valid? {"providers" [old-provider]}))
+      (expect (not (validation/valid? {"providers" [(assoc-in provider
+                                                      ["models" 0 "is_vision_supported"]
+                                                      "false")]})))
+      (expect (not (validation/valid? {"providers"
+                                       [(assoc-in provider ["models" 0 "is_vision"] false)]}))))))

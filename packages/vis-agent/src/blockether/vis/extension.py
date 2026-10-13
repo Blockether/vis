@@ -2940,20 +2940,33 @@ class ProviderStatus(_ProviderValue):
 
 @dataclass(frozen=True, slots=True)
 class ProviderModel(_ProviderValue):
-    """Model metadata returned by enrichment. extra keeps additional router fields."""
+    """Model metadata returned by enrichment. extra keeps additional router fields.
+
+    is_tool_call and is_image_input are old names of is_tool_calls_supported and
+    is_vision_supported. They still work. A new name wins over its old name.
+    """
 
     name: str
     context: int | None = None
-    is_tool_call: bool | None = None
-    is_image_input: bool | None = None
+    is_tool_calls_supported: bool | None = None
+    is_vision_supported: bool | None = None
     extra: Mapping[str, ProviderJSON] | None = None
+    is_tool_call: bool | None = field(default=None, repr=False, compare=False)
+    is_image_input: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         _provider_text(self.name, "model name", required=True)
         _provider_number(self.context, "context", integer=True, minimum=1)
-        for name in ("is_tool_call", "is_image_input"):
-            if getattr(self, name) is not None:
-                _provider_bool(getattr(self, name), name)
+        for new, old in (
+            ("is_tool_calls_supported", "is_tool_call"),
+            ("is_vision_supported", "is_image_input"),
+        ):
+            for name in (new, old):
+                if getattr(self, name) is not None:
+                    _provider_bool(getattr(self, name), name)
+            if getattr(self, new) is None:
+                object.__setattr__(self, new, getattr(self, old))
+            object.__setattr__(self, old, None)
         _provider_extra(self)
 
 

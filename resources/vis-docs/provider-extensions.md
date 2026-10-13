@@ -81,7 +81,7 @@ the key. No interactive login is defined in this minimal example.
 | `ProviderPreset` | `base_url`, `api_style`, `default_models`, `responses_path`, `llm_headers`, `extra_body`, `is_hidden`, JSON-only `extra` |
 | `ProviderCredential` | `token`, optional `api_url`, `api_style`, `responses_path`, `llm_headers`, `source` |
 | `ProviderStatus` | `is_authenticated`, `source`, display-only `extra` |
-| `ProviderModel` | `name`, `context`, `is_tool_call`, `is_image_input`, JSON-only `extra` |
+| `ProviderModel` | `name`, `context`, `is_tool_calls_supported`, `is_vision_supported`, JSON-only `extra` |
 | `ProviderLimits` | `limits` (list of `ProviderLimit`), `rpm`, `tpm`, `note`, `error` |
 
 `api_style` accepts the same values as configuration: `anthropic`, `openai`,
@@ -90,10 +90,15 @@ credential, which overrides the preset. A credential can therefore supply an
 endpoint discovered during authentication while still allowing a user override.
 Header maps replace the entire field at each level.
 
-`ProviderModel.is_image_input` tells Vis if a model reads images. With `True`,
-Vis sends attached pictures to the model. With `False`, Vis sends a text
+`ProviderModel.is_vision_supported` tells Vis if a model reads images. With
+`True`, Vis sends attached pictures to the model. With `False`, Vis sends a text
 description of each picture. With `None`, the model catalog decides. This field
-works like `is_image_input` on a model in [configuration](configuration.md#images).
+works like `is_vision_supported` on a model in
+[configuration](configuration.md#images).
+
+`ProviderModel` still accepts the old argument names `is_tool_call` and
+`is_image_input`. A new name wins over its old name. `to_wire()` gives only the
+new names.
 
 Token and header fields are excluded from a record's `repr`. Never log
 credentials or put them in status metadata. A missing credential is `None`,
@@ -108,7 +113,7 @@ prices. Put a `pricing` map in the `extra` of `ProviderModel`:
 vis.ProviderModel(
     name="claude-haiku-5-5",
     context=1000000,
-    is_tool_call=True,
+    is_tool_calls_supported=True,
     extra={"pricing": {"input": 0.11, "output": 0.55,
                        "input_over_100k": 0.55, "output_over_100k": 2.75}},
 )
