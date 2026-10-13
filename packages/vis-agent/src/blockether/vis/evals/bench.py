@@ -400,7 +400,7 @@ def cause_check(
         ),
         source="diagnose()",
         noun="causes",
-        labeller="label()",
+        labeller="save_label()",
         fix="Correct the diagnose() rules first.",
     )
 

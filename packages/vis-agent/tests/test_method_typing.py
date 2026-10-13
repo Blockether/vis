@@ -63,7 +63,7 @@ class Example:
             {
                 "extraPaths": [str(Path(vis.__file__).resolve().parents[2])],
                 "typeCheckingMode": "basic",
-                "pythonVersion": "3.11",
+                "pythonVersion": "3.12",
             }
         )
     )

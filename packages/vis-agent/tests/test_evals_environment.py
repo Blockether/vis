@@ -126,6 +126,26 @@ def test_exec_sets_the_paths_and_runs_in_the_workspace(started):
     ]
 
 
+def test_relative_trial_paths_reach_the_trial_directory(tmp_path, monkeypatch):
+    # `harbor run --path tasks --jobs-dir jobs` gives relative trial paths.
+    # Commands run in the workspace, so a relative verifier path lost the reward.
+    monkeypatch.chdir(tmp_path)
+    environment = _environment(tmp_path)
+    environment.trial_paths = TrialPaths(Path("jobs") / "trial")
+    environment.trial_paths.mkdir()
+    asyncio.run(environment.start(force_build=False))
+    try:
+        command = 'echo 1 > /logs/verifier/reward.txt; echo "$VIS_HARBOR_VERIFIER_LOGS"'
+        result = asyncio.run(environment.exec(command))
+        verifier = tmp_path.resolve() / "jobs" / "trial" / "verifier"
+        assert result.return_code == 0
+        assert result.stdout.strip() == str(verifier)
+        assert (verifier / "reward.txt").read_text() == "1\n"
+        assert environment.path_table()["/logs/agent"].is_absolute()
+    finally:
+        asyncio.run(environment.stop(delete=True))
+
+
 def test_exec_maps_the_cwd_and_returns_the_exit_code(started):
     result = asyncio.run(started.exec("pwd -P; echo oops >&2; exit 3", cwd="/tests"))
     assert result.stdout.strip() == str(started.root / "tests")

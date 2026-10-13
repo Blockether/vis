@@ -81,10 +81,10 @@ class HostEnvironment(BaseEnvironment):
         paths = EnvironmentPaths.for_os(self.os)
         table = {
             paths.logs_dir: self.root / "logs",
-            paths.agent_dir: self.trial_paths.agent_dir,
-            paths.user_agent_dir: self.trial_paths.user_agent_dir,
-            paths.verifier_dir: self.trial_paths.verifier_dir,
-            paths.artifacts_dir: self.trial_paths.artifacts_dir,
+            paths.agent_dir: self.trial_paths.agent_dir.resolve(),
+            paths.user_agent_dir: self.trial_paths.user_agent_dir.resolve(),
+            paths.verifier_dir: self.trial_paths.verifier_dir.resolve(),
+            paths.artifacts_dir: self.trial_paths.artifacts_dir.resolve(),
             paths.tests_dir: self.root / "tests",
             paths.solution_dir: self.root / "solution",
             paths.default_skills_dir: self.root / "skills",
@@ -121,8 +121,8 @@ class HostEnvironment(BaseEnvironment):
             "VIS_HARBOR_TASK": self.environment_dir.parent.name,
             "VIS_HARBOR_WORKSPACE": str(self.workspace),
             "VIS_HARBOR_TESTS": str(self.host_path(paths.tests_dir)),
-            "VIS_HARBOR_AGENT_LOGS": str(self.trial_paths.agent_dir),
-            "VIS_HARBOR_VERIFIER_LOGS": str(self.trial_paths.verifier_dir),
+            "VIS_HARBOR_AGENT_LOGS": str(self.trial_paths.agent_dir.resolve()),
+            "VIS_HARBOR_VERIFIER_LOGS": str(self.trial_paths.verifier_dir.resolve()),
             "VIS_HARBOR_PYTHON": sys.executable,
         }
 

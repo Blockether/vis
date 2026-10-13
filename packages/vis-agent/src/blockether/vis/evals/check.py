@@ -2,7 +2,7 @@
 
 Run it with ``python -m blockether.vis.evals.check TASK_DIR --provider P --model M``.
 ``TASK_DIR`` is one task or a directory of tasks, for example ``e2e`` of the Vis
-repository. Install the ``harbor`` extra first. Each check makes paid model calls.
+repository. Each check makes paid model calls.
 
 ``harbor check`` runs Claude Code in Docker. This module uses the same rubric,
 prompt and result validation of Harbor. The Vis agent runs each check in the host

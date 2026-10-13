@@ -1,9 +1,8 @@
 """Run the Vis CLI as a Harbor agent on the host.
 
 Select it with the Harbor agent import path ``blockether.vis.evals.agent:VisAgent``.
-It runs only in ``blockether.vis.evals.environment:HostEnvironment``. Install the
-``harbor`` extra of the SDK first. Each trial starts one CLI process with its own
-database. With ``--persist`` the
+It runs only in ``blockether.vis.evals.environment:HostEnvironment``. Each trial
+starts one CLI process with its own database. With ``--persist`` the
 CLI runs the gateway in the same process, so no shared gateway and no operator
 extension changes the measurement. The agent writes these files to its logs
 directory:

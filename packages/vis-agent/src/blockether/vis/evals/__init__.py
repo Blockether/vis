@@ -1,5 +1,6 @@
-"""Evaluation tools: read Vis runs and Harbor jobs, and compare their results.
+"""Evaluation tools: write and run Harbor tasks, read the results and compare them.
 
+Write a Vis task with `write_task`, and run tasks with the Vis agent with `run_tasks`.
 Read one Vis run with `load_trajectory` or `parse_trajectory`. Read the cases of a
 Harbor dataset with `read_tasks`, and the trials of a job or round with `read_trials`.
 Count the trials with `case_results` or `summarize`. Seal a finished round with
@@ -46,10 +47,12 @@ from .harbor import (
     read_tasks,
     read_trial,
     read_trials,
+    run_tasks,
     seal_digest,
     seal_round,
     seal_rows,
     summarize,
+    write_task,
 )
 from .labels import (
     KAPPA_REVIEW,
@@ -171,6 +174,7 @@ __all__ = [
     "read_trials",
     "repeat_stats",
     "round_summary",
+    "run_tasks",
     "sample_agreement",
     "save_label",
     "save_stage_label",
@@ -184,4 +188,5 @@ __all__ = [
     "task_attempts",
     "task_note",
     "wilson_interval",
+    "write_task",
 ]

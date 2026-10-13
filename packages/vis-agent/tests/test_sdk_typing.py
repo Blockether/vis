@@ -60,7 +60,7 @@ _HARBOR_MODULES = ("agent.py", "check.py", "environment.py", "judge.py")
 
 def _pyright(tmp_path, *targets, ignore=()):
     config = tmp_path / "pyrightconfig.json"
-    settings = {"typeCheckingMode": "standard", "pythonVersion": "3.11"}
+    settings = {"typeCheckingMode": "standard", "pythonVersion": "3.12"}
     if ignore:
         settings["ignore"] = [str(path) for path in ignore]
     config.write_text(json.dumps(settings))

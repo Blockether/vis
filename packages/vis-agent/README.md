@@ -6,7 +6,7 @@ Python SDK for Vis extensions and agent sessions.
 pip install vis-agent
 ```
 
-Requires Python 3.11+. Install the Vis executable and configure a provider
+Requires Python 3.12+. Install the Vis executable and configure a provider
 separately for local use. The execution-layer API below is unreleased: build
 the SDK and engine from the same source revision.
 

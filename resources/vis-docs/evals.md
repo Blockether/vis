@@ -1,67 +1,217 @@
 # Evaluations
 
-An evaluation measures how well an agent solves benchmark tasks. You run the tasks with
-[Harbor](https://harborframework.com), then Vis scores the results, finds where the agent loses
-tasks and compares two runs. Vis reads only standard Harbor files, so it works for any agent that
-Harbor runs.
+An evaluation measures how well an agent solves a set of tasks. You write the tasks, run them with
+[Harbor](https://docs.harborframework.com/), then score the results, find why tasks failed and
+compare two runs. This page shows each step from an empty folder to a score.
 
 ## When to use
 
-- **You want to run Vis on benchmark tasks.** Read [Run Vis in Harbor](#run-vis-in-harbor).
-- **You want the score of a benchmark round, with its uncertainty.** Read [Scores and
-  intervals](#scores-and-intervals).
+- **You want to know if Vis can do a type of work, for example renames.** [Write a
+  task](#step-2-write-a-task), then [run it](#step-4-run-the-tasks).
+- **You changed a prompt, a tool or a model and want proof that it helps.** Run the same tasks
+  before and after the change, then [compare the two runs](#compare-two-runs).
+- **You ran a benchmark, for example Terminal-Bench, and want the score with its uncertainty.**
+  Read [Scores and intervals](#scores-and-intervals).
 - **You want to know why the agent failed tasks.** Read [Failure causes](#failure-causes).
-- **You must decide if the automatic causes are correct.** [Check them with
-  labels](#check-the-causes-with-labels).
-- **You changed the agent and want to know if it is better.** [Compare two
-  runs](#compare-two-runs).
-- **You want to see where your agent stands on a public board.** Read [Leaderboard
-  position](#leaderboard-position).
+- **You want to know how Vis and Harbor share the work.** Read [Vis and
+  Harbor](#vis-and-harbor).
 - **Your own program must do these steps.** Read [Evaluations API](evals-api.md).
 
 To watch a single session while it runs, use [Sessions](sessions.md). To run a prompt on a
 schedule, use [Automations](automations.md).
 
-## Run Vis in Harbor
+## Vis and Harbor
 
-Vis is a native Harbor agent. Harbor runs any standard task folder with Vis, so you convert
-nothing. You need Python 3.12 or later, an installed Vis and a configured provider. Each trial
-makes paid model calls.
+Harbor is an open framework for agent evaluations. Vis uses it as its only task runner. Each
+tool does a different part of the work:
 
-1. Install the SDK with its Harbor extra:
+| Part | Harbor | Vis |
+|---|---|---|
+| Task format | Defines the task folder: `task.toml`, `instruction.md`, `environment/` and `tests/`. | Adds `tests/checks.json`, which its grader reads. |
+| Run | `harbor run` starts a job and runs one trial for each task and attempt. | Gives the `VisAgent` agent and the `HostEnvironment` environment. |
+| Verifier | Runs `tests/test.sh` after the agent and reads the reward. | Gives the grader `python -m blockether.vis.evals.grade`. |
+| Results | Writes a job folder with one `result.json` for each trial. | Writes the agent trajectory in the Harbor ATIF format. |
+| Analysis | `harbor view` shows the trials in a browser. | Gives scores with intervals, failure causes, label checks and paired comparisons. |
 
-   ```bash
-   pip install 'vis-agent[harbor]'
-   ```
+The Vis setup is different from the Harbor defaults in three ways:
 
-2. Run a dataset folder, for example the `e2e` folder of the Vis repository:
+- **No containers.** Harbor usually runs each trial in Docker. `HostEnvironment` runs each trial
+  in a new git repository on your computer. The agent can read files outside that repository,
+  so run only tasks that you trust.
+- **A Vis grader.** A standard Harbor verifier runs tests, for example `pytest`, and writes a
+  reward. The Vis grader also reads the agent trajectory. It can check the answer, the tools
+  that the agent used and its errors, not only the files.
+- **Scores for every agent.** The analysis reads only standard Harbor files. It scores a job of
+  any Harbor agent, for example Claude Code or Codex, in the same way.
 
-   ```bash
-   harbor run --path e2e \
-     --agent blockether.vis.evals.agent:VisAgent \
-     --env blockether.vis.evals.environment:HostEnvironment \
-     --model zai-coding-plan/glm-5.3-flash
-   ```
+For the Harbor concepts, read the Harbor [core concepts](https://docs.harborframework.com/core-concepts)
+and the [task overview](https://docs.harborframework.com/tasks/overview).
 
-The host environment runs each trial in a new git repository on your computer, without
-containers. The agent runs the installed `vis-agent` CLI with its own database for each trial.
-To test a Vis checkout, add `--ak source=PATH`. To test a raw native image, add
-`--ak native_bin=PATH`.
+## Step 1: Install the tools
 
-Each Vis task is a standard Harbor task folder:
+You need these items:
 
-| Path | Content |
+- Python 3.12 or later.
+- The Vis runtime with `vis-agent` on `PATH`. Read [Getting started](index.md).
+- A configured provider and model. Read [Configuration](configuration.md).
+
+Install the SDK. It always installs Harbor 0.24.0 with it:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install vis-agent
+harbor --version
+```
+
+The last command shows `0.24.0`. Each trial makes paid model calls. A task with one attempt
+costs one agent run.
+
+## Step 2: Write a task
+
+A task is one folder. The folder name is the task name. This example asks the agent to add one
+function to a Python file:
+
+```text
+tasks/
+  add-function/
+    task.toml
+    instruction.md
+    environment/workspace/m.py
+    tests/checks.json
+    tests/test.sh
+```
+
+`task.toml` sets the time limits in seconds:
+
+```toml
+[metadata]
+lang = "python"
+
+[agent]
+timeout_sec = 300.0
+
+[verifier]
+timeout_sec = 300.0
+```
+
+`instruction.md` is the prompt that the agent gets:
+
+```markdown
+In m.py add a new function c that returns 3, placed after b. Keep a and b unchanged.
+```
+
+`environment/workspace/` holds the seed files. Each trial starts with a copy of them in a new git
+repository. Here, `m.py` defines the functions `a` and `b`.
+
+`tests/checks.json` tells the grader what a correct result is:
+
+```json
+{
+  "want": {"m.py": ["def c(", "return 3", "def a(", "def b("]},
+  "wantnot": {}
+}
+```
+
+`tests/test.sh` runs the grader. Use it without changes:
+
+```bash
+#!/usr/bin/env bash
+# Grade the trial. The Vis host environment sets the VIS_HARBOR_* paths.
+set -euo pipefail
+exec "$VIS_HARBOR_PYTHON" -m blockether.vis.evals.grade "$VIS_HARBOR_TESTS/checks.json"
+```
+
+Make the script executable with `chmod +x tasks/add-function/tests/test.sh`. To write the same
+folder from Python, use [`write_task`](evals-api.md#write-a-task).
+
+### Choose the checks
+
+A trial passes only when all its checks pass. These are the checks that most tasks need:
+
+| Key | What it checks |
 |---|---|
-| `task.toml` | The agent and verifier time limits. |
-| `instruction.md` | The prompt of the trial. |
-| `environment/workspace/` | The seed files of the trial repository. |
-| `environment/workspace_filesystem.json` | Optional. Maps a filesystem root id to a workspace folder. |
-| `tests/checks.json` | The expected files, answer, code blocks and tools. |
-| `tests/test.sh` | Runs the SDK grader `python -m blockether.vis.evals.grade`. |
+| `want` | Each named file holds each text. |
+| `wantnot` | No named file holds any of its texts. |
+| `want_answer` | The final answer of the agent holds each text. |
+| `want_json_files` | Each named file is JSON Lines with exactly these rows, in this order. |
+| `want_tools` | The agent used each named tool. |
+| `forbid_tools` | The agent did not use any named tool. |
+| `max_total_output_chars` | The tool output of the run stayed below this size. |
 
-The grader writes `reward.json` with the verdict and one reward for each check. It also writes
-`grade.json` with the evidence. To review the tasks, run `python -m blockether.vis.evals.check`.
-To find the stage where failed trials went wrong, run `python -m blockether.vis.evals.judge`.
+The grader always checks that the agent finished without an error. The `e2e/` folder of the Vis
+repository has 40 tasks that use these checks. Read them for more examples.
+
+To test a project with its own test suite, write a standard Harbor verifier instead. Read the
+Harbor guide [Create a task](https://docs.harborframework.com/tutorials/create-a-task).
+
+## Step 3: Check the tasks
+
+A bad task gives wrong scores. For example, its instruction does not name a file that its checks
+need. Review each task with the Harbor check rubric:
+
+```bash
+python -m blockether.vis.evals.check tasks --provider zai-coding-plan --model glm-5.3-flash
+```
+
+The Vis agent reviews each task. The command shows a table of the checks and writes
+`check_report.json` in a job folder under `jobs/vis-check/`. Each check makes paid model calls. Correct each task that fails a check before you run it.
+
+## Step 4: Run the tasks
+
+Run all tasks of the folder with the Vis agent:
+
+```bash
+export HARBOR_TELEMETRY=off
+harbor run --path tasks \
+  --agent blockether.vis.evals.agent:VisAgent \
+  --env blockether.vis.evals.environment:HostEnvironment \
+  --model zai-coding-plan/glm-5.3-flash \
+  --jobs-dir jobs --job-name first --n-attempts 1
+```
+
+`HARBOR_TELEMETRY=off` stops Harbor from sending usage data. `--n-attempts` sets the trials for
+each task. More attempts give a smaller interval but cost more. To test a Vis checkout, add `--ak
+source=PATH`. To test a raw native image, add `--ak native_bin=PATH`.
+
+For all options of `harbor run`, read the Harbor guide [Run a
+job](https://docs.harborframework.com/jobs/run-a-job).
+
+## Step 5: Read the results
+
+Harbor writes one job folder. It holds one folder for each trial:
+
+```text
+jobs/first/
+  result.json
+  add-function__AbC123/
+    result.json
+    agent/trajectory.json
+    verifier/reward.json
+    verifier/grade.json
+```
+
+| File | Content |
+|---|---|
+| `result.json` | The reward, the times, the tokens and the Harbor exception of the trial. |
+| `agent/trajectory.json` | Each step of the agent in ATIF format: the code, the output and the errors. |
+| `verifier/reward.json` | `reward` is 1.0 for a pass and 0.0 for a failure. The other keys are the rewards of each check. |
+| `verifier/grade.json` | The evidence of the grader, for example the missing texts. |
+
+To see the trials in a browser, run `harbor view jobs`. Read the Harbor guide [View job
+results](https://docs.harborframework.com/results/view-job-results).
+
+## Step 6: Score and compare
+
+The [Evaluations API](evals-api.md) gives the next steps in Python:
+
+1. [Summarize the round](evals-api.md#summarize-a-round) from the job folder.
+2. [Score it](evals-api.md#score-a-round) with 95% intervals.
+3. [Find the failure causes](evals-api.md#find-the-failure-causes).
+4. [Compare it with another run](evals-api.md#compare-two-runs).
+
+The next sections explain the numbers that these steps give.
+
 ## How evaluations work
 
 A benchmark round is a set of Harbor jobs on one dataset, for example Terminal-Bench. Each job
@@ -135,8 +285,10 @@ uses Cohen's kappa, which corrects for agreement by chance.
 | Kappa from 0.6 to 0.8 | Use the causes with a review. Read the disagreements first. |
 | Kappa 0.8 or more | You can use the causes without a review. |
 
-Only a person can add a label. The same check works for an automatic judge of trajectories. The
-judge sorts each failure into a stage: `understand`, `write`, `verify` or `other`.
+Only a person can add a label. The same check works for an automatic judge of trajectories. To
+find the stage where failed trials went wrong, run `python -m blockether.vis.evals.judge
+jobs/first --provider P --model M`. The judge sorts each failure into a stage: `understand`,
+`write`, `verify` or `other`.
 
 ## Compare two runs
 
@@ -158,6 +310,8 @@ position also lists caveats, for example when the board rows ran more trials for
 
 ## See also
 
-- [Evaluations API](evals-api.md) — summarize, score, diagnose and compare rounds from Python or HTTP.
+- [Evaluations API](evals-api.md) — write, run, score, diagnose and compare from Python or HTTP.
 - [Python SDK](python-sdk.md) — install the SDK and read one run with its trajectory.
 - [Sessions](sessions.md) — follow one task while it runs.
+- [Harbor documentation](https://docs.harborframework.com/) — tasks, jobs, verifiers and the ATIF
+  trajectory format.

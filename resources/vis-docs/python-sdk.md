@@ -36,7 +36,7 @@ It requires an SDK and engine built from the same source revision. An older
 engine cannot execute application callbacks, even if you update only the Python
 package. Do not use these examples with an older published runtime.
 
-You need Python 3.11 or newer. Published SDKs are installed with the command
+You need Python 3.12 or newer. Published SDKs are installed with the command
 below. Version `0.2.3` introduced the earlier Agent API, not the new API shown here:
 
 ```bash

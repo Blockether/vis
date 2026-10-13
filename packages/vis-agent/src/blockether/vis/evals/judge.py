@@ -2,8 +2,7 @@
 
 Run it with ``python -m blockether.vis.evals.judge PATH --provider P --model M``.
 ``PATH`` is one trial directory or a Harbor job directory, for example a job of
-``harbor run``. Install the ``harbor`` extra first. Each judgement makes paid model
-calls.
+``harbor run``. Each judgement makes paid model calls.
 
 ``harbor analyze`` runs Claude Code in Docker. This module uses the same prompt,
 result validation and ``analysis.json`` file of Harbor. The Vis agent runs each

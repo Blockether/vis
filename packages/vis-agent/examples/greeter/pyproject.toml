@@ -3,7 +3,7 @@ name = "vis-greeter"
 version = "1.0.0"
 description = "Typed greeting tools and an optional greeting procedure."
 keywords = ["greetings", "example"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = ["vis-agent>=0.1.45"]
 
 [tool.vis]

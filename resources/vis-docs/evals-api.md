@@ -1,17 +1,21 @@
 # Evaluations API
 
-Summarize, score, diagnose and compare [evaluation](evals.md) rounds from your own program.
+Write and run evaluation tasks, then summarize, score, diagnose and compare the rounds from your
+own program. Read [Evaluations](evals.md) first for the steps by hand and the meaning of the
+numbers.
 
 <div data-variant="python">
 
-The `blockether.vis.evals` package reads Harbor job folders on your computer. Each
-`GatewayClient` method sends one evaluation request to a gateway and returns the parsed JSON answer.
+The `blockether.vis.evals` package does all the work on your computer. It writes task folders,
+runs them with Harbor and reads the Harbor job folders. It needs no gateway.
 
 </div>
 
 <div data-variant="http">
 
-The requests and answers are JSON. The gateway runs the same evaluation code as the Python SDK.
+The gateway routes score, diagnose and compare a round summary that you send. They run the same
+Python code as the SDK, on the gateway. They save nothing: each answer comes from the request
+body only.
 
 </div>
 
@@ -20,8 +24,9 @@ requests, select **HTTP** at the top of the page.
 
 ## When to use
 
-- **A script must score each new benchmark round.** [Summarize a round](#summarize-a-round),
-  then [score it](#score-a-round).
+- **A script must create benchmark tasks.** [Write a task](#write-a-task).
+- **A script must run the tasks and score each new round.** [Run the tasks](#run-the-tasks),
+  [summarize the round](#summarize-a-round), then [score it](#score-a-round).
 - **Your dashboard must show why tasks fail.** [Find the failure causes](#find-the-failure-causes).
 - **A reviewer labels failed attempts, and you must check the automatic causes.** [Check the
   labels](#check-the-labels).
@@ -30,29 +35,22 @@ requests, select **HTTP** at the top of the page.
 - **A report must show the public position of a round.** [Read the leaderboard
   position](#read-the-leaderboard-position).
 
-To learn what the scores, causes and verdicts mean, read [Evaluations](evals.md). To send the same
-requests from another language, select **HTTP** at the top of the page.
+To do the steps by hand, read [Evaluations](evals.md). To send the requests from another language,
+select **HTTP** at the top of the page.
 
 ## Before you start
 
 <div data-variant="python">
 
-[Install the SDK](python-sdk.md#install-the-sdk). Then set `VIS_GATEWAY_URL` and
-`VIS_GATEWAY_TOKEN` as in [Connect to a gateway and run a
-task](python-sdk.md#connect-to-a-gateway-and-run-a-task).
+Install the SDK with Python 3.12 or later. It installs Harbor 0.24.0 with it. To run tasks, also
+install the Vis runtime and configure a provider, as in [Evaluations](evals.md#step-1-install-the-tools).
 
-```python
-import os
-
-from blockether.vis.engine import GatewayClient
-
-with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_TOKEN"]) as client:
-    report = client.post_evals_report(body={"summary": summary})
-    print(report["pass_rate_percent"])
+```bash
+python -m pip install vis-agent
 ```
 
-The next examples are calls on this `client` inside the `with` block. The functions of
-`blockether.vis.evals` need no gateway.
+The examples run as one script in an empty folder. Each example uses the names of the examples
+before it.
 
 </div>
 
@@ -61,34 +59,40 @@ The next examples are calls on this `client` inside the `with` block. The functi
 Define the `vis_api` function from [Authenticate requests](http-api.md#authenticate-requests). The
 examples use it. Each request sends a JSON file with `--data @file.json`.
 
-</div>
+The routes need a round summary, and only the Python SDK makes one. The summary comes from the
+Harbor job folders, which are on the computer that ran Harbor. So you need the Python SDK there,
+also when another program sends the requests. Keep the summary and the answers yourself. The
+gateway does not store them.
 
-You also need the job folders of a finished Harbor round. Each trial folder must have its
-`result.json`. The trajectory and the verifier report make the summary more complete.
+</div>
 
 ## Operations
 
 <div data-variant="python">
 
-`GatewayClient` has one method for each evaluation route. You give the body as a Python `dict`.
-The package functions give the same results as typed objects.
+Each function of `blockether.vis.evals` gives a typed result. The gateway method sends the same
+operation to a gateway and gives the answer as a `dict`. Use it only when the gateway must do the
+work, for example from a computer without the job folders.
 
-| Task | Method | Package function |
+| Task | Function | Gateway method |
 |---|---|---|
-| List the tasks of a dataset | None | `read_tasks(dataset_dir)` |
-| Summarize a round | None | `round_summary(jobs_dir, dataset_dir, model=...)` |
-| Score a round | `post_evals_report(body=...)` | `bench_report(summary)` |
-| Find the failure causes | `post_evals_diagnose(body=...)` | `diagnose(summary, labels, limits)` |
-| Check the cause labels | `post_evals_labels(body=...)` | `cause_check(summary, labels, limits)` |
-| Check other labels | `post_evals_agreement(body=...)` | `agreement(items, ...)` |
-| Compare two runs | `post_evals_compare(body=...)` | `compare_cases(baseline, candidate)` |
-| Read the leaderboard position | `post_evals_leaderboard(body=...)` | `read_leaderboard(...)` |
+| Write a task | `write_task(dataset, name, instruction, checks)` | None |
+| Run the tasks | `run_tasks(path, model)` | None |
+| List the tasks of a dataset | `read_tasks(dataset)` | None |
+| Summarize a round | `round_summary(jobs_dir, dataset_dir, model=...)` | None |
+| Score a round | `bench_report(summary)` | `post_evals_report(body=...)` |
+| Find the failure causes | `diagnose(summary, labels, limits)` | `post_evals_diagnose(body=...)` |
+| Check the cause labels | `cause_check(summary, labels, limits)` | `post_evals_labels(body=...)` |
+| Check other labels | `agreement(items, ...)` | `post_evals_agreement(body=...)` |
+| Compare two runs | `compare_cases(baseline, candidate)` | `post_evals_compare(body=...)` |
+| Read the leaderboard position | `read_leaderboard(package, name, summary)` | `post_evals_leaderboard(body=...)` |
 
 </div>
 
 <div data-variant="http">
 
-Each route takes a JSON object and gives a JSON object.
+Each route takes a JSON object and gives a JSON object. No route writes or runs tasks or reads
+job folders. Do these steps with the Python SDK or the `harbor` command.
 
 | Task | Method and path |
 |---|---|
@@ -101,6 +105,85 @@ Each route takes a JSON object and gives a JSON object.
 
 </div>
 
+## Write a task
+
+<div data-variant="python">
+
+```python
+from blockether.vis.evals import write_task
+
+task = write_task(
+    "tasks",
+    "add-function",
+    "In m.py add a new function c that returns 3, placed after b. Keep a and b unchanged.",
+    {"want": {"m.py": ["def c(", "return 3", "def a(", "def b("]}},
+    files={"m.py": "def a():\n    return 1\n\n\ndef b():\n    return 2\n"},
+    agent_timeout_sec=300,
+)
+print(task.name, task.path, task.agent_timeout_sec)
+```
+
+The call writes the folder `tasks/add-function` with the files of [a
+task](evals.md#step-2-write-a-task). `files` maps each seed file path to its text. `checks` is the
+content of `tests/checks.json`. It raises `FileExistsError` when the task folder exists.
+
+</div>
+
+<div data-variant="http">
+
+No route writes a task, because Harbor reads the task folder on the computer that runs it. Write
+the files of [a task](evals.md#step-2-write-a-task) yourself, or run the Python example on that
+computer:
+
+```bash
+python3 - <<'EOF'
+from blockether.vis.evals import write_task
+
+write_task("tasks", "add-function", "In m.py add a new function c that returns 3.",
+           {"want": {"m.py": ["def c(", "return 3"]}},
+           files={"m.py": "def a():\n    return 1\n"})
+EOF
+```
+
+</div>
+
+## Run the tasks
+
+<div data-variant="python">
+
+```python
+from blockether.vis.evals import run_tasks
+
+job = run_tasks("tasks", "zai-coding-plan/glm-5.3-flash", jobs_dir="jobs", job_name="first")
+print(job)  # jobs/first
+```
+
+`path` is one task folder or a folder of tasks. The model is a `provider/model` route. `attempts`
+sets the trials for each task, and `concurrency` sets the trials that run at the same time. Each
+trial makes paid model calls. The call waits until all trials end.
+
+`agent_options` gives the options of the Vis agent. `{"source": "/path/to/vis"}` tests a Vis
+checkout, and `{"native_bin": "/path/to/vis"}` tests a raw native image. The call sets
+`HARBOR_TELEMETRY=off`, so Harbor sends no usage data.
+
+</div>
+
+<div data-variant="http">
+
+No route runs tasks. Run them with Harbor on the computer that has the task folders:
+
+```bash
+HARBOR_TELEMETRY=off harbor run --path tasks \
+  --agent blockether.vis.evals.agent:VisAgent \
+  --env blockether.vis.evals.environment:HostEnvironment \
+  --model zai-coding-plan/glm-5.3-flash --jobs-dir jobs --job-name first
+```
+
+</div>
+
+Harbor writes the job folder `jobs/first`. [Read the results](evals.md#step-5-read-the-results)
+describes its files.
+
 ## Summarize a round
 
 <div data-variant="python">
@@ -110,7 +193,7 @@ import json
 
 from blockether.vis.evals import round_summary
 
-summary = round_summary("rounds/main/jobs", "datasets/terminal-bench", model="zai/glm-5.3")
+summary = round_summary(job, "tasks", model="zai-coding-plan/glm-5.3-flash")
 print(summary["scored_tasks"], summary["solved_tasks"], summary["task_outcomes"])
 with open("summary.json", "w") as stream:
     json.dump(summary, stream)
@@ -120,10 +203,6 @@ with open("summary.json", "w") as stream:
 folder with a `task.toml` for each task. It is optional, but without it the total counts only the
 attempted tasks. `model` is the model name or the `provider/model` route in the trajectories. An
 attempt of another model does not count.
-
-The summary names the dataset with the Harbor `source` of the trials. It keeps the agent time
-limit of each task in `agent_limits`. `read_tasks(dataset_dir)` gives the same tasks as
-`HarborTask` objects, with their instructions and time limits.
 
 </div>
 
@@ -137,7 +216,7 @@ python3 - <<'EOF'
 import json
 from blockether.vis.evals import round_summary
 
-summary = round_summary("rounds/main/jobs", "datasets/terminal-bench", model="zai/glm-5.3")
+summary = round_summary("jobs/first", "tasks", model="zai-coding-plan/glm-5.3-flash")
 with open("summary.json", "w") as stream:
     json.dump(summary, stream)
 EOF
@@ -146,17 +225,20 @@ jq '{summary: .}' summary.json > report.json
 
 </div>
 
-The summary has the counts, `task_outcomes`, `usage_totals`, `repeated_final_errors` and one row
-in `trials` for each attempt.
+The summary is plain JSON. It has the counts, `task_outcomes`, `agent_limits`, `usage_totals`,
+`repeated_final_errors` and one row in `trials` for each attempt. It has no prompts, messages or
+logs, so you can share it.
 
 ## Score a round
 
 <div data-variant="python">
 
 ```python
-report = client.post_evals_report(body={"summary": summary, "round_name": "main"})
-print(report["pass_rate_percent"], report["pass_rate_ci95"])
-print(report["strict_pass_rate_percent"], report["detectable_change_points"])
+from blockether.vis.evals import bench_report
+
+report = bench_report(summary, "first")
+print(report.pass_rate_percent, report.pass_rate_ci95)
+print(report.strict_pass_rate_percent, report.detectable_change_points)
 ```
 
 </div>
@@ -171,19 +253,19 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/report" \
 </div>
 
 The answer has the [pass rates](evals.md#scores-and-intervals) with their 95% intervals, the
-`outcomes` and the usage. `round_name` is optional. It only names the round in the answer.
+`outcomes` and the usage. The round name is optional. It only names the round in the answer.
 
 ## Find the failure causes
 
 <div data-variant="python">
 
 ```python
-from blockether.vis.evals import agent_limits
+from blockether.vis.evals import agent_limits, diagnose
 
-limits = agent_limits("datasets/terminal-bench")
-diagnosis = client.post_evals_diagnose(body={"summary": summary, "limits": limits})
-for finding in diagnosis["findings"]:
-    print(finding["kind"], finding["task_count"], finding["title"])
+limits = agent_limits("tasks")
+diagnosis = diagnose(summary, None, limits)
+for finding in diagnosis.findings:
+    print(finding.kind, finding.task_count, finding.title)
 ```
 
 </div>
@@ -191,7 +273,7 @@ for finding in diagnosis["findings"]:
 <div data-variant="http">
 
 ```bash
-jq '{summary: ., limits: {"fix-git": 900}}' summary.json > diagnose.json
+jq '{summary: ., limits: {"add-function": 300}}' summary.json > diagnose.json
 vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/diagnose" \
   -H 'content-type: application/json' --data @diagnose.json
 ```
@@ -199,26 +281,27 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/diagnose" \
 </div>
 
 Each finding has a `kind`, a `title`, a `task_count`, a `share` of the scored tasks, a `detail` and
-the `tasks`. `limits` maps each task to its agent time limit in seconds. Without `limits`, the
+the `tasks`. The limits map each task to its agent time limit in seconds. Without limits, the
 answer uses the `agent_limits` of the summary. Without both, no attempt counts as an
-[early stop](evals.md#failure-causes). `labels` is optional. With labels, the answer
-also has a `label_check`.
+[early stop](evals.md#failure-causes). Labels are optional. With labels, the answer also has a
+`label_check`.
 
 ## Check the labels
 
 <div data-variant="python">
 
 ```python
-from blockether.vis.evals import load_labels, save_label
+from blockether.vis.evals import cause_check, load_labels, save_label
 
-save_label("rounds/main/labels.json", summary, "fix-git", "early_stops", "Stopped after the first test.")
-labels = load_labels("rounds/main/labels.json")
-check = client.post_evals_labels(body={"summary": summary, "labels": labels, "limits": limits})
-print(check["labelled"], check["kappa"], check["advice"])
+save_label("labels.json", summary, "add-function", "early_stops", "Stopped before the tests.")
+labels = load_labels("labels.json")
+check = cause_check(summary, labels, limits)
+print(check.labelled, check.kappa, check.advice)
 ```
 
-`save_label` saves one human cause in a labels file. It maps each trial name to its `cause` and
-`note`. A new label of the same attempt replaces the old one.
+`save_label` saves the cause that a person gave to one failed attempt. The labels file maps each
+trial name to its `cause` and `note`. A new label of the same attempt replaces the old one. A
+solved attempt raises `ValueError`.
 
 </div>
 
@@ -226,7 +309,7 @@ print(check["labelled"], check["kappa"], check["advice"])
 
 ```bash
 jq -n --slurpfile summary summary.json \
-  '{summary: $summary[0], labels: {"fix-git__a1b2": {cause: "early_stops"}}}' > labels.json
+  '{summary: $summary[0], labels: {"add-function__a1b2": {cause: "early_stops"}}}' > labels.json
 vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/labels" \
   -H 'content-type: application/json' --data @labels.json
 ```
@@ -243,15 +326,19 @@ To check other automatic results, for example the stages of a judge, send your o
 <div data-variant="python">
 
 ```python
-check = client.post_evals_agreement(
-    body={
-        "items": [{"name": "fix-git__a1b2", "automatic": "write", "human": "verify"}],
-        "source": "judge",
-        "noun": "judge stages",
-    }
+from blockether.vis.evals import agreement
+
+check = agreement(
+    [("add-function__a1b2", "write", "verify")],
+    source="judge",
+    noun="judge stages",
+    labeller="a person",
+    fix="Correct the judge rubric first.",
 )
-print(check["kappa"], check["advice"])
+print(check.kappa, check.advice)
 ```
+
+Each item is a trial name, the automatic result and the human result.
 
 </div>
 
@@ -259,35 +346,44 @@ print(check["kappa"], check["advice"])
 
 ```bash
 cat > agreement.json <<'EOF'
-{"items": [{"name": "fix-git__a1b2", "automatic": "write", "human": "verify"}],
+{"items": [{"name": "add-function__a1b2", "automatic": "write", "human": "verify"}],
  "source": "judge", "noun": "judge stages"}
 EOF
 vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/agreement" \
   -H 'content-type: application/json' --data @agreement.json
 ```
 
+`source`, `noun`, `labeller` and `fix` are optional.
+
 </div>
 
-`source`, `noun`, `labeller` and `fix` are optional. They change only the words of the advice.
+`source`, `noun`, `labeller` and `fix` change only the words of the advice.
 
 ## Compare two runs
 
 <div data-variant="python">
 
+Run the same tasks again after a change, then compare the two jobs:
+
 ```python
-from blockether.vis.evals import case_results, read_trials
+from blockether.vis.evals import case_results, compare_cases, read_trials
 
-def cases(directory):
-    return [
-        {"task": task, "agent": agent, "model": model, "passed": passed, "runs": runs}
-        for (task, agent, model), (passed, runs) in case_results(read_trials(directory)).items()
-    ]
-
-comparison = client.post_evals_compare(
-    body={"baseline": cases("rounds/before/jobs"), "candidate": cases("rounds/after/jobs")}
+second = run_tasks(
+    "tasks",
+    "zai-coding-plan/glm-5.3-flash",
+    job_name="second",
+    agent_options={"source": "/path/to/vis"},
 )
-print(comparison["verdict"], comparison["difference_points"], comparison["difference_ci95"])
+comparison = compare_cases(
+    case_results(read_trials(job)),
+    case_results(read_trials(second)),
+    baseline_name="first",
+    candidate_name="second",
+)
+print(comparison.verdict, comparison.difference_points, comparison.difference_ci95)
 ```
+
+`case_results` maps each case to its passed runs and all runs.
 
 </div>
 
@@ -295,35 +391,31 @@ print(comparison["verdict"], comparison["difference_points"], comparison["differ
 
 ```bash
 cat > compare.json <<'EOF'
-{"baseline": [{"task": "fix-git", "agent": "vis", "model": "zai/glm-5.3", "passed": 0, "runs": 1}],
- "candidate": [{"task": "fix-git", "agent": "vis", "model": "zai/glm-5.3", "passed": 1, "runs": 1}]}
+{"baseline": [{"task": "add-function", "agent": "vis", "model": "zai-coding-plan/glm-5.3-flash", "passed": 0, "runs": 1}],
+ "candidate": [{"task": "add-function", "agent": "vis", "model": "zai-coding-plan/glm-5.3-flash", "passed": 1, "runs": 1}]}
 EOF
 vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/compare" \
   -H 'content-type: application/json' --data @compare.json
 ```
 
+Each case has a `task`, an `agent`, a `model`, the `passed` runs and all `runs`.
+
 </div>
 
-Each case has a `task`, an `agent`, a `model`, the `passed` runs and all `runs`. The answer has the
-`verdict`, the rates, the difference with its interval, the `routes` tests, the `worse` and
-`better` cases and the `caveats`. `baseline_name` and `candidate_name` are optional names for the
-error messages.
+A case is one task with one agent and one model. The answer has the `verdict`, the rates, the
+difference with its interval, the `routes` tests, the `worse` and `better` cases and the
+`caveats`. The baseline and candidate names are optional names for the error messages.
 
 ## Read the leaderboard position
 
 <div data-variant="python">
 
 ```python
-board = client.post_evals_leaderboard(
-    body={
-        "package": "terminal-bench/terminal-bench",
-        "name": "4-0-0",
-        "summary": summary,
-        "round_name": "main",
-    }
-)
-print(board["title"], len(board["rows"]))
-print(board["vis"]["rank_by_pass_rate"], board["vis"]["rank_range"], board["vis"]["caveats"])
+from blockether.vis.evals import read_leaderboard
+
+board = read_leaderboard("terminal-bench/terminal-bench", "4-0-0", summary, "first")
+print(board.title, len(board.rows))
+print(board.vis.rank_by_pass_rate, board.vis.rank_range, board.vis.caveats)
 ```
 
 </div>
@@ -331,7 +423,7 @@ print(board["vis"]["rank_by_pass_rate"], board["vis"]["rank_range"], board["vis"
 <div data-variant="http">
 
 ```bash
-jq '{package: "terminal-bench/terminal-bench", name: "4-0-0", summary: ., round_name: "main"}' \
+jq '{package: "terminal-bench/terminal-bench", name: "4-0-0", summary: ., round_name: "first"}' \
   summary.json > leaderboard.json
 vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/leaderboard" \
   -H 'content-type: application/json' --data @leaderboard.json
@@ -339,24 +431,23 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/leaderboard" \
 
 </div>
 
-This is the only evaluation request that uses the network: the gateway reads the board from Harbor
-Hub. The required `package` and `name` select the board. Without a `summary`, the answer has only
-the board `rows`, and `vis` has no value.
+This is the only evaluation operation that uses the network: it reads the board from Harbor Hub.
+The package and the name select the board. Without a summary, the answer has only the board
+`rows`, and `vis` has no value.
 
 ## Handle errors
 
 <div data-variant="python">
 
 ```python
-from blockether.vis.engine import GatewayError
-
 try:
-    client.post_evals_report(body={})
-except GatewayError as error:
-    print(error.status, error.code)  # 400 invalid-evals-request
+    write_task("tasks", "Add Function", "Add c.", {"want": {"m.py": ["def c("]}})
+except ValueError as error:
+    print(error)  # task name must be lowercase words joined by hyphens: 'Add Function'
 ```
 
-A failed request raises `GatewayError` with the HTTP `status` and the error `code`.
+A function raises `ValueError` for an invalid value and `FileNotFoundError` for a missing folder.
+A gateway method raises `GatewayError` with the HTTP `status` and the error `code` of the table.
 
 </div>
 
@@ -376,6 +467,8 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/report" \
 
 ## See also
 
-- [Evaluations](evals.md) — what the scores, causes, labels and verdicts mean.
+- [Evaluations](evals.md) — the steps by hand and the meaning of the scores, causes and verdicts.
 - [Python SDK](python-sdk.md) — install the SDK, connect a client and handle gateway errors.
 - [HTTP API](http-api.md) — authentication, the OpenAPI document and gateway errors.
+- [Harbor documentation](https://docs.harborframework.com/) — tasks, jobs and the `harbor`
+  command.
