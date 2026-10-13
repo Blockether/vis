@@ -35,6 +35,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [charred.api :as json]
+            [com.blockether.imaging :as imaging]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as contract-wire]
             [com.blockether.vis-python-runtime :as runtime]
@@ -54,6 +55,7 @@
            (java.nio.charset StandardCharsets)
            (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)
+           (java.util Base64)
            (java.util.concurrent TimeUnit)))
 
 ;; ── the binary under test ────────────────────────────────────────────────────
@@ -1141,6 +1143,84 @@
                         (expect (some #(str/includes? % "NATIVE_INTERRUPT_RECOVERED 42") tools)
                                 (pr-str tools))
                         (expect (str/includes? output "NATIVE_INTERRUPT_COMPLETE") output))
+                      (finally (.stop server 0))))))
+           (finally (delete-tree! dir))))))
+
+(defdescribe
+  native-heif-attachment-test
+  ;; HEIC and AVIF decode inside the imaging cdylib through FFM. Only the linked
+  ;; image proves that the downcalls and the bundled library resource load there.
+  (it
+    "sends an attached HEIC photo and AVIF picture to the provider as PNG"
+    (let [dir
+          (temp-dir "vis-native-heif")
+
+          original-stream
+          @#'stream-body
+
+          original-whole
+          @#'whole-body
+
+          calls
+          (atom 0)
+
+          fixtures
+          [(str "for name in ('photo.heic', 'grid.avif'):\n"
+                "    with open(name, 'rb') as f:\n" "        a = attach(f.read(), filename=name)\n"
+                "    print('NATIVE_HEIF', name, a['media_type'])\n" "    show_attachment(a)\n")]
+
+          reply
+          (fn [stream? text]
+            (let [n (swap! calls inc)]
+              (if-let [code (get fixtures (dec n))]
+                (python-tool-body code n stream?)
+                ((if stream? original-stream original-whole) text))))]
+
+      (try (io/copy (io/file "test-native/com/blockether/vis/fixtures/grid-alpha.heic")
+                    (io/file dir "photo.heic"))
+           (io/copy (io/file "test-native/com/blockether/vis/fixtures/grid.avif")
+                    (io/file dir "grid.avif"))
+           (with-redefs-fn {#'stream-body #(reply true %) #'whole-body #(reply false %)}
+             (fn []
+               (let [{:keys [server asked port]} (start-stub-provider! "NATIVE_HEIF_COMPLETE")]
+                 (try (overlay! dir port)
+                      ;; A model name that the catalog knows takes images. With `stub-model`,
+                      ;; Vis sends a text description of each picture instead of its pixels.
+                      (let [config (io/file dir ".vis/config.yml")]
+                        (spit config (str/replace (slurp config) "stub-model" "gpt-4o")))
+                      (let [{:keys [finished? exit output]}
+                            (run-binary dir
+                                        [(.getAbsolutePath (require-binary))
+                                         (str "-Duser.home=" (.getAbsolutePath dir)) "--db"
+                                         (.getAbsolutePath (io/file dir "sessions")) "--raw"
+                                         "Attach the supplied pictures and finish."]
+                                        300)
+                            tools (provider-result-messages @asked)
+                            images (for [{:keys [body]} @asked
+                                         message (get (json/read-json body) "messages")
+                                         :let [content (get message "content")]
+                                         part (when (sequential? content) content)
+                                         :let [url (get-in part ["image_url" "url"])]
+                                         :when url]
+
+                                     (rest (re-matches #"data:([^;]+);base64,(.+)" url)))
+                            sizes (set (for [[_ data] images
+                                             :let [img (imaging/decode (.decode (Base64/getDecoder)
+                                                                                ^String data))]]
+
+                                         [(imaging/width img) (imaging/height img)]))]
+
+                        (expect finished? output)
+                        (expect (= 0 exit) output)
+                        (expect (some #(str/includes? % "NATIVE_HEIF photo.heic image/heic") tools)
+                                (pr-str tools))
+                        (expect (some #(str/includes? % "NATIVE_HEIF grid.avif image/avif") tools)
+                                (pr-str tools))
+                        (expect (seq images) "the provider never received a picture")
+                        (expect (every? #(= "image/png" (first %)) images)
+                                (pr-str (map first images)))
+                        (expect (= #{[1100 600] [64 48]} sizes) (pr-str sizes))
+                        (expect (str/includes? output "NATIVE_HEIF_COMPLETE") output))
                       (finally (.stop server 0))))))
            (finally (delete-tree! dir))))))
 
