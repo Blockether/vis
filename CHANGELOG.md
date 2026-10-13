@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.42] - 2026-10-13
+
 ### Fixed
 - `round_summary` counts only the task folders of a dataset, which have a `task.toml`. Before,
   a cache folder such as `.pytest_cache` in `e2e/` stopped the summary with `FileNotFoundError`.
