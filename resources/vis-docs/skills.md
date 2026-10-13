@@ -92,6 +92,10 @@ Later matches are ignored.
 | Registered extension packages | Qualified `package/skill` names |
 
 Project locations are also searched in parent directories up to the Git root.
+At the Git root, Vis skips nested projects that Git ignores. It also skips
+projects inside dependency directories, such as `.venv`, `venv`,
+`site-packages` and `node_modules`. Skills that installed packages ship are not loaded.
+
 Changes to local skills are loaded without restarting Vis. Skills bundled with
 an extension update when you run `/reload`. If reload fails, Vis keeps the last
 working version. A local skill with the same qualified name overrides the
