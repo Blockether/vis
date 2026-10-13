@@ -1,0 +1,10 @@
+{
+  "want": {
+    "src/app.clj": [
+      "defn farewell",
+      "bye ",
+      "defn greet"
+    ]
+  },
+  "wantnot": {}
+}

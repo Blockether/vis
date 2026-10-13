@@ -70,7 +70,8 @@ def test_leaderboard_reads_every_page(monkeypatch):
     monkeypatch.setattr(
         "blockether.vis.evals.leaderboard._post_json", lambda url, body: replies.pop()
     )
-    result = roundtrip("leaderboard", {})["result"]
+    body = {"package": "terminal-bench/terminal-bench", "name": "2-0-0"}
+    result = roundtrip("leaderboard", body)["result"]
     assert result["title"] == "Terminal-Bench 2.0"
     assert result["vis"] is None
 
@@ -83,6 +84,8 @@ def test_leaderboard_reads_every_page(monkeypatch):
         ("report", {}, "`summary` must be an object"),
         ("compare", {"baseline": [{}], "candidate": []}, "needs task, agent"),
         ("agreement", {"items": [{"name": "x"}]}, "needs name, automatic"),
+        ("leaderboard", {"name": "1-0-0"}, "`package` is required"),
+        ("leaderboard", {"package": "org/bench"}, "`name` is required"),
     ],
 )
 def test_invalid_bodies_give_an_error(operation, body, message):

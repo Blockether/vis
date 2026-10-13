@@ -119,6 +119,10 @@ jobs:
           EXPECTED_VERSION: ${{ inputs.version }}
         run: |
           python -m pip install dist/*.whl
+          # One leg tests the Harbor agent and environment of blockether.vis.evals.
+          if [ "${{ matrix.python }}" = "3.13" ]; then
+            python -m pip install "$(ls dist/*.whl)[harbor]"
+          fi
           cd "$RUNNER_TEMP"
           python - <<'PY'
           import importlib.metadata as metadata

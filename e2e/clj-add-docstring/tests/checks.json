@@ -1,0 +1,9 @@
+{
+  "want": {
+    "doc.clj": [
+      "Returns x times x.",
+      "defn squared"
+    ]
+  },
+  "wantnot": {}
+}

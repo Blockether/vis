@@ -1,0 +1,10 @@
+{
+  "want": {
+    "main.go": [
+      "func two(",
+      "return 2",
+      "func one("
+    ]
+  },
+  "wantnot": {}
+}

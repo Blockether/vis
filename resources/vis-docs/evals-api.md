@@ -314,7 +314,14 @@ error messages.
 <div data-variant="python">
 
 ```python
-board = client.post_evals_leaderboard(body={"summary": summary, "round_name": "main"})
+board = client.post_evals_leaderboard(
+    body={
+        "package": "terminal-bench/terminal-bench",
+        "name": "4-0-0",
+        "summary": summary,
+        "round_name": "main",
+    }
+)
 print(board["title"], len(board["rows"]))
 print(board["vis"]["rank_by_pass_rate"], board["vis"]["rank_range"], board["vis"]["caveats"])
 ```
@@ -324,7 +331,8 @@ print(board["vis"]["rank_by_pass_rate"], board["vis"]["rank_range"], board["vis"
 <div data-variant="http">
 
 ```bash
-jq '{summary: ., round_name: "main"}' summary.json > leaderboard.json
+jq '{package: "terminal-bench/terminal-bench", name: "4-0-0", summary: ., round_name: "main"}' \
+  summary.json > leaderboard.json
 vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/leaderboard" \
   -H 'content-type: application/json' --data @leaderboard.json
 ```
@@ -332,8 +340,8 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/leaderboard" \
 </div>
 
 This is the only evaluation request that uses the network: the gateway reads the board from Harbor
-Hub. `package` and `name` select the board. The default is `terminal-bench/terminal-bench` and
-`4-0-0`. Without a `summary`, the answer has only the board `rows`, and `vis` has no value.
+Hub. The required `package` and `name` select the board. Without a `summary`, the answer has only
+the board `rows`, and `vis` has no value.
 
 ## Handle errors
 

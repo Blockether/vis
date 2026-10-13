@@ -7063,7 +7063,8 @@ vis.register_extension(vis.Extension(
     "deduplicates and bounds discovery without truncating callable metadata or results"
     (with-fresh-loaded
       {"schema_probe.py"
-       (slurp "e2e/scenarios/extension-schema-discovery/files/.vis/extensions/schema_probe.py")}
+       (slurp
+         "e2e/extension-schema-discovery/environment/workspace/.vis/extensions/schema_probe.py")}
       (fn [result _]
         (expect (= 1 (:loaded result)))
         (let [ext
@@ -7391,7 +7392,7 @@ vis.register_extension(vis.Extension(
   [f]
   (with-loaded
     {"watchdog_probe.py"
-     (slurp "e2e/scenarios/extension-watchdog/files/.vis/extensions/watchdog_probe.py")}
+     (slurp "e2e/extension-watchdog/environment/workspace/.vis/extensions/watchdog_probe.py")}
     (fn [loaded _]
       (expect (zero? (:failed loaded)) (pr-str (pyx/load-failures)))
       (let [sandbox-root

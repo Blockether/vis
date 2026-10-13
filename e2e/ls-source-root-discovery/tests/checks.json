@@ -1,0 +1,16 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "packages/listing/src/demo",
+    "fixtures",
+    "glob filter verified"
+  ],
+  "want_tools": [
+    "ls"
+  ],
+  "want_forms": [
+    "ls(",
+    "pattern="
+  ]
+}

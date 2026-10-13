@@ -1,0 +1,12 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "187",
+    "23",
+    "charlie",
+    "18.5"
+  ],
+  "want_helper_reuse": 2,
+  "measurement": true
+}

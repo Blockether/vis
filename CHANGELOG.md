@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `e2e/` holds the Vis tasks as native Harbor task folders. Run them with `harbor run --path e2e`
+  and the SDK agent. The scenario compiler and the `e2e/vis_harbor` project are removed.
+- The SDK holds the Harbor agent `blockether.vis.evals.agent:VisAgent`, the host environment, the
+  grader, the task check and the judge. Install them with `vis-agent[harbor]`.
+- The Harbor agent needs a provider and a model. Without `source` or `native_bin`, it runs the
+  installed `vis-agent` CLI.
+- `read_leaderboard` and `/v1/evals/leaderboard` need `package` and `name`. They have no
+  Terminal-Bench default.
+
 ## [v0.2.41] - 2026-10-13
 
 ### Added

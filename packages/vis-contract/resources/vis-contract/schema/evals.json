@@ -211,10 +211,12 @@
       "type": "object",
       "properties": {
         "package": {
-          "type": "string"
+          "type": "string",
+          "description": "The Harbor Hub package of the board, for example terminal-bench/terminal-bench."
         },
         "name": {
-          "type": "string"
+          "type": "string",
+          "description": "The board name in the package, for example 4-0-0."
         },
         "summary": {
           "type": "object",
@@ -227,10 +229,14 @@
           ]
         }
       },
+      "required": [
+        "package",
+        "name"
+      ],
       "additionalProperties": false
     },
     "bench_report": {
-      "description": "The score of one Terminal-Bench round. Rates are in percent. Intervals are 95% intervals.",
+      "description": "The score of one benchmark round. Rates are in percent. Intervals are 95% intervals.",
       "type": "object",
       "properties": {
         "dataset": {

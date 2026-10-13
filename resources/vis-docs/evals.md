@@ -7,6 +7,7 @@ Harbor runs.
 
 ## When to use
 
+- **You want to run Vis on benchmark tasks.** Read [Run Vis in Harbor](#run-vis-in-harbor).
 - **You want the score of a benchmark round, with its uncertainty.** Read [Scores and
   intervals](#scores-and-intervals).
 - **You want to know why the agent failed tasks.** Read [Failure causes](#failure-causes).
@@ -21,6 +22,46 @@ Harbor runs.
 To watch a single session while it runs, use [Sessions](sessions.md). To run a prompt on a
 schedule, use [Automations](automations.md).
 
+## Run Vis in Harbor
+
+Vis is a native Harbor agent. Harbor runs any standard task folder with Vis, so you convert
+nothing. You need Python 3.12 or later, an installed Vis and a configured provider. Each trial
+makes paid model calls.
+
+1. Install the SDK with its Harbor extra:
+
+   ```bash
+   pip install 'vis-agent[harbor]'
+   ```
+
+2. Run a dataset folder, for example the `e2e` folder of the Vis repository:
+
+   ```bash
+   harbor run --path e2e \
+     --agent blockether.vis.evals.agent:VisAgent \
+     --env blockether.vis.evals.environment:HostEnvironment \
+     --model zai-coding-plan/glm-5.3-flash
+   ```
+
+The host environment runs each trial in a new git repository on your computer, without
+containers. The agent runs the installed `vis-agent` CLI with its own database for each trial.
+To test a Vis checkout, add `--ak source=PATH`. To test a raw native image, add
+`--ak native_bin=PATH`.
+
+Each Vis task is a standard Harbor task folder:
+
+| Path | Content |
+|---|---|
+| `task.toml` | The agent and verifier time limits. |
+| `instruction.md` | The prompt of the trial. |
+| `environment/workspace/` | The seed files of the trial repository. |
+| `environment/workspace_filesystem.json` | Optional. Maps a filesystem root id to a workspace folder. |
+| `tests/checks.json` | The expected files, answer, code blocks and tools. |
+| `tests/test.sh` | Runs the SDK grader `python -m blockether.vis.evals.grade`. |
+
+The grader writes `reward.json` with the verdict and one reward for each check. It also writes
+`grade.json` with the evidence. To review the tasks, run `python -m blockether.vis.evals.check`.
+To find the stage where failed trials went wrong, run `python -m blockether.vis.evals.judge`.
 ## How evaluations work
 
 A benchmark round is a set of Harbor jobs on one dataset, for example Terminal-Bench. Each job

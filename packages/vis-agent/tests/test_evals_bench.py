@@ -194,8 +194,13 @@ def test_read_leaderboard_reads_every_page_and_places_the_round():
         return {"rows": pages[payload["page"]], "pagination": {"total_pages": 2}}
 
     data = summary() | {"dataset": "terminal-bench/terminal-bench@4.0.0"}
-    board = read_leaderboard(summary=data, post=post)
+    board = read_leaderboard(
+        "terminal-bench/terminal-bench", "4-0-0", summary=data, post=post
+    )
     assert calls == [(LEADERBOARD_URL, 1), (LEADERBOARD_URL, 2)]
     assert [row.model for row in board.rows] == ["Model A", "Model B", "GLM"]
     assert board.vis is not None and board.vis.rank_by_pass_rate == 3
-    assert read_leaderboard(summary=summary(), post=post).vis is None
+    other = read_leaderboard(
+        "terminal-bench/terminal-bench", "4-0-0", summary(), post=post
+    )
+    assert other.vis is None

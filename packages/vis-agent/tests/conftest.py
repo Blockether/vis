@@ -1,5 +1,6 @@
 """Make the package importable from the checkout, and give every test a clean host."""
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -13,6 +14,15 @@ sys.modules.pop("blockether.vis._outside", None)
 
 import blockether.vis.extension as vis  # noqa: E402
 import pytest  # noqa: E402  (the path above is what makes `vis` importable)
+
+# The Harbor agent, environment, check and judge need the `harbor` extra.
+if importlib.util.find_spec("harbor") is None:
+    collect_ignore = [
+        "test_evals_agent.py",
+        "test_evals_check.py",
+        "test_evals_environment.py",
+        "test_evals_judge.py",
+    ]
 
 
 @pytest.fixture(autouse=True)

@@ -1,0 +1,33 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "council-thread-recovery-ok",
+    "council-root-marker",
+    "council-reply-marker"
+  ],
+  "want_tools": [
+    "council.publish",
+    "council.read"
+  ],
+  "want_council_recovery": {
+    "root_content": "council-root-marker",
+    "reply_content": "council-reply-marker"
+  },
+  "want_json_files": {
+    "handoff.json": [
+      {
+        "root_content": "council-root-marker",
+        "reply_content": "council-reply-marker"
+      }
+    ]
+  },
+  "forbid_tools": [
+    "patch",
+    "shell",
+    "council.publish_spawn"
+  ],
+  "max_form_output_chars": 6000,
+  "max_total_output_chars": 12000,
+  "want_requested_route": true
+}

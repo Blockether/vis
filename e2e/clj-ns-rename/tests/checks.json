@@ -1,0 +1,21 @@
+{
+  "want": {
+    "src/app.clj": [
+      "foo.core/h 1",
+      "fb/h 2",
+      "[foo.core :as fb]"
+    ],
+    "src/foo/core.clj": [
+      "(ns foo.core)",
+      "(defn h [x] (inc x))"
+    ]
+  },
+  "wantnot": {
+    "src/app.clj": [
+      "foo.bar"
+    ]
+  },
+  "want_tools": [
+    "patch"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "want": {
+    "d.py": [
+      "def keep(",
+      "def alsokeep("
+    ]
+  },
+  "wantnot": {
+    "d.py": [
+      "def drop(",
+      "return 2"
+    ]
+  }
+}

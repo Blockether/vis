@@ -1,4 +1,4 @@
-"""Score a Terminal-Bench round and find where it loses tasks.
+"""Score a Harbor benchmark round and find where it loses tasks.
 
 `round_summary` reads a round summary from Harbor job folders: the trials, the task
 outcomes and the usage of the round. Give that summary to `bench_report` for
@@ -78,7 +78,7 @@ class OutcomeCount:
 
 @dataclass(frozen=True)
 class BenchReport:
-    """The Terminal-Bench score of one round, with its usage.
+    """The benchmark score of one round, with its usage.
 
     `pass_rate_percent` divides solved tasks by scored tasks, by the latest scored
     attempt of each task. `strict_pass_rate_percent` divides them by all dataset tasks,

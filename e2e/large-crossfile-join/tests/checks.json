@@ -1,0 +1,25 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "failed_events": 171,
+    "affected_accounts": 145,
+    "top_three": [
+      {
+        "account_id": "acct-0078",
+        "failures": 2
+      },
+      {
+        "account_id": "acct-0090",
+        "failures": 2
+      },
+      {
+        "account_id": "acct-0186",
+        "failures": 2
+      }
+    ]
+  },
+  "max_form_output_chars": 900,
+  "max_total_output_chars": 1800,
+  "want_requested_route": true
+}

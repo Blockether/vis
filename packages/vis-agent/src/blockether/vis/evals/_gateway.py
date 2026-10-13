@@ -61,6 +61,13 @@ def _word(body: Mapping, key: str, default: str) -> str:
     return default if value is None else value
 
 
+def _required_text(body: Mapping, key: str) -> str:
+    value = _text(body, key)
+    if not value:
+        raise ValueError(f"`{key}` is required.")
+    return value
+
+
 def _cases(body: Mapping, key: str) -> dict[tuple[str, ...], tuple[int, int]]:
     rows = body.get(key)
     if not isinstance(rows, list):
@@ -133,8 +140,8 @@ def _agreement(body: Mapping):
 def _leaderboard(body: Mapping):
     summary = body.get("summary")
     return read_leaderboard(
-        _word(body, "package", "terminal-bench/terminal-bench"),
-        _word(body, "name", "4-0-0"),
+        _required_text(body, "package"),
+        _required_text(body, "name"),
         None if summary is None else _mapping(body, "summary"),
         _text(body, "round_name"),
     )

@@ -1,0 +1,16 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "left_only": 150,
+    "right_only": 150,
+    "mismatched_shared": 133,
+    "net_delta": 931
+  },
+  "max_form_output_chars": 1100,
+  "max_total_output_chars": 2200,
+  "want_requested_route": true,
+  "want_goal_complete": true,
+  "want_cache_read": true,
+  "want_cache_metrics": true
+}

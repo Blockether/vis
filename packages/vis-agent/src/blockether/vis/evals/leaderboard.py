@@ -267,13 +267,16 @@ def standing(
 
 
 def read_leaderboard(
-    package: str = "terminal-bench/terminal-bench",
-    name: str = "4-0-0",
+    package: str,
+    name: str,
     summary: Mapping | None = None,
     round_name: str | None = None,
     post: Callable[[str, dict], dict] | None = None,
 ) -> Leaderboard:
     """Read every page of one board, and place the round of `summary` on it.
+
+    `package` and `name` select the Harbor Hub board, for example
+    `terminal-bench/terminal-bench` and `4-0-0`.
 
     Sends one unauthenticated request for each page, at most 50. `post` sends one
     request and gives the parsed reply; the default uses `urllib`. `vis` is None

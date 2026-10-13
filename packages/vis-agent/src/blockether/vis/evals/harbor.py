@@ -338,8 +338,8 @@ def read_tasks(dataset: Path | str) -> tuple[HarborTask, ...]:
     """Read the tasks of a Harbor dataset directory, sorted by name.
 
     Each task is a folder with a `task.toml`. Other folders do not count. A directory
-    that does not exist raises `FileNotFoundError`. Compile the e2e scenarios into a
-    dataset with `python -m vis_harbor.dataset --out DIR`, then read it here.
+    that does not exist raises `FileNotFoundError`. The `e2e` directory of the Vis
+    repository is such a dataset.
     """
     root = Path(dataset)
     if not root.is_dir():

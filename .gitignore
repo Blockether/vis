@@ -117,6 +117,3 @@ own_your_harness.pptx
 # Call journal written by the e2e schema-probe fixture when it runs from this
 # checkout instead of a temporary workspace.
 /schema-calls.jsonl
-
-# The uv environment of the e2e Harbor project.
-/e2e/.venv/

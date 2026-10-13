@@ -27,6 +27,8 @@ classifiers = [
 
 [project.optional-dependencies]
 docs = ["pdoc==16.0.0"]
+# The Harbor agent, host environment, check and judge of `blockether.vis.evals`.
+harbor = ["harbor==0.24.0; python_version >= '3.12'"]
 
 [project.urls]
 Homepage = "https://vis.blockether.com"
