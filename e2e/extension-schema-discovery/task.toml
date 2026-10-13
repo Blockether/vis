@@ -1,3 +1,5 @@
+artifacts = ["schema-calls.jsonl"]
+
 [metadata]
 lang = "python"
 

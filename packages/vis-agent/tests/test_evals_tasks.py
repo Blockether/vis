@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import sys
+import tomllib
 from pathlib import Path
 
 import blockether.vis.evals as evals
@@ -186,6 +187,43 @@ def test_write_task_keeps_an_existing_task(tmp_path):
     with pytest.raises(FileExistsError):
         write_add_c(tmp_path, "add-c", "Second.")
     assert (tmp_path / "add-c/instruction.md").read_text() == "First.\n"
+
+
+def task_files(folder: Path) -> dict[str, bytes]:
+    """Every file of a task folder, without Python caches, keyed by its path."""
+    return {
+        str(path.relative_to(folder)): path.read_bytes()
+        for path in sorted(folder.rglob("*"))
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+
+
+@pytest.mark.parametrize("task", read_tasks(E2E), ids=lambda task: task.name)
+def test_write_task_writes_each_e2e_task_again(tmp_path, task):
+    # The e2e tasks are the reference for `write_task`: each one comes back byte for byte.
+    folder = task.path
+    workspace = folder / "environment/workspace"
+    roots = folder / "environment/workspace_filesystem.json"
+    written = write_task(
+        tmp_path,
+        task.name,
+        task.instruction,
+        json.loads((folder / "tests/checks.json").read_text()),
+        files={
+            name.removeprefix("environment/workspace/"): data.decode()
+            for name, data in task_files(folder).items()
+            if name.startswith("environment/workspace/")
+        },
+        agent_timeout_sec=task.agent_timeout_sec or 300.0,
+        verifier_timeout_sec=task.verifier_timeout_sec or 300.0,
+        metadata=dict(task.metadata),
+        artifacts=tomllib.loads((folder / "task.toml").read_text()).get(
+            "artifacts", ()
+        ),
+        filesystem_roots=json.loads(roots.read_text()) if roots.exists() else None,
+    )
+    assert workspace.is_dir()
+    assert task_files(written.path) == task_files(folder)
 
 
 def test_run_tasks_refuses_a_folder_without_tasks(tmp_path):

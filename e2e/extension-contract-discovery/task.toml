@@ -1,3 +1,5 @@
+artifacts = ["contract-calls.jsonl", "contract-receipts.jsonl"]
+
 [metadata]
 lang = "python"
 

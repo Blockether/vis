@@ -126,8 +126,12 @@ print(task.name, task.path, task.agent_timeout_sec)
 The call writes the folder `tasks/add-function` with the files of [a
 task](evals.md#step-2-write-a-task). `files` maps each seed file path to its text. `checks` is the
 content of `tests/checks.json`. It raises `FileExistsError` when the task folder exists.
+
 `artifacts` lists the workspace files that Harbor copies to the trial folder, for example the
-record of a [mock extension](evals.md#replace-an-extension-with-a-mock).
+record of a [mock extension](evals.md#replace-an-extension-with-a-mock). `filesystem_roots` maps
+each filesystem root id to a workspace folder, for example `{"library": "library"}`. The trial
+registers each root in `vis.yml`, and the agent finds it with `ls`. The `e2e/py-project-paths`
+task uses it.
 
 </div>
 

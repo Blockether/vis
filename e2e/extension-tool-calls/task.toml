@@ -1,3 +1,5 @@
+artifacts = ["front-desk-calls.jsonl", "seat-desk-calls.jsonl"]
+
 [metadata]
 lang = "python"
 

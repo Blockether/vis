@@ -1,3 +1,5 @@
+artifacts = ["issue-events.jsonl"]
+
 [metadata]
 lang = "python"
 

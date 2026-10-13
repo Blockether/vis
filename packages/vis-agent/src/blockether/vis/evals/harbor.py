@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
+from .grade import WORKSPACE_FILESYSTEM_FILE
 from .stats import cluster_interval
 
 __all__ = [
@@ -411,6 +412,7 @@ def write_task(
     verifier_timeout_sec: float = 300.0,
     metadata: Mapping[str, str | int | float | bool] | None = None,
     artifacts: Sequence[str] = (),
+    filesystem_roots: Mapping[str, str] | None = None,
 ) -> HarborTask:
     """Write the Vis task `name` in the folder `dataset` and return it.
 
@@ -419,9 +421,10 @@ def write_task(
     example `{"want": {"m.py": ["def c("]}}`. `files` maps each seed file path to its
     text. The paths are relative to `environment/workspace/`. `artifacts` lists the
     workspace files that Harbor copies to `artifacts/` in the trial folder after the
-    check, for example the call record of a mock extension. The task gets
-    `tests/test.sh`, which runs the grader. An existing task folder, an invalid name,
-    empty checks or a path outside the workspace raise an error.
+    check, for example the call record of a mock extension. `filesystem_roots` maps each
+    filesystem root id to a workspace folder; the trial registers them in `vis.yml`. The
+    task gets `tests/test.sh`, which runs the grader. An existing task folder, an invalid
+    name, empty checks or a path outside the workspace raise an error.
     """
     if not TASK_NAME.fullmatch(name):
         raise ValueError(
@@ -433,6 +436,9 @@ def write_task(
         raise ValueError("instruction must not be empty")
     seeds = {_seed_path(path): text for path, text in (files or {}).items()}
     kept = [str(_seed_path(path)) for path in artifacts]
+    roots = {
+        root: str(_seed_path(path)) for root, path in (filesystem_roots or {}).items()
+    }
     lines = [
         f"{key} = {_toml_value(key, value)}" for key, value in (metadata or {}).items()
     ]
@@ -462,10 +468,14 @@ def write_task(
         target = workspace.joinpath(*path.parts)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
+    if roots:
+        (workspace.parent / WORKSPACE_FILESYSTEM_FILE).write_text(
+            json.dumps(roots, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
     tests = task / "tests"
     tests.mkdir()
     (tests / CHECKS_FILE).write_text(
-        json.dumps(checks, indent=2) + "\n", encoding="utf-8"
+        json.dumps(checks, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     script = tests / TEST_SCRIPT_FILE
     script.write_text(GRADER_SCRIPT, encoding="utf-8")
