@@ -12,7 +12,7 @@
    So this namespace does exactly one thing: turn bytes a provider REFUSES into
    the same picture in a container it ACCEPTS.
 
-     * raster (BMP, TIFF, HEIC or anything the decoder reads) -> PNG, 1:1
+     * raster (BMP, TIFF, HEIC, AVIF or anything the decoder reads) -> PNG, 1:1
      * vector (`.svg` / gzipped `.svgz`)                      -> rendered PNG
      * video (`.mp4` / `.mov`)                                -> animated GIF
 
@@ -56,8 +56,8 @@
 
 (def svg-media-types
   "Vector containers vis RASTERIZES on the way in instead of refusing. No
-   provider reads SVG -- it is markup, not pixels -- but unlike an AVIF the
-   pixels are recoverable: the document is rendered here, so an attached SVG
+   provider reads SVG -- it is markup, not pixels -- but unlike a corrupt raster
+   the pixels are recoverable: the document is rendered here, so an attached SVG
    chart or a dropped icon still reaches the model."
   #{"image/svg+xml" "image/svg" "application/svg+xml" "text/svg+xml"})
 
@@ -177,8 +177,8 @@
 (defn- transcode-png
   "Decode `data` and write it back out as PNG, pixel for pixel -- same
    dimensions, no resample, no lossy step. `{:reason <why>}` -- the decoder's
-   own words -- when the payload cannot be decoded (AVIF, or an image
-   past the decoder's own memory limit) or cannot be encoded."
+   own words -- when the payload cannot be decoded (a corrupt raster, or an
+   image past the decoder's own memory limit) or cannot be encoded."
   [^bytes data]
   (try (with-open [im (imaging/decode data)]
          (let [out (imaging/encode im :png)
@@ -232,7 +232,7 @@
    one, and an undecodable payload is exactly the thing it must catch. Returns
    the same map as [[rasterize-svg]]; `{:reason <why>}` when the payload can be
    turned into pixels by neither the decoder nor the SVG renderer (a corrupt
-   raster, AVIF, an image the decoder refuses as too large); nil when
+   raster, an image the decoder refuses as too large); nil when
    conversion is DISABLED -- the caller skips it either way, but a reason is
    something it can SHOW."
   [^bytes data media-type]

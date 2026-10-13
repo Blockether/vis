@@ -135,12 +135,13 @@ describe('the FILES door', () => {
     expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mpeg']);
   });
 
-  it('takes iPhone, generic and camera HEIF photos, with or without a platform type', async () => {
+  it('takes iPhone, generic, camera and AVIF HEIF photos, with or without a platform type', async () => {
     filePicker.pickFiles.mockResolvedValue({
       files: [
         picked('IMG_0001.HEIC', ''),
         picked('IMG_0002.heif', 'image/heif'),
         picked('DSC_0003.HIF', ''),
+        picked('render.avif', ''),
       ],
     });
 
@@ -151,6 +152,7 @@ describe('the FILES door', () => {
       'image/heic',
       'image/heif',
       'image/heif',
+      'image/avif',
     ]);
   });
 

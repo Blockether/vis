@@ -274,7 +274,7 @@
                                 ;; names rather than bytes.
                                 :media-types (into ["image/jpeg" "image/png" "image/gif"
                                                     "image/webp" "image/bmp" "image/heic"
-                                                    "image/heif"]
+                                                    "image/heif" "image/avif"]
                                                    (concat (sort attachments/human-only-media-types)
                                                            (sort attachments/video-media-types)
                                                            (sort attachments/audio-media-types)))

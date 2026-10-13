@@ -103,9 +103,10 @@
                  (att/detect-image-mime (byte-array (map unchecked-byte
                                                          [0 0 0 16 0x66 0x74 0x79 0x70 0x6d 0x69
                                                           0x66 0x31 0 0 0 0])))))
-      (expect (nil? (att/detect-image-mime (byte-array (map unchecked-byte
-                                                            [0 0 0 16 0x66 0x74 0x79 0x70 0x61 0x76
-                                                             0x69 0x66 0 0 0 0])))))
+      (expect (= "image/avif"
+                 (att/detect-image-mime (byte-array (map unchecked-byte
+                                                         [0 0 0 16 0x66 0x74 0x79 0x70 0x61 0x76
+                                                          0x69 0x66 0 0 0 0])))))
       (expect (false? (video/mp4? (byte-array (map unchecked-byte
                                                    [0x89 0x50 0x4e 0x47 13 10 26 10])))))
       (expect (false? (video/mp4? (byte-array (map unchecked-byte

@@ -56,3 +56,18 @@
     "vmYKxuQHxKqksAa76xWUL+IrafDZPEZ85Unw"))
 
 (def tiny-heic-bytes (.decode (Base64/getDecoder) ^String tiny-heic-b64))
+
+;; A real 526-byte AVIF still from libheif `heif-enc`: 64x48, AV1 4:2:0, with red,
+;; green, blue and light grey quarters and an AV1 alpha plane. Major brand `avif`.
+(def tiny-avif-b64
+  (str
+    "AAAAHGZ0eXBhdmlmAAAAAG1pZjFhdmlmbWlhZgAAAYRtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAA"
+    "AAAAADRpbG9jAAAAAERAAAIAAQAAAAABqAABAAAAAAAAADwAAgAAAAAB5AABAAAAAAAAACoAAAA4aWluZgAAAAAAAgAAABVp"
+    "bmZlAgAAAAABAABhdjAxAAAAABVpbmZlAgAAAAACAABhdjAxAAAAAA5waXRtAAAAAAABAAAAw2lwcnAAAACdaXBjbwAAAAxh"
+    "djFDgQAMAAAAABNjb2xybmNseAABAA0ABoAAAAAUaXNwZQAAAAAAAABAAAAAMAAAABBwaXhpAAAAAAMICAgAAAAMYXYxQ4EA"
+    "HAAAAAAOcGl4aQAAAAABCAAAADhhdXhDAAAAAHVybjptcGVnOm1wZWdCOmNpY3A6c3lzdGVtczphdXhpbGlhcnk6YWxwaGEA"
+    "AAAAHmlwbWEAAAAAAAAAAgABBIECAwQAAgSFAwaHAAAAGmlyZWYAAAAAAAAADmF1eGwAAgABAAEAAABubWRhdBIACgkYFX+9"
+    "ogIaDQgyLUTx4eGZQGGGH4QAAADCERSzz9A7HVmdJOZP7XLgcz5h5X+vrx6hd/0huRLw8BIACgYYFX+9hUAyHhNACCEAtHIt"
+    "6/4OmpoHq/8//+6F1XNVzVc1nlqagA=="))
+
+(def tiny-avif-bytes (.decode (Base64/getDecoder) ^String tiny-avif-b64))

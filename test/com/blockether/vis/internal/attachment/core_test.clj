@@ -290,9 +290,16 @@
           (expect (= "image/heic" (attachments/detect-image-mime (ftyp-head brand))) brand)))
     (it "finds a HEIF brand among the compatible brands"
         (expect (= "image/heif" (attachments/detect-image-mime (ftyp-brands "miaf" "heic")))))
-    (it "keeps AVIF out, also when it lists a HEIF brand"
-        (expect (nil? (attachments/detect-image-mime (ftyp-head "avif"))))
-        (expect (nil? (attachments/detect-image-mime (ftyp-brands "avif" "mif1" "miaf"))))))
+    (it "names an AV1 file image/avif, by its major or a compatible brand"
+        (expect (= "image/avif" (attachments/detect-image-mime fixtures/tiny-avif-bytes)))
+        (expect (nil? (attachments/detect-video-mime fixtures/tiny-avif-bytes)))
+        (doseq [brand ["avif" "avis"]]
+          (expect (= "image/avif" (attachments/detect-image-mime (ftyp-head brand))) brand))
+        (expect (= "image/avif"
+                   (attachments/detect-image-mime (ftyp-brands "mif1" "avif" "miaf")))))
+    (it "names an H.264, JPEG or uncompressed HEIF file image/heif"
+        (doseq [brand ["avci" "avcs" "jpeg" "unif"]]
+          (expect (= "image/heif" (attachments/detect-image-mime (ftyp-head brand))) brand))))
   (describe "intake"
             (it
               "attaches a dropped .HEIC path byte for byte"
@@ -1264,7 +1271,9 @@
                ["heic re-containered" {:base64 fixtures/tiny-heic-b64 :media-type "image/heic"}
                 [32 24]]
                ["generic heif re-containered"
-                {:base64 (b64 (generic-heif)) :media-type "image/heif"} [32 24]]]]
+                {:base64 (b64 (generic-heif)) :media-type "image/heif"} [32 24]]
+               ["avif re-containered" {:base64 fixtures/tiny-avif-b64 :media-type "image/avif"}
+                [64 48]]]]
         (let [wired (attachments/wire-image att)]
           (expect (= "image/png" (:media-type wired)) label)
           (expect (= expected (decoded-size wired)) label))))

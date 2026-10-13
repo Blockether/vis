@@ -47,15 +47,22 @@ def __vis_install_attach__():
         if starts([0x42, 0x4D]):
             return "image/bmp"
         # HEIF: a HEIF brand as the major or a compatible brand. An HEVC major
-        # brand (an iPhone photo, a camera .HIF) is image/heic, else image/heif.
-        # AVIF uses the same container, and its major brand keeps it out.
+        # brand (an iPhone photo, a camera .HIF) is image/heic. An AV1 brand
+        # makes it image/avif. Any other HEIF file is image/heif.
         box = bytes(data[:256])
-        if box[4:8] == b"ftyp" and box[8:12].lower() not in (b"avif", b"avis"):
+        if box[4:8] == b"ftyp":
             end = max(16, min(len(box), int.from_bytes(box[:4], "big")))
-            brands = [box[8:12]] + [box[i : i + 4] for i in range(16, end - 3, 4)]
+            brands = [
+                b.lower()
+                for b in [box[8:12]] + [box[i : i + 4] for i in range(16, end - 3, 4)]
+            ]
             hevc = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx")
-            if any(b.lower() in hevc + (b"mif1", b"msf1") for b in brands):
-                return "image/heic" if box[8:12].lower() in hevc else "image/heif"
+            avif = (b"avif", b"avis")
+            other = (b"mif1", b"msf1", b"avci", b"avcs", b"jpeg", b"unif")
+            if any(b in hevc + avif + other for b in brands):
+                if brands[0] in hevc:
+                    return "image/heic"
+                return "image/avif" if any(b in avif for b in brands) else "image/heif"
         if starts([0x25, 0x50, 0x44, 0x46]):
             return "application/pdf"
         if starts([0x50, 0x4B, 0x03, 0x04]) or starts([0x50, 0x4B, 0x05, 0x06]):
