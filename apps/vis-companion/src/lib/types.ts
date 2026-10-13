@@ -294,6 +294,8 @@ export interface SessionUsage {
 export interface SlashCommand {
   name: string;
   doc: string;
+  /** Set by the gateway when the command belongs in the prompt history, such as `/goal`. */
+  saveable?: boolean;
 }
 
 // One ranked file row from GET /v1/sessions/:sid/suggest?kind=file — the same

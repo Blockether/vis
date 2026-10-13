@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `.HIF` files attach too.
 - You can attach AVIF images (`image/avif`) and HEIF files with AV1, H.264, JPEG or uncompressed
   pictures. Vis sends them to the model as PNG.
+- In the Companion app, ↑ in the message box shows your previous message in the session, and ↓
+  goes forward again to your draft, like the terminal app (#372).
 
 ## [v0.2.42] - 2026-10-13
 

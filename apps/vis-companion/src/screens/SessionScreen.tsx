@@ -88,6 +88,14 @@ import { sheetDismissed } from '../lib/image-file';
 import { AttachImageContext } from '../lib/attach-image';
 import type { GatewayClient } from '../lib/gateway';
 import { holdKeyboardAcrossSheet, isEnterSendKeyboard, keepKeyboard } from '../lib/keyboard';
+import {
+  isCaretOnFirstLine,
+  isCaretOnLastLine,
+  promptHistory,
+  stepPromptRecall,
+  type PromptHistorySource,
+  type PromptRecall,
+} from '../lib/prompt-history';
 import { isLayerUp } from '../lib/edge-back';
 import {
   GatewayError,
@@ -986,6 +994,19 @@ export function SessionScreen({
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(FALLBACK_SLASHES);
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashDismissed, setSlashDismissed] = useState(false);
+  // Earlier prompts for ↑/↓ recall, and the current recall position (#372).
+  const recallHistory = useMemo(() => {
+    const saveable = new Set(
+      slashCommands
+        .filter((command) => command.saveable)
+        .map((command) => command.name.replace(/^\//, '').toLowerCase()),
+    );
+    const sources: PromptHistorySource[] = [...turns];
+    if (runningTurn && !turns.some((turn) => turn.turn_id === runningTurn.id))
+      sources.push({ request: runningTurn.request, request_kind: runningTurn.requestKind });
+    return promptHistory(sources, saveable);
+  }, [slashCommands, turns, runningTurn]);
+  const promptRecallRef = useRef<PromptRecall | null>(null);
   const [caret, setCaret] = useState(0);
   const [fileSuggestions, setFileSuggestions] = useState<FileSuggestion[]>([]);
   const [fileIndex, setFileIndex] = useState(0);
@@ -5560,6 +5581,53 @@ export function SessionScreen({
                       event.preventDefault();
                       setSlashDismissed(true);
                       return;
+                    }
+                    // Shell-like recall (#372): ↑ on the first line brings back the
+                    // previous prompt, ↓ on the last line steps forward to the draft.
+                    // The open menus above own the arrows first.
+                    if (
+                      (event.key === 'ArrowUp' || event.key === 'ArrowDown') &&
+                      !event.nativeEvent.isComposing &&
+                      !event.altKey &&
+                      !event.ctrlKey &&
+                      !event.metaKey &&
+                      !event.shiftKey
+                    ) {
+                      const editor = event.currentTarget;
+                      const value = editor.value;
+                      const up = event.key === 'ArrowUp';
+                      const atEdge = (up ? isCaretOnFirstLine : isCaretOnLastLine)(
+                        value,
+                        editor.selectionStart,
+                        editor.selectionEnd,
+                      );
+                      // A send or an edit ends the recall: the shown text is no longer
+                      // the recalled prompt.
+                      const recall =
+                        promptRecallRef.current &&
+                        recallHistory[promptRecallRef.current.index] === value
+                          ? promptRecallRef.current
+                          : null;
+                      const step = atEdge
+                        ? stepPromptRecall(recallHistory, recall, up ? -1 : 1, value)
+                        : null;
+                      if (step) {
+                        event.preventDefault();
+                        promptRecallRef.current = step.recall;
+                        setPrompt(step.text);
+                        editor.setSelectionRange(step.text.length, step.text.length);
+                        recordComposerDraft(step.text);
+                        // A recalled command does not open the menus; the draft does.
+                        const recalled = step.recall !== null;
+                        startTransition(() => {
+                          setCaret(step.text.length);
+                          setSlashIndex(0);
+                          setSlashDismissed(recalled);
+                          setFileIndex(0);
+                          setFileDismissed(recalled);
+                        });
+                        return;
+                      }
                     }
                     // On a phone Return is the NEW LINE key: there is no Shift to
                     // hold on an on-screen keyboard, so a submitting Enter makes a
