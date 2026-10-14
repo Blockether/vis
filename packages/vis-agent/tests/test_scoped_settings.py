@@ -68,6 +68,23 @@ def test_parent_nests_a_setting():
         vis.Setting(id="test_detail", label="Test detail", default=False, parent=" ")
 
 
+# Regression for #369: a setting declares a change hook that the host calls.
+def test_on_change_declares_a_callable_hook():
+    def record(old, new, scope):
+        return None
+
+    plain = vis.Setting(id="test_feature", label="Test feature", default=True)
+    hooked = vis.Setting(
+        id="test_feature", label="Test feature", default=True, on_change=record
+    )
+    assert "on_change" not in plain._spec()
+    assert hooked._spec()["on_change"] is record
+    with pytest.raises(TypeError):
+        vis.Setting(
+            id="test_feature", label="Test feature", default=True, on_change="record"
+        )
+
+
 # Regression for #322 and #323: a 300-character description is valid, and a
 # longer one names the setting, the field, the rule and the limit.
 def test_description_limit_and_actionable_error():

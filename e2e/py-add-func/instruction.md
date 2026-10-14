@@ -1,0 +1,1 @@
+In m.py add a new function c that returns 3, placed after b. Keep a and b unchanged.

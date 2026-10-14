@@ -36,6 +36,60 @@
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
 
+(def tool-selection-setting
+  "Session setting that keeps the tool list a session was created with. The colon keeps
+   it apart from snake_case toggle ids."
+  "launch:tools")
+
+(defn- tool-pattern
+  "Compile one tool name from a tool list. `*` matches any characters."
+  [s]
+  (re-pattern (str/join ".*" (map #(java.util.regex.Pattern/quote %) (str/split s #"\*" -1)))))
+
+(defn tool-selection
+  "Parse a tool list from `--tools`. Names keep only those tools of the extensions that
+   they name, `-name` entries turn those tools off, and `*` matches any characters. Return
+   `{:keep patterns :names names}`, `{:drop patterns :names names}` or nil. Throw a 400
+   error for an empty or mixed list."
+  [names]
+  (when (some? names)
+    (let [names
+          (into [] (comp (map (comp str/trim str)) (remove str/blank?)) names)
+
+          dropped
+          (filterv #(str/starts-with? % "-") names)]
+
+      (cond (empty? names)
+            (throw (ex-info (str "Name at least one tool. To turn off every optional extension, "
+                                 "use --extensions none.")
+                            {:status 400 :type :tool/empty-selection}))
+            (empty? dropped) {:keep (mapv tool-pattern names) :names names}
+            (= (count dropped) (count names)) (let [names (mapv #(subs % 1) dropped)]
+                                                {:drop (mapv tool-pattern names) :names names})
+            :else (throw
+                    (ex-info
+                      "Use either tool names to keep or -names to turn off, not both in one list."
+                      {:status 400 :type :tool/mixed-selection}))))))
+
+(defn tool-on?
+  "False when `selection` turns off `tool`. `tools` are the names of every tool of the
+   extension that owns `tool`: a keep list changes only extensions whose tools it names."
+  [selection tools tool]
+  (let [hit? (fn [pattern tool-name]
+               (boolean (re-matches pattern tool-name)))]
+    (cond (:drop selection) (not-any? #(hit? % tool) (:drop selection))
+          (:keep selection) (or (boolean (some #(hit? % tool) (:keep selection)))
+                                (not-any? (fn [pattern]
+                                            (some #(hit? pattern %) tools))
+                                          (:keep selection)))
+          :else true)))
+
+(defn- ext-tool-names
+  "The names that `python_execution` binds for the symbols of `ext`."
+  [ext]
+  (mapv #(env/sym->py-name (extension/symbol-binding ext (:ext.symbol/symbol %)))
+        (extension/ext-symbols ext)))
+
 (defn sync-extension-symbols-into!
   "The symbol sync itself, against a context handed in EXPLICITLY.
 
@@ -51,13 +105,21 @@
                  []))
 
         active-set
-        (set (map :ext/name active-extensions))]
+        (set (map :ext/name active-extensions))
+
+        selection
+        (some-> (:config/tools environment)
+                deref)]
 
     (doseq [ext
             installed
 
             :let [by-sym
-                  (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))]
+                  (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))
+
+                  ;; A tool list changes only optional extensions, never parts of Vis.
+                  tools
+                  (when (and selection (scoped/engine-setting! ext)) (ext-tool-names ext))]
             [sym f]
             (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
 
@@ -66,10 +128,11 @@
       ;; listing and which called as 'NoneType is not callable' — a disabled
       ;; tool must not exist in the sandbox at all.
       (let [target (extension/symbol-binding ext sym)]
-        ;; Bound only when the extension is active and the symbol's `:active-fn`
-        ;; holds for env — one gate for every Python binding.
+        ;; Bound only when the extension is active, the symbol's `:active-fn` holds for
+        ;; env and the session's tool list keeps it — one gate for every Python binding.
         (if (and (contains? active-set (:ext/name ext))
-                 (extension/symbol-active? (get by-sym sym) environment))
+                 (extension/symbol-active? (get by-sym sym) environment)
+                 (or (nil? tools) (tool-on? selection tools (env/sym->py-name target))))
           (do (env/set-python-binding! python-context target f)
               ;; Seed this symbol's doc into `__vis_docs__` keyed by its bound
               ;; py-name, so `doc(db_status)` / `doc(mcp_servers)` /
@@ -299,7 +362,8 @@
    Params:
      `router` - Required. Result of `llm/make-router`.
      `opts`   - Map with `:db` and optional `:session`,
-                 `:channel`, `:external-id`, `:title`.
+                 `:channel`, `:external-id`, `:title`, `:sources` and `:tools`
+                 (see [[tool-selection]]). A resumed session keeps its saved tools.
 
      `:db` accepted forms:
        nil               - no DB (sandbox-only execution)
@@ -309,7 +373,7 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id sources]}]
+  [router {:keys [db session channel external-id title workspace-id sources tools]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; Everything from here to the end runs with the sandbox GUARDED: the session is
   ;; built ~130 lines before this function returns, and workspace resolution,
@@ -415,6 +479,18 @@
                                                     session-id
                                                     workspace/config-sources-setting
                                                     (vec (sort sources))))
+            ;; A new session also keeps its tool list. A resumed session reads it back,
+            ;; so every rebuild path binds the same tools.
+            tools (if resolved-session-id
+                    (get (persistance/db-scoped-settings db-info "session" resolved-session-id)
+                         tool-selection-setting)
+                    tools)
+            _ (when (and tools db-info (not resolved-session-id))
+                (persistance/db-set-scoped-setting! db-info
+                                                    "session"
+                                                    session-id
+                                                    tool-selection-setting
+                                                    (vec tools)))
             ;; Resolve the session_state row id ONCE here (reliable at env build)
             ;; and stamp it on the env, so workspace operations and turns do not re-query
             ;; it. The per-call re-query intermittently returned nil for fresh sessions.
@@ -661,6 +737,8 @@
                          :security-policy security-config
                          :config/toggles toggle-values
                          :config/sources sources
+                         ;; An atom, so `set-session-tools!` can change a live session.
+                         :config/tools (atom (tool-selection tools))
                          :security/filesystem-roots configured-rw-roots
                          :security/no-search-roots (security-policy/no-search-roots security-config)
                          :access-view-fn access-view-fn
@@ -1614,6 +1692,47 @@
   [extensions]
   (doall (extensions-to-turn-off (extension-selection extensions))))
 
+(defn- unknown-tool-hint
+  "One hint for an unknown tool name: the tools of the extension that it names, or one
+   example name."
+  [tool-name selectable]
+  (let [prefix
+        (first (str/split tool-name #"\." 2))
+
+        same
+        (filter #(str/starts-with? % (str prefix ".")) selectable)]
+
+    (cond (and (str/includes? tool-name ".") (seq same))
+          (str "Tools of " prefix ": " (str/join ", " same) ".")
+          (seq selectable)
+          (str "Use the name that python_execution binds, such as " (first selectable) ".")
+          :else "No optional extension has tools in this session.")))
+
+(defn check-tool-selection!
+  "Validate a tool list against the tools of the optional extensions of the bound project.
+   Return the trimmed list to save, or nil without a list. Throw a 400 error for a bad list
+   or for a name that matches no tool."
+  [tools]
+  (when-let [{:keys [names]} (tool-selection tools)]
+    (python-extensions/ensure-python-extensions-loaded!)
+    (let [selectable (sort (into #{}
+                                 (comp (filter #(let [scope (:ext/source-scope %)]
+                                                  (or (nil? scope)
+                                                      (workspace/source-enabled? scope))))
+                                       (filter scoped/engine-setting!)
+                                       (mapcat ext-tool-names)
+                                       (remove #(str/starts-with? (last (str/split % #"\.")) "_")))
+                                 (extension/registered-extensions)))
+          unknown (remove (fn [tool-name]
+                            (some #(re-matches (tool-pattern tool-name) %) selectable))
+                    names)]
+
+      (when (seq unknown)
+        (throw (ex-info (str "Unknown tool: " (str/join ", " unknown)
+                             ". " (unknown-tool-hint (first unknown) selectable))
+                        {:status 400 :type :tool/unknown :tools (vec unknown)})))
+      (into [] (comp (map (comp str/trim str)) (remove str/blank?)) tools))))
+
 (defn turn-off-extensions!
   "Set each extension in `extensions` to Off for the new session of `env`."
   [env extensions]
@@ -1635,9 +1754,10 @@
 
 (defn open-env!
   "Open or resume a session with its project and configuration tiers bound before
-   resolving config and providers. A new session takes `:sources` and `:extensions`
-   (see `extension-selection`); a resumed session keeps what it was created with."
-  [id {:keys [channel external-id title workspace-id sources extensions]}]
+   resolving config and providers. A new session takes `:sources`, `:extensions` (see
+   `extension-selection`) and `:tools` (see [[tool-selection]]); a resumed session keeps
+   what it was created with."
+  [id {:keys [channel external-id title workspace-id sources extensions tools]}]
   (let [db
         (config/resolve-db-spec)
 
@@ -1664,9 +1784,15 @@
       (let [turned-off
             (when-not id (check-extension-selection! extensions))
 
+            tools
+            (when-not id (check-tool-selection! tools))
+
             env
             (create-environment (loop-router/get-router)
                                 (cond-> {:db db :sources sources}
+                                  tools
+                                  (assoc :tools tools)
+
                                   id
                                   (assoc :session id)
 
@@ -1684,6 +1810,40 @@
 
         (turn-off-extensions! env turned-off)
         env))))
+
+(defn set-session-tools!
+  "Replace the tool list of saved session `id` (see [[tool-selection]]). Validate the
+   list against the project and tiers of that session, save it, and rebind the tools of
+   its cached environment: at once when it is idle, at the next iteration when busy.
+   Pass `[\"*\"]` to turn every tool on again. Return the saved list."
+  [id tools]
+  (let [db-info
+        (persistance/db-shared-connection! (config/resolve-db-spec))
+
+        session-id
+        (persistance/db-resolve-session-id db-info id)
+
+        tools
+        (binding [workspace/*workspace-root*
+                  (or (:root (saved-workspace db-info session-id)) workspace/*workspace-root*)
+
+                  workspace/*config-sources*
+                  (workspace/session-config-sources db-info session-id)]
+
+          (python-extensions/prepare-project! (workspace/cwd))
+          (or (check-tool-selection! tools)
+              (throw (ex-info "tools must be a list of tool names"
+                              {:status 400 :type :invalid-request}))))
+
+        entries
+        (select-keys @cache [(cache-key id)])]
+
+    (persistance/db-set-scoped-setting! db-info "session" session-id tool-selection-setting tools)
+    (doseq [{:keys [environment]} (vals entries)]
+      (some-> (:config/tools environment)
+              (reset! (tool-selection tools))))
+    (sync-cached-extension-symbols! entries)
+    tools))
 
 (defn ensure-env!
   [id]

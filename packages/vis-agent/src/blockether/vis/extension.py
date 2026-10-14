@@ -9,10 +9,14 @@ from __future__ import annotations
 import __future__
 
 import ast
+import base64
 import builtins
 import inspect
+import io
 import json
 import math
+import mimetypes
+import os
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -20,6 +24,7 @@ from collections.abc import MutableMapping as _MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar as _ContextVar
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass, make_dataclass
+from functools import cached_property
 from os import PathLike
 from pathlib import Path
 from types import FunctionType, MappingProxyType, MethodType, ModuleType, UnionType
@@ -137,6 +142,34 @@ class Host(Protocol):
         """Run one active session tool by the name `python_execution` calls."""
         ...
 
+    def read_session(self, target: str | None) -> str:
+        """Read one whole session as the sandbox `read_session` does. Return JSON."""
+        ...
+
+    def list_sessions(self, search: str | None) -> str:
+        """List sessions as the sandbox `list_sessions` does. Return JSON."""
+        ...
+
+    def attach(self, options: Mapping[str, Any]) -> str:
+        """Store one artifact of the running block. Return its descriptor as JSON."""
+        ...
+
+    def list_attachments(self) -> str:
+        """List the session's artifact descriptors as JSON, pending ones included."""
+        ...
+
+    def get_attachment(self, target: str, version: int | None) -> str:
+        """Return the descriptor of one artifact as JSON."""
+        ...
+
+    def read_attachment(self, target: str, version: int | None) -> str:
+        """Return the bytes of one artifact as base64 text."""
+        ...
+
+    def show_attachment(self, target: str, version: int | None) -> Sequence[Any]:
+        """Queue a stored image for the next model request: id, filename, type, size."""
+        ...
+
 
 # The engine seeds `_host` into the module dict before exec.
 _host: Host
@@ -203,15 +236,16 @@ class _ToolRecord(dict):
 _tool_classes = {}
 
 
-def _tool_class(name, names, sequence):
+def _tool_class(name, names, sequence, text=None):
     """The frozen class for objects answered as `name` with fields `names`.
 
     Built once per shape, as python_execution rebuilds an extension object. It has its
     public fields only, read by field or key. It is iterable only through its declared
-    sequence field.
+    sequence field. A `text` answer from a class with its own `__str__` becomes the
+    `str` of a class built for that one object.
     """
     shape = (name, names, sequence)
-    if shape in _tool_classes:
+    if text is None and shape in _tool_classes:
         return _tool_classes[shape]
 
     def missing(self, key):
@@ -237,6 +271,8 @@ def _tool_class(name, names, sequence):
     if sequence is not None:
         namespace["__iter__"] = lambda self: iter(getattr(self, sequence))
         namespace["__len__"] = lambda self: len(getattr(self, sequence))
+    if text is not None:
+        namespace["__str__"] = lambda self: text
     cls = make_dataclass(
         name,
         [(n, object) for n in names],
@@ -244,11 +280,13 @@ def _tool_class(name, names, sequence):
         frozen=True,
         slots=True,
     )
+    if text is not None:
+        return cls
     # setdefault keeps one class per shape when two threads build it at once.
     return _tool_classes.setdefault(shape, cls)
 
 
-def _tool_object(name, attrs, sequence):
+def _tool_object(name, attrs, sequence, text=None):
     values = {str(key): _tool_value(item) for key, item in attrs.items()}
     if sequence is not None:
         if (
@@ -260,7 +298,9 @@ def _tool_object(name, attrs, sequence):
             raise ValueError("sequence field must name a public serialized field")
         if type(values[sequence]) not in (list, tuple):
             raise TypeError("sequence field must contain a list or tuple")
-    return _tool_class(name, tuple(values), sequence)(**values)
+    if not isinstance(text, str):
+        text = None
+    return _tool_class(name, tuple(values), sequence, text)(**values)
 
 
 def _tool_value(value):
@@ -269,7 +309,12 @@ def _tool_value(value):
         name = value.get("__vis_object__")
         attrs = value.get("__vis_attrs__")
         if isinstance(name, str) and isinstance(attrs, Mapping):
-            return _tool_object(name, attrs, value.get("__vis_sequence_field__"))
+            return _tool_object(
+                name,
+                attrs,
+                value.get("__vis_sequence_field__"),
+                value.get("__vis_text__"),
+            )
         return _ToolRecord({key: _tool_value(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)):
         return [_tool_value(item) for item in value]
@@ -289,6 +334,53 @@ def _tool_data(value) -> Any:
     if isinstance(value, (list, tuple)):
         return [_tool_data(item) for item in value]
     return value
+
+
+def _is_derived_source(cls) -> bool:
+    """Whether a result of `cls` also sends its properties and its own `str` text.
+
+    Only dataclass models of extensions qualify. Vis SDK classes keep their wire shape.
+    """
+    return (
+        isinstance(cls, type)
+        and is_dataclass(cls)
+        and not str(cls.__module__).startswith("blockether.vis")
+    )
+
+
+def _derived_names(cls) -> tuple[str, ...]:
+    """The public properties that a result of `cls` sends as fields, in class order.
+
+    `property` and `functools.cached_property` count. Declared fields keep their own value.
+    """
+    if not _is_derived_source(cls):
+        return ()
+    declared = {f.name for f in fields(cls)}
+    candidates = dict.fromkeys(
+        name
+        for klass in reversed(cls.__mro__)
+        for name in vars(klass)
+        if not name.startswith("_") and name not in declared
+    )
+    return tuple(
+        name
+        for name in candidates
+        if isinstance(inspect.getattr_static(cls, name), (property, cached_property))
+    )
+
+
+def _derived_text(value) -> str | None:
+    """`str(value)` for a dataclass model whose class defines its own `__str__`.
+
+    A failing `__str__` sends no text.
+    """
+    cls = type(value)
+    if not _is_derived_source(cls) or cls.__str__ is object.__str__:
+        return None
+    try:
+        return str(value)
+    except Exception:
+        return None
 
 
 class _Tools:
@@ -947,6 +1039,9 @@ class Setting(Generic[_SettingValue]):
     for a choice setting. Outside Vis, it returns the declared default.
     `parent` names another setting of the same section. Settings shows this setting
     under that setting. Settings can nest at any depth.
+    `on_change(old, new, scope)` runs once after a person changes the setting in the
+    app or TUI and its effective value changes. `scope` is `global`, `project`, `group`
+    or `session`. Vis keeps the saved value if the hook raises, and shows the error.
     """
 
     id: str
@@ -957,6 +1052,7 @@ class Setting(Generic[_SettingValue]):
     scopes: Sequence[str] | None = None
     description: str | None = None
     parent: str | None = None
+    on_change: Callable[[Any, Any, str], Any] | None = None
 
     def __post_init__(self):
         for name, value in (("scopes", self.scopes), ("choices", self.choices)):
@@ -965,7 +1061,11 @@ class Setting(Generic[_SettingValue]):
             if not isinstance(value, (list, tuple)):
                 raise TypeError(f"Setting {name} must be a list or tuple")
             object.__setattr__(self, name, tuple(value))
-        spec = _host.setting_declaration(self._spec())
+        if self.on_change is not None and not callable(self.on_change):
+            raise TypeError("Setting on_change must be callable")
+        declaration = self._spec()
+        declaration.pop("on_change", None)
+        spec = _host.setting_declaration(declaration)
         object.__setattr__(self, "scopes", tuple(spec["scopes"]))
         if self.type == "boolean" and type(self.default) is not bool:
             raise ValueError("A boolean setting requires a boolean default")
@@ -994,6 +1094,8 @@ class Setting(Generic[_SettingValue]):
             spec["description"] = self.description
         if self.parent is not None:
             spec["parent"] = self.parent
+        if self.on_change is not None:
+            spec["on_change"] = self.on_change
         return spec
 
     def value(self) -> _SettingValue:
@@ -1747,15 +1849,16 @@ def _rebuilt_record(cls, value, namespace):
     """A `cls` record from a mapping of its fields, or `_UNFIT` for any other value.
 
     The mapping may leave out fields with defaults and may carry `init=False`
-    fields, which the record computes itself. Constructor errors propagate: they
-    are the record's own validation.
+    fields and public properties, which the record computes itself. Constructor
+    errors propagate: they are the record's own validation.
     """
     if isinstance(value, cls):
         return value
     if not isinstance(value, Mapping):
         return _UNFIT
     declared = {f.name: f for f in fields(cls)}
-    if not all(isinstance(key, str) and key in declared for key in value):
+    known = declared.keys() | set(_derived_names(cls))
+    if not all(isinstance(key, str) and key in known for key in value):
         return _UNFIT
     initial = [f for f in declared.values() if f.init]
     if any(
@@ -2837,20 +2940,33 @@ class ProviderStatus(_ProviderValue):
 
 @dataclass(frozen=True, slots=True)
 class ProviderModel(_ProviderValue):
-    """Model metadata returned by enrichment. extra keeps additional router fields."""
+    """Model metadata returned by enrichment. extra keeps additional router fields.
+
+    is_tool_call and is_image_input are old names of is_tool_calls_supported and
+    is_vision_supported. They still work. A new name wins over its old name.
+    """
 
     name: str
     context: int | None = None
-    is_tool_call: bool | None = None
-    is_image_input: bool | None = None
+    is_tool_calls_supported: bool | None = None
+    is_vision_supported: bool | None = None
     extra: Mapping[str, ProviderJSON] | None = None
+    is_tool_call: bool | None = field(default=None, repr=False, compare=False)
+    is_image_input: bool | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         _provider_text(self.name, "model name", required=True)
         _provider_number(self.context, "context", integer=True, minimum=1)
-        for name in ("is_tool_call", "is_image_input"):
-            if getattr(self, name) is not None:
-                _provider_bool(getattr(self, name), name)
+        for new, old in (
+            ("is_tool_calls_supported", "is_tool_call"),
+            ("is_vision_supported", "is_image_input"),
+        ):
+            for name in (new, old):
+                if getattr(self, name) is not None:
+                    _provider_bool(getattr(self, name), name)
+            if getattr(self, new) is None:
+                object.__setattr__(self, new, getattr(self, old))
+            object.__setattr__(self, old, None)
         _provider_extra(self)
 
 
@@ -3735,6 +3851,176 @@ def forget(handle):
     return bool(_host.forget_secret(str(handle)))
 
 
+# -- Attachments ----------------------------------------------------------------
+# An extension tool stores and reads artifacts like the sandbox `attach` verbs.
+# The engine binds each call to the python_execution block that runs the tool.
+
+_ATTACH_AUDIENCES = ("both", "user", "model")
+
+# Pillow encoders by filename suffix, as in the sandbox `attach` verb.
+_PIL_FORMATS = {
+    ".png": "PNG",
+    ".jpg": "JPEG",
+    ".jpeg": "JPEG",
+    ".gif": "GIF",
+    ".bmp": "BMP",
+    ".webp": "WEBP",
+    ".tif": "TIFF",
+    ".tiff": "TIFF",
+}
+
+
+def _attachment_row(row):
+    # The engine sends kebab-case keys; the SDK returns snake_case keys.
+    return {str(k).replace("-", "_"): v for k, v in dict(row).items()}
+
+
+def _attachment_source(source, filename):
+    """Return `(bytes, filename)` for a path, bytes, a figure or a Pillow image."""
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        return bytes(source), str(filename) if filename else "artifact"
+    if hasattr(source, "savefig"):
+        buffer = io.BytesIO()
+        source.savefig(buffer, format="png")
+        return buffer.getvalue(), str(filename) if filename else "figure.png"
+    if hasattr(source, "save") and hasattr(source, "mode") and hasattr(source, "size"):
+        name = str(filename) if filename else "image.png"
+        buffer = io.BytesIO()
+        source.save(buffer, format=_PIL_FORMATS.get(Path(name).suffix.lower(), "PNG"))
+        return buffer.getvalue(), name
+    if not isinstance(source, (str, PathLike)):
+        raise TypeError(
+            "vis.attach: source must be a path, bytes, an image or a figure object, got "
+            + type(source).__name__
+        )
+    path = Path(os.path.expandvars(os.path.expanduser(os.fspath(source))))
+    if path.is_dir():
+        raise IsADirectoryError(f"vis.attach: {path} is a directory - attach one file")
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        raise FileNotFoundError(f"vis.attach: no such file: {path}") from None
+    return data, str(filename) if filename else (path.name or "artifact")
+
+
+def _attachment_target(target, version):
+    if isinstance(target, Mapping):
+        target = target.get("id") or target.get("filename") or ""
+    if version is not None and (type(version) is not int):
+        raise TypeError("attachment version must be an integer")
+    return str(target), version
+
+
+def attach(
+    source,
+    filename=None,
+    *,
+    kind=None,
+    media_type=None,
+    label=None,
+    audience="both",
+    commentable=False,
+):
+    """Store an artifact as a durable attachment of the running block.
+
+    `source` is a path, bytes, a Matplotlib figure or a Pillow image. The engine
+    stores the artifact with the `python_execution` block that called this tool,
+    exactly like the sandbox `attach` verb. A second attachment under the same
+    `filename` is the next version of that artifact. `audience` is `both`, `user`
+    or `model`; a PDF or HTML document is for the user only. Set
+    `commentable=True` to let a person comment on this version.
+
+    Returns the descriptor dict: id, filename, version, media_type, kind, size,
+    audience and commentable. Every read function takes it as its target.
+    """
+    data, name = _attachment_source(source, filename)
+    if audience not in _ATTACH_AUDIENCES:
+        raise ValueError(
+            f"vis.attach: audience must be 'both', 'user' or 'model', got {audience!r}"
+        )
+    if not isinstance(commentable, bool):
+        raise TypeError("vis.attach: commentable must be a boolean")
+    if not data:
+        raise ValueError("vis.attach: empty payload.")
+    options = {
+        "base64": base64.b64encode(data).decode("ascii"),
+        "filename": name,
+        "media_type": media_type,
+        "media_type_hint": mimetypes.guess_type(name)[0],
+        "kind": kind,
+        "audience": audience,
+        "label": label,
+        "commentable": commentable,
+    }
+    payload = _host.attach({k: v for k, v in options.items() if v is not None})
+    return _attachment_row(json.loads(payload))
+
+
+def list_attachments(name=None):
+    """List the artifact descriptors of this session, oldest first.
+
+    The list includes the artifacts that the running block attached. With `name`,
+    it lists the versions of that one artifact.
+    """
+    rows = [_attachment_row(row) for row in json.loads(_host.list_attachments())]
+    if name is None:
+        return rows
+    versions = [row for row in rows if row.get("filename") == str(name)]
+    return sorted(versions, key=lambda row: int(row.get("version") or 1))
+
+
+def get_attachment(target, version=None):
+    """Return the descriptor of one artifact, without its bytes.
+
+    `target` is a filename, an id or a descriptor. A filename means the latest
+    version, unless you give `version`. A negative version counts back.
+    """
+    payload = _host.get_attachment(*_attachment_target(target, version))
+    return _attachment_row(json.loads(payload))
+
+
+def read_attachment(target, version=None):
+    """Return the bytes of one artifact. `target` works as in `get_attachment`."""
+    encoded = _host.read_attachment(*_attachment_target(target, version))
+    return base64.b64decode(encoded) if encoded else b""
+
+
+def show_attachment(target, version=None):
+    """Show a stored image to the model for the next request only.
+
+    `target` works as in `get_attachment`. Returns the id, filename, media_type
+    and size of the queued image.
+    """
+    shown = list(_host.show_attachment(*_attachment_target(target, version)))
+    return dict(zip(("id", "filename", "media_type", "size"), shown, strict=True))
+
+
+def read_session(target=None):
+    """Read one whole session, exactly as the sandbox `read_session` does.
+
+    Without `target`, it reads the session that runs the extension. `target` takes a
+    bare id, an unambiguous prefix or the copied `vis_session_id#<uuid>` marker. The
+    `introspection` toggle does not apply, because an extension is trusted code.
+
+    Returns the same string-keyed dict: session, current_turn, failures, diagnosis,
+    session_forks, turn_retries, usage and transcript.
+    """
+    return json.loads(_host.read_session(None if target is None else str(target)))
+
+
+def list_sessions(search=None):
+    """List sessions newest first, exactly as the sandbox `list_sessions` does.
+
+    With `search`, it runs the session search of the TUI and the Companion app. The
+    rows come in rank order: title, request, reply, then thinking, newest first in
+    each rank. Keep that order. The `introspection` toggle does not apply.
+
+    Returns string-keyed rows: id, channel, title, goal, turn_count, created_at and
+    modified_at. A match adds rank, the is_in_* flags and optional snippets.
+    """
+    return json.loads(_host.list_sessions(None if search is None else str(search)))
+
+
 # -- Live views ---------------------------------------------------------------
 # A form PAUSES a run to collect values; a live view REPORTS on work already
 # running. Nothing here blocks: a push crosses to the engine, every mounted
@@ -3847,8 +4133,9 @@ class Progress(_Node):
 
 
 class Stat(_Node):
-    def set(self, stat_id, value_text, label=None, tone=None):
-        # One counter of the strip, upserted by id.
+    def set(self, stat_id, value_text, label, tone=None):
+        # One counter of the strip, upserted by id. The View schema requires
+        # the label in each update.
         return self._op(
             "append",
             stats=[
@@ -3867,9 +4154,10 @@ class Stat(_Node):
 
 
 class Steps(_Node):
-    def set(self, step_id, tone=None, label=None, detail=None, value=None):
+    def set(self, step_id, label, tone=None, detail=None, value=None):
         # One step of the checklist, upserted by id: the same call marks it
-        # running and later done.
+        # running and later done. The View schema requires the label in each
+        # update.
         return self._op(
             "append",
             steps=[
@@ -4307,14 +4595,12 @@ class LiveView:
             value=value, done=done, total=total
         )
 
-    def stat(self, stat_id, value_text, label=None, tone=None):
-        return self._only("stat", "stat").set(
-            stat_id, value_text, label=label, tone=tone
-        )
+    def stat(self, stat_id, value_text, label, tone=None):
+        return self._only("stat", "stat").set(stat_id, value_text, label, tone=tone)
 
-    def step(self, step_id, tone=None, label=None, detail=None, value=None):
+    def step(self, step_id, label, tone=None, detail=None, value=None):
         return self._only("steps", "step").set(
-            step_id, tone=tone, label=label, detail=detail, value=value
+            step_id, label, tone=tone, detail=detail, value=value
         )
 
     def write(self, *lines: str | Sequence[str], tone: LogTone | None = None):
@@ -4536,7 +4822,7 @@ class _LiveRecorder:
             item = _LiveRecorder._copy(item)
             if item["id"] in positions:
                 at = positions[item["id"]]
-                result[at] = {**result[at], **item}
+                result[at] = item
             else:
                 positions[item["id"]] = len(result)
                 result.append(item)
@@ -4636,9 +4922,9 @@ class _LiveRecorder:
         elif action == "append":
             key = self._COLLECTION[node["type"]]
             incoming = self._copy(op.get(key) or [])
-            if node["type"] == "link":
-                for item in incoming:
-                    item.setdefault("target_kind", "url")
+            from blockether.vis import _contracts
+
+            incoming = _contracts.live_items(key, incoming)
             node[key] = self._upsert(node[key], incoming)
             if "groups" in op:
                 # `live/apply-append`: a group already declared KEEPS the keys the

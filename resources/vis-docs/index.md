@@ -28,15 +28,15 @@ The desktop and phone apps connect to this engine. They do not run it themselves
 ### Get the desktop app
 
 Use the buttons below to download Vis for Windows x64, universal macOS, or Linux x64.
-For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.2.37/vis-companion-0.2.37-linux-arm64.AppImage). You can also browse all packages
+For Linux ARM64, [download the AppImage](https://github.com/Blockether/vis/releases/download/v0.2.43/vis-companion-0.2.43-linux-arm64.AppImage). You can also browse all packages
 on the [latest GitHub release](https://github.com/Blockether/vis/releases/latest).
 
 <div class="store-links" aria-label="Download the desktop app">
-<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.2.37/vis-companion-0.2.37-windows-x64.msi"><img src="assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
+<a class="store-windows" href="https://github.com/Blockether/vis/releases/download/v0.2.43/vis-companion-0.2.43-windows-x64.msi"><img src="assets/install-windows.png" alt="Download Vis for Windows x64" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.2.37/vis-companion-0.2.37-macos-universal.dmg"><img src="assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
+<a class="store-macos" href="https://github.com/Blockether/vis/releases/download/v0.2.43/vis-companion-0.2.43-macos-universal.dmg"><img src="assets/install-macos.png" alt="Download Vis for macOS" width="224" height="56"></a>
 <span aria-hidden="true">&nbsp;&nbsp;</span>
-<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.2.37/vis-companion-0.2.37-linux-x64.AppImage"><img src="assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
+<a class="store-linux" href="https://github.com/Blockether/vis/releases/download/v0.2.43/vis-companion-0.2.43-linux-x64.AppImage"><img src="assets/install-linux.png" alt="Download Vis for Linux x64" width="224" height="56"></a>
 </div>
 
 Install the package, open Vis, then follow the [connection steps below](#connect-an-app).
@@ -294,6 +294,7 @@ Each concept page explains one feature: what it does, when to use it and how to 
 - [Drafts](drafts.md) — review changes in a separate working copy.
 - [Council](council.md) — ask another session for help or a second review.
 - [Automations](automations.md) — run a prompt on a schedule or from a webhook.
+- [Evaluations](evals.md) — score benchmark rounds, find failure causes and compare runs.
 - [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
 - [Live views](live-views.md) — show progress a person can watch and stop.
 - [Python sandbox](python-sandbox.md) — Python execution, packages and permissions.
@@ -320,6 +321,7 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 - [Drafts API](drafts-api.md) — draft settings and draft state from Python or HTTP.
 - [Council API](council-api.md) — Council messages, wakes and rooms from Python or HTTP.
 - [Automations API](automations-api.md) — automations, runs, secrets and webhooks from Python or HTTP.
+- [Evaluations API](evals-api.md) — benchmark scores, failure causes and comparisons from Python or HTTP.
 - [Configuration API](configuration-api.md) — settings and extension reloads from Python or HTTP.
 
 <span id="put-your-expertise-into-code"></span>

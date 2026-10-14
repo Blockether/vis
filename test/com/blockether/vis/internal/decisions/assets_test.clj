@@ -142,6 +142,7 @@
   (it "publishes every complete GLiNER2.5 model with distinct pinned artifacts"
       (expect (= (-> (set (keys assets/gliner-architectures))
                      (into (keys assets/decision2-architectures))
+                     (into (keys assets/d3-architectures))
                      (conj "laya-typed-decisions"))
                  (set (map :id (assets/manifest)))))
       (expect (= #{"gliner2.5-base" "gliner2.5-small" "gliner2.5-multi" "gliner2.5-decide"
@@ -201,6 +202,30 @@
                 (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
                 (expect (< 0 (:bytes artifact) 2000000000))
                 (expect (nil? (:parts artifact)))))))))
+  (it "publishes D3 FP32 inference bundles and text-only training checkpoints"
+      (let [revisions {"d3-edge" "18d61df78684675463af9ae732872478845c5a79"
+                       "d3-lite" "a8d25a91ef75552803f7009d25b7bd435991abd9"}]
+        (expect (= (set (keys revisions)) (set (keys assets/d3-architectures))))
+        (doseq [[id revision] revisions]
+          (let [model (assets/entry id)
+                artifact (assets/artifact model :inference)]
+
+            (expect (= revision (:revision model)))
+            (expect (= "Apache-2.0" (:license model)))
+            (expect (= (str "https://huggingface.co/vllm-sr/" id "/tree/" revision)
+                       (:source-url model)))
+            (expect (= (assets/inference-required id) (:requires artifact)))
+            (expect (some #{"model.onnx.data"} (:requires artifact)))
+            (expect (re-matches #"[0-9a-f]{64}" (:sha256 artifact)))
+            (expect (< 0 (:bytes artifact) 2000000000))
+            (expect (= #{"config.json" "decision_config.json" "MODEL_MANIFEST.json"
+                         "model.safetensors" "readout.safetensors" "tokenizer.json"
+                         "tokenizer_config.json" "PROVENANCE.json" "LICENSE.txt"}
+                       (set (:requires (assets/artifact model :training)))))
+            (let [training (assets/artifact model :training)]
+              (expect (re-matches #"[0-9a-f]{64}" (:sha256 training)))
+              (expect (< 0 (:bytes training) 2000000000))
+              (expect (nil? (:parts training))))))))
   (it "splits every archive above the release asset limit into verified parts"
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :training))))
       (expect (seq (:parts (assets/artifact (assets/entry "gliner2.5-decide-1b") :inference))))
@@ -208,7 +233,7 @@
               (assets/manifest)
 
               artifact
-              (map #(assets/artifact model %) [:inference :training])]
+              (vals (:artifacts model))]
 
         (if-let [parts (seq (:parts artifact))]
           (do (expect (nil? (:url artifact)))

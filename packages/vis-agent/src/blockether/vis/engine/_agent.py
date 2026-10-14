@@ -377,6 +377,10 @@ class Agent:
         extensions: Iterable of `blockether.vis.extension.Extension` declarations.
             Their Python callables stay in your application and execute on the
             calling thread while you read, wait or iterate events.
+        tools: Optional iterable of Vis extension tool names for the conversation.
+            Names such as `"py.lint_code"` or `"py.repl_*"` keep only those tools of
+            the extensions they name. Names such as `"-py.repl_stop"` turn tools off.
+            Do not mix the two forms. The gateway refuses an unknown name.
 
     Construction does not start a process or connect. Session access, context
     entry, `send` or `run` starts the conversation. Closing the default agent stops
@@ -386,7 +390,8 @@ class Agent:
 
     Raises:
         TypeError: The supplied layer does not implement
-            `blockether.vis.engine.ExecutionLayer`, or an extension is unsupported.
+            `blockether.vis.engine.ExecutionLayer`, an extension is unsupported, or
+            `tools` is not an iterable of strings.
         ValueError: A project or extension declaration is invalid.
         FileNotFoundError: The local project does not exist.
         NotADirectoryError: The local project is not a directory.
@@ -398,10 +403,17 @@ class Agent:
         *,
         execution_layer: ExecutionLayer | None = None,
         extensions=(),
+        tools=None,
     ):
         from ._extensions import ClientExtensions
 
         self._extensions = ClientExtensions(extensions)
+        if tools is not None:
+            if isinstance(tools, str):
+                raise TypeError("tools must be an iterable of tool names, not a string")
+            tools = list(tools)
+            if not all(isinstance(name, str) for name in tools):
+                raise TypeError("tools must be an iterable of tool names")
         if execution_layer is not None and not isinstance(
             execution_layer, ExecutionLayer
         ):
@@ -411,6 +423,8 @@ class Agent:
             LocalEngine(root=project) if execution_layer is None else execution_layer
         )
         self._session_options = self.execution_layer.session_options(project)
+        if tools is not None:
+            self._session_options["tools"] = tools
         self.project = self._session_options["root"]
         self._session = None
         self._closed = False

@@ -1,0 +1,22 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "RECOVERED",
+    "record-03500;"
+  ],
+  "want_forms": [
+    "read_session()",
+    "update_goal("
+  ],
+  "want_requested_route": true,
+  "want_cache_read": true,
+  "want_cache_metrics": true,
+  "want_goal_complete": true,
+  "want_stdout_recovery": {
+    "min_chars": 90000,
+    "middle": "record-03500;",
+    "tail": "-END",
+    "head": "HEAD-"
+  }
+}

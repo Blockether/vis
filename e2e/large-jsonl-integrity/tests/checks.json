@@ -1,0 +1,13 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "invalid_lines": 12,
+    "first_invalid_line": 2797,
+    "error_events": 415,
+    "unique_error_records": 412
+  },
+  "max_form_output_chars": 700,
+  "max_total_output_chars": 1600,
+  "want_requested_route": true
+}

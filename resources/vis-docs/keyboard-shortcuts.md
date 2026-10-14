@@ -1,7 +1,8 @@
 # Keyboard shortcuts
 
 Use these keyboard shortcuts, also called keybindings, in the Vis terminal app. With them you can
-send a message, start a new line, run commands, move through a session and edit your text.
+send a message, start a new line, run commands, move through a session and edit your text. The
+desktop and phone app has [a smaller set of keys](#in-the-desktop-or-phone-app).
 
 To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
 
@@ -18,6 +19,8 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
   group.** Use the keys under [Sessions](#sessions). The [Sessions guide](sessions.md)
   explains each task.
 - **You want to dictate a message, or voice recording fails.** See [Use voice input](#use-voice-input).
+- **You want to send an earlier message again from the desktop or phone app.** See [In the
+  desktop or phone app](#in-the-desktop-or-phone-app).
 - **You want to know what cancelling or quitting does to your queued messages.** Read
   [Control a running session](sessions.md#control-a-running-session) instead.
 
@@ -187,6 +190,24 @@ works as Alt, such as **Use Option as Meta key** in Terminal.
 
 To copy and paste, use your terminal: select text to copy it, then paste with your
 terminal's paste key.
+
+## In the desktop or phone app
+
+Use these keys in the message box of the Companion app, on a computer or with a keyboard on a
+tablet.
+
+| Keys | What they do |
+|---|---|
+| Enter | Send the message |
+| Shift+Enter | Start a new line |
+| ↑ | Show your previous message in this session. Press again to go further back |
+| ↓ | Go forward to a newer message, and then back to the text that you typed |
+
+↑ and ↓ show an earlier message only when the cursor is on the first or the last line. In a
+message with more lines, they first move the cursor. The app keeps your 20 newest messages. It
+does not keep commands such as `/reload`, but it keeps `/goal`. Messages from other sessions
+through Council are not included. On a phone with no keyboard, Return starts a new line, and the
+send button sends the message.
 
 ## See also
 

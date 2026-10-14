@@ -358,3 +358,28 @@ def test_a_group_arranging_nothing_is_refused_where_it_was_written():
     ):
         with pytest.raises(ValueError, match="at least one node"):
             build()
+
+
+@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
+def test_stat_and_step_updates_carry_the_label_the_schema_requires(
+    monkeypatch, host_kind
+):
+    # The evals watch view sent a counter update without its label, and the host
+    # refused it. The recorder now refuses the same patch, as the View schema says.
+    host = (
+        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+    )
+    monkeypatch.setattr(vis, "_host", host)
+    nodes = [
+        vis.stat("counts", stats=[{"id": "ok", "label": "Passed", "value_text": "0"}]),
+        vis.steps("plan", steps=[{"id": "build", "label": "Build"}]),
+    ]
+    with vis.live("Counts", nodes, flush_ms=0) as view:
+        with pytest.raises((ValueError, _outside.Refused), match="label"):
+            view["counts"]._op("append", stats=[{"id": "ok", "value_text": "1"}])
+        view["counts"].set("ok", "2", "Passed")
+        view["plan"].set("build", "Build", tone="ok")
+        counts, plan = view.state()["nodes"]
+        stats, steps = counts["stats"], plan["steps"]
+        assert stats == [{"id": "ok", "label": "Passed", "value_text": "2"}]
+        assert steps[0]["label"] == "Build" and steps[0]["tone"] == "ok"

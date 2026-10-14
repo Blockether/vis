@@ -99,7 +99,7 @@ Changing the public canonical origin requires updating `web/discovery.js` and re
 
 ## Local development
 
-Requires Node 22.12+, npm, Python 3.11+, Clojure CLI and the repository-pinned GraalVM CE.
+Requires Node 22.12+, npm, Python 3.12+, Clojure CLI and the repository-pinned GraalVM CE.
 From the repository root, prepare the dependencies in an activated Python environment:
 
 ```sh

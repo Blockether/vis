@@ -779,38 +779,42 @@
         ;; ... while the per-entry override keeps `one` shallow.
         (expect (= 1 (get (second out) "depth")))
         (expect (= ["a.txt"] (mapv #(get % "name") (get (second out) "entries"))))))
-  (it "(ls dir) hides dotfiles + gitignored entries by default; opts widen"
-      (let [_
-            (write-temp! "lsopts/.gitignore" "ignored.txt\n")
+  (it
+    "(ls dir) hides dotfiles + gitignored entries by default; opts widen"
+    (let [_
+          (write-temp! "lsopts/.gitignore" "ignored.txt\n")
 
-            _
-            (write-temp! "lsopts/a.txt" "x")
+          _
+          (write-temp! "lsopts/a.txt" "x")
 
-            _
-            (write-temp! "lsopts/.hidden" "x")
+          _
+          (write-temp! "lsopts/.hidden" "x")
 
-            _
-            (write-temp! "lsopts/ignored.txt" "x")
+          _
+          (write-temp! "lsopts/ignored.txt" "x")
 
-            dir
-            (temp-dir-path "lsopts")
+          dir
+          (temp-dir-path "lsopts")
 
-            names
-            (fn [arg]
-              (->> (ls-rows (assoc arg "paths" [dir]))
-                   first
-                   (#(get % "entries"))
-                   (mapv (fn [e]
-                           (get e "name")))
-                   set))]
+          names
+          (fn [arg]
+            (->> (ls-rows (assoc arg "paths" [dir]))
+                 first
+                 (#(get % "entries"))
+                 (mapv (fn [e]
+                         (get e "name")))
+                 set))]
 
-        (expect (= #{"a.txt"} (names {})))
-        (expect (contains? (names {"is_hidden" true}) ".hidden"))
-        (expect (contains? (names {"is_hidden" true}) ".gitignore"))
-        ;; hidden and gitignore are independent axes; gitignored entries are
-        ;; ALWAYS skipped — there is no per-call opt-out any more
-        (expect (not (contains? (names {"is_hidden" true}) "ignored.txt")))
-        (expect (not (contains? (names {}) "ignored.txt")))))
+      (expect (= #{"a.txt"} (names {})))
+      (expect (contains? (names {"is_hidden" true}) ".hidden"))
+      (expect (contains? (names {"is_hidden" true}) ".gitignore"))
+      ;; hidden and gitignore are independent axes: is_hidden never lists
+      ;; gitignored entries, and is_ignored never lists dotfiles
+      (expect (not (contains? (names {"is_hidden" true}) "ignored.txt")))
+      (expect (not (contains? (names {}) "ignored.txt")))
+      (expect (= #{"a.txt" "ignored.txt"} (names {"is_ignored" true})))
+      (expect (= #{"a.txt" "ignored.txt" ".hidden" ".gitignore"}
+                 (names {"is_hidden" true "is_ignored" true})))))
   (it "(ls dir {\"depth\" 2}) nests a children vector under subdirs"
       (let [_
             (write-temp! "lsdepth/sub/b.txt" "y")

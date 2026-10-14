@@ -135,6 +135,27 @@ describe('the FILES door', () => {
     expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mpeg']);
   });
 
+  it('takes iPhone, generic, camera and AVIF HEIF photos, with or without a platform type', async () => {
+    filePicker.pickFiles.mockResolvedValue({
+      files: [
+        picked('IMG_0001.HEIC', ''),
+        picked('IMG_0002.heif', 'image/heif'),
+        picked('DSC_0003.HIF', ''),
+        picked('render.avif', ''),
+      ],
+    });
+
+    const result = await pickDocumentAttachments();
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments.map((a) => a.media_type)).toEqual([
+      'image/heic',
+      'image/heif',
+      'image/heif',
+      'image/avif',
+    ]);
+  });
+
   it('takes back the gzip diagnostics bundle this app exports', async () => {
     filePicker.pickFiles.mockResolvedValue({
       files: [picked('vis-diagnostics-20260501.jsonl.gz', '')],
@@ -212,6 +233,29 @@ describe('naming a candidate', () => {
     expect(isAudioMediaType('audio/mpeg')).toBe(true);
     expect(isAudioMediaType('image/png')).toBe(false);
     expect(isAudioMediaType(undefined)).toBe(false);
+  });
+});
+
+// Regression: a desktop drop refused a macOS voice memo typed `audio/x-m4a` and a
+// Word document, though the gateway stores both.
+describe('what a desktop drop names a memo and a Word document', () => {
+  const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+  it('admits each under the name the gateway stores', async () => {
+    const files = [
+      new File([new Uint8Array(16)], 'audio1407418942.m4a', { type: 'audio/x-m4a' }),
+      new File([new Uint8Array(16)], 'Tryb.docx', { type: docx }),
+    ];
+
+    const result = await attachmentsFromFiles(files, {});
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mp4', docx]);
+  });
+
+  it('names an unnamed .docx by its extension', () => {
+    expect(candidateMediaType('Tryb.docx', '')).toBe(docx);
+    expect(candidateMediaType('memo.m4a', 'audio/m4a')).toBe('audio/mp4');
   });
 });
 

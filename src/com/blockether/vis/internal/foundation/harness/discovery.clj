@@ -21,6 +21,7 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
+            [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
@@ -348,11 +349,37 @@
     (let [^java.io.File canonical-root (.getCanonicalFile root)]
       (when (.exists (io/file canonical-root ".git")) canonical-root))))
 
+(def ^:private dependency-dir-names
+  "Directory names that hold installed third-party packages. A skill below one of them
+   ships with a dependency, so its directory is never a nested project."
+  #{".venv" "venv" "site-packages" "dist-packages" "__pypackages__" "node_modules" ".tox" ".nox"})
+
+(defn- nested-owner
+  "Repository-relative owner directory of a nested `<owner>/<parts…>/<name>/SKILL.md`
+   match, or \"\" for the repository root."
+  [^String relative-path parts]
+  (str/join "/" (drop-last (+ 2 (count parts)) (str/split relative-path #"[/\\]"))))
+
+(defn- dependency-owner?
+  [^String owner]
+  (boolean (some dependency-dir-names (str/split owner #"/"))))
+
+(defn- git-ignored-owners
+  "Owners that Git ignores, also below an ignored directory or through a nested ignore
+   file such as the `*` in a uv `.venv/.gitignore`. Empty when Git cannot answer."
+  [^java.io.File repo owners]
+  (if (empty? owners)
+    #{}
+    (let [{:keys [exit out]}
+          (git/run-git repo (into ["-c" "core.quotePath=false" "check-ignore" "--"] owners))]
+      (if (= 0 exit) (set (remove str/blank? (str/split-lines (or out "")))) #{}))))
+
 (defn- nested-skill-files
   "Project-skill files below a repository-root session, discovered through Vis' one
    pooled fff index. Git ignores stay enabled for the tree; only the explicit harness
-   configuration directories are reopened. Nested app sessions deliberately do not
-   scan siblings."
+   configuration directories are reopened. A match counts only when its owner directory
+   is a real project: not inside a dependency directory and not ignored by Git. Nested
+   app sessions deliberately do not scan siblings."
   []
   (let [^java.io.File repo
         (repository-root)
@@ -376,21 +403,32 @@
             overlay
             {:unignore-globs (vec (distinct (mapcat (fn [h]
                                                       [(str h "/**") (str "**/" h "/**")])
-                                                    harnesses)))}]
+                                                    harnesses)))}
 
-        (fff-index/with-index
-          [idx (fff-index/lease repo true overlay)]
-          (vec (mapcat (fn [[tool _ & parts]]
-                         (let [pattern (str "**/" (str/join "/" parts) "/*/SKILL.md")]
-                           (for [{:keys [relative-path]}
-                                 (sort-by :relative-path
-                                          (:items (fff/glob idx
-                                                            {:pattern pattern :page-size 10000})))
-                                 :let [f (io/file repo relative-path)]
-                                 :when (.isFile ^java.io.File f)]
+            matches
+            (fff-index/with-index
+              [idx (fff-index/lease repo true overlay)]
+              (vec (mapcat (fn [[tool _ & parts]]
+                             (let [pattern (str "**/" (str/join "/" parts) "/*/SKILL.md")]
+                               (for [{:keys [relative-path]}
+                                     (sort-by :relative-path
+                                              (:items
+                                                (fff/glob idx {:pattern pattern :page-size 10000})))
+                                     :let [owner (nested-owner relative-path parts)]
+                                     :when (not (dependency-owner? owner))]
 
-                             [tool f])))
-                       specs)))))))
+                                 {:tool tool :owner owner :file (io/file repo relative-path)})))
+                           specs)))
+
+            ignored
+            (git-ignored-owners repo (vec (distinct (remove str/blank? (map :owner matches)))))]
+
+        (vec (for [{:keys [tool owner ^java.io.File file]}
+                   matches
+
+                   :when (and (not (contains? ignored owner)) (.isFile file))]
+
+               [tool file]))))))
 
 (defn- skill-candidates
   "Ordered `[tool SKILL.md]` candidates. Active/ancestor project definitions win,

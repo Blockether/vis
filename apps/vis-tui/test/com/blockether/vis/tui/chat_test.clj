@@ -1308,6 +1308,18 @@
     (it "a replayed iteration row without delivered messages has no :user-input"
         (let [[entry] (chat/iteration-rows->trace [{"id" "it-1" "position" 1 "forms" []}] false)]
           (expect (nil? (:user-input entry)))))
+    (it "a slash turn's synthetic iteration projects to no trace"
+        ;; Vis #363: the live refresh painted the `user-slash` form as RAW EXECUTION.
+        (let [slash
+              [{"id" "it-1" "position" 1 "forms" [{"tag" "user-slash" "src" "/reload"}]}]
+
+              bang
+              [{"id" "it-1" "position" 1 "forms" [{"tag" "user-shell" "src" "ls"}]}]]
+
+          (expect (chat/slash-turn-rows? slash))
+          (expect (= [] (chat/iteration-rows->trace slash false)))
+          (expect (not (chat/slash-turn-rows? bang)))
+          (expect (= 1 (count (chat/iteration-rows->trace bang false))))))
     (it "the live tracker keeps the messages on the step the chunk names"
         (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
           (on-chunk {:phase :user-input :iteration 2 :messages rows})
@@ -1315,3 +1327,25 @@
             (expect (= 1 (count (get-timeline))))
             (expect (= 2 (:iteration entry)))
             (expect (= rows (:user-input entry))))))))
+
+(defdescribe
+  open-tools-test
+  (it "replaces the tools of the first opened session once, then never again"
+      (let [calls (atom [])]
+        (with-redefs [vis/gateway-set-session-tools! (fn [sid tools]
+                                                       (swap! calls conj [sid tools])
+                                                       {"id" sid})]
+          (chat/set-launch-session-options! {:tools ["-py.repl_stop"]
+                                             :open-tools ["-py.repl_stop"]})
+          (#'chat/apply-open-tools! "first")
+          (#'chat/apply-open-tools! "second")
+          (expect (= [["first" ["-py.repl_stop"]]] @calls)))
+        (chat/set-launch-session-options! {})))
+  (it "turns a refused list into a user error"
+      (with-redefs [vis/gateway-set-session-tools! (fn [& _]
+                                                     (throw (ex-info "Unknown tool: py.lnt."
+                                                                     {:http-status 400})))]
+        (chat/set-launch-session-options! {:open-tools ["py.lnt"]})
+        (let [e (try (#'chat/apply-open-tools! "sid") nil (catch clojure.lang.ExceptionInfo e e))]
+          (expect (= "--tools: Unknown tool: py.lnt." (ex-message e)))
+          (expect (:vis/user-error (ex-data e)))))))

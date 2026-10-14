@@ -23,6 +23,13 @@
   ([env] (check-goal (:db-info env) (:session-id env)))
   ([db sid] (when (and db sid) (persistence/db-get-session-goal db sid))))
 
+(defn active-goal
+  "The goal that still directs the model, or nil. Model context shows only an active goal.
+   The goal rules stay in the cached system prompt, so a status change keeps the prefix cache."
+  [env]
+  (let [goal (check-goal env)]
+    (when (= "active" (get goal "status")) goal)))
+
 (defn- fail! [message] (throw (ex-info message {:type :goal/invalid})))
 
 (defn- change!
@@ -284,6 +291,7 @@ assessment, not an independent engine check.")
   (str
     "Explicit session goals: only the user sets an objective via /goal or SDK; never infer one.
 Read the authoritative goal from session.get('goal'); do not mutate the session dict.
+Without session['goal'], no goal is active: answer the user's request only.
 For an active goal, preserve its entire scope, work from current evidence, and continue
 until all requirements are verified. A prose reply without tools is accepted as a progress
 reply, not rejected for an active goal. The engine automatically continues the same turn

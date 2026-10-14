@@ -1046,6 +1046,8 @@
 
 (def MARKER_ACTIVITY "\uE015") ;; compact Activity timeline surface
 
+(def MARKER_ATTACHMENT_CARD "\uE018") ;; attachment card row -> bordered card paper with file rows, Open buttons and an optional fold title in the top border
+
 (def MARKER_TH_MD_H1 "\uE021") ;; markdown heading 1 (thinking)
 
 (def MARKER_TH_MD_H2 "\uE022") ;; markdown heading 2 (thinking)

@@ -1,0 +1,10 @@
+artifacts = ["contract-calls.jsonl", "contract-receipts.jsonl"]
+
+[metadata]
+lang = "python"
+
+[agent]
+timeout_sec = 300.0
+
+[verifier]
+timeout_sec = 300.0

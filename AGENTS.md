@@ -6,9 +6,9 @@ tests; do not copy them here.
 
 ## Simplified English
 
-Write prompts, rules, descriptions, docs and commits in Simplified English, so that readers with
-basic English and translation tools get the same meaning. Use the
-[ASD-STE100](https://www.asd-ste100.org/) writing rules, not its dictionary:
+Write tracked text in Simplified English: prompts, rules, descriptions, docs and commits. This rule
+does not apply to chat replies. Readers with basic English and translation tools then get the same
+meaning. Use the [ASD-STE100](https://www.asd-ste100.org/) writing rules, not its dictionary:
 
 - Write one instruction in each sentence, in the imperative and active voice, with any condition first.
 - Use at most 20 words in an instruction, 25 in a description, 6 sentences in a paragraph and 3 words in a noun cluster.
@@ -209,7 +209,7 @@ included:
 - Passing JVM tests or a successful native build do not prove that the binary runs. Interop changes need the relevant `test-native/` coverage against the built image (`-M:test-native`).
 - Reachability metadata is inside jars under `META-INF/native-image/`; `native_reachability_test` pins the engine metadata.
 - Read `.graalvm-version` before you change the locked GraalVM CE pin, and use `bin/require-graalvm` for setup. Never substitute Oracle GraalVM. Companion Android Gradle uses stock JDK 21.
-- `e2e/run.py` makes paid model calls. Use it for editing tools and workflows, not for routine docs.
+- `harbor run --path e2e` with the SDK agent `blockether.vis.evals.agent:VisAgent` makes paid model calls. Use it for editing tools and workflows, not for routine docs.
 - Delimiter (Parinfer) repair fixes syntax only.
 - A host, bootstrap or extension boundary change needs coverage across that boundary. Do not drop required keys or validation because one consumer ignores them.
 

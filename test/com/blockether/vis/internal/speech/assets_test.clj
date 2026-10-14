@@ -63,9 +63,11 @@
 
                            source)]
         (expect (seq pack-sources))
-        (doseq [source pack-sources]
+        (doseq [source pack-sources
+                url (if (= :files (:kind source)) (mapv :url (:files source)) [(:url source)])]
+
           (expect (str/starts-with?
-                    (:url source)
+                    url
                     "https://github.com/Blockether/vis/releases/download/assets-pack/")))
         (expect (= "https://github.com/Blockether/vis/releases/tag/assets-pack"
                    (:source-url (assets/entry "voice-samples"))))))
@@ -126,6 +128,9 @@
                   "piper-en_US-ljspeech-high" "piper-en_US-ryan-high"]
                  (mapv :id (assets/for-engine :piper))))
       (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
+      (expect (= ["vibevoice-realtime-0.5b-int8"] (mapv :id (assets/for-engine :vibevoice-tts))))
+      (expect (= ["vibevoice-asr-streaming-1.5b-int8"]
+                 (mapv :id (assets/for-engine :vibevoice-asr))))
       (let [data (ex-data-of #(assets/entry "no-such-model"))]
         (expect (= :speech-assets/unknown-asset (:type data)))
         (expect (contains? (set (:known data)) "parakeet-tdt-0.6b-v3-int8"))))
@@ -224,52 +229,60 @@
                    (expect (str/includes? (:error (first (:failures data))) "carrier-pigeon"))
                    (expect (false? (.exists (io/file dir)))))))
 
-(defdescribe ensure-test
-             (it "refuses to accept an opt-in asset's terms on the user's behalf"
-                 (with-redefs [assets/installed? (constantly false)]
-                   (let [data (ex-data-of #(assets/ensure! (assets/entry "piper-en_US-ryan-high")))]
-                     (expect (= :speech-assets/opt-in-required (:type data)))
-                     (expect (= "piper-en_US-ryan-high" (:id data)))
-                     (expect (seq (:notice data)))
-                     (expect (seq (:source-url data))))))
-             (it "never asks twice for a model Vis may host itself"
-                 ;; pocket-tts is our own CC BY 4.0 export, so the AUTOMATIC path installs
-                 ;; it like any other asset instead of demanding that it be named.
-                 (with-redefs [assets/installed? (constantly true)]
-                   (expect (str/ends-with? (assets/ensure! (assets/entry "pocket-tts-int8"))
-                                           "sherpa-onnx-pocket-tts-int8"))))
-             (it "mirrors nothing it may not host, and hosts nothing it did not make"
-                 ;; The pack is a release of ASSETS WE OWN: our own exports and the
-                 ;; models we may mirror outright. Each Piper voice and its GPL phoneme
-                 ;; tables come together from that voice's publisher, never from our pack.
-                 (doseq [entry (assets/manifest)]
-                   (let [pack (filter #(= :pack (:host %)) (:sources entry))]
-                     (when (seq pack)
-                       (expect (true? (:is-redistributed entry)) (:id entry))
-                       (expect (true? (:is-commercial-ok entry)) (:id entry))
-                       (expect (nil? (:voice entry)) (:id entry))
-                       (doseq [source pack]
-                         (expect (str/starts-with?
-                                   (:url source)
-                                   "https://github.com/Blockether/vis/releases/download/")
-                                 (:id entry))))
-                     (when-not (:is-redistributed entry) (expect (empty? pack) (:id entry)))))
-                 (expect (empty? (filter #(= "espeak-ng-data" (:id %)) (assets/manifest)))))
-             (it "requires every reference clip it says it ships"
-                 ;; A bundle that promises a voice it does not carry is worse than one
-                 ;; with no voice at all: the install reports itself ready and the
-                 ;; first synthesis is what discovers the clip was never there.
-                 (doseq [entry
-                         (assets/manifest)
+(defdescribe
+  ensure-test
+  (it "refuses to accept an opt-in asset's terms on the user's behalf"
+      (with-redefs [assets/installed? (constantly false)]
+        (let [data (ex-data-of #(assets/ensure! (assets/entry "piper-en_US-ryan-high")))]
+          (expect (= :speech-assets/opt-in-required (:type data)))
+          (expect (= "piper-en_US-ryan-high" (:id data)))
+          (expect (seq (:notice data)))
+          (expect (seq (:source-url data))))))
+  (it "never asks twice for a model Vis may host itself"
+      ;; pocket-tts is our own CC BY 4.0 export, so the AUTOMATIC path installs
+      ;; it like any other asset instead of demanding that it be named.
+      (with-redefs [assets/installed? (constantly true)]
+        (expect (str/ends-with? (assets/ensure! (assets/entry "pocket-tts-int8"))
+                                "sherpa-onnx-pocket-tts-int8"))))
+  (it "mirrors nothing it may not host, and hosts nothing it did not make"
+      ;; The pack is a release of ASSETS WE OWN: our own exports and the
+      ;; models we may mirror outright. Each Piper voice and its GPL phoneme
+      ;; tables come together from that voice's publisher, never from our pack.
+      (doseq [entry (assets/manifest)]
+        (let [pack (filter #(= :pack (:host %)) (:sources entry))]
+          (when (seq pack)
+            (expect (true? (:is-redistributed entry)) (:id entry))
+            (expect (true? (:is-commercial-ok entry)) (:id entry))
+            (expect (nil? (:voice entry)) (:id entry))
+            (doseq [source pack
+                    url (if (= :files (:kind source)) (mapv :url (:files source)) [(:url source)])]
 
-                         voice
-                         (:voices entry)]
+              (expect (str/starts-with? url "https://github.com/Blockether/vis/releases/download/")
+                      (:id entry))))
+          (when-not (:is-redistributed entry) (expect (empty? pack) (:id entry)))))
+      (expect (empty? (filter #(= "espeak-ng-data" (:id %)) (assets/manifest)))))
+  (it "requires every reference clip it says it ships"
+      ;; A bundle that promises a voice it does not carry is worse than one
+      ;; with no voice at all: the install reports itself ready and the
+      ;; first synthesis is what discovers the clip was never there.
+      (doseq [entry
+              (remove #(= :vibevoice-tts (:engine %)) (assets/manifest))
 
-                   (expect (some? (:clip voice)) (:id entry))
-                   (expect (str/starts-with? (:clip voice) "voices/") (:id entry))
-                   (expect (contains? (set (:requires entry)) (:clip voice)) (:id entry))
-                   ;; the transcript rides along, because the clone is given the words
-                   (expect (seq (:clip-text voice)) (:id entry)))))
+              voice
+              (:voices entry)]
+
+        (expect (some? (:clip voice)) (:id entry))
+        (expect (str/starts-with? (:clip voice) "voices/") (:id entry))
+        (expect (contains? (set (:requires entry)) (:clip voice)) (:id entry))
+        ;; the transcript rides along, because the clone is given the words
+        (expect (seq (:clip-text voice)) (:id entry))))
+  (it "requires the preset pack that holds every VibeVoice voice"
+      ;; A VibeVoice voice is a cached prompt state, not a clip: all of them
+      ;; are in one `voices.bin`, indexed by `voices.json`.
+      (let [entry (assets/entry "vibevoice-realtime-0.5b-int8")]
+        (expect (seq (:voices entry)))
+        (expect (every? (set (:requires entry)) ["voices.bin" "voices.json"]))
+        (expect (not-any? :clip (:voices entry))))))
 
 (defn- repo-document
   "The generated document at the repository root, found by walking up from the
@@ -317,8 +330,8 @@
                      (expect (str/includes? rendered (:id model)))
                      (expect (str/includes? rendered (:revision model)))
                      (expect (str/includes? rendered (:attribution model)))
-                     (doseq [artifact (concat [(get-in model [:artifacts :inference])
-                                               (get-in model [:artifacts :training])]
+                     (doseq [artifact (concat (keep #(get-in model [:artifacts %])
+                                                    [:inference :training])
                                               (vals (get-in model [:artifacts :wheels])))]
                        (expect (str/includes? rendered (:sha256 artifact)))
                        (doseq [part (or (seq (:parts artifact)) [artifact])]

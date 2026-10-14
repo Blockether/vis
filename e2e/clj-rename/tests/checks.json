@@ -1,0 +1,13 @@
+{
+  "want": {
+    "src/core.clj": [
+      "defn salute",
+      "(salute \"x\")"
+    ]
+  },
+  "wantnot": {
+    "src/core.clj": [
+      "greet"
+    ]
+  }
+}

@@ -3002,52 +3002,55 @@
                        output-recovery-exhausted?)
             llm-provider-error (llm-provider-error-context iteration iteration-error-data)
             error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
-            trace-entry {:iteration iteration :error iteration-error-data :final? false}
             ;; Preserve the provider's raw reasoning, content and usage on every failure
             ;; path. The same reasoning value populates `:thinking` after success.
             err-data (:data iteration-error-data)
             err-reasoning (:reasoning err-data)
             err-partial-content (or (:content err-data) (:partial-content err-data))
             err-api-usage (or (:api-usage iteration-result) (:api-usage err-data))
+            tc (accounting/response-cost turn-pricing
+                                         err-api-usage
+                                         (:name resolved-model)
+                                         (:provider resolved-model))
+            _ (swap! accounting-atom accounting/add-cost tc)
+            trace-entry {:iteration iteration
+                         :error iteration-error-data
+                         :final? false
+                         :usage (some-> tc
+                                        (select-keys [:tokens :cost-usd]))}
             err-iteration-id
             (persistance/db-store-iteration!
               (:db-info environment)
-              (let [tc (accounting/response-cost turn-pricing
-                                                 err-api-usage
-                                                 (:name resolved-model)
-                                                 (:provider resolved-model))
-                    _ (swap! accounting-atom accounting/add-cost tc)]
-
-                (cond-> {:session-turn-id session-turn-id
-                         :council-input council-input
-                         :user-input (transcript/persisted-user-input user-input)
-                         :council-publications (:council-publications iteration-result)
-                         :vars []
-                         :code (or err-partial-content "")
-                         :thinking err-reasoning
-                         :duration-ms 0
-                         :llm-full-duration-ms 0
-                         :error iteration-error-data
-                         :llm-messages effective-messages
-                         :llm-provider (:provider resolved-model)
-                         :llm-model (str (:name resolved-model))
-                         :llm-routing
-                         (cond-> {:selected (transcript/llm-id (:provider resolved-model)
-                                                               (some-> (:name resolved-model)
-                                                                       str))
-                                  :actual (transcript/llm-id (:provider resolved-model)
+              (cond-> {:session-turn-id session-turn-id
+                       :council-input council-input
+                       :user-input (transcript/persisted-user-input user-input)
+                       :council-publications (:council-publications iteration-result)
+                       :vars []
+                       :code (or err-partial-content "")
+                       :thinking err-reasoning
+                       :duration-ms 0
+                       :llm-full-duration-ms 0
+                       :error iteration-error-data
+                       :llm-messages effective-messages
+                       :llm-provider (:provider resolved-model)
+                       :llm-model (str (:name resolved-model))
+                       :llm-routing
+                       (cond-> {:selected (transcript/llm-id (:provider resolved-model)
                                                              (some-> (:name resolved-model)
                                                                      str))
-                                  :fallback? false}
-                           (seq (get-in iteration-error-data [:data :routed/trace]))
-                           (assoc :fallback?
-                             true :trace
-                             (vec (get-in iteration-error-data [:data :routed/trace]))))
-                         :cache-created-tokens (accounting/cache-created-tokens tc)}
-                  tc
-                  (assoc :tokens
-                    (:tokens tc) :cost-usd
-                    (:cost-usd tc)))))]
+                                :actual (transcript/llm-id (:provider resolved-model)
+                                                           (some-> (:name resolved-model)
+                                                                   str))
+                                :fallback? false}
+                         (seq (get-in iteration-error-data [:data :routed/trace]))
+                         (assoc :fallback?
+                           true :trace
+                           (vec (get-in iteration-error-data [:data :routed/trace]))))
+                       :cache-created-tokens (accounting/cache-created-tokens tc)}
+                tc
+                (assoc :tokens
+                  (:tokens tc) :cost-usd
+                  (:cost-usd tc))))]
 
         (ctx-loop/set-turn-state! environment :iteration-id err-iteration-id)
         ;; A recoverable iteration error remains useful live feedback.
@@ -3201,19 +3204,19 @@
                                                      (:attachments b))))
                                       blocks)
           reinspection-attachments (into [] (mapcat :reinspect-attachments) blocks)
+          ;; Price by the ACTUAL serving model (`:llm-model` =
+          ;; routed metadata), not the pre-resolved root — a
+          ;; fallback iteration must not bill at the selected
+          ;; model's rates.
+          tc (accounting/response-cost turn-pricing
+                                       (:api-usage iteration-result)
+                                       (:llm-model iteration-result)
+                                       (:llm-provider iteration-result))
+          _ (swap! accounting-atom accounting/add-cost tc)
           iteration-id
           (persistance/db-store-iteration!
             (:db-info environment)
-            ;; Price by the ACTUAL serving model (`:llm-model` =
-            ;; routed metadata), not the pre-resolved root — a
-            ;; fallback iteration must not bill at the selected
-            ;; model's rates.
-            (let [tc (accounting/response-cost turn-pricing
-                                               (:api-usage iteration-result)
-                                               (:llm-model iteration-result)
-                                               (:llm-provider iteration-result))
-                  _ (swap! accounting-atom accounting/add-cost tc)
-                  served (loop-router/resolve-model-info (:router environment)
+            (let [served (loop-router/resolve-model-info (:router environment)
                                                          (:llm-provider iteration-result)
                                                          (:llm-model iteration-result))
                   ;; Resolution falls back to the router root for missing entries;
@@ -3300,6 +3303,8 @@
                                              reasoning-effort
                                              pre-resolved-model
                                              iteration-result))
+                       :usage (some-> tc
+                                      (select-keys [:tokens :cost-usd]))
                        :final? (boolean final-result)}]
 
       (cond

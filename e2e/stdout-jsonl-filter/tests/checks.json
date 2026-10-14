@@ -1,0 +1,32 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "matched_count": 84,
+    "top_three": [
+      {
+        "id": "rid:00853",
+        "latency": 994
+      },
+      {
+        "id": "rid:03937",
+        "latency": 994
+      },
+      {
+        "id": "rid:02227",
+        "latency": 991
+      }
+    ]
+  },
+  "want_forms": [
+    "read_session()"
+  ],
+  "want_stdout_recovery": {
+    "min_chars": 120000,
+    "head": "JSONL-HEAD",
+    "middle": "rid:02200",
+    "tail": "JSONL-TAIL",
+    "goal_status": null
+  },
+  "want_requested_route": true
+}

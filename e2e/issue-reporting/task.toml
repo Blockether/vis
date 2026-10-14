@@ -1,0 +1,10 @@
+artifacts = ["issue-events.jsonl"]
+
+[metadata]
+lang = "python"
+
+[agent]
+timeout_sec = 300.0
+
+[verifier]
+timeout_sec = 300.0

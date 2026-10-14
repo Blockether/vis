@@ -69,6 +69,7 @@
                      (expect (team/enabled? "project-session"))
                      (expect (= [["subagents" {:scope "session" :target-id "project-session"}]]
                                 @reads))))))
+
 (defdescribe read-errors-are-recoverable-test
              (it "read errors are recoverable"
                  (doseq [response [{:status 503} {:status 200 :body "not json"}

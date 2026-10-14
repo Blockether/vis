@@ -13,7 +13,8 @@ callbacks and host operations.
   [settings](#settings) with their allowed scopes.
 - **Your extension needs a service from Vis**, such as [durable
   state](#durable-state), [environment variables](#environment), [session
-  context](#session-context) or [another session tool](#call-other-session-tools).
+  context](#session-context), [attachments](#attachments), [another session
+  tool](#call-other-session-tools) or [other sessions](#find-and-read-sessions).
 - **Your own program must read or export Activity history.** Read [Sessions
   API](sessions-api.md#read-activity-history).
 - **Your editor or type checker reports errors for code that runs in Vis.**
@@ -33,6 +34,7 @@ design](extension-design.md) for authoring and test guidance.
 | Add a user command or guard | [Slash commands](#slash-commands) · [Op hooks](#op-hooks) |
 | Add configurable behavior | [Settings](#settings) |
 | Persist data or report status | [Durable state](#durable-state) · [Logging and notifications](#logging-and-notifications) |
+| Store or read files that a tool makes | [Attachments](#attachments) |
 | Read environment or add session context | [Environment](#environment) · [Session context](#session-context) |
 | Access files or start a process | [Filesystem and processes](#filesystem-and-processes) |
 | Resolve the active working copy | [Workspace root](#workspace-root) |
@@ -69,6 +71,11 @@ PyPI has the SDK of every release and every published beta. The SDK of a new bet
 arrives on PyPI some minutes after the beta. Without an exact version, pip ignores
 development releases. Pin the exact version in your development environment, not in
 the dependencies of an extension that you publish.
+
+A lock file keeps the old SDK when you update Vis. Your editor then shows old types, but your
+extension still runs with the bundled SDK. `vis-agent doctor` reports each `vis-agent` in the
+project `.venv` or the shared packages that differs from the bundled SDK. To update a uv project,
+set the new version in `pyproject.toml`. Then run `uv lock --upgrade-package vis-agent` and `uv sync`.
 
 A `dev` value, or a value that ends in `+dirty`, comes from a source run or a local
 build. A local build of a commit without a published beta is also not on PyPI. For
@@ -171,6 +178,32 @@ load. The load error names that owner.
 `type` defaults to `"boolean"` with a boolean `default`. For a choice row, use `type="enum"`,
 string `choices` and a `default` from those choices.
 
+To act when a person changes a setting, give `on_change`. Vis calls `on_change(old, new, scope)`
+once after the app or the TUI saves the setting, if the effective value changed. `scope` is the
+level of the change: `global`, `project`, `group` or `session`. Use it for a side effect, such as
+updating a file. The Settings request waits for the hook, so keep it short-running.
+
+```python
+from pathlib import Path
+
+def record_mode(old: str, new: str, scope: str) -> None:
+    Path("steering-mode.txt").write_text(new)
+
+steering_mode = vis.Setting(
+    id="steering_mode",
+    label="Steering mode",
+    type="enum",
+    default="vibe",
+    choices=["vibe", "control"],
+    scopes=["global", "project"],
+    on_change=record_mode,
+)
+```
+
+If the hook raises an error, the value stays saved. The app and the TUI show the error, and the
+gateway log records it. Vis does not call the hook when the extension loads. To read the current
+value at another time, call `value()` in a callback.
+
 The app and the TUI show your settings under **Extensions**, in a group with your extension's
 name. That group also holds the extension's engine choice and its packaged skills. A `project` or
 `global` tag shows where your extension is installed.
@@ -255,6 +288,32 @@ the [tested recipe and boundary checks](extension-design.md#typed-catalog-and-ge
 A dict is enough for simple results. Use frozen dataclasses with annotated public fields when shape
 and meaning matter. The [tested example](extension-design.md#describe-structure-once) shows field
 descriptions with `Annotated`. Private fields and original methods do not cross into the sandbox.
+
+Derived data and a text report can cross with the fields:
+
+- Each public `@property` or `functools.cached_property` of the dataclass becomes a field of the
+  record. Vis reads it once when the tool answers. A property that raises is left out.
+- If the class defines its own `__str__`, its text becomes the record's `str`. Then `print(result)`
+  shows your report, and `repr(result)` still shows the fields.
+
+```python
+@dataclass(frozen=True)
+class Status:
+    env: str
+    phases: tuple[int, ...] = ()
+
+    @property
+    def next_phase(self) -> int:
+        return len(self.phases) + 1
+
+    def __str__(self) -> str:
+        return f"{self.env}: next phase {self.next_phase}"
+```
+
+In the sandbox, `status.next_phase` is a field and `print(status)` shows `DEV04: next phase 1`.
+Other methods, such as `status.text_report()`, stay in your process. Expose the value as a property,
+or as `__str__`, or expose the operation as a tool. When the record goes back to a tool as an
+argument, Vis ignores the property fields and calls your constructor with the declared fields.
 
 Generated records support both `result.url` and `result["url"]`, including nested
 records. An unknown name raises `KeyError` (`result["missing"]`) or `AttributeError`
@@ -1030,6 +1089,37 @@ directory. A hosted call without a bound session fails and does not use the gate
 It does not grant filesystem permissions. The model sandbox uses `project_root_path` for the
 corresponding root. Extension code uses this SDK function.
 
+## Find and read sessions
+
+Call `vis.list_sessions(search=…)` to find a conversation, and `vis.read_session(id)` to read it.
+For example, your extension can turn a failed turn into a test case. Both functions return the
+same string-keyed data as the sandbox tools with the same names.
+
+```python
+import blockether.vis.extension as vis
+
+rows = vis.list_sessions(search="release")
+data = vis.read_session(rows[0]["id"]) if rows else vis.read_session()
+last = data["transcript"]["turns"][-1]
+request, status = last["user_request"], last["status"]
+```
+
+`vis.list_sessions()` lists every session, newest first. With `search`, it runs the session search
+of the TUI and the Companion app. Matches in the title come first, then the request, the reply and
+the thinking. Keep that order. Each row has `id`, `title`, `turn_count`, `created_at` and
+`modified_at`. A match adds `rank`, the `is_in_*` flags and optional snippets.
+
+`vis.read_session()` without an argument reads the session that runs your extension. An argument
+takes a bare id, an unambiguous prefix or the `vis_session_id#<uuid>` marker that a person copies
+from the TUI or the Companion app. The dict has `session`, `current_turn`, `failures`,
+`diagnosis`, `session_forks`, `turn_retries`, `usage` and `transcript`. Each turn has `position`,
+`user_request`, `status`, `content` and `iterations`. Each iteration has `blocks` with `code`,
+`stdout` and `error`.
+
+The `introspection` setting does not apply, because an extension is trusted code. The setting
+controls only the model's own session tools. Outside a Vis process, both functions raise an
+error. There, use the SDK client.
+
 ## Call other session tools
 
 Use `vis.tools` to reuse a tool that the session already has, such as another extension's browser or
@@ -1055,13 +1145,14 @@ Results arrive in the same shape the model sees:
   `result["field"]`. An unknown field raises `AttributeError` or `KeyError`
   listing the available fields. An object with a
   [field-backed sequence](#field-backed-sequences) iterates over that field and
-  supports `len()`.
+  supports `len()`. Its property fields and its `str` text arrive as in
+  [Return typed objects](#return-typed-objects).
 - Other results are JSON data. Objects become dicts that also allow attribute
   access, such as `page.meta.total`, and lists stay lists.
 
 The object is a copy in your extension's process, not an instance of the other extension's class. So
 check its fields. Do not use `isinstance` with the other package's class. Results with the same
-class name and fields share one class.
+class name and fields share one class, unless the object has its own `str` text.
 
 Pass JSON-compatible arguments: strings, numbers, booleans, `None`, lists and
 dicts. A dataclass argument is sent as a dict of its public fields. An extension
@@ -1076,6 +1167,44 @@ Vis refuses a call back into your own extension, or into another extension that 
 call. Such a call would never return. Call your own functions directly instead. Outside a Vis
 session, for example in plain unit tests, `vis.tools` raises an error. There, import and call the
 other package directly.
+
+## Attachments
+
+Use `vis.attach` to store a file that your tool makes, such as a chart, a CSV table or a PDF
+report. The session keeps the file as a durable attachment of the `python_execution` block that
+called your tool. People see it in the transcript, and an image can also go to the model. The
+functions work like the `attach` functions in `python_execution`:
+
+```python
+import blockether.vis.extension as vis
+
+row = vis.attach("out/totals.png", label="Totals by month")  # a path, bytes, a figure or a Pillow image
+vis.attach(csv_bytes, "totals.csv")                           # bytes need a filename
+versions = vis.list_attachments("totals.csv")                 # every version, oldest first
+latest = vis.get_attachment("totals.csv")                     # the descriptor, without bytes
+data = vis.read_attachment(latest)                            # the bytes
+vis.show_attachment(row)                                      # show the image to the model again
+```
+
+`vis.attach` returns a descriptor dict with `id`, `filename`, `version`, `media_type`, `kind`,
+`size`, `audience` and `commentable`. If you attach again under the same filename, Vis stores the
+next version of that file. Use a new filename only for a different file.
+
+Use `audience` to set who sees the file: `both` (the default), `user` or `model`. A PDF or HTML
+document is for the user only. A CSV or TSV table shows as a table, and its rows do not go to
+the model. Set `commentable=True` to let a person comment on this version.
+
+If you do not give `media_type`, Vis detects the type from the bytes, then from the filename.
+If both fail, Vis uses `application/octet-stream`.
+
+The read functions take the same target: a filename, an `id` or a descriptor. A filename means
+the latest version, unless you give `version`. A negative version counts back from the latest
+version. `read_attachment` is the only function that returns the bytes. `show_attachment` shows a
+stored image to the model for the next request only.
+
+If no `python_execution` block runs your code, for example in a slash command, these functions
+raise an error. Outside Vis, for example in plain unit tests, they keep the files in process
+memory. A test can then attach a file and read it back.
 
 ## Filesystem and processes
 
@@ -1095,7 +1224,8 @@ are not shared across workers.
 | Lifetime | session worker | separate registration or session worker, reloaded by `/reload` |
 
 Tool results cross as data. Objects and dataclasses expose their public fields as
-frozen data records in the sandbox, including nested records. The original class,
+frozen data records in the sandbox, including nested records. A dataclass also sends its public
+properties and its own `str` text, as described in [Return typed objects](#return-typed-objects).
 methods, native pointers and object identity stay in the trusted process. Explicit
 [field-backed sequences](#field-backed-sequences) add only local collection operations.
 Expose other operations as declared tools rather than methods on returned objects.

@@ -2603,7 +2603,10 @@ therapy line 2"
              (it "--extensions captures the list and needs a value"
                  (expect (= {:extensions "gh,clj" :no-global true}
                             (parse-args ["--no-global" "--extensions" "gh,clj"])))
-                 (expect (user-error? #(parse-args ["--extensions"])))))
+                 (expect (user-error? #(parse-args ["--extensions"]))))
+             (it "--tools captures the list, takes a leading dash and needs a value"
+                 (expect (= {:tools "-py.repl_stop"} (parse-args ["--tools" "-py.repl_stop"])))
+                 (expect (user-error? #(parse-args ["--tools"])))))
 
 (def ^:private launch-session-options (deref #'screen/launch-session-options))
 
@@ -2633,11 +2636,28 @@ therapy line 2"
         (expect (= {:extensions []} (launch-session-options {:extensions "none"} {}))))
     (it "VIS_EXTENSIONS applies without a flag"
         (expect (= {:extensions ["gh"]} (launch-session-options {} {"VIS_EXTENSIONS" "gh"})))))
+  (describe "tools"
+            (it "splits the list and keeps exclusions"
+                (expect (= {:tools ["py.lint_code" "py.repl_*"]}
+                           (launch-session-options {:tools "py.lint_code, py.repl_*"} {})))
+                (expect (= {:tools ["-py.repl_stop"]}
+                           (launch-session-options {:tools "-py.repl_stop"} {}))))
+            (it "VIS_TOOLS applies without a flag, and a flag wins"
+                (expect (= {:tools ["py.repl_eval"]}
+                           (launch-session-options {} {"VIS_TOOLS" "py.repl_eval"})))
+                (expect (= {:tools ["py.lint_code"]}
+                           (launch-session-options {:tools "py.lint_code"}
+                                                   {"VIS_TOOLS" "py.repl_eval"})))))
   (describe "existing sessions"
             (it "rejects the flags with --session-id, --resume or --continue"
                 (expect (user-error? #(launch-session-options {:no-global true :continue true} {})))
                 (expect (user-error? #(launch-session-options {:extensions "gh" :session-id "x"}
                                                               {}))))
+            (it "takes --tools with a resume flag for new sessions and the first opened session"
+                (expect (= {:tools ["-py.repl_stop"] :open-tools ["-py.repl_stop"]}
+                           (launch-session-options {:tools "-py.repl_stop" :resume true} {})))
+                (expect (= {:tools ["py.repl_eval"]}
+                           (launch-session-options {:continue true} {"VIS_TOOLS" "py.repl_eval"}))))
             (it "accepts environment values with --continue, because only new sessions use them"
                 (expect (= {:sources ["project"]}
                            (launch-session-options {:continue true} {"VIS_SOURCES" "project"}))))))
@@ -3186,8 +3206,8 @@ therapy line 2"
          :session {:id "s1"}}
 
         ;; One live tick against a real virtual terminal: what the tick
-        ;; handed the graphics painter, and where the caption the picture
-        ;; hangs under actually landed on screen.
+        ;; handed the graphics painter, and where the card's file row the
+        ;; picture hangs under actually landed on screen.
         live-tick!
         (fn [previous-layout]
           (let [{terminal :terminal ^TerminalScreen scr :screen}
@@ -3213,7 +3233,7 @@ therapy line 2"
                 {:painted @painted
                  :layout layout
                  :caption-row (first (keep-indexed (fn [i line]
-                                                     (when (str/includes? line "Image #1") i))
+                                                     (when (str/includes? line "shot.png") i))
                                                    (term/grid terminal)))}))))]
 
     (it "a follow-mode tick re-places the picture on the rows it just painted"
@@ -3225,10 +3245,10 @@ therapy line 2"
 
           (expect (some? caption-row))
           (expect (= 1 (count painted)))
-          ;; The reserved box opens on the row under the `[Image #1: …]`
-          ;; caption this very tick painted — not where the last full
-          ;; frame left it.
-          (expect (= (inc (long caption-row)) (long (:row placement))))
+          ;; The reserved box opens under the card's file row, its separator and
+          ;; its padding row, as this very tick painted them — not where the
+          ;; last full frame left it.
+          (expect (= (+ 3 (long caption-row)) (long (:row placement))))
           (expect (= 5 (long (:rows (:img placement)))))
           (expect (= "/tmp/shot.png" (:path (:img placement))))))
     (it "a tick that did not shift the transcript leaves the graphics layer alone"

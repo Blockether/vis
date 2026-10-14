@@ -1,8 +1,15 @@
 import { useContext, useId, useState, type ReactNode } from 'react';
 import { RefreshIcon } from '../../components/icons';
-import { Banner, IconButton, Text } from '../../components/ui';
+import { Banner, Button, IconButton, Text } from '../../components/ui';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
-import type { ExtensionReload, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
+import { OpenScopedSettings } from '../../lib/open-settings';
+import type {
+  ExtensionReload,
+  SettingsProjectExtensions,
+  SettingsTarget,
+  Toggle,
+  ToggleGroup,
+} from '../../lib/types';
 import { SettingsNested, SettingsPanel } from './SettingsLayout';
 
 /** Extension sections stand under Extensions. Older gateways do not mark them. */
@@ -22,16 +29,21 @@ export function hasExtensionNotice(group: ToggleGroup): boolean {
 }
 
 /**
- * The reload report: each scanned scope names its directory and what it loaded. A machine
- * reload says that project extensions need their own reload. Issue #348.
+ * The reload report, one line each: each scanned scope names its directory and what it
+ * loaded. A machine reload names the project extensions, which reload in Project settings.
+ * Issues #348 and #373.
  */
-export function extensionReloadStatus(result: ExtensionReload, global: boolean): string {
+export function extensionReloadStatus(
+  result: ExtensionReload,
+  global: boolean,
+  project?: SettingsProjectExtensions,
+): string[] {
   const scopes = result.scopes ?? [];
   const lines = scopes.length
     ? scopes.map((entry) => {
         const label = entry.scope === 'project' ? 'project extensions' : 'machine extensions';
         const dir = entry.dirs.join(', ');
-        if (entry.loaded + entry.failed === 0) return `No ${label} found in ${dir}.`;
+        if (entry.loaded + entry.failed === 0) return `No ${label} in ${dir}.`;
         const shown = entry.extensions.slice(0, 8);
         const more = entry.extensions.length - shown.length;
         const names = shown.length ? ` (${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''})` : '';
@@ -39,9 +51,12 @@ export function extensionReloadStatus(result: ExtensionReload, global: boolean):
         return `${title} (${dir}): ${entry.loaded} loaded${names}, ${entry.failed} failed.`;
       })
     : [`${result.loaded} loaded, ${result.failed} failed.`];
-  if (global) lines.push('Project extensions were not reloaded. Use Project settings → Reload or /reload.');
+  if (global && project) {
+    lines.push(`This project has ${project.count} ${project.count === 1 ? 'extension' : 'extensions'} (${project.names.join(', ')}).`);
+  }
+  if (global) lines.push('Project extensions reload in Project settings.');
   if (result.failed > 0) lines.push('Each failed extension shows its error.');
-  return lines.join(' ');
+  return lines;
 }
 
 /** The load error of one extension section, or nothing while it loads normally. */
@@ -162,6 +177,7 @@ export function ExtensionsPanel({
   target,
   groups,
   hasActions = true,
+  projectExtensions,
   onRefresh,
   renderSetting,
 }: {
@@ -171,26 +187,37 @@ export function ExtensionsPanel({
   groups: ToggleGroup[];
   /** A search shows only the matching sections, without the reload button. */
   hasActions?: boolean;
+  /** Machine settings only: the project extensions of the open session. */
+  projectExtensions?: SettingsProjectExtensions;
   onRefresh: () => Promise<unknown>;
   /** One setting row; the dialog that saves it draws it. `head` marks the row that names its extension. */
   renderSetting: (toggle: Toggle, head?: SettingHead) => ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<string[] | null>(null);
+  // Only a finished machine reload report points to Project settings.
+  const [isReported, setReported] = useState(false);
   const scoped = Boolean(target && target.scope !== 'global');
   const headingLevel = scoped ? 3 : 4;
   // Inside a section band the Extensions heading is one level lower, and so are its extensions.
   const isNested = useContext(SettingsNested);
   const groupLevel = ((isNested ? headingLevel + 1 : headingLevel) + 1) as 4 | 5 | 6;
+  const openScoped = useContext(OpenScopedSettings);
+  const project = scoped ? undefined : projectExtensions;
+  const openProject = project && openScoped
+    ? () => openScoped(client, { scope: 'project', target_id: project.target_id, label: project.label })
+    : undefined;
   const reload = async () => {
     setBusy(true);
-    setStatus('Reloading…');
+    setStatus(['Reloading…']);
+    setReported(false);
     try {
       const result = await client.reloadExtensions(target);
       await onRefresh();
-      setStatus(extensionReloadStatus(result, !scoped));
+      setStatus(extensionReloadStatus(result, !scoped, project));
+      setReported(true);
     } catch (error) {
-      setStatus(actionError(error));
+      setStatus([actionError(error)]);
     } finally {
       setBusy(false);
     }
@@ -200,8 +227,6 @@ export function ExtensionsPanel({
     <SettingsPanel
       title="Extensions"
       headingLevel={headingLevel}
-      /* The reload result stands as plain text in the header, beside its button. */
-      meta={hasActions && status ? <span role="status">{status}</span> : undefined}
       action={
         hasActions ? (
           <IconButton
@@ -216,6 +241,22 @@ export function ExtensionsPanel({
         ) : undefined
       }
     >
+      {/* The reload report stands below the header as a left-aligned note, one line each (#373). */}
+      {hasActions && status && (
+        <div role="status" className="space-y-1 px-3 py-2 text-left sm:px-4">
+          {status.map((line) => <Text key={line} as="p" variant="description" className="break-words">{line}</Text>)}
+          {isReported && openProject && (
+            <Button variant="secondary" density="panel" className="mt-1" onClick={openProject}>Open Project settings</Button>
+          )}
+        </div>
+      )}
+      {hasActions && groups.length === 0 && (
+        <div className="px-3 py-2 text-left sm:px-4">
+          <Text as="p" variant="description">
+            No extension settings for this {target && target.scope !== 'global' ? target.scope : 'machine'}.
+          </Text>
+        </div>
+      )}
       {groups.map((group) => (
         <ExtensionGroup
           key={group.id}

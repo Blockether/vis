@@ -38,11 +38,11 @@
     (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
       (expect (< 0 touch-ms keepalive-ms ttl-ms))
       (expect (< 0 keepalive-timeout-ms keepalive-ms)))
-    (expect (= 155 (count contract/route-table)))
-    (expect (= 194 (count (contract/route-methods))))
-    (expect (= {:none 125 :json 64 :binary 5}
+    (expect (= 161 (count contract/route-table)))
+    (expect (= 200 (count (contract/route-methods))))
+    (expect (= {:none 125 :json 70 :binary 5}
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 176 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
+    (expect (= {:json 182 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= 37 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
@@ -114,7 +114,7 @@
                                              :client-min-gateway 1})))))
   (it "builds handshake and error response envelopes"
       (expect (=
-              {:protocol 17 :min-client 17 :min-gateway 17 :version "1.2.3" :build "abc123def456"}
+                {:protocol 17 :min-client 17 :min-gateway 17 :version "1.2.3" :build "abc123def456"}
                 (contract/handshake {:version "1.2.3" :build "abc123def456"})))
       (expect (= {"error" {"type" "invalid-request" "message" "replacement" "session_id" "s1"}}
                  (contract/error-body :mcp/invalid-request

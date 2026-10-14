@@ -2,7 +2,7 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { setStepsSummarized } from '../lib/transcript-display';
+import { setPythonCodeShown, setStepsSummarized } from '../lib/transcript-display';
 import type { TranscriptIteration } from '../lib/types';
 
 const { IterationTrace } = await import('./ChatContent');
@@ -93,6 +93,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   setStepsSummarized(true);
+  setPythonCodeShown(true);
 });
 
 describe('a trace backfilling the turns a reader is scrolling into', () => {
@@ -249,4 +250,78 @@ describe('a live trace that a session switch mounts again', () => {
     expect(rising()).toBe(1);
     view.unmount();
   });
+});
+
+/** Queue animation frames, and pump them until a frame mounts nothing new. */
+function frameQueue(mounted: () => number): () => void {
+  const queue: FrameRequestCallback[] = [];
+  let clock = 0;
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    queue.push(cb);
+    return queue.length;
+  });
+  vi.stubGlobal('cancelAnimationFrame', () => {});
+  vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  return () => {
+    let previous = -1;
+    for (let frame = 0; queue.length > 0 && frame < 2000; frame += 1) {
+      const tick = queue.shift();
+      clock += FRAME_MS;
+      act(() => {
+        tick?.(clock);
+      });
+      if (mounted() === previous && queue.length === 0) break;
+      previous = mounted();
+    }
+  };
+}
+
+describe('a mounted trace whose display mode changes', () => {
+  // Regression, user report (session dd707a35, a turn of 507 steps): with a long session open,
+  // the Compact mode switch took seconds to turn off. Every mounted trace mounted the code and
+  // Activity of all its separate steps in the switch's own commit, also a trace that showed
+  // its whole turn. A mode change now mounts the first paint, and the ramp mounts the rest.
+  const step = (position: number): TranscriptIteration => ({
+    ...iteration(position),
+    assistant_prose: position === 0 ? 'step 0' : '',
+    forms: [{ source: `step_${position}()` }],
+  });
+  const steps = Array.from({ length: 300 }, (_, index) => step(index));
+
+  it.each([{ whole: false }, { whole: true }])(
+    'ramps the separate steps of Compact mode turned off (whole: $whole)',
+    ({ whole }) => {
+      setStepsSummarized(true);
+      const view = render(
+        <IterationTrace iterations={steps} whole={whole} client={client} sid="s1" />,
+      );
+      const rail = () => view.container.firstElementChild?.children.length ?? 0;
+      const pump = frameQueue(rail);
+      pump();
+      expect(rail()).toBe(1);
+
+      act(() => setStepsSummarized(false));
+      expect(rail()).toBe(8);
+
+      pump();
+      expect(rail()).toBe(300);
+      view.unmount();
+    },
+    20_000,
+  );
+
+  it('ramps the separate steps again when Code mode changes', () => {
+    setStepsSummarized(false);
+    const view = render(<IterationTrace iterations={steps} whole client={client} sid="s1" />);
+    const rail = () => view.container.firstElementChild?.children.length ?? 0;
+    const pump = frameQueue(rail);
+    expect(rail()).toBe(300);
+
+    act(() => setPythonCodeShown(false));
+    expect(rail()).toBe(8);
+
+    pump();
+    expect(rail()).toBe(300);
+    view.unmount();
+  }, 20_000);
 });

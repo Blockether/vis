@@ -258,35 +258,40 @@
             (expect (= ::connection @closed))
             (expect (= :streamable-http (get-in @seen [1 :transport])))
             (expect (= "Bearer private" (get-in @seen [1 :headers "Authorization"])))))))
-  (it "keeps persisted env and headers when a save omits them"
-      (let [store
-            (atom {"mcp" {"servers" {"remote" {"transport" "streamable_http"
-                                               "url" "https://mcp.example.test/mcp"
-                                               "headers" {"Authorization" "Bearer keep-me"}}}}})
+  (it
+    "keeps persisted env and headers when a save omits them"
+    (let [store
+          (atom {"mcp" {"servers" {"remote" {"transport" "streamable_http"
+                                             "url" "https://mcp.example.test/mcp"
+                                             "headers" {"Authorization" "Bearer keep-me"}}}}})
 
-            reconnect!
-            (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)]
+          reconnect!
+          (ns-resolve 'com.blockether.vis.internal.foundation.mcp.core 'reconcile-async!)]
 
-        (with-redefs-fn {#'config/load-global-config-raw (fn []
-                                                           @store)
-                         #'config/load-global-yaml-config-raw (fn []
-                                                                @store)
-                         #'config/save-config! (fn [value _source]
-                                                 (reset! store value))
-                         reconnect! (constantly nil)}
-          (fn []
-            ;; The sanitized inventory a client reads carries no secret, so a save
-            ;; that round-trips through the UI omits `headers` entirely.
-            (mcp/save-gateway-server! "remote"
-                                      {"transport" "streamable_http"
-                                       "url" "https://mcp.example.test/mcp"})
-            (expect (= "Bearer keep-me"
-                       (get-in @store ["mcp" "servers" "remote" "headers" "Authorization"])))
-            ;; An explicit value — including an empty map — still replaces.
-            (mcp/save-gateway-server!
-              "remote"
-              {"transport" "streamable_http" "url" "https://mcp.example.test/mcp" "headers" {}})
-            (expect (= {} (get-in @store ["mcp" "servers" "remote" "headers"])))))))
+      (with-redefs-fn {#'config/load-global-config-raw (fn []
+                                                         @store)
+                       #'config/load-global-yaml-config-raw (fn []
+                                                              @store)
+                       #'config/save-config! (fn [value _source]
+                                               (reset! store value))
+                       #'config/update-machine-config! (fn [f & _]
+                                                         (let [value (f @store)]
+                                                           (when (and value (not= value @store))
+                                                             (reset! store value))))
+                       reconnect! (constantly nil)}
+        (fn []
+          ;; The sanitized inventory a client reads carries no secret, so a save
+          ;; that round-trips through the UI omits `headers` entirely.
+          (mcp/save-gateway-server! "remote"
+                                    {"transport" "streamable_http"
+                                     "url" "https://mcp.example.test/mcp"})
+          (expect (= "Bearer keep-me"
+                     (get-in @store ["mcp" "servers" "remote" "headers" "Authorization"])))
+          ;; An explicit value — including an empty map — still replaces.
+          (mcp/save-gateway-server!
+            "remote"
+            {"transport" "streamable_http" "url" "https://mcp.example.test/mcp" "headers" {}})
+          (expect (= {} (get-in @store ["mcp" "servers" "remote" "headers"])))))))
   (it
     "refuses to write a server that a hand-written config file declares"
     (let [saved

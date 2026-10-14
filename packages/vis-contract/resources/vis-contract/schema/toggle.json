@@ -100,6 +100,9 @@
           "minItems": 1
         },
         "visible_fn": {},
+        "on_change_fn": {
+          "description": "Local callback that receives the id, old value, new value and scope once after a write changes the effective value."
+        },
         "scopes": {
           "type": "array",
           "items": {
@@ -118,7 +121,7 @@
             "restrict"
           ],
           "default": "override",
-          "description": "A restricted boolean stays false after any explicit ancestor denial."
+          "description": "A restricted setting keeps any explicit ancestor denial: false for a boolean, the first choice for an enum with at least two choices."
         }
       },
       "required": [
@@ -139,14 +142,32 @@
             ]
           },
           "then": {
-            "properties": {
-              "type": {
-                "const": "boolean"
+            "oneOf": [
+              {
+                "properties": {
+                  "type": {
+                    "const": "boolean"
+                  },
+                  "default": {
+                    "type": "boolean"
+                  }
+                }
               },
-              "default": {
-                "type": "boolean"
+              {
+                "properties": {
+                  "type": {
+                    "const": "enum"
+                  },
+                  "choices": {
+                    "minItems": 2
+                  }
+                },
+                "required": [
+                  "type",
+                  "choices"
+                ]
               }
-            }
+            ]
           }
         }
       ]

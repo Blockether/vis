@@ -885,7 +885,7 @@
         (doseq [[sym expected] {'read-session "(target=None)"
                                 'get-session "(target=None)"
                                 'list-sessions "(search=None)"
-                                'council.subagents "()"
+                                'council.wait "(session_ids=None, *, timeout_secs=..., **kwargs)"
                                 'council.cancel "(session_id)"
                                 '_shell-stop "(id)"}]
           (expect (= expected (get sigs sym)) (str sym)))

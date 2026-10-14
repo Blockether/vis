@@ -71,10 +71,37 @@ afterEach(() => {
 });
 
 describe('the native shell after backgrounding', () => {
+  // Regression, user report (paraphrased: with the keyboard open, a trip to another
+  // app and back showed the session try to open the keyboard, drop it again and
+  // make the composer jump). The return refocused the composer, which pinned the
+  // shell for a predicted keyboard that iOS never raised, then unpinned it.
+  it('comes back with the keyboard down and the composer still', () => {
+    render(<ViewportProbe />);
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+    composer.focus();
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
+    expect(shell).toHaveStyle({ height: '544px' });
+
+    act(() => native.app.get('appStateChange')?.({ isActive: false }));
+    // The shell is back at full height before the app is on screen again.
+    expect(shell.style.height).toBe('');
+    expect(screen.getByTestId('inset')).toHaveTextContent('0');
+
+    const focus = vi.spyOn(composer, 'focus');
+    act(() => native.app.get('appStateChange')?.({ isActive: true }));
+    for (let elapsed = 0; elapsed < 1500; elapsed += 50) {
+      act(() => vi.advanceTimersByTime(50));
+      expect(shell.style.height).toBe('');
+    }
+    expect(focus).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(composer);
+  });
+
   // Regression: TestFlight builds 5358 and 5468 blocked in
   // didProgrammaticallyClearFocusedElement / UIKeyboardTaskQueue. Capacitor's
   // iOS resume is willEnterForeground, not didBecomeActive: it must not blur.
-  it('waits for didBecomeActive before restoring focus, once per transition', () => {
+  it('waits for didBecomeActive before dropping the stale focus, once', () => {
     render(<ViewportProbe />);
     const composer = screen.getByRole('textbox', { name: 'Message' });
     composer.focus();
@@ -87,18 +114,18 @@ describe('the native shell after backgrounding', () => {
     act(() => vi.advanceTimersByTime(500));
     expect(isAppForeground()).toBe(false);
     expect(blur).not.toHaveBeenCalled();
-    expect(focus).not.toHaveBeenCalled();
 
     act(() => native.app.get('appStateChange')?.({ isActive: true }));
     act(() => vi.advanceTimersByTime(500));
     expect(isAppForeground()).toBe(true);
     expect(blur).toHaveBeenCalledTimes(1);
-    expect(focus).toHaveBeenCalledTimes(1);
+    expect(focus).not.toHaveBeenCalled();
   });
+
   // Regression, Vis session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: iOS ended
   // keyboard editing while the WebView was suspended, but stale DOM focus and the
   // old keyboard-height pin returned as an empty band where the keyboard had been.
-  it('reopens the keyboard instead of preserving its empty band', () => {
+  it('drops the empty band without reopening the keyboard', () => {
     render(<ViewportProbe />);
     const shell = screen.getByTestId('shell');
     const composer = screen.getByRole('textbox', { name: 'Message' });
@@ -112,8 +139,8 @@ describe('the native shell after backgrounding', () => {
     expect(shell.style.height).toBe('');
     expect(document.activeElement).not.toBe(composer);
 
-    act(() => vi.advanceTimersByTime(200));
-    expect(document.activeElement).toBe(composer);
+    act(() => vi.advanceTimersByTime(500));
+    expect(document.activeElement).not.toBe(composer);
   });
 
   // Regression, TestFlight build 5275: leaving the foreground blurred the composer
@@ -124,39 +151,17 @@ describe('the native shell after backgrounding', () => {
     render(<ViewportProbe />);
     const composer = screen.getByRole('textbox', { name: 'Message' });
     const blur = vi.spyOn(composer, 'blur');
-    composer.focus();
-
-    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
-    expect(document.activeElement).toBe(composer);
-
-    act(() => native.app.get('appStateChange')?.({ isActive: false }));
-    expect(blur).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(composer);
-
-    // Back on screen the keyboard machinery answers again, and only a real focus
-    // change raises the keyboard the suspension took away.
-    act(() => native.app.get('appStateChange')?.({ isActive: true }));
-    act(() => vi.advanceTimersByTime(200));
-    expect(blur).toHaveBeenCalled();
-    expect(document.activeElement).toBe(composer);
-  });
-
-  // Regression, TestFlight build 5275: the restore is deferred past the resume, so
-  // an app that goes away again inside that window would have raised the keyboard
-  // from the background — the same watchdog kill by a later route.
-  it('leaves focus alone when the app goes away again before the restore', () => {
-    render(<ViewportProbe />);
-    const composer = screen.getByRole('textbox', { name: 'Message' });
-    composer.focus();
-
-    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
-    act(() => native.app.get('appStateChange')?.({ isActive: false }));
-    act(() => native.app.get('appStateChange')?.({ isActive: true }));
-    act(() => native.app.get('appStateChange')?.({ isActive: false }));
-
     const focus = vi.spyOn(composer, 'focus');
-    act(() => vi.advanceTimersByTime(200));
-    expect(focus).not.toHaveBeenCalled();
+    composer.focus();
+
+    act(() => native.keyboard.get('keyboardWillShow')?.({ keyboardHeight: 300 }));
+    expect(document.activeElement).toBe(composer);
+
+    act(() => native.app.get('appStateChange')?.({ isActive: false }));
+    act(() => vi.advanceTimersByTime(500));
+    expect(blur).not.toHaveBeenCalled();
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(composer);
   });
 });
 

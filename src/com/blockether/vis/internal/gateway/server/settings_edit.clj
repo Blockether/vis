@@ -50,7 +50,8 @@
                 {:id id :section ["toggles"] :name id :value (:value chosen)})))
 
 (defn apply!
-  "Validate and apply explicit edits with compare-and-swap. Failed batches write nothing."
+  "Validate and apply explicit edits with compare-and-swap. Failed batches write nothing.
+   Returns the new revision and the failed change hooks as setting id -> message."
   [db target expected changes]
   (when-not (and (document/valid-json?
                    "gateway"
@@ -60,35 +61,34 @@
                      (assoc "target_id" (str (:target-id target)))))
                  (= (count changes) (count (distinct (map #(get % "id") changes)))))
     (throw (ex-info "Supply a revision and a valid batch of distinct setting edits" {:status 400})))
-  (scoped/edit-settings!
-    db
-    target
-    (fn [current-db]
-      (when-not (= expected (revision current-db target))
-        (throw (ex-info
-                 "Settings changed in another client. Review the latest values before applying."
-                 {:status 409 :type :settings/conflict})))
-      (let [prepared
-            (mapv #(prepare-edit target %) changes)
+  (let [change-errors
+        (scoped/edit-settings!
+          db
+          target
+          (fn [current-db]
+            (when-not (= expected (revision current-db target))
+              (throw
+                (ex-info
+                  "Settings changed in another client. Review the latest values before applying."
+                  {:status 409 :type :settings/conflict})))
+            (let [prepared (mapv #(prepare-edit target %) changes)
+                  access (filter #(policy/setting? (:id %)) prepared)
+                  inherited
+                  (into {} (map (juxt :id :inherited-value)) (policy/settings current-db target))
+                  candidate (reduce (fn [raw {:keys [id section name value]}]
+                                      (assoc-in raw
+                                        (conj section name)
+                                        (if (nil? value) (get inherited id) value)))
+                                    (policy/effective-config current-db target)
+                                    access)]
 
-            access
-            (filter #(policy/setting? (:id %)) prepared)
-
-            inherited
-            (into {} (map (juxt :id :inherited-value)) (policy/settings current-db target))
-
-            candidate
-            (reduce (fn [raw {:keys [id section name value]}]
-                      (assoc-in raw (conj section name) (if (nil? value) (get inherited id) value)))
-                    (policy/effective-config current-db target)
-                    access)]
-
-        (when (seq access)
-          (try (policy/validate-candidate! target candidate)
-               (catch clojure.lang.ExceptionInfo e
-                 (throw (ex-info (ex-message e)
-                                 (assoc (ex-data e)
-                                   :field-errors
-                                   (into {} (map #(vector (:id %) (ex-message e))) access)))))))
-        prepared)))
-  {:revision (revision db target)})
+              (when (seq access)
+                (try (policy/validate-candidate! target candidate)
+                     (catch clojure.lang.ExceptionInfo e
+                       (throw (ex-info (ex-message e)
+                                       (assoc (ex-data e)
+                                         :field-errors (into {}
+                                                             (map #(vector (:id %) (ex-message e)))
+                                                             access)))))))
+              prepared)))]
+    {:revision (revision db target) :change-errors change-errors}))

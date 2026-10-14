@@ -312,8 +312,8 @@
   {
     "artifacts": {
       "inference": {
-        "bytes": 1763139485,
-        "file": "decision2.0-eos-0.8b-fp32.zip",
+        "bytes": 1763146081,
+        "file": "decision2.0-eos-0.8b-fp32-chunked.zip",
         "requires": [
           "model.onnx",
           "model.onnx.data",
@@ -323,8 +323,8 @@
           "PROVENANCE.json",
           "LICENSE.txt"
         ],
-        "sha256": "0d6761151d36999def1ed27d6a345b23631ff5c4a53357cb9ca54fe723528afa",
-        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-fp32.zip"
+        "sha256": "4161c997a6f887df6986d92bfcdd64c2349405a5591d018efedadb8924d90108",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-eos-0.8b-fp32-chunked.zip"
       },
       "training": {
         "bytes": 1524793982,
@@ -352,8 +352,8 @@
   {
     "artifacts": {
       "inference": {
-        "bytes": 1436529097,
-        "file": "decision2.0-kai-0.6b-fp32.zip",
+        "bytes": 1436547653,
+        "file": "decision2.0-kai-0.6b-fp32-chunked.zip",
         "requires": [
           "model.onnx",
           "model.onnx.data",
@@ -363,8 +363,8 @@
           "PROVENANCE.json",
           "LICENSE.txt"
         ],
-        "sha256": "19f7222e7eb6d47f55eb220b611f3606a49ff2852c2cd89659937a08b53aa339",
-        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-fp32.zip"
+        "sha256": "e9e824176ae330d3c5b2bbe25d88e68961109d5cdf4bf4565214dbe9e2f3818b",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/decision2.0-kai-0.6b-fp32-chunked.zip"
       },
       "training": {
         "bytes": 1225605368,
@@ -388,5 +388,87 @@
     "license": "Apache-2.0",
     "revision": "cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764",
     "source-url": "https://huggingface.co/vllm-sr/Decision-2.0-Kai-0.6B/tree/cd49ea3813fd8ba0928a9a23ef6c9a0f2f0cd764"
+  },
+  {
+    "artifacts": {
+      "inference": {
+        "bytes": 1033669644,
+        "file": "d3-edge-fp32-chunked.zip",
+        "requires": [
+          "model.onnx",
+          "model.onnx.data",
+          "decision_config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "07b9f13a0c07321a07ccfafa72609284028af6e0031951bdef28333779352335",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-fp32-chunked.zip"
+      },
+      "training": {
+        "bytes": 798163817,
+        "file": "d3-edge-training.zip",
+        "requires": [
+          "config.json",
+          "model.safetensors",
+          "readout.safetensors",
+          "decision_config.json",
+          "MODEL_MANIFEST.json",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "f36ea31655f4078c2156c9c42e60e6fae17188e68c43b42e219d4e0aeee2a151",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-edge-training.zip"
+      }
+    },
+    "attribution": "D3 Edge (Decision 3.0, 0.6B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. The training checkpoint keeps the upstream text weights and the readout, without the vision encoder.",
+    "id": "d3-edge",
+    "license": "Apache-2.0",
+    "revision": "18d61df78684675463af9ae732872478845c5a79",
+    "source-url": "https://huggingface.co/vllm-sr/d3-edge/tree/18d61df78684675463af9ae732872478845c5a79"
+  },
+  {
+    "artifacts": {
+      "inference": {
+        "bytes": 1560785811,
+        "file": "d3-lite-fp32-chunked.zip",
+        "requires": [
+          "model.onnx",
+          "model.onnx.data",
+          "decision_config.json",
+          "tokenizer/tokenizer.json",
+          "tokenizer/tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "0d50c95703ab101356d9eb342400f67e17e0481156f9094b4a1eb6229bba6025",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-fp32-chunked.zip"
+      },
+      "training": {
+        "bytes": 1204252208,
+        "file": "d3-lite-training.zip",
+        "requires": [
+          "config.json",
+          "model.safetensors",
+          "readout.safetensors",
+          "decision_config.json",
+          "MODEL_MANIFEST.json",
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "PROVENANCE.json",
+          "LICENSE.txt"
+        ],
+        "sha256": "36e378c44453ce315c12bbf9178c97b970be891b374f79e0b2388669035696f3",
+        "url": "https://github.com/Blockether/vis/releases/download/assets-pack/d3-lite-training.zip"
+      }
+    },
+    "attribution": "D3 Lite (Decision 3.0, 0.8B) by vLLM Semantic Router, Apache-2.0, built on Qwen3.5 0.8B. Text-only FP32 ONNX export by Vis, without the vision encoder; it reads the option codes in one noncausal pass. Choice, score and yes/no decisions without an action head; not approved for autonomous actions. The training checkpoint keeps the upstream text weights and the readout, without the vision encoder.",
+    "id": "d3-lite",
+    "license": "Apache-2.0",
+    "revision": "a8d25a91ef75552803f7009d25b7bd435991abd9",
+    "source-url": "https://huggingface.co/vllm-sr/d3-lite/tree/a8d25a91ef75552803f7009d25b7bd435991abd9"
   }
 ]

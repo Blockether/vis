@@ -5,6 +5,7 @@ import {
   memo,
   useCallback,
   useContext,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useId,
@@ -88,7 +89,7 @@ import 'prismjs/components/prism-yaml';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
-import { parseUserMessage } from '../lib/paste';
+import { parseUserMessage, type UserMessagePart } from '../lib/paste';
 import { formatCost, formatTokens, turnUsage } from '../lib/usage';
 import { isViewportRotating, onViewportRotation } from '../lib/viewport';
 import type {
@@ -2787,14 +2788,44 @@ function DigestLive({
 }) {
   const view = views.at(-1);
   const record = records.at(-1);
-  // Keyed by the view or the record, not by this row: a settling turn re-mounts the row,
-  // and an opened run must stay open.
-  const [opened, setOpened] = useStickyOverlay(
-    view ? `live:${view.id}` : `run:${record?.iteration_id ?? ''}:${record?.index ?? 0}`,
-  );
-  const close = useCallback(() => setOpened(false), [setOpened]);
-  const count = views.length + records.length;
   if (!view && !record) return null;
+  // Keyed by the view or the record, not by this row: a settling turn re-mounts the row,
+  // and an opened run must stay open. A new target mounts a closed control: an interrupted
+  // or finished view hands the control its recording, and only a click opens that.
+  const target = view
+    ? `live:${view.id}`
+    : `run:${record?.iteration_id ?? ''}:${record?.index ?? 0}`;
+  return (
+    <DigestLiveControl
+      key={target}
+      target={target}
+      view={view}
+      record={record}
+      count={views.length + records.length}
+      client={client}
+      sid={sid}
+    />
+  );
+}
+
+/** The `live` control of one target, and the dialog that it opens. */
+function DigestLiveControl({
+  target,
+  view,
+  record,
+  count,
+  client,
+  sid,
+}: {
+  target: string;
+  view?: LiveViewModel;
+  record?: IterationAttachment;
+  count: number;
+  client: GatewayClient;
+  sid: string;
+}) {
+  const [opened, setOpened] = useStickyOverlay(target);
+  const close = useCallback(() => setOpened(false), [setOpened]);
   return (
     <>
       {/* A flex item drops a plain leading space, so the separator uses no-break spaces. */}
@@ -2901,7 +2932,7 @@ function DeliveredMessage({
     <div
       className={`min-w-0 whitespace-pre-wrap break-words ${PROSE} ${index > 0 ? 'mt-2 border-t border-code-edge pt-2' : ''}`}
     >
-      <UserRequestText text={deliveredText(message)} />
+      <UserMessageParts parts={parseUserMessage(deliveredText(message))} />
       {pictures.length > 0 && (
         <div className="mt-2 min-w-0 whitespace-normal">
           {layout === 'grid' ? (
@@ -3201,9 +3232,11 @@ export const IterationTrace = memo(function IterationTrace({
   showCode?: boolean;
   liveViews?: LiveViewModel[];
 }) {
+  // Each display switch changes every mounted trace. Deferred, the switch shows its new state
+  // first, and the traces render in an interruptible background pass.
   const preferredCode = usePythonCodeShown();
-  const showCode = codeOverride ?? preferredCode;
-  const summarize = useStepsSummarized();
+  const showCode = useDeferredValue(codeOverride ?? preferredCode);
+  const summarize = useDeferredValue(useStepsSummarized());
   const rootRef = useRef<HTMLDivElement>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol('trace-ramp'));
@@ -3234,9 +3267,16 @@ export const IterationTrace = memo(function IterationTrace({
   // frame and coming back, with the screen's anchor corrector chasing it both
   // ways. Measured on the simulator as a -294 px write followed by +294 px
   // 39 ms later, on a transcript nobody was touching.
-  const [hiddenSegments, setHiddenSegments] = useState(() =>
-    whole ? 0 : Math.max(0, segments.length - SEGMENT_FIRST_PAINT),
-  );
+  // `mode` is the display mode that the count was made for. A changed mode mounts other
+  // segments in every mounted trace, so it starts the ramp again, also in a whole trace.
+  // Regression, user report: turning off Compact mode mounted every separate step at once.
+  const mode = `${summarize}/${showCode}`;
+  const [ramp, setRamp] = useState(() => ({
+    mode,
+    held: whole ? 0 : Math.max(0, segments.length - SEGMENT_FIRST_PAINT),
+    restarted: false,
+  }));
+  const remounting = ramp.mode !== mode;
 
   // `whole` also arrives LATE, and it has to count then too. WHICH reconcile
   // tick retires the running-turn bubble is not this trace's business: the settled row
@@ -3244,8 +3284,12 @@ export const IterationTrace = memo(function IterationTrace({
   // turn running when its finished row lands — and read only as the initial
   // state, `whole` changed nothing for exactly those handovers. The collapse
   // documented above came back for them. Derived per render, it costs no commit
-  // and no frame.
-  const hidden = whole ? 0 : hiddenSegments;
+  // and no frame. A mode change derives its first paint the same way.
+  const hidden = remounting
+    ? Math.max(0, segments.length - SEGMENT_FIRST_PAINT)
+    : whole && !ramp.restarted
+      ? 0
+      : ramp.held;
 
   // The ramp mounts every segment: no trace folds its earlier steps. Digests keep a long
   // Compact turn short, and separate steps show every step, as in the TUI.
@@ -3254,13 +3298,19 @@ export const IterationTrace = memo(function IterationTrace({
   // A chunk per frame, so the work the first paint skipped never lands as one
   // long frame either.
   useEffect(() => {
+    // Bank the first paint of a new mode. Its first step must not price the old ramp's span.
+    if (remounting) {
+      stepRef.current.startedAt = 0;
+      setRamp({ mode, held: hidden, restarted: true });
+      return;
+    }
     // A late `whole` also has to STICK. It arrives as a prop and can leave the
     // same way — the NEXT turn's handover moves the flag to its own row — so a
     // trace that showed everything only because the flag was up would collapse
     // the moment it left. Bank it in the ramp's own state, which never hands
     // a segment back.
-    if (whole) {
-      setHiddenSegments(0);
+    if (whole && !ramp.restarted) {
+      setRamp((current) => (current.held === 0 ? current : { ...current, held: 0 }));
       releaseRamp(rampId);
       return;
     }
@@ -3293,11 +3343,11 @@ export const IterationTrace = memo(function IterationTrace({
       }
 
       step.startedAt = performance.now();
-      setHiddenSegments((count) => Math.max(0, count - step.size));
+      setRamp((current) => ({ ...current, held: Math.max(0, current.held - step.size) }));
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, [hiddenSegments, rampDone, rampId, whole]);
+  }, [hidden, mode, rampDone, rampId, remounting, ramp.restarted, whole]);
 
   const shown = hidden > 0 ? segments.slice(hidden) : segments;
   // A live view belongs to the form that owns it, also while the ramp still holds that form
@@ -4632,6 +4682,53 @@ function UserRequestText({ text }: { text: string }) {
   });
 }
 
+/**
+ * The parts of one user message: prose, image chips and collapsed pastes. The request
+ * bubble and a queued message that a running turn received paint them the same way.
+ */
+function UserMessageParts({ parts }: { parts: UserMessagePart[] }) {
+  // Inline image chips must stay in their authored position within the text.
+  const hasInlineImage = parts.some((part) => part.type === 'image');
+  return (
+    <>
+      {parts.map((part) =>
+        part.type === 'text' ? (
+          hasInlineImage || !part.text ? (
+            <span key={part.key}>{part.text}</span>
+          ) : (
+            <UserRequestText key={part.key} text={part.text} />
+          )
+        ) : part.type === 'image' ? (
+          <span
+            key={part.key}
+            className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
+          >
+            {part.summary}
+          </span>
+        ) : (
+          // Full-bleed to the bubble's own `px-3`: the rules then read as the
+          // bubble's dividers instead of a stray box hairline-close to the
+          // sentence above and below it. Vertical margin is the paste's ONLY
+          // separation from that prose, so it stays wider than the block's own
+          // padding.
+          <details
+            key={part.key}
+            className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
+          >
+            <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
+              <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
+              {part.summary}
+            </summary>
+            <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
+              <code>{part.content}</code>
+            </pre>
+          </details>
+        ),
+      )}
+    </>
+  );
+}
+
 export const UserMessage = memo(function UserMessage({
   children,
   attachments,
@@ -4648,8 +4745,6 @@ export const UserMessage = memo(function UserMessage({
   createdAt?: number;
 }) {
   const parts = parseUserMessage(children);
-  // Inline image chips must stay in their authored position within the text.
-  const hasInlineImage = parts.some((part) => part.type === 'image');
   const words = parts.some((part) => part.type !== 'text' || part.text.trim() !== '');
   // Persisted user images re-render from DB-owned base64 (survives a restart even
   // after the original clipboard/temp source file is gone). Tool artifacts render
@@ -4718,40 +4813,7 @@ export const UserMessage = memo(function UserMessage({
           {requestKind === 'council' ? (
             <CouncilRequestBody>{council?.content ?? children}</CouncilRequestBody>
           ) : (
-            parts.map((part) =>
-              part.type === 'text' ? (
-                hasInlineImage || !part.text ? (
-                  <span key={part.key}>{part.text}</span>
-                ) : (
-                  <UserRequestText key={part.key} text={part.text} />
-                )
-              ) : part.type === 'image' ? (
-                <span
-                  key={part.key}
-                  className="my-1 mr-1 inline-flex items-center gap-1 border border-code-edge bg-code px-2 py-1 align-middle font-mono text-meta text-dialog-hint first:mt-0"
-                >
-                  {part.summary}
-                </span>
-              ) : (
-                // Full-bleed to the bubble's own `px-3`: the rules then read as the
-                // bubble's dividers instead of a stray box hairline-close to the
-                // sentence above and below it. Vertical margin is the paste's ONLY
-                // separation from that prose, so it stays wider than the block's own
-                // padding.
-                <details
-                  key={part.key}
-                  className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
-                >
-                  <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
-                    <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
-                    {part.summary}
-                  </summary>
-                  <pre className="max-h-[min(28rem,60dvh)] overflow-auto overscroll-contain border-t border-code-edge px-3 py-2 font-mono text-meta [tab-size:2]">
-                    <code>{part.content}</code>
-                  </pre>
-                </details>
-              ),
-            )
+            <UserMessageParts parts={parts} />
           )}
         </div>
       ) : null}

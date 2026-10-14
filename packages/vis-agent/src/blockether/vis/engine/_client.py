@@ -2505,6 +2505,104 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def post_evals_agreement(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/evals/agreement — json response."""
+        response = self._request(
+            "POST",
+            "/v1/evals/agreement",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def post_evals_compare(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/evals/compare — json response."""
+        response = self._request(
+            "POST",
+            "/v1/evals/compare",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def post_evals_diagnose(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/evals/diagnose — json response."""
+        response = self._request(
+            "POST",
+            "/v1/evals/diagnose",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def post_evals_labels(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/evals/labels — json response."""
+        response = self._request(
+            "POST", "/v1/evals/labels", path={}, query=query, timeout=timeout, body=body
+        )
+        return response.json()
+
+    def post_evals_leaderboard(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/evals/leaderboard — json response."""
+        response = self._request(
+            "POST",
+            "/v1/evals/leaderboard",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
+    def post_evals_report(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/evals/report — json response."""
+        response = self._request(
+            "POST", "/v1/evals/report", path={}, query=query, timeout=timeout, body=body
+        )
+        return response.json()
+
     def get_settings(
         self, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:

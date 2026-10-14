@@ -309,19 +309,29 @@
        :user-input (not-empty (user-input-rows (get it "user_input")))
        :forms forms})))
 
+(defn slash-turn-rows?
+  "True when gateway iteration rows hold a slash turn's synthetic `user-slash` form."
+  [turn-iterations]
+  (boolean (some (fn [it]
+                   (some #(= "user-slash" (str (get % "tag"))) (get it "forms")))
+                 turn-iterations)))
+
 (defn iteration-rows->trace
   "Project canonical gateway iteration rows into the TUI trace shape. Used both
-   by restored transcript history and by the terminal refresh of a live turn."
+   by restored transcript history and by the terminal refresh of a live turn.
+   A slash turn has no trace: its answer is the result, not a raw form (Vis #363)."
   [turn-iterations produced-answer?]
-  (let [rows
-        (vec (or turn-iterations []))
+  (if (slash-turn-rows? turn-iterations)
+    []
+    (let [rows
+          (vec (or turn-iterations []))
 
-        last-iteration-id
-        (get (last rows) "id")]
+          last-iteration-id
+          (get (last rows) "id")]
 
-    (mapv (partial it->iteration-entry
-                   {:produced-answer? produced-answer? :last-iteration-id last-iteration-id})
-          rows)))
+      (mapv (partial it->iteration-entry
+                     {:produced-answer? produced-answer? :last-iteration-id last-iteration-id})
+            rows))))
 
 (def ^:private trace-prose-keys
   "Trace-entry keys the ITERATION bubble paints as answer Markdown: the live
@@ -846,13 +856,11 @@
                                 (assoc :trace (get last-it "llm_routing_trace")))
                   produced-answer? (seq content-blocks)
                   ;; A slash turn persists ONE synthetic iteration whose envelope is
-                  ;; tagged `:user-slash`. Live slash turns stream no iterations, so
-                  ;; suppress it on resume as well. A `user-shell` form is the bang
-                  ;; command's one visible stdout owner and must remain in the trace.
-                  slash-turn? (some (fn [it]
-                                      (some #(= "user-slash" (str (get % "tag"))) (get it "forms")))
-                                    turn-iterations)
-                  trace (if slash-turn? [] (iteration-rows->trace turn-iterations produced-answer?))
+                  ;; tagged `:user-slash`; `iteration-rows->trace` gives it no trace. A
+                  ;; `user-shell` form is the bang command's one visible stdout owner
+                  ;; and must remain in the trace.
+                  slash-turn? (slash-turn-rows? turn-iterations)
+                  trace (iteration-rows->trace turn-iterations produced-answer?)
                   ;; The answer band owns prose the settled answer repeats (issue #145);
                   ;; the restore keeps one copy exactly like the live settle path.
                   traces (drop-answered-trace-prose trace content-blocks)
@@ -1614,10 +1622,23 @@
 
 (defonce ^:private launch-session-options* (atom {}))
 
+(defonce ^:private open-session-tools* (atom nil))
+
 (defn set-launch-session-options!
-  "Send `:sources` and `:extensions` with each new session that this client creates."
+  "Send `:sources`, `:extensions` and `:tools` with each new session that this client
+   creates. Keep `:open-tools` for the first saved session that it opens."
   [opts]
-  (reset! launch-session-options* (select-keys opts [:sources :extensions])))
+  (reset! launch-session-options* (select-keys opts [:sources :extensions :tools]))
+  (reset! open-session-tools* (:open-tools opts)))
+
+(defn- apply-open-tools!
+  "Replace the tool list of `sid` once with the `--tools` list of a resume launch."
+  [sid]
+  (let [[tools] (reset-vals! open-session-tools* nil)]
+    (when tools
+      (try (vis/gateway-set-session-tools! sid tools)
+           (catch clojure.lang.ExceptionInfo e
+             (throw (ex-info (str "--tools: " (ex-message e)) {:vis/user-error true} e)))))))
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id root group-id]}]
@@ -1685,9 +1706,13 @@
    tab mirrors the gateway's server-side queue on open; `:client-id` is the
    submitter's own correlation id, so a channel recognises which rows it submitted
    by id instead of by request text. `:running-client-id` is the
-   same correlation id for the RUNNING turn."
+   same correlation id for the RUNNING turn.
+
+   The first resume after a launch with `--tools` and a resume flag also replaces
+   the saved tool list of that session."
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
+    (apply-open-tools! resolved-id)
     (when-let [soul0 (vis/gateway-soul resolved-id)]
       (let
         ;; READ ORDER MATTERS: queued backlog FIRST, running-turn soul SECOND.

@@ -1,0 +1,15 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "EXTENSION_WATCHDOG_OK"
+  ],
+  "want_tools": [
+    "watchdog_probe.poll",
+    "watchdog_probe.poll_async"
+  ],
+  "want_forms": [
+    "def wait_release_progress",
+    "await wait_release_progress()"
+  ]
+}

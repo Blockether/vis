@@ -11,7 +11,7 @@
 
    What a file IS is sniffed from magic bytes (pi-parity: jpeg / non-animated
    png / gif / webp / bmp, plus MP4/QuickTime clips, mp3/m4a/wav/ogg/flac
-   recordings, PDF/HTML documents and gzip streams) or, for SVG, from the
+   recordings, PDF/HTML/Word documents and gzip streams) or, for SVG, from the
    markup head. Markdown uploads use a filename or MIME hint plus UTF-8 validation;
    an extension alone never blesses a payload. A container the model cannot consume
    is kept for the HUMAN and NAMED to the model ([[model-blind-media-type?]]).
@@ -24,7 +24,7 @@
        is skipped with a reason the prompt assembler surfaces.
      * SEND — [[wire-image]] is the one gate every image crosses on its way to
        a provider: it decodes the payload to prove it is pixels, re-containers
-       what no wire accepts (BMP/SVG -> PNG via `image-convert`, on
+       what no wire accepts (BMP/HEIC/HEIF/AVIF/SVG -> PNG via `image-convert`, on
        `com.blockether/imaging`, so it behaves identically in the native image)
        and REFUSES what it cannot turn into a picture.
 
@@ -38,10 +38,11 @@
             [com.blockether.vis.internal.attachment.image-convert :as image-convert]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
-  (:import [java.io File RandomAccessFile]
+  (:import [java.io ByteArrayInputStream File RandomAccessFile]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
-           [java.util Arrays Base64]))
+           [java.util Arrays Base64]
+           [java.util.zip ZipFile ZipInputStream]))
 
 ;; Limits
 
@@ -199,12 +200,66 @@
 
     (and (str/starts-with? start "<") (str/includes? head "<svg"))))
 
+(defn- brand-at
+  "The 4-char ASCII box brand at `off`, lower-cased, or nil when the head is
+   too short."
+  [^bytes b ^long off]
+  (when (>= (alength b) (+ off 4))
+    (str/lower-case (String. b (int off) 4 StandardCharsets/US_ASCII))))
+
+(def ^:private heif-brands
+  "`ftyp` brands of a HEIF picture that the imaging decoder reads: HEVC, AV1
+   (AVIF), H.264 and JPEG still and sequence brands, the uncompressed `unif`
+   brand, and the generic MIAF ones that many encoders put first. Mirrors
+   `HEIF_BRANDS` in the imaging cdylib, so the sniff and the decoder agree on
+   the same bytes."
+  #{"heic" "heix" "heim" "heis" "hevc" "hevx" "mif1" "msf1" "avif" "avis" "avci" "avcs" "jpeg"
+    "unif"})
+
+(def ^:private hevc-brands
+  "The [[heif-brands]] that name the HEVC codec. A file with one of these as its
+   major brand is `image/heic`."
+  #{"heic" "heix" "heim" "heis" "hevc" "hevx"})
+
+(def ^:private avif-brands
+  "The [[heif-brands]] that name the AV1 codec: an AVIF still or sequence."
+  #{"avif" "avis"})
+
+(defn- heif-media-type
+  "\"image/heic\", \"image/avif\" or \"image/heif\" when the head is a HEIF
+   container, else nil. A [[heif-brands]] brand can be the major brand or any
+   compatible brand. An HEVC major brand (an iPhone photo, a camera `.HIF` file)
+   is `image/heic`. An AV1 major brand, or a generic major brand with an AV1
+   compatible brand, is `image/avif`. Any other HEIF file is `image/heif`."
+  [^bytes b]
+  (when (and (>= (alength b) 16) (ascii-at? b 4 "ftyp"))
+    (let [major
+          (brand-at b 8)
+
+          box-size
+          (bit-or (bit-shift-left (u8 b 0) 24)
+                  (bit-shift-left (u8 b 1) 16)
+                  (bit-shift-left (u8 b 2) 8)
+                  (u8 b 3))
+
+          end
+          (min (alength b) (max 16 box-size))
+
+          brands
+          (cons major (map #(brand-at b %) (range 16 (- end 3) 4)))]
+
+      (when (some heif-brands brands)
+        (cond (contains? hevc-brands major) "image/heic"
+              (some avif-brands brands) "image/avif"
+              :else "image/heif")))))
+
 (defn detect-image-mime
   "Sniff a supported image MIME type from the leading bytes of a file.
    Returns \"image/png\" | \"image/jpeg\" | \"image/gif\" | \"image/webp\" |
-   \"image/bmp\" | \"image/svg+xml\", or nil when the bytes are not a supported
-   still image. BMP and SVG are not wire-legal themselves — they are readable,
-   and `image-convert` turns them into PNG before they are sent.
+   \"image/bmp\" | \"image/heic\" | \"image/heif\" | \"image/avif\" |
+   \"image/svg+xml\", or nil when the bytes are not a supported still image.
+   BMP, HEIC, HEIF, AVIF and SVG are not wire-legal themselves — they are
+   readable, and `image-convert` turns them into PNG before they are sent.
    Animated PNGs and JPEG-LS return nil (provider-rejected shapes)."
   [^bytes b]
   (cond (bytes-at? b 0 [0xff 0xd8 0xff]) (when-not (and (>= (alength b) 4) (= 0xf7 (u8 b 3)))
@@ -213,6 +268,7 @@
         (ascii-at? b 0 "GIF8") "image/gif"
         (and (ascii-at? b 0 "RIFF") (ascii-at? b 8 "WEBP")) "image/webp"
         (and (ascii-at? b 0 "BM") (bmp? b)) "image/bmp"
+        (heif-media-type b) (heif-media-type b)
         (svg-markup? b) "image/svg+xml"
         :else nil))
 
@@ -223,13 +279,6 @@
    Mirrors `TerminalImage/STILL_IMAGE_BRANDS` in the Lanterna fork so the
    terminal and the engine classify the same bytes identically."
   #{"heic" "heix" "heim" "heis" "hevc" "hevx" "mif1" "msf1" "avif" "avis"})
-
-(defn- brand-at
-  "The 4-char ASCII box brand at `off`, lower-cased, or nil when the head is
-   too short."
-  [^bytes b ^long off]
-  (when (>= (alength b) (+ off 4))
-    (str/lower-case (String. b (int off) 4 StandardCharsets/US_ASCII))))
 
 (def audio-brands
   "ISO-BMFF major brands that are a RECORDING, not a clip. A voice memo is an
@@ -317,7 +366,8 @@
    :markdown "text/markdown"
    :csv "text/csv"
    :tsv "text/tab-separated-values"
-   :jsonl "application/x-ndjson"})
+   :jsonl "application/x-ndjson"
+   :docx "application/vnd.openxmlformats-officedocument.wordprocessingml.document"})
 
 (def markdown-media-types
   "MIME spellings used by Markdown file providers. Intake stores `text/markdown`."
@@ -416,15 +466,53 @@
           (try (when (map? (json/read-json line)) "application/x-ndjson")
                (catch Exception _ nil)))))))
 
+(def ^:private docx-main-content-type
+  "The content type that the package registry gives the main part of a Word
+   document. A macro-enabled document, a template and a spreadsheet each have a
+   different one."
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")
+
+(defn- docx-registry?
+  "True when the bytes of a `[Content_Types].xml` registry name a Word document."
+  [^bytes registry]
+  (str/includes? (String. registry StandardCharsets/UTF_8) docx-main-content-type))
+
+(defn detect-docx-mime
+  "Sniff a Word document: a ZIP package whose `[Content_Types].xml` registry
+   names [[docx-main-content-type]]. The filename and the claimed type are never
+   asked. A truncated or unrelated archive returns nil."
+  [^bytes b]
+  (when (bytes-at? b 0 [0x50 0x4b 0x03 0x04])
+    (try (with-open [zip (ZipInputStream. (ByteArrayInputStream. b))]
+           (loop [entry (.getNextEntry zip)]
+             (when entry
+               (if (= "[Content_Types].xml" (.getName entry))
+                 (when (docx-registry? (.readNBytes zip 65536)) (:docx document-media-types))
+                 (recur (.getNextEntry zip))))))
+         (catch Exception _ nil))))
+
+(defn- detect-docx-file
+  "Sniff a Word document on disk through the ZIP central directory. The registry
+   can be at any position in the archive, also past the sniffed file head."
+  [^File f ^bytes head]
+  (when (bytes-at? head 0 [0x50 0x4b 0x03 0x04])
+    (try (with-open [zip (ZipFile. f)]
+           (when-let [entry (.getEntry zip "[Content_Types].xml")]
+             (with-open [in (.getInputStream zip entry)]
+               (when (docx-registry? (.readNBytes in 65536)) (:docx document-media-types)))))
+         (catch Exception _ nil))))
+
 (defn detect-media-mime
   "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
-   then audio, video, document and gzip detection. Stills win the ISO-BMFF tie
-   deliberately; recordings are asked about before clips for the same reason."
+   then audio, video, document, Word document and gzip detection. Stills win the
+   ISO-BMFF tie deliberately; recordings are asked about before clips for the same
+   reason."
   [^bytes b]
   (or (detect-image-mime b)
       (detect-audio-mime b)
       (detect-video-mime b)
       (detect-document-mime b)
+      (detect-docx-mime b)
       (detect-gzip-mime b)
       (detect-jsonl-mime b)))
 
@@ -457,7 +545,7 @@
                buf (byte-array n)]
 
            (.readFully raf buf)
-           (detect-media-mime buf)))
+           (or (detect-media-mime buf) (detect-docx-file f buf))))
        (catch Throwable _ nil)))
 
 ;; Path-candidate extraction
@@ -466,7 +554,7 @@
   "Cheap pre-filter before any filesystem access: only tokens that END in
    an image, video or audio extension are stat'd. The magic-byte sniff still
    owns the final verdict."
-  #"(?i)\.(png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)$")
+  #"(?i)\.(png|jpe?g|gif|webp|bmp|heic|heif|hif|avif|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)$")
 
 (def ^:private media-extension-present-pattern
   "Whole-text fast path: a single unanchored scan that answers \"could this
@@ -477,7 +565,7 @@
    (no end anchor): a hit only means \"keep looking\", the anchored per-token
    pattern and the magic-byte sniff still own the real verdict, so the
    loose match can never let a non-media file through."
-  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)")
+  #"(?i)\.(?:png|jpe?g|gif|webp|bmp|heic|heif|hif|avif|svg|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)")
 
 (def ^:private quoted-span-pattern
   "Single- or double-quoted spans — several terminals quote dropped paths
@@ -515,7 +603,7 @@
    whitespace-delimited token ending in an image, video or audio extension.
    Non-capturing throughout so `str/replace` hands the matcher fn a plain
    string."
-  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)'|\S+\.(?:png|jpe?g|gif|webp|bmp|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr))")
+  #"(?i)(?:\"[^\"]*\.(?:png|jpe?g|gif|webp|bmp|heic|heif|hif|avif|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)\"|'[^']*\.(?:png|jpe?g|gif|webp|bmp|heic|heif|hif|avif|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr)'|\S+\.(?:png|jpe?g|gif|webp|bmp|heic|heif|hif|avif|mp4|m4v|mov|mp3|m4a|m4b|wav|ogg|oga|opus|flac|aac|aif|aiff|aifc|caf|amr))")
 
 (defn- path-candidates
   "Raw path-shaped candidates from user text, drop-pattern aware:
@@ -569,7 +657,7 @@
    `upload-rescue-factor` x the per-image cap ([[max-upload-image-bytes]] by
    default): the per-image cap is a PROVIDER limit, and an oversize still is
    squeezed under it at SEND time rather than refused at intake. A container
-   that is rasterized on the way OUT (BMP, SVG) is allowed
+   that is rasterized on the way OUT (BMP, HEIC, HEIF, AVIF, SVG) is allowed
    `oversize-rescue-factor` x that cap, because rendering it routinely lands far
    under it -- and the cap that decides is the one applied to the bytes that
    actually go on the wire (see [[wire-image]]).
@@ -588,7 +676,7 @@
   "Read one image file and keep it EXACTLY as it sits on disk: original bytes,
    sniffed media type, no conversion, no resample, no re-compression.
 
-   Container adaptation (BMP/SVG -> PNG) and decode verification happen at SEND
+   Container adaptation (BMP/HEIC/HEIF/AVIF/SVG -> PNG) and decode verification happen at SEND
    time (see [[wire-image]]), never here: a stored row must not be frozen into
    one provider's shape, and a row that turns out to be unsendable has to be
    droppable on the way out — a bad row baked into the DB replays forever.
@@ -880,6 +968,10 @@
   "Why a PDF or an HTML page is named to the model instead of shown to it."
   "a document for the human — open the file to read it, it is never an image block")
 
+(def ^:private word-document-reason
+  "Why a Word document is named to the model instead of sent as multimodal content."
+  "a Word document — inspect it with read_attachment and a zip/XML reader (word/document.xml); it is never an image block")
+
 (def ^:private compressed-file-reason
   "Why a gzip stream is named to the model instead of sent as multimodal content."
   "a gzip file — inspect it with read_attachment and a gzip/tar reader; it is never an image block")
@@ -1092,7 +1184,7 @@
       {:reason "the attachment carries no readable image bytes"}
       (let [;; The BYTES decide the container; a declared type is a claim, and the
             ;; sniff covers everything vis stores. A type the sniff does not know
-            ;; (tiff, heic, an inline upload's own label) still reaches the decoder
+            ;; (tiff, an inline upload's own label) still reaches the decoder
             ;; below, which sniffs for itself.
             mt (or (detect-media-mime raw) declared)
             ;; A clip takes its own path: no wire reads a video container, and
@@ -1158,8 +1250,8 @@
        BYTE-IDENTICAL (a header sniff is not a picture)
      * SVG / SVGZ            — rasterized to PNG (no wire reads markup)
      * MP4 / QuickTime       — sampled into an animated GIF (no wire takes a clip)
-     * BMP, TIFF, anything else the decoder reads — re-containered to PNG
-     * HEIC/AVIF, a corrupt raster, an image past the decoder's limits —
+     * BMP, TIFF, HEIC/HEIF/AVIF, anything else the decoder reads — re-containered to PNG
+     * a corrupt raster, an image past the decoder's limits —
        refused, with the decoder's own words
      * any side over `max-dimension` — DOWNSCALED to fit, because a provider
        refuses an oversized picture outright once a request carries many images
@@ -1243,6 +1335,7 @@
                                                                    recording-reason
                                                                    transcribed-recording-reason)
                                   (gzip-media-type? media-type) compressed-file-reason
+                                  (= (:docx document-media-types) media-type) word-document-reason
                                   (human-only-media-type? media-type) human-only-doc-reason
                                   :else user-only-reason)
                     :readable-blind? true

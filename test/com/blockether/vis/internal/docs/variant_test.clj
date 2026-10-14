@@ -78,14 +78,13 @@
   (it "publishes the Python variant as the agent's Markdown, beside the whole page"
       ;; The site build writes `:agent-md` to `<slug>.md` and `llms-full.txt`, which
       ;; agents read. The user's rule is the same as for `doc`: always Python.
-      (doseq [{:keys [slug md agent-md]}
-              (merged-pages)]
-
+      (doseq [{:keys [slug md agent-md]} (merged-pages)]
         (expect (= (dc/variant-text md dc/agent-variant) agent-md) slug)
         (expect (not (str/includes? agent-md "data-variant")) slug)
         (expect (str/includes? md "<div data-variant=\"http\">") slug)
         (doseq [line (http-only-lines md)]
-          (expect (not (str/includes? agent-md line)) (str slug " publishes HTTP-only text: " line)))))
+          (expect (not (str/includes? agent-md line))
+                  (str slug " publishes HTTP-only text: " line)))))
   (it "keeps both variants for the site and filters only what the agent reads"
       (doseq [{:keys [name text]}
               (filter #(seq (dc/variants (:text %))) (dc/pages))

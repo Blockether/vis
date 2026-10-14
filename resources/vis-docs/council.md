@@ -161,6 +161,7 @@ Anyone who has the link can use it until it expires, reaches its use limit or is
 
 Open Settings for the machine, project, group or session that you want to configure.
 Select its **Council room**, or keep **Local Council** to use its local group.
+Settings shows **Council room** and **Allow room wake** only after this machine joins a room.
 A session uses one room at a time. Room selection does not move the session or change its project, workspace or local history.
 
 Use each room's access switch to block that room at a broader scope.
@@ -173,9 +174,15 @@ A room's access switch starts enabled, but that alone does not select or share t
 
 ### Permit remote waking
 
-Remote waking starts model work and can incur charges. It is off by default.
-Enable **Allow room wake** only for the scopes that should accept remote pings while idle.
-An explicit parent denial blocks a child's wake setting. The default off value alone does not prevent an explicit child opt-in.
+Remote waking starts model work and can incur charges.
+Set **Allow room wake** for each scope to one of these choices:
+
+- **Off**: room messages never start an idle session.
+- **Active in the last hour** (default): a room message starts an idle session only if its newest turn started less than one hour ago.
+- **Always**: room messages can start any idle session that uses the room.
+
+An explicit **Off** at the machine, project or group level blocks every child scope.
+The default value alone does not prevent an explicit child choice.
 
 Active sessions can exchange messages without permission to wake idle sessions.
 Held queues stay held. Council does not grant file permissions or authorize unrelated work.
@@ -404,8 +411,9 @@ latest message addressed to the publishing session **if it is an unanswered
 request**. Otherwise it only records a message. It never selects an older request
 as a fallback.
 
-`reply_to` selects a particular unanswered request. It cannot answer the same
-request twice or reply to a reply. An explicit ping or `reply_required=True`
+`reply_to` selects a particular unanswered request. It cannot reply to a reply. If
+you answer the same request again, the message becomes a continuation in its
+thread, and the first reply stays the answer. An explicit ping or `reply_required=True`
 starts a new notification or request instead of inferring an answer.
 
 ### IDs and limits

@@ -1,5 +1,6 @@
 """Regression coverage for SDK types under Pyright standard checks."""
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -53,11 +54,16 @@ def context(env):
 """
 
 
-def _pyright(tmp_path, *targets):
+# These evals modules import the optional `harbor` extra.
+_HARBOR_MODULES = ("agent.py", "check.py", "environment.py", "judge.py")
+
+
+def _pyright(tmp_path, *targets, ignore=()):
     config = tmp_path / "pyrightconfig.json"
-    config.write_text(
-        json.dumps({"typeCheckingMode": "standard", "pythonVersion": "3.11"})
-    )
+    settings = {"typeCheckingMode": "standard", "pythonVersion": "3.12"}
+    if ignore:
+        settings["ignore"] = [str(path) for path in ignore]
+    config.write_text(json.dumps(settings))
     command = [
         sys.executable,
         "-m",
@@ -77,7 +83,10 @@ def test_sdk_sources_pass_pyright_standard(tmp_path):
     # The SDK ships py.typed, so type checkers trust its annotations. Each
     # standard-mode finding needs a fix or an explicit suppression (#315).
     package = Path(vis.__file__).resolve().parent
-    result = _pyright(tmp_path, package)
+    ignore = ()
+    if importlib.util.find_spec("harbor") is None:
+        ignore = [package / "evals" / name for name in _HARBOR_MODULES]
+    result = _pyright(tmp_path, package, ignore=ignore)
     assert result.returncode == 0, result.stdout + result.stderr
     summary = json.loads(result.stdout)["summary"]
     assert summary["filesAnalyzed"] == len(list(package.rglob("*.py")))

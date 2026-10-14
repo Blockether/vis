@@ -5,6 +5,8 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.gateway.server.settings-edit :as edit]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.gateway.server.settings :as api]
             [com.blockether.vis.internal.loop :as lp]
@@ -373,3 +375,70 @@
               (expect (= 400 (:status response)))
               (expect (= {} (store/db-scoped-settings db "session" sid)))
               (expect (str/includes? (:body response) "field_errors"))))))))
+
+;; Regression for #373: session settings hid the settings that an extension declares for a
+;; wider scope. They show read-only and name the settings that decide them.
+(defdescribe
+  inherited-extension-settings
+  (it
+    "shows inherited extension rows read-only with the scope that decides them"
+    (with-empty-config
+      (let [{:keys [db sid]}
+            (scope-fixture)
+
+            catalog
+            (fn [query]
+              (with-redefs [lp/db-info
+                            (constantly db)
+
+                            extension/registered-extensions
+                            (fn [& _]
+                              [{:ext/name "demo"
+                                :ext/kind "python"
+                                :ext/toggles [{:id "demo_machine_flag"}
+                                              {:id "demo_project_flag"}]}])]
+
+                (json/read-json (:body ((get api/handlers [:get "/v1/settings"])
+                                         {:query-params query})))))
+
+            rows
+            (fn [body]
+              (into {}
+                    (map (juxt #(get % "id") identity))
+                    (mapcat #(get % "toggles") (get body "groups"))))]
+
+        (toggles/register-toggle!
+          {:id "demo_machine_flag" :label "Machine flag" :default true :scopes ["global"]})
+        (toggles/register-toggle! {:id "demo_project_flag"
+                                   :label "Project flag"
+                                   :default false
+                                   :scopes ["global" "project"]})
+        (toggles/register-toggle!
+          {:id "vis_machine_flag" :label "Vis flag" :default true :scopes ["global"]})
+        (let [body
+              (catalog {"scope" "session" "target_id" sid})
+
+              session-rows
+              (rows body)]
+
+          (expect (= {"scope" "global" "label" "Machine"}
+                     (get-in session-rows ["demo_machine_flag" "decided_in"])))
+          (expect (true? (get-in session-rows ["demo_machine_flag" "enabled"])))
+          (expect (= "project" (get-in session-rows ["demo_project_flag" "decided_in" "scope"])))
+          (expect (= "Settings" (get-in session-rows ["demo_project_flag" "decided_in" "label"])))
+          (expect (= "Settings" (get-in body ["lineage" 1 "label"])))
+          (expect (nil? (get session-rows "vis_machine_flag"))))
+        (let [machine-rows (rows (catalog {}))]
+          (expect (nil? (get-in machine-rows ["demo_machine_flag" "decided_in"])))
+          (expect (nil? (get-in machine-rows ["demo_project_flag" "decided_in"]))))
+        (with-redefs [python-extensions/loaded-python-extensions
+                      (fn [root]
+                        {(str root "/.vis/extensions/demo.py") {:ext-name "demo"
+                                                                :project-root root}})
+
+                      python-extensions/load-failures
+                      (constantly [])]
+
+          (let [note (get (catalog {"context_session_id" sid}) "project_extensions")]
+            (expect (= ["Settings" 1 ["demo"]] (mapv #(get note %) ["label" "count" "names"])))
+            (expect (string? (get note "target_id")))))))))

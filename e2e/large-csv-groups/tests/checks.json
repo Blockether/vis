@@ -1,0 +1,16 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "paid_count": 10909,
+    "net_by_region": {
+      "north": 32972,
+      "south": 33035,
+      "east": 32515,
+      "west": 32541
+    }
+  },
+  "max_form_output_chars": 700,
+  "max_total_output_chars": 1500,
+  "want_requested_route": true
+}

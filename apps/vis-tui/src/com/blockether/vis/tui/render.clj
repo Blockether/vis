@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.attachments :as attach]
             [com.blockether.vis.tui.client :as vis]
+            [com.blockether.vis.tui.format :as fmt]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.keymap :as keymap]
@@ -1348,6 +1349,8 @@
 
 (def ^:private step-digest-marker p/MARKER_STEP_DIGEST)
 
+(def ^:private attachment-card-marker p/MARKER_ATTACHMENT_CARD)
+
 (def ^:private user-input-marker p/MARKER_USER_INPUT)
 
 (def ^:private user-input-hdr-marker p/MARKER_USER_INPUT_HDR)
@@ -1835,6 +1838,145 @@
          (if (:artifact target)
            (= (interactions/label-key target) (interactions/label-key hovered))
            (= (:view-id target) (:view-id hovered))))))
+
+(defn- ellipsize-middle
+  "Fit `s` into `cols` cells. Cut the middle, so the start and the file extension stay."
+  ^String [s ^long cols]
+  (let [s (str s)]
+    (cond (<= (long (p/display-width s)) cols) s
+          (< cols 4) (p/truncate-cols s cols)
+          :else (let [tail-w (quot (dec cols) 2)
+                      head-w (- cols 1 tail-w)
+                      tail (loop [i (count s)
+                                  w 0]
+
+                             (if (zero? i)
+                               s
+                               (let [w (+ w (long (p/display-width (subs s (dec i) i))))]
+                                 (if (> w tail-w) (subs s i) (recur (dec i) w)))))]
+
+                  (str (p/truncate-cols s head-w) "…" tail)))))
+
+(def ^:private attachment-open-label " Open ")
+
+(defn- attachment-card-target
+  "The click target of a file row: its durable artifact or its host document. Nil when unavailable."
+  [meta]
+  (cond (:artifact meta) {:kind :artifact :session-id (:session-id meta) :artifact (:artifact meta)}
+        (:doc meta) {:kind :doc :url (:path (:doc meta))}))
+
+(defn- draw-attachment-file-row!
+  "Paint a file row inside the card: the bold name, the dimmed type and size, and the Open button.
+   The pointer on the row tints the row and fills the button with the accent color."
+  [g meta x y iw abs-row]
+  (let [x
+        (long x)
+
+        iw
+        (long iw)
+
+        target
+        (attachment-card-target meta)
+
+        hovered
+        (.hovered interactions/hit-map)
+
+        hovered?
+        (and target (= (:kind target) (:kind hovered)) (= abs-row (get-in hovered [:bounds :row])))
+
+        button-w
+        (if target (long (p/display-width attachment-open-label)) 0)
+
+        button-col
+        (- (+ x iw) 2 button-w)
+
+        text-col
+        (+ x 2)
+
+        text-end
+        (if target (dec button-col) (- (+ x iw) 2))
+
+        room
+        (max 0 (- text-end text-col))
+
+        label
+        (str (:card-label meta))
+
+        name-col
+        (min (long (:card-name-col meta)) (max 4 (- room (long (p/display-width label)))))
+
+        row-bg
+        (if hovered? t/link-chrome-hover-bg t/code-block-bg)]
+
+    (when hovered? (p/set-bg! g row-bg) (p/fill-rect! g (inc x) y (max 0 (- iw 2)) 1))
+    (p/set-colors! g t/text-fg row-bg)
+    (p/styled
+      g
+      [p/BOLD]
+      (p/put-str! g text-col y (ellipsize-middle (:card-name meta) (min room (- name-col 3)))))
+    (p/set-colors! g t/footer-fg-muted row-bg)
+    (p/put-str! g (+ text-col name-col) y (p/ellipsize label (max 0 (- room name-col))))
+    (when target
+      (if hovered?
+        (do (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
+            (p/styled g [p/BOLD] (p/put-str! g button-col y attachment-open-label)))
+        (do (p/set-colors! g t/button-fg t/button-bg)
+            (p/put-str! g button-col y attachment-open-label)))
+      ;; The button registers after the row region, so it wins its own cells.
+      (.register interactions/hit-map
+                 (assoc target :bounds {:row abs-row :col button-col :width button-w})))
+    (p/clear-styles! g)))
+
+(defn- draw-attachment-card-row!
+  "Paint one attachment card row on card paper: a frame piece, the fold title or a file row.
+   The frame spans the whole row width, so the paper fills every cell of the card."
+  [g meta x y iw viewport-top]
+  (let [x
+        (long x)
+
+        iw
+        (long iw)
+
+        right
+        (+ x (max 1 (dec iw)))
+
+        inner
+        (max 0 (- iw 2))
+
+        abs-row
+        (+ (long viewport-top) (long y))
+
+        part
+        (:card-part meta)]
+
+    (p/clear-styles! g)
+    (p/set-bg! g t/code-block-bg)
+    (p/fill-rect! g x y iw 1)
+    (p/set-colors! g t/turn-separator-fg t/code-block-bg)
+    (case part
+      :top
+      (p/put-str! g x y (str "┌" (repeat-str \─ inner) "┐"))
+
+      :bottom
+      (p/put-str! g x y (str "└" (repeat-str \─ inner) "┘"))
+
+      :separator
+      (do (p/put-str! g x y "├")
+          (p/put-str! g right y "┤")
+          (p/set-colors! g t/answer-sep-fg t/code-block-bg)
+          (p/put-str! g (inc x) y (repeat-str \─ inner)))
+
+      (do (p/put-str! g x y "│") (p/put-str! g right y "│")))
+    (when-let [title (and (= :top part) (not-empty (:card-title meta)))]
+      (p/set-colors! g t/text-fg t/code-block-bg)
+      (p/styled g
+                [p/BOLD]
+                (p/put-str! g (+ x 2) y (p/ellipsize (str " " title " ") (max 0 (- iw 4)))))
+      ;; The top border is the fold control of a card with more than one file.
+      (when-let [toggle (:card-toggle meta)]
+        (.register interactions/hit-map (assoc toggle :bounds {:row abs-row :col x :width iw}))))
+    (when (= :file part) (draw-attachment-file-row! g meta x y iw abs-row))
+    (p/clear-styles! g)))
 
 (defn- draw-live-button!
   [g meta x y iw right-inset viewport-top]
@@ -2395,14 +2537,14 @@
                   (when (and *image-placements* (contains? #{:image :image-pad} (:kind meta)))
                     (swap! *image-placements* conj
                       {:row (+ (long viewport-top) (long y))
-                       :col x
+                       :col (+ (long x) (long (or (:image-col-offset meta) 0)))
                        :img (:img meta)
                        :img-idx (:img-idx meta)}))
                   ;; Every painted image row opens its source in the system viewer.
                   (when-let [img (and (contains? #{:image :image-pad} (:kind meta)) (:img meta))]
                     (.register interactions/hit-map
                                {:bounds {:row (+ (long viewport-top) (long y))
-                                         :col x
+                                         :col (+ (long x) (long (or (:image-col-offset meta) 0)))
                                          :width (long (max 1 (long (or (:cols img) 1))))}
                                 :kind :image
                                 :url (:path img)}))
@@ -2428,6 +2570,11 @@
                   ;; Recorded receipts keep the running Live View title's emphasis.
                   (when (:live-button? meta) (p/enable! g p/BOLD))
                   (cond
+                    ;; Attachment card rows paint their own frame and card paper.
+                    (str/starts-with? line attachment-card-marker)
+                    (do (p/set-bg! g bg-color)
+                        (p/fill-rect! g fbx y fill-iw 1)
+                        (draw-attachment-card-row! g meta x y iw viewport-top))
                     ;; Iteration header.
                     (str/starts-with? line iteration-hdr-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -2690,7 +2837,9 @@
                                             t/user-bubble-fg
                                             t/user-bubble-bg
                                             t/code-block-fg
-                                            t/code-block-bg))
+                                            t/code-block-bg)
+                      ;; A paste in the message folds; its summary row is the toggle.
+                      (register-toggle-region! meta viewport-top y x iw))
                     ;; Activity continues the Code surface, with independent disclosure.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
@@ -4926,29 +5075,134 @@
   (if (and (string? md) (str/includes? md "````vis-image") (timg/graphical-terminal?))
     (long (reduce (fn [^long acc m]
                     (+ acc
+                       ;; The card frame adds a separator and two padding rows around the box.
+                       3
                        (long (max 1
                                   (long (:rows (image-cell-box (parse-long (nth m 1))
                                                                (parse-long (nth m 2))
-                                                               content-w)))))))
+                                                               (max 1 (- content-w 4)))))))))
                   0
                   (re-seq vis-image-dims-re md)))
     0))
 
-(defn- image-disclosure-entries
-  "Render one `vis-image` block with its box PRE-ALLOCATED — NOT collapsible.
+(defn- attachment-type-label
+  "Short file type for people: `HTML`, `PDF`, `Text`, or the file extension in capitals."
+  [mime filename]
+  (let [mime
+        (str/lower-case (str/trim (str mime)))
 
-   The `[Image #N: ...]` token paints as a plain caption row; on a graphical
-   terminal the image's cell box (width x height) is reserved IMMEDIATELY
-   below it, so the virtual layout always accounts for the picture's true
-   size — no expand/collapse state, no height pop-in, no image painted at a
-   stale position. The FIRST reserved row carries `:kind :image` meta so the
-   screen loop can paint the actual picture (Kitty/iTerm2 graphics) over the
-   box AFTER Lanterna's delta refresh; every reserved row (pads included)
-   carries the `:img` map so the paint loop registers a click region that
-   opens the file in the OS previewer. A terminal without inline-image support,
-   or a fence without dimensions, gets a link card instead: the caption and one
-   hint line. Every link row carries the file in `:meta :doc`, so a click opens
-   the picture in the system viewer, like a document card."
+        ext
+        (some-> (re-find #"\.([A-Za-z0-9]{1,8})$" (str filename))
+                second
+                str/upper-case)]
+
+    (case mime
+      "text/html"
+      "HTML"
+
+      "application/pdf"
+      "PDF"
+
+      "text/plain"
+      "Text"
+
+      "text/markdown"
+      "Markdown"
+
+      "text/csv"
+      "CSV"
+
+      "application/json"
+      "JSON"
+
+      (or ext
+          (some-> (re-find #"^image/([a-z0-9.+-]+)$" mime)
+                  second
+                  str/upper-case)
+          "File"))))
+
+(defn- attachment-card-row
+  "One card row. `part` selects the frame piece; `text` is the row's copy text."
+  [part text meta]
+  {:line (str attachment-card-marker text) :meta (assoc meta :card-part part)})
+
+(defn- attachment-card-entries
+  "Frame `files` as one attachment card. Each file is `{:name :label :bytes :target}`; a nil
+   `:target` marks it unavailable. More than one file folds behind a title in the top border
+   and stays closed until the reader opens it. `body` rows join the card below the files."
+  ([files fold] (attachment-card-entries files fold []))
+  ([files {:keys [node-id session-id expanded?]} body]
+   (let [n
+         (count files)
+
+         name-col
+         (min 28 (+ 3 (long (reduce max 0 (map #(p/display-width (:name %)) files)))))
+
+         total
+         (when (and (> n 1) (every? :bytes files))
+           (fmt/format-bytes (reduce + (map :bytes files)) " "))
+
+         foldable?
+         (and (> n 1) node-id)
+
+         open?
+         (or (not foldable?) expanded?)
+
+         title
+         (when (> n 1)
+           (str (when foldable? (if open? "▾ " "▸ ")) n " files" (when total (str " · " total))))
+
+         file-rows
+         (mapv (fn [{:keys [name label target]}]
+                 (attachment-card-row
+                   :file
+                   (str name "  " label)
+                   (merge {:card-name name :card-label label :card-name-col name-col} target)))
+               files)
+
+         separator
+         (attachment-card-row :separator "" {})
+
+         rows
+         (when open?
+           (cond-> (vec (interpose separator file-rows))
+             (seq body)
+             (into (cons separator body))))]
+
+     (-> [(attachment-card-row :top
+                               (or title "")
+                               (cond-> {:card-title title}
+                                 foldable?
+                                 (assoc :card-toggle
+                                   {:kind :toggle-details
+                                    :session-id session-id
+                                    :node-id node-id
+                                    :collapsed? (not open?)})))]
+         (into rows)
+         (conj (attachment-card-row :bottom "" {}))))))
+
+(defn- image-file-name
+  "The picture's own file name from a `vis-image` caption, else the last segment of `path`."
+  [summary path]
+  (or (some-> (re-find #"^\[Image(?: #\d+)?: (.+?)(?: \d+[×x]\d+)?(?:,[^\]]*)?\]$" (str summary))
+              second
+              str/trim
+              not-empty)
+      (not-empty (last (str/split (str path) #"/")))
+      "Image"))
+
+(defn- image-disclosure-entries
+  "Render one `vis-image` block as an attachment card with its picture box PRE-ALLOCATED.
+
+   The card names the picture: its file name, type, pixel size and byte size, and an Open
+   button. On a graphical terminal the picture's cell box (width x height) is reserved
+   inside the card, below the file row and a padding row, so the virtual layout always
+   accounts for the picture's true size. The FIRST reserved row carries `:kind :image` meta
+   so the screen loop can paint the actual picture (Kitty/iTerm2 graphics) over the box
+   AFTER Lanterna's delta refresh. Every reserved row carries the `:img` map, so a click on
+   the picture opens the file, and `:image-col-offset`, so the picture sits inside the
+   frame. A terminal without inline pictures, or a fence without dimensions, gets the card
+   without the picture."
   [node content-w {:keys [session-turn-id] :as opts}]
   (let [{:keys [summary path mime width height size-label]}
         (image-block-parts node)
@@ -4964,61 +5218,71 @@
                          :kind :image
                          :details-path [id]})
 
-        can-draw?
-        (and (timg/graphical-terminal?) width height)
+        file-name
+        (image-file-name summary path)
 
-        ;; The link card of the fallback names the picture itself.
-        header
-        (when can-draw? (vec (layout/ast->entries [:ast {} [:p {} summary]] content-w {})))
-
-        body
-        (if can-draw?
-          (let [box
-                ;; Height ceiling in cells (see `image-max-rows`): large enough that
-                ;; a width-filled portrait fills the width cap, while an over-tall
-                ;; box is clamped to the viewport by `fitting-image-placements`.
-                (image-cell-box width height content-w)
-
-                rows
-                (max 1 (long (:rows box)))
-
-                img
-                {:id (str node-id)
-                 :path path
+        target
+        (when-not (str/blank? path)
+          {:doc {:path path
                  :mime mime
-                 :cols (:cols box)
-                 :rows rows
-                 :width width
-                 :height height}]
-
-            ;; First reserved row carries the paint meta; the rest are
-            ;; blanks the graphics sequence spans over. Every row is
-            ;; tagged (and carries `:img`) so `trim-user-prompt-margin-entries`
-            ;; doesn't mistake the reserved box for trailing margin AND so
-            ;; each painted row registers its own click region.
-            (into [{:line "" :meta {:kind :image :img img :img-idx 0 :node-id (str node-id)}}]
-                  (map (fn [i]
-                         {:line "" :meta {:kind :image-pad :img img :img-idx (inc (long i))}})
-                       (range (dec rows)))))
-          ;; Fallback: a terminal without inline pictures gets a link card. A click
-          ;; opens the file in the system viewer, like a document card.
-          (let [title
-                (if (str/blank? summary) "[Image]" summary)
-
-                doc
-                {:path path
-                 :mime mime
-                 :name (not-empty (last (str/split path #"/")))
+                 :name file-name
                  :size-label size-label
-                 :title title}]
+                 :title (if (str/blank? summary) "[Image]" summary)}})
 
-            (mapv #(assoc-in % [:meta :doc] doc)
-                  (layout/ast->entries
-                    [:ast {} [:code {} (str title "\n→ click to open in the system viewer")]]
-                    content-w
-                    {}))))]
+        label
+        (str/join " · "
+                  (remove str/blank?
+                    [(attachment-type-label mime file-name)
+                     (when (and width height) (str width "x" height)) size-label
+                     (when-not target "Unavailable")]))
 
-    (vec (concat header body))))
+        file
+        {:name file-name :label label :target target}]
+
+    (if (and (timg/graphical-terminal?) width height)
+      (let [box
+            ;; Height ceiling in cells (see `image-max-rows`): large enough that a
+            ;; width-filled portrait fills the width cap, while an over-tall box is
+            ;; clamped to the viewport by `fitting-image-placements`. The frame and
+            ;; its padding take 4 columns.
+            (image-cell-box width height (max 1 (- (long content-w) 4)))
+
+            rows
+            (max 1 (long (:rows box)))
+
+            img
+            {:id (str node-id)
+             :path path
+             :mime mime
+             :cols (:cols box)
+             :rows rows
+             :width width
+             :height height}
+
+            pad
+            (attachment-card-row :pad "" {})
+
+            ;; Every reserved row is tagged (and carries `:img`) so
+            ;; `trim-user-prompt-margin-entries` doesn't mistake the box for trailing
+            ;; margin AND so each painted row registers its own click region.
+            picture
+            (into [(attachment-card-row
+                     :image
+                     ""
+                     {:kind :image :img img :img-idx 0 :node-id (str node-id) :image-col-offset 2})]
+                  (map (fn [i]
+                         (attachment-card-row
+                           :image
+                           ""
+                           {:kind :image-pad :img img :img-idx (inc (long i)) :image-col-offset 2}))
+                       (range (dec rows))))]
+
+        (attachment-card-entries [file]
+                                 {}
+                                 (-> [pad]
+                                     (into picture)
+                                     (conj pad))))
+      (attachment-card-entries [file] {}))))
 
 (defn- table-block-parts
   "Parse a `vis-table` node body — the header lines `attach` writes, then the
@@ -5162,27 +5426,34 @@
      :size-label (not-empty (str/trim (str size-label)))}))
 
 (defn- doc-disclosure-entries
-  "Render one `vis-doc` block as a single card: the `[Document: …]` headline and
-   one hint line.
+  "Render one `vis-doc` block as an attachment card: the file name, its type and size, and an
+   Open button.
 
    A PDF is pages and an HTML page is markup — neither has pixels a terminal
    could paint, and neither is ever handed to the model as an image. So the card
-   is deliberately just a HANDLE: every painted row carries the document in
-   `:meta :doc`, the paint loop turns each into a click region, and clicking it
-   opens the host file in the system viewer (the companion renders the same
-   artifact inline, inside a sandboxed frame)."
-  [node content-w _opts]
+   is deliberately just a HANDLE: the file row carries the document in `:meta :doc`,
+   the paint loop turns it into a click region, and clicking it opens the host file
+   in the system viewer (the companion renders the same artifact inline, inside a
+   sandboxed frame)."
+  [node _content-w _opts]
   (let [{:keys [summary path mime name size-label]}
         (doc-block-parts node)
 
-        lines
-        [(if (str/blank? summary) "[Document]" summary) "→ click to open in the system viewer"]
+        file-name
+        (or name (not-empty summary) "Document")
 
-        doc
-        {:path path :mime mime :name name :size-label size-label :title (or name summary)}]
+        target
+        (when-not (str/blank? path)
+          {:doc
+           {:path path :mime mime :name name :size-label size-label :title (or name summary)}})]
 
-    (mapv #(assoc-in % [:meta :doc] doc)
-          (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))))
+    (attachment-card-entries [{:name file-name
+                               :label (str/join " · "
+                                                (remove str/blank?
+                                                  [(attachment-type-label mime file-name) size-label
+                                                   (when-not target "Unavailable")]))
+                               :target target}]
+                             {})))
 
 (defn- owns-live-view?
   "Match host-captured ownership, including retained histories and nested invocations."
@@ -5206,34 +5477,131 @@
                                             (:rows source))))))
                    sources))))
 
+(defn- artifact-row
+  "One durable artifact row from a gateway attachment descriptor. The row opens at the
+   descriptor's own byte-endpoint `iteration_id` and `index`."
+  [artifact]
+  (cond-> {:filename (str (or (get artifact "filename") "artifact"))
+           :media-type (str (or (get artifact "media_type") "application/octet-stream"))
+           :size (get artifact "size")
+           ;; A summarized run's artifact still opens from its own step.
+           :iteration-id (str (get artifact "iteration_id"))
+           :index (get artifact "index")}
+    (get artifact "view_id")
+    (assoc :view-id (get artifact "view_id"))
+
+    (get artifact "owner")
+    (assoc :owner (wire/->engine (get artifact "owner")))))
+
 (defn- iteration-artifact-rows
-  "Durable document rows from a step's gateway attachment descriptors. Each row
-   opens at the descriptor's own byte-endpoint `iteration_id` and `index`."
+  "Durable document rows from a step's gateway attachment descriptors. Pictures, videos and
+   tables have their own surfaces."
   [attachments]
   (->> attachments
-       (keep
-         (fn [artifact]
-           (let [kind
-                 (str (get artifact "kind"))
+       (keep (fn [artifact]
+               (let [kind
+                     (str (get artifact "kind"))
 
-                 media-type
-                 (str (or (get artifact "media_type") "application/octet-stream"))]
+                     media-type
+                     (str (or (get artifact "media_type") "application/octet-stream"))]
 
-             (when-not (or (#{"image" "table"} kind)
-                           (str/starts-with? media-type "image/")
-                           (str/starts-with? media-type "video/"))
-               (cond-> {:filename (str (or (get artifact "filename") "artifact"))
-                        :media-type media-type
-                        :size (get artifact "size")
-                        ;; A summarized run's artifact still opens from its own step.
-                        :iteration-id (str (get artifact "iteration_id"))
-                        :index (get artifact "index")}
-                 (get artifact "view_id")
-                 (assoc :view-id (get artifact "view_id"))
-
-                 (get artifact "owner")
-                 (assoc :owner (wire/->engine (get artifact "owner"))))))))
+                 (when-not (or (#{"image" "table"} kind)
+                               (str/starts-with? media-type "image/")
+                               (str/starts-with? media-type "video/"))
+                   (artifact-row artifact)))))
        vec))
+
+(def ^:private activity-attachment-types
+  "Activity content block types that point at a step attachment."
+  #{"attachment" "audio" "file" "image" "video"})
+
+(defn- activity-attachment-block?
+  [block]
+  (or (contains? activity-attachment-types (:type block)) (some? (:attachment-id block))))
+
+(defn- activity-content-blocks
+  "Activity content without its attachment references. Their files show on the attachment
+   card below the execution surface, not inside the Activity band."
+  [content]
+  (into [] (remove activity-attachment-block?) content))
+
+(defn- error-comparable
+  "Text as a failure comparison sees it: no truncation marker, no path directories, one space."
+  [text]
+  (-> (str text)
+      (str/replace #"\n… truncated\s*$" "")
+      (str/replace #"\S*/" "")
+      (str/replace #"\s+" " ")
+      str/trim))
+
+(defn- activity-content-without-error
+  "A failed step's content without the blocks that only repeat its error (#376). The error
+   lines already show that text, so a text, code or markdown block contained in it is
+   dropped, and so is a heading left with nothing under it. The engine shortens paths in
+   the error, not in the authored content, so path directories do not count."
+  [content error]
+  (let [said
+        (error-comparable error)
+
+        blocks
+        (vec content)
+
+        kind
+        #(some-> (:type %)
+                 name)
+
+        repeats?
+        (fn [block]
+          (let [text (error-comparable (:text block))]
+            (and (contains? #{"text" "code" "markdown"} (kind block))
+                 (not (str/blank? text))
+                 (str/includes? said text))))
+
+        dropped
+        (set (keep-indexed #(when (repeats? %2) %1) blocks))
+
+        orphan?
+        (fn [index]
+          (let [under (take-while #(not= "heading" (kind (blocks %)))
+                                  (range (inc (long index)) (count blocks)))]
+            (and (seq under) (every? dropped under))))]
+
+    (if (or (str/blank? said) (empty? dropped))
+      blocks
+      (into []
+            (keep-indexed (fn [index block]
+                            (when-not (or (dropped index)
+                                          (and (= "heading" (kind block)) (orphan? index)))
+                              block)))
+            blocks))))
+
+(defn- activity-attachment-rows
+  "Durable rows for the files that `activity` content references, in reference order. Files
+   that `shown` already holds and live recordings stay out: they have their own surfaces."
+  [activity attachments shown]
+  (let [blocks
+        (for [row
+              (mapcat #(tree-seq (comp seq :children) :children %) (:rows activity))
+
+              :let [presentation
+                    (:presentation row)]
+              block
+              (concat (:content presentation) (mapcat :content (:sections presentation)))
+
+              :when (activity-attachment-block? block)]
+
+          block)
+
+        shown-keys
+        (set (map (juxt :iteration-id :index) shown))]
+
+    (into []
+          (comp (keep (fn [id]
+                        (some #(when (= (str id) (str (get % "attachment_id"))) %) attachments)))
+                (map artifact-row)
+                (remove attach/live-artifact?)
+                (remove #(contains? shown-keys ((juxt :iteration-id :index) %))))
+          (distinct (keep :attachment-id blocks)))))
 
 (def ^:private display-fence-re
   "One complete picture, table or document fence that `attach` or `plt.show()`
@@ -5331,21 +5699,39 @@
     (if nested? [receipt] [{:line ""} receipt {:line ""}])))
 
 (defn- artifact-disclosure-entries
-  [artifacts session-id max-w runs nested?]
-  (into []
-        (mapcat (fn [{:keys [filename media-type view-id] :as artifact}]
-                  (let [meta {:artifact artifact :session-id session-id}]
-                    (if (attach/live-artifact? artifact)
-                      (live-artifact-receipt-entries
-                        artifact
-                        session-id
-                        max-w
-                        (when view-id (some #(when (= view-id (:view-id %)) %) runs))
-                        nested?)
-                      [{:line (str result-marker filename " · " media-type) :meta meta}
-                       {:line (str result-marker "→ click to open in the system viewer")
-                        :meta meta}]))))
-        artifacts))
+  "Live recordings as receipts, then the durable files as one attachment card. `fold` gives
+   the card's `:node-id` and `:expanded?`; more than one file folds behind the card title."
+  [artifacts session-id max-w runs nested? fold]
+  (let [{live true files false}
+        (group-by #(boolean (attach/live-artifact? %)) artifacts)
+
+        receipts
+        (into []
+              (mapcat (fn [{:keys [view-id] :as artifact}]
+                        (live-artifact-receipt-entries
+                          artifact
+                          session-id
+                          max-w
+                          (when view-id (some #(when (= view-id (:view-id %)) %) runs))
+                          nested?)))
+              live)]
+
+    (if (empty? files)
+      receipts
+      (-> receipts
+          (conj {:line ""})
+          (into (attachment-card-entries
+                  (mapv (fn [{:keys [filename media-type size] :as artifact}]
+                          {:name filename
+                           :label (str/join " · "
+                                            (remove str/blank?
+                                              [(attachment-type-label media-type filename)
+                                               (when (number? size) (fmt/format-bytes size " "))]))
+                           :bytes (when (number? size) size)
+                           :target {:artifact artifact :session-id session-id}})
+                        files)
+                  (assoc fold :session-id session-id)))
+          (conj {:line ""})))))
 
 (defn- paste-aware-ast->entries
   "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
@@ -6049,7 +6435,7 @@
 (defn- activity-row-openable?
   "Disclosure opens content, never the visible headline or summary."
   [{:keys [summary children resources evidence presentation] :as row}]
-  (boolean (or (seq (:content presentation))
+  (boolean (or (seq (activity-content-blocks (:content presentation)))
                (seq (:sections presentation))
                (seq children)
                (some #(contains? #{"diff" "error"} (activity-evidence-kind %)) evidence)
@@ -6259,8 +6645,8 @@
   "Render symbol content through the existing Markdown/table/code painter, set in
    from the paper's edge to `col`, the column its step's words start in.
    Adjacent tables with identical headers share a grid, retaining each header.
-   Media references use the durable artifact opener, not arbitrary paths or URLs."
-  [blocks width col session-id artifacts running?]
+   Attachment references are left out: their files show on the attachment card."
+  [blocks width col session-id running?]
   (vec
     (mapcat
       (fn [group]
@@ -6274,12 +6660,6 @@
 
                 text
                 (:text block)
-
-                artifact
-                (get artifacts (:attachment-id block))
-
-                media?
-                (contains? #{"image" "video" "audio" "file"} kind)
 
                 ast
                 (case kind
@@ -6323,13 +6703,7 @@
                            (str (:value block) " / " (:total block))
                            (if running? "In progress…" "Stopped")))]]
 
-                  [:ast {}
-                   [:p {}
-                    (str (:label block)
-                         " · "
-                         (if artifact
-                           "→ click to open in the system viewer"
-                           "Attachment unavailable"))]])
+                  [:ast {} [:p {} (str (:label block))]])
 
                 ;; Code rows set their words in by `code-block-h-pad` inside the band, and a
                 ;; heading's gutter mark fills that pad. Every other row takes the same inset,
@@ -6356,18 +6730,15 @@
 
             (concat (when (= kind "heading")
                       [{:line "" :meta {:activity-content? true :activity-content-col col}}])
-                    (if (and media? artifact)
-                      (mapv #(update % :meta merge {:artifact artifact :session-id session-id})
-                            entries)
-                      entries)))))
+                    entries))))
       (partition-by (fn [[index block]]
                       (if (= "table" (:type block)) (:columns block) index))
-                    (map-indexed vector blocks)))))
+                    (map-indexed vector (activity-content-blocks blocks))))))
 
 (defn- activity-section-entries
   "Show each section as one closed head line; its body opens only on its own press.
    Sections take the body inset, so they read as part of the opened row."
-  [sections row-id node-id width col session-id artifacts running? expanded?]
+  [sections row-id node-id width col session-id running? expanded?]
   (vec
     (mapcat
       (fn [[index section]]
@@ -6384,7 +6755,7 @@
               (not-empty (:line summary-entry))
 
               content
-              (:content section)
+              (activity-content-blocks (:content section))
 
               section-key
               (str row-id ":section:" index)
@@ -6419,8 +6790,7 @@
                       :operation-label headline}}]
 
           (concat [{:line activity-marker :meta nil} head]
-                  (when open?
-                    (activity-content-entries content width inset session-id artifacts running?)))))
+                  (when open? (activity-content-entries content width inset session-id running?)))))
       (map-indexed vector sections))))
 
 (defn- activity-group-row
@@ -6666,8 +7036,8 @@
 (defn- activity-detail-entries
   "A joined Activity band, closed until the reader explicitly opens it.
    Disclosure choices inside the band remain independent of its outer fold."
-  [{:keys [node-id activity-rows activity-expanded? activity-artifacts activity-histories
-           activity-sources activity-fetch]} max-w session-id]
+  [{:keys [node-id activity-rows activity-expanded? activity-histories activity-sources
+           activity-fetch]} max-w session-id]
   (let [rows
         (identity-memo operation-rows-memo activity-rows #(activity-operation-rows activity-rows))
 
@@ -6864,7 +7234,13 @@
                                                            (activity-step-lead row))
 
                                                        content
-                                                       (:content presentation)
+                                                       (activity-content-without-error
+                                                         (activity-content-blocks (:content
+                                                                                    presentation))
+                                                         (some #(when (= "error"
+                                                                         (activity-evidence-kind %))
+                                                                  (:text %))
+                                                               (:evidence row)))
 
                                                        terminal
                                                        (some #(when (= "terminal" (:type %)) %)
@@ -7118,13 +7494,12 @@
                                                                                       3))
 
                                                      (and open? (seq content))
-                                                     (into (activity-content-entries
-                                                             content
-                                                             width
-                                                             col
-                                                             session-id
-                                                             activity-artifacts
-                                                             (= :running state)))
+                                                     (into (activity-content-entries content
+                                                                                     width
+                                                                                     col
+                                                                                     session-id
+                                                                                     (= :running
+                                                                                        state)))
 
                                                      (and detail
                                                           open?
@@ -7140,7 +7515,6 @@
                                                              width
                                                              col
                                                              session-id
-                                                             activity-artifacts
                                                              (= :running state)
                                                              expanded?))
 
@@ -7615,6 +7989,66 @@
                  [])
          (mapv execution-group))))
 
+(def ^:private delivered-fence-re
+  "One collapsed fence in a delivered message: kind, summary token and payload."
+  #"(?s)(?:^|\n)````vis-(paste|transcript|image)\n([^\n]*)\n(.*?)\n````(?=\n|\z)")
+
+(defn- delivered-message-entries
+  "The bubble rows of one queued message that a running turn received (`→ Send now`).
+   Prose wraps on the bubble paper. A `vis-paste` or `vis-transcript` fence becomes a
+   collapsed disclosure, like a paste in the request bubble. A `vis-image` fence keeps
+   only its `[Image #N: ...]` token, because the step paints the picture itself."
+  [^String text message-index fill-w
+   {:keys [session-id session-turn-id detail-expansions iteration-number]}]
+  (let [fill-w
+        (max 1 (long fill-w))
+
+        row
+        (fn [line]
+          {:line (str user-input-marker line) :meta nil})
+
+        prose
+        (fn [s]
+          (let [s (str/replace s #"\A\n" "")]
+            (when-not (str/blank? s) (mapv row (wrap-text s fill-w)))))
+
+        fence
+        (fn [[_ kind summary payload]]
+          (let [summary (str/trim summary)]
+            (if (= "image" kind)
+              [(row summary)]
+              (let [id (or (second (re-find #"#(\d+)" summary)) "0")
+                    node-id (detail-node-id {:section :user-input
+                                             :session-turn-id session-turn-id
+                                             :iteration-number iteration-number
+                                             :kind (keyword kind)
+                                             :details-path [message-index id]})
+                    expanded? (detail-expanded? detail-expansions session-id node-id false)]
+
+                (into [{:line (str user-input-marker (if expanded? "▾ " "▸ ") summary)
+                        :meta {:kind :toggle-details
+                               :session-id (str session-id)
+                               :node-id node-id
+                               :collapsed? (not expanded?)}}]
+                      (when expanded?
+                        (mapv #(row (str "  " %)) (wrap-text payload (max 1 (- fill-w 2))))))))))
+
+        matcher
+        (re-matcher delivered-fence-re text)]
+
+    (loop [at
+           0
+
+           out
+           []]
+
+      (if (.find matcher)
+        (recur (.end matcher)
+               (-> out
+                   (into (prose (subs text at (.start matcher))))
+                   (into (fence (re-groups matcher)))))
+        (into out (prose (subs text at)))))))
+
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?
@@ -7899,16 +8333,6 @@
                                       :else (activity-row-tone activity))
                    :elapsed-ms duration-ms
                    :activity-rows (:rows activity)
-                   :activity-artifacts (into {}
-                                             (keep (fn [artifact]
-                                                     (when-let [id (get artifact "attachment_id")]
-                                                       [id
-                                                        {:filename (get artifact "filename")
-                                                         :media-type (get artifact "media_type")
-                                                         :iteration-id (str (get artifact
-                                                                                 "iteration_id"))
-                                                         :index (get artifact "index")}])))
-                                             attachments)
                    :activity-histories (vec (or (seq (:histories activity))
                                                 (when-let [history (:history activity)]
                                                   [history])))
@@ -8285,16 +8709,31 @@
 
                 ;; A closed digest row opens the recordings, so only files stay below it.
                 artifact-block
-                (artifact-disclosure-entries (cond->> (remove (set nested-artifacts) form-artifacts)
-                                               digest-closed?
-                                               (remove attach/live-artifact?))
-                                             session-id
-                                             (or bubble-w code-width)
-                                             (mapcat :runs forms)
-                                             false)
+                (let [node-id (when session-id
+                                (detail-node-id {:session-turn-id session-turn-id
+                                                 :iteration-number iteration-number
+                                                 :block-number block-number
+                                                 :section :iteration
+                                                 :kind :attachments}))]
+                  (artifact-disclosure-entries
+                    (cond->> (into (vec (remove (set nested-artifacts) form-artifacts))
+                                   (activity-attachment-rows (:activity form)
+                                                             attachments
+                                                             iteration-artifacts))
+                      digest-closed?
+                      (remove attach/live-artifact?))
+                    session-id
+                    (or bubble-w code-width)
+                    (mapcat :runs forms)
+                    false
+                    {:node-id node-id
+                     :expanded?
+                     (boolean (and
+                                node-id
+                                (detail-expanded? detail-expansions session-id node-id false)))}))
 
                 live-artifact-block
-                (artifact-disclosure-entries nested-artifacts session-id fill-w runs true)
+                (artifact-disclosure-entries nested-artifacts session-id fill-w runs true {})
 
                 ;; Python and Result share the compact execution surface. Activity follows as
                 ;; a timeline surface, while the verdict remains transcript text above both.
@@ -8446,8 +8885,14 @@
                      (str user-input-hdr-marker "You · Queued · sent now · iter " iteration-number))
                    {:line (str user-input-marker "") :meta {:user-input-pad? true}}]
                   (into (mapcat (fn [i text]
-                                  (cond->> (mapv #(line-entry (str user-input-marker %))
-                                                 (wrap-text text (max 1 (long fill-w))))
+                                  (cond->> (delivered-message-entries
+                                             text
+                                             i
+                                             fill-w
+                                             {:session-id session-id
+                                              :session-turn-id session-turn-id
+                                              :detail-expansions detail-expansions
+                                              :iteration-number iteration-number})
                                     (pos? (long i))
                                     (into [(line-entry (str user-input-marker ""))])))
                                 (range)

@@ -6471,7 +6471,8 @@
   :message-received
   (fn [db [_ a b c :as event]]
     (let [[event-workspace-id answer
-           {:keys [status utilization client-turn-id terminal-sync? terminal-trace] :as completion}]
+           {:keys [status utilization client-turn-id terminal-sync? terminal-trace slash-turn?]
+            :as completion}]
           (if (= 4 (count event)) [a b c] [(current-tab-id db) a b])
 
           workspace-id
@@ -6524,11 +6525,12 @@
                                                 ;; every iteration the user watched on this one.
                                                 (completion-response
                                                   answer
-                                                  (settled-trace terminal-trace
-                                                                 (get-in (vec (:messages workspace))
-                                                                         [matching-pending-index
-                                                                          :terminal-pending
-                                                                          :trace]))
+                                                  (when-not slash-turn?
+                                                    (settled-trace terminal-trace
+                                                                   (get-in
+                                                                     (vec (:messages workspace))
+                                                                     [matching-pending-index
+                                                                      :terminal-pending :trace])))
                                                   nil
                                                   completion))
                                     :scroll (scroll/settle (:scroll workspace)))
@@ -6541,13 +6543,15 @@
                       ;; trace it snapshotted survives on the placeholder; without
                       ;; this fallback every iteration the user watched LIVE is
                       ;; dropped and only the final answer stays on screen.
-                      (settled-trace terminal-trace
-                                     (or (not-empty (vec (get-in workspace
-                                                                 [:progress :iterations])))
-                                         (let [ms (vec (:messages workspace))]
-                                           (get-in ms
-                                                   [(pending-assistant-index ms client-turn-id)
-                                                    :terminal-pending :trace]))))
+                      ;; A slash turn's answer is its result; it keeps no step (Vis #363).
+                      (when-not slash-turn?
+                        (settled-trace terminal-trace
+                                       (or (not-empty (vec (get-in workspace
+                                                                   [:progress :iterations])))
+                                           (let [ms (vec (:messages workspace))]
+                                             (get-in ms
+                                                     [(pending-assistant-index ms client-turn-id)
+                                                      :terminal-pending :trace])))))
 
                       cancelled?
                       (= :cancelled status)
@@ -6940,10 +6944,14 @@
                       ;; The progress stream carries stdout but not durable attachment
                       ;; descriptors. Refresh this one completed turn so the live receipt
                       ;; and a later restored receipt render from the same canonical rows.
-                      terminal-trace (when-let [turn-id (and (not (get result "slash"))
-                                                             (get result "session_turn_id"))]
+                      ;; A slash turn's rows give an empty trace and no step (Vis #363).
+                      terminal-rows (when-let [turn-id (get result "session_turn_id")]
+                                      (try (vis/gateway-turn-trace sid turn-id)
+                                           (catch Throwable _ nil)))
+                      slash-turn? (chat/slash-turn-rows? terminal-rows)
+                      terminal-trace (when terminal-rows
                                        (try (chat/iteration-rows->trace
-                                              (vis/gateway-turn-trace sid turn-id)
+                                              terminal-rows
                                               (boolean (seq (get result "content"))))
                                             (catch Throwable _ nil)))]
 
@@ -6951,6 +6959,7 @@
                     (dispatch [:message-received workspace-id (chat/error-content result)
                                {:client-turn-id client-turn-id
                                 :status :failed
+                                :slash-turn? slash-turn?
                                 :terminal-trace terminal-trace}])
                     (do (dispatch
                           [:message-received workspace-id (chat/completion-content result)
@@ -6986,6 +6995,7 @@
                             :utilization (get result "utilization")
                             :slash (get result "slash")
                             :client-turn-id client-turn-id
+                            :slash-turn? slash-turn?
                             :terminal-trace terminal-trace}])
                         ;; A turn may have changed the session's workspace (`/cd <path>`,
                         ;; or a future model-managed isolation action).

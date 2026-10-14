@@ -72,7 +72,7 @@ def credential():
         llm_headers=__CREDENTIAL_HEADERS__)
 
 def enrich(provider, router_opts):
-    return [vis.ProviderModel(m["name"], context=200000, is_tool_call=True)
+    return [vis.ProviderModel(m["name"], context=200000, is_tool_calls_supported=True)
             for m in provider["models"]]
 
 vis.register_extension(vis.Extension(name="sdk-provider", description="Typed provider integration",
@@ -830,8 +830,8 @@ def test_real_council_managed_child_wakes_once(tmp_path, monkeypatch, transport)
         before_reply=before_reply,
         tool_code=(
             "if session['agent']['role'] == 'leader':\n"
-            "    if not (await council.subagents()):\n"
-            "        print(await council.publish_spawn('Report fixture evidence', iteration_budget=8, key='child'))\n"
+            "    if not council.wait(timeout_secs=1):\n"
+            "        print(council.run({'task': 'Report fixture evidence', 'iteration_budget': 8}))\n"
             "else:\n"
             "    for pending in session['council']['pending_replies']:\n"
             "        print(await council.publish('Fixture evidence', kind='informational', reply_to=pending['entry_id']))\n"

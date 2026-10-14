@@ -622,3 +622,32 @@
                 (expect (str/includes?
                           (.getMessage (failure #(python-runtime/project-environment-exists? dir)))
                           message)))))))))
+
+(defdescribe
+  preparation-replaces-environment-shell-test
+  (it "removes an empty environment shell before uv sync, and keeps one with files"
+      ;; #377: uv rejects a .venv with only empty directories and never replaces it.
+      (with-uv-fixture
+        (str
+          "if [ \"$1\" = workspace ]; then pwd; exit 0; fi\n"
+          "if [ -e .venv ]; then echo present >> \"$0.sync\"; else echo fresh >> \"$0.sync\"; fi\n"
+          "exit 0\n")
+        (fn [dir uv]
+          (let [sync-log
+                (io/file (str uv ".sync"))
+
+                site
+                (io/file dir ".venv" "lib" "python3.14" "site-packages")]
+
+            (with-redefs-fn {#'python-runtime/bundled-uv! (constantly uv)
+                             #'python-runtime/shared-project? (constantly false)
+                             #'python-runtime/project-packages (constantly dir)}
+              (fn []
+                (.mkdirs site)
+                (python-runtime/ensure-project! dir)
+                (expect (= ["fresh"] (str/split-lines (slurp sync-log))))
+                (.mkdirs site)
+                (spit (io/file site "user.txt") "keep")
+                (python-runtime/ensure-project! dir)
+                (expect (= ["fresh" "present"] (str/split-lines (slurp sync-log))))
+                (expect (.isFile (io/file site "user.txt"))))))))))

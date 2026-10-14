@@ -12,7 +12,8 @@ import {
   useRef,
   useState,
 } from 'react';
-import type { GatewayConn } from './lib/types';
+import type { GatewayConn, SettingsTarget } from './lib/types';
+import { OpenMachineSettings, OpenScopedSettings } from './lib/open-settings';
 import { type Compat, compatFromHealth, shouldRereadCompat } from './lib/compat';
 import { GatewayClient, ROUTER_TTL_MS, onGatewayIncompatible } from './lib/gateway';
 import {
@@ -28,6 +29,7 @@ import {
   setActiveUrl,
   setPrimaryUrl,
   switchConnectionUrl,
+  updateConnection,
   upsertConnection,
   removeConnection,
 } from './lib/storage';
@@ -177,6 +179,9 @@ const SessionScreenLazy = lazy(async () => ({
 const SettingsDialogLazy = lazy(async () => ({
   default: (await import('./screens/SettingsScreen')).SettingsDialog,
 }));
+const ScopedSettingsDialogLazy = lazy(async () => ({
+  default: (await import('./screens/settings/ScopedSettingsDialog')).ScopedSettingsDialog,
+}));
 
 // Each split screen keeps its own boundary so a miss costs that screen, never the
 // app shell. The transcript's fallback is the same ink sheet its own veil paints,
@@ -194,6 +199,14 @@ function SettingsDialog(props: ComponentProps<typeof SettingsDialogLazy>) {
   return (
     <Suspense fallback={null}>
       <SettingsDialogLazy {...props} />
+    </Suspense>
+  );
+}
+
+function ScopedSettingsDialog(props: ComponentProps<typeof ScopedSettingsDialogLazy>) {
+  return (
+    <Suspense fallback={null}>
+      <ScopedSettingsDialogLazy {...props} />
     </Suspense>
   );
 }
@@ -380,6 +393,12 @@ export function App() {
   } | null>(null);
   const [settingsDestination, setSettingsDestination] = useState<{
     providerMachineUrl?: string;
+    machineUrl?: string;
+  } | null>(null);
+  // Settings of one project, group or session that another settings dialog opened (#373).
+  const [scopedSettings, setScopedSettings] = useState<{
+    client: GatewayClient;
+    target: SettingsTarget;
   } | null>(null);
   // The app cog opens the fleet. The model picker already knows which machine owns
   // its providers, so its cog opens that machine instead of asking the question again.
@@ -388,6 +407,15 @@ export function App() {
     () => setSettingsDestination(openTarget ? { providerMachineUrl: openTarget.conn.url } : {}),
     [openTarget],
   );
+  // A locked inherited setting opens the dialog that decides it, in place of its own (#373).
+  const openMachineSettings = useCallback((base: string) => {
+    setScopedSettings(null);
+    setSettingsDestination({ machineUrl: base });
+  }, []);
+  const openScopedSettings = useCallback((scopedClient: GatewayClient, target: SettingsTarget) => {
+    setSettingsDestination(null);
+    setScopedSettings({ client: scopedClient, target });
+  }, []);
   const [ready, setReady] = useState(false);
   // Set when the sessions screen finds the active gateway unreachable. While it
   // holds a message there is nothing to navigate, so the shell shows Machines
@@ -440,7 +468,7 @@ export function App() {
         const named = Boolean(conn.label) && conn.label !== hostOf(conn.url);
         await switchConnectionUrl(conn.url, url, named ? {} : { label: hostOf(url) });
       }
-      const saved = await upsertConnection({ url, pinned });
+      const saved = await updateConnection(url, { pinned });
       const next = saved.find((c) => c.url === url) ?? { ...conn, url, pinned };
       if (wasActive) setActive(next);
       await refresh();
@@ -929,7 +957,7 @@ export function App() {
         ? mergeAddresses([activeUrl], advertised)
         : mergeAddresses([activeUrl], knownAltsKey.split(' '));
       if (known.join(' ') !== knownAltsKey) {
-        await upsertConnection({ url: activeUrl, alts: known });
+        await updateConnection(activeUrl, { alts: known });
         if (cancelled) return;
         setConns(await loadConnections());
       }
@@ -1236,7 +1264,7 @@ export function App() {
       for (const conn of missing) {
         const id = await new GatewayClient(conn).identify(ctrl.signal).catch(() => null);
         if (id) {
-          await upsertConnection({ ...conn, id });
+          await updateConnection(conn.url, { id });
           changed = true;
         }
       }
@@ -1329,140 +1357,152 @@ export function App() {
     isSplit || edgeBack.isSwiping || (shellView === 'sessions' && (!isDesk || isSidebarShown));
 
   return (
-    <Shell>
-      {(isChromeVisible || edgeBack.isSwiping) && (
-        <Header
-          // There is nothing to search until a session list stands behind the dialog.
-          onSearch={sessionsMounted ? openSearch : null}
-          onAppSettings={openSettings}
-          improve={
-            <ImproveLauncher
-              gateways={conns}
-              primaryUrl={primary?.url}
-              refreshKey={!!settingsDestination}
-            />
-          }
-        />
-      )}
-
-      <main
-        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? 'flex' : ''} ${shellView === 'session' && !edgeBack.isSwiping ? 'overflow-hidden' : 'overflow-y-auto'}`}
-      >
-        {/* THE DESK'S SIDEBAR. On a phone the list is a screen the transcript replaces;
-            on a desk it uses 33% of the width with a 20rem minimum, so the list
-            is up in BOTH shell states and the same mounted component simply changes
-            width — its scroll, scope and folds are the reader's frame either way. */}
-        {sessionsMounted && (
-          <div
-            ref={edgeBack.under}
-            className={
-              !sessionsVisible
-                ? canSplit
-                  ? sidebarRailClass(false)
-                  : shellView === 'session'
-                    ? PHONE_LIST_CLASS
-                    : PARKED_LIST_CLASS
-                : isSplit
-                  ? sidebarRailClass(true)
-                  : PHONE_LIST_CLASS
-            }
-            aria-hidden={!sessionsVisible || undefined}
-          >
-            <SessionsList
-              conns={conns}
-              primary={primary}
-              isVisible={sessionsVisible}
-              query={query}
-              onQuery={setQuery}
-              subscriptions={subscriptions}
-              onUnreachable={handleUnreachable}
-              onOpen={openSharedTarget}
-              // WHICH ROW THE TRANSCRIPT BELONGS TO. On a desk the list stands beside
-              // the session it opened, so that row wears the open session's mark.
-              openSession={openTarget}
-              // A parked share turns this list into the chooser it already is:
-              // the row the human taps IS the destination.
-              share={pendingShare}
-              onDiscardShare={discardShare}
-              // The list's own way into the search dialog: a pull at the top of it
-              // opens the same door the app bar's glass is — so while the dialog is
-              // already open, the gesture has nothing left to open and stands down.
-              onSearch={searching ? null : openSearch}
-              isSearchOpen={searching}
-              onCloseSearch={closeSearch}
-            />
-          </div>
-        )}
-        {shellView === 'connect' && (
-          <ConnectScreen
-            conns={conns}
-            active={active}
-            primary={primary}
-            onAdd={addConnection}
-            onSettings={openSettings}
-            offlineError={blocked ? offline : null}
-            onRetry={() => setOffline(null)}
-            onClose={hasConn ? () => setTab('sessions') : undefined}
-          />
-        )}
-        {shellView === 'incompatible' && sessionConn && compat && (
-          <IncompatibleScreen compat={compat} conn={sessionConn} />
-        )}
-        {/* The list's toggle stands on the pane's leading edge — in the empty pane's
-            band, then in the session header's — never in the app bar beside the mark. */}
-        {canSplit && shellView === 'sessions' && (
-          <EmptyPane sidebar={{ isShown: isSidebarShown, onToggle: toggleSidebar }} />
-        )}
-        <SessionPane
-          paneRef={edgeBack.pane}
-          className={canSplit ? DESK_PANE_CLASS : PHONE_PANE_CLASS}
-          isHeld={!canSplit && shellView === 'sessions'}
-        >
-          {shellView === 'session' && openTarget && client && subscriptions && (
-            <SessionScreen
-              key={`${openTarget.conn.url}:${openTarget.sid}`}
-              client={client}
-              subscriptions={subscriptions}
-              sid={openTarget.sid}
-              fresh={openTarget.fresh}
-              onBack={leaveSession}
-              sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
-              onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
-              onManageProviders={openProviderSettings}
+    <OpenMachineSettings.Provider value={openMachineSettings}>
+      <OpenScopedSettings.Provider value={openScopedSettings}>
+        <Shell>
+          {(isChromeVisible || edgeBack.isSwiping) && (
+            <Header
+              // There is nothing to search until a session list stands behind the dialog.
+              onSearch={sessionsMounted ? openSearch : null}
+              onAppSettings={openSettings}
+              improve={
+                <ImproveLauncher
+                  gateways={conns}
+                  primaryUrl={primary?.url}
+                  refreshKey={!!settingsDestination}
+                />
+              }
             />
           )}
-        </SessionPane>
-      </main>
 
-      {settingsDestination && (
-        <SettingsDialog
-          gateways={conns}
-          primaryUrl={primary?.url}
-          providerMachineUrl={settingsDestination.providerMachineUrl}
-          contextSession={openTarget ? { url: openTarget.conn.url, sid: openTarget.sid } : undefined}
-          onAddMachine={addConnection}
-          onMakePrimary={async (conn) => {
-            await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);
-            setPrimary(conn);
-            setActive(conn);
-            setOpenTarget(null);
-            setOffline(null);
-            setTab('sessions');
-          }}
-          onRename={async (conn, label) => {
-            const updated = { ...conn, label };
-            await upsertConnection(updated);
-            await refresh();
-          }}
-          onRemove={async (conn) => {
-            await removeConnection(conn.url);
-            await refresh();
-          }}
-          onSelectAddress={selectMachineAddress}
-          onClose={() => setSettingsDestination(null)}
-        />
-      )}
-    </Shell>
+          <main
+            className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${canSplit ? 'flex' : ''} ${shellView === 'session' && !edgeBack.isSwiping ? 'overflow-hidden' : 'overflow-y-auto'}`}
+          >
+            {/* THE DESK'S SIDEBAR. On a phone the list is a screen the transcript replaces;
+                on a desk it uses 33% of the width with a 20rem minimum, so the list
+                is up in BOTH shell states and the same mounted component simply changes
+                width — its scroll, scope and folds are the reader's frame either way. */}
+            {sessionsMounted && (
+              <div
+                ref={edgeBack.under}
+                className={
+                  !sessionsVisible
+                    ? canSplit
+                      ? sidebarRailClass(false)
+                      : shellView === 'session'
+                        ? PHONE_LIST_CLASS
+                        : PARKED_LIST_CLASS
+                    : isSplit
+                      ? sidebarRailClass(true)
+                      : PHONE_LIST_CLASS
+                }
+                aria-hidden={!sessionsVisible || undefined}
+              >
+                <SessionsList
+                  conns={conns}
+                  primary={primary}
+                  isVisible={sessionsVisible}
+                  query={query}
+                  onQuery={setQuery}
+                  subscriptions={subscriptions}
+                  onUnreachable={handleUnreachable}
+                  onOpen={openSharedTarget}
+                  // WHICH ROW THE TRANSCRIPT BELONGS TO. On a desk the list stands beside
+                  // the session it opened, so that row wears the open session's mark.
+                  openSession={openTarget}
+                  // A parked share turns this list into the chooser it already is:
+                  // the row the human taps IS the destination.
+                  share={pendingShare}
+                  onDiscardShare={discardShare}
+                  // The list's own way into the search dialog: a pull at the top of it
+                  // opens the same door the app bar's glass is — so while the dialog is
+                  // already open, the gesture has nothing left to open and stands down.
+                  onSearch={searching ? null : openSearch}
+                  isSearchOpen={searching}
+                  onCloseSearch={closeSearch}
+                />
+              </div>
+            )}
+            {shellView === 'connect' && (
+              <ConnectScreen
+                conns={conns}
+                active={active}
+                primary={primary}
+                onAdd={addConnection}
+                onSettings={openSettings}
+                offlineError={blocked ? offline : null}
+                onRetry={() => setOffline(null)}
+                onClose={hasConn ? () => setTab('sessions') : undefined}
+              />
+            )}
+            {shellView === 'incompatible' && sessionConn && compat && (
+              <IncompatibleScreen compat={compat} conn={sessionConn} />
+            )}
+            {/* The list's toggle stands on the pane's leading edge — in the empty pane's
+                band, then in the session header's — never in the app bar beside the mark. */}
+            {canSplit && shellView === 'sessions' && (
+              <EmptyPane sidebar={{ isShown: isSidebarShown, onToggle: toggleSidebar }} />
+            )}
+            <SessionPane
+              paneRef={edgeBack.pane}
+              className={canSplit ? DESK_PANE_CLASS : PHONE_PANE_CLASS}
+              isHeld={!canSplit && shellView === 'sessions'}
+            >
+              {shellView === 'session' && openTarget && client && subscriptions && (
+                <SessionScreen
+                  key={`${openTarget.conn.url}:${openTarget.sid}`}
+                  client={client}
+                  subscriptions={subscriptions}
+                  sid={openTarget.sid}
+                  fresh={openTarget.fresh}
+                  onBack={leaveSession}
+                  sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
+                  onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
+                  onManageProviders={openProviderSettings}
+                />
+              )}
+            </SessionPane>
+          </main>
+
+          {settingsDestination && (
+            <SettingsDialog
+              gateways={conns}
+              primaryUrl={primary?.url}
+              providerMachineUrl={settingsDestination.providerMachineUrl}
+              machineUrl={settingsDestination.machineUrl}
+              contextSession={openTarget ? { url: openTarget.conn.url, sid: openTarget.sid } : undefined}
+              onAddMachine={addConnection}
+              onMakePrimary={async (conn) => {
+                await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);
+                setPrimary(conn);
+                setActive(conn);
+                setOpenTarget(null);
+                setOffline(null);
+                setTab('sessions');
+              }}
+              onRename={async (conn, label) => {
+                const updated = { ...conn, label };
+                await upsertConnection(updated);
+                await refresh();
+              }}
+              onRemove={async (conn) => {
+                await removeConnection(conn.url);
+                await refresh();
+              }}
+              onSelectAddress={selectMachineAddress}
+              onClose={() => setSettingsDestination(null)}
+            />
+          )}
+          {scopedSettings && (
+            <ScopedSettingsDialog
+              client={scopedSettings.client}
+              target={scopedSettings.target}
+              onClose={() => setScopedSettings(null)}
+            />
+          )}
+        </Shell>
+      </OpenScopedSettings.Provider>
+    </OpenMachineSettings.Provider>
   );
 }
 
@@ -1521,17 +1561,17 @@ export function Header({
             pupil, a highlight, a smile and seven rays share the box, so barely a
             third of it is ink and it reads smaller than it measures; under 24px a
             1x screen washes the pupil to grey and closes the smile. It takes the
-            scale's own rung, half the bar's height, never a pixel fitted by hand to
-            the file's proportion. */}
+            scale's own rung, five sixths of the bar's height, never a pixel fitted
+            by hand to the file's proportion. */}
         {/* AND ITS CANVAS IS NOT ITS CENTRE. The file's top fifth holds only the
             rays — hairlines that wash out at this rung — so a box centred on the
-            bar leaves the eye itself 2px under the bar's middle, so it reads lower
-            than the wordmark. The nudge is that offset, a twelfth of the mark's
-            height, and it moves the ink only:
-            the box stays where the row put it. */}
+            bar leaves the eye itself a twelfth of the mark's height under the bar's
+            middle, so it reads lower than the wordmark. The nudge takes the nearest
+            rung to that offset, and it moves the ink only: the box stays where the
+            row put it. */}
         {/* `data-wordmark` places the memory overlay's dot just after the wordmark. */}
         <div className="flex h-12 items-center gap-2.5" aria-label="Vis" data-wordmark>
-          <img src="/vis-logo.png" alt="" className="h-6 w-7 -translate-y-0.5 object-contain" />
+          <img src="/vis-logo.png" alt="" className="h-10 w-11 -translate-y-1 object-contain" />
           {/* The face stays in foreground ink. Blockether Dark shares Light's yellow
               hard offset rather than the dialog's black shadow. */}
           <span className="font-mono text-head font-extrabold tracking-[0.14em] text-white [text-shadow:2px_2px_0_var(--dialog-shadow)] blockether-dark:[text-shadow:2px_2px_0_var(--primary)]">

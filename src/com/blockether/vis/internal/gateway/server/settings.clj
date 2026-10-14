@@ -21,7 +21,8 @@
 
 (defn- toggle-json
   [{:keys [id label description type choices value experimental? scopes source scope is-override
-           overridden-by inherited-value inherited-source own-value group parent inheritance]}]
+           overridden-by inherited-value inherited-source own-value group parent inheritance
+           change-error decided-in]}]
   (cond-> {:id id
            :label label
            :type (name type)
@@ -45,6 +46,15 @@
     (= "council_room" id)
     (assoc :choice-labels
       (into {"local" "Local Council"} (map (juxt :room_id :name)) (rooms/known-rooms)))
+
+    (= "council_room_wake" id)
+    (assoc :choice-labels {"off" "Off" "recent" "Active in the last hour" "always" "Always"})
+
+    decided-in
+    (assoc :decided-in decided-in)
+
+    change-error
+    (assoc :change-error change-error)
 
     description
     (assoc :description description)
@@ -285,8 +295,48 @@
 
     (remove #(= other (:id %)) rows)))
 
+(defn- settings-lineage
+  "The scopes that `target` inherits from, most general first, each with its label."
+  [target]
+  (let [label #(:label (scoped/target (lp/db-info) %1 %2))]
+    (cond-> [{:scope "global" :label "Machine"}]
+      (:project-id target)
+      (conj {:scope "project"
+             :target-id (:project-id target)
+             :label (label "project" (:project-id target))})
+
+      (:group-id target)
+      (conj
+        {:scope "group" :target-id (:group-id target) :label (label "group" (:group-id target))})
+
+      (= "session" (:scope target))
+      (conj {:scope "session" :target-id (:target-id target) :label (:label target)}))))
+
+(defn- decided-in
+  "The closest scope above `target` in `lineage` where `row` can change, or nil (#373)."
+  [target lineage row]
+  (some #(when (some #{(:scope %)} (:scopes row)) %)
+        (reverse (remove #(= (:scope target) (:scope %)) lineage))))
+
+(defn- project-extensions
+  "The project extensions of the optional `context_session_id` session. Machine settings
+   name them, because their reload is in Project settings (#373)."
+  [request]
+  (when-let [session-id (get-in request [:query-params "context_session_id"])]
+    (let [{:keys [project-id root]} (scoped/target (lp/db-info) "session" session-id)
+          names (sort (keep (fn [[ext-name {:keys [origin]}]]
+                              (when (= "project" origin) (str ext-name)))
+                            (when root (extension-states {:root root}))))]
+
+      (when (and project-id (seq names))
+        {:target-id project-id
+         :label (:label (scoped/target (lp/db-info) "project" project-id))
+         :count (count names)
+         :names (vec names)}))))
+
 (defn- settings-catalog
-  [request target]
+  "The settings of `target`. `change-errors` maps a setting id to its failed change hook."
+  [request target change-errors]
   (let [local?
         (not= "global" (:scope target))
 
@@ -300,11 +350,19 @@
         (some-> (get-in request [:query-params "channel"])
                 keyword)
 
+        lineage
+        (settings-lineage target)
+
+        project-extension-note
+        (when-not local? (project-extensions request))
+
         ;; MCP rows stay out: every scope's MCP servers section owns each server's switch.
+        ;; An inherited extension row shows read-only where an ancestor scope decides it (#373).
         ;; An engine row shows only where its extension is loaded.
         rows
         (filter #(and
-                   (some #{(:scope target)} (:scopes %))
+                   (or (some #{(:scope target)} (:scopes %))
+                       (and local? (owners (:id %)) (decided-in target lineage %)))
                    (case (:group %)
                      :skills
                      (resources (:id %))
@@ -316,9 +374,19 @@
                      (owners (:id %))
 
                      true)
-                   (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %)))
+                   ;; Room rows stay hidden in every scope while this machine has no room.
+                   (if (rooms/setting? (:id %))
+                     (toggles/toggle-visible? %)
+                     (or local? (and (not (false? (:settings? %))) (toggles/toggle-visible? %))))
                    (or (nil? channel) (#{:all :*} channel) (toggles/toggle-for-channel? channel %)))
-                (one-thinking-control (scoped/settings (lp/db-info) target)))
+                (map (fn [row]
+                       (cond-> row
+                         (get change-errors (:id row))
+                         (assoc :change-error (get change-errors (:id row)))
+
+                         (not (some #{(:scope target)} (:scopes row)))
+                         (assoc :decided-in (decided-in target lineage row))))
+                     (one-thinking-control (scoped/settings (lp/db-info) target))))
 
         ;; Everything an extension contributes is configured in that extension's section.
         section
@@ -340,58 +408,52 @@
                               states)
                         (group-by section (mark-overridden request target rows))))]
 
-    {:scope (:scope target)
-     :target-id (:target-id target)
-     :label (:label target)
-     :revision (settings-edit/revision (lp/db-info) target)
-     :lineage (cond-> [{:scope "global" :label "Machine"}]
-                (:project-id target)
-                (conj {:scope "project" :target-id (:project-id target)})
+    (cond-> {:scope (:scope target)
+             :target-id (:target-id target)
+             :label (:label target)
+             :revision (settings-edit/revision (lp/db-info) target)
+             :lineage lineage
+             :groups
+             (let [vis
+                   (into {}
+                         (keep (fn [[[kind group] specs]]
+                                 (when (= :vis kind) [group specs])))
+                         grouped)
 
-                (:group-id target)
-                (conj {:scope "group" :target-id (:group-id target)})
+                   rows
+                   #(mapv toggle-json (get vis %))
 
-                (= "session" (:scope target))
-                (conj {:scope "session" :target-id (:target-id target) :label (:label target)}))
-     :groups
-     (let [vis
-           (into {}
-                 (keep (fn [[[kind group] specs]]
-                         (when (= :vis kind) [group specs])))
-                 grouped)
+                   section-rows
+                   (fn [id groups]
+                     (case id
+                       ;; The agent name stands first. The machine name follows the Council
+                       ;; switches, above the room actions. Experimental switches stand last.
+                       :general
+                       (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
+                               (rows :council)
+                               (when-not local? [(machine-name-setting)])
+                               (rows :experimental))
 
-           rows
-           #(mapv toggle-json (get vis %))
+                       :permissions
+                       (concat (scoped-policy/settings (lp/db-info) target) (rows :sandbox))
 
-           section-rows
-           (fn [id groups]
-             (case id
-               ;; The agent name stands first. The machine name follows the Council
-               ;; switches, above the room actions. Experimental switches stand last.
-               :general
-               (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
-                       (rows :council)
-                       (when-not local? [(machine-name-setting)])
-                       (rows :experimental))
+                       (mapcat rows groups)))
 
-               :permissions
-               (concat (scoped-policy/settings (lp/db-info) target) (rows :sandbox))
+                   sectioned
+                   (set (mapcat last sections))]
 
-               (mapcat rows groups)))
-
-           sectioned
-           (set (mapcat last sections))]
-
-       (vec
-         (concat
-           (keep (fn [[id title groups]]
-                   (when-let [toggles (seq (section-rows id groups))]
-                     {:id (name id)
-                      :title (section-title id title local?)
-                      :toggles (nest-rows toggles)}))
-                 sections)
-           (keep (fn [[[kind group] specs]]
-                   (cond (= :extension kind)
+               (vec
+                 (concat
+                   (keep (fn [[id title groups]]
+                           (when-let [toggles (seq (section-rows id groups))]
+                             {:id (name id)
+                              :title (section-title id title local?)
+                              :toggles (nest-rows toggles)}))
+                         sections)
+                   (keep
+                     (fn [[[kind group] specs]]
+                       (cond
+                         (= :extension kind)
                          {:id (str "extension:" group)
                           :title (str group)
                           :extension (merge {:name (str group) :origin "built_in" :status "loaded"}
@@ -401,12 +463,15 @@
                          (not (sectioned group)) {:id (name group)
                                                   :title (group-title group)
                                                   :toggles (nest-rows (mapv toggle-json specs))}))
-                 grouped))))}))
+                     grouped))))}
+      project-extension-note
+      (assoc :project-extensions project-extension-note))))
 
 (defn- list-settings-handler
   "GET /v1/settings; typed catalog, provenance and a concurrency revision."
   [request]
-  (settings-response #(http/json-response (settings-catalog request (request-target request nil)))))
+  (settings-response #(http/json-response
+                        (settings-catalog request (request-target request nil) nil))))
 
 (defn- reload-extensions-handler
   "POST /v1/extensions/reload; load the extension files where a settings target runs again.
@@ -467,8 +532,9 @@
         (doseq [{:strs [id]} (get body "changes")]
           (when (and (#{:skills :mcp} (:group (toggles/toggle-spec id))) (not (resources id)))
             (throw (ex-info "Resource is not available in this target" {:status 400 :id id}))))
-        (settings-edit/apply! (lp/db-info) target (get body "revision") (get body "changes"))
-        (http/json-response (settings-catalog request target))))))
+        (let [{:keys [change-errors]}
+              (settings-edit/apply! (lp/db-info) target (get body "revision") (get body "changes"))]
+          (http/json-response (settings-catalog request target change-errors)))))))
 
 (defn- get-setting-handler
   "Read one setting, including response controls hidden in the global dialog."

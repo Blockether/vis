@@ -442,6 +442,16 @@ vis-agent desktop --help
 engine selection. With no installed track, a source-only checkout defaults to dev.
 Otherwise the default is release.
 
+On macOS, the launcher also copies the app to `/Applications` when you can write
+there. Launchpad, Spotlight and the Dock then open the version that the launcher
+installed. Each track has its own copy: `Vis.app`, `Vis Beta.app` or `Vis Dev.app`.
+Each install, update or dev build refreshes the copy of its track.
+
+The launcher never replaces an app with that name from another publisher. Before it
+opens the app, it closes a copy that runs from `/Applications`. Set
+`VIS_APPLICATIONS_DIR` to use another folder, or set it to an empty value to turn the
+copy off.
+
 ### Release: download and reuse
 
 On macOS and Linux, the release track chooses the universal macOS app (Apple

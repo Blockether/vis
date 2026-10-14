@@ -61,7 +61,7 @@
              {:type "heading" :text "Result"} {:type "code" :text "None"}]
 
             entries
-            (#'render/activity-content-entries blocks 80 2 nil {} false)]
+            (#'render/activity-content-entries blocks 80 2 nil false)]
 
         ;; Regression #230: the first heading needs the same margin as later sections.
         (doseq [heading ["Program" "Stdout" "Result"]]
@@ -80,7 +80,7 @@
                                   :presentation
                                   :content)]
                    (doseq [width [40 80 120]]
-                     (let [entries (#'render/activity-content-entries blocks width 2 nil {} false)
+                     (let [entries (#'render/activity-content-entries blocks width 2 nil false)
                            lines (map :line entries)
                            headers (filter #(str/includes? % "Result") lines)]
 
@@ -103,7 +103,7 @@
                          :rows [["Literal" "<tag>" "**ready**"]]}]
 
                        entries
-                       (#'render/activity-content-entries blocks 80 2 nil {} false)
+                       (#'render/activity-content-entries blocks 80 2 nil false)
 
                        text
                        (str/join "\n" (map :line entries))]
@@ -127,7 +127,6 @@
                         60
                         2
                         nil
-                        {}
                         false)
 
                        pressed
@@ -2199,40 +2198,38 @@
   activity-code-paper-test
   (it
     "paints Activity content on the same themed code surface"
-    (try
-      (doseq [id (shared-theme/available-theme-ids)]
-        (t/apply-theme! (keyword id))
-        (let [entries (vec (concat [{:line (str p/MARKER_ACTIVITY "ACTIVITY_SENTINEL") :meta {}}]
-                                   (#'render/activity-content-entries
-                                    [{:type "text" :text "ACTIVITY_CONTENT"}]
-                                    72
-                                    2
-                                    nil
-                                    {}
-                                    false)))
-              captured (cap/capture! {:cols 80
-                                      :rows 10
-                                      :paint! (fn [{:keys [g]}]
-                                                (render/draw-chat-bubble!
-                                                  g
-                                                  {:role :assistant
-                                                   :prewrapped-lines (mapv :line entries)
-                                                   :line-meta (mapv :meta entries)}
-                                                  0 0
-                                                  76 {:viewport-top 0 :viewport-h 10}))})
-              frame (last (:frames captured))
-              lines (str/split-lines (cap/frame-text captured))
-              row-for (fn [needle]
-                        (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
-              expected-bg (get-in (shared-theme/theme id) [:palette :code-block-bg])]
+    (try (doseq [id (shared-theme/available-theme-ids)]
+           (t/apply-theme! (keyword id))
+           (let [entries (vec (concat [{:line (str p/MARKER_ACTIVITY "ACTIVITY_SENTINEL") :meta {}}]
+                                      (#'render/activity-content-entries
+                                       [{:type "text" :text "ACTIVITY_CONTENT"}]
+                                       72
+                                       2
+                                       nil
+                                       false)))
+                 captured (cap/capture! {:cols 80
+                                         :rows 10
+                                         :paint! (fn [{:keys [g]}]
+                                                   (render/draw-chat-bubble!
+                                                     g
+                                                     {:role :assistant
+                                                      :prewrapped-lines (mapv :line entries)
+                                                      :line-meta (mapv :meta entries)}
+                                                     0 0
+                                                     76 {:viewport-top 0 :viewport-h 10}))})
+                 frame (last (:frames captured))
+                 lines (str/split-lines (cap/frame-text captured))
+                 row-for (fn [needle]
+                           (first (keep-indexed #(when (str/includes? %2 needle) %1) lines)))
+                 expected-bg (get-in (shared-theme/theme id) [:palette :code-block-bg])]
 
-          (expect (nil? (:error captured)))
-          (doseq [needle ["ACTIVITY_SENTINEL" "ACTIVITY_CONTENT"]]
-            (let [row (row-for needle)]
-              (expect (some? row) (str id " " needle))
-              (when row
-                (expect (= expected-bg (get-in frame [row 20 :bg])) (str id " " needle)))))))
-      (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
+             (expect (nil? (:error captured)))
+             (doseq [needle ["ACTIVITY_SENTINEL" "ACTIVITY_CONTENT"]]
+               (let [row (row-for needle)]
+                 (expect (some? row) (str id " " needle))
+                 (when row
+                   (expect (= expected-bg (get-in frame [row 20 :bg])) (str id " " needle)))))))
+         (finally (t/apply-theme! (keyword shared-theme/default-theme-id))))))
 
 (defmacro ^:private with-raw-code-on
   [& body]
@@ -6218,12 +6215,11 @@
           (try (let [{:keys [text line-meta]} (render/format-answer-markdown-data ast 76 (opts {}))
                      links (filter :doc line-meta)]
 
-                 (expect (str/includes? text "[Image #1: shot.png 1200×800, 245KB]"))
-                 (expect (str/includes? text "→ click to open in the system viewer"))
+                 (expect (str/includes? text "shot.png  PNG · 1200x800 · 245KB"))
+                 (expect (not (str/includes? text "system viewer")))
                  (expect (not (str/includes? text "▸ [Image #1")))
-                 ;; The caption shows once, inside the link card.
-                 (expect (= 1 (count (re-seq #"\[Image #1" text))))
-                 (expect (seq links))
+                 ;; Only the file row of the card opens the picture.
+                 (expect (= 1 (count links)))
                  (expect (every? #(= "/tmp/shot.png" (:path (:doc %))) links))
                  (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta)))
                (finally (render/invalidate-cache!)))))))
@@ -6940,12 +6936,12 @@ h = 8"
                    docs
                    (into #{} (keep :doc) (:line-meta data))]
 
-               (it "paints the headline and the open hint, not the raw fence"
-                   (expect (some #(str/includes? % "[Document: report.pdf PDF, 1.2 MB]") lines))
-                   (expect (some #(str/includes? % "click to open in the system viewer") lines))
+               (it "paints one card with the file name, type and size, not the raw fence"
+                   (expect (some #(str/ends-with? % "report.pdf  PDF · 1.2 MB") lines))
+                   (expect (not-any? #(str/includes? % "system viewer") lines))
                    (expect (not-any? #(str/includes? % "application/pdf") lines))
                    (expect (not-any? #(str/includes? % "/tmp/vis-python/report.pdf") lines)))
-               (it "carries one and the same host file on every row of the card"
+               (it "carries the host file on the file row only"
                    (expect (= 1 (count docs)))
                    (expect (= {:path "/tmp/vis-python/report.pdf"
                                :mime "application/pdf"
@@ -6953,9 +6949,8 @@ h = 8"
                                :size-label "1.2 MB"
                                :title "report.pdf"}
                               (first docs)))
-                   ;; every painted row of the card is clickable, blanks included: a card
-                   ;; whose middle row does nothing is a card that swallows a click.
-                   (expect (= (count (filter :doc (:line-meta data))) (dec (count lines)))))))
+                   ;; The frame rows open nothing; the file row and its Open button do.
+                   (expect (= [:file] (mapv :card-part (filter :doc (:line-meta data))))))))
 
 ;; Regression, issue td-75dad4: a produced document was hidden behind an unnamed
 ;; RESULT disclosure and its pending transport descriptor leaked when expanded.
@@ -7010,9 +7005,170 @@ h = 8"
                            :index 0}
                           (get-in % [:meta :artifact]))
                       expanded))
-        (expect (str/includes? expanded-text "click to open in the system viewer"))
+        (expect (str/includes? expanded-text "report.html  HTML · 2.0 KB"))
         (expect (not (str/includes? expanded-text "is_pending")))
         (expect (not (str/includes? expanded-text "vis-doc"))))))
+
+;; The attachment card replaces the hint rows under a step with one framed card: the file name,
+;; its type and size, and an Open button. More than one file starts folded behind the title.
+(defdescribe
+  attachment-card-test
+  (let [artifact
+        (fn [i filename media-type size]
+          {"index" i
+           "iteration_id" "iteration-1"
+           "tool_call_id" "call-1"
+           "kind" "doc"
+           "media_type" media-type
+           "filename" filename
+           "size" size})
+
+        render-card
+        (fn [attachments expansions]
+          (format-iteration-entry-entries {:iteration-id "iteration-1"
+                                           :attachments attachments
+                                           :forms [{:code "attach(page)"
+                                                    :svar-tool-call-id "call-1"
+                                                    :stdout ""
+                                                    :success? true
+                                                    :duration-ms 25}]}
+                                          80
+                                          1
+                                          {:session-id "session-1"
+                                           :session-turn-id "turn-1"
+                                           :detail-expansions
+                                           (merge {:vis.channel-tui/expand-execution-details? true}
+                                                  expansions)}))
+
+        card-rows
+        (fn [entries]
+          (filterv #(get-in % [:meta :card-part]) entries))
+
+        parts
+        (fn [rows]
+          (mapv #(get-in % [:meta :card-part]) rows))
+
+        paint
+        (fn [entries cols]
+          (.reset interactions/hit-map)
+          (.beginFrame interactions/hit-map)
+          (let [captured (cap/capture!
+                           {:cols cols
+                            :rows 12
+                            :paint! (fn [{:keys [screen]}]
+                                      (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                        (render/draw-chat-bubble! (.newTextGraphics s)
+                                                                  {:role :assistant
+                                                                   :prewrapped-lines (mapv :line
+                                                                                           entries)
+                                                                   :line-meta (mapv :meta entries)}
+                                                                  0
+                                                                  0
+                                                                  cols
+                                                                  {:viewport-h 12})
+                                        (.refresh s)))})]
+            (.commitFrame interactions/hit-map)
+            {:text (cap/frame-text captured)
+             :error (:error captured)
+             :regions (vec (.current interactions/hit-map))}))
+
+        two
+        [(artifact 0 "report.html" "text/html" 2048)
+         (artifact 1 "build-log.txt" "text/plain" 4096)]]
+
+    (it "frames one file as one card with its name, type, size and file target"
+        (let [rows (card-rows (render-card [(artifact 0 "report.html" "text/html" 2048)] {}))]
+          (expect (= [:top :file :bottom] (parts rows)))
+          (expect (= "report.html" (get-in rows [1 :meta :card-name])))
+          (expect (= "HTML · 2.0 KB" (get-in rows [1 :meta :card-label])))
+          (expect (= "report.html" (get-in rows [1 :meta :artifact :filename])))
+          (expect (nil? (get-in rows [0 :meta :card-toggle])))))
+    (it "folds more than one file behind the title in the top border"
+        (let [rows
+              (card-rows (render-card two {}))
+
+              toggle
+              (get-in rows [0 :meta :card-toggle])]
+
+          (expect (= [:top :bottom] (parts rows)))
+          (expect (= "▸ 2 files · 6.0 KB" (get-in rows [0 :meta :card-title])))
+          (expect (= :toggle-details (:kind toggle)))
+          (expect (true? (:collapsed? toggle)))))
+    (it "opens the folded card with a line between the files"
+        (let [node-id
+              (get-in (card-rows (render-card two {})) [0 :meta :card-toggle :node-id])
+
+              rows
+              (card-rows (render-card two {["session-1" node-id] true}))]
+
+          (expect (= [:top :file :separator :file :bottom] (parts rows)))
+          (expect (= "▾ 2 files · 6.0 KB" (get-in rows [0 :meta :card-title])))
+          (expect (false? (get-in rows [0 :meta :card-toggle :collapsed?])))
+          (expect (= ["report.html" "build-log.txt"] (keep #(get-in % [:meta :card-name]) rows)))))
+    (it "paints the frame, the file row and an Open button that opens the file"
+        (let [rows
+              (card-rows (render-card [(artifact 0 "report.html" "text/html" 2048)] {}))
+
+              {:keys [text error regions]}
+              (paint rows 60)
+
+              artifacts
+              (filterv #(= :artifact (:kind %)) regions)
+
+              button
+              (first (filter #(= 6 (get-in % [:bounds :width])) artifacts))]
+
+          (expect (nil? error))
+          (expect (str/includes? text "┌──"))
+          (expect (str/includes? text "│ report.html"))
+          (expect (str/includes? text "HTML · 2.0 KB"))
+          (expect (str/includes? text " Open  │"))
+          (expect (str/includes? text "└──"))
+          (expect (not (str/includes? text "system viewer")))
+          ;; One region for the whole row and one for the button, both on the file.
+          (expect (= 2 (count artifacts)))
+          (expect (some? button))
+          (expect (= "report.html" (get-in button [:artifact :filename])))))
+    (it "registers the folded title as the fold control"
+        (let [rows
+              (card-rows (render-card two {}))
+
+              {:keys [text regions]}
+              (paint rows 60)
+
+              toggle
+              (first (filter #(= :toggle-details (:kind %)) regions))]
+
+          (expect (str/includes? text "┌─ ▸ 2 files · 6.0 KB ─"))
+          (expect (= (get-in rows [0 :meta :card-toggle :node-id]) (:node-id toggle)))
+          (expect (true? (:collapsed? toggle)))
+          (expect (empty? (filter #(= :artifact (:kind %)) regions)))))
+    (it "cuts the middle of a long name on a narrow terminal and keeps the button"
+        (let [rows
+              (card-rows (render-card [(artifact 0 "dev-env-status-DEV04-with-a-long-name.html"
+                                                 "text/html" 2048)]
+                                      {}))
+
+              {:keys [text]}
+              (paint rows 40)]
+
+          (expect (str/includes? text "…"))
+          (expect (str/includes? text ".html"))
+          (expect (str/includes? text " Open  │"))))
+    (it "marks a document without a host file as unavailable, without a button"
+        (let [entries
+              (:line-meta (render/format-answer-markdown-data*
+                            [:ast {}
+                             [:code {:lang "vis-doc"}
+                              "[Document: gone.pdf PDF]\n\napplication/pdf\ngone.pdf\n"]]
+                            76
+                            {}))
+
+              file
+              (first (filter #(= :file (:card-part %)) entries))]
+
+          (expect (= "PDF · Unavailable" (:card-label file)))
+          (expect (nil? (:doc file)))))))
 
 (defdescribe
   shown-picture-test
@@ -7080,7 +7236,7 @@ h = 8"
           (expect (empty? (picture-rows entries)))
           (expect (seq links))
           (expect (every? #(= "/tmp/chart.png" (get-in % [:meta :doc :path])) links))
-          (expect (str/includes? (text-of entries) "click to open in the system viewer"))))
+          (expect (str/includes? (text-of entries) "chart.png  PNG · 1200x800 · 245KB"))))
     (it "shows a printed document without an attachment row as a link"
         (let [entries (render-step
                         {:iteration-id "iteration-1"
@@ -7103,8 +7259,7 @@ h = 8"
                           {:code "print(1)" :stdout "1" :success? true :duration-ms 5}]}
                         :kitty
                         {})]
-          (expect (= 1
-                     (count (re-seq #"click to open in the system viewer" (text-of entries)))))))))
+          (expect (= 1 (count (re-seq #"report\.html  HTML" (text-of entries)))))))))
 
 (defdescribe produced-attachment-inline-dedup-test
              (it "keeps inline images out of the durable document card without shifting indexes"
@@ -10117,40 +10272,34 @@ print(paths)"
               "openable and inert rows share the same left edge")
       (expect (= (+ 2 (.indexOf ^String (line-with rich "Listed") "Listed")) content-col)
               "what a step opens sets its words in from the column its words do, like code")))
-  (it
-    "renders headings, Markdown, tables, code, progress and safe media fallback"
-    (let [blocks
-          [{:type "heading" :text "Verification"}
-           {:type "markdown" :text "**Prepared** the workspace"}
-           {:type "table" :columns ["Suite" "Result"] :rows [["unit" "passed"]]}
-           {:type "code" :language "python" :text "print(42)"}
-           {:type "diff" :text "+added\n-removed"}
-           {:type "progress" :label "Checking" :value 1 :total 2}
-           {:type "image" :label "Screenshot" :attachment-id "image-1"}]
+  (it "renders headings, Markdown, tables, code and progress, without attachment references"
+      (let [blocks
+            [{:type "heading" :text "Verification"}
+             {:type "markdown" :text "**Prepared** the workspace"}
+             {:type "table" :columns ["Suite" "Result"] :rows [["unit" "passed"]]}
+             {:type "code" :language "python" :text "print(42)"}
+             {:type "diff" :text "+added\n-removed"}
+             {:type "progress" :label "Checking" :value 1 :total 2}
+             {:type "image" :label "Screenshot" :attachment-id "image-1"}]
 
-          entries
-          (#'render/activity-content-entries
-           blocks
-           60
-           4
-           "s"
-           {"image-1" {:iteration-id "i" :index 0 :filename "screen.png"}}
-           true)
+            entries
+            (#'render/activity-content-entries blocks 60 4 "s" true)
 
-          text
-          (str/join "\n" (map :line entries))]
+            text
+            (str/join "\n" (map :line entries))]
 
-      (doseq [word ["Verification" "Prepared" "Suite" "passed" "print" "Checking" "Screenshot"]]
-        (expect (str/includes? text word)))
-      (expect (some #(= "i" (get-in % [:meta :artifact :iteration-id])) entries))
-      (expect (str/includes? (str (#'render/activity-content-entries
-                                   [{:type "progress" :label "Checking"}]
-                                   40
-                                   4
-                                   "s"
-                                   {}
-                                   false))
-                             "Stopped"))))
+        (doseq [word ["Verification" "Prepared" "Suite" "passed" "print" "Checking"]]
+          (expect (str/includes? text word)))
+        ;; Attachment references show on the attachment card, not in Activity content.
+        (expect (not (str/includes? text "Screenshot")))
+        (expect (not-any? #(get-in % [:meta :artifact]) entries))
+        (expect (str/includes? (str (#'render/activity-content-entries
+                                     [{:type "progress" :label "Checking"}]
+                                     40
+                                     4
+                                     "s"
+                                     false))
+                               "Stopped"))))
   (it "paints a terminal block: bold command, accent operators, stderr ink and omitted lines"
       (let [block
             {:type "terminal"
@@ -10160,7 +10309,7 @@ print(paths)"
              :exit 0}
 
             entries
-            (#'render/activity-content-entries [block] 60 4 "s" {} false)
+            (#'render/activity-content-entries [block] 60 4 "s" false)
 
             segments
             (mapv #(get-in % [:meta :segments]) entries)]
@@ -10205,7 +10354,6 @@ print(paths)"
              60
              4
              "s"
-             {}
              false)
 
             words-col
@@ -10270,10 +10418,62 @@ print(paths)"
                                             :vis.channel-tui/expand-all-details? true}})
 
           artifacts
-          (keep #(get-in % [:meta :artifact]) entries)]
+          (keep #(get-in % [:meta :artifact]) entries)
+
+          clip-row
+          (first (filter #(= "clip.mp4" (get-in % [:meta :artifact :filename])) entries))]
 
       (expect (some #(and (= "clip.mp4" (:filename %)) (= "i" (:iteration-id %)) (= 0 (:index %)))
-                    artifacts)))))
+                    artifacts))
+      ;; The file sits on the attachment card outside the Activity band.
+      (expect (= :file (get-in clip-row [:meta :card-part])))
+      (expect (not (get-in clip-row [:meta :activity-content?])))
+      (expect (not-any? #(and (get-in % [:meta :activity-content?])
+                              (str/includes? (str (:line %)) "Recording"))
+                        entries))
+      (expect (= 1 (count (filter #(= "notes.txt" (get-in % [:meta :card-name])) entries))))))
+  (it
+    "keeps attachment references out of Activity content and its fold"
+    (let [row
+          (fn [id content]
+            {:id id
+             :sequence 0
+             :state "succeeded"
+             :operation "attach"
+             :presentation {:headline "Attached" :summary id :content content}})
+
+          entries
+          (#'render/activity-detail-entries
+           {:node-id "attach"
+            :activity-rows [(row "only"
+                                 [{:type "attachment"
+                                   :attachment-id "a1"
+                                   :name "report.html"
+                                   :media-type "text/html"}])
+                            (row "mixed"
+                                 [{:type "text" :text "BODY_WORDS"}
+                                  {:type "image" :attachment-id "a2" :label "Chart"}])]
+            :activity-expanded? (fn [_ _]
+                                  true)}
+           80
+           "s")
+
+          text
+          (str/join "\n" (map :line entries))
+
+          head
+          (fn [id]
+            (first (filter #(and (= :activity-row (get-in % [:meta :kind]))
+                                 (= id (get-in % [:meta :item-id])))
+                           entries)))]
+
+      (expect (str/includes? text "BODY_WORDS"))
+      (expect (not (str/includes? text "report.html")))
+      (expect (not (str/includes? text "Chart")))
+      (expect (not (str/includes? text "click to open")))
+      ;; A row with only an attachment reference has nothing to open.
+      (expect (nil? (get-in (head "only") [:meta :node-id])))
+      (expect (some? (get-in (head "mixed") [:meta :node-id]))))))
 
 (defdescribe activity-summary-markdown-test
              (it "keeps opted-in root and section links through disclosure (#254)"
@@ -10344,6 +10544,43 @@ print(paths)"
 
                    (expect (some #(str/includes? (:line %) error) entries))
                    (expect (empty? (mapcat #(get-in % [:meta :links]) entries))))))
+
+;; #376: a failed tool call showed its error as plain output, then again as error lines.
+(defdescribe
+  activity-repeated-error-test
+  (it
+    "shows an error that the presentation repeats only once"
+    (let
+      [reason
+       "pytest wrote no report: Failed to fetch https://index.example.com/pkg-1.0.whl\n    Caused by: HTTP status client error (404 Not Found)"
+
+       error
+       (str "RuntimeError: " reason)
+
+       entries
+       (#'render/activity-detail-entries
+        {:node-id "repeat"
+         :activity-expanded? (fn [_ _]
+                               true)
+         :activity-rows [{:id "repeat"
+                          :state "failed"
+                          :operation "py.run_tests"
+                          :error-summary error
+                          :evidence [{:kind "error" :text error}]
+                          :presentation {:headline "Run Python tests"
+                                         :summary "failed"
+                                         :content [{:type "code" :text "run_tests(cwd=\"/w\")"}
+                                                   {:type "heading" :text "Error"}
+                                                   {:type "code" :text reason}]}}]}
+        120
+        "repeat")
+
+       body
+       (map (comp strip-ansi :line) (remove #(= :activity-row (get-in % [:meta :kind])) entries))]
+
+      (expect (= 1 (count (filter #(str/includes? % "Caused by: HTTP status client error") body))))
+      (expect (some #(str/includes? % "run_tests(cwd=") body))
+      (expect (not-any? #(= "Error" (str/trim %)) body)))))
 
 (defdescribe
   activity-summary-click-test
@@ -12246,6 +12483,65 @@ print(paths)"
     (it "invalidates the live render cache when the messages land"
         (let [fingerprint @#'render/iteration-fingerprint]
           (expect (not= (fingerprint entry) (fingerprint (dissoc entry :user-input))))))))
+
+(defdescribe
+  delivered-paste-test
+  ;; User report: a paste sent with `→ Send now` showed its raw ````vis-paste fence in the
+  ;; `You · Queued` band. The band folds the paste like the request bubble does.
+  (let [entry
+        (iteration/canonicalize {:iteration 39
+                                 :forms []
+                                 :user-input [{:request "The SDK is missing.\n PIN THE SDK!"
+                                               :display-request
+                                               (str "\n````vis-paste\n[Pasted #1: 1 line, 19B]\n"
+                                                    "The SDK is missing.\n````\n PIN THE SDK!")}]})
+
+        entries-of
+        (fn [expansions]
+          (#'render/format-iteration-entry-entries
+           entry
+           60
+           39
+           {:session-id "s1" :session-turn-id "turn-1" :detail-expansions expansions}))
+
+        band-lines
+        (fn [entries]
+          (into [] (comp (map :line) (filter #(str/starts-with? % p/MARKER_USER_INPUT))) entries))
+
+        folded
+        (entries-of {})
+
+        toggle
+        (first (filter #(= :toggle-details (get-in % [:meta :kind])) folded))]
+
+    (it "hides the fence and shows the paste as one folded summary row"
+        (expect (not-any? #(str/includes? % "````") (band-lines folded)))
+        (expect (not-any? #(str/includes? % "vis-paste") (band-lines folded)))
+        (expect (= (str p/MARKER_USER_INPUT "▸ [Pasted #1: 1 line, 19B]") (:line toggle)))
+        (expect (true? (get-in toggle [:meta :collapsed?])))
+        (expect (not-any? #(str/includes? % "The SDK is missing.") (band-lines folded)))
+        (expect (some #(str/includes? % "PIN THE SDK!") (band-lines folded))))
+    (it "opens the paste body when its summary row is toggled"
+        (let [opened (band-lines (entries-of {["s1" (get-in toggle [:meta :node-id])] true}))]
+          (expect (some #{(str p/MARKER_USER_INPUT "▾ [Pasted #1: 1 line, 19B]")} opened))
+          (expect (some #{(str p/MARKER_USER_INPUT "  The SDK is missing.")} opened))))
+    (it "registers the summary row as the click target of the fold"
+        (.reset interactions/hit-map)
+        (.beginFrame interactions/hit-map)
+        (render/draw-chat-bubble! (dummy-text-graphics)
+                                  {:role :assistant
+                                   :text ""
+                                   :prewrapped-lines (mapv :line folded)
+                                   :line-meta (mapv :meta folded)}
+                                  0 2
+                                  80 {:viewport-top 0 :viewport-h 60})
+        (.commitFrame interactions/hit-map)
+        (let [hits (into []
+                         (keep #(.lookup interactions/hit-map 7 (long %)))
+                         (range 0 (+ 2 (count folded) 4)))]
+          (expect (= 1 (count hits)))
+          (expect (= (get-in toggle [:meta :node-id]) (:node-id (first hits))))
+          (expect (true? (:collapsed? (first hits))))))))
 
 (defdescribe
   queued-message-rail-test

@@ -1,0 +1,11 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "ticket": "03101",
+    "team": "team0",
+    "state": "open",
+    "checksum": "0569"
+  },
+  "want_requested_route": true
+}

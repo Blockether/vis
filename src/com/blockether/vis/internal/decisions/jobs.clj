@@ -24,6 +24,7 @@
 (def ^:private training-models
   (-> (set (keys assets/gliner-architectures))
       (into (keys assets/decision2-architectures))
+      (into (keys assets/d3-architectures))
       (conj "laya-typed-decisions")))
 
 (def ^:private inputs
@@ -273,8 +274,9 @@
          (integer? (get result "bytes"))
          (= (long (get result "bytes")) (.length archive))
          (score? (get result "decision_accuracy"))
-         ;; Decision 2.0 has no action head, so its trainer reports no action accuracy.
-         (if (contains? assets/decision2-architectures model-id)
+         ;; Decision 2.0 and D3 have no action head, so their trainers report no action accuracy.
+         (if (or (contains? assets/decision2-architectures model-id)
+                 (contains? assets/d3-architectures model-id))
            (nil? (get result "action_accuracy"))
            (score? (get result "action_accuracy"))))))
 

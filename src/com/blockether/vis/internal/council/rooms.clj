@@ -118,31 +118,41 @@
   [id]
   (str/starts-with? id "council_room"))
 
+(def wake-recent-ms
+  "How recent a session's last turn must be for the `recent` room wake choice."
+  (* 60 60 1000))
+
 (defn register-settings!
   "Membership permits selection. It never selects or shares a session.
-   A room that leaves the membership loses its access setting."
+   A room that leaves the membership loses its access setting. Without rooms,
+   the room selection and wake settings stay registered but hidden."
   [rooms]
-  (toggles/register-toggle! {:id "council_room"
-                             :label "Council room"
-                             :default "local"
-                             :type :enum
-                             :choices (into ["local"] (map :room_id rooms))
-                             :description "Select a shared room, or keep Council on this machine."
-                             :scopes toggle-contract/scopes
-                             :persist? true
-                             :group :council
-                             :parent "council"})
-  (toggles/register-toggle!
-    {:id "council_room_wake"
-     :label "Allow room wake"
-     :default false
-     :inheritance "restrict"
-     :scopes toggle-contract/scopes
-     :description
-     "Allow room messages to start idle sessions. An ancestor denial cannot be overridden."
-     :persist? true
-     :group :council
-     :parent "council"})
+  (let [visible (constantly (boolean (seq rooms)))]
+    (toggles/register-toggle! {:id "council_room"
+                               :label "Council room"
+                               :default "local"
+                               :type :enum
+                               :choices (into ["local"] (map :room_id rooms))
+                               :description "Select a shared room, or keep Council on this machine."
+                               :scopes toggle-contract/scopes
+                               :persist? true
+                               :visible-fn visible
+                               :group :council
+                               :parent "council"})
+    (toggles/register-toggle!
+      {:id "council_room_wake"
+       :label "Allow room wake"
+       :default "recent"
+       :type :enum
+       :choices ["off" "recent" "always"]
+       :inheritance "restrict"
+       :scopes toggle-contract/scopes
+       :description
+       "Let room messages start idle sessions. Recent means a turn in the last hour. A denial at a higher level always wins."
+       :persist? true
+       :visible-fn visible
+       :group :council
+       :parent "council"}))
   (doseq [room rooms]
     (toggles/register-toggle!
       {:id (access-id (:room_id room))
@@ -210,9 +220,25 @@
                    (true? (get values (access-id id))))
           id)))))
 
-(defn wake-allowed?
+(defn- recently-active?
+  "True when the newest turn of `sid` started within `wake-recent-ms`."
   [db sid]
-  (and (selected-room db sid) (true? (get (scoped/values db sid) "council_room_wake"))))
+  (when-let [^java.util.Date at (:latest-turn-at (store/db-session-turn-stats db sid))]
+    (< (- (util/now-ms) (.getTime at)) (long wake-recent-ms))))
+
+(defn wake-allowed?
+  "True when a room message may start idle session `sid`. A saved value other than
+   `recent` or `always`, such as an old boolean, allows no wake."
+  [db sid]
+  (and (selected-room db sid)
+       (case (get (scoped/values db sid) "council_room_wake")
+         "always"
+         true
+
+         "recent"
+         (boolean (recently-active? db sid))
+
+         false)))
 
 (defn- authorize!
   [db sid room-id]

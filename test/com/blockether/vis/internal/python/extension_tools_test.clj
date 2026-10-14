@@ -4,6 +4,7 @@
    extension contexts on the shared engine, with no model in the loop."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.python.extensions :as pyx]
@@ -75,6 +76,14 @@
     "        return _refusal(lambda: vis.tools.svc.reserv(\"x\"))\n" "\n"
     "    def failing(self) -> str:\n" "        \"Call a tool that fails.\"\n"
     "        return _refusal(lambda: vis.tools.svc.fail())\n" "\n"
+    "    def attach_probe(self) -> dict:\n" "        \"Store an artifact and read it back.\"\n"
+    "        row = vis.attach(b\"a,b\\n1,2\\n\", \"totals.csv\", label=\"Totals\")\n"
+    "        return {\n"
+    "            \"row\": [row[\"filename\"], row[\"version\"], row[\"media_type\"], row[\"kind\"]],\n"
+    "            \"bytes\": vis.read_attachment(\"totals.csv\").decode(),\n"
+    "            \"listed\": [r[\"id\"] for r in vis.list_attachments(\"totals.csv\")] == [row[\"id\"]],\n"
+    "            \"same\": vis.get_attachment(row)[\"id\"] == row[\"id\"],\n"
+    "        }\n" "\n"
     "\n"
     "vis.register_extension(vis.Extension(name=\"client\", description=\"Client fixture\", alias=\"client\", symbols=[vis.Symbol(Client(), name=\"client\")]))\n"))
 
@@ -171,6 +180,17 @@
                (call (exts "client") 'client.unknown)))
           (expect (= "VisToolError: ValueError: no browser available"
                      (call (exts "client") 'client.failing))))))
+  (it "stores an extension artifact in the calling block and reads it back"
+      (with-tools (fn [exts]
+                    (let [sink (atom [])]
+                      (expect (= {"row" ["totals.csv" 1 "text/csv" "file"]
+                                  "bytes" "a,b\n1,2\n"
+                                  "listed" true
+                                  "same" true}
+                                 (binding [mpl-capture/*attachment-sink* sink]
+                                   (dissoc (call (exts "client") 'client.attach_probe) "op"))))
+                      (expect (= [["totals.csv" "Totals" "user"]]
+                                 (mapv (juxt :filename :label :audience) @sink)))))))
   (it "refuses a call without a bound session"
       (let [call-tool (get (pyx/host-doors nil "test" nil) "__vis_host_call_tool__")]
         (expect (= :session-not-bound

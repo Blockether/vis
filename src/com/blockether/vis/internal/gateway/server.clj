@@ -36,6 +36,7 @@
     [com.blockether.vis.internal.gateway.server.council :as council-api]
     [com.blockether.vis.internal.gateway.server.rooms :as rooms-api]
     [com.blockether.vis.internal.gateway.server.automations :as automations-api]
+    [com.blockether.vis.internal.gateway.server.evals :as evals-api]
     [com.blockether.vis.internal.automation.runner :as automation-runner]
     [com.blockether.vis.internal.council.rooms :as rooms]
     [com.blockether.vis.internal.gateway.server.decisions :as decisions-api]
@@ -582,11 +583,8 @@
            str/lower-case
            (str/split #","))
        (some (fn [token]
-               (let [[coding & params]
-                     (map str/trim (str/split (str/trim token) #";"))]
-
-                 (and (= "gzip" coding)
-                      (not-any? #(re-matches #"q=0(\.0{1,3})?" %) params)))))
+               (let [[coding & params] (map str/trim (str/split (str/trim token) #";"))]
+                 (and (= "gzip" coding) (not-any? #(re-matches #"q=0(\.0{1,3})?" %) params)))))
        boolean))
 
 (defn- sse-stream
@@ -609,7 +607,9 @@
   [gzip?]
   (cond-> sse/sse-headers
     gzip?
-    (assoc "Content-Encoding" "gzip" "Vary" "Accept-Encoding")))
+    (assoc "Content-Encoding"
+      "gzip" "Vary"
+      "Accept-Encoding")))
 
 (defn- sse-closer
   "Zero-arg terminator for ONE SSE connection: mark it dead, unsubscribe, close
@@ -1534,7 +1534,7 @@
   "Every handler map the built-in router binds. Each operation in
    [[gateway-contract/route-table]] belongs to exactly one of them."
   [server-handlers council-api/handlers rooms-api/handlers automations-api/handlers
-   decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
+   evals-api/handlers decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
    projects-api/handlers providers-api/handlers sessions-api/handlers settings-api/handlers
    speech-api/handlers transcripts-api/handlers turns-api/handlers views-api/handlers])
 

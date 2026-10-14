@@ -1,0 +1,27 @@
+{
+  "want": {
+    "service.py": [
+      "def rate(",
+      "return 42",
+      "def label("
+    ]
+  },
+  "wantnot": {
+    "service.py": [
+      "return 0"
+    ]
+  },
+  "want_answer": [
+    "DRAFT-ISOLATION-OK"
+  ],
+  "want_tools": [
+    "draft-create",
+    "patch",
+    "draft-approve"
+  ],
+  "want_forms": [
+    "draft_create(",
+    "project_root_path",
+    "draft_approve("
+  ]
+}

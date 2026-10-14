@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.foundation.harness.discovery-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]
+            [com.blockether.vis.internal.workspace.git :as git]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe it expect throws?]])
   (:import [java.nio.file Files]
@@ -289,6 +290,66 @@
                  (expect (= (.getCanonicalPath skill-md)
                             (.getCanonicalPath (io/file (:path skill))))))))
            (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
+  ;; Regression for Blockether/vis#374: a package in a virtual environment shipped
+  ;; `.agents/skills`, and the repository-root scan listed it as a nested project skill.
+  (it "skips skills that a dependency directory ships, also without an ignore rule"
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-dependency-skill"
+                                                (make-array FileAttribute 0)))
+
+            dependency-skill
+            (io/file root
+                     "flows" ".venv"
+                     "lib" "python3.12"
+                     "site-packages" "typer"
+                     ".agents" "skills"
+                     "typer" "SKILL.md")
+
+            modules-skill
+            (io/file root "web" "node_modules" "pkg" ".agents" "skills" "pkg-skill" "SKILL.md")
+
+            project-skill
+            (io/file root "flows" ".agents" "skills" "flows-skill" "SKILL.md")]
+
+        (try (.mkdirs (io/file root ".git"))
+             (doseq [[f skill-name] [[dependency-skill "typer"] [modules-skill "pkg-skill"]
+                                     [project-skill "flows-skill"]]]
+               (io/make-parents f)
+               (spit f (str "---\nname: " skill-name "\ndescription: d\n---\nBODY")))
+             (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+               (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+                 (expect (= ["flows-skill"]
+                            (filterv #{"typer" "pkg-skill" "flows-skill"}
+                              (map :name (d/discover-skills)))))))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
+  (it "skips skills whose owner directory Git ignores, through root and nested ignore files"
+      (let [root
+            (.toFile (Files/createTempDirectory "vis-ignored-owner-skill"
+                                                (make-array FileAttribute 0)))
+
+            vendored-skill
+            (io/file root "vendored" "pkg" ".agents" "skills" "vendored-skill" "SKILL.md")
+
+            nested-ignore-skill
+            (io/file root "envs" "py" "pkg" ".agents" "skills" "env-skill" "SKILL.md")
+
+            project-skill
+            (io/file root "apps" "web" ".agents" "skills" "web-skill" "SKILL.md")]
+
+        (try (expect (= 0 (:exit (git/run-git root ["init" "-q"]))))
+             (spit (io/file root ".gitignore") "vendored/\n.agents/\n")
+             (io/make-parents (io/file root "envs" "py" ".gitignore"))
+             (spit (io/file root "envs" "py" ".gitignore") "*\n")
+             (doseq [[f skill-name] [[vendored-skill "vendored-skill"]
+                                     [nested-ignore-skill "env-skill"] [project-skill "web-skill"]]]
+               (io/make-parents f)
+               (spit f (str "---\nname: " skill-name "\ndescription: d\n---\nBODY")))
+             (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+               (with-redefs [d/skill-sources [[:agents :rel-walk ".agents" "skills"]]]
+                 (expect (= ["web-skill"]
+                            (filterv #{"vendored-skill" "env-skill" "web-skill"}
+                              (map :name (d/discover-skills)))))))
+             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root)))))))
   (it "treats skill resources as opaque and ignores implementation-specific command metadata"
       (let [root
             (.toFile (Files/createTempDirectory "vis-skill-resources" (make-array FileAttribute 0)))

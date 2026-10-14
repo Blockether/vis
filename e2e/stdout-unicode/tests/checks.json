@@ -1,0 +1,21 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "label": "étoile",
+    "metric": 1030,
+    "utf8_bytes": 201176,
+    "emoji_rows": 1350
+  },
+  "want_forms": [
+    "read_session()"
+  ],
+  "want_stdout_recovery": {
+    "min_chars": 120000,
+    "head": "UNICODE-HEAD",
+    "middle": "記録02701|label=étoile|metric=1030",
+    "tail": "UNICODE-TAIL",
+    "goal_status": null
+  },
+  "want_requested_route": true
+}

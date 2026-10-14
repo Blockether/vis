@@ -16,9 +16,12 @@ function hostLabel(url: string): string {
   }
 }
 
-/** Parse a `vis://gateway?...` deep link into a connection, or null. */
+/**
+ * Parse a `vis://gateway?...` deep link into a connection, or null. A link holds no
+ * real whitespace, so a space or line break that a paste or a wrap put in is removed.
+ */
 export function parsePairingUrl(input: string): GatewayConn | null {
-  const trimmed = input.trim();
+  const trimmed = input.replace(/\s+/g, '');
   if (!/^vis:\/\/gateway\b/i.test(trimmed)) return null;
   // vis://gateway?url=…&token=… — normalize to a parseable URL.
   const q = trimmed.replace(/^vis:\/\/gateway\??/i, '');

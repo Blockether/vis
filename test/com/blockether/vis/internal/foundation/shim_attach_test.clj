@@ -5,7 +5,8 @@
    into the per-block sink (drained into the block outcome's `:attachments`, which the
    loop persists as `:attachments`), with the media-type sniffed from magic bytes
    / extension / a utf-8 probe. No stdout fence, no parsing."
-  (:require [clojure.string :as str]
+  (:require [charred.api :as charred]
+            [clojure.string :as str]
             [com.blockether.vis.internal.docs.corpus :as doc-corpus]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -252,23 +253,22 @@
         ;; a JPEG has no alpha channel, so an RGBA image is converted, not refused
         (expect (= ["shot.jpg" "image/jpeg"] [(:filename jpg) (:media-type jpg)]))
         (expect (= ["image.png" "image/png"] [(:filename png) (:media-type png)]))))
-  (it
-    "refuses a source that is neither a path nor a producer, by name"
-    (let [pctx
-          (ctx-with-root (temp-root))
+  (it "refuses a source that is neither a path nor a producer, by name"
+      (let [pctx
+            (ctx-with-root (temp-root))
 
-          out
-          (block pctx
-                 (str "try:\n" "    attach({'rows': 1}, 'data.json')\n"
-                      "except TypeError as e:\n" "    print('RAISED', e)\n"))]
+            out
+            (block pctx
+                   (str "try:\n" "    attach({'rows': 1}, 'data.json')\n"
+                        "except TypeError as e:\n" "    print('RAISED', e)\n"))]
 
-      (expect (nil? (:error out)))
-      ;; naming the SHAPE that was wrong, never a repr reported as a missing file
-      (expect
-        (re-find
-          #"RAISED attach: source must be a path, bytes, an image or a figure object, got dict"
-          (str (:stdout out))))
-      (expect (empty? (:attachments out)))))
+        (expect (nil? (:error out)))
+        ;; naming the SHAPE that was wrong, never a repr reported as a missing file
+        (expect
+          (re-find
+            #"RAISED attach: source must be a path, bytes, an image or a figure object, got dict"
+            (str (:stdout out))))
+        (expect (empty? (:attachments out)))))
   (it
     "carries a label into the vis-image fence summary — the picture's caption row"
     (let
@@ -1095,3 +1095,43 @@
                       (expect (empty? @events))
                       (expect (not (str/includes? (pr-str @events)
                                                   "YXR0YWNobWVudC1wYXlsb2FkLWZpeHR1cmU=")))))))
+
+(defn- extension-attach
+  "Call the `vis.attach` door of a Python extension; answer the descriptor or the error."
+  [opts]
+  (let [door (get (shim-attach/extension-host-doors) "__vis_host_attach__")]
+    (try (charred/read-json (door opts)) (catch Exception e (ex-message e)))))
+
+(defdescribe
+  extension-attach-door-test
+  (it "takes an explicit type, then the magic bytes, then the filename hint"
+      (binding [mpl-capture/*attachment-sink* (atom [])]
+        (let [pdf (.encodeToString (java.util.Base64/getEncoder) (.getBytes "%PDF-1.4\n" "UTF-8"))
+              csv (.encodeToString (java.util.Base64/getEncoder) (.getBytes "a,b\n1,2\n" "UTF-8"))]
+
+          (expect (= ["application/pdf" "doc" "user"]
+                     ((juxt #(get % "media-type") #(get % "kind") #(get % "audience"))
+                       (extension-attach
+                         {"base64" pdf "filename" "a.pdf" "media_type_hint" "text/csv"}))))
+          (expect (= ["text/csv" "file" 2]
+                     (do (extension-attach
+                           {"base64" csv "filename" "t.csv" "media_type_hint" "text/csv"})
+                         ((juxt #(get % "media-type") #(get % "kind") #(get % "version"))
+                           (extension-attach
+                             {"base64" csv "filename" "t.csv" "media_type_hint" "text/csv"})))))
+          (expect (= "text/plain"
+                     (get (extension-attach {"base64" csv "filename" "x" "media_type" "text/plain"})
+                          "media-type")))
+          (expect (= "application/octet-stream"
+                     (get (extension-attach {"base64" csv "filename" "x"}) "media-type")))
+          (expect (not (contains? (extension-attach {"base64" pdf "filename" "b.pdf"})
+                                  "display"))))))
+  (it "refuses a wrong audience, a document for the model and a call outside a block"
+      (let [pdf (.encodeToString (java.util.Base64/getEncoder) (.getBytes "%PDF-1.4\n" "UTF-8"))]
+        (binding [mpl-capture/*attachment-sink* (atom [])]
+          (expect (str/includes? (extension-attach {"base64" pdf "audience" "all"})
+                                 "audience must be 'both', 'user' or 'model'"))
+          (expect (str/includes? (extension-attach {"base64" pdf "audience" "model"})
+                                 "documents require audience='user'")))
+        (expect (str/includes? (extension-attach {"base64" pdf})
+                               "call it from a tool that python_execution runs")))))

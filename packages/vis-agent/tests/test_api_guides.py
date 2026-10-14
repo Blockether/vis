@@ -93,7 +93,7 @@ _CONCEPTS = sorted(
 
 def test_pages_name_gateway_routes_only_on_http_pages():
     # An empty topic list once turned the parametrized cases below into zero cases.
-    assert len(_CONCEPTS) == 7, f"merged API pages found: {_CONCEPTS}"
+    assert len(_CONCEPTS) == 8, f"merged API pages found: {_CONCEPTS}"
     for page in _PAGES:
         if page.name == "http-api.md":
             continue

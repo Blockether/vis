@@ -2322,12 +2322,18 @@
                                :content "I do not have that context."
                                :reply_to (:entry_id request)
                                :idempotency_key "answer-once"})))
-          (expect (rejected? :already-replied
-                             #(publish receiver
-                                       {:kind "coordination"
-                                        :content "Another answer"
-                                        :reply_to (:entry_id request)})))
-          (expect (= 3 (count (:entries (page w {}))))))))))
+          ;; A later answer is a same-thread continuation, not a second reply.
+          (let [more (publish receiver
+                              {:kind "coordination"
+                               :content "Another answer"
+                               :reply_to (:entry_id request)})]
+            (expect (= (:entry_id request) (:thread_id more)))
+            (expect (nil? (:reply_to more)))
+            (expect (= [a] (:ping more)))
+            (expect (= (:entry_id reply)
+                       (get-in (council 'get-entry db a {:entry_id (:entry_id request)})
+                               [:replies 0 :reply_entry_id]))))
+          (expect (= 4 (count (:entries (page w {}))))))))))
 
 (defdescribe required-reply-validation-test
              (it "required reply validation"

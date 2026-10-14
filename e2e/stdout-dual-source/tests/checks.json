@@ -1,0 +1,29 @@
+{
+  "want": {},
+  "wantnot": {},
+  "want_answer_json": {
+    "alpha_value": "0863",
+    "beta_weight": "0561",
+    "sum": 1424
+  },
+  "want_forms": [
+    "read_session()"
+  ],
+  "want_stdout_recovery": [
+    {
+      "min_chars": 120000,
+      "head": "ALPHA-HEAD",
+      "middle": "A02700|key=k052|value=1004",
+      "tail": "ALPHA-TAIL",
+      "goal_status": null
+    },
+    {
+      "min_chars": 120000,
+      "head": "BETA-HEAD",
+      "middle": "B02650|key=k002|weight=0465",
+      "tail": "BETA-TAIL",
+      "goal_status": null
+    }
+  ],
+  "want_requested_route": true
+}

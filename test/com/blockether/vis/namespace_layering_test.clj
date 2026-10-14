@@ -149,7 +149,7 @@
 (def ^:private lazily-loaded
   "Engine namespaces loaded on first use: optional JFR and speech machinery."
   '#{com.blockether.vis.internal.jfr com.blockether.vis.internal.speech.engine
-     com.blockether.vis.internal.speech.synthesis})
+     com.blockether.vis.internal.speech.synthesis com.blockether.vis.internal.speech.vibevoice})
 
 (defdescribe
   engine-namespaces-require-instead-of-resolving-at-runtime-test

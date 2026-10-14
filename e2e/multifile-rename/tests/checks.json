@@ -1,0 +1,27 @@
+{
+  "want": {
+    "helpers.py": [
+      "def calculate("
+    ],
+    "main.py": [
+      "import calculate",
+      "calculate(5)"
+    ],
+    "extra.py": [
+      "import calculate",
+      "calculate(9)",
+      "calculate(1)"
+    ]
+  },
+  "wantnot": {
+    "helpers.py": [
+      "compute"
+    ],
+    "main.py": [
+      "compute"
+    ],
+    "extra.py": [
+      "compute"
+    ]
+  }
+}

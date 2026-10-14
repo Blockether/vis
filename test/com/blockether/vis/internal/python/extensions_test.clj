@@ -383,6 +383,48 @@
              (expect (not (listed? {:scope "global"}))))
            (finally (binding [workspace/*workspace-root* root]
                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "calls a Python on_change hook and reports its error"
+      ;; #369: a setting had no change hook, so an extension had to poll for a change.
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)
+
+            changes
+            (io/file dir "changes.txt")
+
+            target
+            {:scope "project" :root root}]
+
+        (write-ext! dir
+                    ".vis/extensions/hooks.py"
+                    (str "import blockether.vis.extension as vis\n"
+                         "def record(old, new, scope):\n"
+                         "    if new == 'broken':\n"
+                         "        raise ValueError('cannot apply broken')\n"
+                         "    with open("
+                         (pr-str (.getPath changes))
+                         ", 'a') as f:\n"
+                         "        f.write(f'{old} {new} {scope}\\n')\n"
+                         "vis.register_extension(vis.Extension(name='change-hooks', "
+                         "description='Change hook fixture', "
+                         "settings=[vis.Setting(id='change_hook_mode', label='Mode', type='enum', "
+                         "choices=['vibe', 'control', 'broken'], default='vibe', "
+                         "scopes=['global', 'project'], on_change=record)]))\n"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                      :project-root root})
+               (expect (= [] (pyx/load-failures)))
+               (scoped/set-setting! nil target "change_hook_mode" "value" "control")
+               (scoped/set-setting! nil target "change_hook_mode" "value" "control")
+               (expect (= "vibe control project\n" (slurp changes)))
+               (let [row (scoped/set-setting! nil target "change_hook_mode" "value" "broken")]
+                 (expect (= "broken" (:value row)))
+                 (expect (str/includes? (str (:change-error row)) "cannot apply broken")
+                         (:change-error row))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "reports which setting field broke which rule at load and in doctor"
       ;; #322 and #323: 300 characters load; 301 name the setting, field, rule and limit.
       (let [dir
@@ -992,7 +1034,65 @@
   (it "refuses a hosted call without an owning session"
       (let [root (get (pyx/host-doors nil "test" nil) "__vis_host_workspace_root__")]
         (expect (= :session-not-bound
-                   (try (root) (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))))))
+                   (try (root) (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
+  (it
+    "reads and searches sessions through the canonical doors with the introspection toggle OFF"
+    (let [store
+          (ps/db-create-connection! :memory)
+
+          registered?
+          (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions))
+
+          doors
+          (pyx/host-doors nil "test" nil)
+
+          read-door
+          (get doors "__vis_host_read_session__")
+
+          list-door
+          (get doors "__vis_host_list_sessions__")]
+
+      (when-not registered? (foundation/register!))
+      (try
+        (let [sid
+              (db-test/store-session! store {:channel :tui :title "Door fixture"})
+
+              other
+              (db-test/store-session! store {:channel :tui :title "Release notes"})
+
+              _
+              (ps/db-store-session-turn!
+                store
+                {:parent-session-id sid :user-request "Fix the typo." :status :running})
+
+              call
+              (fn [door arg]
+                ;; The `introspection` toggle gates only the model's tools. Extensions
+                ;; read sessions also when it is OFF.
+                (binding [toggles/*overrides*
+                          {"introspection" false}
+
+                          extension/*current-environment*
+                          {:session-id sid :db-info store}]
+
+                  (expect (false? (toggles/enabled? "introspection")))
+                  (json/read-json (door arg))))
+
+              data
+              (call read-door nil)]
+
+          (expect (= (str sid) (get-in data ["session" "id"])))
+          (expect (= [[1 "Fix the typo."]]
+                     (mapv (juxt #(get % "position") #(get % "user_request"))
+                           (get-in data ["transcript" "turns"]))))
+          (expect (= #{(str sid) (str other)} (set (map #(get % "id") (call list-door nil)))))
+          (expect (= [(str other)] (mapv #(get % "id") (call list-door "Release"))))
+          (expect (= [:session-not-bound :session-not-bound]
+                     (for [door [read-door list-door]]
+                       (try (door nil)
+                            (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
+        (finally (when-not registered? (extension/deregister-extension! "foundation-core"))
+                 (ps/db-dispose-connection! store))))))
 
 (defdescribe
   dependency-errors-keep-safe-diagnostics-test
@@ -4522,7 +4622,8 @@ def _auth_prompt():
 def _enrich(provider, router_opts):
     # provider crosses in as a plain string-keyed dict (stringify-deep) so the
     # hook can read model names; return an enriched model list.
-    return [vis.ProviderModel(m['name'], context=262144, is_tool_call=True)
+    return [vis.ProviderModel(m['name'], context=262144, is_tool_calls_supported=True,
+                              is_vision_supported=m['name'] == 'acme-large')
             for m in provider['models']]
 
 
@@ -4662,9 +4763,10 @@ vis.register_extension(vis.Extension(
                      ((:provider/refresh-token-fn oauth) "old-rejected-token")))
           ;; enrich-models-fn: host provider + router-opts marshal INTO Python as
           ;; plain string-keyed dicts; the return keywordizes and the snake
-          ;; `is_tool_call` becomes the `:tool-call?` key the router reads.
-          (expect (= [{:name "acme-large" :context 262144 :tool-call? true}
-                      {:name "acme-small" :context 262144 :tool-call? true}]
+          ;; `is_tool_calls_supported` becomes the `:tool-call?` key the router reads,
+          ;; and `is_vision_supported` becomes svar's model `:vision?`.
+          (expect (= [{:name "acme-large" :context 262144 :tool-call? true :vision? true}
+                      {:name "acme-small" :context 262144 :tool-call? true :vision? false}]
                      ((:provider/enrich-models-fn p)
                        {:id :acme :models [{:name "acme-large"} {:name "acme-small"}]}
                        {})))
@@ -5175,7 +5277,72 @@ vis.register_extension(vis.Extension(
                       "Traceback" "line 7" "ImportError: missing_dependency" "[REDACTED]"
                       "/reload"]]
           (expect (str/includes? body text)))
-        (expect (not (str/includes? body "fixture-secret")))))))
+        (expect (not (str/includes? body "fixture-secret"))))))
+  (it
+    "summarizes a healthy reload in one line and lists each part (Vis #363)"
+    (with-redefs [pyx/reload-python-extensions!
+                  (constantly
+                    {:loaded 2
+                     :failed 0
+                     :scopes
+                     [{:scope :global :dirs [] :loaded 2 :failed 0 :extensions ["memo" "spel"]}]})
+
+                  config/current-config
+                  (let [calls (atom 0)]
+                    (fn []
+                      {:network (swap! calls inc)}))
+
+                  config/reload-config!
+                  (constantly {})
+
+                  config/load-config-raw
+                  (constantly {})
+
+                  extension/run-reload-hooks!
+                  (constantly {})
+
+                  agents/reload!
+                  (constantly nil)
+
+                  prompt-templates/reload!
+                  (constantly [:review])]
+
+      (let [{:slash/keys [status title body data]} (#'pyx/reload-slash {:command/argv []})]
+        (expect (= :ok status))
+        (expect
+          (str/starts-with?
+            title
+            "Reloaded · 2 extensions · configuration changed: network · 1 prompt template · "))
+        (expect (not (str/includes? title "failed")))
+        (doseq [text ["- Extensions (global): 2 loaded — memo, spel"
+                      "- Configuration: changed network" "- Prompt templates: 1"
+                      "- Skills, agents and context files: rescanned"]]
+          (expect (str/includes? body text)))
+        (expect (= {:loaded 2 :failed 0 :configuration-changes "network" :prompt-templates 1}
+                   (select-keys data [:loaded :failed :configuration-changes :prompt-templates])))
+        (expect (nat-int? (:duration-ms data))))))
+  (it "names the folders that each extension scope scanned (Vis #365)"
+      (let [home
+            (System/getProperty "user.home")
+
+            {:slash/keys [body]}
+            (#'pyx/reload-report
+             {:loaded 1
+              :failed 0
+              :scopes [{:scope :global
+                        :dirs [(str home "/.vis/extensions")]
+                        :loaded 1
+                        :failed 0
+                        :extensions ["memo"]}
+                       {:scope :project
+                        :dirs ["/srv/rewrite/.vis/extensions"]
+                        :loaded 0
+                        :failed 0
+                        :extensions []}]})]
+
+        (doseq [text ["- Extensions (global): 1 loaded — memo (scanned ~/.vis/extensions)"
+                      "- Extensions (project): 0 loaded (scanned /srv/rewrite/.vis/extensions)"]]
+          (expect (str/includes? body text))))))
 
 ;; Input Views — `vis.ask` blocks the extension until a channel answers
 (defn- answer-pending!
@@ -6202,6 +6369,72 @@ vis.register_extension(vis.Extension(
                    (finally (#'pyx/delete-tree! (:dir frozen)))))))
         (finally (#'pyx/delete-tree! project))))))
 
+;; Issue #378: `python.environment: shared` prepares the project's own uv projects like
+;; `vis-agent python --shared uv sync`; packages outside the project tree keep their environment.
+(defdescribe
+  project-extension-shared-environment-test
+  (it
+    "selects shared preparation for uv projects inside a shared project"
+    (let [root
+          (temp-dir)
+
+          inside
+          (doto (io/file root "tools") .mkdirs)
+
+          outside
+          (temp-dir)
+
+          calls
+          (atom [])
+
+          record
+          (fn [kind]
+            (fn [dir]
+              (swap! calls conj [kind (.getName ^java.io.File dir)])
+              dir))]
+
+      (try
+        (with-redefs [python-runtime/shared-environment?
+                      (fn []
+                        (swap! calls conj [:config (workspace/cwd-root)])
+                        true)
+
+                      python-runtime/ensure-shared-project!
+                      (record :shared-sync)
+
+                      python-runtime/prepared-shared-project
+                      (record :shared-check)
+
+                      python-runtime/ensure-project!
+                      (record :sync)
+
+                      python-runtime/prepared-project
+                      (record :check)
+
+                      python-runtime/project-environment-exists?
+                      (constantly true)]
+
+          (doseq [[project project-root sync? site-packages expected]
+                  [[inside (.getCanonicalPath root) true nil
+                    [[:config (.getCanonicalPath root)] [:shared-sync "tools"]]]
+                   [inside (.getCanonicalPath root) false nil
+                    [[:config (.getCanonicalPath root)] [:shared-check "tools"]]]
+                   [outside (.getCanonicalPath root) true nil [[:sync (.getName outside)]]]
+                   [inside nil true nil [[:sync "tools"]]]
+                   [inside (.getCanonicalPath root) true {(.getCanonicalPath inside) "prepared"}
+                    []]]]
+            (reset! calls [])
+            (let [frozen (#'pyx/prepare-root!
+                          {:roots [root]
+                           :project project
+                           :project-root project-root
+                           :sync-projects? sync?
+                           :site-packages site-packages})]
+              (try (expect (= expected @calls) (pr-str [project project-root sync?]))
+                   (expect (= (if site-packages "prepared" (str project)) (:packages frozen)))
+                   (finally (#'pyx/delete-tree! (:dir frozen)))))))
+        (finally (#'pyx/delete-tree! root) (#'pyx/delete-tree! outside))))))
+
 (defdescribe
   project-extension-environment-isolation-test
   ;; Regression #226: existing project workers must never activate shared .pth hooks or
@@ -6791,6 +7024,67 @@ vis.register_extension(vis.Extension(
               (finally (ep/dispose-python-context! ctx)))))))))
 
 (defdescribe
+  python-record-derived-data-test
+  ;; #367: a model's properties and its own `str` text reach the sandbox, while
+  ;; methods stay in the extension and the record still rebuilds as an argument.
+  (it
+    "sends public properties as fields and custom str text in both sandboxes"
+    (doseq [worker? [false true]]
+      (with-fresh-loaded
+        {"model_status.py"
+         (str
+           "import blockether.vis.extension as vis\n"
+           "from dataclasses import dataclass\n" "@dataclass(frozen=True)\n"
+           "class Phase:\n" "    number: int\n"
+           "    @property\n" "    def label(self) -> str:\n"
+           "        return f'phase {self.number}'\n" "@dataclass(frozen=True)\n"
+           "class Status:\n" "    env: str\n"
+           "    phases: tuple[Phase, ...] = ()\n" "    @property\n"
+           "    def next_phase(self) -> int:\n" "        return len(self.phases) + 1\n"
+           "    @property\n" "    def broken(self) -> int:\n"
+           "        raise RuntimeError('not ready')\n" "    @property\n"
+           "    def _hidden(self) -> int:\n" "        return 1\n"
+           "    def text_report(self) -> str:\n"
+           "        return f'STATUS: {self.env} next {self.next_phase}'\n"
+           "    __str__ = text_report\n" "def status(env: str) -> Status:\n"
+           "    'Read one environment.'\n" "    return Status(env, (Phase(1),))\n"
+           "def report(status: Status) -> str:\n" "    'Report one environment.'\n"
+           "    if not isinstance(status, Status) or not isinstance(status.phases[0], Phase):\n"
+           "        raise TypeError(f'status must be a Status, not {type(status).__name__}')\n"
+           "    return status.text_report()\n"
+           "vis.register_extension(vis.Extension(name='model-status', description='Return models', alias='model_probe', symbols=[vis.Symbol(status, name='env_status'), vis.Symbol(report, name='env_report')]))\n")}
+        (fn [result _]
+          (expect (= 1 (:loaded result)))
+          (let [made (ep/create-python-context {} nil {:worker? worker?} nil)
+                ctx (:python-context made)
+                env {:python-context ctx :extensions (atom []) :active-extensions (atom [])}
+                ext (registered "model-status")]
+
+            (try
+              (reset! (:extensions env) [ext])
+              (if worker?
+                (loop-env/sync-active-extension-symbols! env [ext])
+                (loop-env/sync-extension-symbols-into! ctx (dissoc env :python-context) [ext]))
+              (let
+                [answer
+                 (ep/run-python-block
+                   ctx
+                   (str
+                     "import dataclasses\n" "r = await env_status('DEV04')\n"
+                     "print(r.next_phase, r['next_phase'], r.phases[0].label)\n" "print(r)\n"
+                     "print(str(r.phases[0]) == repr(r.phases[0]))\n"
+                     "print([f.name for f in dataclasses.fields(r)])\n"
+                     "print(hasattr(r, 'broken'), hasattr(r, 'text_report'), hasattr(r, '_hidden'))\n"
+                     "print(await env_report(r))\n"))]
+                (expect (nil? (:error answer)) (str "worker? " worker? " " (pr-str answer)))
+                (expect (= (str "2 2 phase 1\n" "STATUS: DEV04 next 2\n"
+                                "True\n" "['env', 'phases', 'next_phase']\n"
+                                "False False False\n" "STATUS: DEV04 next 2\n")
+                           (:stdout answer))
+                        (str "worker? " worker?)))
+              (finally (ep/dispose-python-context! ctx)))))))))
+
+(defdescribe
   python-string-list-argument-test
   ;; #324: a bare string for a list of strings reaches the tool as one item, not one
   ;; item for each character, so `py.lint_code('/src/app.py')` cannot lint `/`.
@@ -6837,7 +7131,8 @@ vis.register_extension(vis.Extension(
     "deduplicates and bounds discovery without truncating callable metadata or results"
     (with-fresh-loaded
       {"schema_probe.py"
-       (slurp "e2e/scenarios/extension-schema-discovery/files/.vis/extensions/schema_probe.py")}
+       (slurp
+         "e2e/extension-schema-discovery/environment/workspace/.vis/extensions/schema_probe.py")}
       (fn [result _]
         (expect (= 1 (:loaded result)))
         (let [ext
@@ -7165,7 +7460,7 @@ vis.register_extension(vis.Extension(
   [f]
   (with-loaded
     {"watchdog_probe.py"
-     (slurp "e2e/scenarios/extension-watchdog/files/.vis/extensions/watchdog_probe.py")}
+     (slurp "e2e/extension-watchdog/environment/workspace/.vis/extensions/watchdog_probe.py")}
     (fn [loaded _]
       (expect (zero? (:failed loaded)) (pr-str (pyx/load-failures)))
       (let [sandbox-root
@@ -7641,3 +7936,57 @@ vis.register_extension(vis.Extension(
               (expect (= 1 (:loaded loaded)) (pr-str (pyx/load-failures)))
               (expect (= "coexists"
                          (:result ((symbol-fn (registered "decision-fixture") 'identity))))))))))))
+
+(defdescribe
+  editor-sdk-version-doctor-test
+  ;; #375: the project `.venv` locked an old vis-agent, so editors showed old SDK types
+  ;; while Vis ran its bundled SDK. Doctor now names each wheel that differs.
+  (let [project-with-wheel
+        (fn [version]
+          (let [root (temp-dir)]
+            (.mkdirs (io/file root
+                              ".venv/lib/python3.12/site-packages"
+                              (str "vis_agent-" version ".dist-info")))
+            (.mkdirs (io/file root ".venv/lib/python3.12/site-packages/other-1.0.dist-info"))
+            root))
+
+        project-messages
+        (fn [bundled root]
+          (vec (#'pyx/sdk-version-messages bundled (butlast (#'pyx/editor-sdk-dirs root)))))]
+
+    (it "lists the project site-packages first and the shared packages last"
+        (let [root
+              (project-with-wheel "0.2.29")
+
+              dirs
+              (#'pyx/editor-sdk-dirs root)]
+
+          (expect (= 2 (count dirs)))
+          (expect (= (io/file root ".venv/lib/python3.12/site-packages") (first dirs)))
+          (expect (= 1 (count (#'pyx/editor-sdk-dirs (temp-dir)))))))
+    (it "reports an older wheel as info with the exact version to install"
+        (let [[message :as messages] (project-messages "0.2.42" (project-with-wheel "0.2.29"))]
+          (expect (= 1 (count messages)) (pr-str messages))
+          (expect (= :info (:level message)))
+          (expect (= ::pyx/editor-sdk (:check-id message)))
+          (expect (str/includes? (:message message) "vis-agent 0.2.29 in "))
+          (expect (str/includes? (:message message) "bundled SDK 0.2.42."))
+          (expect (str/includes? (:remediation message) "vis-agent==0.2.42"))))
+    (it "warns about a newer wheel, because editors accept missing APIs"
+        (let [[message] (project-messages "0.2.42" (project-with-wheel "0.2.50"))]
+          (expect (= :warn (:level message)))
+          (expect (str/includes? (:message message) "does not have"))))
+    (it "reports a development version that has no order as info"
+        (expect (= [:info]
+                   (mapv :level
+                         (project-messages "0.2.31.dev7292" (project-with-wheel "0.2.29"))))))
+    (it "stays silent for the same version and for builds without a published SDK"
+        (let [root (project-with-wheel "0.2.42")]
+          (expect (= [] (project-messages "0.2.42" root)))
+          (expect (= [] (project-messages "dev" root)))
+          (expect (= [] (project-messages "0.2.42+dirty" (project-with-wheel "0.2.29"))))
+          (expect (= [] (project-messages "0.2.42" (temp-dir))))))
+    (it "adds no SDK message to doctor in a source run"
+        (expect (not-any? #(= ::pyx/editor-sdk (:check-id %))
+                          (#'pyx/doctor-fn
+                           {:workspace/root (str (project-with-wheel "0.2.29"))}))))))

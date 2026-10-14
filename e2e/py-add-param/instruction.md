@@ -1,0 +1,1 @@
+In g.py add a second parameter greeting (default "hi") to greet and use it instead of the literal "hi".

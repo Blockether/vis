@@ -46,6 +46,23 @@ def __vis_install_attach__():
             return "image/gif"
         if starts([0x42, 0x4D]):
             return "image/bmp"
+        # HEIF: a HEIF brand as the major or a compatible brand. An HEVC major
+        # brand (an iPhone photo, a camera .HIF) is image/heic. An AV1 brand
+        # makes it image/avif. Any other HEIF file is image/heif.
+        box = bytes(data[:256])
+        if box[4:8] == b"ftyp":
+            end = max(16, min(len(box), int.from_bytes(box[:4], "big")))
+            brands = [
+                b.lower()
+                for b in [box[8:12]] + [box[i : i + 4] for i in range(16, end - 3, 4)]
+            ]
+            hevc = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx")
+            avif = (b"avif", b"avis")
+            other = (b"mif1", b"msf1", b"avci", b"avcs", b"jpeg", b"unif")
+            if any(b in hevc + avif + other for b in brands):
+                if brands[0] in hevc:
+                    return "image/heic"
+                return "image/avif" if any(b in avif for b in brands) else "image/heif"
         if starts([0x25, 0x50, 0x44, 0x46]):
             return "application/pdf"
         if starts([0x50, 0x4B, 0x03, 0x04]) or starts([0x50, 0x4B, 0x05, 0x06]):

@@ -4328,10 +4328,8 @@
 (defn- with-pathed-fleet
   "Run `f` over a two-session fleet whose workspaces `resolve` answers."
   [resolve f]
-  (let [records
-        [{:id "a" :title "A" :channel :api :created-at 1000}
-         {:id "b" :title "B" :channel :api :created-at 900}]]
-
+  (let [records [{:id "a" :title "A" :channel :api :created-at 1000}
+                 {:id "b" :title "B" :channel :api :created-at 900}]]
     (with-redefs-fn {#'lp/db-info (constantly ::db)
                      #'lp/projects (constantly [])
                      #'lp/by-channel (constantly records)
@@ -4378,8 +4376,7 @@
       (with-pathed-fleet (constantly nil)
                          (fn []
                            (expect (not (contains? (state/soul "a") "workspace")))
-                           (let [row (first (:sessions (state/list-sessions-page :all
-                                                                                {:limit 1})))]
+                           (let [row (first (:sessions (state/list-sessions-page :all {:limit 1})))]
                              (expect (not (contains? row "workspace"))))))))
 
 ;; The overview is embedded in every HEAD read of the session list, and grouping it
@@ -4391,9 +4388,7 @@
   "`projects-overview` over a fleet whose facts the caller supplies, beside the
    number of workspace resolutions that answer paid for."
   [{:keys [records live waiting marks roots]}]
-  (let [resolutions
-        (atom 0)]
-
+  (let [resolutions (atom 0)]
     (with-redefs-fn {#'lp/db-info (constantly ::db)
                      #'lp/projects (constantly [])
                      #'persistance/db-session-turn-stats (constantly {})
@@ -4403,7 +4398,8 @@
                      #'bus/waiting-requests (constantly (or waiting {}))
                      #'state/resolve-workspace (fn [_db sid]
                                                  (swap! resolutions inc)
-                                                 {:root (get roots sid) :repo-root (get roots sid)})}
+                                                 {:root (get roots sid)
+                                                  :repo-root (get roots sid)})}
       (fn []
         [(state/projects-overview) @resolutions]))))
 
@@ -4427,14 +4423,22 @@
         (expect (= (dissoc first-answer :server_time_ms) (dissoc second-answer :server_time_ms)))))
   ;; The clock is the one field that must NOT come back cached.
   (it "stamps every answer with its own server clock"
-      (let [[primed _] (counted-overview two-project-fleet)
-            [cached resolutions] (counted-overview two-project-fleet)]
+      (let [[primed _]
+            (counted-overview two-project-fleet)
+
+            [cached resolutions]
+            (counted-overview two-project-fleet)]
+
         (expect (zero? resolutions))
         (expect (number? (:server_time_ms cached)))
         (expect (<= (long (:server_time_ms primed)) (long (:server_time_ms cached))))))
   (it "recounts when a session starts running"
-      (let [[_ _] (counted-overview two-project-fleet)
-            [answer resolutions] (counted-overview (assoc two-project-fleet :live {"a" "t1"}))]
+      (let [[_ _]
+            (counted-overview two-project-fleet)
+
+            [answer resolutions]
+            (counted-overview (assoc two-project-fleet :live {"a" "t1"}))]
+
         (expect (pos? resolutions))
         (expect (= 1 (:live_count answer)))
         (expect (= 1
@@ -4443,28 +4447,37 @@
                         first
                         (#(get % "live_count")))))))
   (it "recounts when a session parks on a human"
-      (let [[_ _] (counted-overview two-project-fleet)
+      (let [[_ _]
+            (counted-overview two-project-fleet)
+
             [answer resolutions]
             (counted-overview (assoc two-project-fleet :waiting {"b" [:req]}))]
+
         (expect (pos? resolutions))
         (expect (= 1 (:awaiting_count answer)))))
   (it "recounts when a session joins the fleet"
-      (let [[_ _] (counted-overview two-project-fleet)
+      (let [[_ _]
+            (counted-overview two-project-fleet)
+
             [answer resolutions]
             (counted-overview (-> two-project-fleet
                                   (update :records conj {:id "c" :title "C" :created-at 100})
                                   (assoc-in [:roots "c"] "/repo/a")))]
+
         (expect (pos? resolutions))
         (expect (= 3 (:session_count answer)))))
   ;; A root MOVE is the one fact the fingerprint cannot see, so `change-root!`
   ;; invalidates the cache by hand.
   (it "recounts after a session's root moves under it"
-      (let [[_ _] (counted-overview two-project-fleet)
+      (let [[_ _]
+            (counted-overview two-project-fleet)
+
             [answer resolutions]
             (with-redefs-fn {#'lp/db-info (constantly nil)}
               (fn []
                 (state/change-root! "a" "/repo/b")
                 (counted-overview (assoc-in two-project-fleet [:roots "a"] "/repo/b"))))]
+
         (expect (pos? resolutions))
         (expect (= 1 (:project_count answer))))))
 

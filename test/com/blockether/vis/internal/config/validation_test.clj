@@ -32,7 +32,7 @@
                  "models" [{"name" "claude"
                             "context" 200000
                             "output_limit" 8192
-                            "is_tool_call" true
+                            "is_tool_calls_supported" true
                             "api_style" "anthropic"}]
                  "base_url" "https://api.anthropic.com"
                  "compatibility" "anthropic"
@@ -42,7 +42,7 @@
                  "extra_body" {"temperature" 0}
                  "is_stateless" true
                  ;; Provider-level veto: this endpoint refuses image content parts.
-                 "is_image_input" false
+                 "is_vision_supported" false
                  ;; Per-provider transport budget, narrowing the root `network`
                  ;; block for this one endpoint.
                  "network" {"timeout_ms" 120000

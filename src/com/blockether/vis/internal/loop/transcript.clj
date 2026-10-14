@@ -1166,7 +1166,7 @@
                                                (get artifacts (str (:iteration-id rec)))))]))
             compacted))))
 
-(defn- error->display
+(defn error->display
   "LLM-legible rendering of a form `:error` for the model wire. The human
    `:message` (which may already carry a multi-line babashka-style source
    excerpt with a caret) is shown with REAL newlines — NEVER an escaped

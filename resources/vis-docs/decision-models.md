@@ -25,7 +25,8 @@ heads. Then decide when a human must review a result before you rely on it.
   computers have enough memory, evaluate the larger
   [GLiNER2.5 Decide 1B model](#choose-and-train-a-gliner2-5-model).
 - **The GLiNER2.5 models do not answer your questions well enough, and you need no action
-  score.** Evaluate the [Decision 2.0 models](#choose-and-train-decision-2-0) on your own labels.
+  score.** Evaluate the [Decision 2.0 models](#choose-and-train-decision-2-0) and the
+  [D3 models](#choose-and-train-d3) on your own labels.
 - **The baseline does not fit your data.** [Train with your own
   labels](#train-locally-with-the-python-sdk), then [publish a verified version and
   select it](#publish-explicitly-and-select-a-version).
@@ -68,7 +69,7 @@ vis-agent decisions models download --model laya-typed-decisions --training
 
 The command prints the inference and training directories. It does not download Python dependencies.
 Install the vis-decisions runtime while you have network access.
-Its pinned environment supports Laya, GLiNER2.5 and Decision 2.0, so you do not need separate environments.
+Its pinned environment supports Laya, GLiNER2.5, Decision 2.0 and D3, so you do not need separate environments.
 Allow several gigabytes for checkpoints, FP32 bundles, dependencies and exported versions. Review model licenses and
 provenance in
 [`THIRD_PARTY_MODELS.md`](https://github.com/Blockether/vis/blob/main/THIRD_PARTY_MODELS.md).
@@ -128,9 +129,10 @@ GLiNER does not truncate the state or question. The gateway rejects a sequence a
 limit before model inference. A sequence exactly at the limit is accepted. Character counts
 cannot predict this boundary because each model uses its own tokenizer.
 
-Decision 2.0 has a fixed limit of 2,048 tokens for each question. The state, question type,
-instructions, option keys, option descriptions and prompt text share that budget. Decision 2.0
-also does not truncate input. The gateway rejects a longer question before model inference.
+Decision 2.0 Eos has a limit of 16,384 tokens for each question, and Kai has a limit of 8,192
+tokens. D3 has a limit of 16,384 tokens for each question. The state, question type, instructions,
+option keys, option descriptions and prompt text share that budget. These models also do not
+truncate input. The gateway rejects a longer question before model inference.
 
 For overlong input, `Decisions.infer` raises `GatewayError` with `status == 400` and
 `code == "input-too-long"`. Its `input_tokens` attribute gives the rejected sequence's token
@@ -186,7 +188,7 @@ To use training tools in Vis, add this [extension declaration](extension-package
 extensions:
   vis-decisions:
     source: https://github.com/Blockether/vis-decisions
-    version: "0.3.1"
+    version: "0.6.0"
 ```
 
 Then open a session in that project. For example, ask:
@@ -214,6 +216,13 @@ for **both** heads in `policy.json`:
 ```json
 {"min_decision_accuracy":0.8,"min_action_accuracy":0.8}
 ```
+
+To choose the training device, add `"device"` with `auto`, `cpu`, `mps` or `cuda`. With
+MPS, training stops before it starts if `PYTORCH_ENABLE_MPS_FALLBACK` is set, because that
+setting runs some work on the CPU without an error. If MPS does not support the model, set
+`"device": "cpu"`. To train small adapters instead of all encoder weights, add
+`"lora": {"rank": 16}` and keep `train_encoder` false. Each checkpoint stores full merged
+weights.
 
 Choose thresholds from your own evaluation, not the example values. Then train, export
 FP32 and reopen the graph for validation in one call:
@@ -360,9 +369,11 @@ Check these resources before you choose a model:
 - While a model is loaded, the gateway reserves 4,312 MB of memory for Eos and 4,096 MB for Kai.
   The default `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for one of these models. To
   keep both models loaded at the same time, set it to at least 8,408 MB.
-- On an Apple M4 Max with 4 CPU threads, a question near the 2,048-token limit took about
-  2.5 seconds with Eos. With Kai, it took about 3 seconds. The first question also waits about
-  1.3 seconds while the model loads.
+- On an Apple M4 Max with 4 CPU threads, a question of about 2,000 tokens took about 2 seconds
+  with Eos or Kai. At 8,192 tokens, Eos took about 8 seconds and Kai about 17 seconds. At
+  16,384 tokens, Eos took about 19 seconds. The first question also waits about 1.3 seconds
+  while the model loads.
+- A question at the token limit uses at most about 4.2 GB of memory with Eos and 3.3 GB with Kai.
 - Local training with the default batch size of 1 used a peak of about 16 GB of RAM with Eos.
   With Kai, it used about 12 GB. These peaks include the FP32 export. A larger batch needs more
   memory.
@@ -384,6 +395,69 @@ Set only `min_decision_accuracy` in `policy.json`. The trainer rejects a policy 
 `min_action_accuracy`. Then call `Trainer.train` as in the GLiNER2.5 example. The validation
 report and the gateway job metrics give `action_accuracy` as `null`. To train on the gateway, pass
 the model ID as `model_id`, as [Train on the gateway instead](#train-on-the-gateway-instead) shows.
+
+### Choose and train D3
+
+D3 (Decision 3.0) has two text decision models from vLLM Semantic Router. Each model reads the
+state, the instructions and all options in one pass. Then it gives each option a probability.
+
+| Model | Model ID | FP32 bundle download | Checkpoint download |
+| --- | --- | --- | --- |
+| D3 Edge | `d3-edge` | 1.03 GB | 0.80 GB |
+| D3 Lite | `d3-lite` | 1.56 GB | 1.20 GB |
+
+Evaluate both models and Decision 2.0 on your own labels. Then choose the model that answers them
+better.
+
+D3 answers `choice`, `score` and `noul` questions with the same answer fields as Decision 2.0. It
+has no action head, so its answers have no `action` field. A `choice` question needs 1 to 64
+options. A `score` question needs 2 to 10 distinct levels. For a `noul` question, you can describe
+`false` and `true` in `criteria`.
+
+The Vis bundles contain only the text model. The upstream models also read images and videos, but
+Vis does not send them. Vis runs the model in FP32, but the upstream runtime runs it in BF16. So
+the probabilities can differ from the upstream runtime in the third decimal place.
+
+Check these resources before you choose a model:
+
+- While a model is loaded, the gateway reserves 4,096 MB of memory for Edge and 4,308 MB for Lite.
+  The default `VIS_DECISION_MEMORY_BUDGET_MB` of 8,192 MB is enough for one of these models. To
+  keep both models loaded at the same time, set it to at least 8,404 MB.
+- On an Apple M4 Max with 4 CPU threads, a question of about 2,000 tokens took about 0.9 seconds
+  with Edge. With Lite, it took about 1.8 seconds. At 16,384 tokens, Edge took about 13 seconds
+  and Lite about 19 seconds. The first question also waits while the model loads: about
+  6 seconds for Edge and 10 seconds for Lite.
+- A question of 16,384 tokens uses at most about 3.2 GB of memory with Edge and 4.2 GB with Lite.
+  This is inside the reserved memory. Memory grows linearly with the question length.
+- Local training of all weights used a peak of about 7.6 GB of RAM with Edge and 11.4 GB with
+  Lite. This was with short rows and the default batch size of 1, and includes the FP32 export.
+  Long rows and a larger batch need more memory. LoRA and `max_input_tokens` reduce it.
+- Allow at least 10 GB of free disk for Edge and 14 GB for Lite. This holds the checkpoint, a
+  trained version and its upload archive.
+
+Download the FP32 bundle for the gateway. For training, also download the checkpoint. These
+commands download Edge. For Lite, use the model ID `d3-lite`:
+
+```bash
+vis-agent decisions models download --model d3-edge
+vis-agent decisions models download --model d3-edge --training
+```
+
+Then pass the model ID as `model` when you [ask from Python](#ask-from-python).
+
+The checkpoint contains the text weights and the 255-way answer-code readout of the upstream
+model, without the image and video encoder. Training raises the score of the answer code of the
+`target` option. With `lora` in `config.json`, training changes only small adapters. Each saved
+checkpoint merges them into the full weights, and the trained version uses the same FP32 export.
+
+Training uses the same JSONL rows as GLiNER2.5. The `action` field is optional and not used. For a
+`noul` question, set `target` to `0` for false or `1` for true. Use the GLiNER2.5 training settings,
+for example `{"max_steps":100,"encoder_lr":0.00001,"task_lr":0.0005,"lora":{"rank":16}}`.
+`max_input_tokens` can be at most 16,384. D3 training needs vis-decisions 0.6.0 or newer.
+
+As for Decision 2.0, set only `min_decision_accuracy` in `policy.json`. The validation report and
+the gateway job metrics give `action_accuracy` as `null`. To train on the gateway, pass the model
+ID as `model_id`, as [Train on the gateway instead](#train-on-the-gateway-instead) shows.
 
 ### Resume or continue training
 
@@ -506,10 +580,11 @@ print(decisions.get_training_job(job["job_id"]))
 # after completion, it deletes the private resumable checkpoint.
 ```
 
-For GLiNER or Decision 2.0, pass a model ID from the
-[GLiNER2.5 table](#choose-and-train-a-gliner2-5-model) or the
-[Decision 2.0 table](#choose-and-train-decision-2-0) to `decisions.start_training(...)`. For
-example, pass `model_id="gliner2.5-multi"` or `model_id="decision2.0-kai-0.6b"` with approved data
+For GLiNER, Decision 2.0 or D3, pass a model ID from the
+[GLiNER2.5 table](#choose-and-train-a-gliner2-5-model), the
+[Decision 2.0 table](#choose-and-train-decision-2-0) or the [D3 table](#choose-and-train-d3) to
+`decisions.start_training(...)`. For example, pass `model_id="gliner2.5-multi"`,
+`model_id="decision2.0-kai-0.6b"` or `model_id="d3-edge"` with approved data
 and a GLiNER training config. Without `model_id`, the default stays Laya. Job status includes
 `model_id`, stage, progress, metrics and the final `model_ref`.
 

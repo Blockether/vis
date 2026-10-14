@@ -1,0 +1,22 @@
+{
+  "want": {
+    "issue-events.jsonl": [
+      "{\"op\": \"find\", \"repo\": \"blockether/vis\"}",
+      "{\"number\": 239, \"op\": \"create\", \"url\": \"https://github.com/Blockether/vis/issues/239\"}"
+    ]
+  },
+  "wantnot": {
+    "issue-events.jsonl": [
+      "\"number\": 240"
+    ]
+  },
+  "want_answer": [
+    "https://github.com/Blockether/vis/issues/239"
+  ],
+  "want_tools": [
+    "vis.issue_find",
+    "vis.issue_create"
+  ],
+  "max_form_output_chars": 6000,
+  "want_requested_route": true
+}

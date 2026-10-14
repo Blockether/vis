@@ -62,22 +62,21 @@
                    (expect (= (paths/unixify (str home "/projects/vis"))
                               (paths/unixify (paths/expand-home abbreviated)))))))
 
-(defdescribe compact-path-text-test
-             ;; #306: extension diagnostics use this so shared terminal output never names the user.
-             (it "shows home as `~` and the root as relative inside text"
-                 (expect (= "File \"~/.vis/x.py\", line 3"
-                            (paths/compact-path-text nil "File \"/home/u/.vis/x.py\", line 3" "/home/u")))
-                 (expect (= "edit src/a.clj in ~"
-                            (paths/compact-path-text "/home/u/p"
-                                                     "edit /home/u/p/src/a.clj in /home/u"
-                                                     "/home/u"))))
-             (it "leaves sibling names, URL paths and non-strings unchanged"
-                 (expect (= "/home/u2/x and https://example.test/home/u/x"
-                            (paths/compact-path-text nil
-                                                     "/home/u2/x and https://example.test/home/u/x"
-                                                     "/home/u")))
-                 (expect (nil? (paths/compact-path-text nil nil "/home/u")))
-                 (expect (= "/home/u/x" (paths/compact-path-text nil "/home/u/x" nil)))))
+(defdescribe
+  compact-path-text-test
+  ;; #306: extension diagnostics use this so shared terminal output never names the user.
+  (it "shows home as `~` and the root as relative inside text"
+      (expect (= "File \"~/.vis/x.py\", line 3"
+                 (paths/compact-path-text nil "File \"/home/u/.vis/x.py\", line 3" "/home/u")))
+      (expect
+        (= "edit src/a.clj in ~"
+           (paths/compact-path-text "/home/u/p" "edit /home/u/p/src/a.clj in /home/u" "/home/u"))))
+  (it "leaves sibling names, URL paths and non-strings unchanged"
+      (expect
+        (= "/home/u2/x and https://example.test/home/u/x"
+           (paths/compact-path-text nil "/home/u2/x and https://example.test/home/u/x" "/home/u")))
+      (expect (nil? (paths/compact-path-text nil nil "/home/u")))
+      (expect (= "/home/u/x" (paths/compact-path-text nil "/home/u/x" nil)))))
 
 (defdescribe shell-path-test
              ;; #306: a command printed in an error must still work when it is pasted into a shell.

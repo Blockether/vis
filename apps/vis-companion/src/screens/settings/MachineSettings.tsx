@@ -16,7 +16,10 @@ import type {
   McpServer,
   McpServerInput,
   McpTestResult,
+  SettingDecidedIn,
   SettingValue,
+  SettingsProjectExtensions,
+  SettingsScope,
   SpeechPrefs,
   Toggle,
   ToggleGroup,
@@ -106,9 +109,36 @@ export function StringSetting({
   const saved = typeof toggle.value === 'string' ? toggle.value : '';
   const [draft, setDraft] = useState(saved);
   const changed = draft !== saved;
+  const multiline = toggle.multiline || toggle.editor === 'multiline';
+  const actions = (changed || busy) && (
+    <div className={`flex min-w-0 flex-wrap items-center gap-2 ${multiline ? '' : 'col-span-2 justify-end'}`}>
+      <Button
+        type="submit"
+        density="panel"
+        disabled={busy || !draft.trim()}
+        aria-busy={busy}
+      >
+        {busy ? 'Saving…' : 'Save'}
+      </Button>
+      {changed && (
+        <Button
+          type="button"
+          variant="secondary"
+          density="panel"
+          disabled={busy}
+          onClick={() => setDraft(saved)}
+        >
+          Cancel
+        </Button>
+      )}
+    </div>
+  );
   return (
     <form
-      className="flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4"
+      // A one-line value sits on the right, like the switch and picker rows.
+      className={multiline
+        ? 'flex min-w-0 flex-col gap-2 px-3 py-2 sm:px-4'
+        : 'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 py-2 sm:px-4'}
       onSubmit={(event) => {
         event.preventDefault();
         if (!busy && !disabled && changed && draft.trim()) {
@@ -118,50 +148,29 @@ export function StringSetting({
         }
       }}
     >
-      <div>
-        <Text as="p" variant="label">
+      <div className="min-w-0">
+        <Text as="p" variant="label" className="break-words">
           {toggle.label}
         </Text>
         {toggle.description && (
-          <Text as="p" variant="description" className="mt-0.5">
+          <Text as="p" variant="description" className="mt-0.5 break-words">
             {toggle.description}
           </Text>
         )}
       </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {toggle.multiline || toggle.editor === 'multiline' ? <textarea aria-label={toggle.label} value={draft} disabled={busy || disabled}
-          className="min-h-24 w-full border border-dialog-edge bg-input p-2 font-mono text-meta"
-          onChange={(event) => setDraft(event.target.value)} /> : <Input
+      {multiline ? <textarea aria-label={toggle.label} value={draft} disabled={busy || disabled}
+        className="min-h-24 w-full border border-dialog-edge bg-input p-2 font-mono text-meta"
+        onChange={(event) => setDraft(event.target.value)} /> : <div className="w-40 sm:w-56">
+        <Input
           aria-label={toggle.label}
           value={draft}
           maxLength={toggle.max_length}
           disabled={busy || disabled}
           required
-          className="flex-1"
           onChange={(event) => setDraft(event.target.value)}
-        />}
-        {(changed || busy) && (
-          <Button
-            type="submit"
-            density="panel"
-            disabled={busy || !draft.trim()}
-            aria-busy={busy}
-          >
-            {busy ? 'Saving…' : 'Save'}
-          </Button>
-        )}
-        {changed && (
-          <Button
-            type="button"
-            variant="secondary"
-            density="panel"
-            disabled={busy}
-            onClick={() => setDraft(saved)}
-          >
-            Cancel
-          </Button>
-        )}
-      </div>
+        />
+      </div>}
+      {actions}
     </form>
   );
 }
@@ -271,12 +280,23 @@ export function ValueSetting({
   );
 }
 
+/** The settings dialog name of a scope: global settings are Machine settings. */
+export function scopeTitle(scope: SettingsScope): string {
+  return scope === 'global' ? 'Machine' : `${scope.charAt(0).toUpperCase()}${scope.slice(1)}`;
+}
+
 /**
- * Why a more specific scope decides this row for the open session, or null. Such a
- * row stays locked: changing it here would not change what that session uses.
+ * Why this row is read-only here, or null. A wider scope decides an inherited extension
+ * setting (#373). A more specific scope can also decide the row for the open session:
+ * changing it here would not change what that session uses.
  */
 export function lockNote(toggle: Toggle): string | null {
-  if (toggle.inheritance === 'restrict' && toggle.enabled === false && toggle.source
+  if (toggle.decided_in) {
+    return `Set in ${scopeTitle(toggle.decided_in.scope)} settings. You cannot change it per ${toggle.scope ?? 'scope'}.`;
+  }
+  // A restricted boolean denies with false, a restricted enum with its first choice.
+  const denied = toggle.type === 'enum' ? toggle.value === toggle.choices?.[0] : toggle.enabled === false;
+  if (toggle.inheritance === 'restrict' && denied && toggle.source
       && toggle.source !== 'default' && toggle.source !== toggle.scope) {
     return `Locked: ${toggle.source} settings deny this permission. This scope cannot allow it.`;
   }
@@ -320,7 +340,7 @@ export function settingTree(
  * The same value row is used for gateway and scoped settings. Only scoped settings pass
  * `onInherit`: global settings are the root scope, so their rows show no provenance or reset.
  */
-export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: {
+export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit, onOpenSettings }: {
   toggle: Toggle;
   busy: boolean;
   /** Only on the row that names an extension: the label is its heading, with its scope beside it. */
@@ -328,6 +348,8 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: 
   onToggle: () => void;
   onPick: (value: SettingValue) => Promise<boolean>;
   onInherit?: () => void;
+  /** Opens the settings that decide a read-only inherited row. */
+  onOpenSettings?: (where: SettingDecidedIn) => void;
 }) {
   const lock = lockNote(toggle);
   return (
@@ -354,11 +376,17 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit }: 
         </div>
       )}
       {lock && (
-        <div className="px-3 pb-2 sm:px-4">
-          <Text as="p" variant="description" className="break-words">{lock}</Text>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
+          <Text as="p" variant="description" className="min-w-0 break-words">{lock}</Text>
+          {toggle.decided_in && onOpenSettings && (
+            <Button variant="secondary" density="panel" onClick={() => onOpenSettings(toggle.decided_in!)}>
+              Open {scopeTitle(toggle.decided_in.scope)} settings
+            </Button>
+          )}
         </div>
       )}
-      {onInherit && (
+      {/* The lock note of an inherited extension row already names the scope that decides it. */}
+      {onInherit && !toggle.decided_in && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
           <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
           {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy || (lock !== null && toggle.inheritance !== 'restrict')} onClick={onInherit}>Use inherited value</Button>}
@@ -407,6 +435,8 @@ export function MachineSettings({
     () => client.cachedSettings()?.groups ?? null,
   );
   const [err, setErr] = useState<string | null>(null);
+  // The project extensions of the open session; a machine reload report names them (#373).
+  const [projectExtensions, setProjectExtensions] = useState<SettingsProjectExtensions | undefined>();
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<'unreachable' | 'unauthorized' | 'incompatible' | null>(
     null,
@@ -422,6 +452,7 @@ export function MachineSettings({
         setErr(null);
         setFailure(null);
         setGroups(settings.groups ?? []);
+        setProjectExtensions(settings.project_extensions);
       } catch (e) {
         if (signal?.aborted) return;
         // A token-gated gateway that's actually up answers /healthz (so the list
@@ -463,6 +494,8 @@ export function MachineSettings({
           toggles: replaceSetting(group.toggles, updated),
         })) ?? null,
     );
+    // The value is saved, but the extension could not act on the change.
+    if (updated.change_error) setErr(updated.change_error);
   }
 
   async function flip(toggle: Toggle) {
@@ -627,8 +660,8 @@ export function MachineSettings({
           <SettingsSection title={tools?.title ?? 'Tools'}>
             {tools && settingRows(tools)}
             <McpServersPanel client={client} />
-            <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} onRefresh={load}
-              renderSetting={settingRow} />
+            <ExtensionsPanel client={client} groups={groups.filter(isExtensionGroup)} projectExtensions={projectExtensions}
+              onRefresh={load} renderSetting={settingRow} />
           </SettingsSection>
           <AutomationsPanel client={client} gatewayUrl={gateway.url} />
         </>

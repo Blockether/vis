@@ -43,13 +43,18 @@
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.validation :as config-validation]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
+            [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
+            [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension.aggregate :as aggregate]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.channel.notifications :as notifications]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -555,6 +560,19 @@
   [g n f]
   (vswap! g assoc n f))
 
+(defn- session-read
+  "Run one canonical session read for `vis.<verb>` and answer its data as JSON.
+   It is the sandbox read without the `introspection` toggle: extensions are trusted
+   code, and the toggle gates only the model's tools."
+  [verb read arg]
+  (let [env extension/*current-environment*]
+    (when-not (and (:session-id env) (:db-info env))
+      (throw (ex-info (str "vis." verb " needs a bound Vis session") {:error :session-not-bound})))
+    (let [envelope (read env arg)]
+      (when-not (:success? envelope)
+        (throw (ex-info (str "vis." verb " failed") {:error :session-read-failed})))
+      (wire/json-str (:result envelope)))))
+
 (defn ^:no-doc host-doors
   "The `__vis_host_*` callables an extension context receives as `{name fn}`.
    The bootstrap and inert checker derive their members from these bindings.
@@ -603,6 +621,14 @@
                                                   (:workspace/root env))))
                   (throw (ex-info "vis.workspace_root needs a session workspace"
                                   {:error :workspace-root-unavailable}))))))
+    (put! g
+          "__vis_host_read_session__"
+          (fn [target]
+            (session-read "read_session" introspection/read-session target)))
+    (put! g
+          "__vis_host_list_sessions__"
+          (fn [search]
+            (session-read "list_sessions" introspection/list-sessions search)))
     (put! g
           "__vis_host_council_wake__"
           (fn [opts]
@@ -732,6 +758,8 @@
                                    (str/join ", " (sort (keys resolved)))
                                    " resolved")})
               (json/write-json-str resolved))))
+    (doseq [[n f] (shim-attach/extension-host-doors)]
+      (put! g n f))
     @g))
 
 (defn ^:no-doc bind-host!
@@ -1688,7 +1716,7 @@
   "One enriched model row from Python -> the shape svar's router reads. Keys take
    the mechanical `wire/engine-key` inverse; the handful svar itself spells with a
    trailing `?` then move through `config/svar-wire->runtime`, svar's OWN named
-   table (`is_tool_call` -> `:tool-call?`). A foreign contract gets an explicit
+   table (`is_tool_calls_supported` -> `:tool-call?`). A foreign contract gets an explicit
    table at one seam — it never gets a convention applied to every other key.
 
    A declared `pricing` is also kept as `:declared-pricing`. svar's catalog gives
@@ -1700,11 +1728,19 @@
                          (if (contains? m mechanical)
                            (assoc (dissoc m mechanical) runtime-k (get m mechanical))
                            m)))
-                     (decode {:pricing as-pricing} row)
+                     (config/canonical-wire-keys (decode {:pricing as-pricing} row) wire/engine-key)
                      config/svar-wire->runtime)]
-    (if-let [pricing (:pricing m)]
-      (assoc m :declared-pricing pricing)
-      (dissoc m :pricing))))
+    (cond-> m
+      ;; svar reads image input on a model as `:vision?`.
+      (contains? m :image-input?)
+      (-> (assoc :vision? (boolean (:image-input? m)))
+          (dissoc :image-input?))
+
+      (:pricing m)
+      (assoc :declared-pricing (:pricing m))
+
+      (not (:pricing m))
+      (dissoc :pricing))))
 
 (defn- enrich-models-fn-adapter
   "Wrap a Python `enrich_models(provider, router_opts)` callable as
@@ -1741,6 +1777,20 @@
            (tel/log! {:level :warn
                       :id ::provider-fn-failed
                       :data {:extension ext-name :error (ex-message t)}})))
+    nil))
+
+(defn- on-change-adapter
+  "Wrap a Python `on_change(old, new, scope)` callable as a setting's `:on-change-fn`.
+   Vis calls it once after a write changes the effective value. An error propagates,
+   so the settings write reports it to the person and logs it."
+  [ext-name ctx pyfn]
+  (fn [{:keys [old new scope]}]
+    (try (call-py-ext ext-name nil ctx pyfn [old new scope])
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::setting-change-failed
+                      :data {:extension ext-name :error (ex-message t)}})
+           (throw t)))
     nil))
 
 (defn- ->provider-entry
@@ -1857,7 +1907,11 @@
                                     (assoc :parent (get setting "parent"))
 
                                     (get setting "choices")
-                                    (assoc :choices (vec (get setting "choices")))))
+                                    (assoc :choices (vec (get setting "choices")))
+
+                                    (fn? (get setting "on_change"))
+                                    (assoc :on-change-fn
+                                      (on-change-adapter ext-name ctx (get setting "on_change")))))
                                 (get reg "settings"))
              :ext/source-nses ['com.blockether.vis.internal.python.extensions]
              :ext/engine (cond-> {:ext.engine/symbols symbols :ext.engine/exact-symbol-names? true}
@@ -2045,6 +2099,37 @@
   (let [ctx (build-context "extension-package")]
     (try (exec-in! ctx (classpath-src "blockether/vis/extension_package.py"))
          (run-in ctx expression)
+         (finally (discard-context! ctx)))))
+
+(def ^:no-doc evals-modules
+  "The modules of the bundled SDK package `blockether.vis.evals` that its
+   `_gateway` module uses, by file name. The native image has no resource
+   listing, so this vector names each file."
+  ["_gateway" "bench" "compare" "harbor" "labels" "leaderboard" "repeats" "stats"])
+
+(defn evals-call
+  "Run evaluation `operation` of the bundled SDK on the JSON data `body`.
+   Answer the envelope of `blockether.vis.evals._gateway.handle`: a map with
+   `\"result\"`, or with `\"error\"` when the body is not valid."
+  [operation body]
+  (let [sources
+        (into {}
+              (map (fn [module]
+                     [module (classpath-src (str "blockether/vis/evals/" module ".py"))]))
+              evals-modules)
+
+        ctx
+        (build-context "evals")]
+
+    (try (exec-in! ctx (classpath-src "vis-guest/vis_evals.py"))
+         (run-in ctx
+                 (str "evals_call("
+                      (python-string-literal (json/write-json-str sources))
+                      ", "
+                      (python-string-literal operation)
+                      ", "
+                      (python-string-literal (json/write-json-str body))
+                      ")"))
          (finally (discard-context! ctx)))))
 
 (defn- package-version
@@ -2375,21 +2460,39 @@
          {:dir dest :code-sha (code-sha dest)}
          (catch Throwable t (delete-tree! dest) (throw t)))))
 
+(defn- shared-environment?
+  "True when the project's `python.environment` selects shared packages for `project`.
+   The setting covers uv projects inside the project tree only."
+  [project-root ^File project]
+  (boolean (and project-root
+                (.startsWith (.toPath (.getCanonicalFile project))
+                             (.toPath (.getCanonicalFile (io/file project-root))))
+                (binding [workspace/*workspace-root* project-root]
+                  (python-runtime/shared-environment?)))))
+
 (defn- prepare-root!
   "Snapshot sources and prepare dependencies for an admitted project catalog.
    Unmanaged explicit-directory scans prepare missing environments only when requested.
-   A package environment this pass's sync already checked is reused, not checked again."
+   A package environment this pass's sync already checked is reused, not checked again.
+   A project with `python.environment: shared` prepares its uv projects in shared packages."
   [{:keys [roots dependencies project automatic? package-metadata sync-projects? site-packages
            project-root]}]
   (let [frozen (freeze-root! roots)]
-    (try (let [packages (when (and project
-                                   (or sync-projects?
-                                       (python-runtime/project-environment-exists? project)))
+    (try (let [prepare? (or automatic? sync-projects?)
+               packages (when project
                           (or (get site-packages (.getCanonicalPath ^File project))
-                              (str ((if (or automatic? sync-projects?)
-                                      python-runtime/ensure-project!
-                                      python-runtime/prepared-project)
-                                     project))))]
+                              (cond (shared-environment? project-root project)
+                                    (str ((if prepare?
+                                            python-runtime/ensure-shared-project!
+                                            python-runtime/prepared-shared-project)
+                                           project))
+                                    (or sync-projects?
+                                        (python-runtime/project-environment-exists? project))
+                                    (str ((if prepare?
+                                            python-runtime/ensure-project!
+                                            python-runtime/prepared-project)
+                                           project)))))]
+
            (when (and (not project) (seq dependencies))
              (let [result (try (python-runtime/pip-install! {:target (runtime/packages-dir)
                                                              :upgrade? true}
@@ -2957,6 +3060,66 @@
                      diffed-config-keys)]
     (when (seq tokens) (str/join ", " tokens))))
 
+(defn- reload-report
+  "Summary line and details of one `/reload` from its typed data (Vis #363).
+   The line counts what changed and names failures; the body lists each part."
+  [{:keys [loaded failed scopes configuration-changes prompt-templates failed-hooks context-error
+           duration-ms]}]
+  (let [counted
+        (fn [n word]
+          (str n " " word (when-not (= 1 (long n)) "s")))
+
+        summary
+        (cond-> ["Reloaded" (counted loaded "extension")]
+          (pos? (long failed))
+          (conj (str failed " failed"))
+
+          configuration-changes
+          (conj (str "configuration changed: " configuration-changes))
+
+          prompt-templates
+          (conj (counted prompt-templates "prompt template"))
+
+          (seq failed-hooks)
+          (conj (str (counted (count failed-hooks) "reload hook") " failed"))
+
+          context-error
+          (conj "context files failed")
+
+          duration-ms
+          (conj (fmt/format-duration duration-ms)))
+
+        details
+        (concat (for [{:keys [scope dirs loaded failed extensions]} scopes]
+                  ;; Name the scanned folders, so "0 loaded" shows WHERE Vis looked (Vis #365).
+                  (str "- Extensions ("
+                       (name scope)
+                       "): "
+                       loaded
+                       " loaded"
+                       (when (pos? (long failed)) (str ", " failed " failed"))
+                       (when (seq extensions) (str " — " (str/join ", " extensions)))
+                       (when (seq dirs)
+                         (str " (scanned " (str/join ", " (map paths/abbreviate-home dirs)) ")"))))
+                [(str
+                   "- Configuration: "
+                   (if configuration-changes (str "changed " configuration-changes) "unchanged"))]
+                (when prompt-templates [(str "- Prompt templates: " prompt-templates)])
+                (when (seq failed-hooks)
+                  [(str "- Reload hooks failed: " (str/join ", " (map str failed-hooks)))])
+                [(str "- Skills, agents and context files: "
+                      (if context-error
+                        (str "failed — " (util/redact-secret-text context-error))
+                        "rescanned"))])
+
+        failures
+        (when (pos? (long failed))
+          (str "Vis remains available. Healthy extensions and core tools still work.\n\n"
+               (str/join "\n\n" (map failure-summary (load-failures)))))]
+
+    {:slash/title (str/join " · " summary)
+     :slash/body (str/join "\n\n" (remove nil? [(str/join "\n" details) failures]))}))
+
 (defn- reload-slash
   [{argv :command/argv}]
   (if (seq argv)
@@ -2965,7 +3128,10 @@
     ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
     ;; templates, and any extension-owned discovery cache registered as a
     ;; reload hook (harness skills/agents).
-    (let [{:keys [loaded failed]}
+    (let [started
+          (util/now-ms)
+
+          {:keys [loaded failed scopes]}
           (reload-python-extensions!)
 
           old-config
@@ -3005,20 +3171,21 @@
           (try (agents/reload!) nil (catch Throwable t (ex-message t)))
 
           template-cnt
-          (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
+          (try (count (prompt-templates/reload!)) (catch Throwable _ nil))
 
-      {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
-       :slash/title
-       (str "Reloaded — configuration" (when cfg-changes (str " (" cfg-changes ")"))
-            "; Python extensions: " loaded
-            " loaded" (when (pos? (long failed)) (str ", " failed " failed — see details below"))
-            "; skills/agents, prompt templates" (when template-cnt (str " (" template-cnt ")"))
-            ", and context files rescanned" (when (seq failed-hooks)
-                                              (str " — hook failures: "
-                                                   (str/join ", " (map str failed-hooks)))))
-       :slash/body (when (pos? (long failed))
-                     (str "Vis remains available. Healthy extensions and core tools still work.\n\n"
-                          (str/join "\n\n" (map failure-summary (load-failures)))))})))
+          data
+          {:loaded loaded
+           :failed failed
+           :scopes (vec scopes)
+           :configuration-changes cfg-changes
+           :prompt-templates template-cnt
+           :failed-hooks failed-hooks
+           :context-error guidance
+           :duration-ms (- (long (util/now-ms)) (long started))}]
+
+      (assoc (reload-report data)
+        :slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
+        :slash/data data))))
 
 (def ^:private http-methods
   #{"GET" "HEAD" "POST" "PUT" "PATCH" "DELETE" "OPTIONS" "TRACE" "CONNECT"})
@@ -3183,6 +3350,49 @@
          :slash/body (render-probe parsed report)
          :slash/data report}))))
 
+(defn- editor-sdk-dirs
+  "Package directories where editors read SDK types: each `site-packages` of the project
+   `.venv`, then the shared Vis packages."
+  [project-root]
+  (concat (when project-root
+            (keep (fn [^File lib]
+                    (let [packages (io/file lib "site-packages")]
+                      (when (.isDirectory packages) packages)))
+                  (sort (.listFiles (io/file project-root ".venv" "lib")))))
+          [(io/file (runtime/packages-dir))]))
+
+(defn- sdk-version-messages
+  "Doctor messages for each `vis-agent` wheel in `dirs` that is not the `bundled` SDK.
+   Vis runs its bundled SDK, so only editor types differ (#375). A build without a
+   published SDK (`dev` or a `+dirty` local version) gets no messages."
+  [bundled dirs]
+  (when (and (re-find #"^\d" (str bundled)) (not (str/includes? bundled "+")))
+    (for [^File dir
+          dirs
+
+          :when (.isDirectory dir)
+          ^File info
+          (sort (.listFiles dir))
+
+          :let [installed
+                (second (re-matches #"vis_agent-(.+)\.dist-info" (.getName info)))]
+          :when (and installed (not= installed bundled))
+          :let [newer?
+                (gateway-contract/newer-release? installed bundled)]]
+
+      {:level (if newer? :warn :info)
+       :check-id ::editor-sdk
+       :message (str "Editor types come from vis-agent " installed
+                     " in " (.getPath dir)
+                     ", but Vis runs its bundled SDK " bundled
+                     "." (when newer? " Editors accept SDK APIs that this Vis does not have."))
+       :remediation (str
+                      "Install vis-agent=="
+                      bundled
+                      " in that environment. In a uv project, set this version in pyproject.toml, "
+                      "then run `uv lock --upgrade-package vis-agent` and `uv sync`. "
+                      "See extension-api.md#editor-types.")})))
+
 (defn- doctor-fn
   [env]
   (extension/with-context
@@ -3198,7 +3408,9 @@
 
                      {:level :info
                       :check-id ::load
-                      :message (str "Python extension '" ext-name "' loaded from " path)}))))))
+                      :message (str "Python extension '" ext-name "' loaded from " path)})
+                   (sdk-version-messages (gateway-runtime/sdk-version)
+                                         (editor-sdk-dirs (workspace/cwd-root))))))))
 
 (defonce ^:private loader-registered? (atom false))
 

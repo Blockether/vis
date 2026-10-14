@@ -13,6 +13,8 @@ when you want settings shared across projects or checked into a repository.
   the same key.
 - **One session must not use your global or project setup, or some extensions.** Start it with
   the flags in [Leave out global or project configuration](#leave-out-global-or-project-configuration).
+- **One session needs only some tools of an extension, such as `py.lint_code` but not
+  `py.repl_start`.** Start it with the flag in [Choose single tools](#choose-single-tools).
 - **One session or group needs different behavior.** Open its
   [scoped settings](#project-group-and-session-settings) instead of changing the
   gateway defaults.
@@ -30,6 +32,8 @@ when you want settings shared across projects or checked into a repository.
 - **Python HTTPS requests fail a strict certificate check, or packages must come
   from a private index.** See [Python TLS validation](#python-tls-validation) and
   [Python package index](#python-package-index).
+- **Your project installs its Python dependencies only into shared packages.** Let its
+  extensions use them too with [Python extension environment](#python-extension-environment).
 - **Your own program must read or change settings.** Read [Configuration API](configuration-api.md).
 
 Use [Project instructions](project-instructions.md) for rules about working in your
@@ -159,6 +163,46 @@ extension list. A flag wins over its variable.
 A session cannot change the files of a tier that it leaves out. Vis refuses the change with a 409
 error. To start such a session from a program, see [Sessions API](sessions-api.md#create-a-session).
 
+### Choose single tools
+
+Use `--tools` when a session needs an extension, but not all of its tools:
+
+```bash
+vis-agent tui --tools py.lint_code,py.repl_eval   # only these two tools of py
+vis-agent tui --tools -py.repl_stop               # every tool except py.repl_stop
+vis-agent tui --tools 'py.repl_*'                 # only the REPL tools of py
+```
+
+A tool name is the name that the agent calls, such as `py.lint_code`. A list of names keeps only
+those tools of the extensions that they name. Other extensions keep all of their tools. A list of
+`-names` turns only those tools off. Do not mix the two forms in one list. A `*` matches any part
+of a name, as in `py.repl_*`.
+
+Vis refuses an unknown name before the session starts, and the error lists the tools of that
+extension. For scripts, set `VIS_TOOLS` to a tool list for new sessions. The `--tools` flag wins over
+the variable.
+
+### Change the tools of a saved session
+
+A saved session keeps its tool list when you resume it. To change the list, give `--tools` again
+when you open the session:
+
+```bash
+vis-agent --session-id 6d78b3f2 --tools -py.repl_stop "Run the tests"
+vis-agent tui --continue --tools py.lint_code,py.repl_eval
+vis-agent tui --resume --tools '*'                # every tool on again
+```
+
+The new list replaces the saved list, and the session keeps it for later resumes. In the terminal,
+the list applies to the first saved session that you open. That is the session of `--session-id` or
+`--continue`, or the session that you pick after `--resume`. `VIS_TOOLS` never changes a saved
+session. Programs can change the list at any time, also during a turn, as shown in
+[Sessions API](sessions-api.md#change-the-tools-of-a-session). A busy session gets the new list at
+its next step.
+
+The choice applies only to tools of extensions with an Auto/On/Off setting. A tool that is off is not
+in the session's Python sandbox. The extension's prompt text can still name it.
+
 ## Providers and models
 
 The UI provides presets and sign-in for OpenAI, Anthropic (API and coding
@@ -180,7 +224,7 @@ providers:
       - name: qwen3-coder-30b
         context: 262144          # input window
         output_limit: 32768      # max output tokens
-        is_tool_call: true
+        is_tool_calls_supported: true
   - id: my-responses-gateway
     compatibility: openai-responses
     base_url: https://gateway.example.com/v1
@@ -193,11 +237,16 @@ providers:
 
 Provider keys: `compatibility`, `base_url`, `api_key`, `api_key_command`,
 `responses_path`, `api_style`, `llm_headers`, `extra_body`, `is_stateless`,
-`is_image_input`. Providers with managed sign-in (Copilot, coding plans) need
-no `api_key`.
+`is_vision_supported`. Providers with managed sign-in (Copilot, coding plans)
+need no `api_key`.
 
-Model keys: `context`, `output_limit`, `is_tool_call`, `api_style`. Filling in
-the limits makes context checks and output capping accurate.
+Model keys: `context`, `output_limit`, `is_tool_calls_supported`,
+`is_vision_supported`, `api_style`. Filling in the limits makes context checks
+and output capping accurate.
+
+Vis also reads the old names `is_tool_call` and `is_image_input`. When a file
+has the old name and the new name, the new name wins. Vis writes only the new
+names.
 
 Models are offered in the order you list them. Models discovered from the
 provider are appended after them.
@@ -293,9 +342,30 @@ whole-value reference remains `${NAME}`, not the resolved secret.
 
 ### Images
 
-Images produced in a session — matplotlib figures and `image/*` attachments —
-are replayed to the model only when its name is known to support vision. A
-text-only or unknown model gets the text results and no image block.
+Attached pictures, matplotlib figures and other `image/*` attachments go to the
+model only when it reads images. The model catalog decides this for known
+models. Set `is_vision_supported` on a model to decide it yourself:
+
+```yaml
+providers:
+  - id: my-gateway
+    compatibility: openai
+    base_url: https://gateway.example.com/v1
+    models:
+      - name: qwen2.5-vl-72b
+        is_vision_supported: true     # reads images
+      - name: qwen3-coder-30b
+        is_vision_supported: false    # gets a text description of each picture
+```
+
+- `true`: Vis sends the pictures. Use it for a local or private model that the
+  catalog does not know.
+- `false`: Vis sends a text description of each picture.
+- Not set: the model catalog decides.
+
+`is_vision_supported: false` on a provider blocks images for all its models,
+also when a model says `true`. A provider extension sets the same value with
+`ProviderModel(is_vision_supported=...)`.
 
 ### GitHub Copilot
 
@@ -605,6 +675,24 @@ packages. An [editable package install](extension-development.md) supplies its o
 through `.pth` files or backend hooks, so it does not need these layout overrides. Import roots do
 not grant filesystem permissions or install dependencies.
 
+## Python extension environment
+
+By default, each uv project of a project extension gets its own environment, normally `.venv`.
+If your project installs its dependencies with `vis-agent python --shared uv sync`, use the
+shared packages for its extensions too:
+
+```yaml
+# vis.yml
+python:
+  environment: shared
+```
+
+The value is `project` (the default) or `shared`. With `shared`, Vis prepares the extension
+projects inside the project directory like `vis-agent python --shared uv sync`, and their workers
+import `~/.vis/python/packages`. Vis does not create or read `.venv` for them. Installed extension
+packages and global extensions keep their own environments. Run `/reload` after you change the
+value. See [Use shared packages for project extensions](extension-development.md#use-shared-packages-for-project-extensions).
+
 ## MCP servers
 
 Servers you add from the UI, the API or `vis-agent gateway mcp` are written to
@@ -731,7 +819,13 @@ switchable here.
 
 Provider setup, credentials, OAuth and shared MCP start/stop operations stay
 global. Theme and other device preferences remain local to the app or terminal.
-Only settings declared for the selected scope appear in its catalog.
+Only settings declared for the selected scope appear in its catalog, with one
+exception.
+
+An extension setting that a wider scope decides shows read-only. Its row names
+that scope and opens its settings, for example Machine settings. Machine
+settings also name the project extensions of the current session. Reload them
+in Project settings.
 
 ### Scoped MCP servers
 

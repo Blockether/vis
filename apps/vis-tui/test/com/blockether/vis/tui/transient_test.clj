@@ -924,27 +924,52 @@
 ;; the API-key band's own guidance line lost the URL that answers "where do I get
 ;; the key?", though the lanterna fork word-wraps text by the very rule the screen
 ;; paints by.
-(defdescribe transient-heading-wrap-test
-             (it "word-wraps a heading too wide for its pane instead of ellipsizing it"
-                 (let [hint
-                       (str "Entitlement is verified against https://gateway.example.com/v1;"
-                            " only a gateway that accepts the token registers this provider.")
+(defdescribe
+  transient-heading-wrap-test
+  (it "word-wraps a heading too wide for its pane instead of ellipsizing it"
+      (let [hint
+            (str "Entitlement is verified against https://gateway.example.com/v1;"
+                 " only a gateway that accepts the token registers this provider.")
 
-                       spec
-                       {:groups [{:title hint
-                                  :items [{:key "k" :type :option :id :api-key :label "API key"}]}
-                                 {:title "Authenticate"
-                                  :items [{:key "a" :type :action :id :submit :label "Sign in"}]}]}
+            spec
+            {:groups [{:title hint :items [{:key "k" :type :option :id :api-key :label "API key"}]}
+                      {:title "Authenticate"
+                       :items [{:key "a" :type :action :id :submit :label "Sign in"}]}]}
 
-                       grid
-                       (transient-grid! spec 0 40 28)
+            grid
+            (transient-grid! spec 0 40 28)
 
-                       painted
-                       (str/join "\n" grid)]
+            painted
+            (str/join "\n" grid)]
 
-                   ;; Every word survives, over as many rows as the band needs.
-                   (expect (str/includes? painted "https://gateway.example.com/v1;"))
-                   (expect (str/includes? painted "registers this provider."))
-                   (expect (not (str/includes? painted "\u2026")))
-                   ;; …and not one wrapped row runs past the band's own right rail.
-                   (expect (every? #(= \│ (nth % 41)) (filter #(str/starts-with? % "│") grid))))))
+        ;; Every word survives, over as many rows as the band needs.
+        (expect (str/includes? painted "https://gateway.example.com/v1;"))
+        (expect (str/includes? painted "registers this provider."))
+        (expect (not (str/includes? painted "\u2026")))
+        ;; …and not one wrapped row runs past the band's own right rail.
+        (expect (every? #(= \│ (nth % 41)) (filter #(str/starts-with? % "│") grid)))))
+  ;; Issue #373: the extension reload report gives one fact on each line, as the
+  ;; Companion app does. A short heading kept its line break inside one row.
+  (it "starts a new row at each line break of a heading"
+      (let [spec
+            {:groups [{:title "No machine extensions in /m.\nThis project has 1 extension (clj)."
+                       :items [{:key "q" :type :action :id :dismiss :label "Dismiss"}]}]}
+
+            grid
+            (transient-grid! spec 0 60 12)
+
+            headers
+            (fn [panes]
+              (mapv :text (filter #(= :header (:kind %)) (first panes))))]
+
+        (expect (some #(str/includes? % "No machine extensions in /m.") grid))
+        (expect (some #(str/includes? % "This project has 1 extension (clj).") grid))
+        (expect (not-any? #(str/includes? % "\n") grid))
+        ;; Each line starts at the same column: the text is left-aligned.
+        (expect (apply =
+                  (keep #(let [i (str/index-of % "No machine") j (str/index-of % "This project")]
+                           (or i j))
+                        grid)))
+        ;; Without a known width, the heading still breaks at its line breaks.
+        (expect (= ["No machine extensions in /m." "This project has 1 extension (clj)."]
+                   (headers (:panes (tr/pane-grid spec nil))))))))

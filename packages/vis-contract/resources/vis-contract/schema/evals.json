@@ -1,0 +1,1022 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/evals.json",
+  "$ref": "#/$defs/bench_report",
+  "$comment": "Evaluation routes run the bundled SDK package blockether.vis.evals on the request data. They read no files and keep no state. Only the leaderboard route uses the network.",
+  "$defs": {
+    "report_input": {
+      "description": "The request of /v1/evals/report.",
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "object",
+          "description": "A Harbor round summary from blockether.vis.evals.round_summary."
+        },
+        "round_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "diagnose_input": {
+      "description": "The request of /v1/evals/diagnose.",
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "object",
+          "description": "A Harbor round summary from blockether.vis.evals.round_summary."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Human labels by trial name. Each label has a cause.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "cause": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "cause"
+            ]
+          }
+        },
+        "limits": {
+          "type": "object",
+          "description": "The agent time limit of each task, in seconds.",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "labels_input": {
+      "description": "The request of /v1/evals/labels.",
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "object",
+          "description": "A Harbor round summary from blockether.vis.evals.round_summary."
+        },
+        "labels": {
+          "type": "object",
+          "description": "Human labels by trial name. Each label has a cause.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "cause": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "cause"
+            ]
+          }
+        },
+        "limits": {
+          "type": "object",
+          "description": "The agent time limit of each task, in seconds.",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "summary",
+        "labels"
+      ],
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "description": "The passed and run count of one task with one agent and model.",
+      "properties": {
+        "task": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "task",
+        "agent",
+        "model",
+        "passed",
+        "runs"
+      ],
+      "additionalProperties": false
+    },
+    "compare_input": {
+      "description": "The request of /v1/evals/compare.",
+      "type": "object",
+      "properties": {
+        "baseline": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case"
+          }
+        },
+        "candidate": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case"
+          }
+        },
+        "baseline_name": {
+          "type": "string"
+        },
+        "candidate_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "baseline",
+        "candidate"
+      ],
+      "additionalProperties": false
+    },
+    "agreement_item": {
+      "type": "object",
+      "description": "One automatic result with the human label of the same item.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "automatic": {
+          "type": "string"
+        },
+        "human": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "automatic",
+        "human"
+      ],
+      "additionalProperties": false
+    },
+    "agreement_input": {
+      "description": "The request of /v1/evals/agreement.",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agreement_item"
+          }
+        },
+        "source": {
+          "type": "string"
+        },
+        "noun": {
+          "type": "string"
+        },
+        "labeller": {
+          "type": "string"
+        },
+        "fix": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "leaderboard_input": {
+      "description": "The request of /v1/evals/leaderboard.",
+      "type": "object",
+      "properties": {
+        "package": {
+          "type": "string",
+          "description": "The Harbor Hub package of the board, for example terminal-bench/terminal-bench."
+        },
+        "name": {
+          "type": "string",
+          "description": "The board name in the package, for example 4-0-0."
+        },
+        "summary": {
+          "type": "object",
+          "description": "A Harbor round summary from blockether.vis.evals.round_summary."
+        },
+        "round_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "package",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "bench_report": {
+      "description": "The score of one benchmark round. Rates are in percent. Intervals are 95% intervals.",
+      "type": "object",
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "round_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "total_tasks": {
+          "type": "integer"
+        },
+        "scored_tasks": {
+          "type": "integer"
+        },
+        "solved_tasks": {
+          "type": "integer"
+        },
+        "pass_rate_percent": {
+          "type": "number"
+        },
+        "pass_rate_ci95": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strict_pass_rate_percent": {
+          "type": "number"
+        },
+        "strict_pass_rate_ci95": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attempts_per_task": {
+          "type": "integer"
+        },
+        "scored_attempts": {
+          "type": "integer"
+        },
+        "solved_attempts": {
+          "type": "integer"
+        },
+        "attempt_pass_rate_percent": {
+          "type": "number"
+        },
+        "attempt_pass_rate_ci95": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detectable_change_points": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pass_at_k_percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pass_all_k_percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "unstable_tasks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outcomes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/outcome_count"
+          }
+        },
+        "unscored_tasks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gpu_tasks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unattempted_tasks": {
+          "type": "integer"
+        },
+        "attempts": {
+          "type": "integer"
+        },
+        "model_attempts": {
+          "type": "integer"
+        },
+        "agent_hours": {
+          "type": "number"
+        },
+        "input_tokens": {
+          "type": "integer"
+        },
+        "cached_input_percent": {
+          "type": "number"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "estimated_metered_cost_usd": {
+          "type": "number"
+        },
+        "cost_per_solved_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "repeated_final_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "dataset",
+        "round_name",
+        "model",
+        "total_tasks",
+        "scored_tasks",
+        "solved_tasks",
+        "pass_rate_percent",
+        "pass_rate_ci95",
+        "strict_pass_rate_percent",
+        "strict_pass_rate_ci95",
+        "attempts_per_task",
+        "scored_attempts",
+        "solved_attempts",
+        "attempt_pass_rate_percent",
+        "attempt_pass_rate_ci95",
+        "detectable_change_points",
+        "pass_at_k_percent",
+        "pass_all_k_percent",
+        "unstable_tasks",
+        "outcomes",
+        "unscored_tasks",
+        "gpu_tasks",
+        "unattempted_tasks",
+        "attempts",
+        "model_attempts",
+        "agent_hours",
+        "input_tokens",
+        "cached_input_percent",
+        "output_tokens",
+        "estimated_metered_cost_usd",
+        "cost_per_solved_usd",
+        "repeated_final_errors"
+      ],
+      "additionalProperties": false
+    },
+    "outcome_count": {
+      "description": "The tasks of one outcome, such as solved or failed_tests.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "outcome",
+        "count",
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
+    "diagnosis": {
+      "description": "The failure causes of one round and the check of the human labels.",
+      "type": "object",
+      "properties": {
+        "scored_tasks": {
+          "type": "integer"
+        },
+        "solved_tasks": {
+          "type": "integer"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "estimate": {
+          "type": "string"
+        },
+        "label_check": {
+          "$ref": "#/$defs/agreement"
+        }
+      },
+      "required": [
+        "scored_tasks",
+        "solved_tasks",
+        "findings",
+        "estimate",
+        "label_check"
+      ],
+      "additionalProperties": false
+    },
+    "finding": {
+      "description": "One failure cause with its share of the scored tasks and its tasks.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "task_count": {
+          "type": "integer"
+        },
+        "share": {
+          "type": "number"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/task_note"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "task_count",
+        "share",
+        "detail",
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
+    "task_note": {
+      "description": "One task of a finding. budget_used is the used share of the agent time limit.",
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "string"
+        },
+        "pass_ratio": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "budget_used": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "minutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "iterations": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "task",
+        "outcome",
+        "checks",
+        "pass_ratio",
+        "budget_used",
+        "minutes",
+        "iterations"
+      ],
+      "additionalProperties": false
+    },
+    "agreement": {
+      "description": "The agreement of automatic results with human labels, with Cohen kappa and advice.",
+      "type": "object",
+      "properties": {
+        "labelled": {
+          "type": "integer"
+        },
+        "agreement_percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "kappa": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "disagreements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "advice": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "labelled",
+        "agreement_percent",
+        "kappa",
+        "disagreements",
+        "advice"
+      ],
+      "additionalProperties": false
+    },
+    "case_comparison": {
+      "description": "A paired comparison of the cases that both sides ran. Differences are in points.",
+      "type": "object",
+      "properties": {
+        "paired_cases": {
+          "type": "integer"
+        },
+        "baseline_rate_percent": {
+          "type": "number"
+        },
+        "candidate_rate_percent": {
+          "type": "number"
+        },
+        "difference_points": {
+          "type": "number"
+        },
+        "difference_ci95": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "verdict": {
+          "type": "string"
+        },
+        "detectable_change_points": {
+          "type": "number"
+        },
+        "p_value": {
+          "type": "number"
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/route_test"
+          }
+        },
+        "worse": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case_change"
+          }
+        },
+        "better": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/case_change"
+          }
+        },
+        "unpaired": {
+          "type": "integer"
+        },
+        "caveats": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "paired_cases",
+        "baseline_rate_percent",
+        "candidate_rate_percent",
+        "difference_points",
+        "difference_ci95",
+        "verdict",
+        "detectable_change_points",
+        "p_value",
+        "routes",
+        "worse",
+        "better",
+        "unpaired",
+        "caveats"
+      ],
+      "additionalProperties": false
+    },
+    "case_change": {
+      "description": "One case whose pass rate changed, as passed/runs on each side.",
+      "type": "object",
+      "properties": {
+        "case": {
+          "type": "string"
+        },
+        "baseline": {
+          "type": "string"
+        },
+        "candidate": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "case",
+        "baseline",
+        "candidate"
+      ],
+      "additionalProperties": false
+    },
+    "route_test": {
+      "description": "The exact McNemar test of the paired cases of one route.",
+      "type": "object",
+      "properties": {
+        "route": {
+          "type": "string"
+        },
+        "paired_cases": {
+          "type": "integer"
+        },
+        "worse": {
+          "type": "integer"
+        },
+        "better": {
+          "type": "integer"
+        },
+        "p_value": {
+          "type": "number"
+        },
+        "q_value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "route",
+        "paired_cases",
+        "worse",
+        "better",
+        "p_value",
+        "q_value"
+      ],
+      "additionalProperties": false
+    },
+    "leaderboard_row": {
+      "description": "One row of a Harbor Hub leaderboard.",
+      "type": "object",
+      "properties": {
+        "rank": {
+          "type": "integer"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "type": "string"
+        },
+        "accuracy_percent": {
+          "type": "number"
+        },
+        "ci95_half_width": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "trials": {
+          "type": "integer"
+        },
+        "successes": {
+          "type": "integer"
+        },
+        "total_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cost_per_trial_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cost_per_success_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tokens_per_trial": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "avg_trial_minutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "date": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rank",
+        "agent",
+        "model",
+        "reasoning_effort",
+        "accuracy_percent",
+        "ci95_half_width",
+        "trials",
+        "successes",
+        "total_cost_usd",
+        "cost_per_trial_usd",
+        "cost_per_success_usd",
+        "tokens_per_trial",
+        "avg_trial_minutes",
+        "date"
+      ],
+      "additionalProperties": false
+    },
+    "vis_standing": {
+      "description": "The place of the local Vis round on the leaderboard.",
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "round_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scored_tasks": {
+          "type": "integer"
+        },
+        "total_tasks": {
+          "type": "integer"
+        },
+        "attempts_per_task": {
+          "type": "integer"
+        },
+        "pass_rate_percent": {
+          "type": "number"
+        },
+        "pass_rate_ci95": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "strict_pass_rate_percent": {
+          "type": "number"
+        },
+        "strict_pass_rate_ci95": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rank_by_pass_rate": {
+          "type": "integer"
+        },
+        "rank_range": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rank_by_strict_rate": {
+          "type": "integer"
+        },
+        "strict_rank_range": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cost_per_attempt_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cost_per_solved_usd": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tokens_per_attempt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "avg_attempt_minutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "caveats": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "model",
+        "round_name",
+        "scored_tasks",
+        "total_tasks",
+        "attempts_per_task",
+        "pass_rate_percent",
+        "pass_rate_ci95",
+        "strict_pass_rate_percent",
+        "strict_pass_rate_ci95",
+        "rank_by_pass_rate",
+        "rank_range",
+        "rank_by_strict_rate",
+        "strict_rank_range",
+        "cost_per_attempt_usd",
+        "cost_per_solved_usd",
+        "tokens_per_attempt",
+        "avg_attempt_minutes",
+        "caveats"
+      ],
+      "additionalProperties": false
+    },
+    "leaderboard": {
+      "description": "A Harbor Hub leaderboard. vis is null without a local result for its dataset.",
+      "type": "object",
+      "properties": {
+        "package": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/leaderboard_row"
+          }
+        },
+        "vis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/vis_standing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "package",
+        "name",
+        "title",
+        "rows",
+        "vis"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.turn :as turn]
+            [com.blockether.vis.internal.loop.trajectory :as trajectory]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.extension.manifest :as manifest]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -631,24 +632,29 @@
                              ["--provider" "zai-coding-plan" "--model" "glm-5.2"
                               "--reasoning-effort" "max" "--json" "task"])))))
 
-(defdescribe eval-exit-code-test
-             (it "uses 0 for valid eval evidence"
-                 (expect (= 0 (#'main/cli-result-exit-code {:eval {:valid? true}}))))
-             (it "uses 2 for a completed run invalidated by fallback"
-                 (expect (= 2
-                            (#'main/cli-result-exit-code
-                             {:answer {:answer "done"}
-                              :eval {:valid? false
-                                     :invalid-reasons [{:type :provider-model-fallback}]}}))))
-             (it "uses 2 for unsupported preflight even though the result carries an error"
-                 (expect (= 2
-                            (#'main/cli-result-exit-code
-                             {:error "unsupported"
-                              :eval {:valid? false
-                                     :invalid-reasons [{:type :unsupported-reasoning-effort}]}}))))
-             (it "uses 1 for execution failure"
-                 (expect (= 1 (#'main/cli-result-exit-code {:status :error})))
-                 (expect (= 1 (#'main/cli-result-exit-code {:error "boom"})))))
+(defdescribe
+  eval-exit-code-test
+  (it "uses 0 for valid eval evidence"
+      (expect (= 0 (#'main/cli-result-exit-code {:eval {:valid? true}}))))
+  (it "uses 2 for a completed run invalidated by fallback"
+      (expect (= 2
+                 (#'main/cli-result-exit-code
+                  {:answer {:answer "done"}
+                   :eval {:valid? false :invalid-reasons [{:type :provider-model-fallback}]}}))))
+  (it "uses 2 for unsupported preflight even though the result carries an error"
+      (expect (= 2
+                 (#'main/cli-result-exit-code
+                  {:error "unsupported"
+                   :eval {:valid? false
+                          :invalid-reasons [{:type :unsupported-reasoning-effort}]}}))))
+  (it "uses 1 for execution failure"
+      (expect (= 1 (#'main/cli-result-exit-code {:status :error})))
+      (expect (= 1 (#'main/cli-result-exit-code {:error "boom"}))))
+  (it "uses 1 when the turn ends with a provider error block"
+      (expect (= 1
+                 (#'main/cli-result-exit-code
+                  {:content [{"type" "error" "code" "provider_quota_exhausted" "status" 429}]})))
+      (expect (= 0 (#'main/cli-result-exit-code {:content [{"type" "text" "text" "done"}]})))))
 
 (defdescribe toggle-overrides-test
              (it "parses NAME=VALUE pairs against the registry"
@@ -941,6 +947,19 @@
     (it "still refuses --extensions followed by a long flag"
         (expect (= ["--extensions needs a value (got --json)"]
                    (:flag-errors (launch ["--extensions" "--json" "task"] {})))))
+    (it "splits --tools, takes a leading-dash list and reads VIS_TOOLS without a flag"
+        (expect (= ["py.lint_code" "py.repl_*"]
+                   (:tools (launch ["--tools" "py.lint_code, py.repl_*" "task"] {}))))
+        (expect (= ["-py.repl_stop"] (:tools (launch ["--tools" "-py.repl_stop" "task"] {}))))
+        (expect (= ["py.repl_eval"] (:tools (launch ["task"] {"VIS_TOOLS" "py.repl_eval"}))))
+        (expect (= ["py.lint_code"]
+                   (:tools (launch ["--tools" "py.lint_code" "task"]
+                                   {"VIS_TOOLS" "py.repl_eval"})))))
+    (it "refuses --tools followed by a long flag"
+        (expect (= ["--tools needs a value (got --json)"]
+                   (:flag-errors (launch ["--tools" "--json" "task"] {}))))
+        (expect (nil? (:tools (launch ["--session-id" "abc" "task"]
+                                      {"VIS_TOOLS" "py.lint_code"})))))
     (it "reads VIS_SOURCES and VIS_EXTENSIONS without a flag, and a flag wins"
         (expect (= {:sources ["project"] :extensions ["gh"] :prompt "task"}
                    (launch ["task"] {"VIS_SOURCES" "project" "VIS_EXTENSIONS" "gh"})))
@@ -952,7 +971,11 @@
     (it "refuses the flags with --session-id and ignores the variables there"
         (expect (= 1 (count (:flag-errors (launch ["--session-id" "abc" "--vanilla" "task"] {})))))
         (expect (= {:session-id "abc" :persist? true :prompt "task"}
-                   (launch ["--session-id" "abc" "task"] {"VIS_SOURCES" "project"}))))))
+                   (launch ["--session-id" "abc" "task"]
+                           {"VIS_SOURCES" "project" "VIS_TOOLS" "x.y"}))))
+    (it "takes --tools with --session-id to replace the saved tool list"
+        (expect (= {:session-id "abc" :persist? true :tools ["-py.repl_stop"] :prompt "task"}
+                   (launch ["--session-id" "abc" "--tools" "-py.repl_stop" "task"] {}))))))
 
 (defdescribe
   json-schema-arg-test
@@ -1398,3 +1421,70 @@
         (expect (= [] @out))
         (expect (= 2 @exit))
         (expect (= ["vis-agent: Invalid value for --toggles draft_backend: x"] @err)))))
+
+(defdescribe
+  one-shot-trajectory-test
+  (it "writes the run as an ATIF trajectory without the known credentials"
+      (let [path
+            (str (java.nio.file.Files/createTempDirectory
+                   "vis-trajectory"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+                 "/run.json")
+
+            result
+            {:session-id "session-1"
+             :content [{"id" "block_1" "type" "prose" "markdown" "Done: secret-value-1."}]
+             :trace [{:iteration 0 :final? true :blocks []}]
+             :tokens {"input" 10 "output" 2 "cached" 0 "cache_created" 0 "total" 12}}
+
+            {:keys [err exit]}
+            (with-redefs-fn {#'trajectory/run-secrets (fn []
+                                                        ["secret-value-1"])}
+              #(run-cli ["--trajectory" path "--" "Say done."] result))
+
+            document
+            (json/read-json (slurp path))]
+
+        (expect (= [] err))
+        (expect (nil? exit))
+        (expect (= "ATIF-v1.8" (get document "schema_version")))
+        (expect (= ["user" "agent"] (mapv #(get % "source") (get document "steps"))))
+        (expect (= "Say done." (get-in document ["steps" 0 "message"])))
+        (expect (= "Done: [REDACTED]." (get-in document ["steps" 1 "message"])))
+        (expect (= 10 (get-in document ["final_metrics" "total_prompt_tokens"])))))
+  (it "refuses --trajectory without a path"
+      (let [{:keys [out err exit]} (run-cli ["--trajectory" "--json" "hi"] {:content []})]
+        (expect (= [] out))
+        (expect (= 2 exit))
+        (expect (some #(str/includes? % "--trajectory") err))))
+  (it "fails the run when it cannot write the trajectory"
+      (let [file
+            (java.io.File/createTempFile "vis-trajectory" ".txt")
+
+            {:keys [err exit]}
+            (with-redefs-fn {#'trajectory/run-secrets (fn []
+                                                        [])}
+              #(run-cli ["--trajectory" (str file "/run.json") "--" "hi"] {:content []}))]
+
+        (expect (= 1 exit))
+        (expect (some #(str/starts-with? % "vis-agent: cannot write the trajectory: ") err))))
+  (it "reads the usage and the saved goal of a persisted session"
+      (with-redefs [gateway-state/session-usage-info
+                    (fn [sid]
+                      {"session_id" sid "turns" 1})
+
+                    gateway-state/soul
+                    (fn [_]
+                      {"goal" {"status" "complete"}})]
+
+        (expect (= {:session-usage {"session_id" "session-1" "turns" 1} :goal {"status" "complete"}}
+                   (#'main/persisted-session "session-1")))
+        (expect (nil? (#'main/persisted-session nil)))))
+  (it "warns and gives nil when it cannot read the persisted session"
+      (let [err (atom [])]
+        (with-redefs [gateway-state/session-usage-info (fn [_]
+                                                         (throw (ex-info "no db" {})))
+                      commandline/stderr! #(swap! err conj %)]
+
+          (expect (nil? (#'main/persisted-session "session-1")))
+          (expect (= ["vis-agent: the trajectory has no session usage: no db"] @err))))))

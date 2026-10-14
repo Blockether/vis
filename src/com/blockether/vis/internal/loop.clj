@@ -36,9 +36,11 @@
      :sources       configuration tiers the session reads (`#{\"project\"}`);
                     nil reads every tier.
      :extensions    extension names to keep, `-name` entries to turn off, or an
-                    empty list for none; nil keeps every extension."
+                    empty list for none; nil keeps every extension.
+     :tools         tool names to keep, or `-name` entries to turn off, in optional
+                    extensions; nil keeps every tool."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id workspace-id sources extensions]}]
+  ([channel {:keys [title external-id workspace-id sources extensions tools]}]
    (let [env
          (loop-env/open-env! nil
                              (cond-> {:channel channel
@@ -46,7 +48,8 @@
                                                            str)
                                       :title title
                                       :sources sources
-                                      :extensions extensions}
+                                      :extensions extensions
+                                      :tools tools}
                                workspace-id
                                (assoc :workspace-id workspace-id)))
 

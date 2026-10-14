@@ -113,16 +113,21 @@
    Layers are ordered least-specific first. Illegal scope declarations in YAML
    do not gain power by bypassing an HTTP writer."
   [specs layers scope overrides]
-  (mapv (fn [{:keys [id default scopes inheritance] :as spec}]
+  (mapv (fn [{:keys [id default scopes inheritance type choices] :as spec}]
           (let [allowed
                 (set scopes)
+
+                ;; A restricted boolean denies with false, a restricted enum with its first choice.
+                denial?
+                (fn [value]
+                  (or (false? value) (and (= :enum type) (= value (first choices)))))
 
                 resolved
                 (reduce (fn [result layer]
                           (if (and (allowed (:scope layer))
                                    (contains? (:values layer) id)
                                    (not (and (= "restrict" inheritance)
-                                             (false? (:value result))
+                                             (denial? (:value result))
                                              (not= "default" (:source result)))))
                             {:value (get (:values layer) id) :source (:scope layer)}
                             result))
@@ -538,6 +543,31 @@
   ([env kind resource-name live]
    (not (false? (live-value env live (register-resource! kind resource-name))))))
 
+(defn- run-change-hooks!
+  "Call the `:on-change-fn` of each setting whose effective value at `target` changed
+   between the `before` and `after` rows. Return the failures as id -> message. A failed
+   hook never undoes the saved value, and one failure does not stop the other hooks."
+  [target before after]
+  (let [old (into {} (map (juxt :id :value)) before)]
+    (into {}
+          (keep (fn [{:keys [id label value on-change-fn]}]
+                  (when (and on-change-fn (contains? old id) (not= value (get old id)))
+                    (try (on-change-fn {:id id
+                                        :old (get old id)
+                                        :new value
+                                        :scope (:scope target)
+                                        :target-id (:target-id target)})
+                         nil
+                         (catch Throwable t
+                           (tel/log! {:level :warn
+                                      :id ::change-hook-failed
+                                      :data {:id id :scope (:scope target) :error (ex-message t)}}
+                                     "A setting change hook failed")
+                           [id
+                            (str "Saved, but the change hook of " label
+                                 " failed: " (or (ex-message t) (.getName (class t))))])))))
+          after)))
+
 (defn set-setting!
   "Write one eligible key, or inherit by deleting it. Validate before any write."
   [db target id action value]
@@ -557,8 +587,11 @@
           (throw (ex-info "This setting is not available in that scope"
                           {:status 400 :type :invalid-setting-scope :id id :scope scope})))
 
+        before
+        (settings db target)
+
         current
-        (:value (first (filter #(= id (:id %)) (settings db target))))
+        (:value (first (filter #(= id (:id %)) before)))
 
         selected
         (case action
@@ -614,13 +647,25 @@
 
       (store/db-set-scoped-setting! db scope (:target-id target) id v))
     (notify-listeners! (assoc target :id id))
-    (first (filter #(= id (:id %)) (settings db target)))))
+    (let [after
+          (settings db target)
+
+          error
+          (get (run-change-hooks! target before after) id)]
+
+      (cond-> (first (filter #(= id (:id %)) after))
+        error
+        (assoc :change-error error)))))
 
 (defn edit-settings!
   "Edit one owner atomically. `edit` validates inside the storage lock/transaction.
-   It receives the current store and returns section/name/value edits; nil inherits."
+   It receives the current store and returns section/name/value edits; nil inherits.
+   Returns the failed change hooks as setting id -> message."
   [db {:keys [scope target-id root] :as target} edit]
-  (let [apply-raw
+  (let [before
+        (settings db target)
+
+        apply-raw
         (fn [current-db raw]
           (reduce (fn [result {:keys [section name value]}]
                     (if (nil? value)
@@ -629,7 +674,7 @@
                   raw
                   (edit current-db)))
 
-        changed
+        _
         (case scope
           "global"
           (config/update-machine-config! #(apply-raw db %))
@@ -662,4 +707,4 @@
         (doseq [{:keys [id value]} (settings db target)]
           (toggles/set-value! id value))))
     (notify-listeners! target)
-    changed))
+    (run-change-hooks! target before (settings db target))))

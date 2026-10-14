@@ -224,6 +224,58 @@
              (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
+  finished-goal-leaves-later-turns-test
+  (it
+    "finished goal leaves later turns and keeps the system prefix"
+    ;; User report: a completed goal still showed its state in later turns, so the model
+    ;; treated a question as progress and kept working. The goal rules stay in the system
+    ;; message, so a goal status change does not rewrite the cached prefix.
+    (doseq [status ["complete" "budget_limited"]]
+      (let [env (environment)
+            requests (atom [])
+            system-text #(pr-str (filterv (fn [m]
+                                            (= "system" (:role m)))
+                                   %))]
+
+        (try
+          (with-redefs
+            [svar/ask-code!
+             (fn [_ opts]
+               (swap! requests conj (:messages opts))
+               (case (count @requests)
+                 1
+                 (if (= "complete" status)
+                   {:stop-reason :tool-calls
+                    :tool-calls
+                    [{:id "finish-goal"
+                      :name "python_execution"
+                      :input
+                      {:code
+                       "g = session['goal']\nprint(update_goal(g['id'], g['version'], 'complete', 'All checks passed.'))"}}]}
+                   {:stop-reason :end :content "Progress so far."})
+
+                 2
+                 {:stop-reason :end :content "Do you want a local fix only?"}
+
+                 (throw (AssertionError. "A question must end the turn."))))]
+            (turn/run-turn! env
+                            (str "/goal "
+                                 (when (= "budget_limited" status) "--budget 1 ")
+                                 "Ship the finished objective")
+                            {})
+            (expect (= status (get (goals/check-goal env) "status")))
+            (let [result (turn/run-turn! env "fix" {})
+                  [active-request later-request] @requests]
+
+              (expect (= "Do you want a local fix only?" (get-in result [:answer :answer])))
+              (expect (= 2 (count @requests)))
+              (expect (= (system-text active-request) (system-text later-request)))
+              (expect (str/includes? (system-text later-request) "Explicit session goals"))
+              (expect (not (str/includes? (pr-str (last later-request)) "session[\\\"goal\\\"]")))
+              (expect (= status (get (goals/check-goal env) "status")))))
+          (finally (loop-env/dispose-environment! env)))))))
+
+(defdescribe
   user-message-resumes-goal-before-model-request-test
   (it
     "user message resumes goal before model request"

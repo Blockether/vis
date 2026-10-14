@@ -10,7 +10,7 @@ runs:
     - name: Install SDK wheels and test runner in an isolated environment
       shell: bash
       run: |
-        uv venv --python 3.11 "$RUNNER_TEMP/vis-native-sdk-venv"
+        uv venv --python 3.12 "$RUNNER_TEMP/vis-native-sdk-venv"
         uv pip install --python "$RUNNER_TEMP/vis-native-sdk-venv/bin/python" pytest ./packages/vis-agent
     - name: Exercise native HTTP and stdio outside the checkout
       shell: bash

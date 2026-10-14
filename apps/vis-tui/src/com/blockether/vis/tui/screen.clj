@@ -3651,53 +3651,75 @@
    `focus-section` parks the cursor on one section label: the palette's MCP
    entry opens Settings on `MCP servers` and its Providers entry on
    `Providers`, where every provider row runs its OWN transient inside the
-   settings frame and the `:mcp-add` / `:provider-add` header buttons add a new entry. Returns nil."
+   settings frame and the `:mcp-add` / `:provider-add` header buttons add a new entry.
+
+   `target` opens one Project, Group or Session target instead. `context-session-id`
+   names the session whose more specific settings lock the rows they decide. A locked
+   inherited row opens the settings that decide it with `:open-settings` (#373).
+   Returns nil."
   ([^TerminalScreen screen] (open-settings-modal! screen nil))
   ([^TerminalScreen screen focus-section]
-   (when-let [s (dlg/settings-dialog!
-                  screen
-                  (:settings @state/app-db)
-                  {:focus-section focus-section
-                   :context-session-id (get-in @state/app-db [:session :id])
-                   :mcp-add (fn [{:keys [g region]}]
-                              (mcp/save-server! screen g region nil))
-                   ;; One verb the server's transient fired — the manager runs
-                   ;; it IN THAT SAME BAND (its own frame handle comes back
-                   ;; here) and reports its own failures; Settings just reloads.
-                   :mcp-action (fn [{:keys [server action g region]}]
-                                 (mcp/run-action! screen g region server action))
-                   ;; Adding a provider is a BAND inside Settings, not a second
-                   ;; manager on top of it: same frame, same hint bar, and the
-                   ;; provider list it just changed stays visible behind it.
-                   :provider-add (fn [{:keys [g region]}]
-                                   (provider/add-provider-transient! screen g region))
-                   ;; The provider's transient paints INSIDE the settings frame,
-                   ;; so it borrows that frame's graphics and geometry.
-                   :provider-transient (fn [{:keys [provider-id g region]}]
-                                         (provider/provider-transient! screen g region provider-id))
-                   :on-change (fn [settings]
-                                (state/dispatch [:update-settings settings])
-                                (repaint-chat-frame! screen))})]
-     (state/dispatch [:update-settings s]))
-   (refresh-improve-settings!)
-   ;; Settings can change a gateway default that the open session inherits, such as
-   ;; `simplified_thinking_modes`. Read the session rows again so its footer agrees.
-   (when-let [sid (get-in @state/app-db [:session :id])]
-     (state/dispatch [:refresh-session-settings sid]))
-   nil))
+   (open-settings-modal! screen focus-section nil (get-in @state/app-db [:session :id])))
+  ([^TerminalScreen screen focus-section {:keys [scope target-id label]} context-session-id]
+   (let [open-settings
+         (fn [target]
+           (open-settings-modal! screen nil target context-session-id))
+
+         mcp-callbacks
+         {:mcp-add (fn [{:keys [g region]}]
+                     (mcp/save-server! screen g region nil))
+          ;; One verb the server's transient fired — the manager runs
+          ;; it IN THAT SAME BAND (its own frame handle comes back
+          ;; here) and reports its own failures; Settings just reloads.
+          :mcp-action (fn [{:keys [server action g region]}]
+                        (mcp/run-action! screen g region server action))
+          :open-settings open-settings
+          :context-session-id context-session-id}]
+
+     (if (and scope (not= "global" (str scope)))
+       (dlg/settings-dialog! screen
+                             {}
+                             (assoc mcp-callbacks
+                               :settings-target
+                               {:scope scope :target-id (str target-id) :label label}))
+       (do (when-let [s (dlg/settings-dialog!
+                          screen
+                          (:settings @state/app-db)
+                          (merge mcp-callbacks
+                                 {:focus-section focus-section
+                                  ;; Machine settings always read the open session's rows.
+                                  :context-session-id (or context-session-id
+                                                          (get-in @state/app-db [:session :id]))
+                                  ;; Adding a provider is a BAND inside Settings, not a second
+                                  ;; manager on top of it: same frame, same hint bar, and the
+                                  ;; provider list it just changed stays visible behind it.
+                                  :provider-add
+                                  (fn [{:keys [g region]}]
+                                    (provider/add-provider-transient! screen g region))
+                                  ;; The provider's transient paints INSIDE the settings frame,
+                                  ;; so it borrows that frame's graphics and geometry.
+                                  :provider-transient
+                                  (fn [{:keys [provider-id g region]}]
+                                    (provider/provider-transient! screen g region provider-id))
+                                  :on-change (fn [settings]
+                                               (state/dispatch [:update-settings settings])
+                                               (repaint-chat-frame! screen))}))]
+             (state/dispatch [:update-settings s]))
+           (refresh-improve-settings!)
+           ;; Settings can change a gateway default that the open session inherits, such as
+           ;; `simplified_thinking_modes`. Read the session rows again so its footer agrees.
+           (when-let [sid (get-in @state/app-db [:session :id])]
+             (state/dispatch [:refresh-session-settings sid]))))
+     nil)))
 
 (defn- open-settings-target!
   "Open the shared settings dialog for one `scope` target. `context-session-id`
    names the session whose more specific settings lock the rows they decide."
   [screen scope target-id label context-session-id]
-  (dlg/settings-dialog! screen
-                        {}
-                        {:settings-target {:scope scope :target-id (str target-id) :label label}
-                         :context-session-id context-session-id
-                         :mcp-add (fn [{:keys [g region]}]
-                                    (mcp/save-server! screen g region nil))
-                         :mcp-action (fn [{:keys [server action g region]}]
-                                       (mcp/run-action! screen g region server action))}))
+  (open-settings-modal! screen
+                        nil
+                        {:scope scope :target-id target-id :label label}
+                        context-session-id))
 
 (defn- open-scoped-settings-modal!
   "Open the shared dialog for the active session or one of its current ancestors."
@@ -9687,7 +9709,7 @@
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage
-  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--vanilla] [--extensions LIST]")
+  "vis-agent tui [--gateway HOST[:PORT]] [--gateway-token TOKEN] [--session-id ID | --resume | --continue] [--no-global] [--no-project] [--vanilla] [--extensions LIST] [--tools LIST]")
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
@@ -9741,6 +9763,10 @@
           (let [v (flag-value arg more tui-usage)]
             (recur (next more) (assoc opts :extensions v)))
 
+          "--tools"
+          (let [v (flag-value arg more tui-usage)]
+            (recur (next more) (assoc opts :tools v)))
+
           (throw (ex-info (str "unknown flag: " arg "\nUsage: " tui-usage)
                           {:vis/user-error true})))))))
 
@@ -9751,11 +9777,13 @@
     (if (= ["none"] names) [] names)))
 
 (defn- launch-session-options
-  "Build the new-session options from the source and extension flags.
-   Without a flag, read `VIS_SOURCES` and `VIS_EXTENSIONS` from `env`. These
-   options apply to each session that this client creates; an existing session
-   keeps the sources and extensions that it started with."
-  [{:keys [no-global no-project extensions session-id resume continue]} env]
+  "Build the new-session options from the source, extension and tool flags.
+   Without a flag, read `VIS_SOURCES`, `VIS_EXTENSIONS` and `VIS_TOOLS` from `env`.
+   These options apply to each session that this client creates; an existing
+   session keeps the sources and extensions that it started with. With
+   `--session-id`, `--resume` or `--continue`, the `--tools` flag also replaces the
+   tool list of the first saved session that this client opens (`:open-tools`)."
+  [{:keys [no-global no-project extensions tools session-id resume continue]} env]
   (when (and (or no-global no-project extensions) (or session-id resume continue))
     (throw (ex-info
              (str
@@ -9779,6 +9807,10 @@
 
         extensions
         (some-> (or extensions (env-value "VIS_EXTENSIONS"))
+                name-list)
+
+        session-tools
+        (some-> (or tools (env-value "VIS_TOOLS"))
                 name-list)]
 
     (cond-> {}
@@ -9786,7 +9818,14 @@
       (assoc :sources sources)
 
       extensions
-      (assoc :extensions extensions))))
+      (assoc :extensions extensions)
+
+      session-tools
+      (assoc :tools session-tools)
+
+      ;; Only the flag changes a saved session; `VIS_TOOLS` stays for new sessions.
+      (and tools (or session-id resume continue))
+      (assoc :open-tools (name-list tools)))))
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,

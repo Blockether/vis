@@ -1,0 +1,13 @@
+{
+  "want": {
+    "app.js": [
+      "area_value",
+      "return area_value"
+    ]
+  },
+  "wantnot": {
+    "app.js": [
+      "result"
+    ]
+  }
+}

@@ -158,10 +158,16 @@
           "type": "integer",
           "minimum": 1
         },
+        "is_tool_calls_supported": {
+          "type": "boolean"
+        },
         "is_tool_call": {
           "type": "boolean"
         },
-        "is_vision": {
+        "is_vision_supported": {
+          "type": "boolean"
+        },
+        "is_image_input": {
           "type": "boolean"
         },
         "is_reasoning": {
@@ -253,6 +259,9 @@
           "$ref": "#/$defs/networkTimeout"
         },
         "is_stateless": {
+          "type": "boolean"
+        },
+        "is_vision_supported": {
           "type": "boolean"
         },
         "is_image_input": {
@@ -813,6 +822,15 @@
           "type": "string",
           "pattern": "^https?://[^\\s/?#@]+(?:/[^\\s?#@]*)?$",
           "description": "Primary index for Vis-managed pip installs and the default index for uv CLI and project preparation. Explicit uv index environment settings and --default-index take precedence. Credentials, query strings and fragments are not accepted; configure authentication outside committed YAML."
+        },
+        "environment": {
+          "type": "string",
+          "enum": [
+            "project",
+            "shared"
+          ],
+          "default": "project",
+          "description": "Environment for the uv projects of project extensions inside the project tree. project uses each project's own environment, normally .venv. shared prepares them like vis-agent python --shared uv sync and loads them from Vis shared packages."
         },
         "source_paths": {
           "type": "array",

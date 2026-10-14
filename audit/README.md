@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-10-09.
+> Generated 2026-10-13.
 
 Vis is a coding agent that runs Python, uses tools to inspect and change
 projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
@@ -138,11 +138,11 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `clj-kondo/clj-kondo` | `2026.08.04` | EPL-1.0 | 733 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.9` | MIT | 11 KB | Blockether (in-house) |
-| `com.blockether/imaging` | `0.1.10` | MIT | 23 KB | Blockether (in-house) |
+| `com.blockether/imaging` | `0.1.12` | MIT | 23 KB | Blockether (in-house) |
 | `com.blockether/parinferish` | `0.2.4` | MIT | 70 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.203` | Apache-2.0 | 847 KB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `git:defb17fdafc4b18ef8e021663aacecf04245351a` | MIT | source checkout | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:8a8c29e8fcae0b707b713c2952697d584f956ca2` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.042` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.2` | Apache-2.0 | 580 KB | 3rd-party |
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.2` | Apache-2.0 | 72 KB | 3rd-party |
@@ -188,7 +188,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.56` | LGPL-3.0 | 670 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.57` | LGPL-3.0 | 670 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
 ### `vis-contract` module
@@ -218,7 +218,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 Dependencies use several licenses, listed above. Vis first-party code uses
 Apache-2.0. Review dependency terms for the intended distribution method — **with the copyleft exception(s) below that need legal sign-off:**
 
-> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.56`) uses LGPL-3.0.** Review source, notice and relinking
+> **Copyleft: `com.blockether/lanterna` (`3.1.5-vis.57`) uses LGPL-3.0.** Review source, notice and relinking
 > obligations before distribution, particularly for static native-image builds.
 > Keeping an optional dependency separate may affect those obligations (§4.3).
 

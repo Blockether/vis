@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { GatewayClient } from '../../lib/gateway';
 import type { SettingsResponse, SettingsTarget } from '../../lib/types';
+import { OpenMachineSettings, OpenScopedSettings } from '../../lib/open-settings';
 import { ScopedSettingsDialog } from './ScopedSettingsDialog';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -245,4 +246,65 @@ it('offers a retry after a failed first read and drops the failure when the gate
   await screen.findByRole('heading', { name: 'Agent' }, { timeout: 4500 });
   expect(screen.queryByText('gateway timed out')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+});
+
+// Regression for #373: session settings hid the extension settings that a wider scope
+// decides. They show read-only, name that scope and open its settings in place of this dialog.
+it('locks inherited extension rows and opens the settings that decide them', async () => {
+  const user = userEvent.setup();
+  const target: SettingsTarget = { scope: 'session', target_id: 'a' };
+  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
+  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
+  vi.spyOn(client, 'settings').mockResolvedValue({
+    revision: 'scoped-1',
+    scope: 'session', target_id: 'a',
+    groups: [{
+      id: 'extension:demo', title: 'demo',
+      extension: { name: 'demo', origin: 'project', status: 'loaded' },
+      toggles: [
+        { id: 'demo_machine', label: 'Machine flag', type: 'boolean', enabled: true, scope: 'session',
+          scopes: ['global'], source: 'global', decided_in: { scope: 'global', label: 'Machine' } },
+        { id: 'demo_project', label: 'Project flag', type: 'boolean', enabled: false, scope: 'session',
+          scopes: ['global', 'project'], source: 'default',
+          decided_in: { scope: 'project', target_id: 'p1', label: 'Workspace' } },
+      ],
+    }],
+  });
+  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
+  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
+  const onClose = vi.fn();
+  const openMachine = vi.fn();
+  const openScoped = vi.fn();
+  renderOpenBands(
+    <OpenMachineSettings.Provider value={openMachine}>
+      <OpenScopedSettings.Provider value={openScoped}>
+        <ScopedSettingsDialog client={client} target={target} onClose={onClose} />
+      </OpenScopedSettings.Provider>
+    </OpenMachineSettings.Provider>,
+  );
+
+  expect(await screen.findByRole('switch', { name: 'Machine flag: on' })).toBeDisabled();
+  expect(screen.getByRole('switch', { name: 'Project flag: off' })).toBeDisabled();
+  const note = screen.getByText('Set in Machine settings. You cannot change it per session.');
+  expect(note.parentElement).toHaveClass('justify-between');
+  expect(screen.getByText('Set in Project settings. You cannot change it per session.')).toBeInTheDocument();
+  // The lock note names the deciding scope, so the inherited-from line does not repeat it.
+  expect(screen.queryByText(/Inherited from/)).toBeNull();
+
+  await user.click(screen.getByRole('button', { name: 'Open Project settings' }));
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(openScoped).toHaveBeenCalledWith(client, { scope: 'project', target_id: 'p1', label: 'Workspace' });
+  await user.click(screen.getByRole('button', { name: 'Open Machine settings' }));
+  expect(openMachine).toHaveBeenCalledWith('http://127.0.0.1:7890');
+});
+
+it('says when a scope has no extension settings, and offers no open button without a host', async () => {
+  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
+  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
+  vi.spyOn(client, 'settings').mockResolvedValue({ revision: 'scoped-1', scope: 'group', target_id: 'g1', groups: [] });
+  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
+  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
+  renderOpenBands(<ScopedSettingsDialog client={client} target={{ scope: 'group', target_id: 'g1' }} onClose={() => {}} />);
+  expect(await screen.findByText('No extension settings for this group.')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Open .* settings$/ })).toBeNull();
 });

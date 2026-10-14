@@ -290,6 +290,74 @@
              (throw (ex-info (str "show_attachment: " (pr-str (:filename row)) " is not an image.")
                              {:type ::not-an-image})))))))})
 
+(defn- blank->nil [v] (when-not (str/blank? (str (or v ""))) (str v)))
+
+(defn- extension-attach-call
+  "Body of `vis.attach` for a Python extension. Its one options map holds `base64`
+   and the optional `filename`, `media_type`, `media_type_hint`, `kind`,
+   `audience`, `label` and `commentable`. An explicit media type wins, then the
+   magic-byte sniff, then the hint from the filename, then
+   `application/octet-stream`. The result is the descriptor JSON, without the
+   sandbox-only display data."
+  [opts]
+  (let [opt
+        #(get opts %)
+
+        b64
+        (str (or (opt "base64") ""))
+
+        data
+        (try (.decode (java.util.Base64/getDecoder) b64)
+             (catch IllegalArgumentException _
+               (throw (ex-info "vis.attach: the payload is not base64." {}))))
+
+        media-type
+        (or (blank->nil (opt "media_type"))
+            (when (pos? (alength ^bytes data)) (attachments/detect-media-mime data))
+            (blank->nil (opt "media_type_hint"))
+            "application/octet-stream")
+
+        audience
+        (str/lower-case (str (or (blank->nil (opt "audience")) "both")))]
+
+    (when-not (contains? #{"both" "user" "model"} audience)
+      (throw (ex-info (str "vis.attach: audience must be 'both', 'user' or 'model', got "
+                           (pr-str (opt "audience")))
+                      {})))
+    (when (and (= "model" audience) (attachments/viewer-document-media-type? media-type))
+      (throw
+        (ex-info
+          "vis.attach: documents require audience='user'; vis.read_attachment returns their bytes."
+          {})))
+    (when (nil? mpl-capture/*attachment-sink*)
+      (throw (ex-info "vis.attach: call it from a tool that python_execution runs." {})))
+    (-> (record-attachment-call (or (blank->nil (opt "kind"))
+                                    (cond (str/starts-with? media-type "image/") "image"
+                                          (attachments/viewer-document-media-type? media-type) "doc"
+                                          :else "file"))
+                                media-type
+                                b64
+                                (or (blank->nil (opt "filename")) "artifact")
+                                (alength ^bytes data)
+                                audience
+                                (opt "label")
+                                (true? (opt "commentable")))
+        (json/read-json)
+        (dissoc "display")
+        (json/write-json-str))))
+
+(defn ^:no-doc extension-host-doors
+  "The attachment doors of a Python extension, as `{guest-name fn}`. `vis.attach`
+   and its readers use the bindings of the running `python_execution` block, so an
+   extension tool stores and reads the same artifacts as the block that calls it."
+  []
+  (let [bridge (attach-bridge-bindings)]
+    {"__vis_host_attach__" (attachment-tool 'attach :mutation extension-attach-call)
+     "__vis_host_list_attachments__" (bridge "__vis_list_attachments__")
+     "__vis_host_get_attachment__" (bridge "__vis_get_attachment__")
+     "__vis_host_read_attachment__" (bridge "__vis_read_attachment__")
+     "__vis_host_show_attachment__" (bridge "__vis_reinspect_attachment__")}))
+
 (def vis-extension
   (ext/extension
     {:ext/name "foundation-shim-attach"

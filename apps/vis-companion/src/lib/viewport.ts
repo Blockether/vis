@@ -133,9 +133,6 @@ function rememberKeyboardHeight(height: number): void {
  */
 const WAKE_RESYNC_MS = [0, 60, 160, 320, 600, 900, 1400];
 
-/** Let UIKit finish foregrounding before asking its editor to become first responder. */
-const RESUME_KEYBOARD_FOCUS_MS = 150;
-
 type Box = { height: number; top: number };
 
 /**
@@ -1053,8 +1050,8 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // Native background: `appStateChange` reaches JS from
     // `applicationWillResignActive`, where the AppDelegate has already called
     // `endEditing(true)` — UIKit's own first responder release, taken in the UI
-    // process while the keyboard machinery still answers. The keyboard is on its
-    // way down and nothing here has to push it.
+    // process while the keyboard machinery still answers. Leaving the app ends
+    // editing: the keyboard is on its way down and does not come back.
     //
     // What must NOT happen here is a DOM `blur()`. It reaches the UI process as
     // `didProgrammaticallyClearFocusedElement` one IPC hop later, with the scene
@@ -1062,49 +1059,30 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // keyboard task no thread is left to run, and the main thread waits on an
     // `NSConditionLock` until the watchdog kills Vis — zero CPU, ten seconds,
     // `0x8BADF00D` (TestFlight build 5275, and 4861 before it from the resume
-    // side). So only remember the editor: the way back still owes it its keyboard.
-    let releasedForBackground: HTMLElement | null = null;
+    // side). Only the keyboard geometry goes now: the shell is back at full
+    // height before the app is, so the return shows no band and no jump.
     const onNativeBackground = () => {
       nativeForeground = false;
-      const active = document.activeElement;
-      if (!isKeyboardInputElement(active)) return;
-      releasedForBackground = keyboardPinned || isSoftKeyboardUp() ? active : null;
+      if (nativeKeyboard) reclaimAfterExternalNavigation();
     };
 
-    // Restore only after appStateChange reports active (didBecomeActive on iOS).
+    // Act only after appStateChange reports active (didBecomeActive on iOS).
     // Capacitor's resume is willEnterForeground: touching DOM focus there can
     // block UIKit's keyboard queue before the app is active (builds 5358/5468).
-    // Clear the stale keyboard pin and restore the editor after activation.
+    //
+    // The return never raises the keyboard. A programmatic focus there pinned the
+    // shell for a keyboard iOS then refused, so the composer jumped up and back.
+    // WebKit keeps the DOM focus that `endEditing` left behind, and a tap on an
+    // already-focused field raises nothing, so drop that focus now that UIKit
+    // answers again. The next tap then opens the keyboard as usual.
     const onNativeResume = () => {
       nativeForeground = true;
-      const active = document.activeElement;
-      const staleNativeKeyboard = nativeKeyboard && (keyboardPinned || softKeyboardUp);
-      const editor =
-        releasedForBackground ??
-        (staleNativeKeyboard && isKeyboardInputElement(active) ? active : null);
-      if (staleNativeKeyboard) reclaimViewportForExternalNavigation();
+      if (
+        nativeKeyboard &&
+        (keyboardPinned || softKeyboardUp || isKeyboardInputElement(document.activeElement))
+      )
+        reclaimViewportForExternalNavigation();
       resync();
-      if (!editor) return;
-      timers.push(
-        window.setTimeout(() => {
-          releasedForBackground = null;
-          // Gone again inside the delay: this focus would land in exactly the
-          // background the watchdog kills for.
-          if (!nativeForeground) return;
-          if (!editor.isConnected) return;
-          const focused = document.activeElement;
-          if (
-            focused !== editor &&
-            focused !== document.body &&
-            focused !== document.documentElement
-          )
-            return;
-          // Nothing dropped the DOM's focus while the app was away, so only a real
-          // focus CHANGE raises the keyboard again.
-          if (focused === editor) editor.blur();
-          editor.focus({ preventScroll: true });
-        }, RESUME_KEYBOARD_FOCUS_MS),
-      );
     };
     let disposeNative = () => {};
     try {

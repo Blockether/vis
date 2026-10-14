@@ -65,6 +65,7 @@
     [com.blockether.vis.internal.loop.environment :as loop-env]
     [com.blockether.vis.internal.loop.router :as loop-router]
     [com.blockether.vis.internal.loop.turn :as turn]
+    [com.blockether.vis.internal.loop.trajectory :as trajectory]
     [com.blockether.vis.internal.gateway.client :as gateway-client]
     [com.blockether.vis.internal.gateway.server :as gateway-server]
     [com.blockether.vis.internal.gateway.stdio :as gateway-stdio]
@@ -77,6 +78,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.system-trust :as system-trust]
     [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.util :as util]
     [taoensso.telemere :as tel])
   (:import [com.blockether.skjema Uri]))
 
@@ -715,6 +717,8 @@
                     session. Default false.
    - :session-id  - Continue an existing persisted session (full UUID or
                     unambiguous prefix). Implies persistent execution.
+   - :tools       - Tool list (see `loop-env/tool-selection`). A new session keeps it;
+                    with `:session-id` it replaces the saved list before the turn.
    - :no-persist? - Backward-compatible override; when true, forces
                     ephemeral execution even if `:persist?` is true.
 
@@ -727,7 +731,7 @@
    `(sessions/by-channel :cli)`."
   [agent-def prompt &
    [{:keys [spec model provider reasoning-effort on-chunk debug? config db persist? no-persist?
-            session-id json-schema sources extensions]
+            session-id json-schema sources extensions tools]
      :as _opts}]]
   (let [json-compiled
         ;; The CLI checked its schema already. A direct caller gets the same
@@ -829,8 +833,8 @@
       (let [env (loop-env/create-environment (router-for-run cfg local-router?)
                                              {:db (or db :memory)
                                               :channel :cli
-                                              :sources (workspace/normalize-config-sources
-                                                         sources)})]
+                                              :sources (workspace/normalize-config-sources sources)
+                                              :tools (loop-env/check-tool-selection! tools)})]
         (try (loop-env/turn-off-extensions! env (loop-env/check-extension-selection! extensions))
              (let [submit! (fn [_request turn-messages]
                              (let [result (turn/turn! env turn-messages q-opts)]
@@ -888,6 +892,13 @@
                                    :vis/user-error true
                                    :session-id session-id}))))
 
+            ;; `--tools` with `--session-id` replaces the saved list before the turn.
+            _
+            (when (and resolved-session-id (some? tools))
+              (try (gateway-state/set-tools! resolved-session-id tools)
+                   (catch clojure.lang.ExceptionInfo e
+                     (throw (ex-info (ex-message e) (assoc (ex-data e) :vis/user-error true))))))
+
             created-session
             (when-not resolved-session-id
               ;; Create title-less so the async `maybe-auto-title!`
@@ -902,7 +913,10 @@
                                                (assoc :sources sources)
 
                                                (some? extensions)
-                                               (assoc :extensions extensions))))
+                                               (assoc :extensions extensions)
+
+                                               (some? tools)
+                                               (assoc :tools tools))))
 
             session-id
             (or resolved-session-id (get created-session "id"))]
@@ -1488,7 +1502,9 @@
    "--db" :db
    "--session-id" :session-id
    "--json-schema" :json-schema
-   "--extensions" :extensions})
+   "--trajectory" :trajectory
+   "--extensions" :extensions
+   "--tools" :tools})
 
 (defn- option-token?
   "True for a bare token SHAPED like a flag (`-v`, `--json`, `--full-trace-stream`).
@@ -1559,11 +1575,12 @@
     (if (= ["none"] names) [] names)))
 
 (defn- check-launch-options
-  "Turn the source and extension flags into `:sources` and `:extensions` name lists.
-   Without a flag, read `VIS_SOURCES` and `VIS_EXTENSIONS` from `env`. A saved
-   session keeps the choice that it started with, so the flags do not work with
-   `--session-id`, and `--session-id` ignores the variables."
-  [{:keys [no-global? no-project? extensions session-id] :as opts} env]
+  "Turn the source, extension and tool flags into `:sources`, `:extensions` and `:tools`
+   name lists. Without a flag, read `VIS_SOURCES`, `VIS_EXTENSIONS` and `VIS_TOOLS` from
+   `env`. A saved session keeps the sources and extensions that it started with, so only
+   `--tools` works with `--session-id`: it replaces the saved tool list. `--session-id`
+   ignores the variables."
+  [{:keys [no-global? no-project? extensions tools session-id] :as opts} env]
   (let [env-value
         (fn [k]
           (let [v (get env k)]
@@ -1585,24 +1602,30 @@
         (some-> (or extensions (when new-session? (env-value "VIS_EXTENSIONS")))
                 comma-names)
 
+        tools
+        (some-> (or tools (when new-session? (env-value "VIS_TOOLS")))
+                comma-names)
+
         source-error
         (try (workspace/normalize-config-sources sources)
              nil
              (catch clojure.lang.ExceptionInfo e (ex-message e)))]
 
-    (cond-> (dissoc opts :no-global? :no-project? :extensions)
+    (cond-> (dissoc opts :no-global? :no-project? :extensions :tools)
       sources
       (assoc :sources sources)
 
       extensions
       (assoc :extensions extensions)
 
+      tools
+      (assoc :tools tools)
+
       (and (not new-session?) (or no-global? no-project? (:extensions opts)))
       (update :flag-errors
               (fnil conj [])
-              (str
-                "--no-global, --no-project, --vanilla and --extensions apply only to a new session;"
-                " do not use them with --session-id"))
+              (str "--no-global, --no-project, --vanilla and --extensions apply only to a new"
+                   " session; do not use them with --session-id"))
 
       source-error
       (update :flag-errors (fnil conj []) source-error))))
@@ -1651,13 +1674,14 @@
               ;; A value flag with no usable value used to vanish: `--model ""`
               ;; ran the DEFAULT model, and `--model --json "task"` ran a model
               ;; literally named "--json". Blank, `--`, and flag-shaped tokens
-              ;; are all "you forgot the value". `--extensions -spel` is an
-              ;; exclusion list, so one leading dash is a value there.
+              ;; are all "you forgot the value". `--extensions -spel` and
+              ;; `--tools -py.lint_code` are exclusion lists, so one leading dash is a value there.
               (let [v (first more)]
                 (if (or (str/blank? v)
                         (= "--" v)
                         (and (option-token? v)
-                             (not (and (= "--extensions" arg) (not (str/starts-with? v "--"))))))
+                             (not (and (#{"--extensions" "--tools"} arg)
+                                       (not (str/starts-with? v "--"))))))
                   (recur more
                          (update
                            opts
@@ -1710,6 +1734,9 @@
   (commandline/stdout! "                    happening, then print the answer.")
   (commandline/stdout! "  --full-trace-json-stream")
   (commandline/stdout! "                    Stream raw JSON trace frames, one object per line.")
+  (commandline/stdout! "  --trajectory PATH Write the run to PATH as an ATIF trajectory (JSON).")
+  (commandline/stdout! "                    Known credentials become [REDACTED]. Only you can")
+  (commandline/stdout! "                    read the file.")
   (commandline/stdout! "  --debug           Enable verbose debug logging.")
   (commandline/stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
   (commandline/stdout! "  --model MODEL        Override the configured model. Also accepts")
@@ -1730,6 +1757,10 @@
   (commandline/stdout! "  --extensions LIST    Use only these extensions (gh,clj), all but these")
   (commandline/stdout! "                       (-spel,-uplink) or none. Env: VIS_EXTENSIONS,")
   (commandline/stdout! "                       VIS_SOURCES=global|project|none.")
+  (commandline/stdout! "  --tools LIST         Keep only these tools of their extensions")
+  (commandline/stdout! "                       (py.lint_code,py.repl_*) or turn these off")
+  (commandline/stdout! "                       (-py.repl_stop). Env: VIS_TOOLS. With --session-id,")
+  (commandline/stdout! "                       replace the saved list of that session.")
   (commandline/stdout! "  --                   End flag parsing: every later word is prompt")
   (commandline/stdout! "                       text, dashes and all.")
   (commandline/stdout! "")
@@ -1843,6 +1874,8 @@
 
     (cond unsupported? 2
           (or (:error result) (contains? #{:error :cancelled} (:status result))) 1
+          ;; A provider failure ends the turn with an error block and no run error.
+          (some #(= "error" (get % "type")) (result-content result)) 1
           (false? (get-in result [:eval :valid?])) 2
           :else 0)))
 
@@ -1888,6 +1921,93 @@
         (doseq [line (:schema-errors result)]
           (commandline/stderr! (str "  " line))))))
 
+(defn- run-profile
+  "The run options that shape the agent, for the `--trajectory` file."
+  [{:keys [agent-name toggles provider model reasoning-effort extensions tools db persist?]}]
+  (cond-> {:name (or agent-name "cli")}
+    toggles
+    (assoc :toggles (parse-toggle-overrides toggles))
+
+    provider
+    (assoc :provider provider)
+
+    model
+    (assoc :model model)
+
+    reasoning-effort
+    (assoc :reasoning-effort reasoning-effort)
+
+    (some? extensions)
+    (assoc :extensions extensions)
+
+    (some? tools)
+    (assoc :tools tools)
+
+    db
+    (assoc :db (if (= db ":memory") "memory" "file"))
+
+    persist?
+    (assoc :is-persist true)))
+
+(defn- council-subagents
+  "The Council children of the persisted session `sid`, for the `--trajectory`
+   file: each agent row with its `turns`, and each turn with its persisted
+   iterations in `trace`. A failed read gives a warning and nil, so the file
+   still has the run."
+  [sid]
+  (when sid
+    (try (not-empty
+           (into []
+                 (keep (fn [agent]
+                         (let [row
+                               (wire/canonical agent)
+
+                               child
+                               (some-> (get row "session_id")
+                                       str)]
+
+                           (when (and child (not= child (str sid)))
+                             (assoc row
+                               "turns" (mapv (fn [turn]
+                                               (assoc turn
+                                                 "trace" (gateway-state/turn-trace
+                                                           child
+                                                           (or (get turn "turn_id")
+                                                               (get turn "id")))))
+                                             (gateway-state/list-turns child)))))))
+                 (gateway-state/agents-operation! (str sid) :list {})))
+         (catch Exception e
+           (commandline/stderr! (str "vis-agent: the trajectory has no Council children: "
+                                     (ex-message e)))
+           nil))))
+
+(defn- persisted-turn
+  "The iterations and the position of the last turn of the persisted session
+   `sid`, for the `--trajectory` file. A persisted run returns no trace. A failed
+   read gives a warning and nil, so the file still has the run."
+  [sid]
+  (when sid
+    (try
+      (when-let [turn (last (gateway-state/list-turns (str sid)))]
+        {:iterations (gateway-state/turn-trace (str sid) (or (get turn "turn_id") (get turn "id")))
+         :turn-position (get turn "position")})
+      (catch Exception e
+        (commandline/stderr! (str "vis-agent: the trajectory has no iterations: " (ex-message e)))
+        nil))))
+
+(defn- persisted-session
+  "The usage rollup and the saved goal of the persisted session `sid`, for the
+   `--trajectory` file. A failed read gives a warning and nil, so the file still
+   has the run."
+  [sid]
+  (when sid
+    (try {:session-usage (gateway-state/session-usage-info (str sid))
+          :goal (get (gateway-state/soul (str sid)) "goal")}
+         (catch Exception e
+           (commandline/stderr! (str "vis-agent: the trajectory has no session usage: "
+                                     (ex-message e)))
+           nil))))
+
 (defn- run-one-shot!
   "Run the root one-shot command. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
@@ -1897,7 +2017,7 @@
   ;; constructing the one-shot environment; explicit --toggles still wins below.
   (toggles/hydrate-from-config! (config/load-config-raw))
   (let [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name
-                db toggles json-schema]
+                db toggles json-schema trajectory]
          :as opts}
         (-> residual
             parse-run-args
@@ -1915,12 +2035,14 @@
         (commandline/stderr! "  Or make it the prompt text:   vis-agent -- <text>"))
       (exit-process! 2))
     (when (or help? (str/blank? prompt)) (print-run-usage!) (exit-process! 0))
-    ;; Check the extension list before any provider spend: a typo is a usage error.
-    (when (some? (:extensions opts))
-      (try (loop-env/check-extension-selection! (:extensions opts))
-           (catch clojure.lang.ExceptionInfo e
-             (commandline/stderr! (str "vis-agent: " (ex-message e)))
-             (exit-process! 2))))
+    ;; Check the extension and tool lists before any provider spend: a typo is a usage error.
+    ;; A saved session checks its tools against its own project when it applies them.
+    (try (when (some? (:extensions opts)) (loop-env/check-extension-selection! (:extensions opts)))
+         (when (and (some? (:tools opts)) (not (:session-id opts)))
+           (loop-env/check-tool-selection! (:tools opts)))
+         (catch clojure.lang.ExceptionInfo e
+           (commandline/stderr! (str "vis-agent: " (ex-message e)))
+           (exit-process! 2)))
     ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
     ;; Otherwise `vis-agent ... > out.txt` leaves bold/italic ANSI markers in
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
@@ -1945,7 +2067,8 @@
                              :compact?
                              :agent-name
                              :db
-                             :toggles)
+                             :toggles
+                             :trajectory)
                      trace-on-chunk
                      (assoc :on-chunk trace-on-chunk)
 
@@ -1956,11 +2079,32 @@
                      (assoc :db
                        (config/resolve-db-spec
                          (if (= db ":memory") :memory {:backend :sqlite :path db}))))
+          started-at-ms (util/now-ms)
           result (call-with-toggle-overrides (parse-toggle-overrides toggles)
                                              #(run! agent-def prompt run-opts))
+          trajectory-error
+          (when trajectory
+            (try
+              (trajectory/export!
+                trajectory
+                result
+                (merge {:prompt prompt
+                        :started-at-ms started-at-ms
+                        :profile (run-profile opts)
+                        :subagents (when (:persist? opts) (council-subagents (:session-id result)))}
+                       (when (and (:persist? opts) (empty? (:trace result)))
+                         (persisted-turn (:session-id result)))
+                       (when (:persist? opts) (persisted-session (:session-id result)))))
+              nil
+              (catch Exception e (str "vis-agent: cannot write the trajectory: " (ex-message e)))))
+          _ (some-> trajectory-error
+                    commandline/stderr!)
           exit-code (cond-> (cli-result-exit-code result)
                       ;; A `--json-schema` run without a structured answer failed.
                       (and json-schema (not (contains? result :structured)))
+                      (max 1)
+
+                      trajectory-error
                       (max 1))
           trace-result (select-keys result
                                     [:session-id :content :trace :iteration-count :duration-ms
@@ -2924,6 +3068,7 @@
      (help-row "--toggles NAME=VAL[,..]" "Set registered toggles for this run only.")
      (help-row "--full-trace-stream" "Stream pretty human trace.")
      (help-row "--full-trace-json-stream" "Stream raw JSON trace frames.")
+     (help-row "--trajectory PATH" "Write an ATIF trajectory file.")
      (help-row "--provider PROVIDER" "Override provider.")
      (help-row "--model MODEL" "Override model, or use provider/model.")
      (help-row "--reasoning-effort E" "Exact provider-native effort that the model offers.")
@@ -2935,6 +3080,7 @@
      (help-row "--no-project" "Skip project config, extensions, AGENTS.md and skills.")
      (help-row "--vanilla" "Both --no-global and --no-project. Providers stay.")
      (help-row "--extensions LIST" "Only these (gh,clj), all but these (-spel) or none.")
+     (help-row "--tools LIST" "Only these tools (py.lint_code) or all but these (-py.repl_stop).")
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
      (help-row "--help, -h" "Show help.") "" "RUNTIME"

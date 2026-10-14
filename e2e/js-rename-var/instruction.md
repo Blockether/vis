@@ -1,0 +1,1 @@
+In app.js rename the local variable result to area_value, both where it is assigned and returned.

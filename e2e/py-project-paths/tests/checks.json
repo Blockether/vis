@@ -1,0 +1,29 @@
+{
+  "want": {
+    "m.py": [
+      "def a(",
+      "def b(",
+      "def c(",
+      "return 3"
+    ],
+    "library/value.py": [
+      "return 42"
+    ]
+  },
+  "wantnot": {
+    "library/value.py": [
+      "return 0"
+    ]
+  },
+  "want_forms": [
+    "project_root_path",
+    "library_path",
+    "filesystem_roots",
+    "python_name",
+    "cwd",
+    "assert"
+  ],
+  "want_answer": [
+    "PATH-GLOBALS-OK"
+  ]
+}

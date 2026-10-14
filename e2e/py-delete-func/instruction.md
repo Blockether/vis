@@ -1,0 +1,1 @@
+In d.py delete the drop function entirely. Keep keep and alsokeep.

@@ -91,7 +91,7 @@
                  "assert not observed['main-agent-instructions']\n"
                  "assert list(observed['patch']) == ['path', 'edits']\n"
                  "assert all(p.default is inspect.Parameter.empty for p in observed['patch'].values())\n"
-                 "assert not observed['council.subagents']\n"
+                 "assert list(observed['council.wait']) == ['session_ids', 'timeout_secs', 'kwargs']\n"
                  "assert list(observed['council.cancel']) == ['session_id']\n"
                  "tuple_probe = observed['signature.tuple-probe']\n"
                  "assert tuple_probe['limit'].default is Ellipsis\n"

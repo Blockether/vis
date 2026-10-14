@@ -235,7 +235,8 @@
           ;; backends. A fresh JVM is essential: other tests may already have used them.
           (doseq [ns-sym '[com.blockether.vis.internal.speech.asr
                            com.blockether.vis.internal.speech.tts
-                           com.blockether.vis.internal.speech.sherpa]]
+                           com.blockether.vis.internal.speech.sherpa
+                           com.blockether.vis.internal.speech.vibevoice]]
             (expect (not (contains? (:loaded-namespaces result) ns-sym)) (str ns-sym)))
           (expect (= "parakeet-local" (get-in result [:speech-features "voice" "selected"])))
           (expect (= "piper-local" (get-in result [:speech-features "speech" "selected"])))

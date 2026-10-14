@@ -13,6 +13,16 @@
       (expect (= :kitty (:images (timg/detect-capabilities {"WARP_SESSION_ID" "x"})))))
   (it "iTerm2 is detected from its session env"
       (expect (= :iterm2 (:images (timg/detect-capabilities {"ITERM_SESSION_ID" "w0"})))))
+  (it "iTerm2 3.6 and later get Kitty graphics, so iTerm2 3.7 never prompts"
+      ;; iTerm2 3.7 shows a modal prompt for each OSC 1337 image, and the
+      ;; prompt takes the keys that the user types into the TUI.
+      (expect (= :kitty
+                 (:images (timg/detect-capabilities {"ITERM_SESSION_ID" "w0"
+                                                     "TERM_PROGRAM" "iTerm.app"
+                                                     "TERM_PROGRAM_VERSION" "3.7.0beta9"}))))
+      (expect (= :iterm2
+                 (:images (timg/detect-capabilities {"TERM_PROGRAM" "iTerm.app"
+                                                     "TERM_PROGRAM_VERSION" "3.5.14"})))))
   (it "tmux / screen / unknown terminals report no image support"
       (expect (nil? (:images (timg/detect-capabilities {"TMUX" "/tmp/x"
                                                         "TERM_PROGRAM" "ghostty"}))))

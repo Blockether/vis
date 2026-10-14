@@ -1,7 +1,8 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { SearchIcon } from '../../components/icons';
 import type { GatewayClient } from '../../lib/gateway';
-import type { SettingValue, SettingsResponse, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
+import type { SettingDecidedIn, SettingValue, SettingsResponse, SettingsTarget, Toggle, ToggleGroup } from '../../lib/types';
+import { OpenMachineSettings, OpenScopedSettings } from '../../lib/open-settings';
 import { filterSettings, flattenSettings } from '../../lib/setting-tree';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow, settingTree } from './MachineSettings';
@@ -28,6 +29,8 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
   const [search, setSearch] = useState('');
   const searchInput = useRef<HTMLInputElement>(null);
   const epoch = useRef(0);
+  const openMachine = useContext(OpenMachineSettings);
+  const openScoped = useContext(OpenScopedSettings);
   const saving = useRef(false);
   useEffect(() => {
     const controller = new AbortController();
@@ -58,8 +61,10 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     setPending(toggle.id);
     setError(null);
     try {
-      await client.setSetting(toggle.id, action, value, owner);
+      const saved = await client.setSetting(toggle.id, action, value, owner);
       setData(await client.settings(undefined, owner));
+      // The value is saved, but the extension could not act on the change.
+      if (saved.change_error) setError(saved.change_error);
       return true;
     } catch (err) { setError((err as Error).message); return false; }
     finally { saving.current = false; setPending(null); }
@@ -92,9 +97,18 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
   const extensions = groups.filter(isExtensionGroup);
   // MCP servers and extensions stand in the Tools section, with any Tools rows of the gateway.
   const tools = groups.find((group) => group.id === 'tools');
+  // A locked inherited row opens the settings that decide it, in place of this dialog (#373).
+  const canOpen = (where: SettingDecidedIn) =>
+    where.scope === 'global' ? Boolean(openMachine) : Boolean(openScoped && where.target_id);
+  const openSettings = (where: SettingDecidedIn) => {
+    onClose();
+    if (where.scope === 'global') openMachine?.(client.base);
+    else openScoped?.(client, { scope: where.scope, target_id: where.target_id, label: where.label });
+  };
   const row = (toggle: Toggle, head?: SettingHead) => settingTree(toggle, (setting) => (
     <SettingRow key={setting.id} toggle={setting} head={setting === toggle ? head : undefined} busy={pending !== null}
-      onToggle={() => void save(setting, 'toggle')} onPick={(value) => save(setting, 'value', value)} onInherit={() => void save(setting, 'inherit')} />
+      onToggle={() => void save(setting, 'toggle')} onPick={(value) => save(setting, 'value', value)} onInherit={() => void save(setting, 'inherit')}
+      onOpenSettings={setting.decided_in && canOpen(setting.decided_in) ? openSettings : undefined} />
   ));
   const rows = (group: ToggleGroup) => group.toggles.length > 0 && (
     <div className="divide-y divide-dialog-edge">{group.toggles.map((toggle) => row(toggle))}</div>

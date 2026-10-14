@@ -76,6 +76,36 @@ describe('a queued message delivered into the turn', () => {
     expect(band?.textContent).toContain('shot.png');
   });
 
+  // User report: a paste sent with `→` showed its raw ````vis-paste fence in the band.
+  it('folds a pasted block into the same disclosure as the request bubble', () => {
+    const paste = 'The run_tests interpreter lacks the SDK.';
+    const { container } = render(
+      <IterationTrace
+        iterations={[
+          {
+            position: 39,
+            user_input: [
+              {
+                request: `${paste}\n PIN THE SDK!`,
+                display_request: ['', '````vis-paste', '[Pasted #1: 1 line, 40B]', paste, '````', ' PIN THE SDK!'].join('\n'),
+              },
+            ],
+          },
+        ]}
+        whole
+      />,
+    );
+
+    const [band] = bands(container);
+    expect(band?.textContent).not.toContain('````');
+    expect(band?.textContent).not.toContain('vis-paste');
+    const disclosure = band?.querySelector('details');
+    expect(disclosure?.open).toBe(false);
+    expect(disclosure?.querySelector('summary')?.textContent).toBe('[Pasted #1: 1 line, 40B]');
+    expect(disclosure?.querySelector('code')?.textContent).toBe(paste);
+    expect(band?.textContent).toContain('PIN THE SDK!');
+  });
+
   describe('with the pictures it carried', () => {
     afterEach(() => {
       vi.useRealTimers();

@@ -21,6 +21,7 @@
        (boolean (re-matches #"[a-z][a-z0-9-]{0,63}" name))
        (not (contains? (-> (set (keys assets/gliner-architectures))
                            (into (keys assets/decision2-architectures))
+                           (into (keys assets/d3-architectures))
                            (conj "laya-typed-decisions"))
                        name))))
 

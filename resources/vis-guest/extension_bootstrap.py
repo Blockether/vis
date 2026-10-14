@@ -56,7 +56,7 @@ def __vis_seal__(value):
     else:
         attrs = getattr(value, "__dict__", None)
     if isinstance(attrs, dict):
-        sequence = {}
+        markers = {}
         if "__vis_sequence_field__" in vars(type(value)):
             field = vars(type(value))["__vis_sequence_field__"]
             if (
@@ -70,15 +70,26 @@ def __vis_seal__(value):
                 raise TypeError(
                     f"sequence field {field!r} must contain a built-in list or tuple"
                 )
-            sequence["__vis_sequence_field__"] = field
+            markers["__vis_sequence_field__"] = field
+        sealed = {
+            str(k): __vis_seal__(v)
+            for k, v in attrs.items()
+            if not str(k).startswith("_")
+        }
+        for name in _vis_mod._derived_names(type(value)):
+            # A property that fails stays out of the record; the tool still answers.
+            try:
+                sealed[name] = __vis_seal__(getattr(value, name))
+            except Exception:
+                pass
+        # A model's own `__str__` text becomes the record's `str` in the sandbox.
+        text = _vis_mod._derived_text(value)
+        if text is not None:
+            markers["__vis_text__"] = text
         return {
-            **sequence,
+            **markers,
             "__vis_object__": type(value).__name__,
-            "__vis_attrs__": {
-                str(k): __vis_seal__(v)
-                for k, v in attrs.items()
-                if not str(k).startswith("_")
-            },
+            "__vis_attrs__": sealed,
         }
     return value
 

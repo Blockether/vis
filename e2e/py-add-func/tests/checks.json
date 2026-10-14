@@ -1,0 +1,11 @@
+{
+  "want": {
+    "m.py": [
+      "def c(",
+      "return 3",
+      "def a(",
+      "def b("
+    ]
+  },
+  "wantnot": {}
+}

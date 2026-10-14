@@ -656,8 +656,9 @@
         ;; #358: the sandbox pre-imports `dataclasses` and `inspect`, so no rule asks for an import.
         (expect (not (str/includes? text "Import `dataclasses` first.")))
         (expect (not (str/includes? text "import inspect;")))
-        (doseq [rule ["An extension result is a frozen record of its public fields"
-                      "without methods. Its declared sequences iterate"
+        (doseq [rule ["An extension result is a frozen record of its public fields and"
+                      "properties, without methods; `print(r)` shows its own text."
+                      "Its declared sequences iterate."
                       "For a plain dict, use `dataclasses.asdict(r)`, not `dict(r)`."
                       "Arguments | `print(inspect.signature(fn))`."
                       "A wrong name raises an error that lists the real fields"]]
@@ -695,16 +696,18 @@
         (expect (str/includes? text "text next to a `python_execution` call reaches the user"))
         (expect (str/includes? text "it must stand alone without the progress notes"))))
   ;; #303: §7 owns when, where and how progress notes appear, so a project need not copy that
-  ;; policy into AGENTS.md. Prose defaults to ASD-STE100 unless the user or project asks otherwise.
-  (it "owns progress-note timing and style and the default prose standard"
+  ;; policy into AGENTS.md. The style rule names no standard: "ASD-STE100" is Simplified
+  ;; Technical English, and the name drew Claude Opus 5.5 into English and German notes in
+  ;; Polish turns.
+  (it "owns progress-note timing and style"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
+        (expect (not (str/includes? text "ASD-STE100")))
         (doseq [rule ["Before large work, say the first step. Before an edit, say the change"
                       "when a finding, decision or blocker changes the next step"
                       "one or two sentences of facts" "Group related steps"
                       "Routine reads, searches and repeated code need no note"
-                      "Unless the user or project asks for another style"
-                      "80% of the way to ASD-STE100" "short sentences" "one action for each step"
-                      "a clear actor" "one name for each thing"]]
+                      "Unless the user or project asks for another style" "short sentences"
+                      "one action for each step" "a clear actor" "one name for each thing"]]
           (expect (str/includes? text rule) rule))))
   ;; User reports: Claude Opus 5.5 wrote German, then Russian, notes in Polish conversations.
   ;; After the first fix, 934 of 1 084 mid-turn notes in Polish turns were still English. The
@@ -872,12 +875,21 @@
       ;; names no natural language. It lands at 12 070.
       ;; #349: the shell handle line says that `sh.type` adds Enter and how to omit it.
       ;; It lands at 12 138.
-      (expect (< (count text) 12150))
+      ;; `ls` gains `is_ignored`, which lists gitignored entries. It lands at 12 183.
+      ;; User report: the style rule named ASD-STE100 (Simplified Technical English), and Claude
+      ;; Opus 5.5 wrote English and German notes in Polish turns. §7 names no standard now.
+      (expect (< (count text) 12200))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "each hit is a `patch` anchor"
                          "`patch(path, edits)`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
+      ;; User report: a model asked the user a question in a progress note and kept working.
+      ;; A question now ends the turn.
+      (expect
+        (str/includes?
+          text
+          "Ask one question only when the ambiguity changes the result. Then end the turn: reply without a tool call."))
       ;; Regression, user report: a section that ORDERS a verb has to say how it is CALLED.
       ;; Every code verb §3 names carries its literal call shape, and the options-dict ones
       ;; name the keys inside it — the shape is read, never remembered or looked up.
@@ -1662,17 +1674,19 @@
 (defdescribe
   core-prompt-ls-contract-test
   ;; Regression: the prompt omitted ls keywords, including the hidden alias.
-  (it "states the ls signature, batching, return type, and hidden precedence"
-      (let [text (prompt/build-system-prompt {})]
-        (doseq
-          [rule
-           ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None, pattern=None, as_paths=False)"
-            "`pattern` is a case-sensitive basename glob, not a regex"
-            "It applies at each depth and keeps ancestors; a per-path spec overrides it"
-            "takes a str, a Path or a list"
-            "It returns a string, or a flat list of paths with `as_paths=True`"
-            "A non-None `hidden` overrides `is_hidden`" "Gitignored entries stay out"]]
-          (expect (str/includes? text rule) rule)))))
+  (it
+    "states the ls signature, batching, return type, and hidden precedence"
+    (let [text (prompt/build-system-prompt {})]
+      (doseq
+        [rule
+         ["ls(paths='.', depth=1, is_hidden=False, *, hidden=None, is_ignored=False, pattern=None, as_paths=False)"
+          "`pattern` is a case-sensitive basename glob, not a regex"
+          "It applies at each depth and keeps ancestors; a per-path spec overrides it"
+          "takes a str, a Path or a list"
+          "It returns a string, or a flat list of paths with `as_paths=True`"
+          "A non-None `hidden` overrides `is_hidden`"
+          "Gitignored entries stay out unless `is_ignored=True`"]]
+        (expect (str/includes? text rule) rule)))))
 
 (defdescribe
   core-prompt-helper-lifecycle-test

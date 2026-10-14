@@ -17,14 +17,14 @@
         com.blockether/fff {:mvn/version "0.12.9"}
         ;; Imaging over a Rust cdylib with embedded fonts, replacing AWT/Java2D/ImageIO/jsvg:
         ;; no headless bootstrap, no fontconfig. `java.desktop` still loads, for mic capture.
-        com.blockether/imaging {:mvn/version "0.1.10"}
+        com.blockether/imaging {:mvn/version "0.1.12"}
         ;; Names the wrong quote or bracket when Python refuses a `python_execution` block.
         com.blockether/parinferish {:mvn/version "0.2.4"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
         com.blockether/svar {:mvn/version "0.7.203"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
-        com.blockether/vis-python-runtime {:git/sha "defb17fdafc4b18ef8e021663aacecf04245351a"
+        com.blockether/vis-python-runtime {:git/sha "8a8c29e8fcae0b707b713c2952697d584f956ca2"
                                            :git/url
                                            "https://github.com/Blockether/vis-python-runtime.git"}
         com.cnuernber/charred {:mvn/version "1.042"}

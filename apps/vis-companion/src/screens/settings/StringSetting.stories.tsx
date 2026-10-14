@@ -45,6 +45,11 @@ export const Default: Story = {
     await userEvent.click(field);
     await expect(canvas.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
     await expect(field).toHaveValue('Ada');
+    // A one-line value sits on the right of its label, like a switch or a picker.
+    const label = canvas.getByText('Agent name').getBoundingClientRect();
+    const box = field.getBoundingClientRect();
+    await expect(box.left).toBeGreaterThanOrEqual(label.right);
+    await expect(box.top).toBeLessThan(label.bottom + 16);
   },
 };
 export const Saving: Story = {

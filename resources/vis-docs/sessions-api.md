@@ -24,6 +24,8 @@ requests, select **HTTP** at the top of the page.
   session](#create-a-session). Then [send a message and wait](#send-a-message-and-wait).
 - **Your program must show progress while Vis works.** [Follow progress](#follow-progress).
 - **A turn waits for a person.** [Answer a form](#answer-a-form).
+- **A session must stop using some tools, or use them again.** [Change the tools of a
+  session](#change-the-tools-of-a-session).
 - **Your program must stop work or change waiting messages.** [Queue and cancel
   messages](#queue-and-cancel-messages).
 - **Your program must find, copy or sort saved sessions.** [Find a saved
@@ -137,7 +139,7 @@ request.
 | Change or archive a group | `PATCH /v1/session-groups/{gid}` |
 | Delete a group | `DELETE /v1/session-groups/{gid}` |
 | Move a session to a group | `PUT /v1/sessions/{sid}/group` |
-| Rename, star or archive a session | `PATCH /v1/sessions/{sid}` |
+| Rename, star or archive a session, or change its tools | `PATCH /v1/sessions/{sid}` |
 | Delete a session | `DELETE /v1/sessions/{sid}` |
 | Export a transcript | `GET /v1/sessions/{sid}/transcript`, `GET /v1/sessions/{sid}/transcript.md`, `GET /v1/sessions/{sid}/transcript.html` |
 | List live views | `GET /v1/sessions/{sid}/views/live` |
@@ -176,6 +178,21 @@ every optional extension. An unknown tier or extension raises an error for the 4
 global or project configuration](configuration.md#leave-out-global-or-project-configuration)
 describes each tier.
 
+To turn off single tools of an extension, add `tools`:
+
+```python
+session = client.create_session(
+    **client.session_options(os.environ["VIS_PROJECT_ROOT"]),
+    tools=["-py.lint_code", "-py.repl_stop"],
+)
+```
+
+`tools` keeps only the named tools of the extensions that they name, or turns off each `-name`
+entry. A `*` matches any part of a name, as in `py.repl_*`. An unknown tool, an empty list or a list
+that mixes the two forms raises an error for the 400 answer. `Agent(tools=[...])` sends the same
+list for its conversation. [Choose single tools](configuration.md#choose-single-tools) describes the
+rules.
+
 To continue a saved session, call `client.session(session_id)`. It returns a handle and does not
 create a session.
 
@@ -205,6 +222,52 @@ To continue a saved session, use its `id` in the paths of the next requests.
 `extensions` keeps the named extensions or turns off each `-name` entry. An empty list turns off
 every optional extension. An unknown tier or extension returns 400. [Leave out global or project
 configuration](configuration.md#leave-out-global-or-project-configuration) describes each tier.
+
+To turn off single tools of an extension, add `tools`:
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/json' \
+  --data '{"root": "/srv/projects/shop", "channel": "app", "tools": ["-py.lint_code", "-py.repl_stop"]}'
+```
+
+`tools` keeps only the named tools of the extensions that they name, or turns off each `-name`
+entry. A `*` matches any part of a name, as in `py.repl_*`. An unknown tool, an empty list or a list
+that mixes the two forms returns 400. [Choose single tools](configuration.md#choose-single-tools)
+describes the rules.
+
+</div>
+
+## Change the tools of a session
+
+<div data-variant="python">
+
+```python
+session = client.session(session_id)
+session.update(tools=["-py.repl_start", "-py.repl_stop"])
+```
+
+The new list replaces the saved list, also while a turn runs. An idle session gets the new tools at
+once, and a busy session gets them at its next step. Resumed sessions keep the new list. For an
+`Agent`, call `agent.session.update(tools=[...])`. To turn every tool on again, pass `["*"]`.
+
+An unknown tool or a list that mixes the two forms raises an error for the 400 answer, and the old
+list stays. An archived session refuses the change with 409.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X PATCH "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID" -H 'content-type: application/json' \
+  --data '{"tools": ["-py.repl_start", "-py.repl_stop"]}'
+```
+
+The answer has the status 200 and the session. The new list replaces the saved list, also while a
+turn runs. An idle session gets the new tools at once, and a busy session gets them at its next step.
+Resumed sessions keep the new list. To turn every tool on again, send `["*"]`.
+
+An unknown tool, a list that mixes the two forms or a value that is not a list returns 400, and the
+old list stays. An archived session returns 409.
 
 </div>
 

@@ -44,6 +44,32 @@ function RangeSlider({ className = '', ...props }: InputHTMLAttributes<HTMLInput
     </span>
   );
 }
+
+/**
+ * Answers typed into open requests, by session and request ID. The draft stays
+ * in memory only, never in storage, because a field can hold a password or a
+ * one-time code. It lets a remounted screen show the answer again.
+ */
+const humanInputDrafts = new Map<string, HumanInputForm>();
+
+function humanInputDraftKey(sid: string, requestId: string): string {
+  return `${sid}\u0000${requestId}`;
+}
+
+function restoreHumanInputDraft(sid: string, request: HumanInputRequest | null): HumanInputForm {
+  if (!request) return humanInputFormStart(null);
+  return humanInputDrafts.get(humanInputDraftKey(sid, request.id)) ?? humanInputFormStart(request);
+}
+
+/** Drop the drafts of this session's requests that are no longer open. */
+function forgetClosedHumanInputDrafts(sid: string, open: readonly HumanInputRequest[]): void {
+  const kept = new Set(open.map((row) => humanInputDraftKey(sid, row.id)));
+  const prefix = humanInputDraftKey(sid, '');
+  for (const key of humanInputDrafts.keys()) {
+    if (key.startsWith(prefix) && !kept.has(key)) humanInputDrafts.delete(key);
+  }
+}
+
 /**
  * The companion half of the typed human-input pause.
  *
@@ -71,12 +97,20 @@ export function HumanInputPrompt({
   sid: string;
 }) {
   const [pending, setPending] = useState<HumanInputRequest[]>([]);
-  const [form, setForm] = useState<HumanInputForm>(() => humanInputFormStart(null));
+  // The open forms were read back at least once, so a draft for a form that is
+  // not in `pending` belongs to a closed request.
+  const [isLoaded, setLoaded] = useState(false);
+  const [draft, setDraft] = useState<{ id: string | null; form: HumanInputForm }>(() => ({
+    id: null,
+    form: humanInputFormStart(null),
+  }));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   const request = pending[0] ?? null;
+  const requestId = request?.id ?? null;
+  const form = draft.form;
 
   // A screen opened while a run is ALREADY parked never saw the live frame, so
   // the open forms are read back on mount and whenever the stream reconnects.
@@ -87,7 +121,9 @@ export function HumanInputPrompt({
       client
         .inputViews(sid, controller.signal)
         .then((requests) => {
-          if (!cancelled) setPending(requests);
+          if (cancelled) return;
+          setPending(requests);
+          setLoaded(true);
         })
         .catch(() => undefined);
     };
@@ -109,24 +145,46 @@ export function HumanInputPrompt({
 
   // Each request opens on ITS OWN defaults — the same starting form the TUI
   // paints — and a keyed reset here keeps a queued second request from
-  // inheriting the answer typed into the first.
+  // inheriting the answer typed into the first. The key is the request ID, not
+  // the object: a reconnect reads the same open request back as a new object,
+  // and a reset on that read erased what the operator had typed while the app
+  // was in the background. A draft also survives a remount of this screen.
   useEffect(() => {
-    setForm(humanInputFormStart(request));
+    setDraft((current) =>
+      current.id === requestId
+        ? current
+        : { id: requestId, form: restoreHumanInputDraft(sid, request) },
+    );
+  }, [request, requestId, sid]);
+
+  useEffect(() => {
     setError(null);
     setBusy(false);
-  }, [request]);
+  }, [requestId]);
+
+  useEffect(() => {
+    if (draft.id !== null) humanInputDrafts.set(humanInputDraftKey(sid, draft.id), draft.form);
+  }, [draft, sid]);
+
+  useEffect(() => {
+    if (isLoaded) forgetClosedHumanInputDrafts(sid, pending);
+  }, [isLoaded, pending, sid]);
 
   const setValue = useCallback((id: string, value: HumanInputValues[string]) => {
     // Any touch of a field also DROPS the engine's complaint about it: that
     // message judged the previous answer, and the next confirmation will judge
     // this one. The rule lives in `humanInputFormChange`, so the sheet cannot
     // forget it and the TUI band does the same thing on a keystroke.
-    setForm((current) => humanInputFormChange(current, id, value));
+    setDraft((current) => ({ ...current, form: humanInputFormChange(current.form, id, value) }));
   }, []);
 
-  const drop = useCallback((id: string) => {
-    setPending((current) => current.filter((row) => row.id !== id));
-  }, []);
+  const drop = useCallback(
+    (id: string) => {
+      humanInputDrafts.delete(humanInputDraftKey(sid, id));
+      setPending((current) => current.filter((row) => row.id !== id));
+    },
+    [sid],
+  );
 
   const submit = useCallback(() => {
     if (!request || busy) return;
@@ -145,7 +203,10 @@ export function HumanInputPrompt({
           drop(request.id);
           return;
         }
-        setForm((current) => humanInputFormRefused(current, outcome?.errors ?? {}));
+        setDraft((current) => ({
+          ...current,
+          form: humanInputFormRefused(current.form, outcome?.errors ?? {}),
+        }));
         setError('The daemon rejected this answer.');
         setBusy(false);
       })
@@ -193,10 +254,10 @@ export function HumanInputPrompt({
   // keyboard is already on screen. Focusing a field on a phone raises the
   // virtual keyboard over the very question being asked.
   useEffect(() => {
-    if (!request) return;
+    if (!requestId) return;
     if (window.matchMedia?.('(pointer: coarse)').matches) return;
     bodyRef.current?.querySelector<HTMLElement>('input, textarea, button')?.focus();
-  }, [request]);
+  }, [requestId]);
 
   if (!request) return null;
 
@@ -589,10 +650,13 @@ function HumanInputFieldRow({
 
   if (field.type === 'otp') {
     return (
-      <FieldShell field={field} {...(error ? { error } : {})}>
+      <FieldShell field={field} controlId={controlId} {...(error ? { error } : {})}>
         <OtpBoxes
           field={field}
           value={text}
+          controlId={controlId}
+          describedBy={describedBy}
+          isInvalid={Boolean(error)}
           disabled={disabled}
           onChange={onChange}
           onSubmit={onSubmit}
@@ -647,71 +711,42 @@ function HumanInputFieldRow({
 }
 
 /**
- * A one-time code is entered as BOXES, one digit each — the shape every bank and
+ * A one-time code is shown as BOXES, one digit each — the shape every bank and
  * every 2FA screen has taught, and the same `[1] [2] [3] [ ] [ ] [ ]` the TUI
  * band paints. Only digits get in, wherever they come from: typing, an SMS
- * autofill, or a paste of the whole `123 456` line, which fills the boxes from
- * the caret onward instead of dropping six characters into one box.
+ * autofill, or a paste of the whole `123 456` line.
+ *
+ * The boxes are only drawn. ONE real input lies over them and holds the whole
+ * code. One box per input broke a phone in two ways: a double tap could not
+ * paste, because each box held one character and selected itself on focus, and
+ * the keyboard jumped, because focus moved to a new input at every digit and
+ * iOS rebuilt the keyboard for each one. With one input, focus stays put and
+ * the platform's own paste menu and SMS autofill work.
  */
 function OtpBoxes({
   field,
   value,
+  controlId,
+  describedBy,
+  isInvalid,
   disabled,
   onChange,
   onSubmit,
 }: {
   field: HumanInputField;
   value: string;
+  controlId: string;
+  describedBy: string | undefined;
+  isInvalid: boolean;
   disabled: boolean;
   onChange: (id: string, value: HumanInputValues[string]) => void;
   onSubmit: () => void;
 }) {
   const { min, max } = humanInputOtp(field);
   const digits = humanInputOtpDigits(field, value);
-  const boxes = useRef<Array<HTMLInputElement | null>>([]);
-
-  const focusAt = (index: number) => {
-    const box = boxes.current[Math.max(0, Math.min(max - 1, index))];
-    box?.focus();
-    box?.select();
-  };
-
-  const fill = (index: number, raw: string) => {
-    const typed = humanInputOtpDigits(field, raw);
-    if (!typed) return;
-    const next = humanInputOtpDigits(
-      field,
-      digits.slice(0, index) + typed + digits.slice(index + typed.length),
-    );
-    onChange(field.id, next);
-    focusAt(index + typed.length);
-  };
-
-  const keyDown = (index: number, event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      onSubmit();
-      return;
-    }
-    if (event.key === 'Backspace') {
-      // An empty box deletes the one BEFORE it — otherwise a correction takes
-      // two presses and the caret never walks back.
-      event.preventDefault();
-      const at = digits[index] === undefined ? index - 1 : index;
-      if (at < 0) return;
-      onChange(field.id, digits.slice(0, at) + digits.slice(at + 1));
-      focusAt(at);
-      return;
-    }
-    if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      focusAt(index - 1);
-    }
-    if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      focusAt(index + 1);
-    }
-  };
+  const [isFocused, setFocused] = useState(false);
+  // The next digit lands in this box; a full code keeps the last box marked.
+  const active = Math.min(digits.length, max - 1);
 
   return (
     <div className="space-y-1">
@@ -728,36 +763,55 @@ function OtpBoxes({
           a phone and still stops the boxes drifting apart on wider glass; from
           `sm:` up, where `Modal` becomes a 36rem box, it tightens again. */}
       <div
-        className="flex max-w-md flex-wrap justify-between gap-1.5 sm:max-w-sm"
-        role="group"
-        aria-label={field.label}
+        data-otp-row=""
+        className="relative flex max-w-md flex-wrap justify-between gap-1.5 sm:max-w-sm"
       >
         {Array.from({ length: max }, (_unused, index) => (
-          <input
+          <span
             key={index}
-            ref={(box) => {
-              boxes.current[index] = box;
-            }}
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            maxLength={1}
-            disabled={disabled}
-            // Only the FIRST box asks for the code, or a platform autofill offers
-            // the same six digits six times over.
-            autoComplete={index === 0 ? 'one-time-code' : 'off'}
-            aria-label={`${field.label} digit ${index + 1}`}
-            value={digits[index] ?? ''}
-            className="aspect-square min-w-8 max-w-11 flex-1 border border-edge bg-input text-center font-mono text-body tabular-nums text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted"
-            onChange={(event) => fill(index, event.target.value)}
-            onPaste={(event) => {
-              event.preventDefault();
-              fill(index, event.clipboardData.getData('text'));
-            }}
-            onKeyDown={(event) => keyDown(index, event)}
-            onFocus={(event) => event.target.select()}
-          />
+            aria-hidden="true"
+            data-otp-box={index}
+            className={`flex aspect-square min-w-8 max-w-11 flex-1 items-center justify-center border bg-input font-mono text-body tabular-nums ${
+              disabled ? 'text-muted' : 'text-white'
+            } ${isFocused && index === active ? 'border-accent ring-1 ring-accent/30' : 'border-edge'}`}
+          >
+            {digits[index] ?? ''}
+          </span>
         ))}
+        {/* No `maxLength`: a browser cuts a paste at that length BEFORE the
+            digits are picked out, so `123 456` would lose its last digit. */}
+        <input
+          id={controlId}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="one-time-code"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          disabled={disabled}
+          value={digits}
+          aria-describedby={describedBy}
+          aria-invalid={isInvalid}
+          aria-required={field.is_required}
+          className="absolute inset-0 size-full cursor-text border-0 bg-transparent p-0 font-mono text-body text-transparent caret-transparent outline-none selection:bg-transparent disabled:cursor-not-allowed"
+          onChange={(event) => onChange(field.id, humanInputOtpDigits(field, event.target.value))}
+          // A pasted code REPLACES the code: an operator who pastes again after a
+          // wrong paste wants the new code, not the old code with digits added.
+          onPaste={(event) => {
+            const pasted = humanInputOtpDigits(field, event.clipboardData.getData('text'));
+            if (!pasted) return;
+            event.preventDefault();
+            onChange(field.id, pasted);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            onSubmit();
+          }}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+        />
       </div>
       <p className="font-mono text-chip text-dialog-hint">
         {min === max ? `${max} digits` : `${min}–${max} digits`}

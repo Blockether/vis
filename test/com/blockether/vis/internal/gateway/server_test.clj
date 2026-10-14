@@ -1369,14 +1369,16 @@
           ;; Every sniffable file is advertised to the picker. Recordings, tables,
           ;; JSONL and gzip diagnostics ride beside documents: their bytes stay in
           ;; session storage, and the model is told it can inspect them on demand.
-          (expect (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp"
-                      "application/csv" "application/gzip" "application/pdf" "application/x-csv"
-                      "application/x-gzip" "application/x-ndjson" "application/xhtml+xml"
-                      "text/comma-separated-values" "text/csv" "text/html" "text/markdown"
-                      "text/tab-separated-values" "text/tsv" "text/x-csv" "text/x-markdown"
-                      "text/x-tsv" "video/mp4" "video/quicktime" "audio/aac" "audio/aiff"
-                      "audio/amr" "audio/flac" "audio/mp4" "audio/mpeg" "audio/ogg" "audio/wav"
-                      "audio/x-caf"]
+          (expect (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "image/heic"
+                      "image/heif" "image/avif" "application/csv" "application/gzip"
+                      "application/pdf"
+                      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      "application/x-csv" "application/x-gzip" "application/x-ndjson"
+                      "application/xhtml+xml" "text/comma-separated-values" "text/csv" "text/html"
+                      "text/markdown" "text/tab-separated-values" "text/tsv" "text/x-csv"
+                      "text/x-markdown" "text/x-tsv" "video/mp4" "video/quicktime" "audio/aac"
+                      "audio/aiff" "audio/amr" "audio/flac" "audio/mp4" "audio/mpeg" "audio/ogg"
+                      "audio/wav" "audio/x-caf"]
                      (get-in body ["features" "attachments" "media_types"])))
           (expect (= ["video/mp4" "video/quicktime"]
                      (get-in body ["features" "attachments" "video_media_types"])))
@@ -2614,9 +2616,7 @@
                                                        queue)]
                                  (write! event)))}
               (fn []
-                (ring-protocols/write-body-to-stream ((rv 'fleet-sse-body) false nil false)
-                                                     {}
-                                                     out)
+                (ring-protocols/write-body-to-stream ((rv 'fleet-sse-body) false nil false) {} out)
                 (expect (= [true true] @writes))
                 (expect (= ["subscription.ready" "session.status"]
                            (mapv #(get % "type") (sse-jobs (.toString out "UTF-8")))))
@@ -2900,37 +2900,39 @@
                  (:status (#'settings-api/set-setting-handler
                            {:query-params {"id" "unknown_toggle" "action" "toggle"}}))))))
 
-(defdescribe get-setting-handler-serves-hidden-rows-test
-             (it "verbosity is readable by id even though the settings list hides it"
-                 (let [response
-                       (#'settings-api/get-setting-handler {:path-params {:id "verbosity"}})
+(defdescribe
+  get-setting-handler-serves-hidden-rows-test
+  (it "verbosity is readable by id even though the settings list hides it"
+      (let [response
+            (#'settings-api/get-setting-handler {:path-params {:id "verbosity"}})
 
-                       row
-                       (wire/parse-json (:body response))]
+            row
+            (wire/parse-json (:body response))]
 
-                   (expect (= 200 (:status response)))
-                   (expect (= "verbosity" (get row "id")))
-                   (expect (= "enum" (get row "type")))
-                   (expect (seq (get row "choices")))
-                   (expect (string? (get row "value")))))
-             (it "reasoning_level has no global row: only a session sets it, over the provider default"
-                 (expect (= 404
-                            (:status (#'settings-api/get-setting-handler
-                                      {:path-params {:id "reasoning_level"}})))))
-             (it "a non-canonical id is a 400 and an unknown one a 404"
-                 (expect (= 400
-                            (:status (#'settings-api/get-setting-handler
-                                      {:path-params {:id "reasoning-level"}}))))
-                 (expect (= 404
-                            (:status (#'settings-api/get-setting-handler
-                                      {:path-params {:id "unknown_toggle"}}))))))
+        (expect (= 200 (:status response)))
+        (expect (= "verbosity" (get row "id")))
+        (expect (= "enum" (get row "type")))
+        (expect (seq (get row "choices")))
+        (expect (string? (get row "value")))))
+  (it "reasoning_level has no global row: only a session sets it, over the provider default"
+      (expect (= 404
+                 (:status (#'settings-api/get-setting-handler
+                           {:path-params {:id "reasoning_level"}})))))
+  (it "a non-canonical id is a 400 and an unknown one a 404"
+      (expect (= 400
+                 (:status (#'settings-api/get-setting-handler
+                           {:path-params {:id "reasoning-level"}}))))
+      (expect (= 404
+                 (:status (#'settings-api/get-setting-handler
+                           {:path-params {:id "unknown_toggle"}}))))))
 
 (defdescribe settings-change-refreshes-cached-extension-bindings-test
              (it "settings change refreshes cached extension bindings"
                  (toggles/register-toggle! {:id "server_test_toggle" :label "Test" :default false})
                  (toggles/set-enabled! "server_test_toggle" false)
                  (let [synced (atom 0)]
-                   (with-redefs [loop-env/sync-cached-extension-symbols! (fn [_] (swap! synced inc))
+                   (with-redefs [loop-env/sync-cached-extension-symbols! (fn [_]
+                                                                           (swap! synced inc))
                                  config/load-global-yaml-config-raw (constantly {})
                                  config/load-global-config-raw (constantly {})
                                  config/update-machine-config! (fn [f]
@@ -4423,6 +4425,7 @@
 
                   etag
                   (get-in answer [:headers "ETag"])]
+
               (expect (= 200 (:status answer)))
               ;; WEAK, like the session list's: this hashes the content a client paints
               (expect (str/starts-with? (str etag) "W/\""))
@@ -6101,6 +6104,58 @@
         (fn []
           (expect (= 404 (:status (patch-session {:archived true})))))))))
 
+(defdescribe
+  patch-session-tools-test
+  (let [sid
+        (str (random-uuid))
+
+        patch-session
+        (fn [body]
+          (#'sessions-api/patch-session-handler
+           (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
+
+    (it "replaces the tool list of a saved session and answers its soul"
+        (let [seen (atom nil)]
+          (with-redefs [state/session-archived? (constantly false)
+                        state/set-tools! (fn [id tools]
+                                           (reset! seen [id tools])
+                                           {"id" id})]
+
+            (expect (= 200 (:status (patch-session {:tools ["-py.repl_stop"]}))))
+            (expect (= [(parse-uuid sid) ["-py.repl_stop"]] @seen)))))
+    (it "refuses a value that is not a list of strings, and an archived session"
+        (with-redefs [state/session-archived?
+                      (constantly false)
+
+                      state/set-tools!
+                      (fn [& _]
+                        (throw (ex-info "not called" {})))]
+
+          (expect (= 400 (:status (patch-session {:tools "py.lint_code"}))))
+          (expect (= 400 (:status (patch-session {:tools nil})))))
+        (with-redefs [state/session-archived? (constantly true)]
+          (expect (= 409 (:status (patch-session {:tools ["py.lint_code"]}))))))
+    (it "answers an unknown tool with 400 and an unknown session with 404"
+        (with-redefs [state/session-archived?
+                      (constantly false)
+
+                      state/set-tools!
+                      (fn [& _]
+                        (throw (ex-info "Unknown tool: py.lint."
+                                        {:status 400 :type :tool/unknown})))]
+
+          (let [response (patch-session {:tools ["py.lint"]})]
+            (expect (= 400 (:status response)))
+            (expect (= "Unknown tool: py.lint."
+                       (get-in (wire/parse-json (:body response)) ["error" "message"])))))
+        (with-redefs [state/session-archived?
+                      (constantly false)
+
+                      state/set-tools!
+                      (constantly nil)]
+
+          (expect (= 404 (:status (patch-session {:tools ["py.lint_code"]}))))))))
+
 ;; The ONE archive vocabulary every list route of this gateway reads: the view arrives by
   ;; NAME, because a boolean could not say whether the reader wants the active rows, both,
   ;; or the archive alone - which is what a reveal asks for.
@@ -6689,7 +6744,7 @@
                                   (try (handler {:path-params {:sid "fixture"}})
                                        (catch clojure.lang.ExceptionInfo e e)))))))
         (doseq [[kind status] [[:invalid-request 400] [:invalid-thread 400] [:invalid-reply 400]
-                               [:group-not-found 404] [:disabled 409] [:already-replied 409]]]
+                               [:group-not-found 404] [:disabled 409] [:idempotency-conflict 409]]]
           (with-redefs [state/council-operation! (fn [& _]
                                                    (throw (ex-info "fixture" {:error kind})))]
             (expect (= status (:status (handler {:path-params {:sid "fixture"}})))))))))
@@ -7195,141 +7250,141 @@
   [^bytes bytes]
   (slurp (java.util.zip.GZIPInputStream. (java.io.ByteArrayInputStream. bytes))))
 
-(defdescribe
-  sse-stream-compresses-only-when-the-client-asks-test
-  (it "reads the client's Accept-Encoding, and nothing else"
-      (let [gzip? (rv 'sse-gzip?)]
-        (expect (gzip? {:headers {"accept-encoding" "gzip, deflate, br"}}))
-        (expect (gzip? {:headers {"accept-encoding" "GZIP"}}))
-        (expect (not (gzip? {:headers {"accept-encoding" "br"}})))
-        (expect (not (gzip? {:headers {}})))
-        (expect (not (gzip? {})))
-        ;; What the Clojure reader actually sends for a stream (`client.clj`).
-        (expect (not (gzip? {:headers {"accept-encoding" "identity"}})))
-        ;; `q=0` is a REFUSAL, so a substring match would compress a stream the
-        ;; client has already said it cannot inflate.
-        (expect (not (gzip? {:headers {"accept-encoding" "gzip;q=0"}})))
-        (expect (not (gzip? {:headers {"accept-encoding" "identity, gzip;q=0.000"}})))
-        (expect (gzip? {:headers {"accept-encoding" "gzip;q=1.0, identity;q=0.5"}}))
-        ;; A coding that merely CONTAINS the token is not the token.
-        (expect (not (gzip? {:headers {"accept-encoding" "x-gzip-maybe"}})))))
-  (it "declares the encoding it used, and varies on the request header"
-      (let [headers (rv 'sse-encoding-headers)]
-        (expect (= "text/event-stream" (get (headers false) "Content-Type")))
-        (expect (not (contains? (headers false) "Content-Encoding")))
-        (expect (= "gzip" (get (headers true) "Content-Encoding")))
-        (expect (= "Accept-Encoding" (get (headers true) "Vary")))
-        ;; The anti-buffering headers survive compression.
-        (expect (= "no" (get (headers true) "X-Accel-Buffering")))))
-  ;; This is the whole reason `GzipHandler` is not allowed near the live surface:
-  ;; without a SYNC flush the deflater holds every frame until the stream closes.
-  (it "puts every flushed frame on the wire instead of buffering the stream"
-      (let [frame
-            (str "id: 1\nevent: content.delta\ndata: " (apply str (repeat 400 "a")) "\n\n")
+(defdescribe sse-stream-compresses-only-when-the-client-asks-test
+             (it "reads the client's Accept-Encoding, and nothing else"
+                 (let [gzip? (rv 'sse-gzip?)]
+                   (expect (gzip? {:headers {"accept-encoding" "gzip, deflate, br"}}))
+                   (expect (gzip? {:headers {"accept-encoding" "GZIP"}}))
+                   (expect (not (gzip? {:headers {"accept-encoding" "br"}})))
+                   (expect (not (gzip? {:headers {}})))
+                   (expect (not (gzip? {})))
+                   ;; What the Clojure reader actually sends for a stream (`client.clj`).
+                   (expect (not (gzip? {:headers {"accept-encoding" "identity"}})))
+                   ;; `q=0` is a REFUSAL, so a substring match would compress a stream the
+                   ;; client has already said it cannot inflate.
+                   (expect (not (gzip? {:headers {"accept-encoding" "gzip;q=0"}})))
+                   (expect (not (gzip? {:headers {"accept-encoding" "identity, gzip;q=0.000"}})))
+                   (expect (gzip? {:headers {"accept-encoding" "gzip;q=1.0, identity;q=0.5"}}))
+                   ;; A coding that merely CONTAINS the token is not the token.
+                   (expect (not (gzip? {:headers {"accept-encoding" "x-gzip-maybe"}})))))
+             (it "declares the encoding it used, and varies on the request header"
+                 (let [headers (rv 'sse-encoding-headers)]
+                   (expect (= "text/event-stream" (get (headers false) "Content-Type")))
+                   (expect (not (contains? (headers false) "Content-Encoding")))
+                   (expect (= "gzip" (get (headers true) "Content-Encoding")))
+                   (expect (= "Accept-Encoding" (get (headers true) "Vary")))
+                   ;; The anti-buffering headers survive compression.
+                   (expect (= "no" (get (headers true) "X-Accel-Buffering")))))
+             ;; This is the whole reason `GzipHandler` is not allowed near the live surface:
+             ;; without a SYNC flush the deflater holds every frame until the stream closes.
+             (it
+               "puts every flushed frame on the wire instead of buffering the stream"
+               (let [frame
+                     (str "id: 1\nevent: content.delta\ndata: " (apply str (repeat 400 "a")) "\n\n")
 
-            sizes
-            (gzip-wire-sizes true 10 frame)]
+                     sizes
+                     (gzip-wire-sizes true 10 frame)]
 
-        ;; The first frame is already out, and every frame after it moves the wire.
-        (expect (pos? (long (first sizes))))
-        (expect (= sizes (sort sizes)))
-        (expect (apply distinct? sizes))
-        ;; …and it is genuinely smaller than what a plain stream would have sent.
-        (expect (< (long (last sizes)) (* 10 (count frame))))))
-  (it "hands the client back exactly the frames it was written"
-      (let [socket
-            (java.io.ByteArrayOutputStream.)
+                 ;; The first frame is already out, and every frame after it moves the wire.
+                 (expect (pos? (long (first sizes))))
+                 (expect (= sizes (sort sizes)))
+                 (expect (apply distinct? sizes))
+                 ;; …and it is genuinely smaller than what a plain stream would have sent.
+                 (expect (< (long (last sizes)) (* 10 (count frame))))))
+             (it "hands the client back exactly the frames it was written"
+                 (let [socket
+                       (java.io.ByteArrayOutputStream.)
 
-            out
-            ((rv 'sse-stream) socket true)
+                       out
+                       ((rv 'sse-stream) socket true)
 
-            frames
-            (str (sse/sse-frame {"seq" 1 "type" "turn.started"})
-                 ": ping\n\n"
-                 (sse/sse-frame {"seq" 2 "type" "content.delta"}))]
+                       frames
+                       (str (sse/sse-frame {"seq" 1 "type" "turn.started"})
+                            ": ping\n\n"
+                            (sse/sse-frame {"seq" 2 "type" "content.delta"}))]
 
-        (.write out (.getBytes frames "UTF-8"))
-        (.flush out)
-        (.close out)
-        (expect (= frames (gunzip (.toByteArray socket))))
-        ;; A heartbeat comment between two frames survives the round trip too.
-        (expect (= ["turn.started" "content.delta"]
-                   (mapv #(get % "type") (sse-jobs (gunzip (.toByteArray socket))))))))
-  (it "leaves an uncompressed stream as the socket stream itself"
-      (let [socket (java.io.ByteArrayOutputStream.)]
-        (expect (identical? socket ((rv 'sse-stream) socket false)))))
-  ;; The pad exists to push an edge proxy past its buffering threshold, and it is
-  ;; the bytes ON THE WIRE that it counts: 8KB of spaces deflates to a few dozen,
-  ;; so a compressed pad has to be incompressible to keep doing its job.
-  (it "keeps the proxy pad above the buffering threshold under compression"
-      (let [pad
-            (rv 'sse-proxy-pad!)
+                   (.write out (.getBytes frames "UTF-8"))
+                   (.flush out)
+                   (.close out)
+                   (expect (= frames (gunzip (.toByteArray socket))))
+                   ;; A heartbeat comment between two frames survives the round trip too.
+                   (expect (= ["turn.started" "content.delta"]
+                              (mapv #(get % "type") (sse-jobs (gunzip (.toByteArray socket))))))))
+             (it "leaves an uncompressed stream as the socket stream itself"
+                 (let [socket (java.io.ByteArrayOutputStream.)]
+                   (expect (identical? socket ((rv 'sse-stream) socket false)))))
+             ;; The pad exists to push an edge proxy past its buffering threshold, and it is
+             ;; the bytes ON THE WIRE that it counts: 8KB of spaces deflates to a few dozen,
+             ;; so a compressed pad has to be incompressible to keep doing its job.
+             (it "keeps the proxy pad above the buffering threshold under compression"
+                 (let [pad
+                       (rv 'sse-proxy-pad!)
 
-            threshold
-            (long @(rv 'SSE_PROXY_PAD_BYTES))
+                       threshold
+                       (long @(rv 'SSE_PROXY_PAD_BYTES))
 
-            wire-bytes
-            (fn [gzip?]
-              (let [socket (java.io.ByteArrayOutputStream.)]
-                (pad ((rv 'sse-stream) socket gzip?) gzip?)
-                (.size socket)))]
+                       wire-bytes
+                       (fn [gzip?]
+                         (let [socket (java.io.ByteArrayOutputStream.)]
+                           (pad ((rv 'sse-stream) socket gzip?) gzip?)
+                           (.size socket)))]
 
-        (expect (> (long (wire-bytes false)) threshold))
-        (expect (> (long (wire-bytes true)) threshold)))))
+                   (expect (> (long (wire-bytes false)) threshold))
+                   (expect (> (long (wire-bytes true)) threshold)))))
 
 (defdescribe
   sse-body-serves-a-compressed-stream-test
-  (it "gunzips to the same frames the plain body writes"
-      (with-server-state!
-        {}
-        (fn []
-          (let [status
-                {"schema" 1
-                 "type" "session.status"
-                 "session_id" "fleet-session"
-                 "seq" 1
-                 "is_live" true}
+  (it
+    "gunzips to the same frames the plain body writes"
+    (with-server-state!
+      {}
+      (fn []
+        (let [status
+              {"schema" 1
+               "type" "session.status"
+               "session_id" "fleet-session"
+               "seq" 1
+               "is_live" true}
 
-                body-bytes
-                (fn [gzip?]
-                  (let [socket (java.io.ByteArrayOutputStream.)]
-                    (ring-protocols/write-body-to-stream ((rv 'fleet-sse-body) false nil gzip?)
-                                                         {}
-                                                         socket)
-                    (.toByteArray socket)))]
+              body-bytes
+              (fn [gzip?]
+                (let [socket (java.io.ByteArrayOutputStream.)]
+                  (ring-protocols/write-body-to-stream ((rv 'fleet-sse-body) false nil gzip?)
+                                                       {}
+                                                       socket)
+                  (.toByteArray socket)))]
 
-            (with-redefs-fn {#'server/stop! (constantly nil)
-                             #'state/subscribe-fleet! (fn [_ sink]
-                                                        (sink status))
-                             #'state/unsubscribe-fleet! (constantly nil)
-                             (rv 'pump-sse!)
-                             (fn [_ queue _ write!]
-                               (when-let [event (.poll ^java.util.concurrent.ArrayBlockingQueue
-                                                       queue)]
-                                 (write! event)))}
-              (fn []
-                (let [plain
-                      (String. ^bytes (body-bytes false) "UTF-8")
+          (with-redefs-fn {#'server/stop! (constantly nil)
+                           #'state/subscribe-fleet! (fn [_ sink]
+                                                      (sink status))
+                           #'state/unsubscribe-fleet! (constantly nil)
+                           (rv 'pump-sse!)
+                           (fn [_ queue _ write!]
+                             (when-let [event (.poll ^java.util.concurrent.ArrayBlockingQueue
+                                                     queue)]
+                               (write! event)))}
+            (fn []
+              (let [plain
+                    (String. ^bytes (body-bytes false) "UTF-8")
 
-                      compressed
-                      (body-bytes true)
+                    compressed
+                    (body-bytes true)
 
-                      decoded
-                      (gunzip compressed)]
+                    decoded
+                    (gunzip compressed)]
 
-                  ;; A real gzip member, not a plain body with a lying header.
-                  (expect (= [0x1f 0x8b]
-                             (mapv #(bit-and (long %) 0xff) (take 2 (seq compressed)))))
-                  (expect (< (alength ^bytes compressed) (count plain)))
-                  ;; The frames the client ends up holding are the frames the plain
-                  ;; body writes. Only `subscription.ready`'s own clock differs
-                  ;; between the two reads, so the comparison is on the frames.
-                  (expect (= ["subscription.ready" "session.status"]
-                             (mapv #(get % "type") (sse-jobs plain))))
-                  (expect (= (mapv #(dissoc % "ts") (sse-jobs plain))
-                             (mapv #(dissoc % "ts") (sse-jobs decoded))))
-                  (expect (= (str/replace plain #"\"ts\":\d+" "")
-                             (str/replace decoded #"\"ts\":\d+" ""))))))))))
+                ;; A real gzip member, not a plain body with a lying header.
+                (expect (= [0x1f 0x8b] (mapv #(bit-and (long %) 0xff) (take 2 (seq compressed)))))
+                (expect (< (alength ^bytes compressed) (count plain)))
+                ;; The frames the client ends up holding are the frames the plain
+                ;; body writes. Only `subscription.ready`'s own clock differs
+                ;; between the two reads, so the comparison is on the frames.
+                (expect (= ["subscription.ready" "session.status"]
+                           (mapv #(get % "type") (sse-jobs plain))))
+                (expect (= (mapv #(dissoc % "ts") (sse-jobs plain))
+                           (mapv #(dissoc % "ts") (sse-jobs decoded))))
+                (expect (= (str/replace plain #"\"ts\":\d+" "")
+                           (str/replace decoded #"\"ts\":\d+" ""))))))))))
   ;; Negotiation is the route's job, so the handler must agree with the body it built.
   (it "answers the gzip header only for a client that advertised gzip"
       (with-server-state!
@@ -7369,20 +7424,23 @@
         handler
         #'sessions-api/create-session-handler]
 
-    (it "passes sources and extensions to the new session"
+    (it "passes sources, extensions and tools to the new session"
         (let [seen (atom nil)]
           (with-redefs [state/create-session! (fn [opts]
                                                 (reset! seen opts)
                                                 {"id" "s1"})]
-            (expect
-              (= 201 (:status (handler (request {"sources" ["project"] "extensions" ["-spel"]})))))
-            (expect (= {:sources ["project"] :extensions ["-spel"]}
-                       (select-keys @seen [:sources :extensions]))))))
+            (expect (= 201
+                       (:status (handler (request {"sources" ["project"]
+                                                   "extensions" ["-spel"]
+                                                   "tools" ["-py.lint_code"]})))))
+            (expect (= {:sources ["project"] :extensions ["-spel"] :tools ["-py.lint_code"]}
+                       (select-keys @seen [:sources :extensions :tools]))))))
     (it "refuses a value that is not a list of strings"
         (with-redefs [state/create-session! (fn [_]
                                               (throw (ex-info "not called" {})))]
           (expect (= 400 (:status (handler (request {"sources" "project"})))))
-          (expect (= 400 (:status (handler (request {"extensions" [1]})))))))
+          (expect (= 400 (:status (handler (request {"extensions" [1]})))))
+          (expect (= 400 (:status (handler (request {"tools" "py.lint_code"})))))))
     (it "answers an engine selection error with its status and message"
         (with-redefs [state/create-session! (fn [_]
                                               (throw (ex-info "Unknown extension: spell."

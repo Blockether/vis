@@ -59,7 +59,7 @@ jobs:
           # Releases, publication, pull requests and manual runs test every interpreter.
           exclude='[]'
           if [[ "$EVENT" == push && "$REF" == refs/heads/main && -z "$INPUT_REF" && "$VERIFIED" == true ]]; then
-            exclude='[{"os":"macos-26"},{"python":"3.12"},{"python":"3.13"},{"python":"3.14"},{"python":"pypy3.11"}]'
+            exclude='[{"os":"macos-26"},{"python":"3.13"},{"python":"3.14"}]'
           fi
           record=false
           if [[ "$REF" == refs/heads/main && "$VERIFIED" != true ]]; then
@@ -77,7 +77,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-26]
-        python: ['3.11', '3.12', '3.13', '3.14', 'pypy3.11']
+        python: ['3.12', '3.13', '3.14']
         exclude: ${{ fromJSON(needs.interpreters.outputs.exclude) }}
     steps:
       - uses: actions/checkout@v7
@@ -90,7 +90,7 @@ jobs:
         run: python -m pip install build twine pytest ruff pyright==1.1.414
       # Source lint is interpreter-independent; installed tests still run on every matrix leg.
       - name: Lint and format
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: |
           python -m ruff check packages
           python -m ruff format --check packages
@@ -139,7 +139,7 @@ jobs:
           PY
           VIS_TEST_INSTALLED=1 python -m pytest "$GITHUB_WORKSPACE/packages/vis-agent/tests" -q
       - uses: actions/upload-artifact@v6
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         with:
           name: python-sdk-distributions
           path: dist/*
@@ -192,7 +192,7 @@ jobs:
           restore-keys: deps-${{ runner.os }}-${{ runner.arch }}-
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - uses: actions/download-artifact@v7
         with:
           name: python-sdk-distributions

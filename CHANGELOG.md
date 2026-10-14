@@ -7,6 +7,222 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.43] - 2026-10-13
+
+### Added
+- You can attach HEIC and HEIF photos, such as iPhone photos, from the terminal, the Companion app
+  and `attach`. Vis keeps the original file and sends a PNG to the model.
+- A generic HEIF file is stored as `image/heif`, and an HEVC-coded file as `image/heic`. Camera
+  `.HIF` files attach too.
+- You can attach AVIF images (`image/avif`) and HEIF files with AV1, H.264, JPEG or uncompressed
+  pictures. Vis sends them to the model as PNG.
+- In the Companion app, ↑ in the message box shows your previous message in the session, and ↓
+  goes forward again to your draft, like the terminal app (#372).
+- `is_vision_supported` on a model in the configuration, or
+  `ProviderModel(is_vision_supported=...)` in a provider extension, tells Vis if that model reads
+  images. `true` sends attached pictures to a model that the catalog does not know. `false` sends
+  a text description of each picture.
+- `write_task` writes a Vis task for Harbor, and `run_tasks` runs a folder of tasks and returns
+  the job folder. `artifacts` keeps workspace files, such as the call record of a mock extension,
+  in the trial folder. `filesystem_roots` registers filesystem roots for the trial.
+- The Evaluations guide shows each step from an empty folder to a score, and how a mock extension
+  replaces your real extension in a task. The Evaluations API page shows each example in Python
+  first.
+- `vis-agent desktop` and `vis-agent update` copy the macOS app to `/Applications`, so Launchpad,
+  Spotlight and the Dock open the new version. Set `VIS_APPLICATIONS_DIR` to change the folder, or
+  set it empty to stop the copy.
+- `vis-agent doctor` reports each `vis-agent` in the project `.venv` or the shared packages that
+  differs from the SDK bundled with Vis, and names the fix (#375).
+
+### Changed
+- The configuration keys `is_tool_call` and `is_image_input` are now `is_tool_calls_supported` and
+  `is_vision_supported`. The `ProviderModel` arguments have the same new names. The old names
+  still work. When both are set, the new name wins.
+- The SDK always installs Harbor 0.24.0, and needs Python 3.12 or later. The `vis-agent[harbor]`
+  extra is removed.
+- The e2e tasks keep the call records of their mock extensions as trial artifacts.
+- Vis pins vis-lang-clojure 1.15.3. `clj.repl_eval` no longer hangs in delimiter repair.
+
+### Removed
+- The model key `is_vision` is no longer accepted in the configuration. Vis never read it. Use
+  `is_vision_supported` instead.
+
+### Fixed
+- The model keys `is_reasoning` and `is_parallel_tool_calls` in the configuration now reach the
+  model router. Before, Vis accepted them but did not use them.
+- The Harbor host environment accepts relative task and job folders. Before, the verifier wrote
+  no reward and every trial failed.
+- Settings show the inherited extension settings of each scope (#373).
+- Skill discovery skips dependencies and ignored nested projects (#374).
+- The Companion app never saves a machine without its gateway token.
+- A finished goal no longer stays in the context of later turns, and a goal status change keeps
+  the cached system prompt.
+
+## [v0.2.42] - 2026-10-13
+
+### Fixed
+- `round_summary` counts only the task folders of a dataset, which have a `task.toml`. Before,
+  a cache folder such as `.pytest_cache` in `e2e/` stopped the summary with `FileNotFoundError`.
+
+## [v0.2.41] - 2026-10-13
+
+### Added
+- `read_tasks` reads the tasks of a Harbor dataset as `HarborTask` objects, with their
+  instructions and time limits.
+- A round summary keeps the agent time limit of each task in `agent_limits`. `diagnose` uses
+  them when you give no limits.
+
+### Changed
+- `e2e/` holds the Vis tasks as native Harbor task folders. Run them with `harbor run --path e2e`
+  and the SDK agent. The scenario compiler and the `e2e/vis_harbor` project are removed.
+- The SDK holds the Harbor agent `blockether.vis.evals.agent:VisAgent`, the host environment, the
+  grader, the task check and the judge. Install them with `vis-agent[harbor]`.
+- The Harbor agent needs a provider and a model. Without `source` or `native_bin`, it runs the
+  installed `vis-agent` CLI.
+- `read_leaderboard` and `/v1/evals/leaderboard` need `package` and `name`. They have no
+  Terminal-Bench default.
+
+### Fixed
+- `round_summary` reads one e2e job folder. It names the dataset from the Harbor results, not
+  with a fixed Terminal-Bench name.
+
+## [v0.2.40] - 2026-10-13
+
+### Added
+- The SDK module `blockether.vis.evals` scores and diagnoses Terminal-Bench rounds from standard
+  Harbor files: `round_summary`, `bench_report`, `diagnose`, `agent_limits` and the label
+  functions `save_label` and `load_labels`.
+- `compare_cases` compares two runs case by case, with a paired 95% interval and a McNemar test
+  for each route.
+- `agreement`, `kappa_advice` and `stage_agreement` check automatic causes and judge stages
+  against human labels. `save_stage_label` keeps a person's stage of a trial.
+- `read_leaderboard` and `standing` place a round on a Harbor Hub board.
+- `task_attempts` and `repeat_stats` give pass@k, pass^k and the unstable tasks of repeated
+  attempts.
+- `python -m vis_harbor.judge` names the failure stage of each failed scenario trial with the Vis
+  agent and the `harbor analyze` prompt.
+- The gateway serves the evaluation functions under `/v1/evals`, and `GatewayClient` calls them.
+- The manual has the Evaluations and Evaluations API pages.
+
+### Changed
+- An agent failure outcome is `agent_error:<type>`, and its failure cause is `agent_errors`.
+
+### Removed
+- The `evals` project extension. Use the SDK functions and the `vis_harbor` commands in `e2e/`.
+
+### Fixed
+- The 95% interval of a paired change stays between -100 and 100 points. Before, a large change
+  gave an interval below -100 points.
+- `round_summary` scores a trial without an ATIF trajectory. It reads the model from
+  `agent_info.model_info` and the output tokens from `agent_result` in `result.json`.
+- The Companion app ramps its steps again after a display mode change, and its header logo is
+  larger.
+
+## [v0.2.39] - 2026-10-12
+
+### Added
+- `evals.run(dataset, ...)` starts a paid `scenarios` or `terminal-bench` run. Without `ids`, a
+  scenarios run includes every scenario.
+- `evals.watch(run_id)` follows a run in a live view with counters and one row for each finished
+  trial. The run continues when you stop the view.
+- `evals.capture(session_id, turn)` drafts an e2e scenario from a session turn.
+- `python -m vis_harbor.check` checks a Harbor task with the `harbor check` rubric and the Vis agent.
+- Extensions read sessions with `vis.read_session` and `vis.list_sessions`. They also attach files
+  with `vis.attach` and read attachments.
+- `--tools` and `VIS_TOOLS` turn off single tools for a session. You can change the tools of a
+  session when it resumes and while it runs.
+- A setting can run an `on_change` hook when its value changes (#369).
+- Attachments accept Word documents and the `m4a` type aliases. The TUI accepts dropped Word
+  documents.
+
+### Changed
+- `evals.run` replaces `evals.run_scenarios` and `evals.run_bench`.
+- `Stat.set` and `Steps.set` of a live view require the label, as the View schema does.
+
+### Fixed
+- A turn that ends with a provider error, such as an exhausted quota, exits with code 1. The Harbor
+  agent records it as an infrastructure error, not as a wrong answer.
+- The SDK test hosts replace an appended live item, as the engine does.
+- The TUI and the Companion app fold `vis-paste` blocks in delivered queued messages.
+- The Companion app keeps a recording closed after its live view ends.
+
+## [v0.2.38] - 2026-10-12
+
+### Added
+- `vis-agent --trajectory PATH` writes a run as an ATIF trajectory, the format that Harbor tools
+  read. It records each function call with its arguments, result and step cost, and the work of
+  Council children.
+- The Python SDK module `blockether.vis.evals` reads trajectories and Harbor jobs, summarizes
+  trials, seals benchmark rounds and compares two rounds with the McNemar test.
+- The evals extension runs the e2e scenarios as one Harbor 0.24.0 job and grades each trial from
+  its trajectory.
+- `council.run`, `council.wait`, `council.cancel` and `council.ask` run subagents and collect their
+  answers.
+- `vis-agent tui` and one-shot runs accept `--no-global`, `--no-project`, `--vanilla` and
+  `--extensions` for a new session. The session keeps this choice when it resumes. Providers and
+  sign-in always load.
+- `bin/install-vis-agent` selects the optional `tui`, `web` and `desktop` parts with `--components`
+  or `VIS_COMPONENTS`. Later updates keep the selection.
+- Local VibeVoice ONNX engines speak and recognize speech. Each voice plays a sample before the
+  model download. Parakeet and Piper stay the defaults.
+- The D3 decision models `d3-edge` and `d3-lite` from vLLM Semantic Router answer `choice`,
+  `score` and `noul` questions with up to 16,384 tokens each. Their FP32 text bundles use memory
+  that grows linearly with the question length (#366).
+- D3 Edge and Lite have training checkpoints. Local and gateway training jobs fine-tune them fully or
+  with LoRA, and export the result with the same FP32 D3 export.
+- Shell steps show as terminal blocks with the command, its output and an outcome line.
+- The TUI deletes the current session with `C-x Delete`.
+- The TUI shows attachments, also those of Activity rows, as cards with an Open button.
+- The Companion app deletes or archives a Shift-selected batch of sessions in one step.
+- The Companion app has its own calendar and time field.
+- The TUI keeps `/goal` text in the input history, so the up arrow recalls it (#360).
+- `ls` lists gitignored entries with `is_ignored=True`.
+- The sandbox pre-imports `dataclasses` and `inspect` (#358).
+
+### Changed
+- Decision 2.0 Eos accepts questions of up to 16,384 tokens and Kai up to 8,192 tokens, instead of
+  2,048. The new FP32 bundles run attention in blocks, so memory grows linearly with the question
+  length (#366).
+- A Council team can have up to 128 children, and 16 can run at the same time, instead of 32 and 8.
+  The iteration budget of a child is 64 by default and at most 600, instead of 32 and 200.
+- Council room wake is Off, Active in the last hour (the default) or Always. Room settings stay
+  hidden until the machine joins a room.
+- The Terminal-Bench harness moved to the curated-terminal-benchmark repository. The evals
+  extension finds it through `VIS_TERMINAL_BENCH`.
+- The TUI Settings show Theme under General View.
+- The TUI Activity band stays fast in turns with thousands of calls (#357).
+- The project uses vis-lang-clojure 1.15.1.
+
+### Fixed
+- One-shot runs write errors to stderr and keep provider errors canonical (#351, #355).
+- A fork stays in the group of its source session, and Council explains why it refuses (#350).
+- The sandbox writes large values to spill files and names the dependents that it loses. It deletes
+  snapshot and spill files with their session (#347).
+- Bulk deletes and pytest runs pass the sandbox scan cap (#362).
+- A sandbox that starts while a cleanup runs keeps its guest modules.
+- A copied project reuses its synced extension packages (#352).
+- A shared sync warns when it re-points an editable project (#353).
+- A reload names the scope and folder of each extension and the scanned folders (#348, #365).
+- Extensions send model properties and `str` text (#367).
+- `/reload` shows as a summary, not as a raw step (#363).
+- The prompt says that `sh.type` adds Enter (#349).
+- Vis prices responses at the rates that the provider declares (#356).
+- Resumed sessions stay in their saved folder, and new sessions start in the project folder (#364).
+- An empty group deletes without the question about its sessions (#361).
+- The gateway keeps running iteration frames in its replay ring, and fails orphaned subagents when
+  it starts.
+- Provider fleet answers keep the last sign-in status.
+- The native image has no reflective calls that fail at run time.
+- The TUI draws the user rail on a queued message that you send now (#354), focuses the project rail
+  on a mouse press (#359) and opens a new session in the project of its source session.
+- The TUI draws images with Kitty graphics in iTerm2 3.6 and later, so iTerm2 3.7 does not ask
+  before each image.
+- The Companion app keeps live views when events arrive before the snapshot, keeps scoped settings
+  still on a slow gateway and keeps a finished turn on screen when the next turn starts.
+- The Companion app keeps HITL answers, paste and the keyboard steady, wraps long banner text and
+  accepts pairing links with spaces.
+- Shell rows write the home directory as `~`.
+
 ## [v0.2.37] - 2026-10-09
 
 ### Added

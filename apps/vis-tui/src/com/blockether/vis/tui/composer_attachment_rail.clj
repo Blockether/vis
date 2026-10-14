@@ -25,6 +25,8 @@
           (str/starts-with? media-type "video/") "VIDEO"
           (str/starts-with? media-type "audio/") "AUDIO"
           (= media-type "application/pdf") "PDF"
+          (= media-type "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+          "DOCX"
           (str/starts-with? media-type "text/") "TEXT"
           :else "FILE")))
 

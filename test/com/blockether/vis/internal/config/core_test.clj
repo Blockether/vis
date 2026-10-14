@@ -864,7 +864,7 @@
                    runtime))))
   (it "maps svar's is_* YAML keys to their ?-suffixed keyword contracts both ways"
       (let [wire
-            {"providers" [{"id" "p" "models" [{"name" "m" "is_tool_call" true}]}]
+            {"providers" [{"id" "p" "models" [{"name" "m" "is_tool_calls_supported" true}]}]
              "router" {"rate_limit" {"is_respect_retry_after" true "is_fallback_provider" false}
                        "tokens" {"is_check_context" true}}
              "system_prompt" {"text" "x" "is_replace" true}}
@@ -879,7 +879,32 @@
         (expect (true? (get-in runtime [:system-prompt :is-replace])))
         (expect (= "is_respect_retry_after"
                    (first (keys (#'config/->yaml-safe {:respect-retry-after? true})))))
+        (expect (= "is_tool_calls_supported"
+                   (first (keys (#'config/->yaml-safe {:tool-call? true})))))
+        (expect (= "is_vision_supported"
+                   (first (keys (#'config/->yaml-safe {:image-input? true})))))
         (expect (= "is_replace" (first (keys (#'config/->yaml-safe {:is-replace true})))))))
+  (it "still reads the old names is_tool_call and is_image_input, and the new name wins"
+      (let [runtime
+            (config/runtime-config
+              {"providers" [{"id" "p"
+                             "is_image_input" false
+                             "models" [{"name" "old" "is_tool_call" true "is_image_input" true}
+                                       {"name" "both"
+                                        "is_tool_call" false
+                                        "is_tool_calls_supported" true
+                                        "is_image_input" false
+                                        "is_vision_supported" true}]}]})
+
+            provider
+            (get-in runtime [:providers 0])]
+
+        (expect (false? (:image-input? provider)))
+        (expect (= [{:name "old" :tool-call? true :image-input? true}
+                    {:name "both" :tool-call? true :image-input? true}]
+                   (:models provider)))
+        (expect (= {"name" "m" "is_tool_calls_supported" true}
+                   (config/canonical-wire-keys {"name" "m" "is_tool_call" true})))))
   (it "validates vis.yml in its original string-keyed JSON shape"
       (let [read-yaml
             @#'config/read-yaml-config-map
@@ -1347,19 +1372,36 @@
                                             {"providers" [{"id" "gw" "is_stateless" true}]}))))))
       (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
                               :stateless-items?))))
-  (it "carries `is_image_input` through to svar as :image-input?"
+  (it "carries `is_vision_supported` through to svar as :image-input?"
       ;; A gateway can proxy multimodal models and still refuse an image content
       ;; part itself (HTTP 400 `unknown variant image_url, expected text`), so a
       ;; user must be able to veto image input for one provider.
       (expect (false? (:image-input?
                         (config/->svar-provider
                           {:id :gw :api-key "k" :models [{:name "m"}] :image-input? false}))))
-      (expect (false? (:image-input? (first (:providers (config/runtime-config {"providers"
-                                                                                [{"id" "gw"
-                                                                                  "is_image_input"
-                                                                                  false}]}))))))
+      (expect (false? (:image-input? (first (:providers (config/runtime-config
+                                                          {"providers" [{"id" "gw"
+                                                                         "is_vision_supported"
+                                                                         false}]}))))))
       (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
-                              :image-input?)))))
+                              :image-input?))))
+  (it "turns `is_vision_supported` on a model into svar's image verdict for that model"
+      ;; A local or private model is missing from the catalog, so only config knows
+      ;; that it reads images. `false` also overrides a catalog that says yes.
+      (let [models (:models (config/->svar-provider
+                              (first (:providers
+                                       (config/runtime-config
+                                         {"providers"
+                                          [{"id" "gw"
+                                            "models" [{"name" "local-vl" "is_vision_supported" true}
+                                                      {"name" "gpt-4o" "is_vision_supported" false}
+                                                      {"name" "plain"}]}]})))))]
+        (expect (= [{:name "local-vl" :vision? true} {:name "gpt-4o" :vision? false}
+                    {:name "plain"}]
+                   models))
+        (expect (= [true false false]
+                   (mapv #(contains? (:capabilities (svar/provider-model-metadata :gw %)) :vision)
+                         models))))))
 
 ;; Regression, issue #152: a provider whose extension ISSUES the credential could
 ;; answer a `responses_path` but had no way to name the wire it speaks, so the

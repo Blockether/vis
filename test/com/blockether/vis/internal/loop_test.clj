@@ -1251,16 +1251,15 @@
                            (fn [_router opts]
                              (reset! seen opts)
                              {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
-               (iteration/run-iteration
-                 environment
-                 []
-                 {:iteration 0
-                  :reasoning-level :quick
-                  :preferred-reasoning-effort "xhigh"
-                   :resolved-model {:provider :zai-coding-plan
-                                    :name "glm-5.2"
-                                    :reasoning? true
-                                    :reasoning-effort? true}})
+               (iteration/run-iteration environment
+                                        []
+                                        {:iteration 0
+                                         :reasoning-level :quick
+                                         :preferred-reasoning-effort "xhigh"
+                                         :resolved-model {:provider :zai-coding-plan
+                                                          :name "glm-5.2"
+                                                          :reasoning? true
+                                                          :reasoning-effort? true}})
                ;; svar picks the nearest rung of each attempted model; a model
                ;; without rungs keeps the abstract level.
                (expect (= "xhigh" (:preferred-reasoning-effort @seen)))
@@ -3602,28 +3601,28 @@
         (try (expect (nil? (:error (python-exec/execute-code
                                      environment
                                      "handle = (n for n in range(3))\nprint('ready')"))))
-             (let [result (binding [rt/*eval-timeout-ms* 3000]
-                            (with-redefs [rt/eval-timeout-ms-for-code (fn [base code]
-                                                                        (limit-for-code
-                                                                          (if (= code after-code) 30000 base)
-                                                                          code))
-                                          svar/ask-code! (fn [_ opts]
-                                                           (swap! requests conj (:messages opts))
-                                                           (if (= 1 (swap! calls inc))
-                                                             {:stop-reason :tool-calls
-                                                              :tool-calls
-                                                              (mapv (fn [idx code]
-                                                                      {:id (str "call_" idx)
-                                                                       :name "python_execution"
-                                                                       :input {:code code}})
-                                                                    (range)
-                                                                    (cond-> [timeout-code]
-                                                                      same-response?
-                                                                      (conj after-code)))}
-                                                             {:stop-reason :end :content "done"}))]
-                              (iteration/iteration-loop environment
-                                                        "timeout restart"
-                                                        {:session-turn-id tid})))
+             (let [result
+                   (binding [rt/*eval-timeout-ms* 3000]
+                     (with-redefs [rt/eval-timeout-ms-for-code
+                                   (fn [base code]
+                                     (limit-for-code (if (= code after-code) 30000 base) code))
+                                   svar/ask-code! (fn [_ opts]
+                                                    (swap! requests conj (:messages opts))
+                                                    (if (= 1 (swap! calls inc))
+                                                      {:stop-reason :tool-calls
+                                                       :tool-calls (mapv (fn [idx code]
+                                                                           {:id (str "call_" idx)
+                                                                            :name "python_execution"
+                                                                            :input {:code code}})
+                                                                         (range)
+                                                                         (cond-> [timeout-code]
+                                                                           same-response?
+                                                                           (conj after-code)))}
+                                                      {:stop-reason :end :content "done"}))]
+
+                       (iteration/iteration-loop environment
+                                                 "timeout restart"
+                                                 {:session-turn-id tid})))
                    forms (:forms (first (persistance/db-list-session-turn-iterations db tid)))]
 
                (expect (= 2 @calls))
@@ -4138,8 +4137,9 @@
                   environment
                   "/reload"
                   {:result {:slash/status :error
-                            :slash/title "Reloaded: 1 loaded, 1 failed"
-                            :slash/body report}}
+                            :slash/title "Reloaded · 1 extension · 1 failed"
+                            :slash/body report
+                            :slash/data {:loaded 1 :failed 1}}}
                   {})
 
                  turn-id
@@ -6457,6 +6457,25 @@
                  (expect (str/blank? (:assistant-prose final-row)))
                  (expect (= "A useful answer." (get-in result [:answer :answer])))))
              (finally (loop-env/dispose-environment! env)))))))
+
+(defdescribe
+  trace-usage-test
+  (it "gives each trace entry the tokens of its provider call"
+      (let [env (loop-env/create-environment (svar/make-router [{:id :fixture
+                                                                 :api-key "test"
+                                                                 :base-url "http://127.0.0.1:1/v1"
+                                                                 :models [{:name "model"}]}])
+                                             {:db :memory})]
+        (try (with-redefs [svar/ask-code! (fn [_ _]
+                                            {:stop-reason :end
+                                             :content "The answer."
+                                             :api-usage {:input-tokens 10
+                                                         :output-tokens 5
+                                                         :input-tokens-details {:cache-read 4}}})]
+               (let [result (turn/run-turn! env "Answer the question" {})]
+                 (expect (= {"input" 10 "output" 5 "cached" 4 "cache_created" 0}
+                            (get-in (first (:trace result)) [:usage :tokens])))))
+             (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
   finalize-answer-test
@@ -9700,86 +9719,90 @@
   (let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
     (.set la (- (System/currentTimeMillis) (long ms)))))
 
-(defdescribe env-reaper-test
-             ;; The idle-env reaper is the authoritative backstop against unbounded
-             ;; Python session growth. An empty {} env is safe to dispose:
-             ;; dispose-environment! no-ops with no :python-context / :db-info.
-             (describe "evict-if-idle!"
-                       (it "disposes + evicts an idle, unlocked entry"
-                           (let [k
-                                 "reaper-test/idle"
+(defdescribe
+  env-reaper-test
+  ;; The idle-env reaper is the authoritative backstop against unbounded
+  ;; Python session growth. An empty {} env is safe to dispose:
+  ;; dispose-environment! no-ops with no :python-context / :db-info.
+  (describe
+    "evict-if-idle!"
+    (it "disposes + evicts an idle, unlocked entry"
+        (let [k
+              "reaper-test/idle"
 
-                                 entry
-                                 (new-cache-entry {})]
+              entry
+              (new-cache-entry {})]
 
-                             (swap! env-cache assoc k entry)
-                             (try (backdate-entry! entry 10000)
-                                  (expect (true? (evict-if-idle! k 5000 :idle-timeout str)))
-                                  (expect (not (contains? @env-cache k)))
-                                   (finally (swap! env-cache dissoc k)))))
-                       (it "logs why it evicts a sandbox"
-                           ;; A sandbox restarted, and the gateway log never said why.
-                           (let [k
-                                 "reaper-test/reason"
+          (swap! env-cache assoc k entry)
+          (try (backdate-entry! entry 10000)
+               (expect (true? (evict-if-idle! k 5000 :idle-timeout str)))
+               (expect (not (contains? @env-cache k)))
+               (finally (swap! env-cache dissoc k)))))
+    (it "logs why it evicts a sandbox"
+        ;; A sandbox restarted, and the gateway log never said why.
+        (let [k
+              "reaper-test/reason"
 
-                                 logged
-                                 (atom [])]
+              logged
+              (atom [])]
 
-                             (swap! env-cache assoc k (new-cache-entry {:session-id "s-1"}))
-                             (try (with-redefs [env/log-sandbox-stop! (fn [& args] (swap! logged conj args))]
-                                    (backdate-entry! (get @env-cache k) 10000)
-                                    (expect (true? (evict-if-idle! k 5000 :idle-timeout #(str "idle " (quot (long %) 1000) " s")))))
-                                  (expect (= [["s-1" :idle-timeout "idle 10 s"]] @logged))
-                                  (finally (swap! env-cache dissoc k)))))
-                       (it
-                         "skips an entry whose lock is held (a running turn)"
-                         (let [k
-                               "reaper-test/busy"
+          (swap! env-cache assoc k (new-cache-entry {:session-id "s-1"}))
+          (try (with-redefs [env/log-sandbox-stop! (fn [& args]
+                                                     (swap! logged conj args))]
+                 (backdate-entry! (get @env-cache k) 10000)
+                 (expect (true? (evict-if-idle! k
+                                                5000
+                                                :idle-timeout
+                                                #(str "idle " (quot (long %) 1000) " s")))))
+               (expect (= [["s-1" :idle-timeout "idle 10 s"]] @logged))
+               (finally (swap! env-cache dissoc k)))))
+    (it
+      "skips an entry whose lock is held (a running turn)"
+      (let [k
+            "reaper-test/busy"
 
-                               entry
-                               (new-cache-entry {})
+            entry
+            (new-cache-entry {})
 
-                               ^java.util.concurrent.locks.ReentrantLock lock
-                               (:lock entry)]
+            ^java.util.concurrent.locks.ReentrantLock lock
+            (:lock entry)]
 
-                           (swap! env-cache assoc k entry)
-                           ;; A running turn holds the lock on ANOTHER thread;
-                           ;; ReentrantLock is reentrant, so the lock MUST be
-                           ;; held off-thread for tryLock to genuinely fail.
-                           (let [held
-                                 (promise)
+        (swap! env-cache assoc k entry)
+        ;; A running turn holds the lock on ANOTHER thread;
+        ;; ReentrantLock is reentrant, so the lock MUST be
+        ;; held off-thread for tryLock to genuinely fail.
+        (let [held
+              (promise)
 
-                                 release
-                                 (promise)
+              release
+              (promise)
 
-                                 holder
-                                 (Thread. ^Runnable
-                                          (fn []
-                                            (.lock lock)
-                                            (deliver held true)
-                                            @release
-                                            (.unlock lock)))]
+              holder
+              (Thread. ^Runnable
+                       (fn []
+                         (.lock lock)
+                         (deliver held true)
+                         @release
+                         (.unlock lock)))]
 
-                             (try (backdate-entry! entry 10000)
-                                  (.start holder)
-                                  @held
-                                  (expect (false? (evict-if-idle! k 5000 :idle-timeout str)))
-                                  (expect (contains? @env-cache k))
-                                  (finally (deliver release true)
-                                           (.join holder 1000)
-                                           (swap! env-cache dissoc k))))))
-                       (it "keeps a freshly-touched (not-yet-idle) entry"
-                           (let [k
-                                 "reaper-test/warm"
+          (try (backdate-entry! entry 10000)
+               (.start holder)
+               @held
+               (expect (false? (evict-if-idle! k 5000 :idle-timeout str)))
+               (expect (contains? @env-cache k))
+               (finally (deliver release true) (.join holder 1000) (swap! env-cache dissoc k))))))
+    (it "keeps a freshly-touched (not-yet-idle) entry"
+        (let [k
+              "reaper-test/warm"
 
-                                 entry
-                                 (new-cache-entry {})]
+              entry
+              (new-cache-entry {})]
 
-                             (swap! env-cache assoc k entry)
-                             (try (touch-entry! entry)
-                                  (expect (false? (evict-if-idle! k 60000 :idle-timeout str)))
-                                  (expect (contains? @env-cache k))
-                                  (finally (swap! env-cache dissoc k)))))))
+          (swap! env-cache assoc k entry)
+          (try (touch-entry! entry)
+               (expect (false? (evict-if-idle! k 60000 :idle-timeout str)))
+               (expect (contains? @env-cache k))
+               (finally (swap! env-cache dissoc k)))))))
 
 (def ^:private reap-idle-envs! (deref #'loop-env/reap-idle-envs!))
 (def ^:private memory-pressure? (deref #'loop-env/memory-pressure?))
@@ -10115,7 +10138,7 @@
                (finally (deliver release true)
                         (.join holder 1000)
                         (swap! env-cache dissoc k)
-                         (toggles/set-enabled! "loop_test_fanout_busy" false)))))))
+                        (toggles/set-enabled! "loop_test_fanout_busy" false)))))))
 
 ;; A session-scoped write changes only its own session. The fan-out refreshed every
 ;; idle cached session, so a TUI reasoning change waited 140-350 ms on the gateway.

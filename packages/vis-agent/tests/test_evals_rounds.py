@@ -1,0 +1,271 @@
+"""Tests for the round summary of a Harbor job folder in blockether.vis.evals."""
+
+import json
+
+from blockether.vis.evals import bench_report, diagnose, round_summary
+
+MODEL = "glm-5.3"
+PROVIDER = "zai"
+
+
+def step(step_id, iteration, *, error=None, tokens=10):
+    calls = []
+    if error:
+        calls.append(
+            {
+                "tool_call_id": f"call-{step_id}",
+                "function_name": "python_execution",
+                "arguments": {},
+                "extra": {"error": {"type": error, "message": "a log line"}},
+            }
+        )
+    return {
+        "step_id": step_id,
+        "source": "agent",
+        "message": "",
+        "metrics": {"completion_tokens": tokens},
+        "tool_calls": calls,
+        "extra": {"iteration": iteration, **({"error": "a log line"} if error else {})},
+    }
+
+
+def trajectory(*, model=MODEL, failing=0, tokens=10):
+    steps = [step(1, 1, tokens=tokens)]
+    steps += [step(2 + n, 2 + n, error="python-worker-retired") for n in range(failing)]
+    return {
+        "schema_version": "ATIF-v1.6",
+        "agent": {"name": "vis", "model_name": model, "extra": {"provider": PROVIDER}},
+        "steps": steps,
+        "final_metrics": {
+            "total_prompt_tokens": 100,
+            "total_completion_tokens": tokens,
+            "total_cost_usd": 0.25,
+            "iteration_count": len(steps),
+        },
+        "extra": {"error": "a log line"} if failing else {},
+    }
+
+
+def add_trial(
+    jobs,
+    task,
+    *,
+    reward,
+    tests,
+    atif=None,
+    exception=None,
+    raw=None,
+    info=None,
+    output=None,
+):
+    folder = jobs / "job-1" / f"{task}__abc"
+    (folder / "agent").mkdir(parents=True)
+    (folder / "verifier").mkdir()
+    result = {
+        "task_name": f"terminal-bench/{task}",
+        "trial_name": f"{task}__abc",
+        "started_at": "2026-01-02T00:00:00Z",
+        "finished_at": "2026-01-02T00:10:00Z",
+        "agent_execution": {
+            "started_at": "2026-01-02T00:00:00Z",
+            "finished_at": "2026-01-02T00:05:00Z",
+        },
+        "agent_result": {
+            "n_input_tokens": 100,
+            "n_cache_tokens": 40,
+            "n_output_tokens": output,
+        },
+        **({"agent_info": {"name": "other", "model_info": info}} if info else {}),
+        "verifier_result": {"rewards": {"reward": reward}},
+        "exception_info": {"exception_type": exception} if exception else None,
+    }
+    (folder / "result.json").write_text(json.dumps(result))
+    if raw is not None:
+        (folder / "agent/trajectory.json").write_text(raw)
+    elif atif is not None:
+        (folder / "agent/trajectory.json").write_text(json.dumps(atif))
+    report = {"results": {"summary": {"tests": tests[1], "passed": tests[0]}}}
+    (folder / "verifier/ctrf.json").write_text(json.dumps(report))
+
+
+def dataset(tmp_path, *names, gpu=()):
+    root = tmp_path / "dataset"
+    for name in names:
+        (root / name).mkdir(parents=True)
+        gpus = 1 if name in gpu else 0
+        (root / name / "task.toml").write_text(f"[environment]\ngpus = {gpus}\n")
+    return root
+
+
+def by_task(summary, name):
+    return next(t for t in summary["trials"] if t["task"].endswith(f"/{name}"))
+
+
+def test_round_summary_scores_each_task_and_names_its_outcome(tmp_path):
+    jobs = tmp_path / "jobs"
+    add_trial(jobs, "alpha", reward=1.0, tests=(5, 5), atif=trajectory())
+    add_trial(jobs, "beta", reward=0.0, tests=(4, 5), atif=trajectory())
+    add_trial(jobs, "gamma", reward=0.0, tests=(0, 5), exception="AgentTimeoutError")
+    add_trial(jobs, "delta", reward=1.0, tests=(5, 5), atif=trajectory(model="other"))
+    add_trial(jobs, "zeta", reward=0.0, tests=(0, 5), atif=trajectory(failing=3))
+    names = ("alpha", "beta", "gamma", "delta", "zeta", "eta")
+    tasks = dataset(tmp_path, *names, gpu=("eta",))
+
+    summary = round_summary(jobs, tasks, model=f"{PROVIDER}/{MODEL}")
+
+    assert summary["total_dataset_tasks"] == 6
+    assert summary["gpu_required_tasks"] == ["eta"]
+    assert summary["unattempted_tasks"] == ["eta"]
+    assert summary["scored_tasks"] == 4
+    assert summary["solved_tasks"] == ["alpha"]
+    assert summary["task_outcomes"] == {
+        "agent_error:python-worker-retired": ["zeta"],
+        "agent_timeout": ["gamma"],
+        "failed_tests": ["beta"],
+        "solved": ["alpha"],
+    }
+    assert summary["unscored_model_tasks"] == []
+    assert summary["usage_totals"]["model_attempts"] == 4
+    assert summary["usage_totals"]["estimated_metered_api_cost_usd"] == 0.75
+    assert summary["repeated_final_errors"] == [
+        {"trial": "job-1/zeta__abc", "type": "python-worker-retired", "iterations": 3}
+    ]
+    beta = by_task(summary, "beta")
+    assert beta["verifier_tests"] == {"tests": 5, "passed": 4}
+    assert beta["agent_seconds"] == 300
+    assert beta["iterations"] == 1
+    assert beta["tokens"] == {"input": 100, "cached": 40, "output": None}
+    assert json.loads(json.dumps(summary)) == summary
+
+
+def test_round_summary_copies_no_message_or_log_text(tmp_path):
+    jobs = tmp_path / "jobs"
+    add_trial(jobs, "zeta", reward=0.0, tests=(0, 5), atif=trajectory(failing=2))
+
+    assert "a log line" not in json.dumps(round_summary(jobs))
+
+
+def test_round_summary_names_a_harbor_exception(tmp_path):
+    jobs = tmp_path / "jobs"
+    add_trial(
+        jobs,
+        "alpha",
+        reward=0.0,
+        tests=(0, 5),
+        atif=trajectory(),
+        exception="RuntimeError",
+    )
+
+    assert round_summary(jobs)["task_outcomes"] == {
+        "agent_error:RuntimeError": ["alpha"]
+    }
+
+
+def test_round_summary_skips_runs_without_model_output(tmp_path):
+    jobs = tmp_path / "jobs"
+    add_trial(jobs, "alpha", reward=0.0, tests=(0, 5), atif=trajectory(tokens=0))
+    add_trial(jobs, "beta", reward=0.0, tests=(0, 5), raw="not json")
+
+    summary = round_summary(jobs)
+
+    assert summary["scored_tasks"] == 0
+    assert summary["unscored_model_tasks"] == ["alpha"]
+    assert by_task(summary, "beta")["trajectory"]["valid"] is False
+
+
+def test_round_summary_feeds_the_report_and_the_diagnosis(tmp_path):
+    jobs = tmp_path / "jobs"
+    add_trial(jobs, "alpha", reward=1.0, tests=(5, 5), atif=trajectory())
+    add_trial(jobs, "beta", reward=0.0, tests=(4, 5), atif=trajectory())
+
+    summary = round_summary(jobs)
+
+    report = bench_report(summary)
+    assert (report.total_tasks, report.scored_tasks, report.solved_tasks) == (2, 2, 1)
+    assert diagnose(summary).scored_tasks == 2
+
+
+def test_round_summary_without_trials_is_empty(tmp_path):
+    summary = round_summary(tmp_path / "jobs")
+    assert summary["attempts"] == 0
+    assert summary["task_pass_rate"] is None
+
+
+def test_round_summary_reads_the_harbor_model_without_a_trajectory(tmp_path):
+    # Many Harbor agents write no ATIF trajectory. result.json still names the model.
+    jobs = tmp_path / "jobs"
+    info = {"name": MODEL, "provider": PROVIDER}
+    add_trial(jobs, "solved", reward=1.0, tests=(2, 2), info=info, output=30)
+    add_trial(jobs, "silent", reward=0.0, tests=(0, 2), info=info, output=0)
+    add_trial(jobs, "other", reward=1.0, tests=(2, 2), info={"name": "x"}, output=30)
+
+    summary = round_summary(jobs, model=f"{PROVIDER}/{MODEL}")
+    trials = {trial["task"]: trial for trial in summary["trials"]}
+
+    assert trials["terminal-bench/solved"]["model"] == MODEL
+    assert trials["terminal-bench/solved"]["scored"] is True
+    assert trials["terminal-bench/silent"]["model_attempt"] is True
+    assert trials["terminal-bench/silent"]["scored"] is False
+    assert trials["terminal-bench/other"]["model_attempt"] is False
+    assert summary["solved_tasks"] == ["solved"]
+
+
+def test_round_summary_reads_one_e2e_job_folder(tmp_path):
+    # An e2e run writes one Harbor job. Its tasks have no dataset prefix, and the job
+    # writes its own result.json next to the trial folders.
+    job = tmp_path / "e2e-job"
+    (job / "quick__1" / "agent").mkdir(parents=True)
+    (job / "result.json").write_text(json.dumps({"id": "job", "stats": {}}))
+    result = {
+        "task_name": "quick",
+        "trial_name": "quick__1",
+        "source": "vis-e2e",
+        "started_at": "2026-01-02T00:00:00Z",
+        "finished_at": "2026-01-02T00:02:00Z",
+        "agent_execution": {
+            "started_at": "2026-01-02T00:00:00Z",
+            "finished_at": "2026-01-02T00:01:00Z",
+        },
+        "agent_info": {
+            "name": "vis",
+            "model_info": {"name": MODEL, "provider": PROVIDER},
+        },
+        "agent_result": {"n_input_tokens": 10, "n_output_tokens": 5},
+        "verifier_result": {"rewards": {"reward": 0.0}},
+    }
+    (job / "quick__1" / "result.json").write_text(json.dumps(result))
+    tasks = tmp_path / "dataset"
+    for name in ("quick", "unrun"):
+        (tasks / name).mkdir(parents=True)
+        (tasks / name / "task.toml").write_text("[agent]\ntimeout_sec = 600\n")
+
+    summary = round_summary(job, tasks)
+
+    assert summary["dataset"] == "vis-e2e"
+    assert summary["attempts"] == 1
+    assert summary["scored_tasks"] == 1
+    assert summary["unattempted_tasks"] == ["unrun"]
+    assert summary["agent_limits"] == {"quick": 600.0, "unrun": 600.0}
+    assert summary["trials"][0]["dataset"] == "vis-e2e"
+    finding = next(f for f in diagnose(summary).findings if f.kind == "early_stops")
+    assert finding.tasks[0].budget_used == 0.1
+    assert round_summary(job, dataset="scenarios")["dataset"] == "scenarios"
+
+
+def test_round_summary_counts_only_task_folders_of_the_dataset(tmp_path):
+    # The repository e2e directory is the dataset, and it also holds tool caches.
+    tasks = tmp_path / "e2e"
+    for name in ("one", "two"):
+        (tasks / name).mkdir(parents=True)
+        (tasks / name / "task.toml").write_text("[environment]\ngpus = 0\n")
+    (tasks / "two" / "task.toml").write_text("[environment]\ngpus = 1\n")
+    for cache in (".pytest_cache", "__pycache__", ".venv"):
+        (tasks / cache).mkdir()
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+
+    summary = round_summary(jobs, tasks)
+
+    assert summary["total_dataset_tasks"] == 2
+    assert summary["unattempted_tasks"] == ["one", "two"]
+    assert summary["gpu_required_tasks"] == ["two"]

@@ -47,6 +47,7 @@ export function SettingsDialog({
   gateways,
   primaryUrl,
   providerMachineUrl,
+  machineUrl,
   onAddMachine,
   onMakePrimary,
   onRename,
@@ -59,6 +60,8 @@ export function SettingsDialog({
   primaryUrl?: string | null;
   /** Open this machine immediately; Providers is the first panel under its row. */
   providerMachineUrl?: string;
+  /** Open this machine immediately, for example from a locked inherited setting (#373). */
+  machineUrl?: string;
   /** Pairing is setup, and setup happens HERE — never by leaving this dialog. */
   onAddMachine: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
   /**
@@ -150,7 +153,9 @@ export function SettingsDialog({
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(
     () =>
       new Set(
-        gateways.filter((conn) => conn.url === providerMachineUrl).map((conn) => machineId(conn)),
+        gateways
+          .filter((conn) => conn.url === providerMachineUrl || conn.url.replace(/\/+$/, '') === machineUrl)
+          .map((conn) => machineId(conn)),
       ),
   );
   const toggleMachine = useCallback((conn: GatewayConn) => {

@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -160,6 +161,43 @@
                        (:auth-state (providers/provider-status-cached {:id :cached-status-test}))))
             (expect (= calls @probes)))))))
 
+(defdescribe
+  cached-provider-status-outlives-the-memo-window
+  (it "cached provider status keeps the last live verdict after the memo window"
+      ;; Removing one provider answered with a fleet where every OTHER OAuth provider
+      ;; read "Not signed in" once the last live check was more than 30 s old, although
+      ;; no credential changed. Only an auth change may drop the remembered verdict.
+      (let [probes
+            (atom 0)
+
+            now
+            (atom 1000000)
+
+            registered
+            {:provider/status-fn (fn []
+                                   (swap! probes inc)
+                                   {:is-authenticated true :source :auth-file})}]
+
+        (with-redefs [registry/provider-by-id
+                      (constantly registered)
+
+                      util/now-ms
+                      (fn ^long []
+                        (long @now))]
+
+          (providers/forget-provider-status! :stale-status-test)
+          (expect (true? (:is-authenticated (providers/provider-status {:id :stale-status-test}))))
+          (swap! now + (* 10 60 1000))
+          (let [calls
+                @probes
+
+                status
+                (providers/provider-status-cached {:id :stale-status-test})]
+
+            (expect (true? (:is-authenticated status)))
+            (expect (= calls @probes) "repeating it costs nothing"))
+          (providers/forget-provider-status! :stale-status-test)))))
+
 (defdescribe initial-provider-status-is-neutral-until-a-live-check
              (it "initial provider status is neutral until a live check"
                  (let [saved
@@ -301,6 +339,20 @@
                          (expect (= :extension-owned (:provider-id result)))
                          (expect (empty? @effects))))))))
 
+(defn- machine-update
+  "A stand-in for `config/update-machine-config!` over `read` and `write`. Without it a
+   provider write reads the REAL `~/.vis/state.yml`, so the result depends on the machine.
+   Like the real one, it answers the written map, or nil when `f` changed nothing."
+  [read write]
+  (fn [f & _]
+    (let [raw
+          (read)
+
+          raw'
+          (f raw)]
+
+      (when (and raw' (not= raw raw')) (write raw') raw'))))
+
 (defn- with-machine-config
   "Run `f` against an in-memory machine config `raw` — the string-keyed shape
    `load-global-config-raw` answers — and return that config as it stands
@@ -314,6 +366,7 @@
                                         (reset! state raw')
                                         nil)
                   config/reload-config! (constantly nil)
+                  config/update-machine-config! (machine-update #(deref state) #(reset! state %))
                   config/load-config (fn []
                                        {:providers (vec (get @state "providers"))
                                         :default-provider (get @state "default_provider")
@@ -526,6 +579,9 @@
                     (fn [wire _]
                       (reset! saved wire))
 
+                    config/update-machine-config!
+                    (machine-update #(config/load-global-config-raw) #(reset! saved %))
+
                     config/reload-config!
                     (constantly nil)]
 
@@ -577,6 +633,9 @@
                       config/save-config!
                       (fn [wire _]
                         (reset! saved wire))
+
+                      config/update-machine-config!
+                      (machine-update #(config/load-global-config-raw) #(reset! saved %))
 
                       config/reload-config!
                       (constantly nil)]
@@ -955,6 +1014,9 @@
                     config/save-config!
                     (fn [wire _]
                       (reset! saved wire))
+
+                    config/update-machine-config!
+                    (machine-update #(config/load-global-config-raw) #(reset! saved %))
 
                     config/reload-config!
                     (constantly nil)]

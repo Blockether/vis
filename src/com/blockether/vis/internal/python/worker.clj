@@ -71,7 +71,9 @@
    the NAME is the identity. Two builds shipping different guest modules never
    share a directory, so a live worker's modules are never rewritten under it.
    This process CLAIMS the directory it uses, which is what lets another
-   process' cleanup tell a served generation from an abandoned one."
+   process' cleanup tell a served generation from an abandoned one. It creates
+   and claims the directory under the claim lock before it checks the modules,
+   so a sweep of this process cannot delete them after the check."
   [root sources]
   (let [digest
         (util/sha256-hex (pr-str (into (sorted-map) sources)))
@@ -82,7 +84,9 @@
         dir
         (io/file root (str release "-" (subs digest 0 12)))]
 
-    (.mkdirs dir)
+    (paths/with-claim-lock (fn []
+                             (.mkdirs dir)
+                             (paths/claim-dir! dir)))
     (doseq [[name source] sources]
       (let [target (io/file dir name)]
         (when-not (and (.isFile target) (= source (slurp target)))
@@ -97,7 +101,6 @@
                                          [StandardCopyOption/ATOMIC_MOVE
                                           StandardCopyOption/REPLACE_EXISTING]))
                  (finally (Files/deleteIfExists staged)))))))
-    (paths/claim-dir! dir)
     (.getCanonicalPath dir)))
 
 (defonce ^:private guest-sources
@@ -423,10 +426,20 @@
                                         :id ::no-library-to-hand-over
                                         :data {:error (ex-message t)}})
                              nil))
-              packages (some-> (or (when (instance? TrustedExtensionWorker k) (:packages k))
-                                   (runtime/packages-dir))
-                               io/file)
-              _ (when packages
+              declared (when (instance? TrustedExtensionWorker k) (:packages k))
+              ;; #377: create only shared packages. A created project site-packages
+              ;; leaves an invalid .venv that uv rejects on every /reload.
+              packages (if declared
+                         (let [dir (io/file declared)]
+                           (when-not (.isDirectory dir)
+                             (throw (ex-info (str "Extension packages directory " declared
+                                                  " does not exist. Run /reload to prepare"
+                                                  " the extension environment.")
+                                             {:type :vis/python-worker :packages declared})))
+                           dir)
+                         (some-> (runtime/packages-dir)
+                                 io/file))
+              _ (when (and packages (not declared))
                   (Files/createDirectories (.toPath packages)
                                            (make-array java.nio.file.attribute.FileAttribute 0)))
               guest-dir (guest-source-dir)

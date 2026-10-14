@@ -1,0 +1,1 @@
+In src/core.clj rename the function greet to salute everywhere it is used.

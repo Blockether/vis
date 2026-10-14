@@ -319,7 +319,7 @@ export interface TriggerDraft {
   unit: string;
   expression: string;
   timezone: string;
-  /** Once: the local value of a `datetime-local` input, `YYYY-MM-DDTHH:mm`. */
+  /** Once: the local moment of the date and time field, `YYYY-MM-DDTHH:mm`. */
   at: string;
   signature: string;
   /** Webhook event names, separated by commas or spaces. */
@@ -354,7 +354,7 @@ export function deviceTimeZone(): string {
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
-/** Epoch ms as the local value of a `datetime-local` input, to the minute. */
+/** Epoch ms as a local `YYYY-MM-DDTHH:mm` moment, to the minute. */
 export function localInput(millis: number): string {
   const date = new Date(millis);
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
@@ -362,7 +362,7 @@ export function localInput(millis: number): string {
   )}:${pad(date.getMinutes())}`;
 }
 
-/** The local `datetime-local` value as epoch ms, or NaN. */
+/** A local `YYYY-MM-DDTHH:mm` moment as epoch ms, or NaN. */
 function localMillis(text: string): number {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
   return match

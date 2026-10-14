@@ -1,6 +1,7 @@
 /** The Activity projection against `internal.activity.core`'s own bounded snapshot. */
 import { describe, expect, it, vi } from 'vitest';
 import {
+  activityContentWithoutError,
   activityCopyText,
   activityHistoryCopyText,
   mergeActivity,
@@ -622,5 +623,21 @@ describe('settling a snapshot its form outlived', () => {
     };
 
     expect(settleActivity(settled, 'failed')).toBe(settled);
+  });
+});
+
+// #376: the error box shows a failure once; content that only repeats it is dropped.
+describe('activityContentWithoutError', () => {
+  it('drops repeated text across shortened paths and keeps everything else', () => {
+    const content = [
+      { type: 'text' as const, text: 'Collecting tests' },
+      { type: 'heading' as const, text: 'Error' },
+      { type: 'code' as const, text: 'file not found: /Users/me/proj/tests/test_a.py\n… truncated' },
+    ];
+    const error = 'RuntimeError: file not found: ~/proj/tests/test_a.py and more';
+
+    expect(activityContentWithoutError(content, error)).toEqual([content[0]]);
+    expect(activityContentWithoutError(content, undefined)).toBe(content);
+    expect(activityContentWithoutError(content, 'something else')).toBe(content);
   });
 });

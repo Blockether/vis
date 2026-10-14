@@ -9,9 +9,10 @@
             [com.blockether.vis.internal.attachment.image-convert :as image-convert]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [java.awt.image BufferedImage]
-           [java.io ByteArrayInputStream File]
+           [java.io ByteArrayInputStream ByteArrayOutputStream File]
            [java.nio.file Files]
            [java.util Base64]
+           [java.util.zip ZipEntry ZipOutputStream]
            [javax.imageio ImageIO]))
 
 (def ^:private tiny-png-b64 fixtures/tiny-png-b64)
@@ -251,6 +252,83 @@
 
         (expect (empty? (:attached out)))
         (expect (str/includes? (:reason (first (:skipped out))) "exceeds")))))
+
+(defn- ftyp-brands
+  "An `ftyp` box with major brand `major` and the `compatible` brands after it."
+  ^bytes [^String major & compatible]
+  (byte-array (concat [0 0 0 (+ 16 (* 4 (count compatible)))]
+                      (.getBytes "ftyp" "US-ASCII")
+                      (.getBytes major "US-ASCII")
+                      [0 0 0 0]
+                      (mapcat #(.getBytes ^String % "US-ASCII") compatible))))
+
+(defn- generic-heif
+  "The HEIC fixture, re-stamped as a generic HEIF file: major brand `mif1`, as a
+   `.heif` writer that is not an iPhone puts it. The picture is unchanged."
+  ^bytes []
+  (let [b (aclone ^bytes fixtures/tiny-heic-bytes)]
+    (System/arraycopy (.getBytes "mif1" "US-ASCII") 0 b 8 4)
+    b))
+
+(defdescribe
+  heic-test
+  "An iPhone photo is HEIC, and HEIC is one kind of HEIF. Intake keeps either as
+   sent; the wire gets a PNG."
+  (describe
+    "the sniff"
+    (it "names a real HEIC still image/heic, never a clip"
+        (expect (= "image/heic" (attachments/detect-image-mime fixtures/tiny-heic-bytes)))
+        (expect (= "image/heic" (attachments/detect-media-mime fixtures/tiny-heic-bytes)))
+        (expect (nil? (attachments/detect-video-mime fixtures/tiny-heic-bytes))))
+    (it "names a generic HEIF file image/heif, by its major brand"
+        (expect (= "image/heif" (attachments/detect-image-mime (generic-heif))))
+        (expect (= "image/heif" (attachments/detect-image-mime (ftyp-head "mif1"))))
+        (expect (= "image/heif" (attachments/detect-image-mime (ftyp-head "msf1"))))
+        (expect (nil? (attachments/detect-video-mime (generic-heif)))))
+    (it "keeps image/heic for every HEVC major brand, also a camera .HIF"
+        (doseq [brand ["heic" "heix" "heim" "heis" "hevc" "hevx"]]
+          (expect (= "image/heic" (attachments/detect-image-mime (ftyp-head brand))) brand)))
+    (it "finds a HEIF brand among the compatible brands"
+        (expect (= "image/heif" (attachments/detect-image-mime (ftyp-brands "miaf" "heic")))))
+    (it "names an AV1 file image/avif, by its major or a compatible brand"
+        (expect (= "image/avif" (attachments/detect-image-mime fixtures/tiny-avif-bytes)))
+        (expect (nil? (attachments/detect-video-mime fixtures/tiny-avif-bytes)))
+        (doseq [brand ["avif" "avis"]]
+          (expect (= "image/avif" (attachments/detect-image-mime (ftyp-head brand))) brand))
+        (expect (= "image/avif"
+                   (attachments/detect-image-mime (ftyp-brands "mif1" "avif" "miaf")))))
+    (it "names an H.264, JPEG or uncompressed HEIF file image/heif"
+        (doseq [brand ["avci" "avcs" "jpeg" "unif"]]
+          (expect (= "image/heif" (attachments/detect-image-mime (ftyp-head brand))) brand))))
+  (describe "intake"
+            (it
+              "attaches a dropped .HEIC path byte for byte"
+              (let [dir
+                    (temp-dir)
+
+                    f
+                    (write-file dir "IMG_0001.HEIC" fixtures/tiny-heic-bytes)
+
+                    res
+                    (attachments/collect-user-images (str "what is this? " (.getAbsolutePath f)))]
+
+                (expect (= ["image/heic"] (mapv :media-type (:attached res))))
+                (expect (= fixtures/tiny-heic-b64 (:base64 (first (:attached res)))))))
+            (it "attaches dropped .heif and camera .HIF paths"
+                (let [dir
+                      (temp-dir)
+
+                      heif
+                      (write-file dir "photo.heif" (generic-heif))
+
+                      hif
+                      (write-file dir "DSC_0001.HIF" fixtures/tiny-heic-bytes)
+
+                      res
+                      (attachments/collect-user-images (str "compare " (.getAbsolutePath heif)
+                                                            " and " (.getAbsolutePath hif)))]
+
+                  (expect (= ["image/heif" "image/heic"] (mapv :media-type (:attached res))))))))
 
 (defdescribe
   collect-user-videos-test
@@ -641,6 +719,80 @@
   (it "does not accept prose or malformed JSON as a log container"
       (doseq [text ["ordinary log text\n" "{broken}\n" "[1,2]\n"]]
         (expect (nil? (attachments/detect-media-mime (.getBytes text "UTF-8")))))))
+
+(defn- zip-bytes
+  "A ZIP archive with the given `[name text]` entries, in that order."
+  ^bytes [entries]
+  (let [out (ByteArrayOutputStream.)]
+    (with-open [zip (ZipOutputStream. out)]
+      (doseq [[entry-name text] entries]
+        (.putNextEntry zip (ZipEntry. ^String entry-name))
+        (.write zip (.getBytes ^String text "UTF-8"))
+        (.closeEntry zip)))
+    (.toByteArray out)))
+
+(def ^:private docx-media-type
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+(defn- office-bytes
+  "An Office package whose content-type registry names `main-type`."
+  ^bytes [main-type]
+  (zip-bytes [["[Content_Types].xml"
+               (str "<Types><Override PartName=\"/word/document.xml\" ContentType=\""
+                    main-type
+                    "\"/></Types>")] ["word/document.xml" "<w:document/>"]]))
+
+;; Regression: the companion refused a Word document as an unsupported format.
+(defdescribe
+  docx-attachment-test
+  (it "sniffs and stores an inline Word document as a readable human-only file"
+      (let [bytes
+            (office-bytes
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")
+
+            out
+            (attachments/prepare-inline-attachments
+              [{:base64 (b64 bytes) :filename "Tryb.docx" :media-type "application/octet-stream"}])
+
+            attachment
+            (first (:attached out))
+
+            blind
+            (first (:skipped (attachments/wire-images (:attached out))))]
+
+        (expect (empty? (:skipped out)))
+        (expect (= docx-media-type (:media-type attachment)))
+        (expect (= (b64 bytes) (:base64 attachment)))
+        (expect (attachments/hidden-from-model? attachment))
+        (expect (true? (:readable-blind? blind)))
+        (expect (str/includes? (:reason blind) "read_attachment"))))
+  (it "refuses a ZIP archive that is not a Word document, whatever its name"
+      (doseq [bytes [(zip-bytes [["notes.txt" "plain"]])
+                     (office-bytes "application/vnd.ms-word.document.macroEnabled.main+xml")
+                     (office-bytes
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")
+                     (byte-array [0x50 0x4b 0x03 0x04 0 0 0 0])]]
+        (let [out (attachments/prepare-inline-attachments
+                    [{:filename "report.docx" :media-type docx-media-type :base64 (b64 bytes)}])]
+          (expect (empty? (:attached out)))
+          (expect (= "not a supported attachment format" (:reason (first (:skipped out))))))))
+  (it "sniffs a Word document on disk whose registry is past the file head"
+      (let [f
+            (File. (temp-dir) "late-registry.docx")
+
+            main-type
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"]
+
+        (Files/write (.toPath f)
+                     (zip-bytes
+                       [["word/document.xml"
+                         (let [rnd (java.util.Random. 7)]
+                           (apply str (repeatedly 20000 #(char (+ 97 (.nextInt rnd 26))))))]
+                        ["[Content_Types].xml"
+                         (str "<Types><Override ContentType=\"" main-type "\"/></Types>")]])
+                     (make-array java.nio.file.OpenOption 0))
+        (expect (< 4100 (.length f)))
+        (expect (= docx-media-type (attachments/sniff-file-mime f))))))
 
 (defdescribe
   markdown-attachment-test
@@ -1115,7 +1267,13 @@
                 {:base64 (b64 (.getBytes svg-doc "UTF-8")) :media-type "image/svg+xml"} [120 60]]
                ["bmp re-containered"
                 {:base64 (b64 (imaging/encode (imaging/blank 21 13 "white") :bmp))
-                 :media-type "image/bmp"} [21 13]]]]
+                 :media-type "image/bmp"} [21 13]]
+               ["heic re-containered" {:base64 fixtures/tiny-heic-b64 :media-type "image/heic"}
+                [32 24]]
+               ["generic heif re-containered"
+                {:base64 (b64 (generic-heif)) :media-type "image/heif"} [32 24]]
+               ["avif re-containered" {:base64 fixtures/tiny-avif-b64 :media-type "image/avif"}
+                [64 48]]]]
         (let [wired (attachments/wire-image att)]
           (expect (= "image/png" (:media-type wired)) label)
           (expect (= expected (decoded-size wired)) label))))
@@ -1130,6 +1288,27 @@
             (decoded wired)]
 
         (expect (= "333333" (format "%06x" (bit-and (.getRGB img 60 30) 0xffffff))))))
+  (it "keeps the colours of a HEIC photo"
+      ;; The fixture has red, green, blue and white quarters. HEVC is lossy, so
+      ;; each channel may move a little, but never to another colour.
+      (let [^BufferedImage img
+            (decoded (attachments/wire-image {:base64 fixtures/tiny-heic-b64
+                                              :media-type "image/heic"}))
+
+            rgb
+            (fn [x y]
+              (let [c (.getRGB img (int x) (int y))]
+                [(bit-and 0xff (bit-shift-right c 16)) (bit-and 0xff (bit-shift-right c 8))
+                 (bit-and 0xff c)]))
+
+            near?
+            (fn [want got]
+              (every? true? (map #(<= (abs (- (long %1) (long %2))) 24) want got)))]
+
+        (expect (near? [220 30 30] (rgb 4 4)))
+        (expect (near? [30 160 40] (rgb 27 4)))
+        (expect (near? [30 60 220] (rgb 4 19)))
+        (expect (near? [240 240 240] (rgb 27 19)))))
   (it "refuses precisely what the foreign decoder also refuses"
       (let [bad {:base64 (b64 (corrupt-png)) :media-type "image/png"}]
         (expect (nil? (:base64 (attachments/wire-image bad))))

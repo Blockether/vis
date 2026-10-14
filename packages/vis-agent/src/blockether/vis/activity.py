@@ -84,6 +84,7 @@ class ActivityRow:
     resources: tuple[ActivityResource, ...]
     evidence: tuple[ActivityEvidence, ...]
     argument_key: str | None = None
+    read_key: str | None = None
     handle_id: str | None = None
     group_token: str | None = None
     duration_ms: int | None = None
