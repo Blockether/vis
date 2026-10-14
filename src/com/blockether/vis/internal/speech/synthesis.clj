@@ -36,4 +36,8 @@
     :forget-voice voices/forget!
     :model-state #(tts/model-state :pocket-tts)
     :start-download #(tts/start-download! :pocket-tts)
-    :voice-sample tts/pocket-sample} vibevoice/tts-descriptor])
+    :voice-sample tts/pocket-sample
+    :prepare-voice-sample (fn [voice-id]
+                            (sherpa/call-native (fn []
+                                                  (tts/prepare-pocket-sample! voice-id))))}
+   vibevoice/tts-descriptor])

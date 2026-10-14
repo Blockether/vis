@@ -1,73 +1,59 @@
 #!/usr/bin/env bash
-# Record the reference clips a pocket voice IS, from the only voices Vis is
-# allowed to publish: the public-domain Piper voices in the model manifest.
+# Fetch the reference clips that Pocket TTS speaks with, and pack them as
+# `pocket-voice-clips.tar.bz2`, one small asset in the assets-pack release,
+# carried by the `pocket-voice-clips` manifest entry.
 #
-# WHY THIS EXISTS (licence, not preference):
-#   * pocket-tts clones a REFERENCE CLIP instead of selecting a baked speaker,
-#     so a "voice" in that engine is a WAV file and nothing else. Kyutai's own
-#     clips are not ours to hand on, so the assets pack carries clips Vis makes.
-#   * Bryce Beattie released the Kristin, Cori and John Piper voices into the
-#     PUBLIC DOMAIN, trained from scratch on public-domain LibriVox recordings.
-#     Audio those models speak carries no licence forward, so a clip generated
-#     here is ours to publish - the credit is kept anyway, in the manifest.
-#   * RyanSpeech (CC BY-NC-SA 4.0) is deliberately absent: NonCommercial binds
-#     the distributor, and this output ships inside a release asset.
+# WHY THESE CLIPS
+#   * Pocket clones a REFERENCE CLIP instead of selecting a baked speaker, so a
+#     voice in that engine is a WAV file and nothing else.
+#   * These are the voices of Kyutai's own catalogue (`pocket-tts` 1.0.3:
+#     alba, marius, javert, fantine, eponine, azelma), from the source
+#     recordings in https://huggingface.co/kyutai/tts-voices. The engine then
+#     sounds like itself, not like another engine.
+#   * Only clips that may ship in a release asset are here. jean (EARS) and
+#     cosette (Expresso) are CC BY-NC 4.0, and NonCommercial binds the
+#     distributor, so they are deliberately absent.
+#   * Licences: alba is Alba MacKenna, CC BY 4.0. fantine, eponine and azelma
+#     are VCTK speakers p244, p262 and p303, CC BY 4.0. marius and javert are
+#     Unmute voice donations, CC0.
 #
-# WHAT MAKES A GOOD CLIP (this is why the sentences read the way they do):
-#   pocket-tts imitates the clip. Ten seconds or so of ordinary prose, an even
-#   pace, no proper nouns and no unusual words, so what the model copies is the
-#   VOICE and not a performance. The text is written beside the audio and ends
-#   up in the manifest as `:clip-text`: sherpa passes it to the model as the
-#   transcript of the reference, which is what makes the clone track the voice
-#   instead of guessing at it.
+# Each clip is the whole source recording (10 to 13 seconds), resampled to the
+# 24 kHz mono that the Mimi encoder wants and levelled to a -3 dBFS peak. The
+# text beside each clip is its transcript: sherpa passes it to the model as
+# the reference text. It ends up in the manifest as `:clip-text`.
 #
 # Usage:
-#   bin/make-voice-clips                     # dist/voice-clips
+#   bin/make-voice-clips                     # dist/pocket-voice-clips
 #   bin/make-voice-clips --out /tmp/clips
-#   bin/make-voice-clips --only kristin
 #
-# Then, to put them in the bundle without re-exporting the weights:
-#   bin/export-pocket-tts --from dist/voice-assets/pocket-tts-onnx.tar.bz2 \
-#                         --voices dist/voice-clips
+# Then upload the pack and paste the printed sha256 and byte count into the
+# `pocket-voice-clips` entry of the model manifest:
+#   gh release upload assets-pack dist/pocket-voice-clips/pocket-voice-clips.tar.bz2
 #
-# Requires: uv, ffmpeg, tar, curl. No Hugging Face token, no gated weights.
+# Requires: ffmpeg, tar, curl. No Hugging Face token: the repository is public.
 
 set -euo pipefail
 
-SHERPA_VERSION="1.13.5" # only for generating; never shipped
-PYTHON_VERSION="3.12"
 CLIP_RATE=24000 # what the Mimi encoder wants; sherpa resamples anything else
-UPSTREAM="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+PACK_NAME="pocket-voice-clips"
+# A pinned revision, so the same command fetches the same bytes.
+REVISION="323332d33f997de8394f24a193e1a76df720e01a"
+UPSTREAM="https://huggingface.co/kyutai/tts-voices/resolve/${REVISION}"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out_dir="${repo_root}/dist/voice-clips"
-work_dir=""
-only=""
-keep_work=0
+out_dir="${repo_root}/dist/${PACK_NAME}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out) out_dir="$2"; shift 2 ;;
-    --work) work_dir="$2"; shift 2 ;;
-    --only) only="$2"; shift 2 ;;
-    --keep-work) keep_work=1; shift ;;
     -h|--help) sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-for tool in uv ffmpeg tar curl; do
+for tool in ffmpeg tar curl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
 done
-
-if [[ -z "$work_dir" ]]; then
-  work_dir="$(mktemp -d "${TMPDIR:-/tmp}/vis-voice-clips.XXXXXX")"
-fi
-mkdir -p "$work_dir" "$out_dir"
-cleanup() {
-  if [[ "$keep_work" -eq 0 && -d "$work_dir" ]]; then rm -rf "$work_dir"; fi
-}
-trap cleanup EXIT
 
 digest_of() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -77,115 +63,57 @@ digest_of() {
   fi
 }
 
-# id|label|language|gender|bundle|model|sha256|text
-# The sha256 is the upstream archive's, and it is verified: a clip is only
-# public domain because of WHICH model spoke it.
+# id|label|gender|licence|source path|sha256|transcript
+# The sha256 is the source recording's, and it is verified: a clip may only
+# ship because of WHICH recording it is.
 voice_rows() {
   cat <<'ROWS'
-kristin|Kristin (en-US)|en-US|female|vits-piper-en_US-kristin-medium|en_US-kristin-medium.onnx|c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7|This is a reference recording, read at an ordinary pace. Nothing in it is difficult to say, and that is the point: what should carry is the sound of the voice, not the words it happens to be reading.
-cori|Cori (en-GB)|en-GB|female|vits-piper-en_GB-cori-medium|en_GB-cori-medium.onnx|49c9a5361bbdd95d7ca9687c4de11e5908481f65e7c7c368960df79949fdac2b|A short paragraph, read aloud without hurry, with the pauses left where they fall. Ten seconds of plain speech is enough to hear how a voice moves from one sentence into the next.
-john|John (en-US)|en-US|male|vits-piper-en_US-john-medium|en_US-john-medium.onnx|d90362cfa48e429d3096f644785184446145b6e38216f2eaf4c0601b8aad5a36|Reading quietly for a few seconds, plainly and at a steady pace. The manner matters more than the meaning here: where the breath lands, how a sentence turns, and what an unhurried voice sounds like.
+alba|Alba|female|CC-BY-4.0|alba-mackenna/casual.wav|46264e83cb99115c3d210260e029117566d9c64f20266d10daa78107759ede3e|How am I doing? How's it going? How can I help? Need anything? Not right now. Sorry, I can't. Maybe later. I'm afraid not. I couldn't.
+marius|Marius|male|CC0-1.0|voice-donations/Selfie.wav|076968c3122520f3412eb7090e8c1c3f75fe57be1e24a2f96465583d84c71e16|know if it's the first ten seconds or the last ten seconds that you're going to use. It says it's the last ten seconds, and if that's the case and I'd showed up previously, there would just be ten seconds.
+javert|Javert|male|CC0-1.0|voice-donations/Butter.wav|b889e080eec3efa824bddaf875b4f531d75464f88128d08941ae648d9d3ade70|I would like to buy an avocado. One that is green on the outside and green
+fantine|Fantine|female|CC-BY-4.0|vctk/p244_023.wav|3a9d5c27bd89911a58b0e68b4f5e80082d2a6a67e112a9ce17c5a6dc54c9271e|If the red of the second bow falls upon the green of the first, the result is to give a bow with an abnormally wide yellow band, since red and green light when mixed form yellow.
+eponine|Eponine|female|CC-BY-4.0|vctk/p262_023.wav|064c63ee786a58b605ac288f0d97d1adcb6b9662bde39e2fc3eabf17a2eb1715|If the red of the second bow falls upon the green of the first, the result is to give a bow with an abnormally wide yellow band, since red and green light when mixed form yellow.
+azelma|Azelma|female|CC-BY-4.0|vctk/p303_023.wav|0f71ceb87f24d1d13367fdbe064d7f7afc93d5758c7beaddfc49c697f87ca60e|If the red of the second bow falls upon the green of the first, the result is to give a bow with an abnormally wide yellow band, since red and green light when mixed form yellow.
 ROWS
 }
 
-echo "==> work  ${work_dir}"
-echo "==> out   ${out_dir}"
-echo "==> voice models: public domain (Bryce Beattie), via ${UPSTREAM}"
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/vis-voice-clips.XXXXXX")"
+trap 'rm -rf "$work_dir"' EXIT
+pack_dir="${work_dir}/${PACK_NAME}"
+mkdir -p "${pack_dir}/voices" "$out_dir"
 
-echo "==> creating the environment (python ${PYTHON_VERSION})"
-uv venv --quiet --python "$PYTHON_VERSION" "${work_dir}/venv"
-# shellcheck disable=SC1091
-source "${work_dir}/venv/bin/activate"
-# numpy is not a sherpa-onnx dependency; the levelling below needs it.
-uv pip install --quiet "sherpa-onnx==${SHERPA_VERSION}" numpy
-
-made=0
-while IFS='|' read -r id label language gender bundle model sha text; do
+while IFS='|' read -r id label gender licence source sha text; do
   [[ -z "$id" ]] && continue
-  [[ -n "$only" && "$only" != "$id" ]] && continue
-
-  archive="${work_dir}/${bundle}.tar.bz2"
-  if [[ ! -f "$archive" ]]; then
-    echo "==> fetching ${bundle}"
-    curl -fsSL "${UPSTREAM}/${bundle}.tar.bz2" -o "$archive"
-  fi
-  actual="$(digest_of "$archive")"
+  raw="${work_dir}/${id}-source.wav"
+  echo "==> ${id}: ${label}, ${gender}, ${licence}"
+  curl -fsSL "${UPSTREAM}/${source}" -o "$raw"
+  actual="$(digest_of "$raw")"
   if [[ "$actual" != "$sha" ]]; then
-    echo "${bundle}: expected sha256 ${sha}, got ${actual}" >&2
+    echo "${source}: expected sha256 ${sha}, got ${actual}" >&2
     exit 1
   fi
-  tar -xjf "$archive" -C "$work_dir"
-
-  raw="${work_dir}/${id}-raw.wav"
-  echo "==> speaking ${id}"
-  python - "${work_dir}/${bundle}" "$model" "$raw" "$text" <<'PY'
-import sys
-import wave
-
-import numpy as np
-import sherpa_onnx as so
-
-bundle, model, out, text = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-tts = so.OfflineTts(
-    so.OfflineTtsConfig(
-        model=so.OfflineTtsModelConfig(
-            vits=so.OfflineTtsVitsModelConfig(model=f"{bundle}/{model}",
-                                              tokens=f"{bundle}/tokens.txt",
-                                              data_dir=f"{bundle}/espeak-ng-data"),
-            num_threads=4)))
-audio = tts.generate(text, sid=0, speed=1.0)
-samples = np.asarray(audio.samples, dtype=np.float32)
-peak = float(np.abs(samples).max())
-if peak < 0.05:
-    raise SystemExit(f"{model} produced silence")
-# -3 dBFS: the clip is what the model imitates, so it is levelled before it is
-# ever heard, and every clip in the pack is levelled the same way.
-samples = samples / peak * 0.7
-with wave.open(out, "wb") as w:
-    w.setnchannels(1)
-    w.setsampwidth(2)
-    w.setframerate(audio.sample_rate)
-    w.writeframes((samples * 32767).astype(np.int16).tobytes())
-print(f"    {len(samples) / audio.sample_rate:.2f}s at {audio.sample_rate} Hz")
-PY
-
-  clip="${out_dir}/${id}.wav"
-  ffmpeg -v error -y -i "$raw" -ac 1 -ar "$CLIP_RATE" -c:a pcm_s16le "$clip"
-  printf '%s\n' "$text" > "${out_dir}/${id}.txt"
-  echo "    ${clip} ($(wc -c < "$clip" | tr -d ' ') bytes, $(digest_of "$clip"))"
-  made=$((made + 1))
+  # Measure the peak, then scale it to -3 dBFS: clips of one catalogue
+  # must not differ in loudness.
+  peak_db="$(ffmpeg -nostdin -v info -i "$raw" -af volumedetect -f null - 2>&1 \
+    | sed -n 's/.*max_volume: \(-\{0,1\}[0-9.]*\) dB.*/\1/p')"
+  gain="$(awk -v p="$peak_db" 'BEGIN { printf "%.2f", -3 - p }')"
+  ffmpeg -nostdin -v error -y -i "$raw" -af "volume=${gain}dB" -ac 1 -ar "$CLIP_RATE" \
+    -c:a pcm_s16le "${pack_dir}/voices/${id}.wav"
+  printf '%s\n' "$text" > "${pack_dir}/voices/${id}.txt"
 done < <(voice_rows)
 
-if [[ "$made" -eq 0 ]]; then
-  echo "no clips made (--only ${only} matched nothing)" >&2
-  exit 1
-fi
-
-# The catalogue Vis reads is the manifest, not the archive, so the snippet is
-# written next to the clips: paste it into the pocket entry's `:voices`.
-snippet="${out_dir}/voices.edn"
-{
-  echo ":voices"
-  echo "["
-  while IFS='|' read -r id label language gender bundle model sha text; do
-    [[ -z "$id" ]] && continue
-    [[ -n "$only" && "$only" != "$id" ]] && continue
-    echo " {:id \"${id}\""
-    echo "  :label \"${label}\""
-    echo "  :language \"${language}\""
-    echo "  :gender :${gender}"
-    echo "  :clip \"voices/${id}.wav\""
-    echo "  :clip-text \"${text}\"}"
-  done < <(voice_rows)
-  echo "]"
-} > "$snippet"
+# One top-level directory, because the installer strips exactly one on the way in.
+# COPYFILE_DISABLE keeps the macOS AppleDouble `._*` files out of the pack.
+pack="${out_dir}/${PACK_NAME}.tar.bz2"
+COPYFILE_DISABLE=1 tar -cjf "$pack" -C "$work_dir" "$PACK_NAME"
+cp -R "${pack_dir}/." "${out_dir}/"
 
 cat <<EOF
 
-==> ${made} clip(s) in ${out_dir}
-    manifest snippet: ${snippet}
+==> packed into ${pack}
+    bytes   $(wc -c < "$pack" | tr -d ' ')
+    sha256  $(digest_of "$pack")
 
-Put them in the bundle without re-exporting the weights:
-
-    bin/export-pocket-tts --from dist/voice-assets/pocket-tts-onnx.tar.bz2 --voices ${out_dir}
+Upload it, then move those two numbers into the pocket-voice-clips entry of
+resources/vis-models/manifest.edn.
 EOF

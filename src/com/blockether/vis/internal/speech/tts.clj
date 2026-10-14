@@ -8,8 +8,8 @@
                   through eSpeak NG tables. Vis uses a system copy when present or the
                   verified tables carried by a downloaded publisher model archive.
      :pocket-tts  a voice is a reference CLIP the model clones, so the catalogue
-                  is a WAV per voice: the clips the bundle ships and the ones
-                   somebody imported through `voices.clj`. Vis exports those
+                  is a WAV per voice: the clips of `pocket-voice-clips` and the
+                   ones somebody imported through `voices.clj`. Vis exports those
                    weights itself, so they arrive with every other model.
 
    Which assets exist, where they come from and what they are licensed under is
@@ -20,11 +20,13 @@
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.speech.voices :as voices]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [com.k2fsa.sherpa.onnx GeneratedAudio GenerationConfig OfflineTts OfflineTtsCallback
             OfflineTtsConfig OfflineTtsModelConfig OfflineTtsPocketModelConfig
             OfflineTtsVitsModelConfig WaveReader]
            [java.io File]
+           [java.nio.file Files]
            [java.util LinkedHashMap]
            [java.util.concurrent.atomic AtomicLong]))
 
@@ -33,6 +35,8 @@
 (set! *warn-on-reflection* true)
 
 (def ^:const pocket-asset-id "pocket-tts-int8")
+
+(def ^:const pocket-clips-asset-id "pocket-voice-clips")
 
 ;; Piper can use an existing system installation, an explicitly named directory, or the
 ;; verified data directory carried by every publisher model archive.
@@ -105,6 +109,8 @@
 
 (defn pocket-asset [] (assets/entry pocket-asset-id))
 
+(defn pocket-clips-asset [] (assets/entry pocket-clips-asset-id))
+
 (defn piper-voices
   "Piper voices with the licence facts a consent surface must show."
   []
@@ -114,12 +120,12 @@
 
 (defn pocket-voice-catalogue
   "The pocket catalogue with each clip resolved to an absolute path: the clips
-   the bundle ships first, then the imported ones. An import with the same id
+   that Vis ships first, then the imported ones. An import with the same id
    WINS - somebody who names their own recording after a shipped voice meant
    their own recording."
   []
   (let [entry
-        (pocket-asset)
+        (pocket-clips-asset)
 
         dir
         (assets/install-dir entry)
@@ -160,15 +166,17 @@
 
 (defn- no-reference-clips!
   "A pocket voice IS a reference clip, so an empty catalogue is not an unknown
-   voice - it is a bundle with no voice in it and nothing imported either."
-  [entry]
-  (throw (ex-info (str "The " (:id entry)
-                       " bundle carries no reference clip to speak with."
-                       " Import one: vis-agent speech import <clip.wav> --name <name>")
-                  {:type :speech-tts/no-reference-clips
-                   :family :pocket-tts
-                   :asset-id (:id entry)
-                   :notice (:notice entry)})))
+   voice - it is a clip pack with no voice in it and nothing imported either. The
+   notice of the model entry tells how to import one."
+  []
+  (let [clips (pocket-clips-asset)]
+    (throw (ex-info (str "The " (:id clips)
+                         " pack carries no reference clip to speak with."
+                         " Import one: vis-agent speech import <clip.wav> --name <name>")
+                    {:type :speech-tts/no-reference-clips
+                     :family :pocket-tts
+                     :asset-id (:id clips)
+                     :notice (:notice (pocket-asset))}))))
 
 (defn- piper-asset-for
   "The manifest entry whose voice is `voice-id`, or the default when none is
@@ -242,7 +250,7 @@
     [(piper-asset-for voice-id)]
 
     :pocket-tts
-    [(pocket-asset)]))
+    [(pocket-asset) (pocket-clips-asset)]))
 
 (defn model-state-of
   "Readiness of a group of assets, for an engine outside sherpa-onnx that shares
@@ -485,8 +493,9 @@
     (let [installed
           (ensure-assets! family voice-id report)
 
+          ;; The model is always FIRST: a family may need more, such as Pocket's clips.
           dir
-          (assets/install-dir (last installed))]
+          (assets/install-dir (first installed))]
 
       (report {:phase :synthesizing :progress 0})
       (case family
@@ -510,7 +519,7 @@
               (pocket-voice-catalogue)
 
               _
-              (when (empty? catalogue) (no-reference-clips! (pocket-asset)))
+              (when (empty? catalogue) (no-reference-clips!))
 
               voice
               (or (named-voice catalogue voice-id) (unknown-voice! :pocket-tts voice-id catalogue))
@@ -620,6 +629,21 @@
     (or (sample-on-disk id)
         (when (or (is-packed-voice id) (assets/installed? asset)) {:is-preparable true}))))
 
+(defn- speak-sample-into!
+  "Speak [[sample-text]] in `voice-id` of `family` into `out` and return `out`.
+   Rename, so a second press racing the first sees the whole file or no file -
+   never the head of a WAV another thread is still writing."
+  ^File [family voice-id ^File out]
+  (let [generated
+        (synthesize! family {:text sample-text :voice-id voice-id})
+
+        ^File made
+        (io/file (str (:audio-path generated)))]
+
+    (io/make-parents out)
+    (when-not (.renameTo made out) (io/copy made out) (.delete made))
+    out))
+
 (defn prepare-piper-sample!
   "Make the sample [[piper-sample]] said was preparable and return it. Installs
    the pack (0.7 MB, four voices at once) or speaks the sentence with a model
@@ -635,35 +659,89 @@
     (or (sample-on-disk id)
         (when (is-packed-voice id) (assets/install! (samples-asset)) (sample-on-disk id))
         (when (assets/installed? asset)
-          (let [^File out
-                (spoken-sample id)
-
-                generated
-                (synthesize! :piper {:text sample-text :voice-id id})
-
-                ^File made
-                (io/file (str (:audio-path generated)))]
-
-            (io/make-parents out)
-            ;; Rename, so a second press racing the first sees the whole file or
-            ;; no file - never the head of a WAV another thread is still writing.
-            (when-not (.renameTo made out) (io/copy made out) (.delete made))
-            (sample-on-disk id)))
+          (speak-sample-into! :piper id (spoken-sample id))
+          (sample-on-disk id))
         (throw (ex-info (str "No sample for " id " without installing the voice first.")
                         {:type :speech-tts/sample-unavailable :family :piper :voice-id id})))))
 
+;; A pocket voice is a reference clip, but the clip is the voice the engine
+;; COPIES, not what the engine sounds like. So a pocket sample is the engine's own
+;; speech of the sample sentence: from the small pack for a shipped voice, or
+;; spoken on a machine that has the model.
+
+(def ^:const pocket-samples-asset-id "pocket-voice-samples")
+
+(defn pocket-samples-asset [] (assets/entry pocket-samples-asset-id))
+
+(defn- clip-digest
+  "The first 12 hex digits of the SHA-256 of `clip`."
+  ^String [^File clip]
+  (let [^java.security.MessageDigest digest (util/sha256-digest)]
+    (subs (util/bytes->hex (.digest digest (Files/readAllBytes (.toPath clip)))) 0 12)))
+
+(defn- pocket-packed-sample
+  "The packed sample of `voice`, or nil when the pack does not speak for it. An
+   import that takes a shipped name is another recording, so it gets no packed sample."
+  ^File [voice]
+  (let [file-name (sample-file-name (:id voice))]
+    (when (and (not (:is-imported voice)) (some #{file-name} (:requires (pocket-samples-asset))))
+      (io/file (assets/install-dir (pocket-samples-asset)) file-name))))
+
+(defn- pocket-spoken-sample
+  "Where this machine keeps the sample that it spoke for `voice`, or nil when the
+   clip is absent. The name carries the clip digest, so a voice imported again
+   under the same name gets a new sample."
+  ^File [voice]
+  (let [^File clip (io/file (str (:clip voice)))]
+    (when (.isFile clip)
+      (io/file (assets/models-root)
+               "pocket-voice-samples-spoken"
+               (str (name (:id voice)) "-" (clip-digest clip) ".wav")))))
+
+(defn- wav-answer
+  [^File f]
+  (when (and f (.isFile f)) {:audio-path (str f) :media-type "audio/wav"}))
+
 (defn pocket-sample
-  "A pocket voice IS a reference clip, so its sample is that clip: already on
-   disk for a voice somebody imported, part of the bundle for a shipped one.
-   Nothing to prepare and nothing to fetch - when the bundle is absent there is
-   no sample, because 96 MB is not a preview."
+  "Where the sample of a pocket voice is, or what it takes to have one:
+
+     {:audio-path …}        one is on disk, from the pack or spoken here
+     {:is-preparable true}  [[prepare-pocket-sample!]] can install the small pack,
+                            or speak the sentence with the installed model
+     nil                    no such voice, or only the 96 MB model could make one"
   [voice-id]
-  (let [voice
-        (named-voice (pocket-voice-catalogue) voice-id)
+  (when-let [voice (named-voice (pocket-voice-catalogue) voice-id)]
+    (let [packed (pocket-packed-sample voice)
+          spoken (pocket-spoken-sample voice)]
 
-        ^File clip
-        (some-> (:clip voice)
-                str
-                io/file)]
+      (or (wav-answer packed)
+          (wav-answer spoken)
+          (when (or packed (and spoken (assets/installed? (pocket-asset))))
+            {:is-preparable true})))))
 
-    (when (and clip (.isFile clip)) {:audio-path (str clip) :media-type "audio/wav"})))
+(defn prepare-pocket-sample!
+  "Make the sample that [[pocket-sample]] called preparable and return it. Installs
+   the small pack, or speaks the sentence with the installed model and keeps the
+   file. Never downloads the model."
+  [voice-id]
+  (let [catalogue
+        (pocket-voice-catalogue)
+
+        voice
+        (or (named-voice catalogue voice-id) (unknown-voice! :pocket-tts voice-id catalogue))
+
+        packed
+        (pocket-packed-sample voice)
+
+        spoken
+        (pocket-spoken-sample voice)]
+
+    (or (wav-answer packed)
+        (wav-answer spoken)
+        (when packed (assets/install! (pocket-samples-asset)) (wav-answer packed))
+        (when (and spoken (assets/installed? (pocket-asset)))
+          (wav-answer (speak-sample-into! :pocket-tts (name (:id voice)) spoken)))
+        (throw (ex-info (str "No sample for " (name (:id voice)) " without the Pocket model.")
+                        {:type :speech-tts/sample-unavailable
+                         :family :pocket-tts
+                         :voice-id (name (:id voice))})))))
