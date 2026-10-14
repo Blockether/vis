@@ -1,11 +1,13 @@
 (ns com.blockether.vis.internal.python.tls-test
-  "Vis #185: nested config reaches sandbox and trusted extension TLS handshakes."
+  "Vis #185 and #383: nested config reaches sandbox, extension and CLI TLS handshakes."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [com.blockether.vis.contract.config :as contract]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as env]
+            [com.blockether.vis.internal.main]
             [com.blockether.vis.internal.python.extensions :as pyx]
+            [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.python.worker :as worker]
             [com.blockether.vis.internal.sandbox.tls-mitm :as tls]
             [com.blockether.vis.internal.util :as util]
@@ -87,7 +89,7 @@
         (expect (not (contract/definition-valid? "python" {"tls_strict" value})))
         (with-redefs [config/load-config-raw (constantly {"python" {"tls_strict" value}})]
           (expect (re-find #"python.tls_strict"
-                           (try (#'worker/tls-strict?)
+                           (try (python-runtime/tls-strict?)
                                 "no error"
                                 (catch clojure.lang.ExceptionInfo error (ex-message error)))))))
       (doseq [[global project expected] [[{} {} true] [{"tls_strict" false} {} false]
@@ -99,7 +101,7 @@
                       config/load-project-config-raw (constantly nil)]
 
           (config/invalidate-config-cache!)
-          (try (expect (= expected (#'worker/tls-strict?)))
+          (try (expect (= expected (python-runtime/tls-strict?)))
                (when (or (seq global) (seq project))
                  (expect (= expected (get-in (config/load-config false) [:python :tls-strict]))))
                (finally (config/invalidate-config-cache!)))))))
@@ -169,3 +171,45 @@
                                (env/dispose-python-context! session))))))
            (finally (doseq [file (reverse (file-seq directory))]
                       (io/delete-file file true)))))))
+
+(defdescribe
+  tls-policy-reaches-vis-agent-python-test
+  (it "vis-agent python applies the configured policy in its own process"
+      ;; Vis #383: the CLI runs the interpreter in-process, so `true` after `false` must restore STRICT.
+      (let [directory
+            (.toFile (Files/createTempDirectory (.toPath (doto (io/file "target") .mkdirs))
+                                                "tls-cli-policy-"
+                                                (make-array FileAttribute 0)))
+
+            source
+            (slurp (io/resource "com/blockether/vis/internal/python/fixtures/tls_probe.py"))
+
+            probe
+            (str source
+                 "\nimport json, os\nresult = tls_probe(" (pr-str (.getCanonicalPath directory))
+                 ")\nresult['environment'] = os.environ.get('VIS_PYTHON_TLS_STRICT')"
+                 "\nprint(json.dumps(result))")]
+
+        (try (certificates! directory)
+             (doseq [strict [false true nil]]
+               (with-redefs [config/load-config-raw
+                             (constantly (if (nil? strict) {} {"python" {"tls_strict" strict}}))]
+                 (let [ctx ((var-get #'com.blockether.vis.internal.main/python-cli-context)
+                             {:network? false :env {"VIS_PYTHON_TLS_STRICT" "false"}})]
+                   (try (let [{:keys [stdout error]} (with-redefs
+                                                       [config/original-stdout
+                                                        (java.io.PrintStream.
+                                                          (java.io.OutputStream/nullOutputStream))]
+                                                       (env/run-python-block ctx probe))
+                              value (json/read-json stdout)]
+
+                          (expect (nil? error) (str error))
+                          (expect (= (not (false? strict)) (get value "strict")))
+                          (expect (= (str (not (false? strict))) (get value "environment")))
+                          (expect (= "ok" (get value "valid")))
+                          (expect (= (if (false? strict) "ok" 89) (get value "legacy")))
+                          (doseq [failure ["unknown" "wrong_host" "expired" "signature"]]
+                            (expect (integer? (get value failure)) failure)))
+                        (finally (env/dispose-python-context! ctx))))))
+             (finally (doseq [file (reverse (file-seq directory))]
+                        (io/delete-file file true)))))))

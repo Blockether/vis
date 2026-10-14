@@ -894,6 +894,14 @@
                       {:type ::invalid-environment})))
     (= "shared" environment)))
 
+(defn tls-strict?
+  "Read merged `python.tls_strict` for every Vis Python process. Invalid YAML must not weaken TLS."
+  []
+  (let [strict (get-in (config/load-config-raw) ["python" "tls_strict"] true)]
+    (when-not (boolean? strict)
+      (throw (ex-info "python.tls_strict must be a boolean" {:type ::invalid-tls-strict})))
+    strict))
+
 (defn- shared-project-install!
   "Install `project`'s locked dependencies into shared packages, as `--shared uv sync` does.
    With `check?`, install nothing, stay offline and keep the lock unchanged.

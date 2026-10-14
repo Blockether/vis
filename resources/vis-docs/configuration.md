@@ -588,13 +588,16 @@ failed handshake with verification disabled. STRICT covers multiple X.509
 requirements. Disabling it is a security trade-off, not a certificate repair.
 Prefer a correctly issued CA when your administrator can provide one.
 
-The same merged value applies to **`python_execution` and trusted Python
-extensions**, including their separate workers. It affects Python's `ssl`
+The same merged value applies to **`python_execution`, trusted Python
+extensions and `vis-agent python`**, with or without `--shared`. Language
+extension REPLs that run `vis-agent python` get it too. It affects Python's `ssl`
 contexts, including contexts created by stdlib clients and libraries that use
 `ssl.SSLContext`. It does not affect JVM TLS, `gh`, `curl`, uv, external Python
 processes or libraries using a different TLS implementation.
 
-Vis reads the value when a worker starts. After you change it, run `/reload` to rebuild session
+Vis reads the value when a worker starts and each time `vis-agent python` starts.
+Vis also sets `VIS_PYTHON_TLS_STRICT` to `true` or `false` in the environment of
+that Python program. After you change the value, run `/reload` to rebuild session
 workers. If the gateway already runs a worker that registers extensions, restart Vis. Existing
 connections do not change. Use a YAML boolean: `false`, not the string `"false"`.
 

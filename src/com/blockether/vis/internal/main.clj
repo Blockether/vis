@@ -2338,10 +2338,15 @@
    UV_PROJECT_ENVIRONMENT) supplies installed packages and editable hooks, without
    shared packages. A pyproject.toml without an environment reports a sync error.
    `shared?` skips project activation and inferred/configured source roots. The
-   process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE."
+   process stdin is wired to guest `sys.stdin`, so it works alongside `-c`/FILE.
+   Merged `python.tls_strict` applies as in workers and sets `VIS_PYTHON_TLS_STRICT`."
   [{:keys [network? argv env shared? mode]}]
   (let [cwd
         (.getCanonicalPath (io/file (System/getProperty "user.dir")))
+
+        ;; #383: this interpreter runs in the CLI process, so it gets the policy after startup.
+        tls-strict?
+        (python-runtime/tls-strict?)
 
         project-environment
         (python-cli-project-environment cwd env shared?)
@@ -2364,10 +2369,14 @@
     (env/bind-ctx! python-context {})
     ;; Forward script argv + (by default) the caller's env — real-python CLI
     ;; semantics, distinct from the scrubbed agent sandbox.
-    (env/seed-cli-runtime! python-context {:argv argv :env env})
+    (env/seed-cli-runtime! python-context
+                           {:argv argv :env (assoc env "VIS_PYTHON_TLS_STRICT" (str tls-strict?))})
     ;; The source launcher changes OS cwd to resolve deps, preserving the caller
     ;; in user.dir. Python and relative script reads must use that caller too.
     (try (pyrt/exec! python-context (str "import os\nos.chdir(" (env/py-json-literal cwd) ")\n"))
+         (pyrt/exec!
+           python-context
+           (str "import tls_policy\ntls_policy.configure(" (if tls-strict? "True" "False") ")\n"))
          (when project-environment
            (activate-python-cli-environment! python-context
                                              cwd

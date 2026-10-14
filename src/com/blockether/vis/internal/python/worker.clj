@@ -39,7 +39,6 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.internal.paths :as paths]
@@ -346,14 +345,6 @@
               (.clear (.selectedKeys selector))
               (recur)))))))
 
-(defn- tls-strict?
-  "Read the merged worker policy; invalid lenient YAML must not weaken TLS."
-  []
-  (let [strict (get-in (config/load-config-raw) ["python" "tls_strict"] true)]
-    (when-not (boolean? strict)
-      (throw (ex-info "python.tls_strict must be a boolean" {:type ::invalid-tls-strict})))
-    strict))
-
 (def ^:private STACK_CONTROL_MS
   "Maximum wait for a stack-control exchange, including a blocked socket write."
   200)
@@ -453,7 +444,7 @@
                                                       runtime-roots
                                                       (some-> packages
                                                               .getCanonicalPath)))
-              extra (cond-> {"VIS_PYTHON_TLS_STRICT" (str (tls-strict?))}
+              extra (cond-> {"VIS_PYTHON_TLS_STRICT" (str (python-runtime/tls-strict?))}
                       packages
                       (assoc Locations/PACKAGES_ENV (.getCanonicalPath packages))
 

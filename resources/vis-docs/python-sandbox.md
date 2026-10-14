@@ -327,10 +327,11 @@ install.
 ## TLS compatibility
 
 `python.tls_strict` defaults to `true`. An explicit `false` clears only strict
-X.509 validation, for both sandbox execution and trusted Python extensions.
-Certificate trust and hostname checks remain enabled. Configure it in user or
-project YAML. See [TLS validation](configuration.md#python-tls-validation) for
-security trade-offs, scope and worker reload requirements.
+X.509 validation for sandbox execution, trusted Python extensions and
+`vis-agent python`. Certificate trust and hostname checks remain enabled.
+Configure it in user or project YAML. See
+[TLS validation](configuration.md#python-tls-validation) for security
+trade-offs, scope and worker reload requirements.
 
 ## Diagnosing an unresponsive worker
 
