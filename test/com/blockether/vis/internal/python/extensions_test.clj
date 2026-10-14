@@ -509,6 +509,56 @@
                               (into {} (map (juxt :id :value)) (scoped/settings nil target)))))))
              (finally (binding [workspace/*workspace-root* root]
                         (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "reads a project extension's setting from vis.yml without a session snapshot"
+      ;; #380: outside a turn snapshot, `Setting.value()` ignored `toggles:` in the
+      ;; project's vis.yml and returned the declared default.
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)]
+
+        (spit (io/file dir "vis.yml")
+              "toggles:\n  yaml_steering_mode: control\n  yaml_steering_on: false\n")
+        (write-ext!
+          dir
+          ".vis/extensions/yaml_steering.py"
+          (str "import blockether.vis.extension as vis\n"
+               "mode = vis.Setting(id='yaml_steering_mode', label='Steering mode', type='enum', "
+               "choices=['vibe', 'control'], default='vibe')\n"
+               "on = vis.Setting(id='yaml_steering_on', label='Steering', default=True)\n"
+               "def read_mode() -> list:\n    \"Read the steering settings.\"\n"
+               "    return [mode.value(), on.value()]\n"
+               "vis.register_extension(vis.Extension(name='yaml-steering', "
+               "description='YAML steering fixture', alias='yaml_steering', "
+               "settings=[mode, on], symbols=[vis.Symbol(read_mode, "
+               "activity=vis.Activity(label='Read mode', show_start=False))]))\n"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                      :project-root root})
+               (expect (= [] (pyx/load-failures)))
+               (let [read-mode (symbol-fn (registered "yaml-steering") 'read_mode)
+                     read-in (fn [env]
+                               (binding [extension/*current-environment* env]
+                                 (:result (read-mode))))]
+
+                 ;; A callback without a session snapshot, such as a background thread.
+                 (expect (= ["control" false] (read-in {:workspace/root root})))
+                 ;; A session snapshot still decides when it holds the setting.
+                 (expect (= ["vibe" true]
+                            (read-in {:workspace/root root
+                                      :config/toggles (atom {"yaml_steering_mode" "vibe"
+                                                             "yaml_steering_on" true})})))
+                 ;; A host call on a thread without bindings uses the extension's project.
+                 (let [setting (get (pyx/host-doors nil "yaml-steering" {:workspace/root root})
+                                    "__vis_host_setting__")
+                       answer (promise)]
+
+                   (.start (Thread. ^Runnable
+                                    #(deliver answer (setting "yaml_steering_mode" "vibe"))))
+                   (expect (= "control" (deref answer 10000 ::timeout))))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "keeps a stored value while its extension fails, leaves and returns"
       ;; #302: a reload reports failures and keeps stored overrides.
       (let [dir

@@ -204,6 +204,12 @@ If the hook raises an error, the value stays saved. The app and the TUI show the
 gateway log records it. Vis does not call the hook when the extension loads. To read the current
 value at another time, call `value()` in a callback.
 
+`value()` reads the current value in every callback, also outside a turn, such as in a background
+thread. In a session, it uses the session's settings. Without a session, a project extension's
+setting resolves at project scope, as Settings shows it there. Project values, such as `toggles:`
+in the project's `vis.yml`, win over global values. Vis reads a `vis.yml` edit after `/reload`. A
+file edit does not call `on_change`.
+
 The app and the TUI show your settings under **Extensions**, in a group with your extension's
 name. That group also holds the extension's engine choice and its packaged skills. A `project` or
 `global` tag shows where your extension is installed.

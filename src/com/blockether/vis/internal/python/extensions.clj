@@ -585,7 +585,13 @@
         (volatile! {})
 
         bound-session
-        (select-keys bound-env [:session-id :db-info])]
+        (select-keys bound-env [:session-id :db-info])
+
+        ;; #380: the project that loaded this extension, for host calls without a binding.
+        home-root
+        (or (some-> (:workspace/root bound-env)
+                    workspace/normalize-root)
+            (workspace/cwd-root))]
 
     (put! g
           "__vis_host_setting_declaration__"
@@ -606,8 +612,20 @@
           "__vis_host_setting__"
           (fn [id default]
             ;; #326: a project extension's setting is known only where its project runs.
-            (let [root (workspace/cwd-root)]
-              (if (toggles/target-toggle-spec root id) (toggles/value-of root id) default))))
+            (let [root
+                  (if workspace/*workspace-root* (workspace/cwd-root) home-root)
+
+                  spec
+                  (toggles/target-toggle-spec root id)]
+
+              (cond (nil? spec) default
+                    ;; #380: without a session snapshot, a project extension's setting
+                    ;; resolves at project scope, as Settings shows it there, vis.yml included.
+                    (and (not (contains? toggles/*overrides* id))
+                         (not (identical? spec (toggles/toggle-spec id))))
+                    (:value (first (filter #(= id (:id %))
+                                           (scoped/settings nil {:scope "project" :root root}))))
+                    :else (toggles/value-of root id)))))
     (put! g
           "__vis_host_workspace_root__"
           (fn []
@@ -2580,7 +2598,8 @@
                                         path
                                         source
                                         (:packages frozen)
-                                        nil)
+                                        (when-let [root (:project-root frozen)]
+                                          {:workspace/root root}))
 
          ctx
          (:context initialized)]
