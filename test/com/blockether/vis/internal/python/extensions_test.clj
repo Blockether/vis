@@ -5676,6 +5676,44 @@ vis.register_extension(vis.Extension(name='reload-lifecycle', description='Reloa
                           (ep/dispose-python-context! b)
                           (future-cancel running)))))))))
 
+(def ^:private stale-ctx-py
+  "import blockether.vis.extension as vis
+
+
+def _ctx(env):
+    import stale_helper
+    return {\"session_env\": {\"stale\": {\"version\": stale_helper.version}}}
+
+
+vis.register_extension(vis.Extension(name=\"stale-ctx\", description=\"Stale ctx fixture.\", ctx=_ctx))
+")
+
+(defdescribe
+  extension-stale-callable-after-reload-test
+  ;; A session kept hooks from before a reload and every call failed with
+  ;; "registration was replaced" (7363 warnings in one gateway log).
+  (it "routes a hook from before a reload to the registration that replaced it"
+      (with-fresh-loaded
+        {"extension.py" stale-ctx-py "stale_helper/__init__.py" "version = 1\n"}
+        (fn [loaded {:keys [ext-dir]}]
+          (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+          (let [ctx
+                (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+                stale
+                (:ext/ctx-fn (registered "stale-ctx"))
+
+                version
+                (fn []
+                  (binding [extension/*current-environment* {:python-context ctx :session-id ctx}]
+                    (get-in (stale {}) ["session_env" "stale" "version"])))]
+
+            (try (expect (= 1 (version)))
+                 (write-ext! ext-dir "stale_helper/__init__.py" "version = 2\n")
+                 (expect (= 0 (:failed (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))
+                 (expect (= 2 (version)))
+                 (finally (ep/dispose-python-context! ctx))))))))
+
 (defdescribe
   python-human-input-test
   (it

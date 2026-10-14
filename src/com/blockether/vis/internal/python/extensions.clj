@@ -1003,6 +1003,19 @@
             entry))
         @loaded))
 
+(defn- replacement-entry
+  "The loaded entry that replaced a retired registration of `ext-name`: the one in
+   the calling workspace, else the global one. A session keeps the hooks it had
+   before a reload, so its calls must follow the new registration."
+  [ext-name env]
+  (let [root (workspace/workspace-root env)]
+    (some (fn [scope]
+            (some (fn [[_ entry]]
+                    (when (and (= ext-name (:ext-name entry)) (= scope (:project-root entry)))
+                      entry))
+                  @loaded))
+          (distinct [root nil]))))
+
 (defn- session-call-target
   "Resolve a registry callable to the invoking session's trusted extension
    worker, never its sandbox. Calls with no worker-backed session use the
@@ -1023,8 +1036,10 @@
       (throw (ex-info "Python extension session is no longer running" {:type ::session-closed})))
     (if-not (and worker path)
       [source-ctx source-f]
-      (if-let [entry (source-entry ext-name source-ctx)]
-        (let [cache-key [worker ext-name]
+      (if-let [entry (or (source-entry ext-name source-ctx)
+                         (replacement-entry ext-name effective-env))]
+        (let [source-ctx (:context entry)
+              cache-key [worker ext-name]
               local
               (locking session-contexts
                 (let [cached (get @session-contexts cache-key)]
