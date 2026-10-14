@@ -1380,6 +1380,39 @@ describe('the axis says a thing once', () => {
     expect(chronology).toContain('the provider closed the stream before the first token');
   });
 
+  // #376: a failed tool call showed its error as plain output, then again in the error box.
+  it('shows an error that the presentation repeats only once, in the error box', () => {
+    const reason =
+      'pytest wrote no report: Failed to fetch: `https://index.example.com/pkg-1.0.whl`\n' +
+      '    Caused by: HTTP status client error (404 Not Found)';
+    paintStep({
+      operation: 'py.run_tests',
+      state: 'failed' as const,
+      error_summary: `RuntimeError: ${reason}`,
+      evidence: [{ kind: 'error' as const, text: `RuntimeError: ${reason}` }],
+      presentation: {
+        headline: 'Run Python tests',
+        summary: 'failed',
+        content: [
+          { type: 'code', text: 'run_tests(cwd="/Users/me/proj")' },
+          { type: 'heading', text: 'Error' },
+          { type: 'code', text: reason },
+        ],
+      },
+    });
+    fireEvent.click(
+      document.querySelector<HTMLElement>(
+        '[data-activity-row="0:call-1"] [data-disclosure-toggle]',
+      )!,
+    );
+
+    const chronology = screen.getByLabelText('Operation groups').textContent ?? '';
+    expect(chronology.split('Caused by: HTTP status client error')).toHaveLength(2);
+    expect(chronology).toContain('RuntimeError: pytest wrote no report');
+    expect(chronology).toContain('run_tests(cwd="/Users/me/proj")');
+    expect(chronology).not.toMatch(/Error\s*RuntimeError/);
+  });
+
   it('lets the paths stand for a summary that does nothing but count them', () => {
     paintStep({
       operation: 'cat',

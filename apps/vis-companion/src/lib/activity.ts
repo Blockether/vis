@@ -521,6 +521,47 @@ export function settleActivity(
   };
 }
 
+/** Text as a failure comparison sees it: no truncation marker, no path directories, one space. */
+function errorComparable(text: string): string {
+  return text
+    .replace(/\n… truncated\s*$/, '')
+    .replace(/\S*\//g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * A failed step's content without the blocks that only repeat its error (#376). The error
+ * box already shows that text, so a text, code or markdown block contained in it is
+ * dropped, and so is a heading left with nothing under it. The engine shortens paths in
+ * the error, not in the authored content, so path directories do not count.
+ */
+export function activityContentWithoutError(
+  content: ActivityContent[],
+  error: string | undefined,
+): ActivityContent[] {
+  const said = errorComparable(error ?? '');
+  if (!said) return content;
+  const repeats = (block: ActivityContent) => {
+    if (!['text', 'code', 'markdown'].includes(block.type) || !('text' in block)) return false;
+    const text = errorComparable(block.text);
+    return text !== '' && said.includes(text);
+  };
+  const dropped = new Set(content.flatMap((block, index) => (repeats(block) ? [index] : [])));
+  if (dropped.size === 0) return content;
+  const orphan = (index: number) => {
+    const next = content.findIndex((block, at) => at > index && block.type === 'heading');
+    const under = Array.from(
+      { length: (next === -1 ? content.length : next) - index - 1 },
+      (_, offset) => index + 1 + offset,
+    );
+    return under.length > 0 && under.every((at) => dropped.has(at));
+  };
+  return content.filter(
+    (block, index) => !dropped.has(index) && !(block.type === 'heading' && orphan(index)),
+  );
+}
+
 /** Copy retained invocations, not the visible grouping or viewport. Never include identity keys. */
 export function activityCopyText(activity: ActivityProjection): string {
   const contentText = (block: ActivityContent): string => {

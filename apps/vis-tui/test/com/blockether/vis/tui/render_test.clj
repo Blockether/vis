@@ -10545,6 +10545,43 @@ print(paths)"
                    (expect (some #(str/includes? (:line %) error) entries))
                    (expect (empty? (mapcat #(get-in % [:meta :links]) entries))))))
 
+;; #376: a failed tool call showed its error as plain output, then again as error lines.
+(defdescribe
+  activity-repeated-error-test
+  (it
+    "shows an error that the presentation repeats only once"
+    (let
+      [reason
+       "pytest wrote no report: Failed to fetch https://index.example.com/pkg-1.0.whl\n    Caused by: HTTP status client error (404 Not Found)"
+
+       error
+       (str "RuntimeError: " reason)
+
+       entries
+       (#'render/activity-detail-entries
+        {:node-id "repeat"
+         :activity-expanded? (fn [_ _]
+                               true)
+         :activity-rows [{:id "repeat"
+                          :state "failed"
+                          :operation "py.run_tests"
+                          :error-summary error
+                          :evidence [{:kind "error" :text error}]
+                          :presentation {:headline "Run Python tests"
+                                         :summary "failed"
+                                         :content [{:type "code" :text "run_tests(cwd=\"/w\")"}
+                                                   {:type "heading" :text "Error"}
+                                                   {:type "code" :text reason}]}}]}
+        120
+        "repeat")
+
+       body
+       (map (comp strip-ansi :line) (remove #(= :activity-row (get-in % [:meta :kind])) entries))]
+
+      (expect (= 1 (count (filter #(str/includes? % "Caused by: HTTP status client error") body))))
+      (expect (some #(str/includes? % "run_tests(cwd=") body))
+      (expect (not-any? #(= "Error" (str/trim %)) body)))))
+
 (defdescribe
   activity-summary-click-test
   (it

@@ -12,6 +12,7 @@ import type {
   ActivityTextFormat,
 } from '../lib/activity';
 import {
+  activityContentWithoutError,
   activityCopyText,
   activityHistoryCopyText,
   argumentGroups,
@@ -873,7 +874,8 @@ function ActivityStep({
   const [open, setOpen] = useState(false);
   const presentation = row.presentation;
   const lead = presentation?.headline ?? activityStepLead(row);
-  const content = presentation?.content;
+  const error = row.evidence.find((item): item is ActivityTextEvidence => item.kind === 'error');
+  const content = presentation && activityContentWithoutError(presentation.content, error?.text);
   const sections = presentation?.sections ?? [];
   const summary = presentation ? '' : activityStepObject(row);
   // The head says WHAT the step was about — the authored summary, failed or not. WHY it
@@ -896,7 +898,6 @@ function ActivityStep({
   const hasChildren = children.length > 0;
   const Headline = nested ? 'p' : 'h4';
   const diffs = row.evidence.filter((item): item is ActivityDiffEvidence => item.kind === 'diff');
-  const error = row.evidence.find((item): item is ActivityTextEvidence => item.kind === 'error');
   // A failed step says WHY once: the machine's own text when it left one, and
   // the engine's summary line only when it did not. There is no pill — a framed
   // word beside a filled red mark, under a verb that already says "refused",

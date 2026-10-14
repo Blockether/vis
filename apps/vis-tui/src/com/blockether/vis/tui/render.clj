@@ -5525,6 +5525,56 @@
   [content]
   (into [] (remove activity-attachment-block?) content))
 
+(defn- error-comparable
+  "Text as a failure comparison sees it: no truncation marker, no path directories, one space."
+  [text]
+  (-> (str text)
+      (str/replace #"\n… truncated\s*$" "")
+      (str/replace #"\S*/" "")
+      (str/replace #"\s+" " ")
+      str/trim))
+
+(defn- activity-content-without-error
+  "A failed step's content without the blocks that only repeat its error (#376). The error
+   lines already show that text, so a text, code or markdown block contained in it is
+   dropped, and so is a heading left with nothing under it. The engine shortens paths in
+   the error, not in the authored content, so path directories do not count."
+  [content error]
+  (let [said
+        (error-comparable error)
+
+        blocks
+        (vec content)
+
+        kind
+        #(some-> (:type %)
+                 name)
+
+        repeats?
+        (fn [block]
+          (let [text (error-comparable (:text block))]
+            (and (contains? #{"text" "code" "markdown"} (kind block))
+                 (not (str/blank? text))
+                 (str/includes? said text))))
+
+        dropped
+        (set (keep-indexed #(when (repeats? %2) %1) blocks))
+
+        orphan?
+        (fn [index]
+          (let [under (take-while #(not= "heading" (kind (blocks %)))
+                                  (range (inc (long index)) (count blocks)))]
+            (and (seq under) (every? dropped under))))]
+
+    (if (or (str/blank? said) (empty? dropped))
+      blocks
+      (into []
+            (keep-indexed (fn [index block]
+                            (when-not (or (dropped index)
+                                          (and (= "heading" (kind block)) (orphan? index)))
+                              block)))
+            blocks))))
+
 (defn- activity-attachment-rows
   "Durable rows for the files that `activity` content references, in reference order. Files
    that `shown` already holds and live recordings stay out: they have their own surfaces."
@@ -7184,8 +7234,13 @@
                                                            (activity-step-lead row))
 
                                                        content
-                                                       (activity-content-blocks (:content
-                                                                                  presentation))
+                                                       (activity-content-without-error
+                                                         (activity-content-blocks (:content
+                                                                                    presentation))
+                                                         (some #(when (= "error"
+                                                                         (activity-evidence-kind %))
+                                                                  (:text %))
+                                                               (:evidence row)))
 
                                                        terminal
                                                        (some #(when (= "terminal" (:type %)) %)
