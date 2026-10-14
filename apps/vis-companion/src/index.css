@@ -44,6 +44,20 @@
   (&:where([data-theme='blockether-light'], [data-theme='blockether-light'] *));
 @custom-variant blockether-dark
   (&:where([data-theme='blockether-dark'], [data-theme='blockether-dark'] *));
+
+/* `main.tsx` stamps the host on `<html>` (`lib/host.ts`). Only the desktop app is a window
+   of its own, so window styling uses `desktop:`. In a browser tab the shell fills the
+   viewport edge to edge, with square corners and no frame (#381). */
+@custom-variant desktop (&:where([data-host='desktop'], [data-host='desktop'] *));
+@custom-variant web (&:where([data-host='web'], [data-host='web'] *));
+:root[data-host='web'],
+:root[data-host='web'] body,
+:root[data-host='web'] #root,
+:root[data-host='web'] [data-viewport-shell] {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
 /* Monochrome pages change in place. This removes CSS motion, not streamed DOM
    updates or hardware ghosting; those need a separate reader/display policy. */
 :where([data-theme='paper'], [data-theme='high-contrast-dark']) *,

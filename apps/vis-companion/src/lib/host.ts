@@ -12,6 +12,7 @@
  * a keyboard decision is made in a focus handler, not in a promise.
  */
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { desktopInvoke } from './desktop';
 
 interface VisHostPlugin {
   info(): Promise<{ isMac: boolean }>;
@@ -37,4 +38,24 @@ export async function loadHost(): Promise<void> {
   } catch {
     /* an app stamped before the plugin existed answers "not implemented" */
   }
+}
+
+/**
+ * The window that holds this bundle: the Pake `desktop` app, a Capacitor `native` app, or a
+ * browser tab on the `web`. Only the desktop app is a window of its own, so window-like
+ * styling (a frame, rounded corners) uses the `desktop:` variant and never reaches a tab.
+ */
+export type ShellHost = 'desktop' | 'native' | 'web';
+
+export function shellHost(): ShellHost {
+  if (desktopInvoke()) return 'desktop';
+  if (Capacitor.isNativePlatform()) return 'native';
+  return 'web';
+}
+
+/** Mark the document with its host before the first render; `index.css` reads `data-host`. */
+export function stampShellHost(root: HTMLElement = document.documentElement): ShellHost {
+  const host = shellHost();
+  if (root.dataset.host !== host) root.dataset.host = host;
+  return host;
 }
