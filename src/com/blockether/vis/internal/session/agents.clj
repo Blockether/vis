@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity.presenter :as presenter]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
@@ -15,6 +16,27 @@
             [com.blockether.vis.internal.util :as util]))
 
 (defn info [db sid] (when (and db sid) (ps/db-agent-info db sid)))
+
+(defn enabled?
+  "Whether session `sid` can use managed subagents. A new session starts without the session
+   settings of its source, so a managed child reads the setting of its leader. Without such a
+   session setting, or with an invocation value, the configuration decides."
+  [db sid]
+  (let [owner
+        (some-> (or (:leader_id (info db sid)) sid)
+                str)
+
+        row
+        (when (and db
+                   owner
+                   (not (contains? toggles/*invocation-overrides* "subagents"))
+                   (contains? (ps/db-scoped-settings db "session" owner) "subagents"))
+          ;; The resolved row keeps the scope rules of the toggle.
+          (try (some #(when (= "subagents" (:id %)) %)
+                     (scoped/settings db (scoped/target db "session" owner)))
+               (catch clojure.lang.ExceptionInfo _ nil)))]
+
+    (if (= "session" (:source row)) (boolean (:value row)) (toggles/enabled? "subagents"))))
 
 (defn- wakeable?
   [agent]
@@ -41,7 +63,7 @@
         (info db recipient-id)]
 
     (boolean (or (and (nil? author) (nil? recipient) (not= author-id recipient-id))
-                 (and (toggles/enabled? "subagents")
+                 (and (enabled? db (if recipient recipient-id author-id))
                       (or (and (wakeable? recipient) (= author-id (:leader_id recipient)))
                           ;; Returning an outcome costs no further child iteration.
                           (and author
@@ -122,18 +144,43 @@
         (:session-id env)]
 
     (if (info db sid)
-      (if (and (toggles/enabled? "subagents") (ps/db-agent-claim-iteration! db sid))
-        true
-        (let [child (info db sid)]
-          (when (and (toggles/enabled? "subagents") (not= "cancelled" (:status child)))
-            (ps/db-agent-update! db
-                                 sid
-                                 {:status (if (>= (long (:iterations_used child))
-                                                  (long (:iteration_budget child)))
-                                            "budget_limited"
-                                            "failed")}))
-          false))
+      (let [on? (enabled? db sid)]
+        (if (and on? (ps/db-agent-claim-iteration! db sid))
+          true
+          (let [child (info db sid)]
+            (when (and on? (not= "cancelled" (:status child)))
+              (ps/db-agent-update! db
+                                   sid
+                                   {:status (if (>= (long (:iterations_used child))
+                                                    (long (:iteration_budget child)))
+                                              "budget_limited"
+                                              "failed")}))
+            false)))
       true)))
+
+(defn stop-reason
+  "Give the cause when `claim-iteration!` refuses the child session of `env`."
+  [env]
+  (let [db
+        (:db-info env)
+
+        sid
+        (:session-id env)
+
+        child
+        (info db sid)]
+
+    (cond
+      (not (enabled? db sid))
+      "Subagent stopped: Subagents are disabled for this team. Enable Subagents in Experimental settings."
+      (= "cancelled" (:status child)) "Subagent stopped: it is cancelled."
+      (and child (>= (long (:iterations_used child)) (long (:iteration_budget child))))
+      (str "Subagent stopped: it used its full iteration budget of "
+           (:iteration_budget child)
+           ". Retry with a larger budget.")
+      :else (str "Subagent stopped: its leader already runs "
+                 max-active-children
+                 " active subagents. Retry when one of them finishes."))))
 
 (defn finish!
   [db sid status]
@@ -185,8 +232,8 @@
 
 (defn require-enabled!
   "Refuse new managed work before bootstrapping a session or consuming a checkpoint."
-  []
-  (when-not (toggles/enabled? "subagents")
+  [db sid]
+  (when-not (enabled? db sid)
     (fail! :feature-disabled "Subagents are disabled. Enable Subagents in Experimental settings.")))
 
 (defn operation!
@@ -197,7 +244,7 @@
               (and (= :route operation)
                    (:session_id opts)
                    (not= (str (:session-id env)) (:session_id opts))))
-      (require-enabled!))
+      (require-enabled! (:db-info env) (:session-id env)))
     (when-not (document/valid-json? "agents" (name operation) (wire/->wire opts))
       (fail! :invalid-request (str "Invalid subagent " (name operation) " arguments")))
     (when (and (:task opts) (str/blank? (:task opts)))
@@ -460,8 +507,8 @@
       (extension/symbol v
                         (cond-> {:symbol sym
                                  :inject-env? true
-                                 :active-fn (fn [_]
-                                              (toggles/enabled? "subagents"))
+                                 :active-fn (fn [env]
+                                              (enabled? (:db-info env) (:session-id env)))
                                  :tag (if (= sym 'council.wait) :observation :mutation)
                                  :activity (presenter/for-tool (keyword (str sym)))
                                  :call call
@@ -516,8 +563,8 @@
     router))
 
 (defn prompt
-  [_env]
-  (when (toggles/enabled? "subagents")
+  [env]
+  (when (enabled? (:db-info env) (:session-id env))
     "## Subagents (Council)
 - Use subagents only when the user asks or the work has two or more independent parts. Do critical-path work, small tasks and single-file edits yourself.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.

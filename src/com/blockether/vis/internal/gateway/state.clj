@@ -6263,7 +6263,7 @@
 
     (when-not (persistance/db-get-session db sid)
       (agents/fail! :session-not-found "Unknown session"))
-    (when (= :spawn operation) (agents/require-enabled!))
+    (when (= :spawn operation) (agents/require-enabled! db sid))
     ;; Reads and controls need durable state, not a newly bootstrapped interpreter.
     ;; Only spawn consumes the running parent's safe model checkpoint.
     (agents/operation! (assoc (when (= :spawn operation) (live-env sid))

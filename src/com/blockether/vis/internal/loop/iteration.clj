@@ -2313,43 +2313,40 @@
    {:keys [iteration trace]}]
   (let [goal-halt (goals/request-halt-result environment goal-at-turn-start)]
     (when-not goal-halt (ctx-loop/set-turn-state! environment :iteration (inc (long iteration))))
-    (cond
-      (when cancel-atom @cancel-atom)
-      (do (log-stage! :error
-                      iteration
-                      {:reason :cancelled
-                       :cancel-source (cancellation/cancel-reason (:cancel-token environment))})
-          ;; Sticky best-answer: surface the latest non-blank answer
-          ;; this turn produced instead of a blank answer.
-          (let [sticky (some-> (:turn-state-atom environment)
-                               deref
-                               :best-answer
-                               :value)
-                result (merge {:answer sticky
-                               :status :cancelled
-                               :status-id (loop-router/status->id :cancelled)
-                               :trace trace
-                               :iteration-count iteration}
-                              (accounting/turn-cost @accounting-atom turn-pricing))]
+    (cond (when cancel-atom @cancel-atom)
+          (do (log-stage! :error
+                          iteration
+                          {:reason :cancelled
+                           :cancel-source (cancellation/cancel-reason (:cancel-token environment))})
+              ;; Sticky best-answer: surface the latest non-blank answer
+              ;; this turn produced instead of a blank answer.
+              (let [sticky (some-> (:turn-state-atom environment)
+                                   deref
+                                   :best-answer
+                                   :value)
+                    result (merge {:answer sticky
+                                   :status :cancelled
+                                   :status-id (loop-router/status->id :cancelled)
+                                   :trace trace
+                                   :iteration-count iteration}
+                                  (accounting/turn-cost @accounting-atom turn-pricing))]
 
-            result))
-      goal-halt (merge goal-halt
-                       {:status-id (loop-router/status->id (:status goal-halt))
-                        :answer (if (= :success (:status goal-halt))
-                                  (finalize-answer! environment (:answer goal-halt))
-                                  (:answer goal-halt))
-                        :trace trace
-                        :iteration-count iteration}
-                       (accounting/turn-cost @accounting-atom turn-pricing))
-      (not (agents/claim-iteration! environment))
-      (merge
-        {:status :error
-         :status-id (loop-router/status->id :error)
-         :answer
-         "Subagent stopped: cancelled, iteration budget exhausted, or active-team capacity reached. Retry when capacity is available."
-         :trace trace
-         :iteration-count iteration}
-        (accounting/turn-cost @accounting-atom turn-pricing)))))
+                result))
+          goal-halt (merge goal-halt
+                           {:status-id (loop-router/status->id (:status goal-halt))
+                            :answer (if (= :success (:status goal-halt))
+                                      (finalize-answer! environment (:answer goal-halt))
+                                      (:answer goal-halt))
+                            :trace trace
+                            :iteration-count iteration}
+                           (accounting/turn-cost @accounting-atom turn-pricing))
+          (not (agents/claim-iteration! environment))
+          (merge {:status :error
+                  :status-id (loop-router/status->id :error)
+                  :answer (agents/stop-reason environment)
+                  :trace trace
+                  :iteration-count iteration}
+                 (accounting/turn-cost @accounting-atom turn-pricing)))))
 
 (defn- plan-request
   "Plans the iteration's request: the route, the model and reasoning level, the

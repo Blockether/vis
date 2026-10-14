@@ -9,6 +9,8 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.council.core :as council]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -146,6 +148,9 @@
               "The final paid iteration can return its result")
       (expect (not (agents/claim-iteration! env)))
       (expect (= "budget_limited" (:status (agents/info db child))))
+      (expect
+        (= "Subagent stopped: it used its full iteration budget of 1. Retry with a larger budget."
+           (agents/stop-reason env)))
       (expect (not (agents/wake-allowed? db leader child)))
       (expect (agents/wake-allowed? db child leader)
               "Exhaustion can be reported without rerunning the child")
@@ -155,6 +160,68 @@
       (expect (ps/db-routing-locked? db leader))
       (smodel/set-model! db leader nil nil)
       (expect (not (ps/db-routing-locked? db leader))))))
+
+;; Regression: Subagents was on only in the leader's session settings. A child starts without
+;; those overrides, so its turn snapshot read the default and refused its first iteration.
+(defdescribe
+  leader-session-setting-governs-its-team-test
+  (it
+    "admits and stops children with the leader's session setting"
+    (with-redefs [config/load-global-yaml-config-raw
+                  (constantly {})
+
+                  config/load-global-config-raw
+                  (constantly {})
+
+                  config/load-project-tiers-raw
+                  (constantly {})
+
+                  config/load-project-config-raw
+                  (constantly {})]
+
+      (toggles/set-value! "subagents" false)
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {})
+
+            env
+            {:db-info db :session-id child}
+
+            ;; A turn binds the settings of its own session, as `loop.turn/turn!` does.
+            in-turn
+            (fn [sid f]
+              (binding [toggles/*overrides* (scoped/values db sid)]
+                (f)))]
+
+        (ps/db-set-scoped-setting! db "session" leader "subagents" true)
+        (expect (false? (get (scoped/values db child) "subagents"))
+                "A child starts without the session overrides of its leader")
+        (expect (nil? (agents/require-enabled! db leader))
+                "A gateway route outside a turn reads the session setting")
+        (expect (in-turn child #(agents/claim-iteration! env)))
+        (expect (in-turn child #(agents/wake-allowed? db child leader))
+                "The child can return its outcome to an idle leader")
+        (expect (in-turn leader #(agents/wake-allowed? db leader child)))
+        (expect (in-turn child
+                         #(and (nil? (agents/require-enabled! db child))
+                               (every? (fn [entry]
+                                         ((:ext.symbol/active-fn entry) env))
+                                       agents/symbols)
+                               (agents/prompt env)))
+                "The child keeps its Council tools, its prompt and its spawn permission")
+        (ps/db-set-scoped-setting! db "session" leader "subagents" false)
+        (expect (not (in-turn child #(agents/claim-iteration! env)))
+                "Off in the leader's session stops further child iterations")
+        (expect
+          (=
+            "Subagent stopped: Subagents are disabled for this team. Enable Subagents in Experimental settings."
+            (in-turn child #(agents/stop-reason env))))
+        (expect (not (in-turn leader #(agents/wake-allowed? db leader child))))))))
 
 (defdescribe
   gateway-spawn-is-idempotent-and-owned-test
@@ -227,7 +294,9 @@
               (expect (= "cancelled"
                          (:status (gateway/agents-operation! leader :cancel {:session_id sid}))))
               (expect (not (agents/claim-iteration! {:db-info db :session-id sid})))
-              (expect (= "cancelled" (:status (agents/info db sid)))))))))))
+              (expect (= "cancelled" (:status (agents/info db sid))))
+              (expect (= "Subagent stopped: it is cancelled."
+                         (agents/stop-reason {:db-info db :session-id sid}))))))))))
 
 (defdescribe
   child-usage-excludes-inherited-work-test
@@ -476,6 +545,10 @@
         (expect (not (agents/claim-iteration! {:db-info db :session-id idle})))
         (expect (= "failed" (:status (agents/info db idle)))
                 "Temporary capacity refusal must not permanently exhaust the child budget")
+        (expect
+          (=
+            "Subagent stopped: its leader already runs 16 active subagents. Retry when one of them finishes."
+            (agents/stop-reason {:db-info db :session-id idle})))
         (expect (= 0 (:iterations_used (agents/info db idle))))
         (ps/db-agent-update! db blocker {:status "completed"})
         (expect (agents/claim-iteration! {:db-info db :session-id idle})
