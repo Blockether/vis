@@ -1515,6 +1515,123 @@
                   (finally (vis/db-dispose-connection! s2))))
            (finally (fs/delete-tree root))))))
 
+(defn- write-long-activity!
+  "Write one finished Activity invocation whose output is far above the search limit."
+  [store sid aid]
+  (let [ctx
+        (event/context)
+
+        inv
+        (event/invocation ctx nil)
+
+        details
+        {:operation :read-record
+         :presenter :generic
+         :args [{:path "record-1"}]
+         :activity {:headline "Read record"}}
+
+        output
+        (str "record output " (apply str (repeat 20000 "x")) " tail-marker")]
+
+    (persistance/db-activity-apply! store sid aid (event/start-event ctx inv details))
+    (persistance/db-activity-apply! store
+                                    sid
+                                    aid
+                                    (event/content-event ctx
+                                                         inv
+                                                         details
+                                                         {"headline" "Read record"
+                                                          "summary" "Record 1"
+                                                          "content" [{"type" "text"
+                                                                      "text" output}]}))
+    (persistance/db-activity-apply! store
+                                    sid
+                                    aid
+                                    (event/terminal-event
+                                      ctx
+                                      inv
+                                      (assoc details
+                                        :outcome :failed
+                                        :started-at-ms (System/currentTimeMillis)
+                                        :result output
+                                        :error (ex-info "Disk quota reached" {}))))
+    (:invocation-id inv)))
+
+(defn- activity-search-texts
+  [store]
+  (mapv :search_text (raw-query store {:select [:search_text] :from [:activity_invocation]})))
+
+(defdescribe
+  activity-search-text-size-test
+  ;; The whole JSON presentation of every invocation filled 5.8 GB of one real store,
+  ;; with each tool output stored three times. Search keeps bounded plain text.
+  (it "stores bounded plain text with labels before long output"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {})
+
+            aid
+            (str (random-uuid))
+
+            id
+            (write-long-activity! s sid aid)
+
+            [text]
+            (activity-search-texts s)]
+
+        (expect (<= (count text) 4096))
+        (expect (not (str/starts-with? text "{")))
+        (expect (str/includes? text "Disk quota reached"))
+        (expect (str/includes? text "Record 1"))
+        (expect (not (str/includes? text "tail-marker")))
+        (expect (= [id]
+                   (mapv :id (:rows (persistance/db-activity-page s sid aid {:q "disk quota"})))))))
+  (it
+    "rewrites the JSON search text of an older store once on reopen"
+    (let [root
+          (fs/create-temp-dir {:prefix "vis-activity-search-"})
+
+          dir
+          (str (fs/path root "store"))
+
+          s1
+          (vis/db-create-connection! dir)]
+
+      (try (let [sid
+                 (h/store-session! s1 {})
+
+                 aid
+                 (str (random-uuid))
+
+                 id
+                 (write-long-activity! s1 sid aid)
+
+                 old-text
+                 (wire/json-str {:state "idle" :rows [{:summary "Record 1"}]})]
+
+             (expect (= [1] (mapv :user_version (raw-query s1 {:raw "PRAGMA user_version"}))))
+             ;; Rewind this store to the shape that older Vis versions wrote.
+             (jdbc/execute! (:datasource s1)
+                            ["UPDATE activity_invocation SET search_text = ?" old-text])
+             (jdbc/execute! (:datasource s1) ["PRAGMA user_version = 0"])
+             (vis/db-dispose-connection! s1)
+             (let [s2 (vis/db-create-connection! dir)]
+               (try (let [[text] (activity-search-texts s2)]
+                      (expect (= [1]
+                                 (mapv :user_version (raw-query s2 {:raw "PRAGMA user_version"}))))
+                      (expect (not= old-text text))
+                      (expect (str/includes? text "Disk quota reached"))
+                      (expect (<= (count text) 4096))
+                      (expect
+                        (= [id]
+                           (mapv :id
+                                 (:rows
+                                   (persistance/db-activity-page s2 sid aid {:q "disk quota"}))))))
+                    (finally (vis/db-dispose-connection! s2)))))
+           (finally (fs/delete-tree root))))))
+
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
    (require '[com.blockether.vis.internal.persistance.sqlite.test-helpers :as h])

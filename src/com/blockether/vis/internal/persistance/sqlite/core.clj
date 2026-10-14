@@ -241,13 +241,78 @@
      AND trim(substr(workspace_root,
                      length(rtrim(workspace_root, replace(workspace_root, '/', ''))) + 1)) <> ''")
 
+(def ^:private ^:const activity-search-char-limit
+  "Characters of one Activity invocation that search matches. Short labels come first,
+   so a long tool output never pushes the command, summary or error out."
+  4096)
+
+(def ^:private ^:const activity-search-short-chars
+  "Texts up to this length are labels: they go before long output in search text."
+  256)
+
+(def ^:private activity-search-id-keys
+  "Presentation keys whose values are opaque identifiers, not text that a person searches."
+  #{:id :argument-key :read-key :handle-id :group-token})
+
+(defn- activity-search-text
+  "Bounded plain text that Activity search matches for one invocation `row`. It holds each
+   distinct presentation text once, labels before long output, without JSON keys."
+  [row]
+  (let [texts
+        (->> (activity/presentation (assoc activity/empty-state :rows [row]))
+             :rows
+             (tree-seq coll? #(if (map? %) (vals (apply dissoc % activity-search-id-keys)) (seq %)))
+             (filter #(and (string? %) (not (str/blank? %))))
+             distinct)
+
+        {labels true output false}
+        (group-by #(<= (count %) activity-search-short-chars) texts)
+
+        text
+        (str/join "\n" (concat labels output))]
+
+    (subs text 0 (min (count text) activity-search-char-limit))))
+
+(def ^:private ^:const activity-search-generation
+  "`PRAGMA user_version` of a store whose Activity search text is all `activity-search-text`.
+   Older stores kept the whole JSON presentation there, often several megabytes per row."
+  1)
+
+(def ^:private activity-search-batch-sql
+  "The next batch of Activity invocations after a rowid, for the search text rewrite."
+  "SELECT rowid AS row_id, payload FROM activity_invocation WHERE rowid > ? ORDER BY rowid LIMIT 500")
+
+(def ^:private activity-search-update-sql
+  "UPDATE activity_invocation SET search_text = ? WHERE rowid = ?")
+
+(defn- rewrite-activity-search-text!
+  "Rewrite the Activity search text of an older store, then record the generation.
+   Each batch commits, so an interrupted rewrite continues at the next open."
+  [^DataSource ds]
+  (let [opts {:builder-fn rs/as-unqualified-lower-maps}]
+    (when (< (long (:user_version (jdbc/execute-one! ds ["PRAGMA user_version"] opts)))
+             activity-search-generation)
+      (loop [after 0]
+        (let [rows (jdbc/execute! ds [activity-search-batch-sql after] opts)]
+          (when (seq rows)
+            (jdbc/with-transaction [tx ds]
+                                   (with-open [ps (jdbc/prepare tx [activity-search-update-sql])]
+                                     (jdbc/execute-batch!
+                                       ps
+                                       (mapv (fn [{:keys [row_id payload]}]
+                                               [(activity-search-text (<-blob payload)) row_id])
+                                             rows))))
+            (recur (:row_id (peek rows))))))
+      (jdbc/execute! ds [(str "PRAGMA user_version = " activity-search-generation)]))))
+
 (defn- install-schema!
   [^DataSource ds]
   (migration/migrate! ds MIGRATIONS)
   ;; Backfill only missing workflow rows. Reopening never overwrites human analysis or state.
   (when (toggles/enabled? "improve") (jdbc/execute! ds [improve-intake-sql]))
   ;; Projects show their name, never their path: rename the path-named ones once.
-  (jdbc/execute! ds [project-folder-name-sql]))
+  (jdbc/execute! ds [project-folder-name-sql])
+  (rewrite-activity-search-text! ds))
 
 ;; Connection management
 ;;
@@ -6497,7 +6562,7 @@
    :state (name (:state row))
    :visible (if (and (= :running (:state row)) (false? (:show-start row))) 0 1)
    :payload (->blob row)
-   :search_text (wire/json-str (activity/presentation (assoc activity/empty-state :rows [row])))})
+   :search_text (activity-search-text row)})
 
 (defn db-activity-apply!
   "Persist one admitted lifecycle edge without retaining the history in heap."
