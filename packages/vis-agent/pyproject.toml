@@ -15,9 +15,12 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 # Harbor runs the tasks of `blockether.vis.evals`: the agent, host environment, check and judge.
+# Keep LiteLLM at this exact version: some corporate Artifactory mirrors serve only this build.
+# Harbor accepts it (`litellm>=1.92.0`).
 dependencies = [
   "harbor==0.24.0",
   "jsonschema>=4.23,<5",
+  "litellm==1.103.1",
   "packaging>=24",
   "pydantic>=2.13.5,<3",
   "referencing>=0.28.4",

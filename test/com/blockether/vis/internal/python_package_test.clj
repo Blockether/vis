@@ -42,4 +42,6 @@
             (it "bundles contracts instead of depending on another Python distribution"
                 (expect (not (str/includes? (pyproject agent-dir) "vis-contract==")))
                 (expect (str/includes? (pyproject agent-dir) "jsonschema>=4.23,<5"))
-                (expect (str/includes? (pyproject agent-dir) "hatch_build.py")))))
+                (expect (str/includes? (pyproject agent-dir) "hatch_build.py")))
+            (it "pins the only LiteLLM build that corporate Artifactory mirrors serve"
+                (expect (str/includes? (pyproject agent-dir) "\"litellm==1.103.1\"")))))
