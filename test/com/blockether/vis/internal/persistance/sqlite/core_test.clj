@@ -1561,6 +1561,10 @@
   [store]
   (mapv :search_text (raw-query store {:select [:search_text] :from [:activity_invocation]})))
 
+(def ^:private rewrite-older-store! (private-core-fn "rewrite-older-store!"))
+
+(defn- user-version [store] (:user_version (first (raw-query store {:raw "PRAGMA user_version"}))))
+
 (defdescribe
   activity-search-text-size-test
   ;; The whole JSON presentation of every invocation filled 5.8 GB of one real store,
@@ -1588,49 +1592,130 @@
         (expect (not (str/includes? text "tail-marker")))
         (expect (= [id]
                    (mapv :id (:rows (persistance/db-activity-page s sid aid {:q "disk quota"})))))))
+  (it "rewrites the JSON search text of an older store once"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {})
+
+            aid
+            (str (random-uuid))
+
+            id
+            (write-long-activity! s sid aid)
+
+            old-text
+            (wire/json-str {:state "idle" :rows [{:summary "Record 1"}]})]
+
+        ;; Rewind this store to the shape that older Vis versions wrote.
+        (jdbc/execute! (:datasource s) ["UPDATE activity_invocation SET search_text = ?" old-text])
+        (expect (= 0 (user-version s)))
+        (rewrite-older-store! (:datasource s))
+        (let [[text] (activity-search-texts s)]
+          (expect (= 2 (user-version s)))
+          (expect (not= old-text text))
+          (expect (str/includes? text "Disk quota reached"))
+          (expect (<= (count text) 4096))
+          (expect
+            (= [id] (mapv :id (:rows (persistance/db-activity-page s sid aid {:q "disk quota"}))))))
+        ;; A done rewrite does not run again.
+        (jdbc/execute! (:datasource s) ["UPDATE activity_invocation SET search_text = ?" old-text])
+        (rewrite-older-store! (:datasource s))
+        (expect (= [old-text] (activity-search-texts s))))))
+
+(defn- store-activity-iteration!
+  "Store one iteration whose two forms carry Activity: one with a saved history, one without."
+  [store sid aid]
+  (let [tid
+        (vis/db-store-session-turn! store {:parent-session-id sid :user-request "activity"})
+
+        snapshot
+        (persistance/db-activity-page store sid aid {})
+
+        orphan
+        {:state "succeeded"
+         :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+         :rows [{:id "orphan" :summary "Only copy"}]
+         :history {:id (str (random-uuid)) :revision 1 :total 1 :after 0 :next-after nil}}]
+
+    (h/store-iteration! store
+                        {:session-turn-id tid
+                         :status :done
+                         :code "cat('a')"
+                         :forms [{:scope nil :tag :observation :src "cat('a')" :activity snapshot}
+                                 {:scope nil :tag :observation :src "cat('b')" :activity orphan}]})
+    {:tid tid :snapshot snapshot :orphan orphan}))
+
+(defn- stored-activities
+  [store]
+  (->> (raw-query store {:select [:tool_calls] :from [:session_turn_iteration]})
+       (mapcat #(nippy/thaw (:tool_calls %)))
+       (mapv :activity)))
+
+(defdescribe
+  iteration-activity-rows-test
+  ;; Every iteration kept a second copy of its Activity rows: a third of the
+  ;; tool-call bytes of one real store. The history holds the only copy now.
+  (it "keeps one copy of Activity rows and reads the same snapshot back"
+      (let [s
+            (h/store)
+
+            sid
+            (h/store-session! s {})
+
+            aid
+            (str (random-uuid))
+
+            _
+            (write-long-activity! s sid aid)
+
+            {:keys [tid snapshot]}
+            (store-activity-iteration! s sid aid)
+
+            [saved]
+            (stored-activities s)]
+
+        (expect (seq (:rows snapshot)))
+        (expect (not (contains? saved :rows)))
+        (expect (= (dissoc snapshot :rows) saved))
+        (expect (= snapshot
+                   (:activity (first (:forms (first
+                                               (vis/db-list-session-turn-iterations s tid)))))))))
   (it
-    "rewrites the JSON search text of an older store once on reopen"
-    (let [root
-          (fs/create-temp-dir {:prefix "vis-activity-search-"})
+    "drops a stored copy only when the history gives back the same rows"
+    (let [s
+          (h/store)
 
-          dir
-          (str (fs/path root "store"))
+          sid
+          (h/store-session! s {})
 
-          s1
-          (vis/db-create-connection! dir)]
+          aid
+          (str (random-uuid))
 
-      (try (let [sid
-                 (h/store-session! s1 {})
+          _
+          (write-long-activity! s sid aid)
 
-                 aid
-                 (str (random-uuid))
+          {:keys [tid snapshot orphan]}
+          (store-activity-iteration! s sid aid)
 
-                 id
-                 (write-long-activity! s1 sid aid)
+          grouped
+          (assoc snapshot :rows [{:id "group" :children (:rows snapshot)}])
 
-                 old-text
-                 (wire/json-str {:state "idle" :rows [{:summary "Record 1"}]})]
+          older
+          [{:scope nil :tag :observation :src "cat('a')" :activity snapshot}
+           {:scope nil :tag :observation :src "cat('b')" :activity orphan}
+           {:scope nil :tag :observation :src "cat('c')" :activity grouped}]]
 
-             (expect (= [1] (mapv :user_version (raw-query s1 {:raw "PRAGMA user_version"}))))
-             ;; Rewind this store to the shape that older Vis versions wrote.
-             (jdbc/execute! (:datasource s1)
-                            ["UPDATE activity_invocation SET search_text = ?" old-text])
-             (jdbc/execute! (:datasource s1) ["PRAGMA user_version = 0"])
-             (vis/db-dispose-connection! s1)
-             (let [s2 (vis/db-create-connection! dir)]
-               (try (let [[text] (activity-search-texts s2)]
-                      (expect (= [1]
-                                 (mapv :user_version (raw-query s2 {:raw "PRAGMA user_version"}))))
-                      (expect (not= old-text text))
-                      (expect (str/includes? text "Disk quota reached"))
-                      (expect (<= (count text) 4096))
-                      (expect
-                        (= [id]
-                           (mapv :id
-                                 (:rows
-                                   (persistance/db-activity-page s2 sid aid {:q "disk quota"}))))))
-                    (finally (vis/db-dispose-connection! s2)))))
-           (finally (fs/delete-tree root))))))
+      ;; Rewind this store to the shape that older Vis versions wrote.
+      (jdbc/execute! (:datasource s)
+                     ["UPDATE session_turn_iteration SET tool_calls = ?" (nippy/freeze older)])
+      (jdbc/execute! (:datasource s) ["PRAGMA user_version = 1"])
+      (rewrite-older-store! (:datasource s))
+      (expect (= 2 (user-version s)))
+      (expect (= [(dissoc snapshot :rows) orphan grouped] (stored-activities s)))
+      (expect (= [snapshot orphan grouped]
+                 (mapv :activity (:forms (first (vis/db-list-session-turn-iterations s tid)))))))))
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])

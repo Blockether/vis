@@ -193,13 +193,16 @@
 (defn vacuum-async!
   "Fire-and-forget `maybe-vacuum!` for the store at `db-file`, on a
    lowest-priority daemon thread that first sleeps `:delay-ms` so the rewrite is
-   not what a starting process waits on. Returns the thread. Called once per
-   store per process, from the pool that just opened it."
+   not what a starting process waits on. A `:before` function runs on the same
+   thread first, so a data rewrite frees its pages before the reclaim checks
+   them. Returns the thread. Called once per store per process, from the pool
+   that just opened it."
   ([ds db-file] (vacuum-async! ds db-file nil))
-  ([ds db-file {:keys [delay-ms] :as opts}]
+  ([ds db-file {:keys [delay-ms before] :as opts}]
    (doto (Thread. ^Runnable
                   (fn []
                     (try (Thread/sleep (long (or delay-ms vacuum-start-delay-ms)))
+                         (when before (try (before) (catch Exception _ nil)))
                          (maybe-vacuum! ds db-file opts)
                          (catch Throwable _ nil)))
                   "vis-sqlite-vacuum")

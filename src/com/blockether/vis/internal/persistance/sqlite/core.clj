@@ -273,37 +273,143 @@
 
     (subs text 0 (min (count text) activity-search-char-limit))))
 
-(def ^:private ^:const activity-search-generation
-  "`PRAGMA user_version` of a store whose Activity search text is all `activity-search-text`.
-   Older stores kept the whole JSON presentation there, often several megabytes per row."
-  1)
-
 (def ^:private activity-search-batch-sql
   "The next batch of Activity invocations after a rowid, for the search text rewrite."
   "SELECT rowid AS row_id, payload FROM activity_invocation WHERE rowid > ? ORDER BY rowid LIMIT 500")
 
 (def ^:private activity-search-update-sql
-  "UPDATE activity_invocation SET search_text = ? WHERE rowid = ?")
+  "Set the search text of one invocation unless a live write changed its payload."
+  "UPDATE activity_invocation SET search_text = ? WHERE rowid = ? AND payload = ?")
 
 (defn- rewrite-activity-search-text!
-  "Rewrite the Activity search text of an older store, then record the generation.
+  "Rewrite the Activity search text that older stores kept as whole JSON presentations.
    Each batch commits, so an interrupted rewrite continues at the next open."
   [^DataSource ds]
   (let [opts {:builder-fn rs/as-unqualified-lower-maps}]
-    (when (< (long (:user_version (jdbc/execute-one! ds ["PRAGMA user_version"] opts)))
-             activity-search-generation)
-      (loop [after 0]
-        (let [rows (jdbc/execute! ds [activity-search-batch-sql after] opts)]
-          (when (seq rows)
-            (jdbc/with-transaction [tx ds]
-                                   (with-open [ps (jdbc/prepare tx [activity-search-update-sql])]
-                                     (jdbc/execute-batch!
-                                       ps
-                                       (mapv (fn [{:keys [row_id payload]}]
-                                               [(activity-search-text (<-blob payload)) row_id])
-                                             rows))))
-            (recur (:row_id (peek rows))))))
-      (jdbc/execute! ds [(str "PRAGMA user_version = " activity-search-generation)]))))
+    (loop [after 0]
+      (let [rows (jdbc/execute! ds [activity-search-batch-sql after] opts)]
+        (when (seq rows)
+          (jdbc/with-transaction
+            [tx ds]
+            (with-open [ps (jdbc/prepare tx [activity-search-update-sql])]
+              (jdbc/execute-batch! ps
+                                   (mapv (fn [{:keys [row_id payload]}]
+                                           [(activity-search-text (<-blob payload)) row_id payload])
+                                         rows))))
+          (recur (:row_id (peek rows))))))))
+
+(defn- form-without-activity-rows
+  "`form` without the Activity rows that its durable history already holds.
+   `row->iteration` reads them back from `activity_invocation`."
+  [form]
+  (if (and (map? form) (some? (get-in form [:activity :history :id])))
+    (update form :activity dissoc :rows)
+    form))
+
+(defn- activity-history-page
+  "One bounded keyset page of the Activity `history` row, without an owner check."
+  [db history {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit}}]
+  (let [aid
+        (:id history)
+
+        metadata
+        (<-blob (:metadata history))
+
+        rows
+        (query! db
+                {:select [:payload]
+                 :from [:activity_invocation]
+                 :where (cond-> [:and [:= :history_id aid] [:> :sequence after] [:= :visible 1]]
+                          (not (str/blank? q))
+                          (conj [:> [:instr [:lower :search_text] [:lower q]] 0]))
+                 :order-by [[:sequence :asc]]
+                 :limit (inc (long limit))})
+
+        records
+        (mapv #(<-blob (:payload %)) rows)
+
+        page
+        (fn [selected more?]
+          (assoc (activity/presentation (assoc metadata :rows selected))
+            :history {:id aid
+                      :revision (:revision history)
+                      :total (reduce + 0 (vals (:counts metadata)))
+                      :after after
+                      :next-after (when more? (:sequence (peek selected)))}))]
+
+    (loop [selected (vec (take limit records))]
+      (let [projection (page selected (> (count records) (count selected)))]
+        ;; A single invocation is indivisible: byte targets only split between records.
+        (if (or (<= (count selected) 1)
+                (<= (activity/byte-size projection) (long activity-contract/page-byte-target)))
+          projection
+          (recur (pop selected)))))))
+
+(def ^:private activity-rows-batch-sql
+  "The next batch of iterations with tool calls after a rowid, for the Activity row rewrite."
+  "SELECT rowid AS row_id, tool_calls FROM session_turn_iteration
+   WHERE rowid > ? AND tool_calls IS NOT NULL ORDER BY rowid LIMIT 200")
+
+(def ^:private activity-rows-update-sql
+  "Replace the tool calls of one iteration unless another write changed them."
+  "UPDATE session_turn_iteration SET tool_calls = ? WHERE rowid = ? AND tool_calls = ?")
+
+(defn- replayable-activity-form
+  "`form` without its stored Activity rows when its history gives back the same rows.
+   Older Vis versions grouped rows differently, so their forms keep the rows they showed."
+  [^DataSource ds form]
+  (let [aid
+        (when (map? form) (get-in form [:activity :history :id]))
+
+        history
+        (when (and aid (contains? (:activity form) :rows))
+          (jdbc/execute-one! ds
+                             ["SELECT * FROM activity_history WHERE id = ?" (str aid)]
+                             {:builder-fn rs/as-unqualified-lower-maps}))]
+
+    (if (and history
+             (= (get-in form [:activity :rows])
+                (:rows (activity-history-page {:datasource ds :conn ds} history {}))))
+      (form-without-activity-rows form)
+      form)))
+
+(defn- drop-stored-activity-rows!
+  "Drop the copy of Activity rows that older stores kept inside each iteration's tool calls.
+   Each batch commits, so an interrupted rewrite continues at the next open."
+  [^DataSource ds]
+  (let [opts {:builder-fn rs/as-unqualified-lower-maps}]
+    (loop [after 0]
+      (let [rows (jdbc/execute! ds [activity-rows-batch-sql after] opts)]
+        (when (seq rows)
+          (let [changed (keep (fn [{:keys [row_id tool_calls]}]
+                                (let [forms (<-blob tool_calls)
+                                      kept (mapv #(replayable-activity-form ds %) forms)]
+
+                                  (when (not= kept forms) [(->blob kept) row_id tool_calls])))
+                              rows)]
+            (when (seq changed)
+              (jdbc/with-transaction [tx ds]
+                                     (with-open [ps (jdbc/prepare tx [activity-rows-update-sql])]
+                                       (jdbc/execute-batch! ps (vec changed))))))
+          (recur (:row_id (peek rows))))))))
+
+(def ^:private store-rewrites
+  "One-time data rewrites of older stores, in order. `PRAGMA user_version` counts the
+   rewrites that a store has already done. Append new rewrites; never reorder them."
+  [rewrite-activity-search-text! drop-stored-activity-rows!])
+
+(defn- rewrite-older-store!
+  "Run each store rewrite that this store has not done yet, and record each one.
+   Every rewrite is safe to repeat, so a stopped run starts again at the next open."
+  [^DataSource ds]
+  (let [done (long (:user_version (jdbc/execute-one! ds
+                                                     ["PRAGMA user_version"]
+                                                     {:builder-fn rs/as-unqualified-lower-maps})))]
+    (doseq [[n rewrite!] (map-indexed vector store-rewrites)
+            :when (>= (long n) done)]
+
+      (rewrite! ds)
+      (jdbc/execute! ds [(str "PRAGMA user_version = " (inc (long n)))]))))
 
 (defn- install-schema!
   [^DataSource ds]
@@ -311,8 +417,7 @@
   ;; Backfill only missing workflow rows. Reopening never overwrites human analysis or state.
   (when (toggles/enabled? "improve") (jdbc/execute! ds [improve-intake-sql]))
   ;; Projects show their name, never their path: rename the path-named ones once.
-  (jdbc/execute! ds [project-folder-name-sql])
-  (rewrite-activity-search-text! ds))
+  (jdbc/execute! ds [project-folder-name-sql]))
 
 ;; Connection management
 ;;
@@ -580,7 +685,7 @@
         (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet ^AtomicLong pool-counter)))]
 
     (try (with-migration-lock! path #(install-schema! pool))
-         (maintenance/vacuum-async! pool file)
+         (maintenance/vacuum-async! pool file {:before #(rewrite-older-store! pool)})
          pool
          (catch Throwable t (try (.close pool) (catch Throwable _ nil)) (throw t)))))
 
@@ -4302,7 +4407,7 @@
 
     (cond-> {:code code-out}
       (seq forms)
-      (assoc :tool_calls (->blob (freeze-safe (vec forms))))
+      (assoc :tool_calls (->blob (freeze-safe (mapv form-without-activity-rows forms))))
 
       (some? duration-ms)
       (assoc :eval_duration_ms (long duration-ms))
@@ -5526,8 +5631,24 @@
       (assoc :llm-routing-trace (vec (:trace routing))))
     iteration))
 
+(defn- with-activity-rows
+  "`forms` with the Activity rows that `form-without-activity-rows` left in their history.
+   A settled history no longer changes, so its first page is the snapshot the form had."
+  [db-info forms]
+  (mapv (fn [form]
+          (let [aid (when (map? form) (get-in form [:activity :history :id]))]
+            (if (and aid (not (contains? (:activity form) :rows)))
+              (let [history (query-one!
+                              db-info
+                              {:select [:*] :from [:activity_history] :where [:= :id (str aid)]})]
+                (assoc-in form
+                  [:activity :rows]
+                  (or (when history (:rows (activity-history-page db-info history {}))) [])))
+              form)))
+        forms))
+
 (defn- row->iteration
-  [row]
+  [db-info row]
   ;; DB column is `tool_calls`; the in-memory iteration key stays `:forms`
   ;; (the executed tool-call records the resume/replay path reads).
   (let [forms-vec (<-blob (:tool_calls row))]
@@ -5540,7 +5661,7 @@
       (assoc :code (:code row))
 
       (some? forms-vec)
-      (assoc :forms forms-vec)
+      (assoc :forms (with-activity-rows db-info forms-vec))
 
       (:council_input row)
       (assoc :council-input (<-blob (:council_input row)))
@@ -5655,7 +5776,7 @@
                   routing
                   (row-routing-summary row trace)]
 
-              (attach-routing (row->iteration row) routing)))
+              (attach-routing (row->iteration db-info row) routing)))
           rows)))
 
 (defn db-list-session-turn-iterations
@@ -5714,7 +5835,7 @@
                   (update result
                           (:turn_id row)
                           conj
-                          (attach-routing (row->iteration row)
+                          (attach-routing (row->iteration db-info row)
                                           (row-routing-summary row (get traces (:id row) [])))))
                 (zipmap ids (repeat []))
                 rows))
@@ -5785,7 +5906,7 @@
     (if (and (ds db-info) (seq ids))
       (reduce (fn [result batch]
                 (reduce (fn [result row]
-                          (assoc result (:id row) (row->iteration row)))
+                          (assoc result (:id row) (row->iteration db-info row)))
                         result
                         (query-sql!
                           db-info
@@ -6670,47 +6791,20 @@
 
 (defn db-activity-page
   "A session-authorized, keyset page of complete records. Search never clips retention."
-  [db sid aid {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit}}]
+  [db sid aid {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit} :as opts}]
   (when (or (neg? (long after))
             (not (<= 1 (long limit) (long activity-contract/page-row-limit)))
             (and q (> (count q) 512)))
     (throw (ex-info "Invalid Activity page parameters" {:type :activity/invalid-page})))
   ;; One transaction keeps metadata/revision and its bounded row page consistent.
-  (sqlite-write-tx!
-    db
-    (fn [db]
-      (when-let [history (query-one! db
-                                     {:select [:*]
-                                      :from [:activity_history]
-                                      :where [:and [:= :id (str aid)]
-                                              [:= :session_soul_id (str sid)]]})]
-        (let [metadata (<-blob (:metadata history))
-              rows (query! db
-                           {:select [:payload]
-                            :from [:activity_invocation]
-                            :where (cond-> [:and [:= :history_id (str aid)] [:> :sequence after]
-                                            [:= :visible 1]]
-                                     (not (str/blank? q))
-                                     (conj [:> [:instr [:lower :search_text] [:lower q]] 0]))
-                            :order-by [[:sequence :asc]]
-                            :limit (inc (long limit))})
-              records (mapv #(<-blob (:payload %)) rows)
-              page (fn [selected more?]
-                     (assoc (activity/presentation (assoc metadata :rows selected))
-                       :history {:id (str aid)
-                                 :revision (:revision history)
-                                 :total (reduce + 0 (vals (:counts metadata)))
-                                 :after after
-                                 :next-after (when more? (:sequence (peek selected)))}))]
-
-          (loop [selected (vec (take limit records))]
-            (let [projection (page selected (> (count records) (count selected)))]
-              ;; A single invocation is indivisible: byte targets only split between records.
-              (if (or (<= (count selected) 1)
-                      (<= (activity/byte-size projection)
-                          (long activity-contract/page-byte-target)))
-                projection
-                (recur (pop selected))))))))))
+  (sqlite-write-tx! db
+                    (fn [db]
+                      (when-let [history (query-one! db
+                                                     {:select [:*]
+                                                      :from [:activity_history]
+                                                      :where [:and [:= :id (str aid)]
+                                                              [:= :session_soul_id (str sid)]]})]
+                        (activity-history-page db history opts)))))
 
 ;; Improve workflow: mutable analysis/hierarchy over immutable Council intake.
 
