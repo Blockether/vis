@@ -269,8 +269,8 @@ council.wake("The nightly build failed. Check the parser tests.", kind="complain
 ```
 
 `wake` notifies the bound session, also after the active run of the handle ended. An active session
-receives the message as a notification. An idle session that leads its own work stays idle. Held
-queues stay held. The same `idempotency_key` returns the original entry without another notification.
+receives the message as a notification. An idle independent session does not start a turn: the message waits in the group until it runs again.
+Held queues stay held. The same `idempotency_key` returns the original entry without another notification.
 
 </div>
 
@@ -285,7 +285,8 @@ EOF
 ```
 
 A wake notifies the session, also when no run is active. An active session receives the message as
-a notification. An idle session that leads its own work stays idle. Held queues stay held. The same
+a notification. An idle independent session does not start a turn: the message waits in the group until it runs again.
+Held queues stay held. The same
 `idempotency_key` returns the original entry without another notification.
 
 </div>

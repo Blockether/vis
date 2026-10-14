@@ -332,8 +332,7 @@ keychain databases. On Linux it exposes the session D-Bus so the Secret Service
    adopt it.
 3. Use `/net-probe METHOD URL` or `/net-probe host:port` for egress decisions.
 4. If startup reports a missing enforcer, verify that the selected Python runtime
-   contains the matching `libvisjail` platform library.
-5. An enabled jail that cannot be enforced refuses to start the child.
+   contains the matching `libvisjail` platform library. Without it, Vis refuses to start the child.
 
 The policy snapshot resolves paths and symlinks when the session environment is
 built. Live workspace roots can change within that snapshot, but editing `vis.yml`

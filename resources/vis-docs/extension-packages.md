@@ -234,13 +234,9 @@ Commit the project declaration to share it with your team. To update a saved pac
 edit its declaration and run `vis-agent extension sync --project --trust`. Do not
 use manual `update` or `rollback` on a saved package.
 
-Saving preserves existing project comments and unrelated settings. Conflicting
-same-name declarations and configuration layouts that cannot be safely edited are
-refused rather than overwritten. If saving fails after source admission, Vis rolls
-back that installation. You can rerun the same installation with `--save` to record
-an existing local link or managed GitHub snapshot after its source identity is
-verified. Unrelated links, copied directories and different source revisions are
-refused rather than adopted or replaced.
+Saving keeps your comments and other settings. Vis never overwrites a different declaration
+with the same name. If saving fails, Vis also removes the new installation. To record a package
+that you already installed, run the same install command again with `--save`.
 
 ### Install an approved GitHub Release
 

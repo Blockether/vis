@@ -110,11 +110,10 @@ with GatewayClient(os.environ["VIS_GATEWAY_URL"], token=os.environ["VIS_GATEWAY_
     print(answer["answers"], answer["routing"]["model"])
 ```
 
-These calls do not download a model or install a dependency. An uninstalled model
+These calls never download a model or install a dependency. An uninstalled model
 raises `blockether.vis.engine.GatewayError` with `status == 409`. Download the model
 explicitly with the CLI above. The baseline `act_probability` in an answer is a
-diagnostic score, not authorization to act. Installing vis-decisions does not download model weights.
-Training and inference use the same package, but only explicit calls load weights.
+diagnostic score, not authorization to act.
 
 ### Handle long inputs
 
@@ -139,10 +138,9 @@ For overlong input, `Decisions.infer` raises `GatewayError` with `status == 400`
 count. Its `max_input_tokens` attribute gives the configured limit. The error also tells you
 what to shorten. These attributes are `None` if the gateway supplies no valid counts.
 
-Shorten the state, question instructions or criteria before retrying. Do not remove important
-context without checking the effect on your results. The SDK sends the request without
-estimating a character limit. Exact validation uses the installed tokenizer on the gateway,
-not an extra tokenizer dependency in your application.
+Shorten the state, question instructions or criteria before retrying. Check that your results
+stay correct when you remove context. The gateway counts tokens with the installed tokenizer, so
+your application needs no tokenizer.
 
 The Laya baseline has a different policy. It uses `max_len` from the installed `config.json`,
 with a default of 512 tokens per question. It truncates instructions and option text to fit
@@ -301,7 +299,6 @@ vis-agent decisions models download --model gliner2.5-multi --training
 Each command prints the installed inference and checkpoint paths. Decide-1B archives use ordered parts below the release asset limit.
 The downloader joins and verifies those parts automatically. No weight precision is reduced.
 
-Use the same vis-decisions environment as Laya. Allow several gigabytes for checkpoints, exports and dependencies.
 `TrainingBundle.open` selects the family from verified provenance.
 `TrainingBundle.fetch("<model>@<revision>", "cache")` downloads a pinned checkpoint when you explicitly request it.
 Neither `open` nor the trainer fetches weights.
