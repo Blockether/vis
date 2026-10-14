@@ -1657,31 +1657,41 @@
   iteration-activity-rows-test
   ;; Every iteration kept a second copy of its Activity rows: a third of the
   ;; tool-call bytes of one real store. The history holds the only copy now.
-  (it "keeps one copy of Activity rows and reads the same snapshot back"
-      (let [s
-            (h/store)
+  (it
+    "keeps one copy of Activity rows and reads the same snapshot back"
+    (let [s
+          (h/store)
 
-            sid
-            (h/store-session! s {})
+          sid
+          (h/store-session! s {})
 
-            aid
-            (str (random-uuid))
+          aid
+          (str (random-uuid))
 
-            _
-            (write-long-activity! s sid aid)
+          _
+          (write-long-activity! s sid aid)
 
-            {:keys [tid snapshot]}
-            (store-activity-iteration! s sid aid)
+          {:keys [tid snapshot]}
+          (store-activity-iteration! s sid aid)
 
-            [saved]
-            (stored-activities s)]
+          [saved]
+          (stored-activities s)]
 
-        (expect (seq (:rows snapshot)))
-        (expect (not (contains? saved :rows)))
-        (expect (= (dissoc snapshot :rows) saved))
+      (expect (seq (:rows snapshot)))
+      (expect (not (contains? saved :rows)))
+      (expect (= (dissoc snapshot :rows) saved))
+      (expect (= snapshot
+                 (:activity (first (:forms (first (vis/db-list-session-turn-iterations s tid)))))))
+      ;; Every iteration reader gives back the same rows.
+      (let [[iteration] (get (persistance/db-list-session-turns-iterations s [tid]) (str tid))]
+        (expect (= snapshot (:activity (first (:forms iteration)))))
         (expect (= snapshot
-                   (:activity (first (:forms (first
-                                               (vis/db-list-session-turn-iterations s tid)))))))))
+                   (-> (persistance/db-list-iterations s [(:id iteration)])
+                       vals
+                       first
+                       :forms
+                       first
+                       :activity))))))
   (it
     "drops a stored copy only when the history gives back the same rows"
     (let [s

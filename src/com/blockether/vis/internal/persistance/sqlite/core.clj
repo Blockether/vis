@@ -306,32 +306,17 @@
     (update form :activity dissoc :rows)
     form))
 
-(defn- activity-history-page
-  "One bounded keyset page of the Activity `history` row, without an owner check."
-  [db history {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit}}]
-  (let [aid
-        (:id history)
-
-        metadata
+(defn- activity-page-projection
+  "The page projection of `history` over its ordered `records` after a sequence.
+   `records` holds at most one record past `limit`; that record only marks more pages."
+  [history records after limit]
+  (let [metadata
         (<-blob (:metadata history))
-
-        rows
-        (query! db
-                {:select [:payload]
-                 :from [:activity_invocation]
-                 :where (cond-> [:and [:= :history_id aid] [:> :sequence after] [:= :visible 1]]
-                          (not (str/blank? q))
-                          (conj [:> [:instr [:lower :search_text] [:lower q]] 0]))
-                 :order-by [[:sequence :asc]]
-                 :limit (inc (long limit))})
-
-        records
-        (mapv #(<-blob (:payload %)) rows)
 
         page
         (fn [selected more?]
           (assoc (activity/presentation (assoc metadata :rows selected))
-            :history {:id aid
+            :history {:id (:id history)
                       :revision (:revision history)
                       :total (reduce + 0 (vals (:counts metadata)))
                       :after after
@@ -345,6 +330,89 @@
           projection
           (recur (pop selected)))))))
 
+(defn- activity-history-page
+  "One bounded keyset page of the Activity `history` row, without an owner check."
+  [db history {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit}}]
+  (let [rows (query! db
+                     {:select [:payload]
+                      :from [:activity_invocation]
+                      :where (cond-> [:and [:= :history_id (:id history)] [:> :sequence after]
+                                      [:= :visible 1]]
+                               (not (str/blank? q))
+                               (conj [:> [:instr [:lower :search_text] [:lower q]] 0]))
+                      :order-by [[:sequence :asc]]
+                      :limit (inc (long limit))})]
+    (activity-page-projection history (mapv #(<-blob (:payload %)) rows) after limit)))
+
+(def ^:private activity-first-records-sql
+  "The visible records of each history up to one past the page row limit, in order.
+   The caller appends the `IN` list of history ids."
+  "SELECT history_id, payload FROM (
+     SELECT history_id, sequence, payload,
+            row_number() OVER (PARTITION BY history_id ORDER BY sequence) AS n
+     FROM activity_invocation WHERE visible = 1 AND history_id IN (")
+
+(defn- activity-first-rows
+  "The first-page Activity rows of each history id in `aids`, keyed by id. Two queries
+   for each 500 ids, so a long transcript does not pay one query for each form."
+  [db-info aids]
+  (reduce
+    (fn [result batch]
+      (let [in-list
+            (str/join "," (repeat (count batch) "?"))
+
+            histories
+            (query-sql! db-info
+                        (into [(str "SELECT * FROM activity_history WHERE id IN (" in-list ")")]
+                              batch))
+
+            records
+            (group-by :history_id
+                      (query-sql! db-info
+                                  (into [(str activity-first-records-sql
+                                              in-list
+                                              ")) WHERE n <= ? ORDER BY history_id, n")]
+                                        (conj (vec batch)
+                                              (inc (long activity-contract/page-row-limit))))))]
+
+        (reduce (fn [result history]
+                  (assoc result
+                    (:id history) (:rows (activity-page-projection
+                                           history
+                                           (mapv #(<-blob (:payload %)) (get records (:id history)))
+                                           0
+                                           activity-contract/page-row-limit))))
+                result
+                histories)))
+    {}
+    (partition-all 500 aids)))
+
+(defn- activity-rows-needed
+  "The history id of `form` when its Activity rows live only in that history."
+  [form]
+  (when (and (map? form) (map? (:activity form)) (not (contains? (:activity form) :rows)))
+    (some-> (get-in form [:activity :history :id])
+            str)))
+
+(defn- with-activity-rows
+  "`iterations` with the Activity rows that `form-without-activity-rows` left in their
+   histories. A settled history no longer changes, so its first page is the form's snapshot."
+  [db-info iterations]
+  (let [aids (into [] (comp (mapcat :forms) (keep activity-rows-needed) (distinct)) iterations)]
+    (if (empty? aids)
+      (vec iterations)
+      (let [rows-by-aid (activity-first-rows db-info aids)
+            hydrate (fn [form]
+                      (if-let [aid (activity-rows-needed form)]
+                        (assoc-in form [:activity :rows] (get rows-by-aid aid []))
+                        form))]
+
+        (mapv (fn [iteration]
+                (cond-> iteration
+                  (:forms iteration)
+                  (update :forms #(mapv hydrate %))))
+              iterations)))))
+
 (def ^:private activity-rows-batch-sql
   "The next batch of iterations with tool calls after a rowid, for the Activity row rewrite."
   "SELECT rowid AS row_id, tool_calls FROM session_turn_iteration
@@ -354,39 +422,42 @@
   "Replace the tool calls of one iteration unless another write changed them."
   "UPDATE session_turn_iteration SET tool_calls = ? WHERE rowid = ? AND tool_calls = ?")
 
-(defn- replayable-activity-form
-  "`form` without its stored Activity rows when its history gives back the same rows.
-   Older Vis versions grouped rows differently, so their forms keep the rows they showed."
-  [^DataSource ds form]
-  (let [aid
-        (when (map? form) (get-in form [:activity :history :id]))
-
-        history
-        (when (and aid (contains? (:activity form) :rows))
-          (jdbc/execute-one! ds
-                             ["SELECT * FROM activity_history WHERE id = ?" (str aid)]
-                             {:builder-fn rs/as-unqualified-lower-maps}))]
-
-    (if (and history
-             (= (get-in form [:activity :rows])
-                (:rows (activity-history-page {:datasource ds :conn ds} history {}))))
-      (form-without-activity-rows form)
-      form)))
-
 (defn- drop-stored-activity-rows!
   "Drop the copy of Activity rows that older stores kept inside each iteration's tool calls.
-   Each batch commits, so an interrupted rewrite continues at the next open."
+   A form keeps its copy unless its history gives back the same rows: older Vis versions
+   grouped and shortened rows differently. Each batch commits, so an interrupted rewrite
+   continues at the next open."
   [^DataSource ds]
-  (let [opts {:builder-fn rs/as-unqualified-lower-maps}]
+  (let [opts
+        {:builder-fn rs/as-unqualified-lower-maps}
+
+        db-info
+        {:datasource ds :conn ds}
+
+        stored-aid
+        (fn [form]
+          (when (and (map? form) (contains? (:activity form) :rows))
+            (some-> (get-in form [:activity :history :id])
+                    str)))]
+
     (loop [after 0]
       (let [rows (jdbc/execute! ds [activity-rows-batch-sql after] opts)]
         (when (seq rows)
-          (let [changed (keep (fn [{:keys [row_id tool_calls]}]
-                                (let [forms (<-blob tool_calls)
-                                      kept (mapv #(replayable-activity-form ds %) forms)]
-
+          (let [decoded (mapv #(assoc % :forms (<-blob (:tool_calls %))) rows)
+                aids (into [] (comp (mapcat :forms) (keep stored-aid) (distinct)) decoded)
+                first-rows (if (seq aids) (activity-first-rows db-info aids) {})
+                replayable (fn [form]
+                             (let [aid (stored-aid form)]
+                               (if (and aid
+                                        (contains? first-rows aid)
+                                        (= (get-in form [:activity :rows]) (get first-rows aid)))
+                                 (form-without-activity-rows form)
+                                 form)))
+                changed (keep (fn [{:keys [row_id tool_calls forms]}]
+                                (let [kept (mapv replayable forms)]
                                   (when (not= kept forms) [(->blob kept) row_id tool_calls])))
-                              rows)]
+                              decoded)]
+
             (when (seq changed)
               (jdbc/with-transaction [tx ds]
                                      (with-open [ps (jdbc/prepare tx [activity-rows-update-sql])]
@@ -5631,24 +5702,8 @@
       (assoc :llm-routing-trace (vec (:trace routing))))
     iteration))
 
-(defn- with-activity-rows
-  "`forms` with the Activity rows that `form-without-activity-rows` left in their history.
-   A settled history no longer changes, so its first page is the snapshot the form had."
-  [db-info forms]
-  (mapv (fn [form]
-          (let [aid (when (map? form) (get-in form [:activity :history :id]))]
-            (if (and aid (not (contains? (:activity form) :rows)))
-              (let [history (query-one!
-                              db-info
-                              {:select [:*] :from [:activity_history] :where [:= :id (str aid)]})]
-                (assoc-in form
-                  [:activity :rows]
-                  (or (when history (:rows (activity-history-page db-info history {}))) [])))
-              form)))
-        forms))
-
 (defn- row->iteration
-  [db-info row]
+  [row]
   ;; DB column is `tool_calls`; the in-memory iteration key stays `:forms`
   ;; (the executed tool-call records the resume/replay path reads).
   (let [forms-vec (<-blob (:tool_calls row))]
@@ -5661,7 +5716,7 @@
       (assoc :code (:code row))
 
       (some? forms-vec)
-      (assoc :forms (with-activity-rows db-info forms-vec))
+      (assoc :forms forms-vec)
 
       (:council_input row)
       (assoc :council-input (<-blob (:council_input row)))
@@ -5769,15 +5824,16 @@
         traces
         (when (seq rows) (routing-events-for-state db-info state-id-s))]
 
-    (mapv (fn [row]
-            (let [trace
-                  (get traces (:id row) [])
+    (with-activity-rows db-info
+                        (mapv (fn [row]
+                                (let [trace
+                                      (get traces (:id row) [])
 
-                  routing
-                  (row-routing-summary row trace)]
+                                      routing
+                                      (row-routing-summary row trace)]
 
-              (attach-routing (row->iteration db-info row) routing)))
-          rows)))
+                                  (attach-routing (row->iteration row) routing)))
+                              rows))))
 
 (defn db-list-session-turn-iterations
   "List the latest state's iterations for canonical turn soul `session-turn-id`."
@@ -5831,14 +5887,17 @@
                          ids)))
                    (catch SQLException _ {})))]
 
-        (reduce (fn [result row]
-                  (update result
-                          (:turn_id row)
-                          conj
-                          (attach-routing (row->iteration db-info row)
-                                          (row-routing-summary row (get traces (:id row) [])))))
+        (reduce (fn [result [row iteration]]
+                  (update result (:turn_id row) conj iteration))
                 (zipmap ids (repeat []))
-                rows))
+                (map vector
+                     rows
+                     (with-activity-rows
+                       db-info
+                       (mapv (fn [row]
+                               (attach-routing (row->iteration row)
+                                               (row-routing-summary row (get traces (:id row) []))))
+                             rows)))))
       {})))
 
 (def ^:private iteration-read-batch-size
@@ -5904,18 +5963,21 @@
   [db-info iteration-ids]
   (let [ids (into [] (comp (keep ->ref) (distinct)) iteration-ids)]
     (if (and (ds db-info) (seq ids))
-      (reduce (fn [result batch]
-                (reduce (fn [result row]
-                          (assoc result (:id row) (row->iteration db-info row)))
-                        result
-                        (query-sql!
-                          db-info
-                          (into [(str "SELECT i.* FROM session_turn_iteration i WHERE i.id IN ("
-                                      (str/join "," (repeat (count batch) "?"))
-                                      ")")]
-                                batch))))
-              {}
-              (partition-all iteration-read-batch-size ids))
+      (let [by-id (reduce (fn [result batch]
+                            (reduce
+                              (fn [result row]
+                                (assoc result (:id row) (row->iteration row)))
+                              result
+                              (query-sql!
+                                db-info
+                                (into [(str
+                                         "SELECT i.* FROM session_turn_iteration i WHERE i.id IN ("
+                                         (str/join "," (repeat (count batch) "?"))
+                                         ")")]
+                                      batch))))
+                          {}
+                          (partition-all iteration-read-batch-size ids))]
+        (zipmap (keys by-id) (with-activity-rows db-info (vals by-id))))
       {})))
 
 (defn db-latest-turn-request-usage
