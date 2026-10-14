@@ -62,6 +62,11 @@
 
 (defonce ^:private pending (atom {}))
 
+(def ^:dynamic *block-owner*
+  "The current block's owner token: an atom that becomes true when execution ends.
+   Host callbacks inherit this binding. Views keep it until they close."
+  nil)
+
 (defonce ^:private secrets (atom {}))
 
 ;; Secret vault
@@ -1878,6 +1883,7 @@
          ;; gateway thread, which holds no artifacts of its own, and the record still
          ;; belongs to the block whose run produced it.
          :attachment-sink mpl-capture/*attachment-sink*
+         :block-owner *block-owner*
          ;; The eval wall of the block that opened it, LIFTED for as long as the
          ;; view is open. A run SHOWING its work is never billed a deadline: a CI
          ;; run takes fifteen minutes and the Python watchdog around the block
@@ -1914,6 +1920,8 @@
         (:view entry)]
 
     (locking cell
+      ;; A close may win while this patch waits for the view lock.
+      (live-entry! view-id)
       (let [applied
             (-> (normalize-patch @cell patch)
                 materializer/redact-presentation
@@ -2279,51 +2287,45 @@
         @pending))
 
 (defn adopt-open-views!
-  "Give every live view still open and not yet homed the iteration `home` — where
-   a close arriving after its block is gone files its artifact. Returns the ids
-   it stamped, and is called when a block ENDS, the moment that id exists.
-
-   A view OUTLIVES the block that opened it: the call returns while the run keeps
-   painting, and the human's stop can arrive an hour later on a gateway thread.
-   That block's artifact collector was drained the instant it returned, so a close
-   reaching only the collector files a row nobody will ever read — the picture the
-   human watched, lost at the moment they stopped it."
-  [home]
-  (if-not home
+  "Give ended blocks' unhomed live views in `session-id` the iteration `home`.
+   Running blocks and other sessions keep their own views."
+  [session-id home]
+  (if-not (and (trimmed session-id) home)
     []
-    (let [ids (into #{}
-                    (keep (fn [[view-id entry]]
-                            (when (and (= :live (:kind entry)) (nil? (:late-home entry))) view-id)))
-                    @pending)]
-      (when (seq ids)
-        (swap! pending (fn [m]
-                         (reduce (fn [acc view-id]
-                                   (cond-> acc
-                                     (and (contains? acc view-id)
-                                          (nil? (:late-home (get acc view-id))))
-                                     (assoc-in [view-id :late-home] home)))
-                                 m
-                                 ids))))
-      (vec (sort ids)))))
+    (let [eligible?
+          (fn [entry]
+            (and (= :live (:kind entry))
+                 (= session-id (:session-id entry))
+                 (nil? (:late-home entry))
+                 (or (nil? (:block-owner entry)) @(:block-owner entry))))
+
+          [before after]
+          (swap-vals! pending
+                      (fn [entries]
+                        (into {}
+                              (map (fn [[id entry]]
+                                     [id
+                                      (if (eligible? entry) (assoc entry :late-home home) entry)]))
+                              entries)))]
+
+      (->> before
+           (keep (fn [[id entry]]
+                   (when (and (eligible? entry) (= home (:late-home (get after id)))) id)))
+           sort
+           vec))))
 
 (defn close-abandoned!
-  "Close every live view open right now whose id is NOT in `known`, with
-   `ending`. Returns the VERDICT of each one, oldest first — the finished picture
-   included, because the run that would have read it is the one that died.
-
-   The run that opens a view is the one that ends it — `with vis.live` closes on
-   the way out. A block killed at its eval wall or cancelled mid-flight reaches
-   no such line: its frames unwind through a context that no longer accepts host
-   calls, so the close never arrives and the view stays open with nothing left to
-   patch it — a pane painting a picture that will never move again, over a Stop
-   nobody is listening to. That end, and only that end, sweeps: a view
-   deliberately carried from one block to the next is `known` and stays open."
-  [known ending]
-  (let [known (set known)]
-    (into []
-          (keep (fn [view-id]
-                  (close-live! view-id ending)))
-          (remove known (mapv :id (live-views))))))
+  "Close live views opened by `block-owner` with `ending`.
+   A block's failure never closes another block's view, including carried views."
+  [block-owner ending]
+  (if-not block-owner
+    []
+    (->> @pending
+         vals
+         (filter #(and (= :live (:kind %)) (identical? block-owner (:block-owner %))))
+         (sort-by (juxt :created-at :id))
+         (keep #(close-live! (:id %) ending))
+         vec)))
 
 (defn pending-request
   "The pending request `request-id`, as a view, or nil."
@@ -2830,10 +2832,14 @@
       ;; the human's interrupt raced is not a spec problem, and an author must
       ;; not have to tell those two apart by reading a message.
       (let [view-id (live-handle-id opts op)]
-        (if (live-view view-id)
-          {:view-id view-id
-           :is-open true
-           :seq (:seq (patch-live! view-id (spec<-json (get opts "patch"))))}
+        (if-let [entry (live-entry view-id)]
+          (let [cell (:view entry)]
+            (locking cell
+              (if (live-entry view-id)
+                {:view-id view-id
+                 :is-open true
+                 :seq (:seq (patch-live! view-id (spec<-json (get opts "patch"))))}
+                (live-ended view-id))))
           (live-ended view-id)))
 
       "state"

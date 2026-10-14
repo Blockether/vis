@@ -9781,8 +9781,8 @@
                                   (expect (contains? @env-cache k))
                                   (finally (swap! env-cache dissoc k)))))))
 
-(def ^:private reap-idle-envs! (deref #'loop-env/reap-idle-envs!))
 
+(def ^:private reap-idle-envs! (deref #'loop-env/reap-idle-envs!))
 (def ^:private memory-pressure? (deref #'loop-env/memory-pressure?))
 
 (defdescribe env-memory-pressure-test
@@ -11756,6 +11756,116 @@
                 (expect (some? (:activity-id owner)))))
             (finally (when @opened (hi/close-live! @opened))
                      (loop-env/dispose-environment! environment))))))))
+
+(defdescribe
+  live-view-cross-session-cleanup-boundary-test
+  ;; Regression: B's failed block closed a view that A opened after B started.
+  (it
+    "keeps A running and files only B's view when overlapping Python blocks fail"
+    (with-redefs-fn {live-views-dir (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
+                                                               (str "vis-views-" (random-uuid))))}
+      (fn []
+        (tpc/with-own
+          [a-pc {}]
+          (tpc/with-own
+            [b-pc {}]
+            (let [b-started
+                  (promise)
+
+                  a-opened
+                  (promise)
+
+                  release-a
+                  (promise)
+
+                  a-work
+                  (atom nil)
+
+                  b-work
+                  (atom nil)
+
+                  before
+                  (hi/open-live-ids)
+
+                  a-code
+                  (str/replace (open-a-view) "vis-test-wall" "session-A")
+
+                  b-code
+                  (-> (open-a-view)
+                      (str/replace "vis-test-wall" "session-B")
+                      (str/replace "Watching" "B view"))]
+
+              (python-host/install-sync-tools!
+                a-pc
+                {"__vis_host_live__" (fn [envelope]
+                                       (let [answer (hi/live-json! envelope)]
+                                         (when (= "open" (get (json/read-json envelope) "op"))
+                                           (deliver a-opened
+                                                    (get (json/read-json answer) "view_id")))
+                                         answer))
+                 "__vis_test_wait__" (fn []
+                                       (deref release-a 10000 nil))}
+                (fn [pc name]
+                  (python-runtime/install-sync-tool! pc name)))
+              (python-host/install-sync-tools! b-pc
+                                               {"__vis_host_live__" hi/live-json!
+                                                "__vis_test_wait__" (fn []
+                                                                      (deliver b-started true)
+                                                                      (deref a-opened 10000 nil))}
+                                               (fn [pc name]
+                                                 (python-runtime/install-sync-tool! pc name)))
+              (try
+                (reset! b-work (future (#'python-exec/run-python-code
+                                        b-pc
+                                        (str "__vis_test_wait__()\n"
+                                             b-code
+                                             "raise RuntimeError('B deliberate failure')\n")
+                                        :env
+                                        {:session-id "session-B"})))
+                (expect (= true (deref b-started 10000 ::timeout)))
+                (reset! a-work
+                  (future
+                    (#'python-exec/run-python-code
+                     a-pc
+                     (str
+                       a-code
+                       "__vis_test_wait__()\n"
+                       "state = json.loads(__vis_host_live__(json.dumps({'op': 'state', 'view_id': answer['view_id']})))\n"
+                       "assert state['is_open']\n")
+                     :env
+                     {:session-id "session-A"})))
+                (let [a-id
+                      (deref a-opened 10000 ::timeout)
+
+                      b-result
+                      (deref @b-work 10000 ::timeout)]
+
+                  (expect (not= ::timeout a-id))
+                  (expect (not= ::timeout b-result))
+                  (expect (some? (:error b-result)))
+                  (expect (= ["session-B"] (mapv :session-id (:attachments b-result))))
+                  (expect (str/includes? (str (:stdout b-result)) "# B view"))
+                  (expect (not (str/includes? (str (:stdout b-result)) "# Watching")))
+                  (expect (some? (hi/live-view a-id)))
+                  (expect (empty? (hi/adopt-open-views! "session-A" "A-running")))
+                  (expect (empty? (hi/adopt-open-views! "session-B" "B-iteration")))
+                  (deliver release-a true)
+                  (let [a-result (deref @a-work 10000 ::timeout)]
+                    (expect (not= ::timeout a-result))
+                    (expect (nil? (:error a-result)))
+                    (expect (empty? (:attachments a-result)))
+                    (expect (= [a-id] (hi/adopt-open-views! "session-A" "A-iteration")))))
+                (finally (deliver release-a true)
+                         (deliver a-opened nil)
+                         (doseq [work
+                                 [@a-work @b-work]
+
+                                 :when work]
+
+                           (deref work 10000 nil)
+                           (future-cancel work))
+                         (doseq [id (remove before (hi/open-live-ids))]
+                           (hi/close-live! id)))))))))))
 
 (defn- cancelled-watching-block
   "The same block as [[watching-block]], stopped the way a person's Cancel stops

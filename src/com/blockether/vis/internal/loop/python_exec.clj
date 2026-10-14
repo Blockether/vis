@@ -366,10 +366,9 @@
         {eval-deadline :deadline eval-park :park eval-hold :hold}
         (rt/parkable-wall (util/now-ms) timeout-ms)
 
-        ;; The views already open when this block started. Anything the block
-        ;; opens on top of them is the block's own, and dies with it.
-        views-before
-        (view/open-live-ids)
+        ;; Host callbacks inherit this token. Only this block can abandon its views.
+        block-owner
+        (atom false)
 
         ;; A view the block opened and never closed. Sweeping it is the run's last
         ;; act, so a wall or a cancel cannot leave a pane painting a picture that
@@ -384,7 +383,7 @@
         (fn [ending]
           (let [sink (atom [])]
             (try (when-let [verdicts (seq (binding [mpl-capture/*attachment-sink* sink]
-                                            (view/close-abandoned! views-before ending)))]
+                                            (view/close-abandoned! block-owner ending)))]
                    {:verdicts (vec verdicts) :attachments (mpl-capture/drain sink)})
                  (catch Throwable t
                    (tel/log! {:level :warn
@@ -427,7 +426,10 @@
                           attachment-reader
 
                           mpl-capture/*attachment-reinspection-sink*
-                          reinspection-sink]
+                          reinspection-sink
+
+                          view/*block-owner*
+                          block-owner]
 
                   ;; One persistent interpreter per session: globals (defs,
                   ;; imports, vars) carry across calls/turns NATURALLY.
@@ -483,90 +485,92 @@
             :error {:message "Python execution was interrupted" :type :vis/interrupted})
           raw-execution-result)]
 
-    (if (identical? timeout-sentinel execution-result)
-      ;; Eval timeout: interrupt the guest at a bytecode boundary. A guest the
-      ;; exception cannot reach retires its environment before the Java interrupt.
-      (let [retired-before?
-            (some? (env/retired-context-error env))
+    (try
+      (if (identical? timeout-sentinel execution-result)
+        ;; Eval timeout: interrupt the guest at a bytecode boundary. A guest the
+        ;; exception cannot reach retires its environment before the Java interrupt.
+        (let [retired-before?
+              (some? (env/retired-context-error env))
 
-            landed?
-            (interrupt-block! python-context exec-future env :await-unwind? true)
+              landed?
+              (interrupt-block! python-context exec-future env :await-unwind? true)
 
-            retired?
-            (some? (env/retired-context-error env))
+              retired?
+              (some? (env/retired-context-error env))
 
-            ;; The unwinding guest cannot reach the host any more, so its `with` never
-            ;; closes: the wall that killed the block ends its views too, and the model
-            ;; still reads the picture they held.
-            ;;
-            ;; What the block PRINTED before the wall is real work — progress lines of
-            ;; a fetch loop, results already computed. An interrupted block unwinds
-            ;; through its own outcome and hands that capture buffer back, so the
-            ;; envelope is never a bare `Timeout` and nothing else: that is
-            ;; unactionable, and the model re-runs the whole block blind.
-            out
-            (when (or landed? retired?) (unwound-stdout python-context exec-future))
-
-            ;; A block parked in native code did not respond to the stop, so its
-            ;; worker was killed. The turn goes on in a fresh interpreter that the
-            ;; next block builds. Only this block's own retirement renews, never a
-            ;; cancelled turn's, and only after the old worker's stdout was drained
-            ;; above, because renewal disposes it.
-            restarted?
-            (and retired?
-                 (not retired-before?)
-                 (not (cancellation/cancelled? cancel-token))
-                 (env/renew-python-sandbox! env))
-
-            envelope
-            (cond-> {:lru {}
-                     :error (timeout-error timeout-ms
-                                           (cond restarted? :restarted
-                                                 retired? :retired
-                                                 :else :kept))
-                     :timeout? true}
+              ;; The unwinding guest cannot reach the host any more, so its `with` never
+              ;; closes: the wall that killed the block ends its views too, and the model
+              ;; still reads the picture they held.
+              ;;
+              ;; What the block PRINTED before the wall is real work — progress lines of
+              ;; a fetch loop, results already computed. An interrupted block unwinds
+              ;; through its own outcome and hands that capture buffer back, so the
+              ;; envelope is never a bare `Timeout` and nothing else: that is
+              ;; unactionable, and the model re-runs the whole block blind.
               out
-              (assoc :stdout out))
+              (when (or landed? retired?) (unwound-stdout python-context exec-future))
 
-            activity-envelope
-            (activity-block/settle! activity-block envelope)
+              ;; A block parked in native code did not respond to the stop, so its
+              ;; worker was killed. The turn goes on in a fresh interpreter that the
+              ;; next block builds. Only this block's own retirement renews, never a
+              ;; cancelled turn's, and only after the old worker's stdout was drained
+              ;; above, because renewal disposes it.
+              restarted?
+              (and retired?
+                   (not retired-before?)
+                   (not (cancellation/cancelled? cancel-token))
+                   (env/renew-python-sandbox! env))
 
-            swept
-            (sweep-abandoned! {:reason :timeout
-                               :error (str "the run watching this view was stopped at its "
-                                           (/ timeout-ms 1000)
-                                           "s wall")})]
+              envelope
+              (cond-> {:lru {}
+                       :error (timeout-error timeout-ms
+                                             (cond restarted? :restarted
+                                                   retired? :retired
+                                                   :else :kept))
+                       :timeout? true}
+                out
+                (assoc :stdout out))
 
-        (envelope-with-settled-views activity-envelope swept))
-      (let [;; A cancel unwinds the same way a wall does. An ordinary Python
-            ;; exception does NOT — `with vis.live` closes on its way out — so this
-            ;; finds nothing to sweep and says nothing.
-            ;;
-            ;; Cancellation may interrupt the host wait before the guest has returned
-            ;; its outcome. Wait for that unwind exactly as the timeout path does, or
-            ;; output printed before Cancel disappears from the transcript.
-            interrupted?
-            (= :vis/interrupted (get-in execution-result [:error :type]))
+              activity-envelope
+              (activity-block/settle! activity-block envelope)
 
-            out
-            (when (and interrupted? (str/blank? (str (:stdout execution-result))))
-              (unwound-stdout python-context exec-future))
+              swept
+              (sweep-abandoned! {:reason :timeout
+                                 :error (str "the run watching this view was stopped at its "
+                                             (/ timeout-ms 1000)
+                                             "s wall")})]
 
-            recovered-result
-            (cond-> execution-result
+          (envelope-with-settled-views activity-envelope swept))
+        (let [;; A cancel unwinds the same way a wall does. An ordinary Python
+              ;; exception does NOT — `with vis.live` closes on its way out — so this
+              ;; finds nothing to sweep and says nothing.
+              ;;
+              ;; Cancellation may interrupt the host wait before the guest has returned
+              ;; its outcome. Wait for that unwind exactly as the timeout path does, or
+              ;; output printed before Cancel disappears from the transcript.
+              interrupted?
+              (= :vis/interrupted (get-in execution-result [:error :type]))
+
               out
-              (assoc :stdout out))
+              (when (and interrupted? (str/blank? (str (:stdout execution-result))))
+                (unwound-stdout python-context exec-future))
 
-            activity-envelope
-            (activity-block/settle! activity-block recovered-result)
+              recovered-result
+              (cond-> execution-result
+                out
+                (assoc :stdout out))
 
-            swept
-            (when (:error recovered-result)
-              (sweep-abandoned! {:reason :failed
-                                 :error (or (:message (:error recovered-result))
-                                            "the run that opened this view ended")}))]
+              activity-envelope
+              (activity-block/settle! activity-block recovered-result)
 
-        (envelope-with-settled-views activity-envelope swept)))))
+              swept
+              (when (:error recovered-result)
+                (sweep-abandoned! {:reason :failed
+                                   :error (or (:message (:error recovered-result))
+                                              "the run that opened this view ended")}))]
+
+          (envelope-with-settled-views activity-envelope swept)))
+      (finally (reset! block-owner true)))))
 
 (defn- run-with-timing
   [python-context code _sandbox-ns timeout-ms start-time tool-event-fn env]

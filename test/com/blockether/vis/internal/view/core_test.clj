@@ -2480,7 +2480,7 @@
                 ;; The block ENDS: its iteration is nameable now, and from here the
                 ;; record belongs to it.
                 adopted
-                (hi/adopt-open-views! "iteration-7")
+                (hi/adopt-open-views! (:session-id view) "iteration-7")
 
                 result
                 (try (hi/set-late-artifact-filer! (fn [home att]
@@ -2615,3 +2615,122 @@
         (expect (str/includes? (live-refusal #(hi/live-dispatch
                                                 (merge {"op" "state" "view_id" "unused"} options)))
                                "timeout_ms")))))
+
+(defdescribe
+  live-view-block-ownership-test
+  ;; Regression: a failed block closed another session's view and captured its artifact.
+  (it
+    "closes only its own views on failure or timeout, even within one session"
+    (doseq [a-session
+            ["session-A" "session-B"]
+
+            reason
+            [:failed :timeout]]
+
+      (recorded
+        (fn []
+          (let [a-owner
+                (atom false)
+
+                b-owner
+                (atom false)
+
+                a-sink
+                (atom [])
+
+                b-sink
+                (atom [])
+
+                spec
+                {:title "Watching" :nodes [{:id "status" :type "status" :text "Watching"}]}
+
+                a
+                (binding [hi/*block-owner*
+                          a-owner
+
+                          mpl/*attachment-sink*
+                          a-sink]
+
+                  (hi/open-live! (assoc spec :session-id a-session)))
+
+                b
+                (binding [hi/*block-owner*
+                          b-owner
+
+                          mpl/*attachment-sink*
+                          b-sink]
+
+                  (hi/open-live! (assoc spec :session-id "session-B")))]
+
+            (try (let [swept (binding [mpl/*attachment-sink* b-sink]
+                               (hi/close-abandoned! b-owner {:reason reason :error "B stopped"}))]
+                   (expect (= [(:id b)] (mapv :view-id swept)))
+                   (expect (= [reason] (mapv :reason swept)))
+                   (expect (some? (hi/live-view (:id a))))
+                   (expect (nil? (hi/live-view (:id b))))
+                   (expect (empty? @a-sink))
+                   (expect (= [(:id b)] (mapv :view-id @b-sink)))
+                   (expect (empty? (hi/close-abandoned! nil {:reason reason}))))
+                 (finally (hi/close-live! (:id a)) (hi/close-live! (:id b)))))))))
+  (it "adopts only ended blocks in the owning session and never changes their home"
+      (recorded
+        (fn []
+          (let [a-owner
+                (atom false)
+
+                b-owner
+                (atom true)
+
+                spec
+                {:title "Watching" :nodes [{:id "status" :type "status" :text "Watching"}]}
+
+                a
+                (binding [hi/*block-owner* a-owner]
+                  (hi/open-live! (assoc spec :session-id "session-A")))
+
+                b
+                (binding [hi/*block-owner* b-owner]
+                  (hi/open-live! (assoc spec :session-id "session-B")))]
+
+            (try (expect (empty? (hi/adopt-open-views! "session-A" "A-iteration")))
+                 (expect (= [(:id b)] (hi/adopt-open-views! "session-B" "B-iteration")))
+                 (reset! a-owner true)
+                 (expect (empty? (hi/adopt-open-views! "session-B" "B-next")))
+                 (expect (= [(:id a)] (hi/adopt-open-views! "session-A" "A-iteration")))
+                 (expect (empty? (hi/adopt-open-views! "session-A" "A-next")))
+                 (finally (hi/close-live! (:id a)) (hi/close-live! (:id b)))))))))
+
+(defdescribe
+  live-patch-close-race-test
+  (it "returns the ended verdict when close wins after the first registry lookup"
+      (recorded
+        (fn []
+          (let [spec
+                (live-spec {:id "status" :type "status" :text "Watching"})
+
+                view
+                (hi/open-live! spec)
+
+                lookup
+                #'hi/live-entry
+
+                original
+                @lookup
+
+                close-once
+                (atom true)]
+
+            (try
+              (let [answer
+                    (with-redefs-fn {lookup
+                                     (fn [id]
+                                       (let [entry (original id)]
+                                         (when (and entry (compare-and-set! close-once true false))
+                                           (hi/close-live! id {:reason :failed :error "B failed"}))
+                                         entry))}
+                      #(binding [extension/*current-environment* {:session-id (:session-id spec)}]
+                         (hi/live-dispatch
+                           {"op" "patch" "view_id" (:id view) "patch" {"ops" []}})))]
+                (expect (false? (:is-open answer)))
+                (expect (= "failed" (get-in answer [:result :reason]))))
+              (finally (hi/close-live! (:id view)))))))))

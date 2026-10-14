@@ -3270,7 +3270,7 @@
           ;; A view still open when the block ends outlives the collector that
           ;; block was draining: from here on its record belongs to the
           ;; ITERATION, which is only nameable now.
-          _ (view/adopt-open-views! iteration-id)
+          _ (view/adopt-open-views! (:session-id environment) iteration-id)
           ;; Context end-of-iter bookkeeping.
           ctx-atom-ref (:ctx-atom environment)
           _ (when ctx-atom-ref
