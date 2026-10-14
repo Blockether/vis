@@ -95,9 +95,9 @@ Global configuration in `~/.vis` accepts `config.yml`, `config.yaml`, `vis.yml` 
 project root accepts `vis.yml` or `vis.yaml`. The `<project>/.vis` directory accepts `config.yml` or
 `config.yaml`. The project is the directory where you start `vis-agent`.
 
-Keys are `snake_case` strings. Boolean keys start with `is_`. Unknown keys are
-rejected, and an invalid file prints every offending path and exits with status
-2 instead of starting:
+Keys are `snake_case` strings. Most boolean keys start with `is_`, but some do not, for example
+`enabled` and `tls_strict`. Vis refuses unknown keys. An invalid file prints each wrong path, and
+Vis exits with status 2 instead of starting:
 
 ```text
 Invalid Vis configuration in /project/.vis/config.yml:
@@ -883,9 +883,6 @@ If an extension fails to load, its group stays in the list and shows the
 error. If a reload fails after an earlier load, Vis keeps using the earlier
 version. The group then says so. Your stored values do not change when an
 extension fails, goes away or loads again.
-
-If the gateway runs an older Vis, the reload shows a message. Update Vis on that
-machine to reload extensions.
 
 ## Session titling
 

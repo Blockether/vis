@@ -84,7 +84,7 @@ clojure -M:test-native
 ```
 
 To test another built image, set `VIS_NATIVE_BIN` to its path. Keep its matching
-Python sidecar available too. These tests execute the binary. Passing JVM tests
+embedded Python runtime (`vis-agent-python/`) beside it. These tests execute the binary. Passing JVM tests
 or reaching the end of `native-image` does not prove that tools, HTTP or Python
 work inside it.
 
@@ -103,7 +103,8 @@ HOME="$VIS_TEST_HOME" target/release-bundle/vis-agent \
 ```
 
 The staging helper renames `target/vis` to `vis-agent-native` and adds the
-`vis-agent` launcher, build stamp, Python sidecar and installer. Ship these
+`vis-agent` launcher, build stamp, embedded Python runtime
+(`vis-agent-python/`) and installer. Ship these
 files together. The terminal client is a separate release component. This
 engine bundle is enough for gateway and SDK stdio use, not a complete TUI
 installation.
