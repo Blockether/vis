@@ -1035,6 +1035,13 @@
       (let [root (get (pyx/host-doors nil "test" nil) "__vis_host_workspace_root__")]
         (expect (= :session-not-bound
                    (try (root) (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
+  ;; Regression, #379: py tools read `python.environment` to choose the shared interpreter.
+  (it "answers the project's python.environment through vis.python_environment"
+      (let [environment (get (pyx/host-doors nil "test" nil) "__vis_host_python_environment__")]
+        (doseq [[python expected] [[nil "project"] [{"environment" "project"} "project"]
+                                   [{"environment" "shared"} "shared"]]]
+          (with-redefs [config/load-config-raw (constantly (if python {"python" python} {}))]
+            (expect (= expected (environment)))))))
   (it
     "reads and searches sessions through the canonical doors with the introspection toggle OFF"
     (let [store

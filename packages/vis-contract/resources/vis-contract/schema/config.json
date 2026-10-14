@@ -830,7 +830,7 @@
             "shared"
           ],
           "default": "project",
-          "description": "Environment for the uv projects of project extensions inside the project tree. project uses each project's own environment, normally .venv. shared prepares them like vis-agent python --shared uv sync and loads them from Vis shared packages."
+          "description": "Environment for project Python: the uv projects of project extensions inside the project tree and the Python language tools. project uses each project's own environment, normally .venv. shared prepares extension projects like vis-agent python --shared uv sync, loads them from Vis shared packages and runs the Python language tools with vis-agent python --shared."
         },
         "source_paths": {
           "type": "array",

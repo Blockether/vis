@@ -57,6 +57,10 @@ class Host(Protocol):
         """Read the active session working copy, or the outside process directory."""
         ...
 
+    def python_environment(self) -> str:
+        """Read the project's `python.environment`: `project` or `shared`."""
+        ...
+
     def setting_declaration(self, spec: Mapping[str, Any]) -> Mapping[str, Any]:
         """Validate a declaration and fill defaults from the contract schema."""
         ...
@@ -3339,6 +3343,19 @@ def workspace_root() -> Path:
     session fails instead of silently using the gateway process directory.
     """
     return Path(_host.workspace_root())
+
+
+def python_environment() -> Literal["project", "shared"]:
+    """Return the Python environment that the session's project selects.
+
+    The value comes from `python.environment` in the merged configuration.
+    `shared` means that project Python runs like `vis-agent python --shared`,
+    with Vis shared packages and without the project's `.venv`. `project`, the
+    default, means that the project's own environment applies. Outside Vis, the
+    value is `project`.
+    """
+    value = _host.python_environment()
+    return "shared" if value == "shared" else "project"
 
 
 def log(level, msg):

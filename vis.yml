@@ -100,7 +100,7 @@ extensions:
     version: "1.15.3"
   vis-lang-python:
     source: https://github.com/Blockether/vis-lang-python
-    version: "1.10.0"
+    version: "1.11.0"
   vis-spel:
     source: https://github.com/Blockether/spel
     subdirectory: extensions/vis-spel

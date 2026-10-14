@@ -622,6 +622,11 @@
                   (throw (ex-info "vis.workspace_root needs a session workspace"
                                   {:error :workspace-root-unavailable}))))))
     (put! g
+          "__vis_host_python_environment__"
+          (fn []
+            ;; #379: tools that start project Python follow the project's `python.environment`.
+            (if (python-runtime/shared-environment?) "shared" "project")))
+    (put! g
           "__vis_host_read_session__"
           (fn [target]
             (session-read "read_session" introspection/read-session target)))

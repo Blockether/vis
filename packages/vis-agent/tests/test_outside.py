@@ -105,6 +105,11 @@ def test_workspace_root_tracks_outside_process_directory(tmp_path, monkeypatch):
     assert isinstance(vis.workspace_root(), Path)
 
 
+def test_python_environment_defaults_to_project_outside_vis():
+    # Regression, #379: py tools read this value to choose the shared interpreter.
+    assert vis.python_environment() == "project"
+
+
 @pytest.mark.parametrize("name", ["jailed_shell", "council_wake"])
 def test_session_bound_operations_refuse_without_the_host(name):
     with pytest.raises(_outside.Refused, match=f"vis\\.{name}"):

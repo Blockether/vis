@@ -693,6 +693,10 @@ import `~/.vis/python/packages`. Vis does not create or read `.venv` for them. I
 packages and global extensions keep their own environments. Run `/reload` after you change the
 value. See [Use shared packages for project extensions](extension-development.md#use-shared-packages-for-project-extensions).
 
+The Python language tools also follow this value. With `shared`, `py.run_tests` and `py.repl_start`
+run project Python with `vis-agent python --shared`, and they do not use the project's `.venv`.
+Extensions read the value with [`vis.python_environment()`](extension-api.md#python-environment).
+
 ## MCP servers
 
 Servers you add from the UI, the API or `vis-agent gateway mcp` are written to

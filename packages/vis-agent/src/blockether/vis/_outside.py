@@ -106,6 +106,11 @@ def workspace_root():
     return str(Path.cwd())
 
 
+def python_environment():
+    """Use the project environment when no Vis session owns this call."""
+    return "project"
+
+
 def setting_declaration(spec):
     """Use the package's own JSON Schemas for outside-host declarations."""
     from ._contracts import definition, problems, validate
@@ -1431,6 +1436,7 @@ def _live_handle(held, envelope, op, view_id):
 
 _IMPLEMENTATIONS = {
     "workspace_root": workspace_root,
+    "python_environment": python_environment,
     "setting_declaration": setting_declaration,
     "setting": setting,
     "state_get": state_get,

@@ -37,7 +37,7 @@ design](extension-design.md) for authoring and test guidance.
 | Store or read files that a tool makes | [Attachments](#attachments) |
 | Read environment or add session context | [Environment](#environment) · [Session context](#session-context) |
 | Access files or start a process | [Filesystem and processes](#filesystem-and-processes) |
-| Resolve the active working copy | [Workspace root](#workspace-root) |
+| Resolve the active working copy | [Workspace root](#workspace-root) · [Python environment](#python-environment) |
 | Show forms, live work or register a provider | [Forms](human-input.md) · [Live views](live-views.md) · [Providers](provider-extensions.md) |
 
 ## Build metadata
@@ -1088,6 +1088,27 @@ directory. A hosted call without a bound session fails and does not use the gate
 
 It does not grant filesystem permissions. The model sandbox uses `project_root_path` for the
 corresponding root. Extension code uses this SDK function.
+
+## Python environment
+
+Call `vis.python_environment()` before your extension starts project Python, such as a test
+runner or a REPL. It returns `project` or `shared` from `python.environment` in the session
+project's [configuration](configuration.md#python-extension-environment).
+
+```python
+import shutil
+
+import blockether.vis.extension as vis
+
+if vis.python_environment() == "shared":
+    command = [shutil.which("vis-agent"), "python", "--shared", "-m", "pytest"]
+else:
+    command = ["uv", "run", "python", "-m", "pytest"]
+```
+
+With `shared`, start Python with `vis-agent python --shared`. That interpreter imports Vis shared
+packages and does not use the project's `.venv`. With `project`, the default, use the project's own
+environment. Outside a Vis process, the function returns `project`.
 
 ## Find and read sessions
 
