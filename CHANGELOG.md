@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.46] - 2026-10-14
+
+### Changed
+- Activity search stores at most 4096 characters of plain text for each tool call. One store
+  held 5.8 GB of search text before. Older stores are rewritten once when they open.
+- Each iteration keeps one copy of its Activity rows, not two. Turns with many iterations read
+  their history in two queries.
+
+### Fixed
+- `vis-agent python` applies the `python.tls_strict` setting (#383).
+- Links in an HTML attachment open outside the Companion frame (#382).
+- Extension hooks from before `/reload` call the reloaded extension. Before, they failed until
+  the session closed.
+- A failed speech model install names each source and its error.
+- Idle sandbox stops and errors that the caller receives no longer show as gateway warnings.
+
 ## [v0.2.45] - 2026-10-14
 
 ### Fixed
