@@ -386,7 +386,7 @@
   (let [lookup
         #(io/file (str/trim (run-uv! project [(bundled-uv!) "workspace" "dir" "--offline"])))
 
-        workspace
+        ^File workspace
         (if-let [cache *workspace-dirs*]
           (or (get @cache (.getPath project))
               (let [dir (lookup)]
