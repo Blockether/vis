@@ -107,6 +107,12 @@ export function isPdfMedia(mime: string | undefined): boolean {
   return baseMedia(mime) === 'application/pdf';
 }
 
+/** A page that the app frames as markup: HTML or XHTML, not a PDF. */
+export function isMarkupMedia(mime: string | undefined): boolean {
+  const media = baseMedia(mime);
+  return media === 'text/html' || media === 'application/xhtml+xml';
+}
+
 /** The chip beside the name: what KIND of document this is. */
 export function docKindLabel(mime: string | undefined, filename?: string): string {
   if (isDiffMedia(mime)) return 'DIFF';

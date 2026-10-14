@@ -7,10 +7,13 @@ import {
   DocFrame,
   DocOverlay,
   DocPreview,
+  DOC_LINK_BRIDGE,
   DocStack,
   OverlayScreen,
+  docLinkHref,
   docSandbox,
   docStackSummary,
+  withDocLinkBridge,
 } from './DocArtifact';
 import { dismissTopLayer } from '../lib/edge-back';
 
@@ -74,6 +77,163 @@ describe('sandboxing', () => {
       expect(html).not.toContain('<button');
       expect(html).toContain('allow-scripts');
     }
+  });
+});
+
+// Regression for #382: a report's links to Jira, Gerrit or Jenkins did nothing. The
+// sandbox refuses popups and framing sites paint blank, so links leave through the app.
+describe('links in a framed page', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const latin1 = (bytes: Uint8Array) => new TextDecoder('latin1').decode(bytes);
+  const page = (source: string) => new TextEncoder().encode(source);
+
+  it('runs the link bridge first inside the head and keeps every other byte', () => {
+    const bytes = Uint8Array.from([...page('<!DOCTYPE html><html><head><title>caf'), 0xe9, ...page('</title>')]);
+    const out = latin1(withDocLinkBridge(bytes));
+    expect(out).toBe(
+      `<!DOCTYPE html><html><head><script>${DOC_LINK_BRIDGE}</script><title>caf\u00e9</title>`,
+    );
+  });
+
+  it('falls back to the html tag, then the doctype, then the start', () => {
+    expect(latin1(withDocLinkBridge(page('<html lang="en"><p>x')))).toMatch(/^<html lang="en"><script>/);
+    expect(latin1(withDocLinkBridge(page('<!doctype html><p>x')))).toMatch(/^<!doctype html><script>/);
+    expect(latin1(withDocLinkBridge(page('<p>x')))).toMatch(/^<script>/);
+    const bom = withDocLinkBridge(Uint8Array.from([0xef, 0xbb, 0xbf, ...page('<p>x')]));
+    expect([...bom.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(latin1(bom.subarray(3))).toMatch(/^<script>/);
+  });
+
+  it('leaves a UTF-16 page as it is', () => {
+    const bytes = Uint8Array.from([0xff, 0xfe, 0x3c, 0x00]);
+    expect(withDocLinkBridge(bytes)).toBe(bytes);
+  });
+
+  it('stays well-formed inside an XHTML page', () => {
+    expect(DOC_LINK_BRIDGE).not.toMatch(/[<&]/);
+  });
+
+  it('accepts only web and mail links', () => {
+    const open = (href: unknown) => docLinkHref({ type: 'vis-doc-open', href });
+    expect(open('https://example.org/a b')).toBe('https://example.org/a%20b');
+    expect(open('http://jenkins.example.com/job/1')).toBe('http://jenkins.example.com/job/1');
+    expect(open('mailto:team@example.com')).toBe('mailto:team@example.com');
+    for (const href of ['javascript:alert(1)', 'blob:https://app/x', 'data:text/html,x', 'file:///etc', 'x', 1]) {
+      expect(open(href)).toBeNull();
+    }
+    expect(docLinkHref({ type: 'other', href: 'https://example.org' })).toBeNull();
+    expect(docLinkHref('https://example.org')).toBeNull();
+    expect(docLinkHref(null)).toBeNull();
+  });
+
+  /** A frame of the test document with the bridge running in it, as in the artifact. */
+  function bridgedFrame() {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const win = frame.contentWindow as Window & typeof globalThis;
+    new Function('window', DOC_LINK_BRIDGE)(win);
+    const posted = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+    const link = (href: string, target?: string) => {
+      const anchor = win.document.createElement('a');
+      anchor.setAttribute('href', href);
+      if (target) anchor.setAttribute('target', target);
+      anchor.textContent = href;
+      win.document.body.append(anchor);
+      return anchor;
+    };
+    const click = (anchor: HTMLAnchorElement) => {
+      const event = new win.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+      anchor.dispatchEvent(event);
+      return event;
+    };
+    return { frame, win, posted, link, click };
+  }
+
+  it('sends a followed link to the app instead of loading it in the frame', () => {
+    const { frame, posted, link, click } = bridgedFrame();
+    for (const target of [undefined, '_blank']) {
+      posted.mockClear();
+      const event = click(link('https://example.org/', target));
+      expect(event.defaultPrevented).toBe(true);
+      expect(posted).toHaveBeenCalledWith({ type: 'vis-doc-open', href: 'https://example.org/' }, '*');
+    }
+    frame.remove();
+  });
+
+  it('keeps in-page anchors, script links and clicks the page handles itself', () => {
+    const { frame, posted, link, click } = bridgedFrame();
+    expect(click(link('#results')).defaultPrevented).toBe(false);
+    expect(click(link('javascript:void(0)')).defaultPrevented).toBe(false);
+    const handled = link('https://example.org/');
+    handled.addEventListener('click', (event) => event.preventDefault());
+    click(handled);
+    expect(posted).not.toHaveBeenCalled();
+    frame.remove();
+  });
+
+  it('sends window.open to the app and gives the page no window', () => {
+    const { frame, win, posted } = bridgedFrame();
+    expect(win.open('https://github.com/', '_blank')).toBeNull();
+    expect(posted).toHaveBeenCalledWith({ type: 'vis-doc-open', href: 'https://github.com/' }, '*');
+    frame.remove();
+  });
+
+  async function framedDoc() {
+    const made: Blob[] = [];
+    const create = URL.createObjectURL;
+    const revoke = URL.revokeObjectURL;
+    URL.createObjectURL = (blob: Blob | MediaSource) => `blob:bridged/${made.push(blob as Blob)}`;
+    const revoked = vi.fn();
+    URL.revokeObjectURL = revoked;
+    const source = '<!DOCTYPE html><head></head><a href="https://example.org">x</a>';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ blob: async () => new Blob([source], { type: 'text/html; charset=utf-8' }) }),
+    );
+    const view = render(<DocFrame url="blob:shared" mime="text/html" name="links.html" />);
+    const frame = view.container.querySelector('iframe') as HTMLIFrameElement;
+    await vi.waitFor(() => expect(frame.getAttribute('src')).toBe('blob:bridged/1'));
+    const opened = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const send = (data: unknown, source: Window | null = frame.contentWindow) =>
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', { data, source }));
+      });
+    const restore = () => {
+      view.unmount();
+      URL.createObjectURL = create;
+      URL.revokeObjectURL = revoke;
+    };
+    return { made, frame, opened, send, restore, revoked, source };
+  }
+
+  it('frames its own copy of the page with the bridge in it', async () => {
+    const { made, restore, revoked, source } = await framedDoc();
+    expect(made[0].type).toBe('text/html; charset=utf-8');
+    expect(made[0].size).toBe(new TextEncoder().encode(source).length + `<script>${DOC_LINK_BRIDGE}</script>`.length);
+    restore();
+    expect(revoked).toHaveBeenCalledWith('blob:bridged/1');
+  });
+
+  it('opens a link from its own frame as an external link', async () => {
+    const { opened, send, restore } = await framedDoc();
+    send({ type: 'vis-doc-open', href: 'https://example.org/' });
+    expect(opened).toHaveBeenCalledWith('https://example.org/', '_blank', 'noopener,noreferrer');
+    restore();
+  });
+
+  it('ignores other windows, other schemes and a page without a click', async () => {
+    const { opened, send, restore } = await framedDoc();
+    send({ type: 'vis-doc-open', href: 'https://example.org/' }, window);
+    send({ type: 'vis-doc-open', href: 'javascript:alert(1)' });
+    Object.defineProperty(navigator, 'userActivation', { value: { isActive: false }, configurable: true });
+    try {
+      send({ type: 'vis-doc-open', href: 'https://example.org/' });
+    } finally {
+      delete (navigator as { userActivation?: unknown }).userActivation;
+    }
+    expect(opened).not.toHaveBeenCalled();
+    restore();
   });
 });
 

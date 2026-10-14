@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
+import { memo, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import type { GatewayClient } from '../lib/gateway';
@@ -7,10 +7,12 @@ import {
   attachmentBytes,
   docKindLabel,
   isMarkdownMedia,
+  isMarkupMedia,
   isPdfMedia,
   isTextMedia,
   isDiffMedia,
 } from '../lib/artifacts';
+import { openExternalUrl } from '../lib/desktop';
 import { parseAnnotated } from '../lib/markdown-annotations';
 import type { IterationAttachment } from '../lib/types';
 import { type DocumentChrome, MarkdownArtifact } from './MarkdownArtifact';
@@ -120,7 +122,10 @@ export function OverlayScreen({
  * strip its own sandbox. It is never granted, to any media type. Two more
  * capabilities stay off because they act on the app AROUND the frame rather
  * than inside it: `allow-top-navigation`, which would yank the user off the
- * companion, and `allow-popups`, which would open windows behind it.
+ * companion, and `allow-popups`, which would open windows behind it. Its
+ * `allow-popups-to-escape-sandbox` partner is worse: an unsandboxed popup can
+ * open the page's own app-origin blob: URL, and it can rewrite the companion
+ * through `window.opener`. A link leaves through the app instead (`DOC_LINK_BRIDGE`).
  *
  * `allow-scripts` IS GRANTED, to every document and with nothing to press
  * first. The frame is the boundary; the capabilities withheld above are what
@@ -138,9 +143,86 @@ export function docSandbox(mime: string | undefined): string {
   return 'allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads';
 }
 
+/** The message a framed page sends when the reader follows one of its links. */
+const DOC_LINK_MESSAGE = 'vis-doc-open';
+
+/** The schemes a framed page can hand to the browser: web pages and mail. */
+const OPENABLE_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
+
+/**
+ * THE WAY OUT OF THE FRAME FOR A LINK (#382). A report links to Jira, Gerrit and
+ * Jenkins; inside the sandbox such a link either loads the site in the frame, where
+ * `X-Frame-Options` paints it blank, or asks for a popup that the sandbox refuses.
+ *
+ * This script runs first in the framed page. It takes each followed link and each
+ * `window.open`, and it posts the absolute URL to the app. `DocFrame` opens it as
+ * any external link: a new `noopener` tab, or the system browser on the desktop.
+ * A link to `#section` stays in the page, and a page that prevents the click keeps it.
+ *
+ * The source has no `<` and no `&`, so it is also well-formed inside an XHTML page.
+ */
+export const DOC_LINK_BRIDGE = `(function (w) {
+  var d = w.document;
+  function send(raw) {
+    var href;
+    try { href = new URL(String(raw), d.baseURI).href; } catch (e) { return false; }
+    if (!/^(https?|mailto):/i.test(href)) return false;
+    w.parent.postMessage({ type: '${DOC_LINK_MESSAGE}', href: href }, '*');
+    return true;
+  }
+  function claim(e) {
+    if (e.defaultPrevented || e.button > 1) return;
+    var a = e.target instanceof w.Element ? e.target.closest('a[href], area[href]') : null;
+    if (!a) return;
+    var raw = a.getAttribute('href');
+    if (!raw || raw.charAt(0) === '#') return;
+    if (send(raw)) e.preventDefault();
+  }
+  w.addEventListener('click', claim);
+  w.addEventListener('auxclick', claim);
+  w.open = function (raw) { if (raw) send(raw); return null; };
+})(window);`;
+
+/**
+ * The page's bytes with `DOC_LINK_BRIDGE` as its first script: just inside
+ * `<head>`, else inside `<html>`, else after the doctype, else at the start.
+ * The scan reads bytes, so the page keeps its own encoding. A UTF-16 page has
+ * no ASCII markup to find and stays as it is.
+ */
+export function withDocLinkBridge(bytes: Uint8Array): Uint8Array {
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return bytes;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return bytes;
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, 8192));
+  const tag =
+    /<head(\s[^>]*)?>/i.exec(head) ?? /<html(\s[^>]*)?>/i.exec(head) ?? /<!doctype[^>]*>/i.exec(head);
+  const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+  const at = tag ? tag.index + tag[0].length : bom;
+  const script = new TextEncoder().encode(`<script>${DOC_LINK_BRIDGE}</script>`);
+  const out = new Uint8Array(bytes.length + script.length);
+  out.set(bytes.subarray(0, at), 0);
+  out.set(script, at);
+  out.set(bytes.subarray(at), at + script.length);
+  return out;
+}
+
+/** The URL that a framed page asked the app to open, or null for any other message. */
+export function docLinkHref(data: unknown): string | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const { type, href } = data as { type?: unknown; href?: unknown };
+  if (type !== DOC_LINK_MESSAGE || typeof href !== 'string') return null;
+  try {
+    const url = new URL(href);
+    return OPENABLE_SCHEMES.has(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The artifact itself, quarantined: markup renders in its own opaque-origin
- * frame, with no gateway credential and no parent callback.
+ * frame, with no gateway credential and no parent callback. Its one message
+ * to the app is a followed link, which the app opens only from this frame,
+ * only for a web or mail URL and only while the reader's click is active.
  */
 export const DocFrame = memo(function DocFrame({
   url,
@@ -151,10 +233,51 @@ export const DocFrame = memo(function DocFrame({
   mime: string;
   name: string;
 }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const markup = isMarkupMedia(mime);
+  // A markup page is framed from its own copy that carries the link bridge.
+  // The shared attachment URL stays as it is for every other view.
+  const [bridged, setBridged] = useState<{ from: string; url: string } | null>(null);
+  useEffect(() => {
+    if (!markup) return;
+    let alive = true;
+    let made = '';
+    void (async () => {
+      try {
+        const page = await (await fetch(url)).blob();
+        const bytes = withDocLinkBridge(new Uint8Array(await page.arrayBuffer()));
+        if (!alive) return;
+        made = URL.createObjectURL(new Blob([bytes as BlobPart], { type: page.type || mime }));
+        setBridged({ from: url, url: made });
+      } catch {
+        // Without the bridge the page still paints; only its links stay inside the frame.
+        if (alive) setBridged({ from: url, url });
+      }
+    })();
+    return () => {
+      alive = false;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [markup, mime, url]);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const own = frame.current?.contentWindow;
+      if (!own || event.source !== own) return;
+      const href = docLinkHref(event.data);
+      if (!href) return;
+      // A page script without a click cannot open tabs or the system browser.
+      if (navigator.userActivation && !navigator.userActivation.isActive) return;
+      openExternalUrl(href);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+  const src = markup ? (bridged?.from === url ? bridged.url : undefined) : url;
   return (
     <iframe
+      ref={frame}
       title={name}
-      src={url}
+      src={src}
       sandbox={docSandbox(mime)}
       referrerPolicy="no-referrer"
       loading="lazy"

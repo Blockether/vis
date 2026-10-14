@@ -1180,6 +1180,7 @@ export const STORY_DOC_HTML = [
   '  <tr><td>src/screens/SessionScreen.tsx</td><td class="n">6412</td><td class="n">91%</td></tr>',
   '  <tr><td>src/lib/live-view.ts</td><td class="n">318</td><td class="n">100%</td></tr>',
   '</table>',
+  '<p><a href="https://example.org/coverage">Full report</a></p>',
 ].join('\n');
 
 export const STORY_DOC_URL = `data:text/html;charset=utf-8,${encodeURIComponent(STORY_DOC_HTML)}`;
