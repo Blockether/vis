@@ -24,6 +24,7 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 ```
 
 The desktop and phone apps connect to this engine. They do not run it themselves.
+For a Python program, `pip install vis-agent` is enough: the [Python SDK](python-sdk.md#install-the-sdk) downloads Vis on first use.
 
 ### Get the desktop app
 

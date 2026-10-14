@@ -7,7 +7,7 @@ that runs separately, give `Agent()` a `GatewayClient`. Add your application's f
 
 For classes, methods, signatures and type annotations, browse the
 [generated Python SDK API reference](https://vis.blockether.com/python-sdk-api/).
-It is rebuilt from `main` and may include APIs not yet released on PyPI.
+The reference follows `main`, so it can show APIs that the newest PyPI release does not have.
 Use this guide for installation and task examples.
 
 ## When to use
@@ -31,31 +31,25 @@ For a program in another language, read [HTTP API](http-api.md).
 
 ## Install the SDK
 
-**The execution-layer and application-extension API on this page is unreleased.**
-It requires an SDK and engine built from the same source revision. An older
-engine cannot execute application callbacks, even if you update only the Python
-package. Do not use these examples with an older published runtime.
-
-You need Python 3.12 or newer. Published SDKs are installed with the command
-below. Version `0.2.3` introduced the earlier Agent API, not the new API shown here:
+You need Python 3.12 or newer on Linux or macOS:
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install --upgrade "vis-agent>=0.2.3"
+python -m pip install --upgrade vis-agent
 ```
 
-The Python package does **not** install the engine. For local use on Linux or macOS, do these
-steps:
+You do not have to install Vis first. When your program starts a private agent and no
+`vis-agent` command is installed, the SDK downloads the Vis release of the same version.
+It checks the download against the release checksums and keeps it in `~/.vis/sdk`. Later
+runs use that copy, so only the first run needs network access. The download does not
+change your shell profile or an installed Vis. To turn it off, set `VIS_NO_AUTO_INSTALL=1`.
 
-1. Install the [Vis runtime](distributions.md).
-2. Put `vis-agent` on `PATH`.
-3. Configure a [provider and model](configuration.md).
-
-A remote client needs only the Python package. Its provider runs on the gateway machine.
+Before the first task, configure a [provider and model](configuration.md). A gateway
+client needs only the Python package, because the provider runs on the gateway machine.
 
 Requests can incur model charges and use the engine's tools and files. Choose an
-appropriate account and [access policy](jail.md) before running a task. Keep
+appropriate account and [access policy](jail.md) before you run a task. Keep
 credentials and engine state outside the project you ask the agent to inspect.
 
 ## Let your program own a private agent
@@ -190,10 +184,9 @@ objects or arrays. If your model sets Pydantic's `hide_input_in_errors`, message
 
 ## Use stdio from the Python SDK
 
-The local `Agent` example above starts `vis-agent stdio` for you. This is a working transport for a
-Vis process that Python owns. It is not a command to ask the agent a question at your terminal, and
-it is not an MCP server. It does not start an HTTP gateway. The SDK and engine must come from
-compatible revisions. The execution-layer API in this guide is not released yet.
+The local `Agent` example above starts `vis-agent stdio` for you. In this mode, Python owns a
+private Vis process and talks to it over standard input and output. It does not start an HTTP
+gateway, and it is not an MCP server or a terminal chat.
 
 To choose the executable yourself or share one local process between agents,
 use `LocalEngine`:
@@ -207,21 +200,14 @@ with LocalEngine(executable="vis-agent", root=".") as layer:
         print(result["status"])
 ```
 
-`LocalEngine` appends `stdio` to the executable command. It sets `VIS_DB_PATH` to an isolated
-temporary SQLite database. It writes the engine's standard error to a file next to that database.
-When its context closes, it stops its process and removes both files. If the engine fails, the
-error message shows the engine's exit status and the end of its standard error.
+`LocalEngine` gives the process a temporary session database and a log file for its standard
+error. When the context closes, it stops the process and removes both files. If the engine fails,
+the error shows the exit status and the end of the log.
 
-Running a task can cost provider charges, and it gives the engine access to project files. If the
-executable is not on `PATH`, pass its absolute launcher path to `executable`.
-
-You can run `vis-agent stdio --help` without starting the transport. Direct
-invocation requires `VIS_DB_PATH` set to an isolated, writable SQLite file
-path. The process writes a protocol handshake and newline-delimited JSON
-(NDJSON) replies to stdout, reads NDJSON requests from stdin, and exits when
-stdin closes. Keep stdout free of other output. Use the SDK instead of typing
-requests by hand. Neither starting nor stopping this mode affects an existing
-gateway.
+With the default `executable="vis-agent"`, the SDK uses the installed command or
+[downloads it](#install-the-sdk). To use another Vis build, pass the absolute path of its
+`vis-agent` launcher. Pass the launcher, not the bare native binary: the launcher also loads
+the bundled Python runtime. Starting or stopping this process does not affect a running gateway.
 
 ## Connect to a gateway and run a task
 
@@ -480,22 +466,14 @@ except TransportError:
 | `LocalEngine(executable=..., root=...)` | Several sessions in one owned stdio process | Stops that process and discards its session database |
 | `GatewayClient(url, token=...)` | Persistent or shared sessions on a separately running gateway | Closes streams and releases its client lease |
 
-For a launcher outside `PATH`, configure `LocalEngine(executable=..., root=...)`
-and pass that layer to `Agent`. `LocalEngine` accepts a launcher path or argv list
-and adds `stdio` itself. Use an outer `with LocalEngine(...) as layer:` context
-to own its lifetime, as the gateway example does with `GatewayClient`.
-
-Both implementations share the `ExecutionLayer` contract. `Agent` does not choose
-a transport from a mixture of gateway and process options. Use the complete
-installed wrapper, not a bare native binary without its Python sidecar. Each
-client and its session handles use one calling thread.
-`conversation.delete()` is a separate, destructive operation.
+`Agent` never picks a transport for you: pass a `LocalEngine` or a `GatewayClient` when the default
+private engine does not fit. Each layer and its session handles use one calling thread. Closing a
+layer never deletes a saved conversation. To delete one, call `conversation.delete()`.
 
 ## See also
 
 - [HTTP API](http-api.md) — the same gateway from any language.
 - [Sessions API](sessions-api.md) — send messages, follow progress and manage sessions.
 - [Running a gateway](gateway-service.md) — install and secure a shared agent service.
-- [Decision models](decision-models.md) — download Laya, train both heads and publish a verified FP32 version.
-- [Native builds for JVM extensions](jvm-native-image.md) — rebuild Vis only when adding Java/Clojure capabilities.
+- [Configuration](configuration.md) — choose a provider and model before the first task.
 - [Extending Vis](extending.md) — add tools inside the agent.

@@ -1,8 +1,9 @@
 """Owned local Vis subprocess, with the same session API and no HTTP listener.
 
-You select the executable explicitly. There is no download, gateway discovery or
-user-server shutdown. Each engine gets a temporary database and stderr log, and closing
-discards them.
+Pass an executable, or keep the default `vis-agent`. The default uses the installed
+command, or downloads the matching Vis release once into the SDK cache. There is no
+gateway discovery or user-server shutdown. Each engine gets a temporary database and
+stderr log, and closing discards them.
 Supports Linux and macOS. Instances use one calling thread, like GatewayClient.
 """
 
@@ -34,6 +35,7 @@ from ._client import (
     _PollingEvents,
     _SessionPollingEvents,
 )
+from ._install import _COMMAND, InstallError, ensure_vis_agent
 
 # Errors quote at most this much of the engine's stderr, starting at a line.
 _STDERR_TAIL = 4096
@@ -52,9 +54,11 @@ class LocalEngine(ExecutionLayer):
     """Own a private Vis process without starting an HTTP server.
 
     Use this layer when you need to choose an executable, share one local process
-    between agents, or call the session API directly. The Vis executable must be
-    installed separately. This class never downloads it or discovers a gateway.
-    Supported platforms are Linux and macOS.
+    between agents, or call the session API directly. With the default `vis-agent`,
+    `connect` uses the installed command. Without one, it downloads the matching Vis
+    release once into `$VIS_HOME/sdk` and checks it against the release checksums.
+    Set `VIS_NO_AUTO_INSTALL=1` to turn off the download. This class never discovers
+    a gateway. Supported platforms are Linux and macOS.
 
     Args:
         executable: Executable path/name or nonempty argument sequence. The SDK
@@ -160,6 +164,12 @@ class LocalEngine(ExecutionLayer):
             raise TransportError("client is closed")
         if self._process is not None:
             return self
+        if self._command == [_COMMAND]:
+            try:
+                self._command = [ensure_vis_agent()]
+            except (InstallError, subprocess.TimeoutExpired) as error:
+                self.close()
+                raise TransportError(f"could not start local engine: {error}") from None
         self._home = tempfile.TemporaryDirectory(prefix="vis-sdk-")
         env = {
             **os.environ,
