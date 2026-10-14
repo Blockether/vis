@@ -16,7 +16,7 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
 - **You want to read an earlier part of a long session.** Use the keys in [Move
   through a session](#move-through-a-session) to scroll, jump and fold.
 - **You want to fork a session, go back to an earlier turn or move a session to a
-  group.** Use the keys under [Sessions](#sessions). The [Sessions guide](sessions.md)
+  group.** Use the keys under [Sessions](#sessions) and [In Projects](#in-projects). The [Sessions guide](sessions.md)
   explains each task.
 - **You want to dictate a message, or voice recording fails.** See [Use voice input](#use-voice-input).
 - **You want to send an earlier message again from the desktop or phone app.** See [In the
@@ -169,6 +169,31 @@ You can also click **↓ messages** when it appears to jump to the latest messag
 
 On macOS, Alt is the Option key. Many macOS terminals need a setting before Option
 works as Alt, such as **Use Option as Meta key** in Terminal.
+
+## In Projects
+
+Press **Ctrl+X w** to open **Projects**. While it has focus, these keys act on the selected row.
+Press **?** to see them in Vis.
+
+| Keys | What they do |
+|---|---|
+| ↑ or ↓, Ctrl+P or Ctrl+N | Move between rows |
+| ← or → | Fold or unfold the row |
+| Enter | Open the row |
+| g | Open the row menu |
+| n | Start a session here |
+| G (Shift+G) | Create a group |
+| a | Add a project |
+| + | Add a group, session or project here |
+| Space | Select or clear a session |
+| m or u | Move sessions to a group, or take them out of it |
+| f | Star or unstar a session |
+| R (Shift+R) | Rename the row |
+| A (Shift+A) | Archive or restore the row |
+| v | Show or hide archived rows |
+| D (Shift+D) | Delete the row. Vis asks you to confirm first |
+| / | Search sessions |
+| Esc or Tab | Return to the chat |
 
 ## Edit your message
 

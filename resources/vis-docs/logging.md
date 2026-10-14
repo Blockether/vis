@@ -51,20 +51,13 @@ logs use a start timestamp such as `20260914T153000Z` to distinguish runs.
 
 ## Python runtime
 
-Session sandboxes and trusted Python extensions use separate worker processes.
-Both write process output to `pyext-<worker-id>/worker.log`, including while the
-worker is still running. Packaged native workers and the JVM fallback use the
-same dated layout and keep their startup directory after midnight.
+Session sandboxes and trusted Python extensions run in separate worker processes. Each worker
+writes its output to `pyext-<worker-id>/worker.log` while it runs. Python `print()` output comes
+back with the execution result. Extension `vis.log` messages go to the gateway log.
 
-Normal Python `print()` output returns with the execution result. Extension
-`vis.log` messages go to the gateway log. The embedded runtime does not choose
-another log directory: Vis forwards its in-process JSONL diagnostic stream to
-the process logger at debug level.
-
-JVM fallback workers write fatal-error reports beside `worker.log`. If JVM heap
-dumping is enabled, their heap dumps also go there. Vis does not enable heap
-dumping itself. These JVM options are not passed to packaged native workers.
-Operating-system crash reports follow the operating system's own reporting policy.
+A source build without a packaged Python worker runs the worker on the JVM. That worker writes
+fatal-error reports beside `worker.log`, and heap dumps if you enable them. Operating-system crash
+reports follow the operating system's own policy.
 
 ## Hang reports
 
@@ -120,9 +113,6 @@ Cleanup runs in the background and needs a running process. A very short-lived
 CLI or Python process may exit before its first pass finishes. If both are
 stopped, expired logs remain until a later run. Save diagnostic files you need
 longer outside the log tree before they expire.
-
-Existing files are not moved into the dated layout. New writers use it. The
-engine's age cleanup still removes old files beneath `~/.vis/logs/`.
 
 ## Review before sharing
 

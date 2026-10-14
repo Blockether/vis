@@ -133,11 +133,9 @@ print(await hello("Ada"))
 print(await hello("Ada", uppercase=True))
 ```
 
-The two calls print `Hello, Ada!` and `HELLO, ADA!`. `apropos()` filters public
-names, not descriptions. `doc()` combines the registered signature and resolved
-types with the short semantic docstring. It shows parameter kinds, default presence,
-return type and effect tag without requiring that information to be copied into
-prose. `hello.contract` exposes the same contract as structured data when needed.
+The two calls print `Hello, Ada!` and `HELLO, ADA!`. `apropos()` searches public names, not
+descriptions. `doc()` shows the signature, types and defaults together with your docstring, so the
+docstring does not need to repeat them. `hello.contract` gives the same data as a structure.
 
 A displayed default of `...` means an optional argument's value was withheld,
 not that you should pass `Ellipsis`. Omit the argument to use its real default.
@@ -164,16 +162,13 @@ call, explain omitted arguments, and tell me which reload steps remain.
 Do not publish or install it globally.
 ```
 
-When implementing a requested extension:
+Vis then works in these steps:
 
-1. Check whether an existing tool or skill already covers the task.
-2. Choose one file for a small integration or an existing Python package for reusable logic. Choose
-   a distributable package when the request includes sharing it.
-3. Register once, and annotate inputs and results. In docstrings, describe meaning, preconditions,
-   side effects and failures. Do not copy signatures or schemas into them.
-4. Test ordinary Python behavior, then discovery and a real tool call in Vis.
-5. Report any untested boundary or required reload. Do not substitute registration
-   success for execution or add publishing steps the user did not request.
+1. It checks whether an existing tool or skill already does the task.
+2. It chooses one file for a small integration, or a package for reusable or shared code.
+3. It writes the tool with typed inputs and results, and a docstring that explains effects and failures.
+4. It tests the Python code, then calls the registered tool in Vis.
+5. It tells you what it could not test and which reload steps remain.
 
 ## Continue by task
 

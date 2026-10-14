@@ -50,7 +50,7 @@ else:
 
 The request opens this form in the Vis terminal. Select a target, enter
 notes and submit. The extension resumes with the answer. Password input stays
-masked. This capture uses example data. Select the image to view it full size.
+masked. Select the image to view it full size.
 
 [![Vis terminal form with Target, Release notes and a masked Deploy token field](assets/screenshots/ask.png)](assets/screenshots/ask.png)
 
@@ -117,11 +117,9 @@ Use the same `row` and `column` layout vocabulary for Ask forms and
 `column` (default) or `row`. Groups can nest. Each nested group uses the width
 available inside its parent, not the full screen width.
 
-In Companion, rows use equal-width columns with a minimum width of `12rem`,
-wrapping into fewer columns as space narrows and eventually stacking. A single
-column can shrink below that minimum to fit a very narrow panel. In the TUI,
-rows use equal-width columns when each child has at least 24 terminal text cells
-after spacing. Otherwise the entire row stacks vertically. Columns always stack.
+A row shows its children side by side in equal columns. When the space is too narrow, the
+children stack: Companion stacks them one by one, and the TUI stacks the whole row. Columns
+always stack.
 
 Ask groups can have a `label` and a plain-text `description`. Layout nodes
 produce no answer values: a `heading` displays plain text and a `paragraph`

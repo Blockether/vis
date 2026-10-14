@@ -165,69 +165,34 @@ instructions. No background scheduler restarts a goal without a new user message
 
 ### Iteration budget
 
-`--budget N` limits **model responses, not tokens**. One response and its tool
-calls count as one iteration, even if it calls several tools. Prose-only or empty
-responses and rejected final answers also count. Provider retries within a request
-do not count separately. The recorded completion or blocker summary does not require
-a separate model response or consume another iteration.
+`--budget N` limits **model responses, not tokens**. One response counts as one iteration, also when
+it runs several tools. Pausing and resuming keep the count. Without `--budget`, the goal has no
+limit of its own.
 
-The final allowed iteration can still run tools and update the goal. Vis checks
-the limit before making another model request. If the goal remains unresolved,
-its status becomes `budget_limited`, not complete. If the last tools resolved it,
-Vis returns the recorded evidence or blocker without another model call.
+The budget can go before or after the objective. A leading `--` keeps the rest as objective text,
+also any `--budget` text.
 
-Pausing and resuming preserve the count. Once the budget is spent, set a new
-goal and budget to continue. Without `--budget`, there is no goal-specific
-iteration limit. Provider limits and failure handling still apply.
+### How a goal ends
 
-The budget option can go before or after the objective. A leading `--` keeps
-everything after it as literal objective text, including any `--budget` text.
-Quotes and newlines are also preserved.
+Vis records a goal as complete only with evidence, such as passing tests. If it cannot continue,
+it marks the goal blocked and names the blocker. A progress reply does not end the goal, and Vis
+continues the work in the same turn. Saying "done" in a reply does not complete a goal.
 
-### Model command and continuation
-
-Vis gives the agent the current goal in `session["goal"]`. The agent records
-completion with verification evidence, or reports a concrete blocker, through
-`update_goal`:
-
-```python
-g = session["goal"]
-print(update_goal(g["id"], g["version"], "complete", "Parser regression tests pass."))
-```
-
-The agent can set only `complete` or `blocked`. It cannot use this command to create, cancel,
-replace, resume or enlarge a goal. Vis rejects stale goal IDs and lifecycle versions. Saying
-"complete" in a reply does not update the goal.
-
-Even a recorded completion is the model's assessment, not an independent check. When the tools of
-the current iteration finish, Vis returns the recorded evidence or blocker as the final reply. It
-makes no further model request, even when there is no budget limit.
-
-While the goal is active, you can receive a progress reply without ending the
-work. Vis keeps that reply and automatically continues the same turn. It does
-not reject the reply or require the agent to mark the goal `blocked` to answer.
-
-Before it reports `blocked`, the agent checks the whole objective. It looks for progress, a verified
-operation that still runs, or no progress. The same concrete blocker must prevent all useful
-authorized work for at least three goal continuations in a row. New user input, a resume or new
-progress resets that count.
-
-One waiting branch or one missing verification is not enough. The agent continues other available
-work and does not poll again and again only to reach the count. The model applies this policy. The
-engine does not check it.
-
-Repeated empty replies stop the turn and pause an unresolved goal. An exhausted
-iteration budget instead leaves it `budget_limited`.
+A goal never gives Vis extra permissions. Your newer messages always win over the goal.
 
 ### Goal states
 
-A goal is `active`, `paused`, `blocked`, `budget_limited`, `complete` or `cancelled`. The apps show
-`budget_limited` as "iteration-limit reached". The elapsed time counts only while the goal is active.
-Resuming continues from the saved time, and a new goal starts again from zero. Companion updates the
-clock every second while goal details are open.
+| State | Meaning |
+|---|---|
+| `active` | Vis works on the goal |
+| `paused` | You paused it, or a turn failed or was stopped. A new message resumes it |
+| `blocked` | Vis named a blocker. A new message resumes it if budget remains |
+| `budget_limited` | The iteration budget is used up. The apps show "iteration-limit reached". Set a new goal to continue |
+| `complete` | Vis recorded the evidence |
+| `cancelled` | You cancelled it |
 
-Your own program can set, read and control goals. Read [Project instructions
-API](project-instructions-api.md#set-a-goal).
+Elapsed time counts only while the goal is active. Your own program can set, read and control
+goals. Read [Project instructions API](project-instructions-api.md#set-a-goal).
 
 ## Skills: /skill:name
 

@@ -15,8 +15,8 @@ engine build, not a drop-in JAR plugin system.
 - **The build fails with a certificate error behind a corporate proxy.** See
   [Building behind a corporate TLS proxy](#building-behind-a-corporate-tls-proxy).
 
-You do **not** need a native build to use the Python SDK, connect a Java/Clojure
-client, run a gateway or add a Python extension. Use a [prebuilt runtime](distributions.md)
+You do **not** need a native build to run a gateway, use the Python SDK or add a Python extension.
+Java and Clojure programs can call the [HTTP API](http-api.md). Use a [prebuilt runtime](distributions.md)
 for those tasks. Start with [Extending Vis](extending.md) for Python tools.
 
 ## Prerequisites
@@ -108,9 +108,8 @@ files together. The terminal client is a separate release component. This
 engine bundle is enough for gateway and SDK stdio use, not a complete TUI
 installation.
 
-`VIS_HOME` selects launcher installation state, so an installed `dev` track cannot
-silently select the JVM. It does **not** relocate all engine state. The explicit
-`-Duser.home` selects the engine's home. `HOME` matches it for child processes.
+`VIS_HOME` keeps the launcher away from your installed Vis. `-Duser.home` moves the engine's own
+state, and `HOME` does the same for child processes.
 
 This test home is temporary. Prepare its provider configuration and credentials
 before starting a gateway. Use a persistent service-account home for deployment.

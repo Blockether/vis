@@ -96,9 +96,7 @@ description of each picture. With `None`, the model catalog decides. This field
 works like `is_vision_supported` on a model in
 [configuration](configuration.md#images).
 
-`ProviderModel` still accepts the old argument names `is_tool_call` and
-`is_image_input`. A new name wins over its old name. `to_wire()` gives only the
-new names.
+Vis also reads the old names `is_tool_call` and `is_image_input`. Use the new names in new code.
 
 Token and header fields are excluded from a record's `repr`. Never log
 credentials or put them in status metadata. A missing credential is `None`,

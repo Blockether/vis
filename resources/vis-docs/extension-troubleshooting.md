@@ -55,11 +55,9 @@ Editable source and declared `source_paths` need reload. Moving a checkout or ch
 its dependencies needs [preparation](extension-development.md#prepare-the-project-environment)
 again. In-flight calls may finish using old imports.
 
-The built-in guide returned by `doc("extending")` is bundled with the running Vis
-build. Editing repository Markdown or publishing the website does not update an
-already running gateway's bundled docs. `/reload` refreshes Python extensions,
-not the gateway binary. Check which build is running before treating a source/site
-and `doc()` difference as an extension reload failure.
+Guides such as `doc("extending")` come with the running Vis build. A changed website or Markdown
+file does not change them, and `/reload` does not either. If `doc()` differs from the website,
+check which Vis version runs before you suspect your extension.
 
 ## Already registered
 
