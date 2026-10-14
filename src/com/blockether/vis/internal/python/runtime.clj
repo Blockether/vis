@@ -421,6 +421,16 @@
                          .getCanonicalFile
                          .getParentFile))))))
 
+(defn- remove-environment-shell!
+  "Remove a project environment that holds only empty directories.
+   uv rejects such a shell and never replaces it. A file or link can be user data, so keep it."
+  [^File project]
+  (let [environment (project-environment project nil)]
+    (when (and (.isDirectory environment)
+               (not-any? #(or (.isFile ^File %) (Files/isSymbolicLink (.toPath ^File %)))
+                         (file-seq environment)))
+      (delete-tree! environment))))
+
 (defn- embedded-python
   "uv options that select the worker's embedded Python and never download another."
   []
@@ -547,6 +557,7 @@
                             (catch clojure.lang.ExceptionInfo _ false))]
             (when-not ready?
               (preparation-stage! project "installing")
+              (remove-environment-shell! project)
               (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
             (let [packages (project-packages project)]
               (preparation-stage! project (if ready? "cached" "ready"))

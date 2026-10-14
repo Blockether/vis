@@ -1652,3 +1652,31 @@ print(worker_value)"))))
                      (expect (= "eval" (get-in report [:rpc :outbound :last-completed :op])))
                      (expect (not (str/includes? (pr-str report) "private-control-fixture"))))
                    (finally (deliver release true)))))))))
+
+(defdescribe trusted-worker-missing-packages-test
+             (it "never creates a missing project packages directory"
+                 ;; #377: a created site-packages left an invalid .venv that uv rejected.
+                 (let [project
+                       (.toFile (java.nio.file.Files/createTempDirectory
+                                  "vis-missing-venv"
+                                  (make-array java.nio.file.attribute.FileAttribute 0)))
+
+                       session
+                       (str (java.util.UUID/randomUUID))
+
+                       key
+                       (worker/extension-worker-key
+                         session
+                         (io/file project ".venv" "lib" "python3.14" "site-packages"))]
+
+                   (try (expect (str/includes?
+                                  (str (try (worker/trust! key (str session "-extension") true)
+                                            nil
+                                            (catch clojure.lang.ExceptionInfo error
+                                              (ex-message error))))
+                                  "does not exist"))
+                        (expect (not (worker/worker-live? key)))
+                        (expect (not (.exists (io/file project ".venv"))))
+                        (finally (worker/forget-policy! key)
+                                 (doseq [^java.io.File f (reverse (file-seq project))]
+                                   (.delete f)))))))

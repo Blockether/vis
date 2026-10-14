@@ -426,10 +426,20 @@
                                         :id ::no-library-to-hand-over
                                         :data {:error (ex-message t)}})
                              nil))
-              packages (some-> (or (when (instance? TrustedExtensionWorker k) (:packages k))
-                                   (runtime/packages-dir))
-                               io/file)
-              _ (when packages
+              declared (when (instance? TrustedExtensionWorker k) (:packages k))
+              ;; #377: create only shared packages. A created project site-packages
+              ;; leaves an invalid .venv that uv rejects on every /reload.
+              packages (if declared
+                         (let [dir (io/file declared)]
+                           (when-not (.isDirectory dir)
+                             (throw (ex-info (str "Extension packages directory " declared
+                                                  " does not exist. Run /reload to prepare"
+                                                  " the extension environment.")
+                                             {:type :vis/python-worker :packages declared})))
+                           dir)
+                         (some-> (runtime/packages-dir)
+                                 io/file))
+              _ (when (and packages (not declared))
                   (Files/createDirectories (.toPath packages)
                                            (make-array java.nio.file.attribute.FileAttribute 0)))
               guest-dir (guest-source-dir)
