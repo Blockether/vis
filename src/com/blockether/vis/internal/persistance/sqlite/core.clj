@@ -262,7 +262,7 @@
         (->> (activity/presentation (assoc activity/empty-state :rows [row]))
              :rows
              (tree-seq coll? #(if (map? %) (vals (apply dissoc % activity-search-id-keys)) (seq %)))
-             (filter #(and (string? %) (not (str/blank? %))))
+             (filter util/non-blank-string?)
              distinct)
 
         {labels true output false}
