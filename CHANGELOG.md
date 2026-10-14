@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.44] - 2026-10-14
+
+### Added
+- A project that installs with `vis-agent python --shared uv sync` can prepare its extensions in
+  the same shared packages. A broken `.venv` no longer stops those extensions (#378).
+- Extensions can read the project's `python.environment` with `vis.python_environment()`. The `py`
+  tools then run tests and the REPL in that environment (#379).
+- Speech packs ship the Kyutai Pocket voice clips in their own pack. Each Pocket voice now sounds
+  like Pocket, not like a copy of a Piper voice.
+
+### Changed
+- The `vis-agent` SDK pins `litellm==1.103.1`. Some corporate Artifactory mirrors serve only this
+  build, so the SDK now installs behind them.
+
+### Fixed
+- Python workers no longer create a `.venv` in a project environment that uv then refuses (#377).
+- `Setting.value()` of a project extension reads `vis.yml` also outside a turn, for example in a
+  background thread (#380).
+- A repeated tool error shows only once in the activity (#376).
+- Window styling of the desktop app no longer changes the web app (#381).
+- Live views clean up only the blocks that they own.
+
 ## [v0.2.43] - 2026-10-13
 
 ### Added
