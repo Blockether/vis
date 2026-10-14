@@ -18,8 +18,7 @@ requests, select **HTTP** at the top of the page.
 - **A session works in the wrong directory.** [Return to the original
   checkout](#return-to-the-original-checkout).
 
-To learn how drafts isolate changes, read [Drafts](drafts.md). To send the same requests from
-another language, select **HTTP** at the top of the page.
+To learn how drafts isolate changes, read [Drafts](drafts.md).
 
 ## Before you start
 
@@ -38,8 +37,8 @@ examples use it. They also use `SESSION_ID` for the ID of a session that you cre
 
 </div>
 
-Drafts are experimental. Approval commits and can push, so your program must have the permission of
-the person who owns the repository.
+Drafts are experimental and off by default. Approval commits and can push. Your program must have the
+permission of the person who owns the repository.
 
 ## Operations
 

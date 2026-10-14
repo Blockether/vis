@@ -17,8 +17,7 @@ requests, select **HTTP** at the top of the page.
 - **You edited an extension and the gateway must load the new code.** [Reload
   extensions](#reload-extensions).
 
-To learn the settings and the configuration files, read [Configuration](configuration.md). To send
-the same requests from another language, select **HTTP** at the top of the page.
+To learn the settings and the configuration files, read [Configuration](configuration.md).
 
 ## Before you start
 
@@ -244,7 +243,7 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/extensions/reload" -H 'content-type: applic
 </div>
 
 Vis runs the extension files of the target again. A global target reloads machine extensions only.
-Reading the catalog never runs extension code. An older gateway without this route answers 404.
+Reading the catalog never runs extension code.
 
 The answer has the totals `loaded` and `failed`. Its `scopes` list has one entry for each scanned
 scope. An entry has `scope` (`global` or `project`), the scanned `dirs`, and `loaded` and `failed`

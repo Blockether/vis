@@ -15,8 +15,7 @@ requests, select **HTTP** at the top of the page.
 - **A long session must continue with less context.** [Fold settled work](#fold-settled-work) with
   a message to the session.
 
-To learn how Vis keeps the context small, read [Context management](context-management.md). To send
-the same requests from another language, select **HTTP** at the top of the page.
+To learn how Vis keeps the context small, read [Context management](context-management.md).
 
 ## Before you start
 

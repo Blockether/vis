@@ -19,8 +19,7 @@ requests, select **HTTP** at the top of the page.
   goal](#pause-resume-or-cancel-a-goal).
 
 To learn how project rules, prompt templates, skills and goals work, read [Project
-instructions](project-instructions.md). To send the same requests from another language, select
-**HTTP** at the top of the page.
+instructions](project-instructions.md).
 
 ## Before you start
 

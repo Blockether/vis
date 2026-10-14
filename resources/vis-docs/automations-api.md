@@ -28,8 +28,7 @@ requests, select **HTTP** at the top of the page.
   webhook](#send-a-webhook).
 
 To learn what an automation does and how to create one in the app, read
-[Automations](automations.md). To send the same requests from another language, select **HTTP** at
-the top of the page.
+[Automations](automations.md).
 
 ## Before you start
 

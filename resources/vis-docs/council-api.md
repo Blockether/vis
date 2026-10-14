@@ -16,8 +16,7 @@ requests, select **HTTP** at the top of the page.
 - **An administration script must manage rooms for several machines.** [Manage
   rooms](#manage-rooms).
 
-To learn how Council works in chat, read [Council](council.md). To send the same requests from
-another language, select **HTTP** at the top of the page.
+To learn how Council works in chat, read [Council](council.md).
 
 ## Before you start
 
