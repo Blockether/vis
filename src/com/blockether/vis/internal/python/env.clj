@@ -1394,12 +1394,21 @@
    The NameError hint in [[map-python-error]] reads both."
   (atom {}))
 
+(def ^:private routine-stop-causes
+  "Stops that are part of normal work, such as an idle sandbox. They log as info."
+  #{:idle-timeout :session-closed})
+
+(defn sandbox-stop-level
+  "The log level for a sandbox stop: info for a routine cause, warn for others."
+  [cause]
+  (if (contains? routine-stop-causes cause) :info :warn))
+
 (defn log-sandbox-stop!
-  "Log why the sandbox of `session-id` stops, before it stops: one warning with
+  "Log why the sandbox of `session-id` stops, before it stops: one entry with
    `cause` and `detail`. A restart is never silent in the gateway log."
   [session-id cause detail]
   (when session-id
-    (tel/log! {:level :warn
+    (tel/log! {:level (sandbox-stop-level cause)
                :id ::sandbox-stopped
                :data {:session-id (str session-id) :cause cause :detail detail}}
               (str "Python sandbox of session " session-id " stops (" (name cause) "): " detail))

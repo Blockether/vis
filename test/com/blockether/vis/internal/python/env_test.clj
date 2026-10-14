@@ -113,6 +113,13 @@
                      (expect (nil? (:error result)) (pr-str result))
                      (expect (= "Runtime restrictions preserved\n" (:stdout result)))))))
 
+(defdescribe sandbox-stop-level-test
+             ;; 69 idle-timeout stops were gateway warnings, and none was a problem.
+             (it "logs routine stops as info and every other stop as a warning"
+                 (expect (= :info (ep/sandbox-stop-level :idle-timeout)))
+                 (expect (= :info (ep/sandbox-stop-level :session-closed)))
+                 (expect (= :warn (ep/sandbox-stop-level :settings-change)))))
+
 (defdescribe
   retired-context-entry-test
   ;; Issue #180: retirement is a typed local failure, never an invitation to

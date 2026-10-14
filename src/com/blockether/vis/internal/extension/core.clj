@@ -2057,7 +2057,8 @@
                        {:result r})
                      (catch Throwable e
                        (let [ms (elapsed-ms ct0)]
-                         (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
+                         ;; The caller gets the error, so a refused call is not a gateway warning.
+                         (log-hook! :info ::fn-threw ext-ns sym :call ms (ex-message e))
                          (try (let [recovery (run-on-error ext sym-entry e call-env f call-args)]
                                 (cond (contains? recovery :result) recovery
                                       (contains? recovery :error) (throw (:error recovery))
