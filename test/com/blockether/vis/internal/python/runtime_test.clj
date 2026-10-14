@@ -485,6 +485,7 @@
                                            (when (= 1 (count @calls))
                                              (throw (ex-info "Environment needs sync" {}))))
                                          #'python-runtime/shared-project? (constantly false)
+                                         #'python-runtime/remove-environment-shell! (constantly nil)
                                          #'python-runtime/runtime-environment? (constantly true)
                                          #'python-runtime/project-packages (constantly project)}
                           (fn []
@@ -518,6 +519,7 @@
         (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
                                                          (swap! calls conj (vec (rest args))))
                               #'python-runtime/shared-project? (constantly false)
+                              #'python-runtime/remove-environment-shell! (constantly nil)
                               #'python-runtime/runtime-environment? (constantly false)
                               #'python-runtime/project-packages (constantly project)}
                (fn []
