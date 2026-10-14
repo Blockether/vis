@@ -9781,7 +9781,6 @@
                                   (expect (contains? @env-cache k))
                                   (finally (swap! env-cache dissoc k)))))))
 
-
 (def ^:private reap-idle-envs! (deref #'loop-env/reap-idle-envs!))
 (def ^:private memory-pressure? (deref #'loop-env/memory-pressure?))
 
