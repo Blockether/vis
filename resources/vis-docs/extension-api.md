@@ -49,13 +49,12 @@ Python extension entry files and `python_execution` receive these globals withou
 | `VIS_VERSION` | Version of the loaded Vis build |
 | `VIS_SHA_RELEASE` | Full Vis build commit, with `-dirty` for an uncommitted native build, or `None` if unavailable |
 | `VIS_PYTHON_RUNTIME_VERSION` | Version of Vis' embedded Python runtime library, not the CPython interpreter version |
-| `VIS_PYTHON_SDK_VERSION` | PyPI version of the bundled SDK: `VIS_VERSION` for a release, a development release such as `0.2.31.dev7292` for a beta |
+| `VIS_PYTHON_SDK_VERSION` | PyPI version of the bundled SDK: `VIS_VERSION` for a release, a development release such as `0.2.47.dev7678` for a beta |
 
 The model's system context reports the same values. A source build can report `dev`.
-These values describe the loaded build, not necessarily a published release. They are
-diagnostic metadata and do not change instruction priority. The bundled SDK takes
-precedence over pip and editable copies in both trusted extensions and
-`python_execution`. Installing another SDK does not change these globals.
+These values describe the loaded build, which is not always a published release. Use them for
+diagnostics. Extensions and `python_execution` always use the bundled SDK, also when pip or an
+editable install has another copy. Installing another SDK does not change these globals.
 
 ### Editor types
 
@@ -64,22 +63,20 @@ package in your Python environment. Vis runs its bundled SDK instead. To get the
 types, install the version in `VIS_PYTHON_SDK_VERSION`:
 
 ```bash
-pip install "vis-agent==0.2.31.dev7292"
+pip install "vis-agent==0.2.46"
 ```
 
-PyPI has the SDK of every release and every published beta. The SDK of a new beta
-arrives on PyPI some minutes after the beta. Without an exact version, pip ignores
-development releases. Pin the exact version in your development environment, not in
-the dependencies of an extension that you publish.
+PyPI has the SDK of every release and every beta. A new beta reaches PyPI some minutes after its
+release. For a beta, give the exact version, because pip skips development versions otherwise. Pin
+the version in your development environment only, not in an extension that you publish.
 
 A lock file keeps the old SDK when you update Vis. Your editor then shows old types, but your
 extension still runs with the bundled SDK. `vis-agent doctor` reports each `vis-agent` in the
 project `.venv` or the shared packages that differs from the bundled SDK. To update a uv project,
 set the new version in `pyproject.toml`. Then run `uv lock --upgrade-package vis-agent` and `uv sync`.
 
-A `dev` value, or a value that ends in `+dirty`, comes from a source run or a local
-build. A local build of a commit without a published beta is also not on PyPI. For
-these builds, install `packages/vis-agent` from the same checkout.
+A `dev` value, or a value that ends in `+dirty`, comes from a source run or a local build. PyPI
+does not have these versions. For them, install `packages/vis-agent` from the same checkout.
 
 In `python_execution`, you can import `blockether.vis.extension` to inspect public
 types and construct declarations without registering them. Registration and host
@@ -219,10 +216,9 @@ select **Reload** in the **Extensions** header of Settings. Opening Settings doe
 code. See [extension settings](configuration.md#extension-settings).
 
 `scopes` accepts any non-empty, duplicate-free subset of `global`, `project`, `group` and `session`.
-Without it, only `global` is permitted. The backend enforces eligibility for writes and resolution,
-not only for display. A missing override inherits, but `False` does not. Reloading or temporarily
-removing an extension keeps its stored choices. These declarations belong to gateway-hosted
-extensions, not application-hosted tool bridges.
+Without it, only `global` is permitted. Vis checks the scope when it saves or reads a value, not
+only in Settings. A missing override inherits, but `False` does not. Reloading or temporarily
+removing an extension keeps its stored choices.
 
 A project extension exists only in its project. For a project extension, `global` means the whole
 project. Its settings show only in the settings of that project.
@@ -453,11 +449,10 @@ cells. Paths in the session workspace become relative. Other paths under the hos
 and published sections before TUI or Companion rendering. Tool arguments, return values, resource
 identities, code, Markdown and diff bodies keep their original paths.
 
-`vis.Activity(presenter="tests", label="Run checks", render=render_checks)` selects a semantic
-presenter and a synchronous callback. `presenter` classifies the operation. It does **not** generate
-tool-specific content. The default `"generic"` is only a classification, not a result renderer. The
-engine never turns any result object into an activity view or a generic result-summary block. The
-tool's return value remains independently available to Python.
+`vis.Activity(presenter="tests", label="Run checks", render=render_checks)` selects a presenter and
+a synchronous callback. `presenter` only classifies the operation, and the default is `"generic"`.
+It does not draw any content. Only your `render` callback does. The tool's return value stays
+available to Python.
 
 Not every operation needs a visible start. Set `show_start=False` for fast local
 actions such as reading a file, applying a patch or looking up a cached record:
@@ -604,23 +599,10 @@ registration. The [Activity
 schema](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/schema/activity.json)
 has the exact portable limits and block shapes.
 
-Vis keeps every admitted, redacted invocation and its complete presentation in
-the session store, without a total size or call-count cap. Companion and the TUI
-load small pages as you browse. A single large invocation is kept whole even if
-it exceeds the page's byte target. Search, Copy all and Export cover the full
-history, including calls outside the current page. Copying or sharing a complete
-export can use memory proportional to its size. Closing a client or restarting
-Vis does not discard saved Activity.
-
-For clients, a projection's optional `history` object identifies its durable record and carries the
-revision, total invocation count and page cursor. A client reads the history in pages with the
-[Sessions API](sessions-api.md#read-activity-history). `q` searches all saved details. Follow
-`history.next_after` until it is `null`. Pages contain at most 32 invocations and 1 MiB, without
-shortening their details. Synthetic group headings do not count as invocations.
-
-The export returns the unfiltered history as text. Optional `revision` pins a page read or an export
-to the version that you read. A changed revision returns 409. When a concurrent change interrupts an
-export, Vis marks the export incomplete. Read the history again and retry.
+Vis saves every call and its complete presentation in the session, without a size or count limit.
+The app and the terminal load small pages as you scroll. Search, Copy all and Export cover the full
+history. A restart does not remove saved Activity. To read or export the history from your own
+program, use the [Sessions API](sessions-api.md#read-activity-history).
 
 ### Report checks and outside effects
 
@@ -739,12 +721,11 @@ signature `()`. That does not mean metadata is missing.
 A short semantic docstring is enough. Do not repeat the signature, defaults or full return schema in
 it.
 
-When you know the callable but need its arguments, start with
-`print(inspect.signature(tool))`. Read `doc("tool")` when you need
-preconditions, side effects, safety constraints, units, retry behavior or non-obvious
-limits. For nested types, select the relevant fields from `tool.contract`.
-`Catalog.spec(name)` exposes the same metadata as an SDK `ToolSpec`. A mutation tag
-describes an effect. It does not authorize it.
+The agent reads the arguments with `inspect.signature(tool)` and reads `doc("tool")` only for
+semantics. So put preconditions, side effects, safety limits, units and retry behavior in the
+docstring. For nested types, the agent selects fields from `tool.contract`. `Catalog.spec(name)`
+gives the same metadata as an SDK `ToolSpec`. A mutation tag describes an effect. It does not
+authorize it.
 
 This is a documentation contract, not JSON invocation or runtime validation. Python
 binds arguments. The implementation validates domain constraints. There is no manual
@@ -899,10 +880,8 @@ class Tools:
 ```
 
 `vis.Symbol(Tools(), name="tools").contract` expands `Result.text` beneath the
-variadic tuple. Omitting `text` uses the public string `"ready"`. The SDK tests
-execute these snippets, and host-to-sandbox tests cover invocation, nested records,
-redacted defaults, introspection and refreshed metadata after reload. This is
-contract inspection, not registration. When you bind `Tools.read`, declare its
+variadic tuple. Omitting `text` uses the public string `"ready"`. This is contract inspection, not
+registration. When you bind `Tools.read`, declare its
 Activity in the entrypoint as in the [greeter example](extension-design.md#keep-the-entrypoint-small).
 This immediate local operation can use `show_start=False`.
 
@@ -955,7 +934,7 @@ fresh anchors. The hook must validate its candidate before returning it.
 
 `vis.repair` requires string source and a nonempty list or tuple of nonblank notes.
 Invalid repair markers fail without running the operation. Only `"patch"` accepts
-repairs. Vis repairs `"python_execution"` blocks itself with parinferish, so a block
+repairs. Vis repairs `"python_execution"` blocks itself, so a block
 hook that returns `vis.repair` fails the block. Give `vis.block(reason, hint=...)` a
 `hint` to tell the model what to do next. Without a hint, the failure tells the model
 to ask the user before a retry.
@@ -975,8 +954,8 @@ you want post-edit checks to cover host patches and plain Python writes. Use
 model request, not the callback's return value. See the complete
 [complexity-check example](extension-design.md#check-code-complexity-after-edits).
 
-`ops` also names the draft lifecycle: `"draft/create"`, `"draft/approve"` and
-`"draft/discard"` run for the sandbox's `draft_create()`, `draft_approve()` and
+`ops` also names the draft lifecycle: `"draft/create"`, `"draft/sync"`, `"draft/approve"` and
+`"draft/discard"` run for the sandbox's `draft_create()`, `draft_sync()`, `draft_approve()` and
 `draft_discard()`. Their `args` carry the draft's `workspace_id`, `label`,
 `root`, `repo_root`, `backend` and, for approval, `branch`, `target_branch`,
 `files` and `message`. Approval commits and merges into the default branch.
@@ -1253,7 +1232,7 @@ are not shared across workers.
 Tool results cross as data. Objects and dataclasses expose their public fields as
 frozen data records in the sandbox, including nested records. A dataclass also sends its public
 properties and its own `str` text, as described in [Return typed objects](#return-typed-objects).
-methods, native pointers and object identity stay in the trusted process. Explicit
+Methods, native pointers and object identity stay in the trusted process. Explicit
 [field-backed sequences](#field-backed-sequences) add only local collection operations.
 Expose other operations as declared tools rather than methods on returned objects.
 

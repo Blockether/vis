@@ -120,11 +120,9 @@ Two cases keep a different order:
 
 Press **Esc** or **Ctrl+G** to cancel the running turn.
 
-The cancelled message stays in the conversation. Vis does not put it back in the
-composer. To send it again in the terminal, press **↑** to recall it.
+Your queued messages return to the composer as one draft. Submit the draft again to run them.
 
-Cancellation stops the turn and returns queued messages to the composer as a
-draft. To run them, submit the draft again.
+The cancelled message stays in the conversation. To send it again in the terminal, press **↑**.
 
 ### Quit
 
@@ -139,8 +137,7 @@ draft. To run them, submit the draft again.
 
 ## Find a saved session
 
-Each result names its **Project** and **Group**. Search rows do not use project or
-group colors. Status labels use uppercase, such as `IDLE`, `NEW` and `LIVE`.
+Each result shows its project, its group and its status, such as `IDLE`, `NEW` or `LIVE`.
 
 Project and group filters apply to recent sessions and text searches. Selecting several
 groups searches any of them. A project and group selection narrows both together.
@@ -177,7 +174,6 @@ sessions from the connected gateway, including ones you have not opened in this
 terminal. Use **↑** and **↓** to choose a project, group or session, and press
 **Enter** to expand it or to resume a session. Press **g** on a row for its menu.
 If your terminal reports mouse clicks, you can click rows and menu items instead.
-**Tab** does not switch sessions.
 
 Each project shows only its name. A new project takes the name of its folder. To rename a project
 or change its folder, press **g** on the project row. Then choose **Rename project…** or

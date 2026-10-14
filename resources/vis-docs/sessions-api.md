@@ -35,8 +35,7 @@ requests, select **HTTP** at the top of the page.
   Activity history](#read-activity-history).
 
 To learn what a session is and how to use it in the terminal or the app, read
-[Sessions](sessions.md). To send the same requests from another language, select **HTTP** at the top
-of the page.
+[Sessions](sessions.md).
 
 ## Before you start
 

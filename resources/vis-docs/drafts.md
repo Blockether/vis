@@ -1,8 +1,8 @@
 # Drafts
 
-A draft gives a session its own isolated working copies of one or more repositories. Each copy is a
-Git worktree or a copy-on-write clone, separate from your current checkout. **Drafts are
-experimental and off by default.**
+A draft gives a session its own copy of one or more repositories. Vis then changes files there, not
+in your checkout. Each copy is a Git worktree or a copy-on-write clone. **Drafts are experimental and
+off by default.**
 
 ## When to use
 
@@ -24,15 +24,13 @@ Read-only questions and analysis do not need a draft.
 
 ## Enable drafts
 
-Open **Settings → General → Draft backend** in the TUI or Companion app and
-choose `auto`, `worktree` or `rift`. Choose `off` to disable automatic drafts and
-new draft creation. Vis preserves any choice you have already saved.
+Open **Settings** in the terminal or the app. In the **Experimental** section, set **Draft
+backend** to `auto`, `worktree` or `rift`. To stop new drafts, choose `off`.
 
-When enabled, Vis starts each change-making task in a session-owned draft without a
-separate request. This includes code, tests, documentation and configuration. Vis
-keeps edits and checks in the draft. If no backend can create one, Vis reports the
-blocker instead of editing your current checkout. Original project repositories stay
-read-only to sandbox writers. Select every repository you need to change.
+With drafts on, Vis does each task that changes files in a draft of its session. You do not have to
+ask for it. This covers code, tests, documentation and configuration, and the checks run in the
+draft too. If Vis cannot create a draft, it tells you why and leaves your checkout alone. Name every
+repository that the task must change.
 
 Draft write protection does not need the jail. While drafts are enabled, the file tools of Vis
 refuse writes to the original repositories, with or without the jail. The jail adds OS-level
@@ -65,29 +63,16 @@ Discarding an unfinished draft can lose unapproved changes or unmerged commits,
 so Vis asks for confirmation first. Drafts awaiting review or a required push stay
 open. Work already merged stays on the target branch.
 
-## Sandbox tools
+## See the draft state
 
-| Tool | Effect |
-|---|---|
-| `draft_create("name", clean=None, roots=None)` | Open a draft from committed `HEAD`. To select repositories, pass a nonempty list of authorized root Paths. The first one is primary. Omit `roots` to use the project and configured copy policies. `clean=False` also copies pending source changes. One draft group at a time. |
-| `draft_status()` | Report each repository, target branch, unpublished commits and pending paths, plus task-only review counts. |
-| `draft_diff(...)` | Attach a reviewable diff of the draft's changes and return a checkpoint for the next task. No commit, approval or push. |
-| `draft_sync(action="start", message=None, roots=None)` | Fetch and merge target history inside the draft. Resolve reported conflicts, then use `action="continue"`. To undo this synchronization, use `action="abort"`. It can create commits, so it needs commit permission. |
-| `draft_approve()` | Commit pending work, fast-forward each default branch and publish to origin if configured. `draft_approve("subject")` sets the subject. The draft stays open. |
-| `draft_discard()` | Return to the original checkout and remove the draft working copy. Approved work stays on the default branch. Unapproved changes are lost. A merged draft branch can be removed. |
+The terminal footer shows the draft name and its counts:
 
-Opening or discarding a draft updates the session's workspace immediately. Use
-`session["workspace"]` and the Path bindings from the next block, when Python's
-writable paths are refreshed.
-While in a draft, `session["workspace"]["draft"]` includes `label`, `backend`,
-`branch`, `target_branch`, `approved_ahead` and `pending_paths`.
+- `CHANGES`: the files in the task review.
+- `PENDING`: changed paths that are not committed.
+- `UNMERGED`: draft commits that the target branch does not have.
 
-The TUI footer shows the draft name and task-review `CHANGES`, plus `PENDING`
-paths and `UNMERGED` commits for repositories included in approval. Approval
-reduces the latter counts to zero once the changes land locally. It does not
-reset the review baseline or close the draft. These counts do not confirm a
-successful push. Discarding switches the footer back to the original checkout.
-The footer refreshes in the background and at the end of a turn.
+After approval, `PENDING` and `UNMERGED` go to zero when the changes land locally. These counts do
+not show if a push worked. When Vis discards the draft, the footer shows your checkout again.
 
 ## Recover a session opened in the wrong draft
 
@@ -152,39 +137,6 @@ The final cumulative diff still uses the original starting point. File contents,
 additions and deletions come from the draft. Comments are saved separately and
 never rewrite the patch. Ignored untracked files and backend bookkeeping are not
 review material.
-
-### Diff tool reference
-
-`draft_diff(filename=None, since=None)` attaches `DIFF-<draft-label>.json` for one
-repository. Its result includes the attachment descriptor, a `checkpoint` snapshot
-tree ID and an `empty` flag. With several repositories, it creates separate
-`-repo-1.json`, `-repo-2.json` attachments. Each document identifies its source
-repository, so identical file paths cannot be confused. The result includes an
-`attachments` list and a `checkpoint` map keyed by source repository path.
-
-Keep the complete checkpoint value for the next task. Use a different filename
-for each task and one stable filename for revisions of that task's diff:
-
-```python
-first = draft_diff(filename="DIFF-search-task-1.json")
-print(first)
-# After completing the next task:
-second = draft_diff(filename="DIFF-search-task-2.json", since=first["checkpoint"])
-print(second)
-# The whole implementation, still measured from the draft's starting point:
-print(draft_diff(filename="DIFF-search.json"))
-```
-
-A checkpoint must have been recorded by this draft. Multi-repository checkpoints
-must contain every member. Missing, foreign or invalid members are refused before
-any attachments are created. Snapshot IDs are not Git commits.
-A diff with no changes still records its checkpoint and clearly reports that it is
-empty. The tool does not approve the draft, commit, push or run an implementation.
-
-The snapshot store uses Git even for a Rift directory without Git history. It is
-private to the draft and removed when the draft is discarded. A draft created
-without a saved baseline cannot supply a trustworthy historical diff. Vis refuses
-rather than using today's original checkout as yesterday's starting point.
 
 ## Approval
 
@@ -252,7 +204,7 @@ require Git history. The `draft_backend` toggle chooses between them:
 | `worktree`, `rift` | Require drafts that use only that backend. `draft_create` refuses when the backend is unavailable. |
 | `off` (default) | No automatic draft workflow or draft creation. `draft_create` explains why. |
 
-Set it in **Settings → General**, or in `~/.vis/config.yml`:
+Set it in **Settings → Experimental**, or in `~/.vis/config.yml`:
 
 ```yaml
 toggles:
@@ -264,6 +216,60 @@ the `filesystem_roots` configuration. See
 [Configuration](configuration.md#jail-filesystem-and-network). Copy-only dependency roots keep their
 source bytes, even with `clean=True`. They are never approval targets. An explicit selection cannot
 make a copy-only root part of the approval.
+
+## Reference
+
+Vis uses these sandbox tools for drafts. You do not call them yourself. Ask Vis in the conversation.
+
+### Draft tools
+
+| Tool | Effect |
+|---|---|
+| `draft_create("name", clean=None, roots=None)` | Open a draft from committed `HEAD`. To select repositories, pass a nonempty list of authorized root Paths. The first one is primary. Omit `roots` to use the project and configured copy policies. `clean=False` also copies pending source changes. One draft group at a time. |
+| `draft_status()` | Report each repository, target branch, unpublished commits and pending paths, plus task-only review counts. |
+| `draft_diff(...)` | Attach a reviewable diff of the draft's changes and return a checkpoint for the next task. No commit, approval or push. |
+| `draft_sync(action="start", message=None, roots=None)` | Fetch and merge target history inside the draft. Resolve reported conflicts, then use `action="continue"`. To undo this synchronization, use `action="abort"`. It can create commits, so it needs commit permission. |
+| `draft_approve()` | Commit pending work, fast-forward each default branch and publish to origin if configured. `draft_approve("subject")` sets the subject. The draft stays open. |
+| `draft_discard()` | Return to the original checkout and remove the draft working copy. Approved work stays on the default branch. Unapproved changes are lost. A merged draft branch can be removed. |
+
+Opening or discarding a draft updates the session's workspace immediately. Use
+`session["workspace"]` and the Path bindings from the next block, when Python's
+writable paths are refreshed.
+While in a draft, `session["workspace"]["draft"]` includes `label`, `backend`,
+`branch`, `target_branch`, `approved_ahead` and `pending_paths`.
+
+### Diff tool
+
+`draft_diff(filename=None, since=None)` attaches `DIFF-<draft-label>.json` for one
+repository. Its result includes the attachment descriptor, a `checkpoint` snapshot
+tree ID and an `empty` flag. With several repositories, it creates separate
+`-repo-1.json`, `-repo-2.json` attachments. Each document identifies its source
+repository, so identical file paths cannot be confused. The result includes an
+`attachments` list and a `checkpoint` map keyed by source repository path.
+
+Keep the complete checkpoint value for the next task. Use a different filename
+for each task and one stable filename for revisions of that task's diff:
+
+```python
+first = draft_diff(filename="DIFF-search-task-1.json")
+print(first)
+# After completing the next task:
+second = draft_diff(filename="DIFF-search-task-2.json", since=first["checkpoint"])
+print(second)
+# The whole implementation, still measured from the draft's starting point:
+print(draft_diff(filename="DIFF-search.json"))
+```
+
+A checkpoint must have been recorded by this draft. Multi-repository checkpoints
+must contain every member. Missing, foreign or invalid members are refused before
+any attachments are created. Snapshot IDs are not Git commits.
+A diff with no changes still records its checkpoint and clearly reports that it is
+empty. The tool does not approve the draft, commit, push or run an implementation.
+
+The snapshot store uses Git even for a Rift directory without Git history. It is
+private to the draft and removed when the draft is discarded. A draft created
+without a saved baseline cannot supply a trustworthy historical diff. Vis refuses
+rather than using today's original checkout as yesterday's starting point.
 
 ## Hooks for extensions
 
