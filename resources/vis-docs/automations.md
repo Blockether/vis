@@ -2,7 +2,7 @@
 
 An automation gives Vis a prompt without a message from you. It starts on a schedule, at a set
 time or when another service sends a webhook. Vis reports each result in a session, as a phone
-notification or at an address that you choose. Automations are always available.
+notification or at an address that you choose. You do not need to turn automations on.
 
 ## When to use
 
@@ -113,11 +113,11 @@ run always reports.
 
 ## Keep automations running
 
-Automations are always available. Each automation starts enabled. To stop its triggers, [pause that
-automation](#manage-automations).
+Each new automation starts enabled. To stop its triggers, [pause that automation](#manage-automations).
 
-Vis runs automations only while the gateway runs. If the gateway stops during a run, the run ends
-as `unknown`.
+Vis runs automations only while the gateway runs. For schedules and webhooks that work when your
+computer sleeps, [run the gateway on a server](gateway-service.md). If the gateway stops during a
+run, the run ends as `unknown`.
 
 ## Create an automation
 
@@ -134,9 +134,8 @@ At 17:30 today, check whether the release build passed and tell me the result.
 ```
 
 Vis creates the automation with its `automations` tool and shows you the result. To change it
-later, ask again, for example `Move the morning review list to 7:30.` The tool is available only
-while automations are on. A run that an automation started cannot create, change or delete
-automations.
+later, ask again, for example `Move the morning review list to 7:30.` A run that an automation
+started cannot create, change or delete automations.
 
 You can also create an automation in the app. Open **Settings** and open the row of the machine.
 Select **+** in the header of its **Automations** band. The app asks one question at a time. It

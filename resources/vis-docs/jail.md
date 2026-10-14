@@ -288,7 +288,7 @@ See [Extension API](extension-api.md#registration) for `network_filters`.
 
 No system package, helper executable, `PATH` entry, or operator install is required. Vis
 loads the platform library adjacent to `libvispython`. The library applies Seatbelt or
-bubblewrap before the child command starts. On Linux, a filtered proxy policy currently
+bubblewrap before the child command starts. On Linux, a filtered proxy policy
 uses a private network namespace with no route, so it fails closed rather than exposing
 direct egress.
 

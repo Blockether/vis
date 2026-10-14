@@ -45,7 +45,7 @@ running the latest code from `main`.
 | Gateway RAM | ~122 MiB | ~566 MiB |
 | RAM per session (light use) | ~60 MiB | ~153 MiB |
 
-*Performance figures: Vis v0.2.0 on Apple M4 Max.*
+*Approximate figures, measured on an Apple M4 Max.*
 
 ## Installing
 
@@ -77,13 +77,13 @@ Use `--version` when a CI pipeline or a team must stay on a tested release. The
 installer then installs exactly that release, never a newer one.
 
 ```bash
-curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --version 0.2.36
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --version 0.2.46
 # The same with an environment variable:
-curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | VIS_AGENT_VERSION=0.2.36 bash
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | VIS_AGENT_VERSION=0.2.46 bash
 ```
 
-You can write `0.2.36` or `v0.2.36`. The installer takes the `vis-agent` command from
-that release and runs `vis-agent update v0.2.36`. If the release does not exist or
+You can write `0.2.46` or `v0.2.46`. The installer takes the `vis-agent` command from
+that release and runs `vis-agent update v0.2.46`. If the release does not exist or
 has no bundle for your platform, the installation stops. It never falls back to the
 latest release. A version is always a stable release, so you cannot add `--track beta`
 or `--track dev`.
@@ -129,7 +129,7 @@ repository instead, so a replaced asset cannot pass. Pin the installer with
 `VIS_AGENT_SHA256`:
 
 ```bash
-tag=v0.2.37
+tag=v0.2.46
 base=https://github.com/Blockether/vis/releases/download/$tag
 curl -fsSLO "$base/install-vis-agent"
 echo "<installer hash>  install-vis-agent" | sha256sum --check
@@ -142,7 +142,7 @@ A different command stops the installation before it runs.
 To check release assets by hand, download them and `SHA256SUMS` to one directory:
 
 ```bash
-tag=v0.2.37
+tag=v0.2.46
 base=https://github.com/Blockether/vis/releases/download/$tag
 curl -fsSLO "$base/SHA256SUMS"
 curl -fsSLO "$base/vis-agent"
@@ -201,7 +201,7 @@ a published beta to try a fix, and then back to the stable release.
 vis-agent switch list                     # installed build, tracks and published versions
 vis-agent switch release                  # newest stable release
 vis-agent switch beta                     # the beta the installer index selects today
-vis-agent switch v0.2.8                   # that stable release
+vis-agent switch v0.2.46                  # that stable release
 vis-agent switch beta-<commit>            # that published beta build
 vis-agent switch dev                      # newest main source, always JVM
 ```
@@ -219,40 +219,20 @@ If managed source already exists in `~/.vis/install/src`, a native update also p
 commit of the selected native build. This needs Git. Native-only installations do not download
 source.
 
-For native and dev updates, staged, unstaged or untracked changes stop the update. Vis then shows
-the checkout path and tells you to inspect it with `git status`. Resolve conflicts and commit or
-stash your local changes, including untracked files. Then retry with the same track options. Until
-then, the source checkout and pin, the native installation and the selected track stay the same. The
-updater does not replace source that has local changes with a fresh checkout.
+If that checkout has staged, unstaged or untracked changes, the update stops and shows the checkout
+path. Commit or stash your changes, then run the same command again. Until then, nothing changes:
+not the source, the native installation or the selected track. A failed source fetch also changes
+nothing.
 
-Managed source is a detached pin, not a tracking branch. A manual pull needs an
-explicit branch/ref. Rerunning the updater after resolving local changes selects
-the correct pin: the exact native build commit for release/beta, or newest main
-for dev. A source fetch failure also leaves the installed versions and track unchanged.
+Managed source is a detached commit, not a tracking branch. For a manual pull, name a branch.
 
-By default an update releases an idle managed gateway using its old executable
-before replacing it. Busy or user-owned gateways are never stopped. Add
-`--keep-gateway` to leave even an idle gateway running.
+An update stops an idle managed gateway before it replaces the files. It never stops a busy gateway
+or one that you started yourself. Add `--keep-gateway` to leave an idle gateway running too.
 
 Dev needs Git and JDK 25+. The launcher can install the Clojure CLI.
 `VIS_NO_AUTO_INSTALL=1` disables that installation. Dev does not build native images.
 To run local repository edits independently of installed tracks, use
 `clojure -M:vis` inside that checkout. Build those edits with `clojure -T:build native`.
-
-### Older launchers that reject dev
-
-If `vis-agent update --track dev` reports that dev is not a distribution track,
-your installed launcher predates the dev selector. `--dev` is not an update option.
-Rerun the current bootstrap with dev selected. A plain update reinstalls the stable
-release's launcher and may still lack the selector:
-
-```bash
-curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --track dev
-```
-
-Use `--install-dir PATH` if Vis was installed somewhere other than `~/.local/bin`.
-Dev requires Git and JDK 25+. This replaces the launcher and installs main source.
-It does not erase your sessions or configuration.
 
 ## One-launch JVM override
 
@@ -361,10 +341,8 @@ command also prints the addresses that other devices can open.
 ### Get the web app
 
 Release and beta builds publish the web app with the native runtime. `vis-agent update` installs it
-next to the runtime, so you do not need Node.js. An installation can have no web app, for example
-because an older `vis-agent` ran the update. Then the first `vis-agent web` downloads the copy
-published with the installed build. A build published before the web app existed has no copy.
-Install a newer build with `vis-agent update` or `vis-agent update --track beta`.
+next to the runtime, so you do not need Node.js. If the web app is missing, the first
+`vis-agent web` downloads the copy published with your installed build.
 
 The dev track runs Vis from source. There, the first `vis-agent web` builds the web app with Node.js
 and npm. Later runs rebuild it only after the Companion sources change. A gateway that is already
@@ -420,9 +398,6 @@ connection to that machine open. Use the Companion app on your phone or a browse
 Dictation uses the microphone and pairing by QR code uses the camera, so macOS asks for permission
 the first time you use each one. Allow it once and the desktop app keeps that access. To change it
 later, open System Settings, under Privacy & Security, and look at Microphone and Camera.
-
-Earlier desktop builds could not ask at all and refused dictation with a message about the request
-not being allowed by the user agent. Update to the current release if you still see that.
 
 ### macOS and Linux launcher
 

@@ -595,7 +595,6 @@ resume across model families fails. It does not fall back to another checkpoint.
 
 The worker uses one CPU thread for each physical core, or for each performance core on Apple silicon.
 To choose another number, set `VIS_DECISION_TRAINING_THREADS` to a whole number from 1 to 1024.
-This needs vis-decisions 0.3.1 or newer. Older versions use at most four threads.
 
 The `checkpoint_steps` setting also saves partial checkpoints on the gateway. If a job
 reaches the time limit or fails, it keeps its last saved step. To resume, start a new job with

@@ -150,34 +150,24 @@ From `project/`:
    `doc("status")` and call `await status()`. The tool returns `ready`.
    `vis-agent extension list` checks registration only.
 
-After reviewing dependency changes, run `/reload`. Project admission and reload
-prepare declared uv projects automatically, including missing environments. The
-host-owned invocation selects the gateway's embedded Python with `--python` so
-compiled dependencies match the worker. Preparation can download dependencies
-and update `uv.lock`. Review those changes before sharing them. You can also run
-`vis-agent python uv sync --project PATH` beforehand to inspect preparation directly.
+Vis also prepares a declared uv project by itself when you open the project or run `/reload`. It
+uses the gateway's embedded Python, so compiled dependencies match the worker. Preparation can
+download dependencies and update `uv.lock`. Review those changes before you share them.
 
 ### What preparation installs
 
-uv owns interpreter selection, lock generation and updates, dependency groups,
-extras, editable installs, indexes and environment cleanup. `--locked` rejects lock
-changes. Omitting it permits updates. Default groups are included according to uv's
-configuration, and normal sync removes extraneous packages from the project environment.
-`--project`, `--directory`, `--python`, `--frozen`, `--no-dev` and other uv options keep
-their upstream meaning. `vis-agent python uv sync --help` is uv's own help.
+Preparation is an ordinary `uv sync`. Every uv option keeps its usual meaning, and
+`vis-agent python uv sync --help` shows uv's own help. `--locked` refuses lock changes.
 
-Configure uv through `pyproject.toml`, `uv.toml`, its environment variables or CLI
-options. Vis's [`python.index_url`](configuration.md#python-package-index) also
-supplies uv's default index unless `UV_DEFAULT_INDEX` or `UV_INDEX_URL` is already
-set. Override it with uv's `--default-index`. Keep credentials in uv's credential
-configuration or environment, never committed URLs. CLI output and exit status
-are unchanged. Automatic extension preparation reports bounded, credential-redacted
-diagnostics and the uv exit status or timeout.
+Configure uv as usual: `pyproject.toml`, `uv.toml`, environment variables or options. Vis's
+[`python.index_url`](configuration.md#python-package-index) sets uv's default index, unless
+`UV_DEFAULT_INDEX` or `UV_INDEX_URL` is set. Keep index credentials in uv's credential
+configuration, never in committed URLs. When automatic preparation fails, Vis shows uv's exit
+status, with credentials removed from the output.
 
-The CLI does not force embedded Python. When selecting Python yourself, use a version
-compatible with the gateway's embedded interpreter for compiled extension dependencies.
-Project dependencies are not installed into `~/.vis/python/packages` and do not become
-sandbox imports merely because an extension uses them.
+The CLI does not force the embedded Python. If you choose an interpreter yourself, use a version
+that is compatible with the gateway's embedded Python. Project dependencies stay in the project
+environment. They do not become sandbox imports.
 
 ## Reload after changes
 

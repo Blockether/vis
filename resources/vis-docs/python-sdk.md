@@ -134,7 +134,7 @@ run your Python validators and return a `Quote`. Without `response_model`, `run(
 original turn record. Both modes work with a private local engine or a borrowed `GatewayClient`.
 
 The schema is a **request to the model**, not provider-enforced JSON mode: Vis
-currently uses plain-text completions. The result must be one complete JSON
+uses plain-text completions. The result must be one complete JSON
 value matching your model (an object for `Quote`), without a Markdown fence
 or commentary.
 
