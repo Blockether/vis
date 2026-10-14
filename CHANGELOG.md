@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.45] - 2026-10-14
+
+### Fixed
+- The v0.2.44 release build stopped on a reflection warning in the Python environment lookup, so
+  v0.2.44 was not published. This release ships all v0.2.44 changes, including the
+  `litellm==1.103.1` pin of the `vis-agent` SDK.
+
 ## [v0.2.44] - 2026-10-14
 
 ### Added
