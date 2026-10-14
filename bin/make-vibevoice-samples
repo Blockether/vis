@@ -66,6 +66,8 @@ clojure -M -e "
 (doseq [{:keys [id]} (vibevoice/voices)]
   (vibevoice/speak-sample! id (java.io.File. \"${pack_dir}\" (str id \".wav\")))
   (println \"   \" id))
+;; Close the ONNX sessions first: onnxruntime can abort while the JVM exits with them open.
+(vibevoice/release!)
 (shutdown-agents)
 (System/exit 0)"
 
