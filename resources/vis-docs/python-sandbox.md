@@ -2,7 +2,7 @@
 
 Vis uses a CPython sandbox to run the agent's tool calls and calculations, and to
 start its shell commands. It is separate from your project's Python environment:
-installing a package in one does not necessarily make it available in the other.
+a package that you install in one is not always available in the other.
 This page explains which environment to use, how to install packages with `pip`
 and what the sandbox can access.
 
@@ -28,7 +28,7 @@ To limit what the agent's commands can reach, turn on the [process jail](jail.md
 Each session has its own Python state. The sandbox and trusted Python extensions
 use separate namespaces.
 Tools such as `grep`, `cat`, `patch` and `shell` are available as
-Python functions. `apropos` and `doc` inspect the available API synchronously.
+Python functions. `apropos` and `doc` show the available functions.
 
 ### Unbalanced quotes and brackets
 
@@ -156,8 +156,7 @@ from blockether.vis.engine import Agent  # ModuleNotFoundError
 [Python SDK](python-sdk.md), which drives Vis from your own program. Install
 `vis-agent` and run that code in your own interpreter.
 
-Names that start with an underscore in the bundled module are internal. Reading them here tells you
-nothing about the world outside the sandbox. No extension registers in `python_execution`, so the
+Names that start with an underscore in the bundled module are internal. No extension registers in `python_execution`, so the
 registration record of the module stays empty.
 
 Running an extension entry file yourself does not change that. `importlib` runs the file, and the
@@ -309,8 +308,8 @@ attach(report.encode("utf-8"), filename="IMPLEMENTATION-search.md", kind="doc",
        media_type="text/markdown", commentable=False)
 ```
 
-Here `specification` and `report` are the Markdown strings you produced. Read-only
-prevents human comment saves, not a producer's later update under the same filename.
+Here `specification` and `report` are the Markdown strings you produced. Read-only stops
+comments from people. It does not stop a new version under the same filename.
 See [draft diffs](drafts.md) for reviewable patches from an isolated working copy.
 
 ## Runtime locations
@@ -344,7 +343,7 @@ active and last completed RPCs, and capped JVM stacks. When the runtime supports
 `python-stacks.log` contains Python frames, even if native code holds the GIL. The report records
 whether that capture succeeded, failed or timed out.
 
-Collection adds at most 500 ms to retirement. A failed diagnostic does not prevent
+Collection adds at most 500 ms before the worker stops. A failed diagnostic does not prevent
 Vis from stopping the worker. Healthy readiness checks and ordinary session
 cleanup do not dump stacks.
 

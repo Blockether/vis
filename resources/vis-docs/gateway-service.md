@@ -35,8 +35,8 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 
 The installer places `vis-agent` and its companion runtime files under
 `~/.local/bin`. Put that directory on `PATH`, then check `vis-agent --version`.
-Native releases do not require Java. The Python SDK package alone is not an
-engine installation. See
+Native releases do not require Java. A script that uses only the Python SDK downloads Vis by
+itself, but a service needs this installation. See
 [Runtime distributions](distributions.md) for supported platforms, release
 tracks and updates.
 
@@ -68,7 +68,8 @@ needs its documented connection settings.
 
 The terminal client starts a managed gateway if needed. It stops after the last client disconnects and no work remains.
 `vis-agent desktop` starts one too and keeps it while the app runs. Opening the app another way does not start a gateway.
-Explicit `gateway start` stays running without clients. Use this mode under a service manager.
+A gateway that you start with `gateway start` keeps running without clients. Use this mode under a
+service manager.
 
 ### Stop or restart a gateway
 
@@ -81,7 +82,8 @@ vis-agent gateway stop            # stop even if clients are connected
 ```
 
 Stopping a busy gateway interrupts its clients and active work.
-An unconditional stop can escalate to SIGTERM/SIGKILL. Use `--if-idle` to avoid interrupting another session.
+Without `--if-idle`, a stop can end the process with SIGTERM or SIGKILL. Add `--if-idle` to stop the
+gateway only when no session works.
 For a supervised service, use its service manager to stop it. Otherwise, its restart policy may start it again.
 
 To change the listening address, stop the gateway before starting it with the new address.
@@ -221,8 +223,8 @@ pairing link from the service uses the same address. A service unit starts witho
 profile. So a `VIS_GATEWAY_ADVERTISE` that you export in a login shell never reaches it. See
 [gateway pairing address](configuration.md#gateway-pairing-address).
 
-Keep the complete native bundle together. Its launcher sets up the Python
-sidecar. Copying only `vis-agent-native` can leave a process that starts but
+Keep the complete native bundle together. Its launcher sets up the embedded
+Python runtime. Copying only `vis-agent-native` can leave a process that starts but
 cannot run Python tools. A custom launcher must preserve the bundle layout and
 runtime environment. Prefer the supplied wrapper unless you maintain and test
 that setup yourself.
@@ -259,7 +261,8 @@ Set these environment variables before starting the gateway:
 | `VIS_ENV_IDLE_TTL_MS` | `300000` | Idle milliseconds before a session's Python sandbox stops |
 | `VIS_ENV_RSS_BUDGET_MB` | `3072` native / `5120` JVM | Process memory threshold for eviction |
 
-A value `<= 0` disables an eviction threshold.
+For the last three variables, a value of `0` or less turns the limit off. For the first two, it
+uses the default.
 
 ## Troubleshoot a connection
 
@@ -269,7 +272,7 @@ A value `<= 0` disables an eviction threshold.
 | Authentication fails | The token must belong to this gateway, and the client must receive it. Never print the token to debug. |
 | Client reports an incompatible protocol, or an HTTP client receives `HTTP 426` | Update the SDK and gateway to compatible versions |
 | Requests work but progress stalls | Proxy SSE buffering, idle timeouts and the client's transport timeout |
-| Python tools fail after a manual install | The launcher, Python sidecar, file permissions and service environment |
+| Python tools fail after a manual install | The launcher, the embedded Python runtime, file permissions and the service environment |
 | A session cannot find the project | The path exists and is accessible on the gateway machine |
 
 ### Tokens and HTTP 401
