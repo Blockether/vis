@@ -51,13 +51,10 @@ and the [task overview](https://docs.harborframework.com/tasks/overview).
 
 ## Step 1: Install the tools
 
-You need these items:
+You need Python 3.12 or later and a configured provider and model. Read
+[Configuration](configuration.md) for the provider.
 
-- Python 3.12 or later.
-- The Vis runtime with `vis-agent` on `PATH`. Read [Getting started](index.md).
-- A configured provider and model. Read [Configuration](configuration.md).
-
-Install the SDK. It always installs Harbor 0.24.0 with it:
+Install the SDK. It installs Harbor 0.24.0 with it:
 
 ```bash
 python3 -m venv .venv
@@ -66,8 +63,9 @@ python -m pip install vis-agent
 harbor --version
 ```
 
-The last command shows `0.24.0`. Each trial makes paid model calls. A task with one attempt
-costs one agent run.
+The last command shows `0.24.0`. You do not have to install Vis. When `vis-agent` is not on `PATH`,
+the first run downloads the matching Vis release once. Each trial makes paid model calls. A task
+with one attempt costs one agent run.
 
 ## Step 2: Write a task
 

@@ -257,6 +257,20 @@ def test_installed_cli_is_the_default_engine(tmp_path, clean_settings):
     assert agent.version() is None
 
 
+def test_setup_downloads_vis_when_the_cli_is_missing(
+    tmp_path, monkeypatch, clean_settings
+):
+    import asyncio
+
+    from blockether.vis.evals.environment import HostEnvironment
+
+    downloaded = str(tmp_path / "sdk" / "v0.2.46" / DEFAULT_COMMAND)
+    monkeypatch.setattr(agent_module, "ensure_vis_agent", lambda: downloaded)
+    agent = make_agent(tmp_path)
+    asyncio.run(agent.setup(object.__new__(HostEnvironment)))
+    assert agent.process_env("go", tmp_path)["VIS_HARBOR_ENGINE"] == downloaded
+
+
 def test_native_binary_replaces_the_source_engine(tmp_path, clean_settings):
     binary = tmp_path / "vis"
     binary.write_bytes(b"\x7fELF" + bytes(12))

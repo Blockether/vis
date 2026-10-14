@@ -33,6 +33,7 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from pydantic import Field
 
+from ..engine._install import ensure_vis_agent
 from .environment import HostEnvironment
 from .grade import RUN_FILE, STDERR_FILE, TRACE_FILE, TRAJECTORY_FILE
 from .trajectory import load_trajectory as load_vis_trajectory
@@ -162,7 +163,8 @@ class VisAgent(BaseAgent):
 
     The engine comes from the first option that is set: ``command``, ``native_bin``
     (``VIS_HARBOR_NATIVE_BIN``), ``source`` (``VIS_HARBOR_SOURCE``). Without them, the
-    agent runs the installed ``vis-agent`` CLI.
+    agent runs the installed ``vis-agent`` CLI. When it is missing, setup downloads the
+    matching Vis release once into the SDK cache.
     """
 
     capabilities = AgentCapabilities(atif=True)
@@ -196,6 +198,7 @@ class VisAgent(BaseAgent):
         self.source = Path(source).resolve() if source else None
         self.engine_override = options.command
         self.classpath: str | None = None
+        self.installed_command: str | None = None
         self.model_name = f"{self.provider}/{self.model}"
         self._init_model_info()
 
@@ -263,7 +266,7 @@ class VisAgent(BaseAgent):
             env["VIS_HARBOR_ENGINE"] = self.clojure
             env["VIS_HARBOR_SOURCE"] = str(self.source)
         else:
-            env["VIS_HARBOR_ENGINE"] = DEFAULT_COMMAND
+            env["VIS_HARBOR_ENGINE"] = self.installed_command or DEFAULT_COMMAND
         if self.classpath is not None:
             env["VIS_HARBOR_CLASSPATH"] = self.classpath
         return env
@@ -283,10 +286,7 @@ class VisAgent(BaseAgent):
                 source_classpath, self.clojure, self.source
             )
             return
-        if shutil.which(DEFAULT_COMMAND) is None:
-            raise FileNotFoundError(
-                f"{DEFAULT_COMMAND} is not on PATH: install Vis, or set source or native_bin"
-            )
+        self.installed_command = await asyncio.to_thread(ensure_vis_agent)
 
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext

@@ -35,15 +35,13 @@ requests, select **HTTP** at the top of the page.
 - **A report must show the public position of a round.** [Read the leaderboard
   position](#read-the-leaderboard-position).
 
-To do the steps by hand, read [Evaluations](evals.md). To send the requests from another language,
-select **HTTP** at the top of the page.
-
 ## Before you start
 
 <div data-variant="python">
 
 Install the SDK with Python 3.12 or later. It installs Harbor 0.24.0 with it. To run tasks, also
-install the Vis runtime and configure a provider, as in [Evaluations](evals.md#step-1-install-the-tools).
+configure a provider, as in [Evaluations](evals.md#step-1-install-the-tools). The SDK downloads Vis
+when it is not installed.
 
 ```bash
 python -m pip install vis-agent
@@ -359,11 +357,9 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/agreement" \
   -H 'content-type: application/json' --data @agreement.json
 ```
 
-`source`, `noun`, `labeller` and `fix` are optional.
-
 </div>
 
-`source`, `noun`, `labeller` and `fix` change only the words of the advice.
+`source`, `noun`, `labeller` and `fix` are optional. They change only the words of the advice.
 
 ## Compare two runs
 
