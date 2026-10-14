@@ -166,68 +166,73 @@
 
             (expect (str/includes? url voice)))))))
 
-(defdescribe install-test
-             (it "installs from a source and lands the files the entry requires"
-                 (let [archive
-                       (archive-of! ["model.onnx" "tokens.txt"])
+(defdescribe
+  install-test
+  (it "installs from a source and lands the files the entry requires"
+      (let [archive
+            (archive-of! ["model.onnx" "tokens.txt"])
 
-                       dir
-                       (temp-dir-path "vis-speech-install-")
+            dir
+            (temp-dir-path "vis-speech-install-")
 
-                       entry
-                       {:id "test-asset"
-                        :requires ["model.onnx" "tokens.txt"]
-                        :sources [{:host :test :kind :archive :url (str (.toURI archive))}]}
+            entry
+            {:id "test-asset"
+             :requires ["model.onnx" "tokens.txt"]
+             :sources [{:host :test :kind :archive :url (str (.toURI archive))}]}
 
-                       seen
-                       (atom [])]
+            seen
+            (atom [])]
 
-                   (try (expect (= dir (assets/install! entry dir #(swap! seen conj %))))
-                        (expect (true? (assets/installed? entry dir)))
-                        (expect (seq (filter #(= :downloading (:phase %)) @seen)))
-                        (expect (seq (filter #(= :extracting (:phase %)) @seen)))
-                        (expect (every? #(<= 0 (long (:progress %)) 99) @seen))
-                        (finally (.delete archive) (files/delete-dir! (io/file dir))))))
-             (it "leaves NOTHING behind when every source fails"
-                 ;; A half-written model directory is worse than an absent one: the file is
-                 ;; present, so a caller that only asks `.isFile` loads a truncated .onnx
-                 ;; and the native runtime aborts the JVM.
-                 (let [dir
-                       (temp-dir-path "vis-speech-failed-install-")
+        (try (expect (= dir (assets/install! entry dir #(swap! seen conj %))))
+             (expect (true? (assets/installed? entry dir)))
+             (expect (seq (filter #(= :downloading (:phase %)) @seen)))
+             (expect (seq (filter #(= :extracting (:phase %)) @seen)))
+             (expect (every? #(<= 0 (long (:progress %)) 99) @seen))
+             (finally (.delete archive) (files/delete-dir! (io/file dir))))))
+  (it "leaves NOTHING behind when every source fails"
+      ;; A half-written model directory is worse than an absent one: the file is
+      ;; present, so a caller that only asks `.isFile` loads a truncated .onnx
+      ;; and the native runtime aborts the JVM.
+      (let [dir
+            (temp-dir-path "vis-speech-failed-install-")
 
-                       gone
-                       (str (.toURI (io/file (temp-dir-path "vis-speech-absent-archive-"))))
+            gone
+            (str (.toURI (io/file (temp-dir-path "vis-speech-absent-archive-"))))
 
-                       entry
-                       {:id "test-asset"
-                        :requires ["model.onnx"]
-                        :sources [{:host :first :kind :archive :url gone}
-                                  {:host :second :kind :archive :url gone}]}
+            entry
+            {:id "test-asset"
+             :requires ["model.onnx"]
+             :sources [{:host :first :kind :archive :url gone}
+                       {:host :second :kind :archive :url gone}]}
 
-                       data
-                       (ex-data-of #(assets/install! entry dir nil))]
+            data
+            (ex-data-of #(assets/install! entry dir nil))]
 
-                   (expect (= :speech-assets/install-failed (:type data)))
-                   (expect (= [:first :second] (:tried data)))
-                   (expect (= [:first :second] (mapv :host (:failures data))))
-                   (expect (false? (.exists (io/file dir))))
-                   (expect (= [] (siblings-of dir)))))
-             (it "refuses a source kind it does not understand instead of installing part of one"
-                 (let [dir
-                       (temp-dir-path "vis-speech-bad-kind-")
+        (expect (= :speech-assets/install-failed (:type data)))
+        (expect (= [:first :second] (:tried data)))
+        (expect (= [:first :second] (mapv :host (:failures data))))
+        ;; Release run 38545790875 failed with only "from any source"; name each cause.
+        (expect (re-find #"from any source: first: .+; second: .+"
+                         (try (assets/install! entry dir nil)
+                              ""
+                              (catch clojure.lang.ExceptionInfo e (ex-message e)))))
+        (expect (false? (.exists (io/file dir))))
+        (expect (= [] (siblings-of dir)))))
+  (it "refuses a source kind it does not understand instead of installing part of one"
+      (let [dir
+            (temp-dir-path "vis-speech-bad-kind-")
 
-                       entry
-                       {:id "test-asset"
-                        :requires ["model.onnx"]
-                        :sources
-                        [{:host :first :kind :carrier-pigeon :url "https://example.com/x.tar.bz2"}]}
+            entry
+            {:id "test-asset"
+             :requires ["model.onnx"]
+             :sources [{:host :first :kind :carrier-pigeon :url "https://example.com/x.tar.bz2"}]}
 
-                       data
-                       (ex-data-of #(assets/install! entry dir nil))]
+            data
+            (ex-data-of #(assets/install! entry dir nil))]
 
-                   (expect (= :speech-assets/install-failed (:type data)))
-                   (expect (str/includes? (:error (first (:failures data))) "carrier-pigeon"))
-                   (expect (false? (.exists (io/file dir)))))))
+        (expect (= :speech-assets/install-failed (:type data)))
+        (expect (str/includes? (:error (first (:failures data))) "carrier-pigeon"))
+        (expect (false? (.exists (io/file dir)))))))
 
 (defdescribe
   ensure-test

@@ -184,6 +184,16 @@
                        :host (:host source)
                        :missing missing})))))
 
+(defn- failures-text
+  "Each source and its error, so a failed install says why without a log."
+  [failures]
+  (str/join "; "
+            (map #(str (some-> (:host %)
+                               name)
+                       ": "
+                       (:error %))
+                 failures)))
+
 (defn install!
   "Download + verify + ATOMICALLY install `entry`, trying each source in turn.
    The final directory never holds partial files: an interrupted or corrupt
@@ -232,7 +242,8 @@
                    (throw (ex-info "Could not move the downloaded asset into place"
                                    {:type :speech-assets/install-failed :id (:id entry) :dir dir})))
                  dir)))
-           (throw (ex-info (str "Could not install " (:id entry) " from any source")
+           (throw (ex-info (str "Could not install " (:id entry)
+                                " from any source: " (failures-text failures))
                            {:type :speech-assets/install-failed
                             :id (:id entry)
                             :tried (mapv :host candidates)

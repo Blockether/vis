@@ -432,6 +432,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/vis-native-home"
           echo "HOME=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
           echo "JAVA_TOOL_OPTIONS=-Duser.home=$RUNNER_TEMP/vis-native-home" >> "$GITHUB_ENV"
+          # Keep the speech models across runs: each release would download them again.
+          mkdir -p "$RUNNER_TOOL_CACHE/vis-speech-models"
+          echo "VIS_SPEECH_MODELS_DIR=$RUNNER_TOOL_CACHE/vis-speech-models" >> "$GITHUB_ENV"
       # Release and beta tags attach only to drafts; branches remain dry runs.
       - name: Decide where this build lands
         id: target
