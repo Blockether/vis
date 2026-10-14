@@ -331,6 +331,10 @@
 
 (def ^:dynamic ^:private *extension-preparation?* false)
 
+(def ^:dynamic ^:private *workspace-dirs*
+  "Nil, or an atom of uv workspace directories by project path for one preparation."
+  nil)
+
 (defn- run-uv!
   "Run bundled uv. Failure and timeout retain phase, exit and safe diagnostics."
   ([project command] (run-uv! project command {}))
@@ -379,8 +383,16 @@
    Workspace members share the workspace environment. An override replaces .venv,
    and a relative override resolves against the workspace root."
   ^File [^File project override]
-  (let [workspace
-        (io/file (str/trim (run-uv! project [(bundled-uv!) "workspace" "dir" "--offline"])))
+  (let [lookup
+        #(io/file (str/trim (run-uv! project [(bundled-uv!) "workspace" "dir" "--offline"])))
+
+        workspace
+        (if-let [cache *workspace-dirs*]
+          (or (get @cache (.getPath project))
+              (let [dir (lookup)]
+                (swap! cache assoc (.getPath project) dir)
+                dir))
+          (lookup))
 
         path
         (or (not-empty override) ".venv")
@@ -564,7 +576,13 @@
    A ready private environment must pass uv's offline check and use the embedded Python."
   [^File project]
   (locking preparation-lock
-    (binding [*extension-preparation?* true]
+    ;; #377: the readiness check and the shell cleanup share one workspace lookup.
+    (binding [*extension-preparation?*
+              true
+
+              *workspace-dirs*
+              (atom {})]
+
       (try (if (shared-project? project true)
              (do (preparation-stage! project "cached")
                  (.getCanonicalFile (io/file (runtime/packages-dir))))
