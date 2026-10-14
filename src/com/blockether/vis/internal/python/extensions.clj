@@ -2460,21 +2460,39 @@
          {:dir dest :code-sha (code-sha dest)}
          (catch Throwable t (delete-tree! dest) (throw t)))))
 
+(defn- shared-environment?
+  "True when the project's `python.environment` selects shared packages for `project`.
+   The setting covers uv projects inside the project tree only."
+  [project-root ^File project]
+  (boolean (and project-root
+                (.startsWith (.toPath (.getCanonicalFile project))
+                             (.toPath (.getCanonicalFile (io/file project-root))))
+                (binding [workspace/*workspace-root* project-root]
+                  (python-runtime/shared-environment?)))))
+
 (defn- prepare-root!
   "Snapshot sources and prepare dependencies for an admitted project catalog.
    Unmanaged explicit-directory scans prepare missing environments only when requested.
-   A package environment this pass's sync already checked is reused, not checked again."
+   A package environment this pass's sync already checked is reused, not checked again.
+   A project with `python.environment: shared` prepares its uv projects in shared packages."
   [{:keys [roots dependencies project automatic? package-metadata sync-projects? site-packages
            project-root]}]
   (let [frozen (freeze-root! roots)]
-    (try (let [packages (when (and project
-                                   (or sync-projects?
-                                       (python-runtime/project-environment-exists? project)))
+    (try (let [prepare? (or automatic? sync-projects?)
+               packages (when project
                           (or (get site-packages (.getCanonicalPath ^File project))
-                              (str ((if (or automatic? sync-projects?)
-                                      python-runtime/ensure-project!
-                                      python-runtime/prepared-project)
-                                     project))))]
+                              (cond (shared-environment? project-root project)
+                                    (str ((if prepare?
+                                            python-runtime/ensure-shared-project!
+                                            python-runtime/prepared-shared-project)
+                                           project))
+                                    (or sync-projects?
+                                        (python-runtime/project-environment-exists? project))
+                                    (str ((if prepare?
+                                            python-runtime/ensure-project!
+                                            python-runtime/prepared-project)
+                                           project)))))]
+
            (when (and (not project) (seq dependencies))
              (let [result (try (python-runtime/pip-install! {:target (runtime/packages-dir)
                                                              :upgrade? true}

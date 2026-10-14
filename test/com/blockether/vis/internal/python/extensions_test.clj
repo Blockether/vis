@@ -6369,6 +6369,72 @@ vis.register_extension(vis.Extension(
                    (finally (#'pyx/delete-tree! (:dir frozen)))))))
         (finally (#'pyx/delete-tree! project))))))
 
+;; Issue #378: `python.environment: shared` prepares the project's own uv projects like
+;; `vis-agent python --shared uv sync`; packages outside the project tree keep their environment.
+(defdescribe
+  project-extension-shared-environment-test
+  (it
+    "selects shared preparation for uv projects inside a shared project"
+    (let [root
+          (temp-dir)
+
+          inside
+          (doto (io/file root "tools") .mkdirs)
+
+          outside
+          (temp-dir)
+
+          calls
+          (atom [])
+
+          record
+          (fn [kind]
+            (fn [dir]
+              (swap! calls conj [kind (.getName ^java.io.File dir)])
+              dir))]
+
+      (try
+        (with-redefs [python-runtime/shared-environment?
+                      (fn []
+                        (swap! calls conj [:config (workspace/cwd-root)])
+                        true)
+
+                      python-runtime/ensure-shared-project!
+                      (record :shared-sync)
+
+                      python-runtime/prepared-shared-project
+                      (record :shared-check)
+
+                      python-runtime/ensure-project!
+                      (record :sync)
+
+                      python-runtime/prepared-project
+                      (record :check)
+
+                      python-runtime/project-environment-exists?
+                      (constantly true)]
+
+          (doseq [[project project-root sync? site-packages expected]
+                  [[inside (.getCanonicalPath root) true nil
+                    [[:config (.getCanonicalPath root)] [:shared-sync "tools"]]]
+                   [inside (.getCanonicalPath root) false nil
+                    [[:config (.getCanonicalPath root)] [:shared-check "tools"]]]
+                   [outside (.getCanonicalPath root) true nil [[:sync (.getName outside)]]]
+                   [inside nil true nil [[:sync "tools"]]]
+                   [inside (.getCanonicalPath root) true {(.getCanonicalPath inside) "prepared"}
+                    []]]]
+            (reset! calls [])
+            (let [frozen (#'pyx/prepare-root!
+                          {:roots [root]
+                           :project project
+                           :project-root project-root
+                           :sync-projects? sync?
+                           :site-packages site-packages})]
+              (try (expect (= expected @calls) (pr-str [project project-root sync?]))
+                   (expect (= (if site-packages "prepared" (str project)) (:packages frozen)))
+                   (finally (#'pyx/delete-tree! (:dir frozen)))))))
+        (finally (#'pyx/delete-tree! root) (#'pyx/delete-tree! outside))))))
+
 (defdescribe
   project-extension-environment-isolation-test
   ;; Regression #226: existing project workers must never activate shared .pth hooks or

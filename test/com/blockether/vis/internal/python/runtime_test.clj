@@ -597,3 +597,119 @@
                    (expect (= {"VIS_VERSION" "1.4.9" "VIS_PYTHON_SDK_VERSION" "1.4.10.dev3"}
                               (select-keys (python-runtime/version-globals)
                                            ["VIS_VERSION" "VIS_PYTHON_SDK_VERSION"]))))))
+
+;; Issue #378: a project that installs with `vis-agent python --shared uv sync` can prepare
+;; its extensions the same way, without its own .venv.
+(defn- shared-preparation-calls
+  "Run `f` with a recording uv. The dry-run answer says whether shared packages match the lock."
+  [project packages matches? f]
+  (let [calls (atom [])]
+    (with-redefs-fn {#'python-runtime/run-uv! (fn [dir args]
+                                                (swap! calls conj (vec (rest args)))
+                                                (expect (= project dir))
+                                                (case (second args)
+                                                  "workspace"
+                                                  (str (.getCanonicalPath project) "\n")
+
+                                                  "pip"
+                                                  (if (and matches? (some #{"--dry-run"} args))
+                                                    "Would make no changes"
+                                                    "Would install 1 package")
+
+                                                  ""))
+                     #'runtime/packages-dir (constantly (str packages))}
+      (fn []
+        {:result (try (f) (catch clojure.lang.ExceptionInfo e e)) :calls @calls}))))
+
+(defdescribe
+  shared-project-preparation-test
+  (it "uses shared packages when the lock matches them, and installs into them when it does not"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-shared-project")
+
+            packages
+            (temp-dir "vis-shared-packages")
+
+            stage
+            #(:stage (first (filter (fn [row]
+                                      (= (.getName project) (:name row)))
+                                    (python-runtime/preparation-status))))]
+
+        (try (let [{:keys [result calls]} (shared-preparation-calls
+                                            project
+                                            packages
+                                            true
+                                            #(python-runtime/ensure-shared-project! project))]
+               (expect (= (.getCanonicalFile packages) result))
+               (expect (= [["workspace" "dir" "--offline"] ["export" "pip"] ["pip" "install"]]
+                          [(first calls) [(first (second calls)) (first (nth calls 2))]
+                           (vec (take 2 (nth calls 2)))]))
+               (expect (every? (set (second calls)) ["pylock.toml" "--locked" "--offline"]))
+               (expect (every? (set (nth calls 2)) ["--dry-run" "--offline" "--no-deps"]))
+               (expect (= (str packages) (second (drop-while #(not= "--target" %) (nth calls 2)))))
+               (expect (= "cached" (stage))))
+             (let [{:keys [result calls]}
+                   (shared-preparation-calls project
+                                             packages
+                                             false
+                                             #(python-runtime/ensure-shared-project! project))
+
+                   install
+                   (last calls)]
+
+               (expect (= (.getCanonicalFile packages) result))
+               (expect (= ["export" "pip"] [(first (nth calls 4)) (first install)]))
+               (expect (not-any? #{"--locked" "--offline"} (nth calls 4)))
+               (expect (not-any? #{"--dry-run" "--offline"} install))
+               (expect (= "ready" (stage))))
+             (expect (not (.exists (io/file project ".venv"))))
+             (expect (empty? (filter #(str/starts-with? (.getName ^java.io.File %) "pylock.vis-")
+                                     (.listFiles project)))
+                     "the temporary lock export is removed")
+             (finally (#'python-runtime/delete-tree! project)
+                      (#'python-runtime/delete-tree! packages))))))
+
+(defdescribe
+  prepared-shared-project-test
+  (it "checks shared packages without installing and names the shared sync command"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-shared-manual")
+
+            packages
+            (temp-dir "vis-shared-manual-packages")]
+
+        (try (let [{:keys [result calls]} (shared-preparation-calls
+                                            project
+                                            packages
+                                            true
+                                            #(python-runtime/prepared-shared-project project))]
+               (expect (= (.getCanonicalFile packages) result))
+               (expect (= 3 (count calls))))
+             (let [{:keys [result calls]} (shared-preparation-calls
+                                            project
+                                            packages
+                                            false
+                                            #(python-runtime/prepared-shared-project project))]
+               (expect (= ::python-runtime/project-sync-required (:type (ex-data result))))
+               (expect (str/includes? (ex-message result)
+                                      (str "Run vis-agent python --shared uv sync --project "
+                                           (paths/shell-path (.getCanonicalPath project)))))
+               (expect (every? #(some #{"--dry-run"} %) (filter #(= "pip" (first %)) calls))
+                       "manual validation never installs"))
+             (finally (#'python-runtime/delete-tree! project)
+                      (#'python-runtime/delete-tree! packages))))))
+
+(defdescribe
+  shared-environment-setting-test
+  (it "reads python.environment and rejects unknown values"
+      (doseq [[python expected] [[nil false] [{"environment" "project"} false]
+                                 [{"environment" "shared"} true]
+                                 [{"environment" "venv"} ::invalid]]]
+        (with-redefs [config/load-config-raw (constantly (if python {"python" python} {}))]
+          (expect (= expected
+                     (try (python-runtime/shared-environment?)
+                          (catch clojure.lang.ExceptionInfo e
+                            (when (= ::python-runtime/invalid-environment (:type (ex-data e)))
+                              ::invalid)))))))))

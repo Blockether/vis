@@ -480,6 +480,13 @@
                       {})))
     (.getCanonicalFile (io/file path))))
 
+(defn- project-argument
+  "Name `project` for a sync command: `.` for the current directory, else its shell path."
+  ^String [^File project]
+  (if (= (.getCanonicalFile project) (.getCanonicalFile (io/file (System/getProperty "user.dir"))))
+    "."
+    (paths/shell-path (.getCanonicalPath project))))
+
 (defn prepared-project
   "Validate a manually prepared environment. Never install or replace it.
    Source-only projects without dependencies beyond Vis use shared packages."
@@ -493,10 +500,7 @@
        (catch clojure.lang.ExceptionInfo e
          (throw (ex-info (str (.getMessage e)
                               "\nRun vis-agent python uv sync --project "
-                              (if (= (.getCanonicalFile project)
-                                     (.getCanonicalFile (io/file (System/getProperty "user.dir"))))
-                                "."
-                                (paths/shell-path (.getCanonicalPath project)))
+                              (project-argument project)
                               " --python "
                               (paths/shell-path (Interpreter/pythonExecutable))
                               " --no-python-downloads, then /reload.")
@@ -537,6 +541,22 @@
       (.println config/original-stderr (str "[vis extensions] " name ": " stage))
       (.flush config/original-stderr))))
 
+(defn- preparation-failure
+  "Record a failed preparation stage and wrap `t` as a credential-free preparation error."
+  [^File project ^Throwable t]
+  (preparation-stage! project "failed")
+  (let [data
+        (ex-data t)
+
+        cause
+        (installer-error "uv"
+                         (or (:phase data) :prepare)
+                         (assoc data :diagnostics (or (:diagnostics data) (.getMessage t))))]
+
+    (ex-info (str "Extension preparation failed: " (.getMessage cause))
+             (assoc (ex-data cause) :type ::project-preparation-failed)
+             cause)))
+
 (defn ensure-project!
   "Prepare an extension with bundled uv and the embedded Python.
    Source-only projects without dependencies beyond Vis use shared packages.
@@ -545,34 +565,23 @@
   [^File project]
   (locking preparation-lock
     (binding [*extension-preparation?* true]
-      (try
-        (if (shared-project? project true)
-          (do (preparation-stage! project "cached")
-              (.getCanonicalFile (io/file (runtime/packages-dir))))
-          (let [ready? (try (and (runtime-environment? project)
-                                 (do (run-uv! project
-                                              (into [(bundled-uv!) "sync" "--check" "--offline"]
-                                                    (embedded-python)))
-                                     true))
-                            (catch clojure.lang.ExceptionInfo _ false))]
-            (when-not ready?
-              (preparation-stage! project "installing")
-              (remove-environment-shell! project)
-              (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
-            (let [packages (project-packages project)]
-              (preparation-stage! project (if ready? "cached" "ready"))
-              packages)))
-        (catch Throwable t
-          (preparation-stage! project "failed")
-          (let [data (ex-data t)
-                cause (installer-error "uv"
-                                       (or (:phase data) :prepare)
-                                       (assoc data
-                                         :diagnostics (or (:diagnostics data) (.getMessage t))))]
-
-            (throw (ex-info (str "Extension preparation failed: " (.getMessage cause))
-                            (assoc (ex-data cause) :type ::project-preparation-failed)
-                            cause))))))))
+      (try (if (shared-project? project true)
+             (do (preparation-stage! project "cached")
+                 (.getCanonicalFile (io/file (runtime/packages-dir))))
+             (let [ready? (try (and (runtime-environment? project)
+                                    (do (run-uv! project
+                                                 (into [(bundled-uv!) "sync" "--check" "--offline"]
+                                                       (embedded-python)))
+                                        true))
+                               (catch clojure.lang.ExceptionInfo _ false))]
+               (when-not ready?
+                 (preparation-stage! project "installing")
+                 (remove-environment-shell! project)
+                 (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
+               (let [packages (project-packages project)]
+                 (preparation-stage! project (if ready? "cached" "ready"))
+                 packages)))
+           (catch Throwable t (throw (preparation-failure project t)))))))
 
 (def ^:private shared-sync-selection-options
   {"--locked" 0
@@ -856,6 +865,87 @@
                        (str "Shared packages: " packages "\nRun /reload to refresh Vis workers.")))
                    exit)))
              (finally (Files/deleteIfExists lock-file)))))))
+
+(defn shared-environment?
+  "True when merged config selects shared packages for project extensions.
+   `python.environment` is `project` (the default) or `shared`."
+  []
+  (let [environment (get-in (config/load-config-raw) ["python" "environment"] "project")]
+    (when-not (contract-config/definition-valid? "python" {"environment" environment})
+      (throw (ex-info "python.environment must be project or shared"
+                      {:type ::invalid-environment})))
+    (= "shared" environment)))
+
+(defn- shared-project-install!
+  "Install `project`'s locked dependencies into shared packages, as `--shared uv sync` does.
+   With `check?`, install nothing, stay offline and keep the lock unchanged.
+   Answer true when uv plans no change or after an installation."
+  [^File project check?]
+  (let [uv
+        (bundled-uv!)
+
+        workspace
+        (io/file (str/trim (run-uv! project [uv "workspace" "dir" "--offline"])))]
+
+    (when-not (and (.isAbsolute workspace) (.isDirectory workspace))
+      (throw (ex-info "uv did not report an existing workspace directory" {})))
+    ;; uv writes local sources relative to the workspace root, and reads them
+    ;; relative to the pylock's parent. Never put this file in the system temp dir.
+    (let [lock-file
+          (Files/createTempFile (.toPath workspace)
+                                "pylock.vis-"
+                                ".toml"
+                                (make-array java.nio.file.attribute.FileAttribute 0))
+
+          packages
+          (runtime/packages-dir)]
+
+      (try (run-uv! project
+                    (into [uv "export" "--format" "pylock.toml" "--output-file" (str lock-file)]
+                          (concat (when check? ["--locked" "--offline"]) (embedded-python))))
+           (let [before
+                 (when-not check? (editable-installs packages))
+
+                 output
+                 (run-uv! project
+                          (into
+                            [uv "pip" "install" "--target" packages "--requirements" (str lock-file)
+                             "--no-deps" "--directory" (.getCanonicalPath workspace)]
+                            (concat (when check? ["--offline" "--dry-run"]) (embedded-python))))]
+
+             (when-not check? (warn-repointed-editables! before (editable-installs packages)))
+             (or (not check?) (str/includes? output "Would make no changes")))
+           (finally (Files/deleteIfExists lock-file))))))
+
+(defn ensure-shared-project!
+  "Prepare an extension project in shared packages, as `vis-agent python --shared uv sync` does.
+   Install only when uv's offline plan differs from the lock. Never create or read `.venv`."
+  ^File [^File project]
+  (locking preparation-lock
+    (binding [*extension-preparation?* true]
+      (try (let [ready? (try (shared-project-install! project true)
+                             (catch clojure.lang.ExceptionInfo _ false))]
+             (when-not ready?
+               (preparation-stage! project "installing")
+               (shared-project-install! project false))
+             (preparation-stage! project (if ready? "cached" "ready"))
+             (.getCanonicalFile (io/file (runtime/packages-dir))))
+           (catch Throwable t (throw (preparation-failure project t)))))))
+
+(defn prepared-shared-project
+  "Check that shared packages hold an extension project's lock. Never install."
+  ^File [^File project]
+  (let [hint (str "Run vis-agent python --shared uv sync --project "
+                  (project-argument project)
+                  ", then /reload.")]
+    (when-not (try (shared-project-install! project true)
+                   (catch clojure.lang.ExceptionInfo e
+                     (throw (ex-info (str (.getMessage e) "\n" hint)
+                                     (assoc (ex-data e) :type ::project-sync-required)
+                                     e))))
+      (throw (ex-info (str "Shared packages differ from the extension project's lock.\n" hint)
+                      {:type ::project-sync-required})))
+    (.getCanonicalFile (io/file (runtime/packages-dir)))))
 
 (defn uv-command!
   "Run bundled upstream uv with unchanged arguments and stdio; return its exit code.

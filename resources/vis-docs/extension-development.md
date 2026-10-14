@@ -15,6 +15,8 @@ A small extension file registers the tools. This guide covers that setup.
   implementation and the tool](#test-the-implementation-and-the-tool).
 - **The agent's own Python code should import your library.** [Install the project
   into shared packages](#install-a-project-into-shared-packages).
+- **Your project already installs everything into shared packages, and a second `.venv` only
+  causes failures.** [Use shared packages for project extensions](#use-shared-packages-for-project-extensions).
 
 For a new extension, the [one-file tutorial](extending.md) or an [automatically
 prepared package](extension-packages.md#package-manifest) needs less setup.
@@ -252,6 +254,8 @@ use `~/.vis/python/packages` and the [shared sync workflow](#install-a-project-i
 Source-only projects also use shared packages when uv selects no dependency beyond the bundled Vis SDK.
 Vis does not create or read `.venv` for these projects. Declare your import directories in `tool.vis.source_paths`.
 A project that needs an editable installation keeps its own environment, even without other dependencies.
+To prepare all extension projects of your project in shared packages, see
+[Use shared packages for project extensions](#use-shared-packages-for-project-extensions).
 
 Automatic preparation ignores `UV_PROJECT_ENVIRONMENT` and uses the workspace's `.venv`.
 Manual validation honors that variable. If a selected environment is incomplete or uses another Python,
@@ -329,6 +333,32 @@ vis-agent python --shared uv sync --project . --check --offline || vis-agent pyt
 `vis-agent python --shared uv sync --help` lists supported options. Shared sync does
 not support `--exact`, `--active`, or choosing another interpreter.
 Without `--shared`, `vis-agent python uv ...` remains ordinary upstream uv.
+
+## Use shared packages for project extensions
+
+Some projects install their dependencies only with `vis-agent python --shared uv sync`
+and also run their tests with `vis-agent python --shared`. By default, the extensions of such a
+project still get their own `.venv`. Then a broken `.venv` stops every project extension. To use the
+shared packages for the extensions too, set this in the project's `vis.yml`:
+
+```yaml
+python:
+  environment: shared
+```
+
+With this setting, Vis prepares each uv project of the project's extensions like
+`vis-agent python --shared uv sync`. It does not create or read `.venv`. The trusted worker
+imports the shared packages in `~/.vis/python/packages` (or `VIS_PYTHON_PACKAGES`).
+
+- When you open the project or run `/reload`, Vis first checks the lock offline. It installs only
+  when the shared packages differ from the lock.
+- An unmanaged scan only checks. If the shared packages differ, the error names the
+  `vis-agent python --shared uv sync --project` command to run before `/reload`.
+- The setting applies only to uv projects inside the project directory. Installed extension
+  packages and global extensions keep their own environments.
+
+The default value is `project`. All [shared install limits](#install-a-project-into-shared-packages)
+also apply here: every shared consumer uses the same versions and the same editable checkout.
 
 ## See also
 

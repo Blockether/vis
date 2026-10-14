@@ -32,6 +32,8 @@ when you want settings shared across projects or checked into a repository.
 - **Python HTTPS requests fail a strict certificate check, or packages must come
   from a private index.** See [Python TLS validation](#python-tls-validation) and
   [Python package index](#python-package-index).
+- **Your project installs its Python dependencies only into shared packages.** Let its
+  extensions use them too with [Python extension environment](#python-extension-environment).
 - **Your own program must read or change settings.** Read [Configuration API](configuration-api.md).
 
 Use [Project instructions](project-instructions.md) for rules about working in your
@@ -672,6 +674,24 @@ come before the packages of the selected environment. Vis does not merge project
 packages. An [editable package install](extension-development.md) supplies its own import roots
 through `.pth` files or backend hooks, so it does not need these layout overrides. Import roots do
 not grant filesystem permissions or install dependencies.
+
+## Python extension environment
+
+By default, each uv project of a project extension gets its own environment, normally `.venv`.
+If your project installs its dependencies with `vis-agent python --shared uv sync`, use the
+shared packages for its extensions too:
+
+```yaml
+# vis.yml
+python:
+  environment: shared
+```
+
+The value is `project` (the default) or `shared`. With `shared`, Vis prepares the extension
+projects inside the project directory like `vis-agent python --shared uv sync`, and their workers
+import `~/.vis/python/packages`. Vis does not create or read `.venv` for them. Installed extension
+packages and global extensions keep their own environments. Run `/reload` after you change the
+value. See [Use shared packages for project extensions](extension-development.md#use-shared-packages-for-project-extensions).
 
 ## MCP servers
 
