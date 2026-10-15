@@ -151,6 +151,10 @@
    handed straight to fff, which applies it in the native walker AND in the
    watcher's filter.
 
+   `content-indexing?` (default true) builds the content index that grep reads. A
+   caller that reads only paths passes false. Its rescans then wait for the walk
+   only, not for the content of each file.
+
    `respect-ignore-files?` (default true) is handed STRAIGHT to fff: false makes
    fff's own native walker skip `.gitignore`/`.ignore`/`.git/info/exclude`/global
    ignores. vis' search tools ALWAYS pass true — gitignore is honored
@@ -171,6 +175,8 @@
   (^java.io.Closeable [^File root respect-ignore-files? overlay]
    (open! root respect-ignore-files? overlay nil))
   (^java.io.Closeable [^File root respect-ignore-files? overlay event-data]
+   (open! root respect-ignore-files? overlay event-data true))
+  (^java.io.Closeable [^File root respect-ignore-files? overlay event-data content-indexing?]
    (when-not (.isDirectory root)
      (throw (ex-info (str "File index root must be a directory: " (.getPath root))
                      {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
@@ -185,7 +191,7 @@
                        {:base-path k
                         :watch? true
                         :ai-mode? true
-                        :enable-content-indexing? true
+                        :enable-content-indexing? (boolean content-indexing?)
                         :enable-mmap-cache? false
                         ;; content budget: fff skips files past this SILENTLY,
                         ;; and its 10 MB default made grep miss needles that
@@ -473,56 +479,105 @@
         (record-event! :invalidate (entry-data entry)))))
   nil)
 
+(defn- retire-failed!
+  "Take a failed entry out of the pool, so that the next lease builds a fresh index.
+   Current borrowers keep the old instance, and the last release closes it."
+  [entry reason]
+  (let [k
+        (:key entry)
+
+        removed?
+        (locking pool (when (identical? (get @pool k) entry) (swap! pool dissoc k) true))]
+
+    (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
+    (when removed? (record-event! :evict (assoc (entry-data entry) :reason reason)))))
+
 (defn- resync!
-  "Serialize read-your-writes rescans per shared index. A write during a rescan
-   remains pending; failed scans never advance the synchronized epoch."
+  "Rescan a shared index after writes, so that the body reads its own writes.
+
+   - One rescan runs at a time for each index. A caller that waited for it uses its
+     result and does not start another rescan.
+   - The wait is bounded and interruptible, so a turn cancel reaches a waiting thread.
+   - A failed or late rescan never fails the caller. The caller uses the watcher-live
+     index, and the pool retires the entry, so the next lease builds a fresh index.
+   - A failed scan never advances the synchronized epoch. A write during a rescan
+     stays pending."
   [entry idx]
   (let [^java.util.concurrent.atomic.AtomicLong synced
         (:synced-epoch entry)
 
         ^java.util.concurrent.atomic.AtomicLong written
-        (:write-epoch entry)]
+        (:write-epoch entry)
 
-    (when (< (.get synced) (.get written))
-      (locking synced
-        (let [now (.get written)]
-          (when (< (.get synced) now)
-            (let [requested-at (System/nanoTime)]
-              (with-scan-permit*
-                (fn []
-                  (let [started-at (System/nanoTime)
-                        data (assoc (entry-data entry)
-                               :reason :write
-                               :queued-ms (quot (- started-at requested-at) 1000000))]
+        ^java.util.concurrent.locks.ReentrantLock lock
+        (:resync-lock entry)
 
-                    (try (when-not (fff/rescan! idx scan-timeout-ms)
-                           (throw (ex-info "File index rescan after a write timed out"
-                                           {:type :ext.foundation.editing/fff-scan-timeout
-                                            :path (first (:key entry))
-                                            :timeout-ms scan-timeout-ms})))
-                         (.set synced now)
-                         (record-event! :scan
-                                        (assoc data
-                                          :status :ready
-                                          :scan-ms (quot (- (System/nanoTime) started-at) 1000000)))
-                         (catch Throwable t
-                           (record-event! :scan
-                                          (assoc data
-                                            :status :failed
-                                            :scan-ms (quot (- (System/nanoTime) started-at)
-                                                           1000000)))
-                           (throw t)))))))))))))
+        target
+        (.get written)
+
+        stale!
+        (fn [reason]
+          (record-event! :stale (assoc (entry-data entry) :reason reason))
+          nil)]
+
+    (when (< (.get synced) target)
+      (if-not (.tryLock lock (long scan-timeout-ms) java.util.concurrent.TimeUnit/MILLISECONDS)
+        (stale! :rescan-busy)
+        (try
+          (cond (.get ^java.util.concurrent.atomic.AtomicBoolean (:dead entry)) (stale!
+                                                                                  :rescan-failed)
+                (>= (.get synced) target) nil
+                :else (let [now
+                            (.get written)
+
+                            requested-at
+                            (System/nanoTime)]
+
+                        (with-scan-permit*
+                          (fn []
+                            (let [started-at
+                                  (System/nanoTime)
+
+                                  data
+                                  (assoc (entry-data entry)
+                                    :reason :write
+                                    :queued-ms (quot (- started-at requested-at) 1000000))
+
+                                  scan-ms
+                                  #(quot (- (System/nanoTime) started-at) 1000000)
+
+                                  failed!
+                                  (fn [error]
+                                    (record-event! :scan
+                                                   (assoc data
+                                                     :status :failed
+                                                     :scan-ms (scan-ms)
+                                                     :error error))
+                                    (retire-failed! entry :rescan-failed)
+                                    (stale! :rescan-failed))]
+
+                              (try (if (fff/rescan! idx scan-timeout-ms)
+                                     (do (.set synced now)
+                                         (record-event! :scan
+                                                        (assoc data
+                                                          :status :ready
+                                                          :scan-ms (scan-ms))))
+                                     (failed! "File index rescan after a write timed out"))
+                                   (catch InterruptedException e (throw e))
+                                   (catch Throwable t (failed! (ex-message t)))))))))
+          (finally (.unlock lock)))))))
 
 (defn- pool-key
-  "The pool identity of a lease: canonical root path, ignore policy and the
-   ignore overlay — two overlays index DIFFERENT file universes, so they must
-   never share one instance."
-  [{:keys [^File root respect-ignore-files? overlay]}]
+  "The pool identity of a lease: canonical root path, ignore policy, ignore overlay
+   and content indexing. Two overlays index DIFFERENT file universes, and a
+   path-only index cannot serve grep, so these never share one instance."
+  [{:keys [^File root respect-ignore-files? overlay content-indexing?]}]
   [(.getCanonicalPath root) (boolean respect-ignore-files?)
    (when overlay
      (mapv (fn [k]
              (vec (get overlay k)))
-           [:custom-ignore-filenames :exclude-globs :unignore-globs]))])
+           [:custom-ignore-filenames :exclude-globs :unignore-globs]))
+   (not (false? content-indexing?))])
 
 (defn- new-entry
   [lease k]
@@ -536,13 +591,18 @@
      :index-id id
      :idx (delay (let [data {:pool-key k :index-id id :active-users (.get users)}]
                    (record-event! :create data)
-                   (open! (:root lease) (:respect-ignore-files? lease) (:overlay lease) data)))
+                   (open! (:root lease)
+                          (:respect-ignore-files? lease)
+                          (:overlay lease)
+                          data
+                          (not (false? (:content-indexing? lease))))))
      :leases users
      :last-used (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
      :closed (java.util.concurrent.atomic.AtomicBoolean. false)
      :dead (java.util.concurrent.atomic.AtomicBoolean. false)
      :write-epoch (java.util.concurrent.atomic.AtomicLong. 0)
-     :synced-epoch (java.util.concurrent.atomic.AtomicLong. 0)}))
+     :synced-epoch (java.util.concurrent.atomic.AtomicLong. 0)
+     :resync-lock (java.util.concurrent.locks.ReentrantLock.)}))
 
 (defn with-index*
   "Call `f` with the process-wide index shared by every worker for this root and
@@ -568,18 +628,10 @@
     (try (record-event! :acquire (entry-data entry))
          (when reused? (record-event! :reuse (entry-data entry)))
          (start-idle-reaper!)
-         (let [idx (try
-                     @(:idx entry)
-                     (catch Throwable t
-                       (let [removed?
-                             (locking pool
-                               (when (identical? (get @pool k) entry) (swap! pool dissoc k) true))]
-                         (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
-                         (when removed?
-                           (record-event! :evict (assoc (entry-data entry) :reason :build-failed))))
-                       (throw t)))]
+         (let [idx (try @(:idx entry)
+                        (catch Throwable t (retire-failed! entry :build-failed) (throw t)))]
            (sweep! k)
-           (resync! entry idx)
+           (when-not (false? (:resync? lease)) (resync! entry idx))
            (f idx))
          (finally (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
                   (.decrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases entry))
@@ -593,9 +645,15 @@
    overlay. Bundled into a single value so `with-index` keeps a plain
    `[binding init]` shape. Files under `root` that this process holds OS locks
    on (`paths/held-file?`) join the overlay's exclude globs, so no index opens
-   them."
+   them.
+
+   `opts` takes two flags, both true by default:
+   - `:content-indexing?` false builds a path-only index (see `open!`).
+   - `:resync?` false skips the read-your-writes rescan. Use it for a caller on a
+     critical path that can read the watcher-live index."
   ([^File root respect-ignore-files?] (lease root respect-ignore-files? nil))
-  ([^File root respect-ignore-files? overlay]
+  ([^File root respect-ignore-files? overlay] (lease root respect-ignore-files? overlay nil))
+  ([^File root respect-ignore-files? overlay {:keys [content-indexing? resync?]}]
    (let [held
          (held-globs (.getCanonicalPath root))
 
@@ -606,7 +664,9 @@
 
      {:root root
       :respect-ignore-files? (boolean respect-ignore-files?)
-      :overlay (when (some seq (vals overlay)) overlay)})))
+      :overlay (when (some seq (vals overlay)) overlay)
+      :content-indexing? (not (false? content-indexing?))
+      :resync? (not (false? resync?))})))
 
 (defmacro with-index
   "`(with-index [idx (lease root respect?)] body…)` — body runs with a

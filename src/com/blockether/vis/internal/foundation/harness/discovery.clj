@@ -379,7 +379,12 @@
    pooled fff index. Git ignores stay enabled for the tree; only the explicit harness
    configuration directories are reopened. A match counts only when its owner directory
    is a real project: not inside a dependency directory and not ignored by Git. Nested
-   app sessions deliberately do not scan siblings."
+   app sessions deliberately do not scan siblings.
+
+   The index reads paths only and skips the read-your-writes rescan. Prompt assembly
+   runs this on every turn, and the re-include globs make the native walk cover the
+   whole tree, so a content index or a blocking rescan can stall every turn. The
+   watcher keeps the paths current (Blockether/vis#384, Blockether/vis#385)."
   []
   (let [^java.io.File repo
         (repository-root)
@@ -407,7 +412,7 @@
 
             matches
             (fff-index/with-index
-              [idx (fff-index/lease repo true overlay)]
+              [idx (fff-index/lease repo true overlay {:content-indexing? false :resync? false})]
               (vec (mapcat (fn [[tool _ & parts]]
                              (let [pattern (str "**/" (str/join "/" parts) "/*/SKILL.md")]
                                (for [{:keys [relative-path]}

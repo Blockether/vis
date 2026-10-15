@@ -203,35 +203,178 @@
                   (expect (= [a-index nested-index] @rescans))
                   (expect (= 2 (get-in (index/pool-stats) [:counters :events :scan])))))))))))
 
-(defdescribe failed-rescan-does-not-run-search-or-consume-write-test
-             (it "failed rescan does not run search or consume write"
-                 (with-pool
-                   (fn [_ _]
-                     (let [attempts
-                           (atom 0)
+;; Regression for Blockether/vis#384 and Blockether/vis#385: a write rescan that timed
+;; out failed every caller, and the next caller rescanned the same index again. One
+;; slow tree then failed settings requests and stalled every turn every 30 s.
+(defdescribe
+  failed-rescan-serves-the-live-index-and-retires-it-test
+  (it "failed rescan runs the search and the next lease builds a fresh index"
+      (with-pool
+        (fn [pool _]
+          (let [attempts
+                (atom 0)
 
-                           searches
+                searches
+                (atom 0)]
+
+            (with-redefs-fn {#'index/open! fake-index
+                             #'fff/rescan! (fn [& _]
+                                             (swap! attempts inc)
+                                             false)}
+              (fn []
+                (let [first-handle (index/with-index* (lease) identity)]
+                  (index/note-fs-write! (java.io.File. "marker.txt"))
+                  (expect (identical? first-handle
+                                      (index/with-index* (lease)
+                                                         (fn [idx]
+                                                           (swap! searches inc)
+                                                           idx))))
+                  (expect (empty? @pool))
+                  (expect (= 1 (get-in (index/pool-stats) [:counters :evictions :rescan-failed])))
+                  (expect (not (identical? first-handle (index/with-index* (lease) identity))))
+                  (expect (= 1 @attempts))
+                  (expect (= 1 @searches))))))))))
+
+(defn- blocking-rescan
+  "A `fff/rescan!` stub that blocks until `release` opens, and counts its calls."
+  [started release calls]
+  (fn [& _]
+    (swap! calls inc)
+    (.countDown ^java.util.concurrent.CountDownLatch started)
+    (.await ^java.util.concurrent.CountDownLatch release)
+    true))
+
+(defdescribe
+  waiting-callers-share-one-rescan-test
+  (it "callers that wait for a rescan use its result"
+      (with-pool
+        (fn [_ _]
+          (let [started
+                (java.util.concurrent.CountDownLatch. 1)
+
+                release
+                (java.util.concurrent.CountDownLatch. 1)
+
+                calls
+                (atom 0)]
+
+            (with-redefs-fn {#'index/open! fake-index
+                             #'fff/rescan! (blocking-rescan started release calls)}
+              (fn []
+                (index/with-index* (lease) identity)
+                (index/note-fs-write! (java.io.File. "marker.txt"))
+                (let [holder
+                      (future (index/with-index* (lease) (constantly :holder)))
+
+                      _
+                      (.await started)
+
+                      waiters
+                      (mapv (fn [_]
+                              (future (index/with-index* (lease) (constantly :waiter))))
+                            (range 4))]
+
+                  (Thread/sleep 50)
+                  (.countDown release)
+                  (expect (= :holder (deref holder 5000 :timeout)))
+                  (expect (= (repeat 4 :waiter) (map #(deref % 5000 :timeout) waiters)))
+                  (expect (= 1 @calls))))))))))
+
+(defdescribe
+  rescan-wait-is-bounded-and-interruptible-test
+  (it "a caller stops waiting for a rescan at the budget and searches the live index"
+      (with-pool
+        (fn [pool _]
+          (let [started
+                (java.util.concurrent.CountDownLatch. 1)
+
+                release
+                (java.util.concurrent.CountDownLatch. 1)]
+
+            (with-redefs-fn {#'index/open! fake-index
+                             #'index/scan-timeout-ms 100
+                             #'fff/rescan! (blocking-rescan started release (atom 0))}
+              (fn []
+                (index/with-index* (lease) identity)
+                (index/note-fs-write! (java.io.File. "marker.txt"))
+                (let [holder (future (index/with-index* (lease) identity))]
+                  (.await started)
+                  (expect (= :searched (index/with-index* (lease) (constantly :searched))))
+                  (expect (= 1 (get-in (index/pool-stats) [:counters :events :stale])))
+                  (.countDown release)
+                  (deref holder 5000 :timeout)
+                  (expect (= 1 (count @pool))))))))))
+  (it
+    "a cancelled caller leaves the rescan wait and releases its lease"
+    (with-pool
+      (fn [pool _]
+        (let [started
+              (java.util.concurrent.CountDownLatch. 1)
+
+              release
+              (java.util.concurrent.CountDownLatch. 1)]
+
+          (with-redefs-fn {#'index/open! fake-index
+                           #'fff/rescan! (blocking-rescan started release (atom 0))}
+            (fn []
+              (index/with-index* (lease) identity)
+              (index/note-fs-write! (java.io.File. "marker.txt"))
+              (let [holder
+                    (future (index/with-index* (lease) identity))
+
+                    _
+                    (.await started)
+
+                    outcome
+                    (promise)
+
+                    waiter
+                    (Thread. ^Runnable
+                             (fn []
+                               (deliver outcome
+                                        (try (index/with-index* (lease) (constantly :searched))
+                                             (catch InterruptedException _ :interrupted)))))]
+
+                (.start waiter)
+                (Thread/sleep 100)
+                (.interrupt waiter)
+                (expect (= :interrupted (deref outcome 5000 :timeout)))
+                (expect (= 1 (:active-users (first (:entries (index/pool-stats))))))
+                (.countDown release)
+                (deref holder 5000 :timeout)
+                (expect (zero? (:active-users (first (:entries (index/pool-stats))))))
+                (expect (= 1 (count @pool)))))))))))
+
+(defdescribe lease-options-select-a-path-only-index-without-rescans-test
+             (it "a path-only lease has its own index and skips the write rescan"
+                 (with-pool
+                   (fn [pool _]
+                     (let [opened
+                           (atom [])
+
+                           rescans
                            (atom 0)]
 
-                       (with-redefs-fn {#'index/open! fake-index
+                       (with-redefs-fn {#'index/open! (fn [& args]
+                                                        (swap! opened conj (nth args 4))
+                                                        (fake-index))
                                         #'fff/rescan! (fn [& _]
-                                                        (> (swap! attempts inc) 1))}
+                                                        (swap! rescans inc)
+                                                        true)}
                          (fn []
-                           (index/with-index* (lease) identity)
-                           (index/note-fs-write! (java.io.File. "marker.txt"))
-                           (expect (= :ext.foundation.editing/fff-scan-timeout
-                                      (try (index/with-index* (lease)
-                                                              (fn [_]
-                                                                (swap! searches inc)))
-                                           nil
-                                           (catch clojure.lang.ExceptionInfo e
-                                             (:type (ex-data e))))))
-                           (expect (zero? @searches))
-                           (index/with-index* (lease)
-                                              (fn [_]
-                                                (swap! searches inc)))
-                           (expect (= 2 @attempts))
-                           (expect (= 1 @searches)))))))))
+                           (let [paths (index/lease (java.io.File. ".")
+                                                    true
+                                                    nil
+                                                    {:content-indexing? false :resync? false})]
+                             (index/with-index* (lease) identity)
+                             (index/with-index* paths identity)
+                             (index/note-fs-write! (java.io.File. "marker.txt"))
+                             (index/with-index* paths identity)
+                             (expect (= [true false] @opened))
+                             (expect (= 2 (count @pool)))
+                             (expect (zero? @rescans))
+                             (index/with-index* (lease) identity)
+                             (expect (= 1 @rescans))))))))))
 
 (defdescribe write-during-rescan-remains-pending-test
              (it "write during rescan remains pending"
