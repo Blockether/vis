@@ -2357,9 +2357,7 @@
           (let [sticky (:value (:best-answer (ctx-loop/read-turn-state environment)))]
             (merge {:status :error
                     :status-id (loop-router/status->id :error)
-                    :answer (cond-> (agents/stop-reason environment)
-                              (util/non-blank-string? sticky)
-                              (str "\n\nLast report:\n" sticky))
+                    :answer (agents/refusal-answer environment sticky)
                     :trace trace
                     :iteration-count iteration}
                    (accounting/turn-cost @accounting-atom turn-pricing))))))

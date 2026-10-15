@@ -252,20 +252,36 @@
         (expect (not= "budget_limited" (:status (agents/info db child))))
         (expect (not (agents/claim-iteration! env)) "Only one handoff iteration")
         (expect (= "budget_limited" (:status (agents/info db child))))
-        (expect (re-find #"council\.extend" (agents/stop-reason env)))))
-  (it "marks a child that ends its turn at the budget as budget_limited"
+        (expect (re-find #"council\.extend" (agents/stop-reason env)))
+        (expect (re-find #"Last report:\nParser fixed\.$"
+                         (agents/refusal-answer env "Parser fixed.")))
+        (expect (re-find #"no report\. Read its work with read_session\(\""
+                         (agents/refusal-answer env nil))
+                "A handoff without prose still tells the parent where the work is")))
+  (it "marks a child budget_limited only when its turn ends in the handoff iteration"
       (let [db
             (h/store)
 
             leader
             (h/store-session! db {:channel :api})
 
-            child
-            (child! db leader {:iteration_budget 1})]
+            done
+            (child! db leader {:iteration_budget 1})
 
-        (agents/claim-iteration! {:db-info db :session-id child})
-        (agents/finish! db child "completed")
-        (expect (= "budget_limited" (:status (agents/info db child))))))
+            cut
+            (child! db leader {:iteration_budget 1})
+
+            cut-env
+            {:db-info db :session-id cut :turn-state-atom (atom {})}]
+
+        (agents/claim-iteration! {:db-info db :session-id done :turn-state-atom (atom {})})
+        (agents/finish! db done "completed")
+        (expect (= "completed" (:status (agents/info db done)))
+                "An answer on the last claimed iteration is a finished task")
+        (agents/claim-iteration! cut-env)
+        (agents/claim-iteration! cut-env)
+        (agents/finish! db cut "completed")
+        (expect (= "budget_limited" (:status (agents/info db cut))))))
   (it
     "extends a budget within the limits and makes the child wakeable again"
     (let [db
@@ -291,7 +307,9 @@
         leader
         (atom #{})
         (fn [_]
-          (agents/claim-iteration! {:db-info db :session-id child})
+          (let [child-env {:db-info db :session-id child :turn-state-atom (atom {})}]
+            (agents/claim-iteration! child-env)
+            (agents/claim-iteration! child-env))
           (agents/finish! db child "completed")
           (expect (not (agents/wake-allowed? db leader child)))
           (expect (= {"status" "completed" "iteration_budget" 6 "iterations_used" 1}
@@ -312,6 +330,13 @@
                                                                 grandchild
                                                                 2)))
                           "iteration_budget")))
+          (expect (= 4 (:iteration_budget (agents/info db child)))
+                  "A subagent gives its own iterations away")
+          (expect (some? (outcome
+                           #(agents/extend-agent {:db-info db :session-id child} grandchild 3))))
+          (expect (= :budget-exceeded
+                     (outcome #(agents/extend-agent {:db-info db :session-id child} grandchild 1)))
+                  "Repeated extensions cannot pass the remaining budget")
           (ps/db-agent-update! db grandchild {:status "cancelled"})
           (expect (= :invalid-request (outcome #(agents/extend-agent env grandchild 1))))))))
   (it
@@ -409,6 +434,8 @@
                   (outcome
                     #(agents/resume-agent env child "Fix the parser test too" {:timeout_secs 1}))]
               (expect (= "queued" (get (first records) "status")))
+              (expect (= :invalid-request (outcome #(agents/resume-agent env child "Again")))
+                      "A queued follow-up task blocks a second resume")
               (expect (= {:kind "coordination"
                           :title "Follow-up task"
                           :content "Fix the parser test too"
@@ -427,6 +454,7 @@
           (agents/claim-iteration! {:db-info db :session-id child})
           (dotimes [_ 3]
             (agents/claim-iteration! {:db-info db :session-id child}))
+          (agents/finish! db child "completed")
           (expect (= :budget-exceeded (outcome #(agents/resume-agent env child "More")))
                   "Extend first")
           (ps/db-agent-update! db child {:status "cancelled"})

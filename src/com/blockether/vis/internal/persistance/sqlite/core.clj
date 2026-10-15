@@ -5410,23 +5410,44 @@
 
 (defn db-agent-extend-budget!
   "Add `iterations` to one child budget atomically, within the schema maximum. A child that
-   used its budget becomes idle again. Answers the new row, or nil when the child is cancelled,
-   missing or would pass the maximum."
-  [db sid iterations]
+   used its budget becomes idle again. With a `from` session, the same transaction takes the
+   iterations from that subagent's remaining budget. Answers the new row, or nil when the child
+   is cancelled or missing, the budget would pass the maximum, or `from` has too few iterations."
+  [db sid iterations from]
   (let [max-budget
         (long (get-in agent-schema ["$defs" "spawn" "properties" "iteration_budget" "maximum"]))
 
-        updated
-        (:next.jdbc/update-count
-          (first (execute! db
-                           {:update :session_agent
-                            :set {:iteration_budget [:+ :iteration_budget (long iterations)]
-                                  :status [:case [:= :status "budget_limited"] "completed" :else
-                                           :status]}
-                            :where [:and [:= :session_id (str sid)] [:<> :status "cancelled"]
-                                    [:<= [:+ :iteration_budget (long iterations)] max-budget]]})))]
+        n
+        (long iterations)
 
-    (when (pos? (long (or updated 0))) (db-agent-info db sid))))
+        changed?
+        (fn [tx-info q]
+          (pos? (long (or (:next.jdbc/update-count (first (execute! tx-info q))) 0))))]
+
+    (when (try (sqlite-write-tx!
+                 db
+                 (fn [tx-info]
+                   (when-not (or (nil? from)
+                                 (changed? tx-info
+                                           {:update :session_agent
+                                            :set {:iteration_budget [:- :iteration_budget n]}
+                                            :where [:and [:= :session_id (str from)]
+                                                    [:not-in :status ["cancelled" "budget_limited"]]
+                                                    [:>= [:- :iteration_budget n] :iterations_used]
+                                                    [:>= [:- :iteration_budget n] 1]]}))
+                     (throw (ex-info "Too few iterations" {::refused true})))
+                   (when-not (changed? tx-info
+                                       {:update :session_agent
+                                        :set {:iteration_budget [:+ :iteration_budget n]
+                                              :status [:case [:= :status "budget_limited"]
+                                                       "completed" :else :status]}
+                                        :where [:and [:= :session_id (str sid)]
+                                                [:<> :status "cancelled"]
+                                                [:<= [:+ :iteration_budget n] max-budget]]})
+                     (throw (ex-info "Budget unchanged" {::refused true})))
+                   true))
+               (catch clojure.lang.ExceptionInfo e (when-not (::refused (ex-data e)) (throw e))))
+      (db-agent-info db sid))))
 
 (defn db-fork-session-at-turn!
   "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is

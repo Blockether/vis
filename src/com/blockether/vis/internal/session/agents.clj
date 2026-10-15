@@ -90,6 +90,10 @@
 
 (defn install-runtime! [callbacks] (reset! runtime callbacks) nil)
 
+;; Child session ids whose turn runs its handoff iteration. `finish!` reads it, so only a turn
+;; that went past its budget ends as `budget_limited`.
+(defonce ^:private handoffs (atom #{}))
+
 (defn- budget-notice
   "Reminder for a subagent near the end of its iteration budget, or nil. It rides in
    `session[\"agent\"]`, so the model sees it as a context change after each iteration."
@@ -177,6 +181,7 @@
         (if (and on? (ps/db-agent-claim-iteration! db sid))
           (do (ctx-loop/set-turn-state! env :agent-handoff? false)
               (ctx-loop/set-turn-state! env :agent-claimed? true)
+              (swap! handoffs disj (str sid))
               true)
           (let [child (info db sid)
                 exhausted? (>= (long (:iterations_used child)) (long (:iteration_budget child)))]
@@ -187,7 +192,9 @@
                        (:turn-state-atom env)
                        (:agent-claimed? (ctx-loop/read-turn-state env))
                        (not (:agent-handoff? (ctx-loop/read-turn-state env))))
-                  (do (ctx-loop/set-turn-state! env :agent-handoff? true) true)
+                  (do (ctx-loop/set-turn-state! env :agent-handoff? true)
+                      (swap! handoffs conj (str sid))
+                      true)
                   :else (do (when (and on? (not= "cancelled" (:status child)))
                               (ps/db-agent-update! db
                                                    sid
@@ -220,20 +227,32 @@
                  max-active-children
                  " active subagents. Retry when one of them finishes."))))
 
+(defn refusal-answer
+  "The answer of a child turn that `claim-iteration!` stopped: the stop reason, then the last
+   report of the turn. Without a report, it names where the parent can read the work."
+  [env report]
+  (str (stop-reason env)
+       "\n\n"
+       (if (util/non-blank-string? report)
+         (str "Last report:\n" report)
+         (str "The subagent gave no report. Read its work with read_session(\""
+              (:session-id env)
+              "\")."))))
+
 (defn finish!
-  "Store the status of a finished child turn. A child that used its whole budget becomes
-   `budget_limited`, so its parent knows that it needs council.extend before council.resume."
+  "Store the status of a finished child turn. A child that ended its turn in its handoff
+   iteration becomes `budget_limited`, so its parent knows that it needs council.extend before
+   council.resume. A child that answered within its budget is `completed`."
   [db sid status]
-  (when-let [child (info db sid)]
-    (when-not (contains? #{"cancelled" "budget_limited"} (:status child))
-      (ps/db-agent-update! db
-                           sid
-                           {:status (cond (= "cancelled" status) "cancelled"
-                                          (>= (long (:iterations_used child))
-                                              (long (:iteration_budget child)))
-                                          "budget_limited"
-                                          (contains? #{"completed" "success"} status) "completed"
-                                          :else "failed")}))))
+  (let [handoff? (contains? (first (swap-vals! handoffs disj (str sid))) (str sid))]
+    (when-let [child (info db sid)]
+      (when-not (contains? #{"cancelled" "budget_limited"} (:status child))
+        (ps/db-agent-update! db
+                             sid
+                             {:status (cond (= "cancelled" status) "cancelled"
+                                            handoff? "budget_limited"
+                                            (contains? #{"completed" "success"} status) "completed"
+                                            :else "failed")})))))
 
 (defn reconcile-orphans!
   "Fail the children that a dead process left queued or running. Spare a child or a leader
@@ -658,7 +677,10 @@
                    (> (long iterations)
                       (- (long (:iteration_budget caller)) (long (:iterations_used caller))))))
       (fail! :budget-exceeded "The extension exceeds your remaining iteration budget"))
-    (let [row (or (ps/db-agent-extend-budget! db session_id iterations)
+    (let [row (or (ps/db-agent-extend-budget! db
+                                              session_id
+                                              iterations
+                                              (when caller (str (:session-id env))))
                   (fail! :budget-exceeded "The subagent budget did not change"))]
       (answer-budget!
         env
@@ -704,23 +726,26 @@
 
      (when (= (str (:session-id env)) session_id)
        (fail! :not-owner "A subagent cannot resume itself"))
-     (when (live? session_id)
-       (fail! :invalid-request "The subagent still runs. Call council.wait."))
-     (when (= "cancelled" (:status child))
-       (fail! :invalid-request "A cancelled subagent cannot resume"))
-     (when (or (= "budget_limited" (:status child))
-               (>= (long (:iterations_used child)) (long (:iteration_budget child))))
-       (fail!
-         :budget-exceeded
-         "The subagent has no iterations left. Call council.extend(session_id, iterations) first."))
-     (when (>= (count (filter #(contains? #{"queued" "running"} (:status %))
-                              (ps/db-agent-list db (:leader_id child))))
-               (long max-active-children))
-       (fail! :agent-limit "The leader already has the maximum active subagents"))
-     (swap! resumed assoc
-       session_id
-       {:at (util/now-ms) :turns (count (ps/db-list-session-turns db session_id))})
-     (ps/db-agent-update! db session_id {:status "queued"})
+     ;; One lock holds the checks and the queued mark, so two resumes cannot both start.
+     (locking resumed
+       (let [child (info db session_id)]
+         (when (or (live? session_id) (contains? #{"queued" "running"} (:status child)))
+           (fail! :invalid-request "The subagent still runs. Call council.wait."))
+         (when (= "cancelled" (:status child))
+           (fail! :invalid-request "A cancelled subagent cannot resume"))
+         (when (or (= "budget_limited" (:status child))
+                   (>= (long (:iterations_used child)) (long (:iteration_budget child))))
+           (fail!
+             :budget-exceeded
+             "The subagent has no iterations left. Call council.extend(session_id, iterations) first."))
+         (when (>= (count (filter #(contains? #{"queued" "running"} (:status %))
+                                  (ps/db-agent-list db (:leader_id child))))
+                   (long max-active-children))
+           (fail! :agent-limit "The leader already has the maximum active subagents"))
+         (swap! resumed assoc
+           session_id
+           {:at (util/now-ms) :turns (count (ps/db-list-session-turns db session_id))})
+         (ps/db-agent-update! db session_id {:status "queued"})))
      (let [entry (try ((runtime-fn :publish)
                         env
                         {:kind "coordination"
