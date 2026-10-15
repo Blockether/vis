@@ -12,7 +12,7 @@ export function SessionHealth({ snapshot }: { snapshot?: SessionHealthData }) {
     return (
       <section aria-label="Session health" className="mb-4">
         <h3 className="text-title font-bold text-white">Session health</h3>
-        <p className="mt-2 text-ui text-dialog-hint">Context measurement unavailable</p>
+        <p className="mt-1 text-ui text-dialog-hint">Context measurement unavailable</p>
         <p className="mt-1 text-ui text-dialog-hint">
           Session totals below do not measure context size.
         </p>

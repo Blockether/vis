@@ -1014,8 +1014,8 @@ export function SessionStatsPanel({
             <Stat label="Tools" value={compactCount(usage.tool_call_count)} />
           </dl>
           {usage.subagents && (
-            <section aria-label="Subagents" className="mt-2.5 border-t border-dialog-edge/40 pt-2">
-              <h4 className="text-ui font-bold text-white">Subagents</h4>
+            <section aria-label="Subagents" className="mt-4 border-t border-dialog-edge pt-4">
+              <h3 className="text-title font-bold text-white">Subagents</h3>
               <p className="mt-1 text-ui text-dialog-hint">
                 Every subagent below this session, at any depth.
               </p>
