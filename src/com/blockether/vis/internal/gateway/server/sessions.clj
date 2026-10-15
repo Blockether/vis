@@ -443,6 +443,110 @@
                       (given? "group_ids")
                       (assoc :group-ids (http/query-session-ids request "group_ids"))))))))
 
+(def ^:private archive-scope-window
+  "Rows one step of the bulk archive walk reads. The search route caps a window at the same
+   size, so the walk asks for the largest page that the store already answers."
+  1000)
+
+(defn- archive-scope-ids
+  "The ids of the ACTIVE sessions one bulk archive names, in the list's own order. The walk
+   uses the cut that the pager counts (`state/list-sessions-page`): `:root` or
+   `:project-id` names the project, `:loose?` keeps only the sessions outside a group, and
+   `:ids` keeps only the rows that a search answered on the device."
+  [{:keys [root project-id ids loose?]}]
+  (loop [after
+         nil
+
+         found
+         []]
+
+    (let [page
+          (state/list-sessions-page :all
+                                    (cond-> {:limit archive-scope-window
+                                             :after after
+                                             :root root
+                                             :project-id project-id
+                                             :ids ids
+                                             :archived :exclude}
+                                      loose?
+                                      (assoc :grouped
+                                        "aside" :group-ids
+                                        [])))
+
+          found
+          (into found
+                (keep #(some-> (get % "id")
+                               str))
+                (:sessions page))]
+
+      (if (and (:has-more page) (seq (:next-cursor page)))
+        (recur (:next-cursor page) found)
+        (vec (distinct found))))))
+
+(defn- archive-sessions-handler
+  "POST /v1/sessions/actions/archive - archive many active sessions in one request (#387).
+
+   The body names a scope: `root` (a blank root is the `No project` shelf), `project_id` or
+   `ids`, and with `loose` only the sessions outside a group. Without a scope the request is
+   refused, so that no caller archives the whole fleet by mistake. A session that is still
+   working is never archived: it is answered under `working`, the same rule that
+   `PATCH /v1/sessions/:sid` applies to one session. With `dry_run` nothing changes, and the
+   answer counts what a real run would archive. A client confirms with that count first."
+  [request]
+  (let [body
+        (http/body-json request)
+
+        ids
+        (when (map? body) (get body "ids"))
+
+        root
+        (when (and (map? body) (contains? body "root")) (str (get body "root")))
+
+        project-id
+        (when (map? body)
+          (some-> (get body "project_id")
+                  str
+                  not-empty))]
+
+    (cond (not (map? body)) (http/error-response 400 :invalid-body "the body must be a JSON object")
+          (and (some? ids) (not (and (sequential? ids) (every? string? ids))))
+          (http/error-response 400 :invalid-ids "ids must be a list of session ids")
+          (and (nil? root) (nil? project-id) (nil? ids))
+          (http/error-response 400 :invalid-scope "name the sessions with root, project_id or ids")
+          :else (let [dry-run?
+                      (true? (get body "dry_run"))
+
+                      ;; An empty `ids` list names no session. It must never fall through to the
+                      ;; whole project or to the whole fleet.
+                      sids
+                      (if (and (some? ids) (empty? ids))
+                        []
+                        (archive-scope-ids {:root root
+                                            :project-id project-id
+                                            :ids (some->> ids
+                                                          (into #{}))
+                                            :loose? (true? (get body "loose"))}))
+
+                      working?
+                      #(state/session-working? (parse-uuid %))
+
+                      working
+                      (filterv working? sids)
+
+                      idle
+                      (into [] (remove (set working)) sids)
+
+                      archived
+                      (if dry-run?
+                        idle
+                        (into []
+                              (filter #(some-> %
+                                               parse-uuid
+                                               (state/set-archived! true)))
+                              idle))]
+
+                  (http/json-response {:archived archived :working working :dry-run dry-run?})))))
+
 (defn- soul-handler
   [request]
   (let [sid
@@ -738,6 +842,7 @@
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/sessions"] list-sessions-handler
    [:post "/v1/sessions"] create-session-handler
+   [:post "/v1/sessions/actions/archive"] archive-sessions-handler
    [:get "/v1/sessions/actions/search"] search-sessions-handler
    [:get "/v1/sessions/:sid"] soul-handler
    [:patch "/v1/sessions/:sid"] patch-session-handler

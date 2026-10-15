@@ -38,11 +38,11 @@
     (let [{:keys [ttl-ms touch-ms keepalive-ms keepalive-timeout-ms]} contract/client-lease]
       (expect (< 0 touch-ms keepalive-ms ttl-ms))
       (expect (< 0 keepalive-timeout-ms keepalive-ms)))
-    (expect (= 161 (count contract/route-table)))
-    (expect (= 200 (count (contract/route-methods))))
-    (expect (= {:none 125 :json 70 :binary 5}
+    (expect (= 162 (count contract/route-table)))
+    (expect (= 201 (count (contract/route-methods))))
+    (expect (= {:none 125 :json 71 :binary 5}
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 182 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
+    (expect (= {:json 183 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= 38 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))

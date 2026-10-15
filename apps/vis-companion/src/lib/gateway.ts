@@ -4360,6 +4360,25 @@ export class GatewayClient {
       }),
     );
   }
+
+  /**
+   * Put many sessions away in one request (#387). `scope` names them as the gateway counts
+   * them: a project `root` (blank is `No project`), with `loose` only the rows outside a group,
+   * or the `ids` a search answered. The gateway never archives a session that is still
+   * working; it answers it under `working`. With `dryRun` nothing changes, and `archived`
+   * lists what a real call would archive.
+   */
+  async archiveSessions(
+    scope: { root?: string; ids?: readonly string[]; loose?: boolean },
+    dryRun = false,
+  ): Promise<{ archived: string[]; working: string[] }> {
+    const answer = await this.request<{ archived?: string[]; working?: string[] }>(
+      'POST',
+      '/v1/sessions/actions/archive',
+      { ...scope, dry_run: dryRun },
+    );
+    return { archived: answer.archived ?? [], working: answer.working ?? [] };
+  }
   /**
    * The GROUPS one project is divided into, addressed by workspace ROOT.
    *

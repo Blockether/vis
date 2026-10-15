@@ -433,6 +433,29 @@ export function renderSessionsScreen({
       }
       return answer({ id: project.project_id });
     }
+    // POST /v1/sessions/actions/archive — the bulk archive (#387). It archives the active
+    // rows of the scope and answers a running row under `working`; a dry run changes nothing.
+    if (url.pathname === '/v1/sessions/actions/archive' && init?.method === 'POST') {
+      const body = (sent ? JSON.parse(sent) : {}) as {
+        root?: string;
+        ids?: string[];
+        loose?: boolean;
+        dry_run?: boolean;
+      };
+      const rows = machine.sessions ?? [];
+      const named = rows.filter(
+        (row) =>
+          row.archived_at == null &&
+          (body.ids ? body.ids.includes(row.id) : row.workspace?.root === body.root) &&
+          !(body.loose && row.group_id),
+      );
+      const working = named.filter((row) => row.status === 'running').map((row) => row.id);
+      const archived = named.filter((row) => row.status !== 'running').map((row) => row.id);
+      if (!body.dry_run)
+        for (const [index, row] of rows.entries())
+          if (archived.includes(row.id)) rows[index] = { ...row, archived_at: Date.now() };
+      return answer({ archived, working, dry_run: Boolean(body.dry_run) });
+    }
     // PATCH /v1/sessions/:sid — the gateway OWNS what this changes: it applies the
     // star (the rename, the archive) to its own row, echoes the row back, and every
     // later list read from this machine tells the same story.

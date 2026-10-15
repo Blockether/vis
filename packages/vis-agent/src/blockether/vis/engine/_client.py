@@ -2183,6 +2183,24 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def post_sessions_archive(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """POST /v1/sessions/actions/archive — archive many sessions; skip working ones."""
+        response = self._request(
+            "POST",
+            "/v1/sessions/actions/archive",
+            path={},
+            query=query,
+            timeout=timeout,
+            body=body,
+        )
+        return response.json()
+
     def get_sessions_search(
         self, *, query: Query | None = None, timeout: float | None = None
     ) -> JSONValue:

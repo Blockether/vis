@@ -6410,6 +6410,69 @@
         (fn []
           (expect (= 200 (:status (patch-group {:archived false})))))))))
 
+;; Regression for #387: the Sessions set had no way to archive every session at once. The
+;; bulk archive walks the pager's own cut, skips work in flight and changes nothing on a
+;; dry run.
+(defdescribe
+  bulk-archive-walks-the-scope-and-skips-work-in-flight
+  (it
+    "bulk archive walks the scope and skips work in flight"
+    (let [[a b c]
+          (repeatedly 3 #(str (random-uuid)))
+
+          asked
+          (atom [])
+
+          stamped
+          (atom [])
+
+          pages
+          (fn [_channel opts]
+            (swap! asked conj opts)
+            (if (nil? (:after opts))
+              {:sessions [{"id" a} {"id" b}] :has-more true :next-cursor "0:1:x"}
+              {:sessions [{"id" c}] :has-more false :next-cursor nil}))
+
+          archive
+          (fn [body]
+            (let [response (#'sessions-api/archive-sessions-handler
+                            (merge {:request-method :post} (json-body body)))]
+              [(:status response) (wire/parse-json (:body response))]))]
+
+      (with-redefs-fn {#'state/list-sessions-page pages
+                       #'state/session-working? (fn [sid]
+                                                  (= b (str sid)))
+                       #'state/set-archived! (fn [sid archived?]
+                                               (swap! stamped conj [(str sid) archived?])
+                                               {"id" (str sid)})}
+        (fn []
+          ;; a dry run counts the idle sessions of every page and stamps nothing
+          (let [[status answer] (archive {:root "/repo" :loose true :dry_run true})]
+            (expect (= 200 status))
+            (expect (= [a c] (get answer "archived")))
+            (expect (= [b] (get answer "working")))
+            (expect (true? (get answer "dry_run")))
+            (expect (= [] @stamped))
+            (expect (= ["/repo" "/repo"] (mapv :root @asked)))
+            (expect (= ["aside" "aside"] (mapv :grouped @asked)))
+            (expect (= [:exclude :exclude] (mapv :archived @asked))))
+          ;; the real run archives the same sessions, never the working one
+          (let [[status answer] (archive {:root "/repo"})]
+            (expect (= 200 status))
+            (expect (= [a c] (get answer "archived")))
+            (expect (= [[a true] [c true]] @stamped))
+            (expect (nil? (:grouped (last @asked)))))
+          ;; an empty id list names no session and never walks the project
+          (reset! asked [])
+          (let [[status answer] (archive {:ids []})]
+            (expect (= 200 status))
+            (expect (= [] (get answer "archived")))
+            (expect (= [] @asked)))
+          ;; a request without a scope is refused
+          (let [[status answer] (archive {:dry_run true})]
+            (expect (= 400 status))
+            (expect (= "invalid-scope" (get-in answer ["error" "type"])))))))))
+
 ;; Regression: the settings mutation route answered 200 to every value it could
   ;; not store — a JSON `false` was read as "no value given" and ignored, the string
   ;; "false" was cast by truthiness into ON, an unknown enum choice changed nothing

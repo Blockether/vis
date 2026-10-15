@@ -97,6 +97,8 @@ type MenuStep =
   | { kind: 'colour'; id: string }
   | { kind: 'project' }
   | { kind: 'drop-project' }
+  | { kind: 'archive-all'; ids?: string[]; count: number; working: number }
+  | { kind: 'archived-all'; archived: number; working: number }
 
 /** One group as a band paints it: the gateway's row, or what a row itself said. */
 type GroupBandView = {
@@ -1585,6 +1587,41 @@ export const ProjectGroup = memo(function ProjectGroup({
         return next;
       });
     }, { kind: 'root' });
+  // ARCHIVE ALL ASKS FIRST (#387). A dry run of the same scope gives the count: under a query
+  // the rows that it matched, otherwise this project's sessions outside a group. The gateway
+  // never archives a working session; the sheet says how many stay.
+  const archiveAll = async (dryRun: boolean, ids?: string[]) => {
+    setIsBusy(true);
+    setFailure(null);
+    try {
+      const scope = ids ? { ids } : { root, loose: true };
+      const done = await getClient(conn).archiveSessions(scope, dryRun);
+      if (dryRun) {
+        goTo({ kind: 'archive-all', ids, count: done.archived.length, working: done.working.length });
+        return;
+      }
+      // Hold the rows as archived until the list reads them again, as one row's Archive does.
+      const gone = new Set(done.archived);
+      const at = Date.now();
+      setRefiled((held) => {
+        const next = new Map(held);
+        for (const row of [...sessions, ...painted]) {
+          if (gone.has(row.id)) next.set(row.id, { ...row, archived_at: at });
+        }
+        return next;
+      });
+      setGroupsRead((read) => read + 1);
+      if (done.working.length > 0) {
+        goTo({ kind: 'archived-all', archived: done.archived.length, working: done.working.length });
+      } else {
+        setMenu(null);
+      }
+    } catch {
+      setFailure('That did not reach the machine. Try again.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
   // A project's verbs run on the screen that holds its machine. A refusal stays in this
   // sheet; a partial delete says how many sessions stayed.
   const runProject = async (act: () => Promise<void>) => {
@@ -1639,19 +1676,25 @@ export const ProjectGroup = memo(function ProjectGroup({
             (row) => row.id !== session.id && held.includes(row.id) && sessionIsArchived(row) !== away,
           )
         : [];
-      let failed = 0;
-      for (const row of others) {
-        try {
-          await one(row, rowConn, away);
-        } catch {
-          failed += 1;
+      // An archive changes the project's page and its count (#387). Read both again after the
+      // batch, also after a refusal, so that the rows below move up without a poll.
+      try {
+        let failed = 0;
+        for (const row of others) {
+          try {
+            await one(row, rowConn, away);
+          } catch {
+            failed += 1;
+          }
         }
+        if (failed > 0) {
+          const verb = away ? 'archived' : 'unarchived';
+          throw new Error(`${failed} of ${others.length + 1} sessions could not be ${verb}.`);
+        }
+        return await one(session, rowConn, away);
+      } finally {
+        setGroupsRead((read) => read + 1);
       }
-      if (failed > 0) {
-        const verb = away ? 'archived' : 'unarchived';
-        throw new Error(`${failed} of ${others.length + 1} sessions could not be ${verb}.`);
-      }
-      return one(session, rowConn, away);
     };
   }, [rowActions.commands.archive]);
   // The row's Move action opens the same anchored popup on a phone and a desktop.
@@ -2193,7 +2236,13 @@ export const ProjectGroup = memo(function ProjectGroup({
           label={
             menu.step.kind === 'project' || menu.step.kind === 'drop-project'
               ? project
-              : `${menu.step.kind === 'sessions' ? 'Sessions' : 'Groups'} in ${project}`
+              : `${
+                  menu.step.kind === 'sessions' ||
+                  menu.step.kind === 'archive-all' ||
+                  menu.step.kind === 'archived-all'
+                    ? 'Sessions'
+                    : 'Groups'
+                } in ${project}`
           }
           at={menu.at}
           onDismiss={() => setMenu(null)}
@@ -2243,7 +2292,54 @@ export const ProjectGroup = memo(function ProjectGroup({
                       setMenu(null);
                     }}
                   />
+                  {rowActions.commands.archive && !isSessionRevealing && (
+                    <MenuItem
+                      title={searching ? 'Archive all matches' : 'Archive all'}
+                      icon={<ArchiveIcon className="size-3.5" />}
+                      disabled={isBusy}
+                      onSelect={() =>
+                        void archiveAll(true, searching ? sessions.map((session) => session.id) : undefined)
+                      }
+                    />
+                  )}
+                  {failure && <MenuNote>{failure}</MenuNote>}
                 </>
+              );
+            if (step.kind === 'archive-all') {
+              const stay =
+                step.working > 0
+                  ? `${step.working} working ${step.working === 1 ? 'session stays' : 'sessions stay'} in the list.`
+                  : null;
+              return (
+                <>
+                  <MenuItem
+                    title={step.count > 0 ? 'Keep them' : 'Back'}
+                    icon={<ArchiveIcon className="size-3.5" />}
+                    disabled={isBusy}
+                    onSelect={() => goTo({ kind: 'sessions' })}
+                  />
+                  {step.count > 0 ? (
+                    <MenuItem
+                      title={isBusy ? 'Archiving...' : `Archive ${step.count} ${step.count === 1 ? 'session' : 'sessions'}`}
+                      tone="danger"
+                      icon={<ArchiveIcon className="size-3.5" />}
+                      disabled={isBusy}
+                      onSelect={() => void archiveAll(false, step.ids)}
+                    />
+                  ) : (
+                    <MenuNote>No sessions to archive.</MenuNote>
+                  )}
+                  {stay && <MenuNote>{stay}</MenuNote>}
+                  {failure && <MenuNote>{failure}</MenuNote>}
+                </>
+              );
+            }
+            if (step.kind === 'archived-all')
+              return (
+                <MenuNote>
+                  {`Archived ${step.archived} ${step.archived === 1 ? 'session' : 'sessions'}. `}
+                  {`${step.working} working ${step.working === 1 ? 'session stays' : 'sessions stay'} in the list.`}
+                </MenuNote>
               );
             if (step.kind === 'new')
               return (

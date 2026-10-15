@@ -100,6 +100,7 @@ request.
 | Delete a group | — | `delete_session_group(gid, query=...)` |
 | Move a session to a group | — | `put_session_group(sid, body=...)` |
 | Rename, star or archive a session | `session.update(...)` | `patch_session(sid, body=...)` |
+| Archive many sessions | — | `post_sessions_archive(body=...)` |
 | Delete a session | `session.delete()` | `delete_session(sid)` |
 | Export a transcript | `session.transcript(format=...)` | `get_session_transcript(sid)`, `get_session_transcript_md(sid)`, `get_session_transcript_html(sid)` |
 | List live views | `session.live_views()` | `get_session_views_live(sid)` |
@@ -139,6 +140,7 @@ request.
 | Delete a group | `DELETE /v1/session-groups/{gid}` |
 | Move a session to a group | `PUT /v1/sessions/{sid}/group` |
 | Rename, star or archive a session, or change its tools | `PATCH /v1/sessions/{sid}` |
+| Archive many sessions | `POST /v1/sessions/actions/archive` |
 | Delete a session | `DELETE /v1/sessions/{sid}` |
 | Export a transcript | `GET /v1/sessions/{sid}/transcript`, `GET /v1/sessions/{sid}/transcript.md`, `GET /v1/sessions/{sid}/transcript.html` |
 | List live views | `GET /v1/sessions/{sid}/views/live` |
@@ -746,6 +748,43 @@ vis_api -X PATCH "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID" \
 
 Send one field in each request: `title`, `is_favorite` or `archived`. The gateway refuses to archive
 a session while a turn runs. `DELETE /v1/sessions/{sid}` deletes the session permanently.
+
+</div>
+
+## Archive many sessions
+
+<div data-variant="python">
+
+```python
+scope = {"root": "/srv/projects/shop", "loose": True}
+preview = client.post_sessions_archive(body={**scope, "dry_run": True})
+result = client.post_sessions_archive(body=scope)
+print(len(result["archived"]), "archived,", len(result["working"]), "still working")
+```
+
+Name the sessions with `root`, `project_id` or `ids`. A blank `root` names the sessions outside a
+project. With `"loose": True`, sessions in a group stay. The gateway never archives a session that
+is still working. It lists that session under `working`.
+
+With `"dry_run": True`, nothing changes and `archived` lists the sessions that a real call archives.
+Use this count to ask for confirmation.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/actions/archive" \
+  -H 'content-type: application/json' \
+  --data '{"root": "/srv/projects/shop", "loose": true, "dry_run": true}'
+```
+
+Name the sessions with `root`, `project_id` or `ids`. A blank `root` names the sessions outside a
+project. With `"loose": true`, sessions in a group stay. A request without a scope returns 400.
+
+The answer is `{"archived": [...], "working": [...], "dry_run": ...}`. The gateway never archives a
+session that is still working. It lists that session under `working`. With `"dry_run": true`,
+nothing changes.
 
 </div>
 
