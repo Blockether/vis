@@ -25,6 +25,8 @@
         (expect (= ["Extensions"] (vec sections)))
         (expect (str/starts-with? document "# Native builds for Java and Clojure extensions"))
         (expect (str/includes? document "not a drop-in JAR plugin system"))
-        (expect (str/includes? document "You do **not** need a native build to use the Python SDK"))
+        (expect (str/includes?
+                  document
+                  "You do **not** need a native build to run a gateway, use the Python SDK"))
         (expect (str/includes? document "resources/META-INF/vis/manifest.edn"))
         (expect (str/includes? document "clojure -M:test-native")))))

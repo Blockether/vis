@@ -768,7 +768,7 @@
   [turn]
   (let [error (:error turn)]
     (when (map? error)
-      (some-> (or (get error "message") (:message error))
+      (some-> (:message error)
               (preview 220)))))
 
 (defn- hung-turns
