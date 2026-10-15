@@ -4844,6 +4844,71 @@
             (finally (stop)))
           (expect (= 1 @stops)))))))
 
+(defdescribe
+  created-session-refresh-test
+  ;; Regression, user report in this Vis session: a created or forked session made the
+  ;; sidebar read every expanded project, not only the project that holds it.
+  (it
+    "reads only the expanded project that holds a created session"
+    (let [sink
+          (atom nil)
+
+          full
+          (atom [])
+
+          pages
+          (atom [])
+
+          counts
+          (atom 0)
+
+          await!
+          (fn [a]
+            (loop [attempt 0]
+              (when (and (empty? @a) (< attempt 60)) (Thread/sleep 50) (recur (inc attempt)))))]
+
+      (with-redefs [state/app-db
+                    (atom (assoc-in (fixture-db) [:project-sidebar :expanded] #{"a" "b"}))
+
+                    vis/gateway-fleet-subscribe!
+                    (fn [callback]
+                      (reset! sink callback)
+                      (fn []))
+
+                    screen/warm-picker-cache!
+                    (constantly true)
+
+                    screen/refresh-projects!
+                    (fn [automatic?]
+                      (swap! full conj automatic?))
+
+                    screen/load-project-page!
+                    (fn [pid automatic?]
+                      (swap! pages conj [pid automatic?]))
+
+                    vis/gateway-projects-overview
+                    (fn [_]
+                      (swap! counts inc)
+                      {"projects" []})]
+
+        (let [stop (#'screen/start-projects-refresh!)]
+          (try
+            ;; The first tick reads everything once.
+            (await! full)
+            (reset! full [])
+            (@sink
+             {"type" "session.created" "session_id" "s9" "root" "/work/companion" "group_id" "g1"})
+            (await! pages)
+            (expect (= [["b" true]] @pages))
+            (expect (= 1 @counts))
+            (expect (empty? @full))
+            ;; A project this sidebar does not hold yet needs the full read.
+            (@sink {"type" "session.created" "session_id" "s10" "root" "/work/elsewhere"})
+            (await! full)
+            (expect (= [true] @full))
+            (expect (= [["b" true]] @pages))
+            (finally (stop))))))))
+
 (defn- every-kind-db
   "A rail with every row kind: projects, both sets, two groups and two saved sessions."
   []

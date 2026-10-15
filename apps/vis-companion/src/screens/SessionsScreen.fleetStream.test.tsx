@@ -132,6 +132,47 @@ describe('a session list carried by the fleet stream', () => {
     expect(listReads(view.requests)).toBe(read + 1);
     expect(screen.getByText('Forked session')).toBeVisible();
   });
+
+  // A created session names its project root on the frame, so only that project
+  // reads its page again; a neighbour project keeps the page it holds.
+  it('reads only the page of the project where a session was created', async () => {
+    const fleet = fleetHub();
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({ id: 'a1', title: 'Alpha', workspace: { root: '/work/alpha' } }),
+            listSession({ id: 'b1', title: 'Beta', workspace: { root: '/work/beta' } }),
+          ],
+        },
+      ],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
+    await settle(200);
+    // A project's own reads: its page and its wall of groups, both by `root=`.
+    const pageReads = (root: string) =>
+      view.requests.filter((request) =>
+        request.path.includes(`root=${encodeURIComponent(root)}`)).length;
+    const alpha = pageReads('/work/alpha');
+    const beta = pageReads('/work/beta');
+    const read = listReads(view.requests);
+
+    view.setRows(0, [
+      listSession({ id: 'a2', title: 'Alpha fork', workspace: { root: '/work/alpha' } }),
+      listSession({ id: 'a1', title: 'Alpha', workspace: { root: '/work/alpha' } }),
+      listSession({ id: 'b1', title: 'Beta', workspace: { root: '/work/beta' } }),
+    ]);
+    await fleet.emit({ type: 'session.created', session_id: 'a2', root: '/work/alpha' } as SseEvent);
+    await settle(200);
+
+    expect(listReads(view.requests)).toBe(read + 1);
+    expect(pageReads('/work/alpha')).toBeGreaterThan(alpha);
+    expect(beta).toBeGreaterThan(0);
+    expect(pageReads('/work/beta')).toBe(beta);
+    expect(screen.getByText('Alpha fork')).toBeVisible();
+  });
   it('does not let an older in-flight window resurrect a deleted row', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);

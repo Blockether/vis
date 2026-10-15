@@ -604,6 +604,11 @@ export type ProjectGroupReading = {
    * page windows beside it cost three reads a poll and are driven by `revision`.
    */
   reads?: number;
+  /**
+   * Reads asked for ONE project, by its root: a session was created or forked there. Each
+   * step reads that project's page and wall again, and leaves the other projects alone.
+   */
+  nudges?: ReadonlyMap<string, number>;
 };
 
 /** One project-creation lifecycle, shared so headers report the request they started. */
@@ -675,9 +680,15 @@ export const ProjectGroup = memo(function ProjectGroup({
   projectActions?: ProjectActions;
 }) {
   const { label: project, root, sessions, tally } = group;
-  const { conn, sessions: list } = machine;
+  const { conn } = machine;
+  // The rows this project holds in the machine's window. Its pages are read again when
+  // these change, not when a row of another project does.
+  const ownRows = useMemo(() => JSON.stringify(sessions), [sessions]);
   const { getClient, drafts, needle, actions: rowActions, openRow, previewId, preview, readFloors } = context;
-  const { pageSize, isVisible, revision = 0, reads = 0 } = reading;
+  const { pageSize, isVisible, nudges } = reading;
+  const nudge = nudges?.get(root) ?? 0;
+  const revision = (reading.revision ?? 0) + nudge;
+  const reads = (reading.reads ?? 0) + nudge;
   const { state: creating, start: onNewSession } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
@@ -989,7 +1000,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, start, pageSize, isVisible, isShowing, searching, archived, bandWindow,
-    bandOffset, list, getClient, groupsRead, revision, noteRefresh,
+    bandOffset, ownRows, getClient, groupsRead, revision, noteRefresh,
   ]);
   // Tail pages omit grouped rows. Read them separately there and when archive views differ.
   // The limit applies to loose rows; grouped rows cover the complete band window.
@@ -1029,7 +1040,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     };
   }, [
     conn, root, isVisible, isShowing, searching, groupArchived, readGroupsAside, bandWindow,
-    bandOffset, list, getClient, groupsRead, revision, noteRefresh,
+    bandOffset, ownRows, getClient, groupsRead, revision, noteRefresh,
   ]);
   // The count under the header and the pages beside it are ONE number — the
   // project's own total, as the gateway counted it. Under a query the complete
@@ -1125,7 +1136,7 @@ export const ProjectGroup = memo(function ProjectGroup({
       .map((session) => settled(session, local, refiled))
       .filter(paints);
     return parked.length === 0 ? shown : [...parked, ...shown];
-  }, [searching, painting, local, refiled, paints, paged, getClient, conn, list]);
+  }, [searching, painting, local, refiled, paints, paged, getClient, conn, ownRows]);
   // Each response can land first: never put a new band's name over the previous page's
   // sessions, or create an unnamed band from rows whose own page has not arrived yet.
   const matchedRows =

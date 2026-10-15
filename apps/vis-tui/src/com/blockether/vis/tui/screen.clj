@@ -6138,12 +6138,67 @@
         (catch Throwable _
           (state/dispatch [:project-sidebar {:loading? false :error "Load failed · r retry"}]))))))
 
+(defn- created-project-ids
+  "Ids of the projects in `items` that hold the sessions of `frames`, or nil when a
+   frame names no project in `items`. Only a full read shows such a session."
+  [items frames]
+  (reduce (fn [ids frame]
+            (let [pid
+                  (str (get frame "project_id"))
+
+                  root
+                  (str (get frame "root"))]
+
+              (if-let [id (some (fn [item]
+                                  (when (or (and (seq pid) (= pid (str (get item "id"))))
+                                            (and (seq root)
+                                                 (= root (str (get item "workspace_root")))))
+                                    (str (get item "id"))))
+                                items)]
+                (conj ids id)
+                (reduced nil))))
+          #{}
+          frames))
+
+(defn- refresh-created-projects!
+  "Show the sessions that `frames` announce as created or forked. Read the project
+   counts and the page of each expanded project that holds one, not every project."
+  [frames]
+  (let [sidebar
+        (:project-sidebar @state/app-db)
+
+        pids
+        (created-project-ids (:items sidebar) frames)]
+
+    (if (nil? pids)
+      (refresh-projects! true)
+      (vis/worker-future
+        "tui-project-counts"
+        (fn []
+          (try (let [overview (vis/gateway-projects-overview (with-session-drafts {}))]
+                 (state/dispatch [:project-sidebar
+                                  {:items (projects/with-gateway-counts
+                                            (vec (get-in @state/app-db [:project-sidebar :items]))
+                                            overview)}]))
+               (catch Throwable _ nil))
+          (doseq [pid
+                  pids
+
+                  :when (contains? (set (:expanded sidebar)) pid)]
+
+            (load-project-page! pid true)))))))
+
 (defn- start-projects-refresh!
   "Follow fleet status/title deltas and periodically catch arrivals outside this TUI.
-   The same deltas keep the kept rows of the C-x s picker current."
+   A created or forked session reads only its own project. The same deltas keep the
+   kept rows of the C-x s picker current."
   []
   (let [dirty?
         (atom false)
+
+        ;; `session.created` frames since the last tick; each names its project.
+        created
+        (atom [])
 
         picker-stale?
         (atom false)
@@ -6153,12 +6208,16 @@
         (atom false)
 
         stop
-        (try (vis/gateway-fleet-subscribe! (fn [event]
-                                             (when (#{"session.created" "session.status"
-                                                      "session.title_updated"}
-                                                    (get event "type"))
-                                               (reset! dirty? true)
-                                               (reset! picker-stale? true))))
+        (try (vis/gateway-fleet-subscribe!
+               (fn [event]
+                 (case (get event "type")
+                   "session.created"
+                   (do (swap! created conj event) (reset! picker-stale? true))
+
+                   ("session.status" "session.title_updated")
+                   (do (reset! dirty? true) (reset! picker-stale? true))
+
+                   nil)))
              (catch Throwable _
                (fn [])))
 
@@ -6216,7 +6275,10 @@
                       picker-started?
                       (and picker? (warm-picker-cache! (first picker-key)))]
 
-                  (when due? (reset! dirty? false) (refresh-projects! true))
+                  (cond due? (do (reset! dirty? false) (reset! created []) (refresh-projects! true))
+                        (not (:open? sidebar)) (reset! created [])
+                        (and ready? (seq @created)) (refresh-created-projects!
+                                                      (first (reset-vals! created []))))
                   ;; A picker read that could not start yet runs at a later tick.
                   (when (and picker? (not picker-started?)) (reset! picker-stale? true))
                   (try (Thread/sleep 1000) (catch InterruptedException _ nil))
@@ -7730,7 +7792,7 @@
                                 ;; Show the fork in its group now, also when this
                                 ;; client misses the gateway's `session.created` frame.
                                 (when (get-in @state/app-db [:project-sidebar :open?])
-                                  (refresh-projects! true))
+                                  (refresh-created-projects! [forked]))
                                 (vis/notify! success-message
                                              :level :success
                                              :ttl-ms copy-success-ttl-ms))

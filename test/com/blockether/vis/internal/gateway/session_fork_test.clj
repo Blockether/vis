@@ -183,8 +183,12 @@
                                         [(get frame "type") (get frame "session_id")
                                          (some-> (ps/db-get-session store (get frame "session_id"))
                                                  :group-id
-                                                 str)]))})]
+                                                 str)
+                                         (get frame "project_id") (get frame "group_id")]))})]
 
                  (let [fork-id (get (state/fork-session! sid nil) "id")]
-                   (expect (= [["session.created" fork-id (str (:id group))]] @frames)))))
+                   ;; The frame names the project and the group, so a list reads only them.
+                   (expect (= [["session.created" fork-id (str (:id group)) (str (:id project))
+                                (str (:id group))]]
+                              @frames)))))
              (finally (ps/db-close! store))))))

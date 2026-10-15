@@ -1065,18 +1065,6 @@
                       "session_id" (str sid)
                       "title" (str (get event "title"))}])))
 
-(defn- publish-session-created!
-  "Tell fleet watchers that the wire `session` now exists, then return it. A list
-   that shows sessions it has never opened, such as a session group in the
-   sidebar, can then show a new or forked row at once, not at its next poll."
-  [session]
-  (when-let [sid (some-> session
-                         (get "id")
-                         str
-                         not-empty)]
-    (publish-fleet! [{"schema" 1 "type" "session.created" "session_id" sid}]))
-  session)
-
 (defn- spawn-fleet-watch-thread!
   "Create, mark daemon and START the single fleet watcher. While no stream is
    open it does NO directory work and holds no baseline. The first tick announces
@@ -1355,6 +1343,42 @@
                (workspace/for-session db))
       (some->> (:workspace/id (live-env sid))
                (persistance/db-workspace-get db))))
+
+(defn- session-project-root
+  "The PROJECT a session belongs to: its workspace `repo-root` when there is one,
+   else its `root`. The same key clients group the list by (a draft is a clone
+   under ~/.vis/drafts and reports the repo it was forked from), so a `root=`
+   window is exactly one project's column of the navigator."
+  [db id]
+  (try (when-let [w (resolve-workspace db id)]
+         (or (:repo-root w) (:root w)))
+       (catch Throwable _ nil)))
+
+(defn- publish-session-created!
+  "Tell fleet watchers that the wire `session` now exists, then return it.
+
+   The frame names the project root, the project and the group of the session. A
+   client then reads only the list that now holds the new or forked row, not every
+   project it shows. A frame without them asks for a full read."
+  [db session]
+  (when-let [sid (some-> session
+                         (get "id")
+                         str
+                         not-empty)]
+    (let [{:keys [project-id group-id]}
+          (when db (try (persistance/db-get-session db sid) (catch Throwable _ nil)))
+          root (when db (session-project-root db sid))]
+
+      (publish-fleet! [(cond-> {"schema" 1 "type" "session.created" "session_id" sid}
+                         root
+                         (assoc "root" (str root))
+
+                         project-id
+                         (assoc "project_id" (str project-id))
+
+                         group-id
+                         (assoc "group_id" (str group-id)))])))
+  session)
 
 (defn session-default-model
   "The default `{:provider :model}` that the turns of soul `sid` use when the
@@ -5768,6 +5792,7 @@
    create still runs. A failed create forgets its key, so a retry creates again."
   [{:keys [channel idempotency-key] :as opts}]
   (let [create #(publish-session-created!
+                  (try (lp/db-info) (catch Throwable _ nil))
                   (session->wire (create-session-cold! (-> opts
                                                            (dissoc :idempotency-key)
                                                            (assoc :channel (or channel :api))))))]
@@ -6378,7 +6403,7 @@
         (cond group-id (persistance/db-set-session-group! db forked group-id)
               project-id (persistance/db-set-session-project! db forked project-id)))
       (put-session! forked {:next-seq 0 :last-active (util/now-ms)})
-      (publish-session-created! (soul forked)))))
+      (publish-session-created! db (soul forked)))))
 
 (defn- session-summary-extras
   "Bulk summary decorations for `list-sessions`: per-session `turn_count` +
@@ -6643,16 +6668,6 @@
                     (let [id (str (get session "id"))]
                       [(long (get place id Long/MAX_VALUE)) id])))
          vec)))
-
-(defn- session-project-root
-  "The PROJECT a session belongs to: its workspace `repo-root` when there is one,
-   else its `root`. The same key clients group the list by (a draft is a clone
-   under ~/.vis/drafts and reports the repo it was forked from), so a `root=`
-   window is exactly one project's column of the navigator."
-  [db id]
-  (try (when-let [w (resolve-workspace db id)]
-         (or (:repo-root w) (:root w)))
-       (catch Throwable _ nil)))
 
 (def default-reader-id
   "The reader a gateway answers for when a caller names none. One gateway serves

@@ -471,3 +471,23 @@
                                {:sessions sessions :active-session-id "current"}
                                [(KeyStroke. (Character/valueOf \s) true false false)])]
         (expect (= {:action :favorite :id "current" :favorite? true} choice)))))
+
+(defdescribe
+  session-navigator-created-scope-test
+  (it
+    "reads the head again only for a created session inside the scope"
+    (let [in-scope?
+          (var-get #'dlg/navigator-created-in-scope?)
+
+          frame
+          {"type" "session.created" "session_id" "s" "root" "/r" "project_id" "p" "group_id" "g"}]
+
+      (expect (in-scope? {} frame))
+      (expect (in-scope? {:project-id "p"} frame))
+      (expect (not (in-scope? {:project-id "other"} frame)))
+      (expect (in-scope? {:group-ids #{"g" "h"}} frame))
+      (expect (not (in-scope? {:group-ids #{"h"}} frame)))
+      (expect (not (in-scope? {:group-ids #{"g"}} (dissoc frame "group_id"))))
+      (expect (in-scope? {:project-id "other" :group-ids #{"h"}}
+                         {"type" "session.created" "session_id" "s"}))
+      (expect (not (in-scope? {} (assoc frame "type" "session.status")))))))

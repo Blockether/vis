@@ -390,6 +390,11 @@ export function SessionsScreen({
   // screen is not news (see `settle`), and it must not charge the machine a full prefetch
   // of every project on screen to learn that.
   const [machineMoves, setMachineMoves] = useState<ReadonlyMap<string, number>>(() => new Map());
+  // READS ASKED FOR ONE PROJECT, by machine and then by root: a session was created or forked
+  // there. Only that project reads its page and wall again; the others keep theirs.
+  const [projectNudges, setProjectNudges] = useState<
+    ReadonlyMap<string, ReadonlyMap<string, number>>
+  >(() => new Map());
   // A visit is local truth before the transcript's gateway read mark reaches this list.
   const [readFloors, setReadFloors] = useState<ReadonlyMap<string, number>>(() => new Map());
   const readFloorsRef = useRef(readFloors);
@@ -598,6 +603,8 @@ export function SessionsScreen({
       conn: GatewayConn,
       signal?: AbortSignal,
       deadlineMs?: number,
+      // A QUIET READ adopts the window and the totals, but asks no project to read again.
+      quiet = false,
     ): Promise<string | null> => {
       const key = machineKey(conn);
       const api = clientFor(conn);
@@ -657,7 +664,7 @@ export function SessionsScreen({
           // gateway SERVED: that verdict travels beside the rows it no longer matches.
           const countedUnread = servedUnread(rows, held?.countedUnread);
           const countedStopped = servedStopped(rows, held?.countedStopped);
-          setMachineReads((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
+          if (!quiet) setMachineReads((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
           if (
             held &&
             held.error === null &&
@@ -668,7 +675,7 @@ export function SessionsScreen({
             countedStopped === held.countedStopped
           )
             return;
-          setMachineMoves((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
+          if (!quiet) setMachineMoves((current) => new Map(current).set(key, (current.get(key) ?? 0) + 1));
           patchMachine(key, (machine) => ({
             ...machine,
             sessions: merged,
@@ -1084,9 +1091,29 @@ export function SessionsScreen({
         return;
       }
       // A created or forked session is a row this list does not hold yet, also when
-      // another client made it, so read the window for its place.
+      // another client made it. The frame names its project root: read the window
+      // quietly for the totals, then only that project. Else read the whole window.
       if (event.type === 'session.created') {
-        readWindow();
+        const root = (event as { root?: unknown }).root;
+        const machine = machinesRef.current.find(
+          (held) => clientFor(held.conn).base === subscriptions.gatewayUrl,
+        );
+        const known =
+          typeof root === 'string' &&
+          root !== '' &&
+          machine?.overview?.projects.some((project) => project.root === root) === true;
+        if (!machine || !known) {
+          readWindow();
+          return;
+        }
+        const key = machineKey(machine.conn);
+        void loadMachine(machine.conn, undefined, undefined, true).then(() =>
+          setProjectNudges((current) => {
+            const roots = new Map(current.get(key) ?? []);
+            roots.set(root, (roots.get(root) ?? 0) + 1);
+            return new Map(current).set(key, roots);
+          }),
+        );
         return;
       }
       if (FLEET_ROW_EVENTS.has(event.type)) {
@@ -1106,7 +1133,7 @@ export function SessionsScreen({
       fleetStreamingRef.current = false;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [applyFleetFrame, forgetSessions, isVisible, load, subscriptions]);
+  }, [applyFleetFrame, forgetSessions, isVisible, load, loadMachine, subscriptions]);
 
   // A SENT MESSAGE MOVES ITS ROW AT ONCE, also behind the open session. The gateway
   // ranks a session by its newest message as soon as it accepts it, so read the window
@@ -1773,6 +1800,7 @@ export function SessionsScreen({
           isVisible,
           revision: machineMoves.get(machineKey(entry.machine.conn)) ?? 0,
           reads: machineReads.get(machineKey(entry.machine.conn)) ?? 0,
+          nudges: projectNudges.get(machineKey(entry.machine.conn)),
         },
         // Keep canonical gateway paths for identity and creation; shorten only for paint.
         groups: projectGroups(
@@ -1783,7 +1811,7 @@ export function SessionsScreen({
           stoppedReadSinceCounted(entry.machine, (session) => isRowSeen(entry.machine.conn, session)),
         ),
       })),
-    [listed, pageSize, isVisible, isRowUnread, isRowSeen, machineMoves, machineReads],
+    [listed, pageSize, isVisible, isRowUnread, isRowSeen, machineMoves, machineReads, projectNudges],
   );
   const foundSections = useMemo(
     () =>

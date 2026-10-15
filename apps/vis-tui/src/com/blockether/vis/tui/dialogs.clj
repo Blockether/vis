@@ -7042,6 +7042,30 @@
                  [[] #{}]
                  (concat held incoming))))
 
+(defn- navigator-created-in-scope?
+  "True when `frame` announces a created session that can show under `scope`. A frame
+   that names no project root and no project counts as in scope, so the list reads."
+  [scope frame]
+  (let [pid
+        (str (get frame "project_id"))
+
+        gid
+        (str (get frame "group_id"))
+
+        known?
+        (or (seq pid) (seq (str (get frame "root"))))
+
+        scope-pid
+        (str (:project-id scope))
+
+        scope-gids
+        (into #{} (map str) (:group-ids scope))]
+
+    (and (= "session.created" (str (get frame "type")))
+         (or (not known?)
+             (and (or (str/blank? scope-pid) (= scope-pid pid))
+                  (or (empty? scope-gids) (contains? scope-gids gid)))))))
+
 (defn- navigator-apply-fleet-frame
   "PURE fold of ONE fleet frame into the rows the picker holds. `session.status`
    re-stamps that row's fleet marks (the frame speaks the wire's `is_live`; a list row
@@ -8031,10 +8055,11 @@
                                        (map (fn [frame]
                                               (str (get frame "session_id")))
                                             frames)))
-                ;; A new session is outside every window held so far: read the head again.
+                ;; A new session in this scope is outside every window held so far:
+                ;; read the head again.
                 (when (and load-more
                            (str/blank? @query)
-                           (some #(= "session.created" (str (get % "type"))) frames))
+                           (some #(navigator-created-in-scope? @search-scope %) frames))
                   (let [scope @search-scope]
                     (future (try (when-let [page (load-more nil scope)]
                                    (reset! created-head {:scope scope :sessions (:sessions page)}))
