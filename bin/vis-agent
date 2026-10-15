@@ -90,6 +90,21 @@ die()  {
   exit 1
 }
 
+# Run npm and append its output to `log`. Turn off the audit, funding and update
+# notices: a Vis user cannot act on them, and `npm audit fix --force` breaks the
+# exact pins of the installation. If npm fails, show the end of the log.
+vis_npm_logged() {
+  local log="$1"
+  shift
+  if NPM_CONFIG_AUDIT=false NPM_CONFIG_FUND=false NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_LOGLEVEL=error npm "$@" >>"$log" 2>&1; then
+    return 0
+  fi
+  warn "npm $* failed; the end of $log:"
+  tail -n 30 "$log" >&2
+  return 1
+}
+
 # First non-blank line of a state file, or nothing.
 read_state() {
   [[ -f "$1" ]] || return 0
@@ -1755,7 +1770,7 @@ vis_desktop_gateway() {
 
 vis_do_desktop() {
   local update=0 gateway=1 track os arch desktop_dir version cmd
-  local source destination artifact
+  local source destination artifact log
   track="$(read_state "$vis_track_file")"
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1799,13 +1814,20 @@ vis_do_desktop() {
     [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "desktop: invalid VIS_VERSION in $source"
     artifact="$source/apps/vis-companion/build/desktop-dev/vis-companion-$version-$desktop_platform.$desktop_extension"
     configure_system_trust native
+    log="$vis_home/logs/desktop-build.log"
+    mkdir -p "${log%/*}" && : >"$log" || die "desktop: cannot write the build log $log"
     say "building dev desktop from $source (Node/npm, Rust, and native build tools required)"
+    say "build log: $log"
     (
       cd "$source/apps/vis-companion"
       rm -f "$artifact"
-      npm ci || die "desktop: dev dependency installation failed; no app was opened"
-      npm run build || die "desktop: dev web build failed; no app was opened"
-      npm run package:desktop -- --dev || die "desktop: dev native build failed; no app was opened"
+      say "installing dependencies"
+      vis_npm_logged "$log" ci || die "desktop: dev dependency installation failed; no app was opened"
+      say "building the web app"
+      vis_npm_logged "$log" run build || die "desktop: dev web build failed; no app was opened"
+      say "building the native app; this can take several minutes"
+      vis_npm_logged "$log" run package:desktop -- --dev ||
+        die "desktop: dev native build failed; no app was opened"
     )
     [[ -s "$artifact" ]] || die "desktop: dev build did not produce $artifact; no app was opened"
     mkdir -p "$desktop_dir"
@@ -1885,7 +1907,7 @@ vis_update_desktop() {
 # web build, so build it when it is missing or older than its sources. Release
 # installations ship that build prebuilt and need no Node.
 vis_prepare_dev_web() {
-  local source="$1" companion build cmd
+  local source="$1" companion build cmd log
   companion="$source/apps/vis-companion"
   build="$companion/dist-web"
   [[ -f "$companion/package.json" ]] || die "web: no Companion source in $source"
@@ -1900,13 +1922,15 @@ vis_prepare_dev_web() {
     command -v "$cmd" >/dev/null 2>&1 || die "web: building the web app from source needs '$cmd' on PATH" \
       "Install Node.js and npm, or use a release installation: vis-agent update"
   done
+  log="$vis_home/logs/web-build.log"
+  mkdir -p "${log%/*}" && : >"$log" || die "web: cannot write the build log $log"
   say "building the web app from $companion"
   if ! (
     cd "$companion" &&
-      { [[ node_modules/.package-lock.json -nt package-lock.json ]] || npm ci; } &&
-      npm run build:web
+      { [[ node_modules/.package-lock.json -nt package-lock.json ]] || vis_npm_logged "$log" ci; } &&
+      vis_npm_logged "$log" run build:web
   ); then
-    die "web: the web app build failed; nothing was opened"
+    die "web: the web app build failed; nothing was opened" "Full log: $log"
   fi
   [[ -f "$build/index.html" ]] || die "web: the build did not produce $build/index.html"
   export VIS_WEB_DIR="$build"

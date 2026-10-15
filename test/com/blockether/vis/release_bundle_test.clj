@@ -3904,11 +3904,14 @@
         (write-executable! (io/file bin "node") "#!/usr/bin/env bash\nexit 0\n")
         (write-executable!
           (io/file bin "npm")
-          (str "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$VIS_TEST_NPM_CALLS\"\n"
-               "case \"$*\" in\n"
-               "  ci) mkdir -p node_modules && : > node_modules/.package-lock.json ;;\n"
-               "  'run build:web') [[ ${VIS_TEST_NPM_FAIL:-0} != 1 ]] || exit 1\n"
-               "    mkdir -p dist-web && printf built > dist-web/index.html ;;\nesac\n"))
+          (str
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$VIS_TEST_NPM_CALLS\"\n"
+            "printf 'npm warn noise audit=%s fund=%s notifier=%s level=%s\\n' \"${NPM_CONFIG_AUDIT:-}\" "
+            "\"${NPM_CONFIG_FUND:-}\" \"${NPM_CONFIG_UPDATE_NOTIFIER:-}\" \"${NPM_CONFIG_LOGLEVEL:-}\"\n"
+            "case \"$*\" in\n"
+            "  ci) mkdir -p node_modules && : > node_modules/.package-lock.json ;;\n"
+            "  'run build:web') [[ ${VIS_TEST_NPM_FAIL:-0} != 1 ]] || { echo 'npm error the build broke' >&2; exit 1; }\n"
+            "    mkdir -p dist-web && printf built > dist-web/index.html ;;\nesac\n"))
         ;; Before the first build every other command still names the build folder,
         ;; so a gateway it starts serves the build once `vis-agent web` makes it.
         (let [{:keys [exit output]} (launch! ["--version" "--jvm"] {})]
@@ -3921,7 +3924,13 @@
           (expect (zero? exit) output)
           (expect (str/includes? output "<-M:vis><web><--no-open>") output)
           (expect (= (.getCanonicalPath (.getParentFile index)) (served output)) output)
-          (expect (= ["ci" "run build:web"] (npm-calls))))
+          (expect (= ["ci" "run build:web"] (npm-calls)))
+          ;; Regression for #386: npm writes only to the build log, without audit,
+          ;; funding or update notices.
+          (expect (not (str/includes? output "npm warn")) output)
+          (expect (str/includes?
+                    (slurp (io/file home ".vis/logs/web-build.log"))
+                    "npm warn noise audit=false fund=false notifier=false level=error")))
         ;; Current: serve the existing build without running npm.
         (.setLastModified index (+ now 60000))
         (let [{:keys [exit output]} (launch! ["web" "--jvm"] {})]
@@ -3952,6 +3961,9 @@
         (let [{:keys [exit output]} (launch! ["web" "--jvm"] {"VIS_TEST_NPM_FAIL" "1"})]
           (expect (not (zero? exit)) output)
           (expect (str/includes? output "the web app build failed") output)
+          ;; Only a failure shows the end of the build log and where the full log is.
+          (expect (str/includes? output "npm error the build broke") output)
+          (expect (str/includes? output "Full log: ~/.vis/logs/web-build.log") output)
           (expect (not (str/includes? output "<-M:vis>")) output))
         (finally (delete-tree! root))))))
 
