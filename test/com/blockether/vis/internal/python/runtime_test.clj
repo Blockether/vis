@@ -470,39 +470,39 @@
              (finally (doseq [file (reverse (file-seq project))]
                         (io/delete-file file true)))))))
 
-(defdescribe automatic-project-preparation-falls-back-after-an-offline-miss
-             (it "automatic project preparation falls back after an offline miss"
-                 (python-runtime/ensure-library!)
-                 (let [project
-                       (temp-dir "vis-cold-project")
+(defdescribe
+  automatic-project-preparation-falls-back-after-an-offline-miss
+  (it "automatic project preparation falls back after an offline miss"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-cold-project")
 
-                       calls
-                       (atom [])]
+            calls
+            (atom [])]
 
-                   (try (with-redefs-fn {#'python-runtime/run-uv!
-                                         (fn [_ args]
-                                           (swap! calls conj (vec (rest args)))
-                                           (when (= 1 (count @calls))
-                                             (throw (ex-info "Environment needs sync" {}))))
-                                         #'python-runtime/shared-project? (constantly false)
-                                         #'python-runtime/remove-environment-shell! (constantly nil)
-                                         #'python-runtime/runtime-environment? (constantly true)
-                                         #'python-runtime/project-packages (constantly project)}
-                          (fn []
-                            (expect (= project (python-runtime/ensure-project! project)))
-                            (expect (= [["sync" "--check" "--offline" "--python"
-                                         (com.blockether.vispython.Interpreter/pythonExecutable)
-                                         "--no-python-downloads"]
-                                        ["sync" "--python"
-                                         (com.blockether.vispython.Interpreter/pythonExecutable)
-                                         "--no-python-downloads"]]
-                                       @calls))
-                            (expect (= "ready"
-                                       (:stage (first (filter
-                                                        #(= (.getName project) (:name %))
-                                                        (python-runtime/preparation-status))))))))
-                        (finally (doseq [file (reverse (file-seq project))]
-                                   (io/delete-file file true)))))))
+        (try (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                         (swap! calls conj (vec (rest args)))
+                                                         (when (= 1 (count @calls))
+                                                           (throw (ex-info "Environment needs sync"
+                                                                           {}))))
+                              #'python-runtime/shared-project? (constantly false)
+                              #'python-runtime/remove-environment-shell! (constantly nil)
+                              #'python-runtime/runtime-environment? (constantly true)
+                              #'python-runtime/project-packages (constantly project)}
+               (fn []
+                 (expect (= project (python-runtime/ensure-project! project)))
+                 (expect (= [["sync" "--check" "--offline" "--python"
+                              (com.blockether.vispython.Interpreter/pythonExecutable)
+                              "--no-python-downloads"]
+                             ["sync" "--python"
+                              (com.blockether.vispython.Interpreter/pythonExecutable)
+                              "--no-python-downloads"]]
+                            @calls))
+                 (expect (= "ready"
+                            (:stage (first (filter #(= (.getName project) (:name %))
+                                                   (python-runtime/preparation-status))))))))
+             (finally (doseq [file (reverse (file-seq project))]
+                        (io/delete-file file true)))))))
 
 (defdescribe
   automatic-project-preparation-replaces-an-environment-from-another-python

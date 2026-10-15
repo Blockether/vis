@@ -4,7 +4,7 @@
 
 (def ^:dynamic *workspace-root* nil)
 
-(defn cwd [] (io/file (or *workspace-root* (System/getProperty "user.dir"))))
+(defn cwd ^java.io.File [] (io/file (or *workspace-root* (System/getProperty "user.dir"))))
 
 (defn workspace-root
   [workspace]

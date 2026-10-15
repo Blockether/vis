@@ -345,7 +345,8 @@
           (if (= lo hi)
             (when (< hi (dec n)) (aset gaps hi (max (aget gaps hi) (+ 4 need))))
             (let [have (reduce + (map #(aget gaps %) (range lo hi)))]
-              (when (< have need) (aset gaps (dec hi) (+ (aget gaps (dec hi)) (- need have)))))))
+              (when (< have need)
+                (aset gaps (dec hi) (long (+ (aget gaps (dec hi)) (- need have))))))))
 
         :note
         (let [i (long (index (first over) 0))

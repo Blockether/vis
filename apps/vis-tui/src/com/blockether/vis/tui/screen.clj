@@ -7234,7 +7234,7 @@
                         avail (long (try (.available in) (catch Throwable _ 0)))
                         n (when (pos? avail) (.read in tmp 0 (int (min avail 512))))
                         last-read-at (if (and n (pos? n))
-                                       (do (.append buf (String. tmp 0 n "UTF-8")) now)
+                                       (do (.append buf (String. tmp 0 (int n) "UTF-8")) now)
                                        last-read-at)
                         parsed (timg/parse-cell-size-report (.toString buf))]
 
