@@ -84,4 +84,37 @@ describe('switching back into a running session', () => {
     await waitFor(() => expect(stepTally()).toMatch(/1 running/));
     expect(stepTally()).not.toMatch(/cancel/i);
   });
+
+  it('reopens a settled bubble while the gateway still runs its turn', async () => {
+    renderSessionScreen({
+      session: sessionFixture({
+        status: 'running',
+        live: true,
+        current_turn_id: 't-live',
+        running_request: 'watch the deploy',
+      }),
+      client: {
+        // An earlier visit settled this bubble, but the turn never ended.
+        cachedRunningTurn: () => ({
+          turn: {
+            id: 't-live',
+            request: 'watch the deploy',
+            answer: '',
+            status: 'completed',
+            startedAt: Date.now(),
+            iterations,
+          },
+          seq: 9,
+        }),
+        cachedTranscript: () => [runningRow],
+        transcript: () => Promise.resolve([runningRow]),
+        turnTrace: () => Promise.resolve(iterations),
+      },
+      subscriptions: { hasEndedTurn: () => false },
+    });
+
+    await screen.findByText('Watching the deploy.');
+    await waitFor(() => expect(stepTally()).toMatch(/1 running/));
+    expect(stepTally()).not.toMatch(/cancel/i);
+  });
 });

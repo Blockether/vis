@@ -1158,6 +1158,9 @@ export function SessionScreen({
   // The sid whose bubble the cache effect last wrote, so a session switch never
   // stores the outgoing bubble under the incoming id.
   const runningTurnSidRef = useRef(sid);
+  // Turns that this screen settled from a terminal frame or a registry verdict. They
+  // really ended, so a stale `live` session row must never reopen their bubbles.
+  const endedTurnIdsRef = useRef(new Set<string>());
   // turn id -> what THIS device authored for a message it queued behind the running
   // turn. A user cancel drops the whole pre-cancel backlog server-side
   // (`drop-cancelled-backlog!`), so without a local copy the text, its pastes and its
@@ -2015,6 +2018,16 @@ export function SessionScreen({
       // A streaming bubble owns deltas newer than the durable row. Adopt only when
       // no running bubble for this canonical id is already painted.
       const held = runningTurnRef.current;
+      if (held?.id === tid && held.status !== 'running') {
+        // The gateway still runs the turn that this bubble shows as settled, and nothing
+        // proved that the turn ended: an earlier visit settled it too early. Reopen it,
+        // or its running steps stay cancelled and its live views stay gone.
+        if (endedTurnIdsRef.current.has(tid) || subscriptions.hasEndedTurn(sid, tid)) return;
+        const reopened: RunningTurn = { ...held, status: 'running', cancelling: false };
+        runningTurnRef.current = reopened;
+        setRunningTurn(reopened);
+        return;
+      }
       if (held && (held.status === 'running' || held.id === tid)) return;
 
       const inlineTrace = persisted?.iterations;
@@ -2060,7 +2073,7 @@ export function SessionScreen({
       setRunningTurn(current);
       setRunning(true);
     },
-    [client, sid],
+    [client, sid, subscriptions],
   );
 
   useEffect(() => {
@@ -2658,6 +2671,7 @@ export function SessionScreen({
       // another turn meanwhile, which must not be settled by this callback.
       const finishedId = eventString(event, 'turn_id');
       if (!finishedId) return;
+      endedTurnIdsRef.current.add(finishedId);
       const ownsTerminal = (turn: RunningTurn | null) => turn?.id === finishedId;
       const streamedTurn = runningTurnRef.current;
       if (
