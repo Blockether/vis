@@ -357,6 +357,56 @@
         (expect (= ["current"] (selected-ids (last frames))))
         (expect (= {:action :switch :id "current"} choice)))))
 
+(defdescribe session-navigator-created-session-test
+             ;; Regression, user report in this Vis session: a fork reached an open C-x s list only
+             ;; when the list opened again.
+             (it
+               "reads the head again when the fleet announces a created session"
+               (let [sink
+                     (promise)
+
+                     reads
+                     (atom [])
+
+                     read
+                     (promise)
+
+                     current
+                     {"id" "current" "title" "Current session" "turn_count" 1 "modified_at" 2000}
+
+                     forked
+                     {"id" "forked" "title" "Forked session" "turn_count" 1 "modified_at" 5000}
+
+                     {:keys [frames]}
+                     (capture-navigator! 100
+                                         30
+                                         {:sessions [current]
+                                          :active-session-id "current"
+                                          :load-initial (fn []
+                                                          {:sessions [current] :next-cursor nil})
+                                          :load-more (fn [cursor scope]
+                                                       (swap! reads conj [cursor scope])
+                                                       (deliver read true)
+                                                       {:sessions [forked current]
+                                                        :next-cursor nil})
+                                          :watch-fleet (fn [f]
+                                                         (deliver sink f)
+                                                         (fn []))}
+                                         [(fn [_]
+                                            (Thread/sleep 100)
+                                            nil)
+                                          (fn [_]
+                                            (@sink {"type" "session.created" "session_id" "forked"})
+                                            nil)
+                                          (fn [_]
+                                            (deref read 1000 nil)
+                                            (Thread/sleep 100)
+                                            nil)])]
+
+                 (expect (= ["current"] (painted-ids (second frames))))
+                 (expect (= [[nil {}]] @reads))
+                 (expect (= ["forked" "current"] (painted-ids (last frames)))))))
+
 (defdescribe
   session-navigator-interaction-test
   (it "uses modified time, then creation time, for all registered timestamp types"

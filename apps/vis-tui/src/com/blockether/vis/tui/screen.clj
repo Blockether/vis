@@ -6154,7 +6154,8 @@
 
         stop
         (try (vis/gateway-fleet-subscribe! (fn [event]
-                                             (when (#{"session.status" "session.title_updated"}
+                                             (when (#{"session.created" "session.status"
+                                                      "session.title_updated"}
                                                     (get event "type"))
                                                (reset! dirty? true)
                                                (reset! picker-stale? true))))
@@ -7726,6 +7727,10 @@
                    (try (if-let [forked (vis/fork-session! source-id through-turn-id)]
                           (if-let [session-result (chat/resume-session (get forked "id"))]
                             (do (open-session-tab! session-result false)
+                                ;; Show the fork in its group now, also when this
+                                ;; client misses the gateway's `session.created` frame.
+                                (when (get-in @state/app-db [:project-sidebar :open?])
+                                  (refresh-projects! true))
                                 (vis/notify! success-message
                                              :level :success
                                              :ttl-ms copy-success-ttl-ms))

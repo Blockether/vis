@@ -153,4 +153,38 @@
                    (expect (nil? (:group-id saved)))
                    (expect (= (council/default-group store sid)
                               (council/default-group store fork-id))))))
+             (finally (ps/db-close! store)))))
+  ;; Regression, user report in this Vis session: a fork reached its session group in
+  ;; the sidebar only at the next list poll, because no fleet frame announced it.
+  (it "announces the fork to fleet watchers after it joins the source group"
+      (let [store
+            (ps/db-open! :memory)
+
+            frames
+            (atom [])]
+
+        (try (let [{:keys [sid]}
+                   (seeded-session! store ["first ask"])
+
+                   project
+                   (ps/db-create-project! store {:name "Fork project"})
+
+                   group
+                   (ps/db-create-session-group! store (:id project) {:name "Fork group"})]
+
+               (ps/db-set-session-group! store sid (:id group))
+               (with-redefs [lp/db-info
+                             (constantly store)
+
+                             state/fleet-sinks
+                             (atom {"watch"
+                                    (fn [frame]
+                                      (swap! frames conj
+                                        [(get frame "type") (get frame "session_id")
+                                         (some-> (ps/db-get-session store (get frame "session_id"))
+                                                 :group-id
+                                                 str)]))})]
+
+                 (let [fork-id (get (state/fork-session! sid nil) "id")]
+                   (expect (= [["session.created" fork-id (str (:id group))]] @frames)))))
              (finally (ps/db-close! store))))))

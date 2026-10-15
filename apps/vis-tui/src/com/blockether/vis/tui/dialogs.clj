@@ -7843,6 +7843,11 @@
           fleet-frames
           (atom [])
 
+          ;; The head of the scope, read again after a session was created or forked. It
+          ;; merges into the held rows and leaves the page cursor alone.
+          created-head
+          (atom nil)
+
           stop-fleet!
           (when-let [watch (:watch-fleet opts)]
             (try (watch (fn [frame]
@@ -8025,7 +8030,18 @@
                                        %
                                        (map (fn [frame]
                                               (str (get frame "session_id")))
-                                            frames)))))
+                                            frames)))
+                ;; A new session is outside every window held so far: read the head again.
+                (when (and load-more
+                           (str/blank? @query)
+                           (some #(= "session.created" (str (get % "type"))) frames))
+                  (let [scope @search-scope]
+                    (future (try (when-let [page (load-more nil scope)]
+                                   (reset! created-head {:scope scope :sessions (:sessions page)}))
+                                 (catch Throwable _ nil)))))))
+            (when-let [{:keys [scope sessions]} (first (swap-vals! created-head (constantly nil)))]
+              (when (= scope @search-scope)
+                (swap! loaded-sessions navigator-merge-sessions sessions)))
             (when-let [{:keys [token query matches]} @search-result]
               (reset! search-result nil)
               (when (and (= token @search-generation) (= (:scope matches) @search-scope))
@@ -8227,6 +8243,7 @@
                           search-result
                           (when (or stop-fleet! @page-task @page-result @groups-task @recent-task)
                             #(or (seq @fleet-frames)
+                                 @created-head
                                  @page-result
                                  (seq @recent-result)
                                  (and @groups-task (future-done? @groups-task)))))]

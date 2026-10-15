@@ -2384,6 +2384,9 @@
           "const": "session.agent_name_updated"
         },
         {
+          "const": "session.created"
+        },
+        {
           "const": "session.deleted"
         },
         {

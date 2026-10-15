@@ -44,7 +44,7 @@
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= {:json 182 :resource 2 :sse 5 :empty 3 :binary 5 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= 37 (count contract/event-types)))
+    (expect (= 38 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
     (expect (= #{"model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
                  "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"

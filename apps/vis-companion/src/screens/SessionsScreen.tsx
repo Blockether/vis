@@ -1083,6 +1083,12 @@ export function SessionsScreen({
         }
         return;
       }
+      // A created or forked session is a row this list does not hold yet, also when
+      // another client made it, so read the window for its place.
+      if (event.type === 'session.created') {
+        readWindow();
+        return;
+      }
       if (FLEET_ROW_EVENTS.has(event.type)) {
         if (!applyFleetFrame(event)) readWindow();
         return;

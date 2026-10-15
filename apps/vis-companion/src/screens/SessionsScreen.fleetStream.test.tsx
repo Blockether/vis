@@ -112,6 +112,26 @@ describe('a session list carried by the fleet stream', () => {
     expect(new GatewayClient(view.conns[1]!).isSessionDeleted('s1')).toBe(false);
   });
 
+  // Regression, user report in this Vis session (paraphrased: "a forked session takes
+  // a while to show in its group"): a fork announced nothing on the fleet stream, so
+  // the list learned of the new row only at its next poll.
+  it('reads the window at once when another client creates or forks a session', async () => {
+    const fleet = fleetHub();
+    const view = oneRow(fleet);
+    restore = view.restore;
+    await settle(200);
+    const read = listReads(view.requests);
+
+    view.setRows(0, [
+      listSession({ id: 'fork', title: 'Forked session' }),
+      listSession({ id: 's1', title: 'First' }),
+    ]);
+    await fleet.emit({ type: 'session.created', session_id: 'fork' });
+    await settle(200);
+
+    expect(listReads(view.requests)).toBe(read + 1);
+    expect(screen.getByText('Forked session')).toBeVisible();
+  });
   it('does not let an older in-flight window resurrect a deleted row', async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);

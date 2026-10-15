@@ -1065,6 +1065,18 @@
                       "session_id" (str sid)
                       "title" (str (get event "title"))}])))
 
+(defn- publish-session-created!
+  "Tell fleet watchers that the wire `session` now exists, then return it. A list
+   that shows sessions it has never opened, such as a session group in the
+   sidebar, can then show a new or forked row at once, not at its next poll."
+  [session]
+  (when-let [sid (some-> session
+                         (get "id")
+                         str
+                         not-empty)]
+    (publish-fleet! [{"schema" 1 "type" "session.created" "session_id" sid}]))
+  session)
+
 (defn- spawn-fleet-watch-thread!
   "Create, mark daemon and START the single fleet watcher. While no stream is
    open it does NO directory work and holds no baseline. The first tick announces
@@ -5755,9 +5767,10 @@
    same key answers with the session that the first create made, also while that
    create still runs. A failed create forgets its key, so a retry creates again."
   [{:keys [channel idempotency-key] :as opts}]
-  (let [create #(session->wire (create-session-cold! (-> opts
-                                                         (dissoc :idempotency-key)
-                                                         (assoc :channel (or channel :api)))))]
+  (let [create #(publish-session-created!
+                  (session->wire (create-session-cold! (-> opts
+                                                           (dissoc :idempotency-key)
+                                                           (assoc :channel (or channel :api))))))]
     (if (str/blank? idempotency-key)
       (create)
       (let [now (util/now-ms)
@@ -6365,7 +6378,7 @@
         (cond group-id (persistance/db-set-session-group! db forked group-id)
               project-id (persistance/db-set-session-project! db forked project-id)))
       (put-session! forked {:next-seq 0 :last-active (util/now-ms)})
-      (soul forked))))
+      (publish-session-created! (soul forked)))))
 
 (defn- session-summary-extras
   "Bulk summary decorations for `list-sessions`: per-session `turn_count` +

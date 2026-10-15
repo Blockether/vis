@@ -5,6 +5,7 @@
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.terminal-image :as timg]
@@ -367,6 +368,9 @@
         error
         (atom nil)
 
+        sidebar-reads
+        (atom [])
+
         config
         {:providers [{:id :openai-codex :models [{:name "gpt-5.5"}]}]}
 
@@ -375,35 +379,38 @@
           nil)
 
         bindings
-        (merge (zipmap
-                 [#'screen/configure-terminal-input! #'screen/probe-terminal-cell-size!
-                  #'screen/register-terminal-interrupt-handlers! #'screen/enable-terminal-state!
-                  #'screen/disable-terminal-state! #'screen/install-ssh-passphrase-prompt!
-                  #'screen/start-provider-limits-thread! #'screen/start-workspace-refresh-thread!
-                  #'screen/ensure-launch-project-id! #'screen/latest-project-session-id
-                  #'screen/session-db-title #'screen/persist-tabs!
-                  #'screen/release-workspace-sessions! #'screen/start-deferred-gateway-slash-load!
-                  #'client/gateway-reconcile-running-turns! #'client/reload-config!
-                  #'client/toggles-hydrate-from-config! #'client/save-toggles!
-                  #'client/watch-notifications! #'client/unwatch-notifications!
-                  #'client/add-channel-event-listener! #'client/remove-channel-event-listener!
-                  #'client/gateway-release-session! #'timg/images-protocol]
-                 (repeat no-op))
-               {#'screen/create-terminal! (constantly terminal)
-                #'screen/session-workspace (constantly {"root" "/tmp"})
-                #'screen/subscribe-session-live! (constantly no-op)
-                #'client/toggle-add-listener! (constantly no-op)
-                #'client/load-config (constantly config)
-                #'client/load-config-raw (constantly {})
-                #'client/notify! (fn [message & _]
-                                   (swap! notices conj message))
-                #'chat/resume-session (fn [sid]
-                                        {:id sid
-                                         :history (if (= source-id sid) history [(first history)])})
-                #'client/fork-session!
-                (fn [sid tid]
-                  (swap! requests conj [sid tid])
-                  (if fail? (throw (ex-info "Fork unavailable" {})) {"id" forked-id}))})
+        (merge
+          (zipmap [#'screen/configure-terminal-input! #'screen/probe-terminal-cell-size!
+                   #'screen/register-terminal-interrupt-handlers! #'screen/enable-terminal-state!
+                   #'screen/disable-terminal-state! #'screen/install-ssh-passphrase-prompt!
+                   #'screen/start-provider-limits-thread! #'screen/start-workspace-refresh-thread!
+                   #'screen/ensure-launch-project-id! #'screen/latest-project-session-id
+                   #'screen/session-db-title #'screen/persist-tabs!
+                   #'screen/release-workspace-sessions! #'screen/start-deferred-gateway-slash-load!
+                   #'client/gateway-reconcile-running-turns! #'client/reload-config!
+                   #'client/toggles-hydrate-from-config! #'client/save-toggles!
+                   #'client/watch-notifications! #'client/unwatch-notifications!
+                   #'client/add-channel-event-listener! #'client/remove-channel-event-listener!
+                   #'client/gateway-release-session! #'timg/images-protocol]
+                  (repeat no-op))
+          {#'screen/create-terminal! (constantly terminal)
+           #'screen/start-projects-refresh! (constantly no-op)
+           #'screen/refresh-projects! (fn [& args]
+                                        (swap! sidebar-reads conj (vec args)))
+           #'screen/session-workspace (constantly {"root" "/tmp"})
+           #'screen/subscribe-session-live! (constantly no-op)
+           #'client/toggle-add-listener! (constantly no-op)
+           #'client/load-config (constantly config)
+           #'client/load-config-raw (constantly {})
+           #'client/notify! (fn [message & _]
+                              (swap! notices conj message))
+           #'chat/resume-session (fn [sid]
+                                   {:id sid
+                                    :history (if (= source-id sid) history [(first history)])})
+           #'client/fork-session!
+           (fn [sid tid]
+             (swap! requests conj [sid tid])
+             (if fail? (throw (ex-info "Fork unavailable" {})) {"id" forked-id}))})
 
         runner
         (future (try (with-redefs-fn bindings #(screen/run-chat! {:session-id source-id}))
@@ -414,6 +421,7 @@
      :history history
      :requests requests
      :notices notices
+     :sidebar-reads sidebar-reads
      :error error
      :runner runner
      :close! (fn []
@@ -424,36 +432,47 @@
 
 (defdescribe
   clicking-a-header-forks-that-turn-once-and-opens-a-new-tab
-  (it "clicking a header forks that turn once and opens a new tab"
-      (doseq [[gesture fail?] [[[MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE] false]
-                               [[MouseActionType/CLICK_RELEASE] false]
-                               [[MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE] true]]]
-        (let [terminal (DefaultVirtualTerminal. (TerminalSize. 100 30))
-              {:keys [source-id forked-id history requests notices error close!]}
-              (start-fork-screen! terminal fail?)]
+  (it
+    "clicking a header forks that turn once and opens a new tab"
+    (doseq [[gesture fail?] [[[MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE] false]
+                             [[MouseActionType/CLICK_RELEASE] false]
+                             [[MouseActionType/CLICK_DOWN MouseActionType/CLICK_RELEASE] true]]]
+      (let [terminal (DefaultVirtualTerminal. (TerminalSize. 100 30))
+            {:keys [source-id forked-id history requests notices sidebar-reads error close!]}
+            (start-fork-screen! terminal fail?)]
 
-          (try (let [hit (await-value #(some (fn [r]
-                                               (when (and (= :fork-at-turn (:kind r))
-                                                          (= "turn-1" (:turn-id r)))
-                                                 r))
-                                             (.current interactions/hit-map)))
-                     {:keys [col row]} (:bounds hit)]
+        (try
+          (let [fork-hit #(some (fn [r]
+                                  (when (and (= :fork-at-turn (:kind r)) (= "turn-1" (:turn-id r)))
+                                    r))
+                                (.current interactions/hit-map))
+                ;; Open the rail on the running screen; startup owns the state before it.
+                first-hit (await-value fork-hit)
+                _ (state/dispatch [:project-sidebar {:open? true}])
+                hit (await-value #(when-let [r (fork-hit)] (when (not= r first-hit) r)))
+                {:keys [col row]} (:bounds hit)]
 
-                 (expect (some? hit))
-                 (when hit
-                   (doseq [action gesture]
-                     (.addInput terminal
-                                (MouseAction. action 1 (TerminalPosition. (int col) (int row))))))
-                 (expect (some? (await-value #(seq @notices))))
-                 (expect (= [[source-id "turn-1"]] @requests))
-                 (if fail?
-                   (do (expect (= source-id (get-in @state/app-db [:session :id])))
-                       (expect (= 1 (count (:tabs @state/app-db))))
-                       (expect (= history (:messages @state/app-db)))
-                       (expect (= ["Fork unavailable"] @notices)))
-                   (do (expect (= forked-id (get-in @state/app-db [:session :id])))
-                       (expect (= 2 (count (:tabs @state/app-db))))
-                       (expect (= [(first history)] (:messages @state/app-db)))
-                       (expect (= ["Forked session at turn"] @notices)))))
-               (finally (close!)))
-          (expect (nil? @error))))))
+            (expect (some? hit))
+            (when hit
+              ;; The docked rail moves the chat right; hit bounds stay chat-local.
+              (let [left (:chat-left (projects/geometry @state/app-db 100 30))]
+                (doseq [action gesture]
+                  (.addInput
+                    terminal
+                    (MouseAction. action 1 (TerminalPosition. (int (+ col left)) (int row)))))))
+            (expect (some? (await-value #(seq @notices))))
+            ;; Regression, user report in this Vis session: the fork reached its
+            ;; group in the open sidebar only at the next poll.
+            (expect (= (if fail? [] [[true]]) @sidebar-reads))
+            (expect (= [[source-id "turn-1"]] @requests))
+            (if fail?
+              (do (expect (= source-id (get-in @state/app-db [:session :id])))
+                  (expect (= 1 (count (:tabs @state/app-db))))
+                  (expect (= history (:messages @state/app-db)))
+                  (expect (= ["Fork unavailable"] @notices)))
+              (do (expect (= forked-id (get-in @state/app-db [:session :id])))
+                  (expect (= 2 (count (:tabs @state/app-db))))
+                  (expect (= [(first history)] (:messages @state/app-db)))
+                  (expect (= ["Forked session at turn"] @notices)))))
+          (finally (close!)))
+        (expect (nil? @error))))))
