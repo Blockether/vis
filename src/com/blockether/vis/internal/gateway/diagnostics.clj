@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.gateway.diagnostics
   "Best-effort local hang evidence, independent of Python worker retirement.
 
-   Gateway watchdogs capture platform-thread stacks before cancellation/cleanup.
+   Gateway watchdogs capture platform and virtual thread stacks before cancellation/cleanup.
    An authenticated local client can additionally ask a previously observed JVM
    for platform AND virtual stacks through jcmd when HTTP stops responding.
    Neither path stops/restarts the gateway. A frozen VM may also refuse attach;
@@ -10,10 +10,13 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
-  (:import (java.io File)
+  (:import (com.sun.management HotSpotDiagnosticMXBean HotSpotDiagnosticMXBean$ThreadDumpFormat)
+           (java.io File)
            (java.lang ProcessBuilder$Redirect ProcessHandle)
+           (java.lang.management ManagementFactory)
            (java.nio.file CopyOption Files Path StandardCopyOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)
            (java.util.concurrent TimeUnit)))
@@ -27,6 +30,8 @@
 (def ^:private PROBE_COOLDOWN_MS 60000)
 
 (def ^:private MAX_REPORTS 10)
+
+(def ^:private MAX_THREADS 256)
 
 (defonce ^:private capturing? (atom false))
 
@@ -85,22 +90,26 @@
   (.toFile (Files/createFile (.toPath (io/file dir name))
                              (private-attributes (.toPath dir) "rw-------"))))
 
+(defn- report-dirs
+  "Completed report directories across all log dates. Symbolic links are skipped."
+  []
+  (->> (paths/log-date-dirs)
+       (mapcat (fn [^File date-dir]
+                 (.listFiles date-dir)))
+       (filter (fn [^File dir]
+                 (and (re-matches #"gateway-hang-[0-9]+" (.getName dir))
+                      (not (Files/isSymbolicLink (.toPath dir)))
+                      (.isFile (io/file dir "report.json"))
+                      (not (Files/isSymbolicLink (.toPath (io/file dir "report.json")))))))))
+
 (defn- prune-reports!
   []
-  (let [reports (->> (paths/log-date-dirs)
-                     (mapcat (fn [^File date-dir]
-                               (.listFiles date-dir)))
-                     (filter (fn [^File dir]
-                               (and (re-matches #"gateway-hang-[0-9]+" (.getName dir))
-                                    (not (Files/isSymbolicLink (.toPath dir)))
-                                    (.isFile (io/file dir "report.json"))
-                                    (not (Files/isSymbolicLink (.toPath
-                                                                 (io/file dir "report.json")))))))
-                     (sort-by (fn [^File dir]
-                                (- (.lastModified dir)))))]
+  (let [reports (sort-by (fn [^File dir]
+                           (- (.lastModified dir)))
+                         (report-dirs))]
     (doseq [^File dir (drop MAX_REPORTS reports)]
       ;; Only our fixed report files; never recurse into an unexpected directory.
-      (doseq [name ["report.json" "threads.json" "attach.log"]]
+      (doseq [name ["report.json" "threads.json" ".threads.json" "attach.log"]]
         (Files/deleteIfExists (.toPath (io/file dir name))))
       (Files/deleteIfExists (.toPath dir)))))
 
@@ -127,42 +136,118 @@
               "Gateway hang diagnostic saved locally")
     result))
 
+(defn- thread-entry
+  [id thread-name virtual? state stack]
+  {:id id
+   :name (util/redact-secret-text (str thread-name))
+   :virtual virtual?
+   :state (str state)
+   :stack (mapv str (take 64 stack))})
+
+(defn- jvm-thread-dump
+  "Every platform and virtual thread from the JVM JSON thread dump. Returns nil
+   where the runtime has no such dump, for example in a native image. The raw
+   dump has unredacted names, so it never stays in the report directory."
+  [^File dir]
+  (let [file (io/file dir ".threads.json")]
+    (try (let [^HotSpotDiagnosticMXBean bean (ManagementFactory/getPlatformMXBean
+                                               HotSpotDiagnosticMXBean)]
+           (.dumpThreads bean (.getAbsolutePath file) HotSpotDiagnosticMXBean$ThreadDumpFormat/JSON)
+           (->> (get-in (wire/parse-json (slurp file :encoding "UTF-8"))
+                        ["threadDump" "threadContainers"])
+                (mapcat #(get % "threads"))
+                (mapv (fn [thread]
+                        (thread-entry (parse-long (str (get thread "tid")))
+                                      (get thread "name")
+                                      (true? (get thread "virtual"))
+                                      (get thread "state")
+                                      (get thread "stack"))))))
+         (catch Throwable _ nil)
+         (finally (try (Files/deleteIfExists (.toPath file)) (catch Throwable _ nil))))))
+
+(defn- runtime-threads
+  "Platform stacks plus the virtual workers that Vis started itself."
+  []
+  (into (mapv (fn [[^Thread thread stack]]
+                (thread-entry (.threadId thread) (.getName thread) false (.getState thread) stack))
+              (Thread/getAllStackTraces))
+        (keep (fn [^Thread thread]
+                (when (.isAlive thread)
+                  (thread-entry (.threadId thread)
+                                (.getName thread)
+                                true
+                                (.getState thread)
+                                (.getStackTrace thread)))))
+        (cancellation/virtual-workers)))
+
 (defn- write-snapshot!
   [context]
-  (let [stacks
-        (Thread/getAllStackTraces)
+  (let [dir
+        (report-directory!)
 
-        target-name
-        (str "gateway-turn-" (:turn-id context))
+        dumped
+        (jvm-thread-dump dir)
 
         threads
-        (sort-by (fn [[^Thread thread _]]
-                   [(not= target-name (.getName thread)) (.threadId thread)])
-                 stacks)]
+        (or dumped (runtime-threads))
 
-    (finish-report! (report-directory!)
-                    (merge (select-keys context
-                                        [:session-id :turn-id :reason :phase :idle-ms :grace-ms])
-                           {:status :written
-                            :pid (.pid (ProcessHandle/current))
-                            :coverage :platform-threads
-                            :thread-count (count stacks)
-                            :threads (mapv (fn [[^Thread thread stack]]
-                                             {:id (.threadId thread)
-                                              :name (util/redact-secret-text (.getName thread))
-                                              :state (str (.getState thread))
-                                              :stack (mapv str (take 64 stack))})
-                                           (take 256 threads))}))))
+        target-name
+        (str "gateway-turn-" (:turn-id context))]
+
+    (finish-report!
+      dir
+      (merge (select-keys context [:session-id :turn-id :reason :phase :idle-ms :grace-ms])
+             {:status :written
+              :pid (.pid (ProcessHandle/current))
+              :coverage (if dumped :platform-and-virtual-threads :platform-and-worker-threads)
+              :thread-count (count threads)
+              :virtual-thread-count (count (filter :virtual threads))
+              :threads (vec (take MAX_THREADS
+                                  (sort-by (fn [thread]
+                                             [(not= target-name (:name thread))
+                                              (boolean (:virtual thread)) (or (:id thread) 0)])
+                                           threads)))}))))
 
 (defn capture!
-  "Save private, bounded platform stacks before a gateway watchdog tears down a
+  "Save private, bounded thread stacks before a gateway watchdog tears down a
    stalled turn. Adds at most CAPTURE_MS of waiting; failures never prevent recovery.
    Reports are UTF-8 JSON with snake_case field names under
    ~/.vis/logs/YYYY-MM-DD/gateway-hang-*/report.json (newest ten across all dates retained).
-   JVM virtual threads are not enumerated by Thread/getAllStackTraces."
+   On the JVM the report lists platform and virtual threads. Where the runtime has
+   no JSON thread dump, it lists platform threads and the virtual workers of
+   cancellation/worker-future."
   [context]
   (try (bounded! capturing? CAPTURE_MS #(write-snapshot! context))
        (catch Throwable _ {:status :failed})))
+
+(defn session-reports
+  "Saved watchdog hang reports for one session, newest first. Each item has the
+   turn id, reason, phase, idle time, thread coverage, record time and report path.
+   Returns [] when nothing is saved or the logs cannot be read."
+  [session-id]
+  (try (->> (report-dirs)
+            (keep
+              (fn [^File dir]
+                (let [file
+                      (io/file dir "report.json")
+
+                      report
+                      (try (wire/parse-json (slurp file :encoding "UTF-8"))
+                           (catch Throwable _ nil))]
+
+                  (when (and (map? report)
+                             (some? session-id)
+                             (= (str session-id) (get report "session_id")))
+                    {:turn-id (get report "turn_id")
+                     :reason (get report "reason")
+                     :phase (get report "phase")
+                     :idle-ms (get report "idle_ms")
+                     :coverage (get report "coverage")
+                     :recorded-ms (get report "recorded_ms")
+                     :path (str file)}))))
+            (sort-by #(- (long (or (:recorded-ms %) 0))))
+            vec)
+       (catch Throwable _ [])))
 
 (defn- local-jvm-target
   [{:keys [pid remote?]}]

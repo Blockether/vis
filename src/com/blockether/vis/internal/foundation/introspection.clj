@@ -23,6 +23,7 @@
             [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.gateway.diagnostics :as gateway-diagnostics]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -741,6 +742,81 @@
         (conj
           "Spend the anchor the refusal handed back instead of re-reading; put every edit for one file in ONE patch(path, edits) call, so no earlier edit can drift a later anchor.")))))
 
+(def ^:private STALE_RUNNING_TURN_MS
+  "A running turn with no new iteration for this long is a suspected hang."
+  (* 5 60 1000))
+
+(def ^:private HUNG_TURN_ACTION
+  "A turn hung in the gateway. It is not a failure of your code. Read hung_turns[].reports[].path for the thread stacks and phase for the step that waited. Resubmit the request if you still need it.")
+
+(defn- epoch-ms
+  [value]
+  (cond (inst? value) (inst-ms value)
+        (integer? value) (long value)
+        :else nil))
+
+(defn- last-progress-ms
+  "Wall-clock time of the newest iteration of `turn`, else its start."
+  [db-info turn]
+  (let [iterations (try (iteration-rows db-info (:id turn)) (catch Throwable _ []))]
+    (or (some->> (keep (comp epoch-ms :created-at) iterations)
+                 seq
+                 (apply max))
+        (epoch-ms (:created-at turn)))))
+
+(defn- turn-error-message
+  [turn]
+  (let [error (:error turn)]
+    (when (map? error)
+      (some-> (or (get error "message") (:message error))
+              (preview 220)))))
+
+(defn- hung-turns
+  "Turns that stopped making progress in the gateway. A turn qualifies when a
+   watchdog saved a hang report for it, or when it still runs without a new
+   iteration for [[STALE_RUNNING_TURN_MS]]. The caller's own live turn is skipped."
+  [env session-id turns]
+  (let [reports
+        (group-by :turn-id (gateway-diagnostics/session-reports session-id))
+
+        own-turn
+        (when (same-uuid? session-id (current-session-id env)) (:id (last turns)))
+
+        now
+        (util/now-ms)]
+
+    (into []
+          (keep
+            (fn [turn]
+              (let [turn-reports
+                    (mapv #(dissoc % :turn-id) (get reports (str (:id turn))))
+
+                    idle-ms
+                    (when (and (= :running (:status turn)) (not= own-turn (:id turn)))
+                      (some->> (last-progress-ms (:db-info env) turn)
+                               (- now)))
+
+                    stale?
+                    (boolean (and idle-ms (>= (long idle-ms) (long STALE_RUNNING_TURN_MS))))]
+
+                (when (or (seq turn-reports) stale?)
+                  (cond-> {:turn-id (:id turn)
+                           :status (:status turn)
+                           :signal (if (seq turn-reports) :hang-report :no-progress)
+                           :iteration-count (:iteration-count turn)}
+                    (:user-request turn)
+                    (assoc :user-request (preview (:user-request turn) 120))
+
+                    stale?
+                    (assoc :idle-ms idle-ms)
+
+                    (seq turn-reports)
+                    (assoc :reports turn-reports)
+
+                    (turn-error-message turn)
+                    (assoc :error (turn-error-message turn)))))))
+          turns)))
+
 (defn- foundation-diagnose
   "Compact current-turn diagnosis built from failure data. Returns a
    map with counts, repetition-loop detection, and next actions so the
@@ -751,7 +827,11 @@
    least `REPETITION_THRESHOLD` times in the failure list - the
    single-glance flag for the 'agent retried the same broken call N
    times' pathology. `:repetition-clusters` carries the supporting
-   data (signature, count, sample failure)."
+    data (signature, count, sample failure).
+
+    The session form also returns `:hung-turns`: turns that a gateway watchdog
+    saved a hang report for, and running turns without a new iteration for
+    five minutes. Their failures never reach the iteration rows."
   ([env]
    (let [turn
          (turn-snapshot env)
@@ -776,7 +856,15 @@
          (vec (foundation-failures env session-id))
 
          clusters
-         (repetition-clusters failures)]
+         (repetition-clusters failures)
+
+         hung
+         (if (and (:db-info env) session-id)
+           (try (hung-turns env
+                            session-id
+                            (persistance/db-list-session-turns (:db-info env) session-id))
+                (catch Throwable _ []))
+           [])]
 
      {:session-id session-id
       :failure-count (count failures)
@@ -784,7 +872,10 @@
       :repetition-loop? (boolean (seq clusters))
       :repetition-clusters clusters
       :failures failures
-      :next-actions (next-actions failures clusters)})))
+      :hung-turns hung
+      :next-actions (cond-> (next-actions failures clusters)
+                      (seq hung)
+                      (conj HUNG_TURN_ACTION))})))
 
 (declare safe-call session-envelope)
 

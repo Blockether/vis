@@ -911,7 +911,9 @@
 
         diagnosis-summary
         (str (counted-label (count failures) "failure")
-             (when (field diagnosis "repetition_loop") " · repeated failures detected"))
+             (when (field diagnosis "repetition_loop") " · repeated failures detected")
+             (when (seq (field diagnosis "hung_turns"))
+               (str " · " (counted-label (count (field diagnosis "hung_turns")) "hung turn"))))
 
         present?
         (or session current totals (seq failures))]

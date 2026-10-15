@@ -14,7 +14,11 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.gateway.resources :as resources]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+            [com.blockether.vis.internal.gateway.diagnostics :as gateway-diagnostics]
+            [com.blockether.vis.internal.paths :as paths]
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]])
+  (:import (java.nio.file Files)
+           (java.nio.file.attribute FileAttribute)))
 
 ;; Direct session reads need the registration normally supplied by the manifest.
 (set-ns-context! [(around-each [f]
@@ -1150,3 +1154,67 @@
           (expect (= (subs stdout 1000 1100) (subs full 1000 1100)))
           (expect (= "ValueError: failed" (get-in (first matches) ["error" "message"]))))
         (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe
+  hung-turn-diagnosis-test
+  ;; Issue #385: a turn wedged in prompt assembly left no iteration rows, so
+  ;; read_session(...).diagnosis reported a clean session.
+  (it
+    "reports watchdog hang reports and running turns without progress"
+    (let [s
+          (vis/db-create-connection! :memory)
+
+          dir
+          (.toFile (Files/createTempDirectory "vis-hung-turn-test-" (make-array FileAttribute 0)))]
+
+      (try
+        (with-redefs [paths/logs-dir
+                      #(.getAbsolutePath dir)
+
+                      introspection/STALE_RUNNING_TURN_MS
+                      0]
+
+          (let [cid
+                (h/store-session! s {:channel :tui :title "Hung fixture"})
+
+                wedged
+                (vis/db-store-session-turn!
+                  s
+                  {:parent-session-id cid :user-request "wedged turn" :status :running})
+
+                _silent
+                (vis/db-store-session-turn!
+                  s
+                  {:parent-session-id cid :user-request "silent turn" :status :running})
+
+                _
+                (gateway-diagnostics/capture!
+                  {:session-id (str cid) :turn-id (str wedged) :reason :turn-stall :phase :prompt})
+
+                diagnose
+                (fn [env-session-id]
+                  (get (:result (@#'introspection/foundation-inspect
+                                 {:session-id env-session-id :db-info s}
+                                 cid))
+                       "diagnosis"))
+
+                foreign
+                (diagnose "other-session")
+
+                [reported silent]
+                (get foreign "hung_turns")]
+
+            (expect (= ["wedged turn" "silent turn"]
+                       (mapv #(get % "user_request") (get foreign "hung_turns"))))
+            (expect (= "hang_report" (get reported "signal")))
+            (expect (= ["turn-stall"] (mapv #(get % "reason") (get reported "reports"))))
+            (expect (= "prompt" (get-in reported ["reports" 0 "phase"])))
+            (expect (= "no_progress" (get silent "signal")))
+            (expect (nat-int? (get silent "idle_ms")))
+            (expect (some #(str/includes? % "hung in the gateway") (get foreign "next_actions")))
+            ;; The caller's own live turn is running, not hung.
+            (expect (= ["wedged turn"]
+                       (mapv #(get % "user_request") (get (diagnose cid) "hung_turns"))))))
+        (finally (vis/db-dispose-connection! s)
+                 (doseq [^java.io.File file (reverse (file-seq dir))]
+                   (.delete file)))))))

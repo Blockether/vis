@@ -33,6 +33,14 @@
        true
        (catch Throwable _ false)))
 
+(defonce ^:private running-virtual-workers (java.util.concurrent.ConcurrentHashMap/newKeySet))
+
+(defn virtual-workers
+  "Live virtual threads that [[worker-future]] started. Hang reports read them
+   when the runtime cannot list virtual threads itself."
+  []
+  (vec running-virtual-workers))
+
 (defn worker-runtime
   "Runtime probe for worker execution. `:worker-helper` is stable metadata for
    diagnostics; `:virtual-threads?` reports whether new worker tasks will use
@@ -62,8 +70,23 @@
 
          _runner
          (if (and (not platform?) (virtual-threads-available?))
-           (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
-             (.invoke m nil (object-array [task])))
+           (let [m
+                 (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))
+
+                 tracked
+                 ^Runnable
+                 (fn []
+                   (let [thread
+                         (Thread/currentThread)
+
+                         ^java.util.Set workers
+                         running-virtual-workers]
+
+                     (.setName thread (str name))
+                     (.add workers thread)
+                     (try (.run task) (finally (.remove workers thread)))))]
+
+             (.invoke m nil (object-array [tracked])))
            (doto (Thread. ^Runnable task (str name)) (.setDaemon true) (.start)))]
 
      (reify

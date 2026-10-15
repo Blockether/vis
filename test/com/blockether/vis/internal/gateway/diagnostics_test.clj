@@ -167,7 +167,7 @@
                               "turn_id" "fixture"
                               "phase" "provider-call"
                               "reason" "turn-stall"
-                              "coverage" "platform-threads"}
+                              "coverage" "platform-and-virtual-threads"}
                              (select-keys report
                                           ["status" "session_id" "turn_id" "phase" "reason"
                                            "coverage"])))
@@ -185,6 +185,66 @@
                                                                 (.getParent file)
                                                                 (make-array LinkOption 0)))))))))
             (finally (.countDown gate) (.join thread 2000)))))))
+  (it
+    "lists a parked virtual worker in the JVM thread dump and in the fallback"
+    (with-logs
+      (fn [_]
+        (let [gate
+              (CountDownLatch. 1)
+
+              ready
+              (promise)
+
+              worker
+              (cancellation/worker-future "virtual-worker-fixture"
+                                          #(do (deliver ready true) (.await gate)))
+
+              worker-entry
+              (fn [report]
+                (some #(when (= "virtual-worker-fixture" (get % "name")) %)
+                      (get report "threads")))]
+
+          (try (expect (true? (deref ready 2000 false)))
+               (let [dumped (wire/parse-json (slurp (:path (diagnostics/capture!
+                                                             {:session-id "session"
+                                                              :turn-id "dumped"
+                                                              :reason :turn-stall}))
+                                                    :encoding
+                                                    "UTF-8"))]
+                 (expect (= "platform-and-virtual-threads" (get dumped "coverage")))
+                 (expect (pos-int? (get dumped "virtual_thread_count")))
+                 (expect (true? (get (worker-entry dumped) "virtual")))
+                 (expect (seq (get (worker-entry dumped) "stack"))))
+               (with-redefs [diagnostics/jvm-thread-dump (constantly nil)]
+                 (let [fallback (wire/parse-json (slurp (:path (diagnostics/capture!
+                                                                 {:session-id "session"
+                                                                  :turn-id "fallback"
+                                                                  :reason :cancel-backstop}))
+                                                        :encoding
+                                                        "UTF-8"))]
+                   (expect (= "platform-and-worker-threads" (get fallback "coverage")))
+                   (expect (true? (get (worker-entry fallback) "virtual")))
+                   (expect (some #(str/includes? % "CountDownLatch.await")
+                                 (get (worker-entry fallback) "stack")))))
+               (finally (.countDown gate) (deref worker 2000 nil)))
+          (expect (await-value #(not-any? (fn [^Thread thread]
+                                            (= "virtual-worker-fixture" (.getName thread)))
+                                          (cancellation/virtual-workers))))))))
+  (it "returns the saved hang reports of one session, newest first"
+      (with-logs (fn [_]
+                   (diagnostics/capture!
+                     {:session-id "wanted" :turn-id "first" :reason :turn-stall :phase :prompt})
+                   (Thread/sleep 5)
+                   (diagnostics/capture! {:session-id "other" :turn-id "noise" :reason :turn-stall})
+                   (Thread/sleep 5)
+                   (diagnostics/capture!
+                     {:session-id "wanted" :turn-id "second" :reason :cancel-backstop})
+                   (let [reports (diagnostics/session-reports "wanted")]
+                     (expect (= ["second" "first"] (mapv :turn-id reports)))
+                     (expect (= ["cancel-backstop" "turn-stall"] (mapv :reason reports)))
+                     (expect (= "prompt" (:phase (second reports))))
+                     (expect (every? #(.isFile (io/file (:path %))) reports))
+                     (expect (= [] (diagnostics/session-reports "missing")))))))
   (it "retains the newest completed reports across dates without touching unrelated files"
       (with-logs
         (fn [dir]
