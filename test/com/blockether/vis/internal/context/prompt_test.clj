@@ -326,7 +326,7 @@
 
           (expect (= (svar/count-messages model selected) (counter model selected))))))
   (it
-    "scopes reuse by model and message, and drops it with the counter"
+    "reuses complete content across counters and separates model changes"
     (let [message
           {:role "user" :content "Stable request"}
 
@@ -358,7 +358,7 @@
                       ["gpt-4" [message]] 1}
                      (frequencies @calls)))
           ((prompt/request-token-counter) "gpt-4o" [message])
-          (expect (= 2 (get (frequencies @calls) ["gpt-4o" [message]])))
+          (expect (= 1 (get (frequencies @calls) ["gpt-4o" [message]])))
           (expect (= 2 (get (frequencies @calls) ["gpt-4o" []]))))))))
 
 (defdescribe

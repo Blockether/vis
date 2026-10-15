@@ -46,6 +46,54 @@
       (.writeObject writer value))
     (.toString out)))
 
+(defn bounded-memoize
+  "Memoize immutable inputs with entry and weight limits. Evict the oldest entry first.
+   Compute misses outside cache updates. Concurrent misses can compute more than once.
+   `weight-fn` receives the original arguments and result, and estimates retained bytes.
+   `key-fn` receives the arguments. Store only its key, not the original arguments.
+   Keep every input that affects the result in the key."
+  ([f max-entries max-weight weight-fn]
+   (bounded-memoize f max-entries max-weight weight-fn identity))
+  ([f max-entries max-weight weight-fn key-fn]
+   {:pre [(pos-int? max-entries) (pos-int? max-weight)]}
+   (let [max-entries
+         (long max-entries)
+
+         max-weight
+         (long max-weight)
+
+         state
+         (atom {:entries {} :order clojure.lang.PersistentQueue/EMPTY :weight 0})]
+
+     (fn [& args]
+       (let [key (key-fn args)]
+         (if-let [entry (find (:entries @state) key)]
+           (:value (val entry))
+           (let [value (apply f args)
+                 weight (max 1 (long (weight-fn args value)))]
+
+             (when (<= weight max-weight)
+               (swap! state (fn [current]
+                              (if (contains? (:entries current) key)
+                                current
+                                (let [room (loop [s current]
+                                             (if (or (>= (count (:entries s)) max-entries)
+                                                     (> (+ (long (:weight s)) weight) max-weight))
+                                               (let [old (peek (:order s))]
+                                                 (recur (-> s
+                                                            (update :weight
+                                                                    -
+                                                                    (get-in s
+                                                                            [:entries old :weight]))
+                                                            (update :entries dissoc old)
+                                                            (update :order pop))))
+                                               s))]
+                                  (-> room
+                                      (assoc-in [:entries key] {:value value :weight weight})
+                                      (update :order conj key)
+                                      (update :weight + weight)))))))
+             value)))))))
+
 (def ^:private secret-key-pattern
   #"(?i)(?:password|passwd|passphrase|secret|token|authorization|cookie|otp|(?:api|private|access)[_-]?key|credentials?)")
 

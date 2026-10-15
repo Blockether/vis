@@ -1063,24 +1063,27 @@
       (throw (ex-info "Prepared request components unavailable" {})))
     parts))
 
+(def ^:private cached-message-tokens
+  (util/bounded-memoize (fn [model message opts]
+                          (svar/count-messages model [message] opts))
+                        512
+                        (* 4 1024 1024)
+                        (fn [args _]
+                          (+ 1024 (* 4 (count (pr-str args)))))))
+
 (defn request-token-counter
-  "Create one iteration's tokenizer-aware Svar estimate. Reuse each model/message's
-   marginal count across budgeting and health without retaining a cross-request cache.
+  "Count messages with bounded reuse by model, tokenizer options and complete content.
+   Retain at most 512 messages within a 4 MiB weight limit across requests.
    Provider usage remains the authority for an accepted request."
   ([] (request-token-counter {}))
   ([opts]
-   (let [priming
-         (memoize #(svar/count-messages % [] opts))
-
-         message-tokens
-         (memoize (fn [model message]
-                    (- (svar/count-messages model [message] opts) (long (priming model)))))]
-
+   (let [priming (memoize #(svar/count-messages % [] opts))]
      (fn ^long [model messages]
-       (long (reduce (fn [^long total message]
-                       (+ total (long (message-tokens model message))))
-                     (long (priming model))
-                     messages))))))
+       (let [baseline (long (priming model))]
+         (long (reduce (fn [^long total message]
+                         (+ total (- (long (cached-message-tokens model message opts)) baseline)))
+                       baseline
+                       messages)))))))
 
 (defn request-health
   "Content-free provenance for one request. Prefer Svar's final :request-accounting

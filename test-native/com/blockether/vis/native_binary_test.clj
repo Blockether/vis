@@ -2303,7 +2303,7 @@
 
 (defn- native-context-case!
   "Exercise token resources, independent input limits and a measured fold in the linked image."
-  [model tokenizer & [limits]]
+  [model tokenizer & [limits stdout-repeats]]
   (let
     [dir
      (temp-dir "vis-native-context-")
@@ -2317,10 +2317,17 @@
      original-whole
      whole-body
 
+     stdout-line
+     "お誕生日おめでとう Zażółć gęślą jaźń 👋 <|endoftext|> "
+
      steps
      [{:input 24000
        :code (str "assert session['utilization']['model_input_limit'] == 36000\n"
-                  "print('お誕生日おめでとう Zażółć gęślą jaźń 👋 <|endoftext|> ' * 40)")}
+                  "print("
+                  (pr-str stdout-line)
+                  " * "
+                  (or stdout-repeats 40)
+                  ")")}
       {:input 28000
        :code
        (str
@@ -2409,6 +2416,8 @@
                             (pr-str {:forms (mapv #(select-keys % [:src :error]) forms)
                                      :paths (mapv :path @asked)}))
                     (expect (every? #(nil? (:error %)) forms) (pr-str forms))
+                    (expect (= (str (apply str (repeat (or stdout-repeats 40) stdout-line)) "\n")
+                               (:stdout (first forms))))
                     (expect (= "Native tokenizer and folding verified\n" (:stdout (last forms)))
                             (pr-str (last forms)))
                     (expect (= 1 (:fold-count usage))
@@ -2423,6 +2432,18 @@
                           after (str (json/read-json (:body (nth requests 2))))]
 
                       (expect (str/includes? before "お誕生日おめでとう"))
+                      (when stdout-repeats
+                        (let [request (json/read-json (:body (second requests)))
+                              tool-message (first (filter #(= "tool" (get % "role"))
+                                                          (get request "messages")))
+                              replay (str (get tool-message "content"))]
+
+                          (expect (= "native-context-0" (get tool-message "tool_call_id")))
+                          (expect (str/includes? replay "stdout clipped: kept "))
+                          (expect (str/includes? replay "4096 estimated-token ceiling"))
+                          (expect (str/includes? replay "Recover exact stdout"))
+                          (expect (str/includes? replay "native-context-0"))
+                          (expect (< (count replay) (count (:stdout (first forms)))))))
                       (expect (not (str/includes? after "お誕生日おめでとう")))
                       (expect (str/includes? after "Native context evidence"))))
                   (finally (ps/db-dispose-connection! store)))))
@@ -2430,6 +2451,9 @@
       (finally (delete-tree! dir)))))
 
 (defdescribe native-tokenizers-and-context-folding-test
+             ;; Regression: exact weak stdout keys must also work in the linked image.
+             (it "clips large stdout and preserves its raw Unicode text and tool identity"
+                 (native-context-case! "gpt-4o" nil nil 4000))
              (it "loads cl100k resources selected by model" (native-context-case! "gpt-4" nil))
              (it "loads o200k resources selected by model" (native-context-case! "gpt-4o" nil))
              (it "loads p50k resources selected by model"

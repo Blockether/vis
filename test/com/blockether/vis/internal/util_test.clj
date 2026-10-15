@@ -345,3 +345,126 @@
 
                                         (str (.getPath f) " re-rolls " what)))]
                    (expect (= [] offenders)))))
+
+(defdescribe bounded-memoize-test
+             (it "evicts the oldest inputs when the entry limit is reached"
+                 (let [calls
+                       (atom [])
+
+                       cached
+                       (util/bounded-memoize (fn [x]
+                                               (swap! calls conj x)
+                                               x)
+                                             2
+                                             100
+                                             (fn [_ _]
+                                               1))]
+
+                   (doseq [x [:a :b :a :c :a]]
+                     (cached x))
+                   (expect (= [:a :b :c :a] @calls))))
+             (it "counts input and result weight, and bypasses oversized entries"
+                 (let [calls
+                       (atom [])
+
+                       cached
+                       (util/bounded-memoize (fn [s]
+                                               (swap! calls conj s)
+                                               s)
+                                             20
+                                             12
+                                             (fn [[s] result]
+                                               (+ (count s) (count result))))]
+
+                   (doseq [s ["aaa" "bbb" "aaa" "cccc" "aaa" "oversized" "oversized"]]
+                     (cached s))
+                   (expect (= ["aaa" "bbb" "cccc" "aaa" "oversized" "oversized"] @calls))))
+             (it "caches nil and false, but does not cache failures"
+                 (let [calls
+                       (atom 0)
+
+                       cached
+                       (util/bounded-memoize
+                         (fn [value]
+                           (swap! calls inc)
+                           (if (= :failure value) (throw (ex-info "fixture failure" {})) value))
+                         4
+                         100
+                         (fn [_ _]
+                           1))]
+
+                   (doseq [value [nil nil false false]]
+                     (expect (= value (cached value))))
+                   (dotimes [_ 2]
+                     (expect (throws? clojure.lang.ExceptionInfo #(cached :failure))))
+                   (expect (= 4 @calls))))
+             (it "computes unrelated misses without holding a shared lock"
+                 (let [entered
+                       (promise)
+
+                       release
+                       (promise)
+
+                       cached
+                       (util/bounded-memoize
+                         (fn [value]
+                           (when (= :slow value) (deliver entered true) @release)
+                           value)
+                         4
+                         100
+                         (fn [_ _]
+                           1))
+
+                       slow
+                       (future (cached :slow))]
+
+                   (try (expect (= true (deref entered 2000 :timeout)))
+                        (let [fast (future (cached :fast))]
+                          (expect (= :fast (deref fast 2000 :timeout))))
+                        (finally (deliver release true) (deref slow 2000 :timeout)))))
+             (it "keeps exact equality for different strings with the same Java hash"
+                 (let [calls
+                       (atom 0)
+
+                       cached
+                       (util/bounded-memoize (fn [x]
+                                               (swap! calls inc)
+                                               x)
+                                             4
+                                             100
+                                             (fn [_ _]
+                                               1))]
+
+                   (expect (= (.hashCode "Aa") (.hashCode "BB")))
+                   (expect (= "Aa" (cached "Aa")))
+                   (expect (= "BB" (cached "BB")))
+                   (expect (= "Aa" (cached "Aa")))
+                   (expect (= 2 @calls)))))
+
+(defdescribe transformed-memoize-key-test
+             (it "uses transformed keys and passes original arguments to the weight function"
+                 (let [calls
+                       (atom 0)
+
+                       weighed
+                       (atom [])
+
+                       cached
+                       (util/bounded-memoize (fn [request]
+                                               (swap! calls inc)
+                                               (:version request))
+                                             2
+                                             100
+                                             (fn [args result]
+                                               (swap! weighed conj [args result])
+                                               1)
+                                             (fn [[request]]
+                                               (:version request)))
+
+                       first-request
+                       {:version 1 :unused "first source"}]
+
+                   (expect (= 1 (cached first-request)))
+                   (expect (= 1 (cached {:version 1 :unused "second source"})))
+                   (expect (= 1 @calls))
+                   (expect (= [[[first-request] 1]] @weighed)))))

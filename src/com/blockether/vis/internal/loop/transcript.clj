@@ -1443,22 +1443,24 @@
 
         ;; Text-only iteration with no tool calls: join its forms.
         fallback-content
-        (let [lines
-              (concat (keep form-line forms) (map live-record-context-line live-records))
+        (when-not (or (:collapsed? iter-record) tool-calls)
+          (let [lines
+                (concat (keep form-line forms) (map live-record-context-line live-records))
 
-              iscope
-              (some #(iter-of-scope (:scope %)) forms)
+                iscope
+                (some #(iter-of-scope (:scope %)) forms)
 
-              header
-              (when (and iscope (seq lines)) (str "# " iscope))
+                header
+                (when (and iscope (seq lines)) (str "# " iscope))
 
-              body-ls
-              (concat summary-lines (when header [header]) lines)
+                body-ls
+                (concat summary-lines (when header [header]) lines)
 
-              body
-              (when (seq body-ls) (str/join "\n" body-ls))]
+                body
+                (when (seq body-ls) (str/join "\n" body-ls))]
 
-          (str/join "\n\n" (remove str/blank? [body (:goal-continuation iter-record) ctx-diff])))]
+            (str/join "\n\n"
+                      (remove str/blank? [body (:goal-continuation iter-record) ctx-diff]))))]
 
     (cond
       ;; Collapsed by summarize/drop: the whole iteration is gone — emit ONLY the
@@ -1984,15 +1986,23 @@
    ~277 the measured folds imply."
   250)
 
+(def ^:private cached-fallback-tokens
+  (util/bounded-memoize (fn [text]
+                          (svar/count-tokens "unknown" text))
+                        256
+                        (* 4 1024 1024)
+                        (fn [[text] _]
+                          (+ 1024 (* 2 (count text))))))
+
 (defn- estimated-iteration-tokens
-  "Tokenizer-backed fallback for an iteration before its model is resolved. The
-   same Svar unknown-model fallback prices the canonical bounded stdout."
+  "Price the canonical bounded stdout before its model is resolved. Reuse text counts
+   within 256 entries and a 4 MiB weight limit."
   ^long [wire-rec]
   (+ (long MESSAGE_FRAME_TOKENS)
-     (long (svar/count-tokens "unknown"
-                              (str (:thinking wire-rec)
-                                   "\n"
-                                   (str/join "\n" (keep form-wire-text (:forms-vec wire-rec))))))))
+     (long (cached-fallback-tokens (str (:thinking wire-rec)
+                                        "\n"
+                                        (str/join "\n"
+                                                  (keep form-wire-text (:forms-vec wire-rec))))))))
 
 (defn- measured-iteration-tokens
   "`{pos tokens}` for the visible projection, tokenized from the canonical messages

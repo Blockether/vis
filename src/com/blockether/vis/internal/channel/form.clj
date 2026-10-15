@@ -15,7 +15,8 @@
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.python.format :as pyfmt]
-            [com.blockether.vis.internal.util :as util]))
+            [com.blockether.vis.internal.util :as util])
+  (:import (java.lang.ref WeakReference)))
 
 (def ^:private display-fields
   "Every field carried VERBATIM from the loop to a channel to render a form,
@@ -68,94 +69,130 @@
   "Additional work bound for unusually compressible text before token counting."
   32768)
 
+(defn- clip-stdout
+  [s model scope call-id max-output-tokens max-preview-chars]
+  (let [s
+        (str/trimr s)
+
+        n
+        (count s)
+
+        tokens
+        #(long (svar/count-tokens model %))
+
+        addressable?
+        (and (string? scope)
+             (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)
+             (string? call-id)
+             (<= (count call-id) 512)
+             (re-matches #"[A-Za-z0-9_|-]+" call-id))
+
+        recovery
+        (if addressable?
+          (str "# Recover exact stdout: r = await read_session(); "
+               "b = next(b for t in r[\"transcript\"][\"turns\"] "
+               "for i in t[\"iterations\"] for b in i[\"blocks\"] "
+               "if b.get(\"scope\") == "
+               (pr-str scope)
+               " and b.get(\"svar_tool_call_id\") == "
+               (pr-str call-id)
+               "); print(b[\"stdout\"][0:4096]) # adjust the slice as needed")
+          "# To see more, slice or filter the result in the sandbox and print less.")
+
+        preview
+        (fn [kept]
+          (let [head-len
+                (quot kept 4)
+
+                head
+                (util/truncate s head-len)
+
+                tail-start
+                (- n (- kept head-len))
+
+                tail-start
+                (if (and (< tail-start n) (Character/isLowSurrogate (.charAt ^String s tail-start)))
+                  (inc tail-start)
+                  tail-start)
+
+                tail
+                (subs s tail-start)]
+
+            (str head
+                 "\n# ⋯ stdout clipped: kept " (+ (count head) (count tail))
+                 "/" n
+                 " chars (" max-output-tokens
+                 " estimated-token ceiling).\n" recovery
+                 "\n" tail)))]
+
+    (when (pos? n)
+      (if (and (<= n max-preview-chars) (<= (tokens s) max-output-tokens))
+        s
+        (loop [low
+               0
+
+               high
+               (min n max-preview-chars)]
+
+          (if (< low high)
+            (let [mid (inc (quot (+ low high) 2))]
+              (if (<= (tokens (preview mid)) max-output-tokens)
+                (recur mid high)
+                (recur low (dec mid))))
+            (preview low)))))))
+
+(deftype ^:private WeakStdout [^WeakReference source ^int hash-value]
+  Object
+    (hashCode [_] hash-value)
+    (equals [this other]
+      (or (identical? this other)
+          (and (instance? WeakStdout other)
+               (let [text
+                     (.get source)
+
+                     other-text
+                     (.get ^WeakReference (.-source ^WeakStdout other))]
+
+                 (and (some? text) (some? other-text) (= text other-text)))))))
+
+(defn- stdout-key
+  [[s model scope call-id max-output-tokens max-preview-chars]]
+  [(WeakStdout. (WeakReference. s) (.hashCode ^String s)) model scope call-id max-output-tokens
+   max-preview-chars])
+
+(def ^:private cached-stdout
+  (util/bounded-memoize clip-stdout
+                        128
+                        (* 8 1024 1024)
+                        (fn [[_ model scope call-id] result]
+                          (+ 1024
+                             (* 2 (+ (count model) (count scope) (count call-id) (count result)))))
+                        stdout-key))
+
 (defn clip-to-wire
-  "Project one stdout body for model replay, gateway wire and human display. The
-   same Svar tokenizer selection used for request estimates prices the body and its
-   marker; a head/tail binary search keeps the entire excerpt inside the budget.
-   Raw stdout remains in the saved form. `form` supplies the serving model and
-   recoverable iteration scope/tool-call identity. Live events may add `/fN` to
-   the display scope; saved `read_session()` blocks use only `tN/iM`."
+  "Project stdout for model replay, gateway wire and human display. Keep raw stdout unchanged.
+   `form` supplies the serving model, iteration scope and tool-call identity.
+   Normalize live scopes from `tN/iM/fN` to `tN/iM` for saved-block recovery.
+
+   Count the excerpt and recovery marker with Svar's tokenizer. Reuse up to 128 projections.
+   Hold source text weakly. Limit retained results and metadata to an estimated 8 MiB."
   ([s] (clip-to-wire s {}))
   ([s form]
-   (let [s
-         (str/trimr (str (or s "")))
-
-         n
-         (count s)
-
-         model
-         (or (:llm-model form) "unknown")
-
-         tokens
-         #(long (svar/count-tokens model %))
-
-         scope
+   (let [scope
          (when (string? (:scope form)) (str/replace (:scope form) #"/f[1-9]\d*$" ""))
 
          call-id
-         (:svar/tool-call-id form)
+         (:svar/tool-call-id form)]
 
-         addressable?
-         (and (string? scope)
-              (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)
-              (string? call-id)
-              (<= (count call-id) 512)
-              (re-matches #"[A-Za-z0-9_|-]+" call-id))
-
-         recovery
-         (if addressable?
-           (str "# Recover exact stdout: r = await read_session(); "
-                "b = next(b for t in r[\"transcript\"][\"turns\"] "
-                "for i in t[\"iterations\"] for b in i[\"blocks\"] "
-                "if b.get(\"scope\") == "
-                (pr-str scope)
-                " and b.get(\"svar_tool_call_id\") == "
-                (pr-str call-id)
-                "); print(b[\"stdout\"][0:4096]) # adjust the slice as needed")
-           "# To see more, slice or filter the result in the sandbox and print less.")
-
-         preview
-         (fn [kept]
-           (let [head-len
-                 (quot kept 4)
-
-                 head
-                 (util/truncate s head-len)
-
-                 tail-start
-                 (- n (- kept head-len))
-
-                 tail-start
-                 (if (and (< tail-start n)
-                          (Character/isLowSurrogate (.charAt ^String s tail-start)))
-                   (inc tail-start)
-                   tail-start)
-
-                 tail
-                 (subs s tail-start)]
-
-             (str head
-                  "\n# ⋯ stdout clipped: kept " (+ (count head) (count tail))
-                  "/" n
-                  " chars (" MAX_FORM_OUTPUT_TOKENS
-                  " estimated-token ceiling).\n" recovery
-                  "\n" tail)))]
-
-     (when (pos? n)
-       (if (and (<= n MAX_FORM_PREVIEW_CHARS) (<= (tokens s) MAX_FORM_OUTPUT_TOKENS))
-         s
-         (loop [low
-                0
-
-                high
-                (min n MAX_FORM_PREVIEW_CHARS)]
-
-           (if (< low high)
-             (let [mid (inc (quot (+ low high) 2))]
-               (if (<= (tokens (preview mid)) MAX_FORM_OUTPUT_TOKENS)
-                 (recur mid high)
-                 (recur low (dec mid))))
-             (preview low))))))))
+     (cached-stdout (str (or s ""))
+                    (or (:llm-model form) "unknown")
+                    (when (and scope (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)) scope)
+                    (when (and (string? call-id)
+                               (<= (count call-id) 512)
+                               (re-matches #"[A-Za-z0-9_|-]+" call-id))
+                      call-id)
+                    MAX_FORM_OUTPUT_TOKENS
+                    MAX_FORM_PREVIEW_CHARS))))
 
 (defn stdout-display
   "Project a form's printed stdout into a human card. Artifact fences are passed
