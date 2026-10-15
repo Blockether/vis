@@ -3246,6 +3246,32 @@
                  (expect (<= 25000 (long (get event "silent_ms")) 35000)))
                (finally (cancellation/cancel! token) (swap! @#'state/registry dissoc sid)))))))
 
+;; Session 3bcf13c4-499f-4033-9523-684d466bbcfa: a block that computed for 20 minutes
+;; showed only the phrase of its last tool call, so nobody saw the wedge.
+(defdescribe
+  python-busy-progress-test
+  (it "publishes the busy time, the wall and the CPU of a block"
+      (expect
+        (= ["turn.progress" false
+            {:progress "python" :iteration 4 :busy-ms 72000 :deadline-in-ms 228000 :cpu-percent 99}]
+           (#'state/progress-chunk->event
+            {:phase :python
+             :iteration 4
+             :position 0
+             :busy-ms 72000
+             :deadline-in-ms 228000
+             :cpu-percent 99})))
+      (expect (= ["turn.progress" false {:progress "python" :iteration 4}]
+                 (#'state/progress-chunk->event {:phase :python :iteration 4 :position 0}))))
+  (it "never lets the turn watchdog stop a busy block"
+      (let [decision @#'state/turn-stall-decision]
+        (expect (not (:tripped? (decision {:phase :python
+                                           :started? true
+                                           :produced? true
+                                           :stall-timeout-ms 1000
+                                           :first-output-timeout-ms 1000}
+                                          3600000)))))))
+
 (defdescribe
   turn-launch-orphan-test
   "A throw anywhere AFTER `turn.started` — every caller of `launch-turn-worker!`

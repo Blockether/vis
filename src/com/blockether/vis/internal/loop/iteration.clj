@@ -985,7 +985,17 @@
                                                            :activity/on-snapshot
                                                            (when emit-activity!
                                                              (fn [snapshot]
-                                                               (emit-activity! snapshot false))))]
+                                                               (emit-activity! snapshot false)))
+                                                           ;; A block that computes without a tool call
+                                                           ;; names its busy time and its wall.
+                                                           :python/on-busy
+                                                           (when tool-event-fn
+                                                             (fn [notice]
+                                                               (on-chunk (merge {:phase :python
+                                                                                 :iteration
+                                                                                 iteration-position
+                                                                                 :position idx}
+                                                                                notice)))))]
                                         (if tool-event-fn
                                           (python-exec/execute-code activity-env
                                                                     expr

@@ -7674,6 +7674,43 @@ vis.register_extension(vis.Extension(
             (expect (nil? (:error result)) (pr-str result))
             (expect (not (:timeout? result)))
             (expect (str/includes? (or (:stdout result) "") "execution resumed"))))))
+  ;; Session 3bcf13c4-499f-4033-9523-684d466bbcfa: a regex that never ended ran
+  ;; for 20 minutes, because a `shell(` later in the same block raised its limit
+  ;; to 30 minutes. A shell call parks the wall, so its text must not widen it.
+  (it "stops a CPU-bound block at the base limit when the block also calls shell"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [result (watchdog-block
+                         ctx
+                         env
+                         "while True:\n    pass\nsh = await shell('true')\nsh.wait(600)\n")]
+            (expect (true? (:timeout? result)))
+            (expect (not (worker/retired? ctx)))))))
+  (it "names a CPU-bound block busy while it runs and ends the notice with the block"
+      (with-watchdog-extension
+        (fn [ctx env]
+          (let [notices
+                (atom [])
+
+                result
+                (with-redefs-fn {#'python-exec/BUSY_NOTICE_MS 200 #'python-exec/BUSY_POLL_MS 100}
+                  #(watchdog-block ctx
+                                   (assoc env
+                                     :python/on-busy (fn [n]
+                                                       (swap! notices conj n)))
+                                   (str "import time\n"
+                                        "t = time.time()\n" "while time.time() - t < 0.8:\n"
+                                        "    pass\n" "print('done')\n")))
+
+                busy
+                (filterv seq @notices)]
+
+            (expect (nil? (:error result)) (pr-str result))
+            (expect (seq busy) (pr-str @notices))
+            (expect (every? #(<= 200 (long (:busy-ms %)) 1000) busy) (pr-str busy))
+            (expect (every? #(<= 0 (long (:deadline-in-ms %)) 800) busy) (pr-str busy))
+            (expect (some #(< 50 (long (:cpu-percent % 0))) busy) (pr-str busy))
+            (expect (= {} (peek @notices)))))))
   (it "stops runaway Python after a returned extension and preserves the context"
       (with-watchdog-extension
         (fn [ctx env]

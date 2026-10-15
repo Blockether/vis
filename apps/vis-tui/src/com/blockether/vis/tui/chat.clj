@@ -1325,6 +1325,19 @@
             (merge {:deadline-in-ms (event-get event :deadline-in-ms)
                     :deadline-action (wire-keyword (event-get event :deadline-action))}))
 
+          ;; A Python block runs without a tool call. The notice names the busy time, the
+          ;; CPU use and the time to the block stop. Without `busy_ms` it ends the notice.
+          "python"
+          (cond-> {:phase :python :iteration iteration}
+            (event-get event :busy-ms)
+            (assoc :busy-ms
+              (event-get event :busy-ms) :deadline-in-ms
+              (event-get event :deadline-in-ms) :received-ms
+              (System/currentTimeMillis))
+
+            (event-get event :cpu-percent)
+            (assoc :cpu-percent (event-get event :cpu-percent)))
+
           "response-parse"
           {:phase :response-parse :iteration iteration}
 

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import activityFixture from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity.json';
-import { providerWaitDetail, reduceRunningTurnEvent, type ProviderWait } from './running-turn';
+import {
+  providerWaitDetail,
+  pythonBusyDetail,
+  reduceRunningTurnEvent,
+  type ProviderWait,
+  type PythonBusy,
+} from './running-turn';
 import type { SseEvent } from './types';
 
 const runningTurn = {
@@ -402,5 +408,53 @@ describe('the provider wait notice', () => {
     )?.progress?.wait;
 
     expect(bare && providerWaitDetail(bare, bare.receivedAt)).toBe('No response for 25s');
+  });
+});
+
+// A Python block can run for minutes without a tool call. The ticker said only
+// "running", so a busy block looked like a hung session.
+describe('the busy Python notice', () => {
+  const notice = (extra: Record<string, unknown> = {}) =>
+    event({
+      type: 'turn.progress',
+      turn_id: 'gw-thinking',
+      progress: 'python',
+      iteration: 3,
+      busy_ms: 72_000,
+      deadline_in_ms: 228_000,
+      cpu_percent: 99,
+      ...extra,
+    });
+
+  const busy: PythonBusy = { busyMs: 72_000, receivedAt: 1_000, cpuPercent: 99, deadlineInMs: 228_000 };
+
+  it('keeps the busy time, the CPU use and the deadline of the block', () => {
+    const before = Date.now();
+    const turn = reduceRunningTurnEvent(runningTurn, notice());
+
+    expect(turn?.progress).toMatchObject({ kind: 'python', iteration: 3 });
+    expect(turn?.progress?.busy).toMatchObject({ busyMs: 72_000, cpuPercent: 99, deadlineInMs: 228_000 });
+    expect(turn?.progress?.busy?.receivedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('ends the notice when the block ends', () => {
+    const turn = reduceRunningTurnEvent(
+      runningTurn,
+      notice({ busy_ms: undefined, deadline_in_ms: undefined, cpu_percent: undefined }),
+    );
+
+    expect(turn?.progress?.kind).toBe('python');
+    expect(turn?.progress?.busy).toBeUndefined();
+  });
+
+  it('moves both clocks on from the moment the notice arrived', () => {
+    expect(pythonBusyDetail(busy, 1_000)).toBe('No tool call for 1m 12s · CPU 99% · stops in 3m 48s');
+    expect(pythonBusyDetail(busy, 6_000)).toBe('No tool call for 1m 17s · CPU 99% · stops in 3m 43s');
+  });
+
+  it('leaves out the CPU use when Vis cannot read it', () => {
+    const bare = reduceRunningTurnEvent(runningTurn, notice({ cpu_percent: undefined }))?.progress?.busy;
+
+    expect(bare && pythonBusyDetail(bare, bare.receivedAt)).toBe('No tool call for 1m 12s · stops in 3m 48s');
   });
 });

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.config.runtime-settings
   "Per-eval / per-call runtime knobs for the loop: Python-sandbox eval timeouts
-   (with clamping and a shell-timeout-aware widener), the `svar/ask-code!` stream
+   (with clamping and a widener for HTTP calls and sleeps), the `svar/ask-code!` stream
    watchdog defaults, and the dynamic vars the loop binds per call.
 
    Also the HOST half of the cancel contract: [[park-blocking-wall]] stops a
@@ -13,18 +13,13 @@
 (def DEFAULT_EVAL_TIMEOUT_MS
   "Default wall-clock backstop around ONE `python_execution` block — five minutes.
 
-   A BACKSTOP for guest code that would never finish on its own (`while True:`, a
-   wedged frame), never a co-deadline for work that is progressing. Every BOUNDED
-   call a block makes — shell, HTTP — is already floored ABOVE this
-   number by the widener below, so what this number really bounds is the in-sandbox
-   compute no scan can see: a large parse, an image pass, an analytic loop over
-   thousands of files. At two minutes that work was killed exactly where it got
-   expensive, and the model re-ran the whole block from zero.
+   It stops guest code that never ends on its own, such as `while True:` or a regex
+   with catastrophic backtracking. Tool calls (shell, MCP, extensions) park this
+   clock, so they do not use this budget. It bounds the compute inside the sandbox:
+   a large parse, an image pass, a loop over many files.
 
-   The price is deliberate: a genuinely wedged block now costs five minutes of a
-   turn instead of two. It stays far under [[MAX_EVAL_TIMEOUT_MS]] and under every
-   bounded-call floor, so a block that makes such a call still gets that call's own
-   budget plus the widener's grace."
+   At two minutes that work was killed where it got expensive. At five minutes, a
+   wedged block costs five minutes of a turn."
   300000)
 
 (def MIN_EVAL_TIMEOUT_MS "Floor for :eval-timeout-ms." 3000)
@@ -32,12 +27,8 @@
 (def MAX_EVAL_TIMEOUT_MS
   "Hard ceiling for :eval-timeout-ms — 35 minutes.
 
-   It must sit ABOVE the longest bounded call a block may own plus the widener's
-   grace: [[MAX_SHELL_TIMEOUT_SECS]] (30 min) + `shell-timeout-eval-grace-ms`. A
-   ceiling equal to the shell cap would clamp the widened watchdog 10s BELOW the
-   shell envelope, so a legal 30-minute wait would die at the watchdog with a bare
-   `Timeout` and no output instead of shell's own structured envelope — the exact
-   defect [[DEFAULT_SHELL_TIMEOUT_SECS]] describes. Lift the two together."
+   It caps the configured base and the floors that a literal sleep or an HTTP
+   timeout in the block adds."
   (* 35 60 1000))
 
 (def ^:dynamic *eval-timeout-ms*
@@ -120,43 +111,28 @@
   (let [candidate (long candidate)]
     (min (long MAX_EVAL_TIMEOUT_MS) (max (long MIN_EVAL_TIMEOUT_MS) candidate))))
 
-(def ^:private shell-timeout-eval-grace-ms
-  "Extra room around a bounded call's OWN timeout so that call can kill, drain,
-   and return its structured timeout envelope before the outer Python eval
-   watchdog fires. The watchdog is a
-   BACKSTOP, never a co-deadline."
+(def ^:private bounded-call-grace-ms
+  "Extra room above the budget of a call that blocks inside the guest: an HTTP
+   request or a sleep. The call can then end and return its own result before the
+   wall fires. The wall is a backstop, never a co-deadline."
   10000)
 
 (def DEFAULT_SHELL_TIMEOUT_SECS
-  "Default per-command / per-wait budget of the `shell` tool — declared here, and
-   read by `foundation.shell`, so ONE number governs both the tool and the
-   watchdog above it.
+  "Default per-command and per-wait budget of the `shell` tool, in seconds.
+   `foundation.shell` reads it here.
 
    Thirty minutes, the same as [[MAX_SHELL_TIMEOUT_SECS]]. The budget is a
-   CEILING on the WAIT, never a delay: a fast command returns the instant it
-   exits, so the only calls this number touches are the long ones — a native
-   image, a cold Gradle / npm build, a full suite — and at two minutes those were
-   killed precisely where their output started to matter, with the work already
-   paid for.
+   CEILING on the WAIT, never a delay: a fast command returns when it exits. At
+   two minutes, long builds and full test suites were killed where their output
+   started to matter.
 
-   It matters here because it used to EQUAL the eval watchdog's own default: both
-   were two minutes. A `shell` call that named no timeout therefore raced a
-   watchdog that had already started, and the watchdog always won — the turn got a
-   bare `Timeout` with NO output instead of shell's own envelope (partial stdout,
-   `timed_out` true, a killed process tree). The widener below now floors the
-   watchdog above this budget whenever an eval calls the shell at all."
+   A shell call parks the wall of its block (see [[park-blocking-wall]]), so this
+   budget never races the eval watchdog."
   1800)
 
 (def MAX_SHELL_TIMEOUT_SECS
-  "Hard ceiling `foundation.shell` clamps EVERY `run` / `wait` budget to: thirty
-   minutes. Declared here so the widener below can floor the eval watchdog above
-   the LONGEST budget a shell call may legally own, and so
-   [[MAX_EVAL_TIMEOUT_MS]] can stay a grace period above THIS.
-
-   A budget that is a variable or an expression is invisible to a text scan, so
-   flooring at anything under the cap let the watchdog preempt a legal wait with a
-   bare `Timeout` instead of shell's own envelope — the same defect
-   `DEFAULT_SHELL_TIMEOUT_SECS` describes, one spelling further out."
+  "Hard ceiling that `foundation.shell` clamps EVERY `run` and `wait` budget to:
+   thirty minutes."
   1800)
 
 (def HTTP_CALL_FLOOR_SECS
@@ -179,12 +155,6 @@
 
 (def ^:private timeout-ms-re #"[\"']?timeout_ms[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)")
 
-;; `subprocess` is NOT here: it never spawns (the POSIX refusal shim raises at
-;; once), so a block that mentions it buys no time. Only the `shell` tool waits —
-;; through the verb itself or through a handle's `.wait(secs)`, which parks the
-;; guest in a host call for up to the same cap.
-(def ^:private shell-call-re #"\bshell\s*\(|\.wait\s*\(")
-
 (def ^:private http-call-re
   #"\b(?:requests|httpx|urllib3)\s*\.|\b(?:import|from)\s+(?:requests|httpx|urllib3)\b|\burlopen\s*\(")
 
@@ -198,14 +168,10 @@
   (when-let [xs (seq (remove nil? xs))]
     (apply max xs)))
 
-(defn explicit-shell-timeout-secs
-  "Best-effort scan for an EXPLICIT timeout override in Python code, in seconds.
-   Reads `timeout_secs` / `timeout` / `secs` (seconds) and `timeout_ms`
-   (milliseconds, rounded up) — an MCP call or an extension tool spells its budget
-   in ms, a shell handle's `.wait(secs=…)` in seconds, and leaving a spelling out let
-   a deliberately long call die at the default watchdog. The real tool still owns
-   validation/clamping; this only prevents the outer watchdog from preempting a
-   longer requested budget."
+(defn- explicit-timeout-secs
+  "Best-effort scan for an EXPLICIT timeout in Python code, in seconds. Reads
+   `timeout_secs`, `timeout` and `secs` (seconds) and `timeout_ms` (milliseconds,
+   rounded up)."
   [code]
   (let [code
         (str code)
@@ -220,24 +186,17 @@
 
     (max-of (concat secs ms))))
 
-(defn implicit-call-budget-secs
-  "Seconds an eval is entitled to purely from WHICH bounded calls it makes, when
-   none of them names a number. A timeout that is a variable, an expression, or
-   simply the tool's default is invisible to a text scan, so without this floor
-   the watchdog silently preempts a call that owns a longer budget and answers
-   timeouts itself.
+(defn- http-call-budget-secs
+  "Seconds that an eval needs for its HTTP calls, or nil when it makes none.
 
-   A `shell` call may legally own the FULL cap, so that is its floor even when the
-   block DOES spell a literal budget somewhere: that literal bounds ONE call, and a
-   second, unannotated call in the same block still owns shell's default — which is
-   the cap.
-
-   An HTTP call keeps its floor for the same reason: a literal `timeout=` bounds
-   ONE request, and the block is almost always a LOOP of them."
+   An HTTP request blocks inside the guest and does not park the wall, unlike a
+   tool call. The shims default to 30s for each request, and a block often loops
+   over many hosts with a helper from an earlier block. So any HTTP call floors
+   the budget at [[HTTP_CALL_FLOOR_SECS]]. A longer literal `timeout=` raises it."
   [code]
   (let [code (str code)]
-    (max-of [(when (re-find http-call-re code) HTTP_CALL_FLOOR_SECS)
-             (when (re-find shell-call-re code) MAX_SHELL_TIMEOUT_SECS)])))
+    (when (re-find http-call-re code)
+      (max-of [HTTP_CALL_FLOOR_SECS (explicit-timeout-secs code)]))))
 
 (defn literal-sleep-ms
   "Longest sleep in Python code whose duration is a literal number, in
@@ -250,7 +209,11 @@
 
 (defn eval-timeout-ms-for-code
   "Eval watchdog for ONE Python block: the configured base, raised so it sits a
-   grace period ABOVE the longest bounded call the block makes.
+   grace period ABOVE the longest call that blocks inside the guest.
+
+   Only HTTP calls and literal sleeps raise it. A tool call (shell, MCP, an
+   extension) parks the wall, so its budget never needs room here. Raising the
+   wall for a tool call also gave the CPU work in the same block that time.
 
    A literal sleep that alone reaches the base raises it the same way:
    `await asyncio.sleep(420)` cannot finish inside five minutes. A shorter sleep
@@ -261,10 +224,10 @@
         (clamp-eval-timeout-ms base-timeout-ms)
 
         grace
-        (long shell-timeout-eval-grace-ms)
+        (long bounded-call-grace-ms)
 
         secs
-        (max-of [(explicit-shell-timeout-secs code) (implicit-call-budget-secs code)])
+        (http-call-budget-secs code)
 
         sleep-ms
         (literal-sleep-ms code)

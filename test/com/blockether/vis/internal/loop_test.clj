@@ -6815,62 +6815,17 @@
       ;; makes one still gets that call's own budget plus the widener's grace.
       (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/HTTP_CALL_FLOOR_SECS) 10000)))
       (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS rt/MAX_EVAL_TIMEOUT_MS)))
-  (it "extends the outer eval timeout when shell code asks for a longer timeout"
-      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print(1)")))
-      ;; Any `shell` call floors at the CAP, literal budget or not: the literal
-      ;; bounds ONE call, and a second unannotated call in the same block owns
-      ;; shell's default — which IS the cap.
-      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                 (eval-timeout-ms-for-code
-                   120000
-                   "await shell({\"command\": \"clojure -M:test\", \"timeout_secs\": 180})")))
-      (expect (= 310000
-                 (eval-timeout-ms-for-code 120000
-                                           "subprocess.run([\"sleep\", \"1\"], timeout=300)"))))
-  (it "keeps the eval ceiling above the longest shell budget plus its grace"
-      ;; The widener floors the watchdog at the shell cap + grace; a ceiling at or
-      ;; below that would clamp the watchdog back UNDER the shell envelope and kill
-      ;; a legal wait with a bare `Timeout` and no output.
-      (expect (< (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
-  (it "reads a millisecond budget too, so an explicit ms budget is not preempted"
-      ;; REGRESSION: the scan only understood seconds, so an explicitly long
-      ;; `timeout_ms` (an MCP call, an extension tool) died at the 120s watchdog
-      ;; instead.
-      (expect (= 310000 (eval-timeout-ms-for-code 120000 "await probe(timeout_ms=300000)")))
-      ;; Sub-second budgets round UP, never to a zero-second widening.
-      (expect (= 120000 (eval-timeout-ms-for-code 120000 "await probe(timeout_ms=500)"))))
-  (it "floors the watchdog above a bounded call whose timeout is NOT a literal"
-      ;; REGRESSION: the watchdog EQUALLED shell's own 120s default, and a
-      ;; timeout that is a variable / expression / plain default is invisible
-      ;; to a text scan. The watchdog started first, so it always won and the
-      ;; turn got a bare `Timeout (120s)` with no stdout instead of shell's
-      ;; structured envelope.
-      ;;
-      ;; The floor is shell's CAP (`MAX_SHELL_TIMEOUT_SECS`, thirty minutes), not
-      ;; a shorter budget: a `wait` whose budget the scan cannot read may legally
-      ;; own the full cap, and the watchdog is a BACKSTOP, never a co-deadline.
-      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                 (eval-timeout-ms-for-code 120000 "r = await shell(command=\"sleep 300\")")))
-      ;; Regression: a HANDLE wait (`sh.wait(600)`) parks the guest in a host call
-      ;; for up to the same cap, but the scan only knew the verb — the block died
-      ;; at the base watchdog, the interrupt could not reach a thread parked in
-      ;; the host, and the worker was retired mid-turn.
-      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                 (eval-timeout-ms-for-code 120000 "sh = await shell(\"make\")\nr = sh.wait(600)")))
-      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                 (eval-timeout-ms-for-code 120000 "r = sh.wait(secs=600)")))
-      (expect (= 610000 (eval-timeout-ms-for-code 120000 "r = await block(secs=600)")))
-      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                 (eval-timeout-ms-for-code
-                   120000
-                   "secs = 600\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)")))
-      ;; A literal budget does not lower the floor either: it bounds ONE call, and
-      ;; the next call in the block can still own shell's default.
-      (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
-                 (eval-timeout-ms-for-code 120000
-                                           "r = await shell(command=\"x\", timeout_secs=180)")))
-      ;; Prose that merely mentions the word must not widen anything.
-      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('shell is bounded')"))))
+  ;; Session 3bcf13c4-499f-4033-9523-684d466bbcfa: a `shell(` in the block raised its
+  ;; wall to 30 minutes, and a regex that never ended used all of that time.
+  (it "does not widen the wall for a tool call, because a tool call parks it"
+      (doseq [code ["await shell({\"command\": \"clojure -M:test\", \"timeout_secs\": 180})"
+                    "r = await shell(command=\"sleep 300\")"
+                    "sh = await shell(\"make\")\nr = sh.wait(600)" "r = sh.wait(secs=600)"
+                    "secs = 600\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)"
+                    "await probe(timeout_ms=300000)" "r = await block(secs=600)"
+                    ;; `subprocess` never starts a process here, so it buys no time.
+                    "subprocess.run([\"sleep\", \"1\"], timeout=300)"]]
+        (expect (= 120000 (eval-timeout-ms-for-code 120000 code)) code)))
   (it "floors the watchdog above a block that reaches the network"
       ;; REGRESSION: HTTP was not a bounded-call FAMILY at all. The shims'
       ;; own per-request default is 30s, a sweep loops over N hosts, and the
@@ -6909,7 +6864,22 @@
       (expect (= 3000 (eval-timeout-ms-for-code 3000 "time.sleep(2.5)")))
       ;; A computed delay and prose give the scan no number.
       (expect (= 120000 (eval-timeout-ms-for-code 120000 "time.sleep(delay)")))
-      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('sleep for ten minutes')")))))
+      (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('sleep for ten minutes')"))))
+  ;; Session 3bcf13c4-499f-4033-9523-684d466bbcfa: a wedged block showed no sign of
+  ;; its wedge for 20 minutes.
+  (it "names a block busy after 30 seconds of its wall, with the time it has left"
+      (let [busy-notice @#'python-exec/busy-notice]
+        (expect (nil? (busy-notice 300000 nil 1000 99)))
+        (expect (nil? (busy-notice 300000 (+ 1000 271000) 1000 99)))
+        (expect (= {:busy-ms 30000 :deadline-in-ms 270000 :cpu-percent 99}
+                   (busy-notice 300000 (+ 1000 270000) 1000 99)))
+        (expect (= {:busy-ms 300000 :deadline-in-ms 0} (busy-notice 300000 500 1000 nil)))))
+  (it "measures the CPU of the worker between two samples"
+      (let [cpu-percent @#'python-exec/cpu-percent]
+        (expect (nil? (cpu-percent nil [5000 4000])))
+        (expect (nil? (cpu-percent [5000 1000] [5000 4000])))
+        (expect (= 99 (cpu-percent [0 0] [5000 4950])))
+        (expect (= 0 (cpu-percent [0 100] [5000 100]))))))
 
 (defdescribe final-answer-gate-test
              ;; `final-answer-gate-error` itself carries ONLY extension

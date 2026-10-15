@@ -1891,11 +1891,12 @@
 (def ^:private turn-progress-phases
   "Coarse 'Vis is doing X' phases surfaced to the live ticker but never pinned
    into the durable trace."
-  #{:attachment-transcription :provider-call :response-parse :shell-run :shell-bg :tool-start})
+  #{:attachment-transcription :provider-call :response-parse :python :shell-run :shell-bg
+    :tool-start})
 
 (defn- progress-chunk->event
   "Ephemeral `turn.progress` wire event `[type store? payload]`, or nil."
-  [{:keys [phase cmd iteration reason model] :as chunk}]
+  [{:keys [phase cmd iteration reason model busy-ms deadline-in-ms cpu-percent] :as chunk}]
   (when (and (turn-progress-phases phase)
              (not (and (= phase :response-parse) (= :done (:status chunk)))))
     (let [op
@@ -1942,7 +1943,18 @@
          (assoc :phrase (str phrase))
 
          (some? label)
-         (assoc :label (str label)))])))
+         (assoc :label (str label))
+
+         ;; A block that computes without a tool call: how long, how hard, and when
+         ;; its wall stops it. A `python` event without these fields ends the notice.
+         (some? busy-ms)
+         (assoc :busy-ms busy-ms)
+
+         (some? deadline-in-ms)
+         (assoc :deadline-in-ms deadline-in-ms)
+
+         (some? cpu-percent)
+         (assoc :cpu-percent cpu-percent))])))
 
 (defn- form-activity-chunk->event
   "`block.activity` frame `[type store? payload]` carrying one full replacement of a
@@ -3189,7 +3201,7 @@
    watchdog never cancels these phases. Other phases (provider-call, reasoning/content streaming,
    response-parse, and the between-iteration `:iteration-final` gap) are
    engine/provider-internal and must never sit idle for `TURN_STALL_TIMEOUT_MS`."
-  #{:form-start :form-activity :form-result :tool-start :shell-run :shell-bg
+  #{:form-start :form-activity :form-result :tool-start :shell-run :shell-bg :python
     :attachment-transcription})
 
 (def ^:private provider-attempt-phases

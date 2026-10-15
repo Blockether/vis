@@ -55,6 +55,11 @@
                        deadline, `:deadline-in-ms` and `:deadline-action`. It
                        replaces a retry error; the next model output ends it.
 
+     :python           A Python block runs and has not called a tool for 30
+                       seconds. Carries `:busy-ms`, `:deadline-in-ms`,
+                       `:received-ms` and, when known, `:cpu-percent`. A chunk
+                       without `:busy-ms` ends the notice.
+
    Public API:
 
      `(make-progress-tracker)`              - fresh tracker, no callback
@@ -310,6 +315,14 @@
                 (dissoc :error))
       (:model chunk)
       (assoc :activity/model (:model chunk)))
+
+    :python
+    ;; A busy Python block gets its own line. A chunk without `:busy-ms` keeps the
+    ;; phase and drops the busy notice.
+    (assoc entry
+      :activity :python
+      :activity/busy (when (:busy-ms chunk)
+                       (select-keys chunk [:busy-ms :deadline-in-ms :cpu-percent :received-ms])))
 
     :shell-run
     (assoc entry

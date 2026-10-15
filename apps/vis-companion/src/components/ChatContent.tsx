@@ -105,7 +105,12 @@ import type {
   CouncilRequest,
 } from '../lib/types';
 import type { GatewayClient } from '../lib/gateway';
-import { providerWaitDetail, type ProviderWait } from '../lib/running-turn';
+import {
+  providerWaitDetail,
+  pythonBusyDetail,
+  type ProviderWait,
+  type PythonBusy,
+} from '../lib/running-turn';
 import { speechOutput } from '../lib/speech';
 import type { SpokenTrack } from '../lib/speech';
 import { ExpandableImage } from './ImageViewer';
@@ -3889,6 +3894,7 @@ function TurnPhaseLine({
   phase,
   startedAt,
   wait,
+  busy,
   still = false,
   terminal = false,
 }: {
@@ -3897,6 +3903,8 @@ function TurnPhaseLine({
   startedAt?: number;
   /** The silence of the model under a ticking phase: how long, and what Svar does next. */
   wait?: ProviderWait;
+  /** A Python block under a ticking phase: how long without a tool call, and when it stops. */
+  busy?: PythonBusy;
   still?: boolean;
   /** A final phase keeps the same slot but has no in-progress punctuation. */
   terminal?: boolean;
@@ -3929,12 +3937,12 @@ function TurnPhaseLine({
           {ticking && elapsed ? <>&nbsp;&nbsp;{elapsed}</> : null}
         </span>
       </div>
-      {ticking && wait ? (
+      {ticking && (wait || busy) ? (
         <div
           className="mt-1 truncate whitespace-nowrap pl-[3ch] font-mono text-ui text-footer-muted"
           aria-hidden="true"
         >
-          {providerWaitDetail(wait, now)}
+          {wait ? providerWaitDetail(wait, now) : busy ? pythonBusyDetail(busy, now) : null}
         </div>
       ) : null}
       <span className="sr-only" role="status">
@@ -4353,6 +4361,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   streaming = false,
   progressLabel,
   providerWait,
+  pythonBusy,
   pending,
   startedAt,
   settled = false,
@@ -4370,6 +4379,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   progressLabel?: string;
   /** The silence of the model in the running provider attempt. */
   providerWait?: ProviderWait;
+  /** The running Python block when it has not called a tool for a while. */
+  pythonBusy?: PythonBusy;
   /** A settled running-turn bubble is waiting for its authoritative transcript row. */
   pending?: string;
   startedAt?: number;
@@ -4490,6 +4501,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             phase={progressLabel ?? `${agentName} is working`}
             startedAt={startedAt}
             wait={providerWait}
+            busy={pythonBusy}
           />
         ) : cancelled ? (
           <TurnPhaseLine phase="Cancelled by user." terminal />

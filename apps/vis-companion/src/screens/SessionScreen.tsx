@@ -440,6 +440,9 @@ function runningTurnPhase(
       return `${agentName} is running: ${compactLabel(progress.command ?? '', 'command')}`;
     case 'attachment-transcription':
       return `${agentName} is transcribing recordings (up to 5 min)`;
+    case 'python':
+      // A Python block runs. When it is busy, the line under this one says for how long.
+      return `${agentName} is running Python code ${suffix}`;
     case 'provider-wait':
       // The model is silent. The line under this one says for how long and what comes next.
       return `${agentName} is waiting for ${progress.model ?? 'the provider'} ${suffix}`;
@@ -4801,6 +4804,7 @@ export function SessionScreen({
             session?.agent_name ?? 'Vis',
           )}
           providerWait={connected && !runningTurn.cancelling ? runningTurn.progress?.wait : undefined}
+          pythonBusy={connected && !runningTurn.cancelling ? runningTurn.progress?.busy : undefined}
           startedAt={runningTurn.startedAt}
           client={client}
           sid={sid}

@@ -2428,6 +2428,29 @@
                     (catch clojure.lang.ExceptionInfo _ nil)))
              (expect (= "True\n" @bound) (pr-str @bound))
              (finally (loop-env/dispose-environment! env)))))
+  ;; Session 3bcf13c4-499f-4033-9523-684d466bbcfa: the block wall gives a shell
+  ;; wait no extra time, so the wait must park that wall.
+  (it "parks the block wall while a shell call waits"
+      (let [sid
+            (str "py-shell-park-" (System/nanoTime))
+
+            c
+            (py-ctx {:session-id sid})]
+
+        (try (expect (= 1 (py c "1")))
+             (let
+               [result
+                (with-redefs [rt/MIN_EVAL_TIMEOUT_MS 1000]
+                  (binding [rt/*eval-timeout-ms* 1000]
+                    (#'python-exec/run-python-code
+                     c
+                     "sh = await shell('sleep 2; echo done')\nprint(sh.wait(10)['out'].strip())\n"
+                     :env
+                     {:python-context c :session-id sid})))]
+               (expect (not (:timeout? result)) (pr-str result))
+               (expect (nil? (:error result)) (pr-str result))
+               (expect (= "done" (str/trim (str (:stdout result)))) (pr-str result)))
+             (finally (resources/stop-all! sid)))))
   (it "routes the lifecycle tools through the native Python bridge"
       ;; Regression: a stale positional wrapper invoked shell-dispatch as
       ;; (env command options), which made these lifecycle calls fail before the

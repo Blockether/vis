@@ -305,6 +305,155 @@
          :settle! #(persistance/db-activity-settle! db history-id %1 %2)
          :page #(persistance/db-activity-page db sid history-id {})}))))
 
+(def ^:private BUSY_NOTICE_MS
+  "Time that a block computes with its wall running before channels show it. A
+   tool call parks the wall, and this time starts again when the call returns."
+  30000)
+
+(def ^:private BUSY_POLL_MS
+  "Interval of the busy monitor. While a block is busy, each poll sends a new
+   notice with a new CPU sample. The event is not stored, so a channel that
+   connects late gets the next notice."
+  5000)
+
+(defn- ps-cpu-ms
+  "Total CPU time of process `pid` from `ps -o time=`, in milliseconds, or nil.
+   The output is `[[dd-]hh:]mm:ss[.cc]`."
+  [pid]
+  (try (let [^Process p
+             (.start (ProcessBuilder. ^java.util.List ["ps" "-o" "time=" "-p" (str pid)]))
+
+             out
+             (str/trim (slurp (.getInputStream p)))]
+
+         (when-not (.waitFor p 2 java.util.concurrent.TimeUnit/SECONDS) (.destroyForcibly p))
+         (when (re-matches #"(?:\d+-)?(?:\d+:)*\d+(?:\.\d+)?" out)
+           (let [[days clock]
+                 (if (str/includes? out "-") (str/split out #"-" 2) ["0" out])
+
+                 parts
+                 (str/split clock #":")
+
+                 secs
+                 (reduce (fn [acc part]
+                           (+ (* 60.0 acc) (Double/parseDouble part)))
+                         0.0
+                         parts)]
+
+             (Math/round (* 1000.0 (+ secs (* 86400.0 (Double/parseDouble days))))))))
+       (catch Throwable _ nil)))
+
+(defn- process-cpu-ms
+  "Total CPU time of process `pid` in milliseconds, or nil when the OS does not
+   report it. On macOS, `ProcessHandle` reports the CPU of this process only, so
+   another process falls back to `ps`."
+  [pid]
+  (when pid
+    (or (try (let [^java.util.Optional handle (java.lang.ProcessHandle/of (long pid))]
+               (when (.isPresent handle)
+                 (let [^java.util.Optional cpu (.totalCpuDuration (.info ^java.lang.ProcessHandle
+                                                                         (.get handle)))]
+                   (when (.isPresent cpu) (.toMillis ^java.time.Duration (.get cpu))))))
+             (catch Throwable _ nil))
+        (ps-cpu-ms pid))))
+
+(defn- busy-notice
+  "Busy notice for one block, or nil while the block is not busy.
+
+   `deadline` is the epoch-ms deadline of the block wall, nil while a call parks
+   it. The wall restarts its full `timeout-ms` after each park, so the busy time
+   is the used part of that budget. The block is busy when its wall has run for
+   [[BUSY_NOTICE_MS]]. `cpu-percent` is the CPU use of the worker since the last
+   poll, or nil."
+  [timeout-ms deadline now cpu-percent]
+  (when deadline
+    (let [left
+          (max 0 (- (long deadline) (long now)))
+
+          busy
+          (- (long timeout-ms) left)]
+
+      (when (>= busy (long BUSY_NOTICE_MS))
+        (cond-> {:busy-ms busy :deadline-in-ms left}
+          cpu-percent
+          (assoc :cpu-percent cpu-percent))))))
+
+(defn- cpu-percent
+  "CPU use of the worker between two `[epoch-ms cpu-ms]` samples, in whole
+   percent, or nil."
+  [before after]
+  (when (and before after)
+    (let [[at used]
+          before
+
+          [now spent]
+          after
+
+          span
+          (- (long now) (long at))]
+
+      (when (pos? span)
+        (max 0 (Math/round (/ (* 100.0 (- (long spent) (long used))) (double span))))))))
+
+(defn- start-busy-monitor!
+  "Watch one running block and send each busy notice to `on-busy`. Answer a
+   function that stops the watch.
+
+   After a busy notice, the stop sends an empty notice, so channels drop the busy
+   line. The stop waits for that notice, so it never arrives after the block
+   result. A park sends nothing: the tool call that parks the wall shows its own
+   line."
+  [on-busy python-context deadline timeout-ms]
+  (when (fn? on-busy)
+    (let [stopped
+          (promise)
+
+          send!
+          (fn [notice]
+            (try (on-busy notice)
+                 (catch Throwable t (tel/log! {:level :debug :id ::busy-notice-failed :error t}))))
+
+          thread
+          (Thread. ^Runnable
+                   (fn []
+                     (loop [shown?
+                            false
+
+                            sample
+                            nil]
+
+                       (if (deref stopped BUSY_POLL_MS false)
+                         (when shown? (send! {}))
+                         (let [now
+                               (util/now-ms)
+
+                               at
+                               @deadline
+
+                               ;; Sample only near the notice, so a short block starts no `ps`.
+                               sampling?
+                               (and at
+                                    (<= (- (long BUSY_NOTICE_MS) (long BUSY_POLL_MS))
+                                        (- (long timeout-ms) (- (long at) now))))
+
+                               sample'
+                               (when sampling?
+                                 (some->> (process-cpu-ms (env/python-context-pid python-context))
+                                          (vector now)))
+
+                               notice
+                               (busy-notice timeout-ms at now (cpu-percent sample sample'))]
+
+                           (when notice (send! notice))
+                           (recur (boolean (or notice shown?)) sample')))))
+                   "vis-python-busy-monitor")]
+
+      (.setDaemon thread true)
+      (.start thread)
+      (fn []
+        (deliver stopped true)
+        (.join thread 1000)))))
+
 (defn- run-python-code
   "Run an agent code block through the embedded Python sandbox. Wraps the
    worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
@@ -467,6 +616,11 @@
                                      ;; interrupt can strand its GIL.
                                      (interrupt-block! python-context exec-future env))))
 
+        ;; A block that computes for a long time without a tool call shows how long,
+        ;; how hard and when its wall stops it (`python` turn progress).
+        stop-busy-monitor!
+        (start-busy-monitor! (:python/on-busy env) python-context eval-deadline timeout-ms)
+
         timeout-sentinel
         (Object.)
 
@@ -476,7 +630,8 @@
                (reset! thrown e)
                (interrupt-block! python-context exec-future env)
                {:lru {} :error (python-op-error python-context e code cancel-token)})
-             (finally (when dispose-cancel-hook
+             (finally (when stop-busy-monitor! (stop-busy-monitor!))
+                      (when dispose-cancel-hook
                         (try (dispose-cancel-hook) (catch Throwable _ nil)))))
 
         execution-result

@@ -4083,6 +4083,44 @@
           (on-chunk {:phase :reasoning :iteration 1 :thinking "Now I see."})
           (expect (not (str/includes? (spinner (get-timeline) received) "waiting for")))))))
 
+;; A Python block can run for minutes without a tool call. The Vis line said
+;; "thinking" all that time, so a busy block looked like a hung session.
+(defdescribe
+  spinner-python-busy-test
+  (let [received
+        1700000000000
+
+        spinner
+        (fn [iterations now-ms]
+          (first (filter #(str/includes? (str %) "Esc to cancel")
+                         (:lines (render/progress->lines-data {:iterations iterations}
+                                                              200
+                                                              {}
+                                                              {:now-ms now-ms
+                                                               :turn-start-ms received})))))
+
+        busy
+        (fn [chunk]
+          (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+            (on-chunk {:phase :provider-call :iteration 1 :model "claude-x"})
+            (on-chunk (merge {:phase :python :iteration 1 :received-ms received} chunk))
+            (get-timeline)))]
+
+    (it "says that Python runs and moves both clocks"
+        (let [timeline (busy {:busy-ms 72000 :deadline-in-ms 228000 :cpu-percent 99})]
+          (expect (str/includes? (spinner timeline received) "Vis is running Python code (iter 1)"))
+          (expect (str/includes? (spinner timeline received)
+                                 "no tool call for 1m 12s · CPU 99% · stops in 3m 48s"))
+          (expect (str/includes? (spinner timeline (+ received 5000))
+                                 "no tool call for 1m 17s · CPU 99% · stops in 3m 43s"))))
+    (it "leaves out the CPU share when Vis cannot read it"
+        (expect (str/includes? (spinner (busy {:busy-ms 30000 :deadline-in-ms 270000}) received)
+                               "no tool call for 30s · stops in 4m 30s")))
+    (it "ends the notice when the block ends"
+        (let [timeline (busy {})]
+          (expect (str/includes? (spinner timeline received) "Vis is running Python code (iter 1)"))
+          (expect (not (str/includes? (spinner timeline received) "no tool call")))))))
+
 ;; Regression, issue #152: a run SHOWING its work on the band was reported as
 ;; "Vis is thinking (iter 30)... 10m 1s" — the live panel and its Interrupt sat
 ;; right under that row, so the ticker read as a hang for the whole run.

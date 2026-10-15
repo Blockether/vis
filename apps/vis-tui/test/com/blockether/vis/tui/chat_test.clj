@@ -670,7 +670,22 @@
                       :deadline-in-ms 215000
                       :deadline-action :retry}
                      (dissoc chunk :received-ms)))
-          (expect (int? (:received-ms chunk)))))))
+          (expect (int? (:received-ms chunk)))))
+    ;; A long Python block with no tool call looked like a hung session.
+    (it "a python progress event projects to :python with its busy clocks"
+        (let [chunk (g->c {"type" "turn.progress"
+                           "progress" "python"
+                           "iteration" 4
+                           "busy_ms" 72000
+                           "deadline_in_ms" 228000
+                           "cpu_percent" 99})]
+          (expect
+            (= {:phase :python :iteration 4 :busy-ms 72000 :deadline-in-ms 228000 :cpu-percent 99}
+               (dissoc chunk :received-ms)))
+          (expect (int? (:received-ms chunk)))))
+    (it "a python progress event without busy_ms ends the notice"
+        (expect (= {:phase :python :iteration 4}
+                   (g->c {"type" "turn.progress" "progress" "python" "iteration" 4}))))))
 
 (defdescribe provider-retry-event-chunk-test
              (let [g->c @#'chat/gateway-event->chunk]

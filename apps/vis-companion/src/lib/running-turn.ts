@@ -36,6 +36,18 @@ export interface ProviderWait {
   deadline?: { inMs: number; action: 'retry' | 'timeout' };
 }
 
+/** A Python block that runs without a tool call. */
+export interface PythonBusy {
+  /** Time since the last tool call of the block when the notice arrived. */
+  busyMs: number;
+  /** Device clock when the notice arrived; the clocks move from here. */
+  receivedAt: number;
+  /** CPU use of the Python process since the last notice, when known. */
+  cpuPercent?: number;
+  /** Time until Vis stops the block. */
+  deadlineInMs?: number;
+}
+
 export interface TurnProgress {
   kind: string;
   iteration?: number;
@@ -48,6 +60,8 @@ export interface TurnProgress {
   model?: string;
   /** The silence of the model while `kind` is `provider-wait`. */
   wait?: ProviderWait;
+  /** The busy Python block while `kind` is `python`; absent when the notice ends. */
+  busy?: PythonBusy;
 }
 
 export interface RunningTurn {
@@ -98,6 +112,21 @@ function providerWaitFromEvent(event: SseEvent): ProviderWait | undefined {
   };
 }
 
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function pythonBusyFromEvent(event: SseEvent): PythonBusy | undefined {
+  const busyMs = finiteNumber(event.busy_ms);
+  if (busyMs === undefined) return undefined;
+  return {
+    busyMs,
+    receivedAt: Date.now(),
+    cpuPercent: finiteNumber(event.cpu_percent),
+    deadlineInMs: finiteNumber(event.deadline_in_ms),
+  };
+}
+
 /** `25s` or `3m 5s`: whole seconds, because the wait clocks move once a second. */
 function waitClock(ms: number): string {
   const seconds = Math.floor(Math.max(0, ms) / 1_000);
@@ -112,6 +141,17 @@ export function providerWaitDetail(wait: ProviderWait, now: number): string {
   if (wait.connection) parts.push(`connection ${wait.connection}`);
   if (wait.deadline) {
     parts.push(`${wait.deadline.action} in ${waitClock(wait.deadline.inMs - passed)}`);
+  }
+  return parts.join(' · ');
+}
+
+/** The line under the ticker: `No tool call for 1m 12s · CPU 99% · stops in 3m 48s`. */
+export function pythonBusyDetail(busy: PythonBusy, now: number): string {
+  const passed = Math.max(0, now - busy.receivedAt);
+  const parts = [`No tool call for ${waitClock(busy.busyMs + passed)}`];
+  if (busy.cpuPercent !== undefined) parts.push(`CPU ${Math.round(busy.cpuPercent)}%`);
+  if (busy.deadlineInMs !== undefined) {
+    parts.push(`stops in ${waitClock(busy.deadlineInMs - passed)}`);
   }
   return parts.join(' · ');
 }
@@ -379,6 +419,7 @@ export function reduceRunningTurnEvent(
             phrase: eventString(event, 'phrase') || undefined,
             model: eventString(event, 'model') || undefined,
             wait: kind === 'provider-wait' ? providerWaitFromEvent(event) : undefined,
+            busy: kind === 'python' ? pythonBusyFromEvent(event) : undefined,
           }
         : undefined,
     };

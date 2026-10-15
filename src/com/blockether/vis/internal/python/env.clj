@@ -87,6 +87,14 @@
   []
   (pyext/worker-pids))
 
+(defn python-context-pid
+  "PID of the process that runs `session`: its live worker, or this process for a
+   session that it runs itself. Nil when the worker is gone."
+  [session]
+  (if-let [k (worker-of session)]
+    (pyext/worker-pid k)
+    (.pid (java.lang.ProcessHandle/current))))
+
 ;; ── The interpreter this session reaches, wherever it lives ─────────────────
 ;; Every call a session makes goes through here, so the choice between "in this
 ;; process" and "in this session's worker" is made once, by name, instead of at

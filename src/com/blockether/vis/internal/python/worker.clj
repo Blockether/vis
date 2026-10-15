@@ -546,6 +546,12 @@
                (when (alive? state) (.pid ^Process (:process state)))))
        vec))
 
+(defn worker-pid
+  "PID of the live worker for `k`, or nil."
+  [k]
+  (when-let [state (get @workers k)]
+    (when (alive? state) (.pid ^Process (:process state)))))
+
 (defn- live
   "Start a worker only for a new key. A dead or retired worker has lost its
    namespace and host bindings; only a rebuilt environment may replace it."

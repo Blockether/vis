@@ -9014,6 +9014,28 @@
 
         (str "  \u2014 " (str/join " \u00b7 " parts))))))
 
+(defn- python-busy-segment
+  "Suffix for the spinner row while a Python block runs without a tool call, or nil:
+
+     — no tool call for 1m 12s · CPU 99% · stops in 3m 48s
+
+   Both clocks move from the moment the notice arrived (`:received-ms`). The CPU
+   share is the use of the Python process since the last notice. At the deadline
+   Vis stops the block."
+  [iterations now-ms]
+  (let [{:keys [activity] busy :activity/busy} (last iterations)]
+    (when (and (= :python activity) (map? busy) (:busy-ms busy))
+      (let [{:keys [busy-ms deadline-in-ms cpu-percent received-ms]} busy
+            passed (max 0 (- (long now-ms) (long (or received-ms now-ms))))
+            parts (cond-> [(str "no tool call for " (wait-clock (+ (long busy-ms) passed)))]
+                    cpu-percent
+                    (conj (str "CPU " (long cpu-percent) "%"))
+
+                    deadline-in-ms
+                    (conj (str "stops in " (wait-clock (- (long deadline-in-ms) passed)))))]
+
+        (str "  — " (str/join " · " parts))))))
+
 (defn- progress-phase
   "Human-readable phase label for the current iteration state. Drives
    the spinner row text so the user can tell whether Vis is calling
@@ -9126,6 +9148,7 @@
           (= :slash activity) (str agent-name " is running: " slash-label)
           (= :attachment-transcription activity) (str agent-name
                                                       " is transcribing recordings (up to 5 min)")
+          (= :python activity) (str agent-name " is running Python code (iter " n ")")
           (= :provider-wait activity)
           (str agent-name " is waiting for " (or activity-model "the provider") " (iter " n ")")
           (= :provider-call activity)
@@ -10028,6 +10051,7 @@
                 elapsed-str
                 (or (progress-error-segment iterations) "")
                 (or (provider-wait-segment iterations now-ms) "")
+                (or (python-busy-segment iterations now-ms) "")
                 "  /  Esc to cancel"))
 
          line-entry
