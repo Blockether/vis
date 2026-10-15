@@ -119,6 +119,29 @@
                  (expect (= ["completed" "streaming" "cancelled" "failed"]
                             (mapv #(get % "status") (state/fork-points sid))))))
              (finally (ps/db-close! store)))))
+  ;; Regression, user report in this Vis session: a fork of a LIVE session looked live
+  ;; in the TUI and the web, because the copied turn kept its running status.
+  (it "settles a copied running turn so the fork of a live session is idle"
+      (let [store (ps/db-open! :memory)]
+        (try (let [{:keys [sid]} (seeded-session! store ["first ask"])]
+               (ps/db-store-session-turn!
+                 store
+                 {:parent-session-id sid :user-request "still running" :status :running})
+               (with-redefs [lp/db-info (constantly store)]
+                 (let [forked (state/fork-session! sid nil)
+                       fork-id (get forked "id")]
+
+                   (expect (false? (get forked "live")))
+                   (expect (= "idle" (get forked "status")))
+                   ;; The web and the TUI read a running turn from these statuses.
+                   (expect (= ["completed" "cancelled"]
+                              (mapv #(get % "status") (state/fork-points fork-id))))
+                   ;; The TUI history shows a cancel notice only from the prior outcome.
+                   (expect (= "cancelled" (get (last (state/transcript fork-id)) "prior_outcome")))
+                   ;; The source turn keeps running.
+                   (expect (= ["completed" "streaming"]
+                              (mapv #(get % "status") (state/fork-points sid)))))))
+             (finally (ps/db-close! store)))))
   (it "keeps ordinary forks in the source session group"
       (let [store (ps/db-open! :memory)]
         (try (let [{:keys [sid turn-ids]} (seeded-session! store ["first ask" "second ask"])

@@ -2997,11 +2997,11 @@
           fork-id
           (h/fork-session-at-turn! s cid {:through-turn-id t2})
 
-          statuses
+          outcomes
           (fn [sid]
-            (mapv :status
+            (mapv (juxt :status :prior_outcome)
                   (raw-query s
-                             {:select [:ts.status]
+                             {:select [:ts.status :ts.prior_outcome]
                               :from [[:session_turn_soul :t]]
                               :join [[:session_turn_state :ts] [:= :ts.session_turn_soul_id :t.id]]
                               :where [:= :t.session_state_id
@@ -3012,8 +3012,10 @@
                                        :limit 1}]
                               :order-by [[:t.position :asc]]})))]
 
-      (expect (= ["done" "interrupted"] (statuses fork-id)))
-      (expect (= ["done" "running"] (statuses cid)))))
+      ;; The fork settles the copy the way a cancel settles a turn: interrupted, with the
+      ;; cancelled outcome that the TUI and the next turn's handover read.
+      (expect (= [["done" nil] ["interrupted" "cancelled"]] (outcomes fork-id)))
+      (expect (= [["done" nil] ["running" nil]] (outcomes cid)))))
   (it "returns nil instead of throwing when there is no state to fork"
       (let [s (h/store)]
         (expect (nil? (h/fork-session! s (random-uuid) {}))))))

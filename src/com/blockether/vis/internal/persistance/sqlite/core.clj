@@ -5534,10 +5534,12 @@
                                                   :version 0
                                                   :forked_from_session_turn_state_id nil)
                                           ;; The fork runs nothing: a turn still running in the
-                                          ;; source is settled here, or every client paints the
-                                          ;; fork as live.
+                                          ;; source is settled here the way a cancel settles
+                                          ;; it, or every client paints the fork as live.
                                           (= "running" (:status ts-row))
-                                          (assoc :status (normalize-status :cancelled)))]}))
+                                          (assoc :status
+                                            (normalize-status :interrupted) :prior_outcome
+                                            "cancelled"))]}))
                   (doseq [it iters
                           :let [forms (<-blob (:tool_calls it))
                                 history-id-map (fork-activity-histories! tx-info new-soul-id forms)]]
