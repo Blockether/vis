@@ -175,6 +175,20 @@
           (expect (str/includes? answer "https://gateway.example.com/report.md"))
           (expect (str/includes? answer "[section](#report)")))))))
 
+(defdescribe source-reference-delivery-test
+             (it "preserves source references without delivery warnings"
+                 ;; #193: source citations are not report downloads.
+                 (report-fixture
+                   (fn [dir environment]
+                     (spit (io/file dir "core.clj") "(ns example)\n")
+                     (doseq [destination ["core.clj#L1719" "core.clj:1719" "missing.py#L4"
+                                          "src/core%2Eclj#L1719" "deps.edn" "src/"]]
+                       (let [markdown (str "Starting at [core.clj:1719](" destination ").")
+                             result (deliver environment markdown)]
+
+                         (expect (= markdown (get-in result [:final-result :answer :answer])))
+                         (expect (empty? (:linked-report-attachments result)))))))))
+
 (defdescribe
   denied-report-delivery-test
   (it "denied report delivery"

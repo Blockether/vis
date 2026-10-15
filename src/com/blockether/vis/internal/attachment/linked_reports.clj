@@ -2,9 +2,9 @@
   "Snapshot deliberately linked workspace reports before persisting assistant prose.
 
    Only the session's primary workspace is eligible, never other host roots. Hidden
-   paths, credential-like names, policy exclusions, traversal, symlinks, directories
-   and unsupported report types fail closed. Reads walk directory handles without
-   following symlinks; platforms without SecureDirectoryStream refuse publication.
+   paths, credential-like names, policy exclusions, traversal, symlinks and directories
+   fail closed. Source references and other unsupported file types stay unchanged.
+   Reads require SecureDirectoryStream and never follow symlinks.
    At most eight distinct links and 8 MiB per file are delivered per iteration.
    Attachments are human-only snapshots, not live paths. Existing attachment and
    remote links, code examples and images are not republished. Failed local links
@@ -118,12 +118,23 @@
          :size (alength bytes)
          :base64 (.encodeToString (Base64/getEncoder) bytes)}))))
 
-(defn- local-link?
+(defn- local-report-link?
   [destination]
   (and (not (str/blank? destination))
        (not (str/starts-with? destination "#"))
        (not (str/starts-with? destination "//"))
-       (not (re-find #"^[a-zA-Z][a-zA-Z0-9+.-]*:" destination))))
+       (not (re-find #"^[a-zA-Z][a-zA-Z0-9+.-]*:" destination))
+       (try (let [decoded
+                  (java.net.URLDecoder/decode (str/replace destination "+" "%2B") "UTF-8")
+
+                  path
+                  (str/replace decoded #"[?#].*$" "")
+
+                  extension
+                  (str/lower-case (last (str/split path #"\.")))]
+
+              (contains? report-types extension))
+            (catch IllegalArgumentException _ false))))
 
 (defn- rewrite
   [environment cache markdown]
@@ -133,7 +144,7 @@
       [edits
        (keep
          (fn [^Node node]
-           (when (and (instance? Link node) (local-link? (.getDestination ^Link node)))
+           (when (and (instance? Link node) (local-report-link? (.getDestination ^Link node)))
              (let [destination (.getDestination ^Link node)
                    cached (find @cache destination)
                    attachment (if cached
