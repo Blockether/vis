@@ -7,6 +7,8 @@ measure volume; JFR weights are sampling estimates, not exact per-site totals.
 VIS_TEST_GATEWAY_PROFILE_TASKS and VIS_TEST_GATEWAY_PROFILE_WARMUP control the
 measured and warmup session counts (defaults: 20 and 5). Set
 VIS_TEST_GATEWAY_PROFILE_TURNS_PER_SESSION (default: 1) to exercise growing history.
+VIS_TEST_GATEWAY_PROFILE_STDOUT_REPEATS (default: 0) adds source-like stdout lines
+to each tool result. Use 6000 to measure clipped replay and preserve raw output.
 VIS_TEST_GATEWAY_PROFILE_IDLE_SECONDS (default: 5) controls the final idle sample;
 use 65 or more to include the default 60-second periodic GC interval.
 VIS_TEST_GATEWAY_PROFILE_COLLECT_BEFORE=0 omits the pre-measurement full GC
@@ -103,6 +105,14 @@ def test_profile_rejects_invalid_mode(tmp_path, monkeypatch, setting):
         test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch)
 
 
+@pytest.mark.parametrize("repeats", [-1, 1, 12001])
+def test_profile_rejects_invalid_stdout_size(tmp_path, monkeypatch, repeats):
+    monkeypatch.setattr(shutil, "which", lambda name: name)
+    monkeypatch.setenv("VIS_TEST_GATEWAY_PROFILE_STDOUT_REPEATS", str(repeats))
+    with pytest.raises(AssertionError, match="STDOUT_REPEATS must be"):
+        test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch)
+
+
 @pytest.mark.skipif(
     os.environ.get("VIS_TEST_GATEWAY_PROFILE") != "1",
     reason="set VIS_TEST_GATEWAY_PROFILE=1 for JVM resource measurements",
@@ -131,18 +141,52 @@ def test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch):
         "TRANSCRIPT_EVERY_TURN must be 0 or 1"
     )
     transcript_every_turn = transcript_every_turn_value == "1"
+    stdout_repeats = int(os.environ.get("VIS_TEST_GATEWAY_PROFILE_STDOUT_REPEATS", "0"))
+    assert stdout_repeats == 0 or 6000 <= stdout_repeats <= 12000, (
+        "STDOUT_REPEATS must be 0 or between 6000 and 12000"
+    )
     assert tasks > 0 and warmup_tasks >= 0 and turns_per_session > 0
     assert idle_seconds > 0
     processes = []
     worker_samples = []
     tool_call_ids = set()
+    turn_wall_seconds = []
+    stdout_line = 'source path: "quoted"\n'
+
+    def tool_code(position):
+        code = f"print(sum(range(1000))); print('execution-{position}')"
+        if stdout_repeats:
+            code += (
+                f"; print({stdout_line!r} * {stdout_repeats}, end='')"
+                f"; print('tail-{position}')"
+            )
+        return code
+
+    def check_transcript(session, positions):
+        content = session.transcript().content
+        assert "499500" in str(content)
+        if stdout_repeats:
+            transcript = json.loads(content)
+            forms = [
+                form
+                for turn in transcript["turns"]
+                for iteration in turn["iterations"]
+                for form in iteration.get("forms", ())
+                if form.get("stdout")
+            ]
+            assert [form["stdout"] for form in forms] == [
+                f"499500\nexecution-{position}\n"
+                + stdout_line * stdout_repeats
+                + f"tail-{position}\n"
+                for position in positions
+            ]
+            assert "SDK flow completed" in str(content)
+
     with sdk_fixture(
         tmp_path,
         monkeypatch,
         "http",
-        tool_code=lambda position: (
-            f"print(sum(range(1000))); print('execution-{position}')"
-        ),
+        tool_code=tool_code,
         on_process=processes.append,
     ) as (client, work, requests):
         process = processes[0]
@@ -209,8 +253,10 @@ def test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch):
 
         def task(streamed, *, measure_worker=False):
             session = client.create_session(root=str(work), channel="app")
+            positions = []
             try:
                 for turn_index in range(turns_per_session):
+                    turn_started = time.monotonic()
                     turn = session.send(
                         f"Turn {turn_index}: compute the sum of integers from zero through 999"
                     )
@@ -226,8 +272,8 @@ def test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch):
                                     assert event.type == "turn.completed", event.data
                                     break
                     assert turn.wait(timeout=60)["status"] == "completed"
-                    if transcript_every_turn:
-                        assert "499500" in str(session.transcript().content)
+                    if measure_worker:
+                        turn_wall_seconds.append(time.monotonic() - turn_started)
                     assert len(requests) == 2
                     tool_result = requests[-1]["messages"][-1]
                     assert tool_result["role"] == "tool"
@@ -239,10 +285,27 @@ def test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch):
                     assert f"execution-{call_id.removeprefix('call_')}" in str(
                         tool_result["content"]
                     )
+                    position = int(call_id.removeprefix("call_"))
+                    positions.append(position)
+                    if stdout_repeats:
+                        replay = str(tool_result["content"])
+                        assert f"tail-{position}" in replay
+                        assert "stdout clipped: kept " in replay
+                        assert "4096 estimated-token ceiling" in replay
+                        assert "Recover exact stdout" in replay
+                        assert call_id in replay
+                        replay_ids = [
+                            message["tool_call_id"]
+                            for message in requests[-1]["messages"]
+                            if message["role"] == "tool"
+                        ]
+                        assert replay_ids == [f"call_{item}" for item in positions]
                     tool_call_ids.add(call_id)
+                    if transcript_every_turn:
+                        check_transcript(session, positions)
                     requests.clear()  # Do not retain earlier prompts in the provider.
                 if not transcript_every_turn:
-                    assert "499500" in str(session.transcript().content)
+                    check_transcript(session, positions)
                 assert len(session.turns()) == turns_per_session
                 if measure_worker:
                     worker_samples.append(
@@ -259,6 +322,9 @@ def test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch):
             "JFR.start",
             "name=sdk-dogfood",
             "settings=profile",
+            "jdk.InitialEnvironmentVariable#enabled=false",
+            "jdk.InitialSystemProperty#enabled=false",
+            "jdk.SystemProcess#enabled=false",
             f"filename={recording}",
             "dumponexit=true",
         )
@@ -315,6 +381,8 @@ def test_jvm_gateway_repeated_sessions(tmp_path, monkeypatch):
                     "warmup_tasks": warmup_tasks,
                     "turns_per_session": turns_per_session,
                     "measured_turns": tasks * turns_per_session,
+                    "stdout_repeats": stdout_repeats,
+                    "turn_wall_seconds": turn_wall_seconds,
                     "wall_seconds": elapsed,
                     "jvm_allocated_bytes": (
                         after["total_allocated_bytes"] - before["total_allocated_bytes"]
