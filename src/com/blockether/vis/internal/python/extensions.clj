@@ -2981,69 +2981,115 @@
                 :error (get result "error")}))
            failed)}))
 
+(defn- ready-scope-result
+  "Read one completed catalog without waiting for unrelated scope preparation."
+  [{:keys [project-root] :as scope} explicit? fingerprints prepared]
+  (let [prepare? (and (not explicit?) (or (:global scope) (some? workspace/*workspace-root*)))]
+    (when (or (not prepare?) (contains? prepared project-root))
+      (::scope-result (meta (get fingerprints project-root))))))
+
 (defn- load-scopes!
   [opts force?]
-  (locking ensure-load-lock
-    (let [explicit?
-          (contains? opts :dirs)
+  (let [explicit?
+        (contains? opts :dirs)
 
-          scopes
-          (if explicit?
-            [opts]
-            (let [[global-dir project-dir]
-                  (default-extension-dirs)
+        scopes
+        (if explicit?
+          [opts]
+          (let [[global-dir project-dir]
+                (default-extension-dirs)
 
-                  root
-                  (workspace/cwd-root)]
+                root
+                (workspace/cwd-root)]
 
-              (cond-> [{:dirs [global-dir] :global true}]
-                (and (not (:global-only? opts))
-                     (not= (.getCanonicalPath ^File global-dir)
-                           (.getCanonicalPath ^File project-dir)))
-                (conj {:dirs [project-dir] :project true :project-root root}))))
+            (cond-> [{:dirs [global-dir] :global true}]
+              (and (not (:global-only? opts))
+                   (not= (.getCanonicalPath ^File global-dir)
+                         (.getCanonicalPath ^File project-dir)))
+              (conj {:dirs [project-dir] :project true :project-root root}))))
 
-          results
-          (mapv
-            (fn [{:keys [project-root] :as scope}]
-              (let [initialized?
-                    (contains? @last-fingerprint project-root)
+        ready
+        (when-not force?
+          ;; Read preparation first: admission invalidates its report before preparing.
+          (let [prepared
+                @prepared-scopes
 
-                    ;; Only the global catalog and an explicitly opened project are
-                    ;; prepared. The process-directory fallback (REPL, tests and
-                    ;; sessionless paths) loads what is already on disk.
-                    prepare?
-                    (and (not explicit?) (or (:global scope) (some? workspace/*workspace-root*)))
+                fingerprints
+                @last-fingerprint]
 
-                    pending?
-                    (and prepare? (not (contains? @prepared-scopes project-root)))]
+            (mapv #(ready-scope-result % explicit? fingerprints prepared) scopes)))
 
-                (if (and initialized? (not force?) (not pending?))
-                  {:loaded (count (scope-entries project-root))
-                   :failed (count (filter #(= project-root (:project-root %)) @failures))
-                   :changed? false}
-                  ;; Opening a configured project admits its declared extensions. Source
-                  ;; receipts retain pins; this is not a background update or prune.
-                  (let [prepared (when prepare? (prepare-scope-packages! scope project-root))]
-                    (when (or (:force? opts) pending?) (swap! last-fingerprint dissoc project-root))
-                    (load-scope! (cond-> (merge opts scope prepared)
-                                   prepare?
-                                   (assoc :sync-projects? true)))))))
-            scopes)]
+        results
+        (if (and ready (every? some? ready))
+          ready
+          (locking ensure-load-lock
+            ;; A multi-scope reload cannot expose a partially updated report.
+            (when force?
+              (swap! last-fingerprint (fn [fingerprints]
+                                        (reduce (fn [state {:keys [project-root]}]
+                                                  (if-let [fingerprint (get state project-root)]
+                                                    (assoc state
+                                                      project-root
+                                                      (vary-meta fingerprint dissoc ::scope-result))
+                                                    state))
+                                                fingerprints
+                                                scopes))))
+            (mapv
+              (fn [{:keys [project-root] :as scope}]
+                (let [initialized?
+                      (contains? @last-fingerprint project-root)
 
-      {:loaded (reduce + 0 (map :loaded results))
-       :failed (reduce + 0 (map :failed results))
-       :changed? (boolean (some :changed? results))
-       ;; Each scanned scope with its directories and loaded names, so a reload report
-       ;; can say WHERE it looked. Issue #348: a bare "0 loaded" hid the scope.
-       :scopes (mapv (fn [{:keys [dirs project-root] :as scope} {:keys [loaded failed]}]
-                       {:scope (if (or (:project scope) (some? project-root)) :project :global)
-                        :dirs (mapv #(.getAbsolutePath (io/file %)) dirs)
-                        :loaded loaded
-                        :failed failed
+                      ;; Prepare global and explicitly opened project catalogs only.
+                      prepare?
+                      (and (not explicit?) (or (:global scope) (some? workspace/*workspace-root*)))
+
+                      pending?
+                      (and prepare? (not (contains? @prepared-scopes project-root)))
+
+                      result
+                      (if (and initialized? (not force?) (not pending?))
+                        {:loaded (count (scope-entries project-root))
+                         :failed (count (filter #(= project-root (:project-root %)) @failures))
+                         :changed? false}
+                        (do
+                          ;; Invalidate before any admission or reload mutation.
+                          (when-let [fingerprint (get @last-fingerprint project-root)]
+                            (swap! last-fingerprint assoc
+                              project-root
+                              (vary-meta fingerprint dissoc ::scope-result)))
+                          (let [prepared (when prepare?
+                                           (prepare-scope-packages! scope project-root))]
+                            (when (or (:force? opts) pending?)
+                              (swap! last-fingerprint dissoc project-root))
+                            (load-scope! (cond-> (merge opts scope prepared)
+                                           prepare?
+                                           (assoc :sync-projects? true))))))
+
+                      result
+                      (assoc result
                         :extensions (vec (sort (keep :ext-name
-                                                     (vals (scope-entries project-root)))))})
-                     scopes
-                     results)})))
+                                                     (vals (scope-entries project-root))))))]
+
+                  ;; Publish only after registration, listeners and cleanup finish.
+                  (when-let [fingerprint (get @last-fingerprint project-root)]
+                    (swap! last-fingerprint assoc
+                      project-root
+                      (vary-meta fingerprint assoc ::scope-result (assoc result :changed? false))))
+                  result))
+              scopes)))]
+
+    {:loaded (reduce + 0 (map :loaded results))
+     :failed (reduce + 0 (map :failed results))
+     :changed? (boolean (some :changed? results))
+     ;; Issue #348: report each catalog's directories and admitted names.
+     :scopes (mapv (fn [{:keys [dirs project-root] :as scope} {:keys [loaded failed extensions]}]
+                     {:scope (if (or (:project scope) (some? project-root)) :project :global)
+                      :dirs (mapv #(.getAbsolutePath (io/file %)) dirs)
+                      :loaded loaded
+                      :failed failed
+                      :extensions extensions})
+                   scopes
+                   results)}))
 
 (defn load-python-extensions!
   "Load global extensions and the bound project's independent catalog. Declared

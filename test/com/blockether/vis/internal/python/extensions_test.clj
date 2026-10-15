@@ -6168,6 +6168,176 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
 (def ^:private sidecar-impl-py "VERSION = 'v1'\n")
 
 (defdescribe
+  initialized-discovery-lock-test
+  ;; Regression: ready catalogs waited behind unrelated extension preparation.
+  (it "returns an admitted catalog while another scope holds the loading lock"
+      (let [entered
+            (promise)
+
+            release
+            (promise)
+
+            fingerprint
+            (atom {})]
+
+        (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                         #'pyx/loaded (atom {"fixture" {:project-root nil :ext-name "ready"}})
+                         #'pyx/failures (atom [])
+                         #'pyx/load-scope! (fn [_]
+                                             (swap! fingerprint assoc nil [])
+                                             {:loaded 1 :failed 0 :changed? true})}
+          (fn []
+            (pyx/ensure-python-extensions-loaded! {:dirs []})
+            (let [holder (future (locking @#'pyx/ensure-load-lock (deliver entered true) @release))]
+              (try (expect (= true (deref entered 5000 ::timeout)))
+                   (let [reader (future (pyx/ensure-python-extensions-loaded! {:dirs []}))
+                         result (deref reader 500 ::timeout)]
+
+                     (deliver release true)
+                     (expect (map? result))
+                     (expect
+                       (= {:loaded 1
+                           :failed 0
+                           :changed? false
+                           :scopes
+                           [{:scope :global :dirs [] :loaded 1 :failed 0 :extensions ["ready"]}]}
+                          (deref reader 5000 ::timeout))))
+                   (finally (deliver release true) (deref holder 5000 ::timeout)))))))))
+
+(defdescribe
+  scope-discovery-admission-test
+  (it "waits for a same-scope reload instead of reporting an incomplete catalog"
+      (let [fingerprint
+            (atom {})
+
+            entered
+            (promise)
+
+            release
+            (promise)
+
+            reload?
+            (atom false)]
+
+        (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                         #'pyx/loaded (atom {})
+                         #'pyx/failures (atom [])
+                         #'pyx/load-scope! (fn [_]
+                                             (when @reload? (deliver entered true) @release)
+                                             (swap! fingerprint assoc nil [])
+                                             {:loaded 0 :failed 0 :changed? true})}
+          (fn []
+            (pyx/ensure-python-extensions-loaded! {:dirs []})
+            (reset! reload? true)
+            (let [loader (future (pyx/load-python-extensions! {:dirs []}))]
+              (try (expect (= true (deref entered 5000 ::timeout)))
+                   (let [reader (future (pyx/ensure-python-extensions-loaded! {:dirs []}))]
+                     (expect (= ::waiting (deref reader 100 ::waiting)))
+                     (deliver release true)
+                     (expect (map? (deref loader 5000 ::timeout)))
+                     (expect (false? (:changed? (deref reader 5000 ::timeout)))))
+                   (finally (deliver release true) (deref loader 5000 ::timeout))))))))
+  (it "still prepares a catalog first admitted through unmanaged discovery"
+      (let [fingerprint
+            (atom {})
+
+            prepared
+            (atom #{})
+
+            preparations
+            (atom 0)
+
+            directory
+            (io/file (System/getProperty "java.io.tmpdir"))]
+
+        (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                         #'pyx/prepared-scopes prepared
+                         #'pyx/loaded (atom {})
+                         #'pyx/failures (atom [])
+                         #'pyx/default-extension-dirs (constantly [directory directory])
+                         #'pyx/prepare-scope-packages! (fn [_ root]
+                                                         (swap! preparations inc)
+                                                         (swap! prepared conj root)
+                                                         {})
+                         #'pyx/load-scope! (fn [_]
+                                             (swap! fingerprint assoc nil [])
+                                             {:loaded 0 :failed 0 :changed? true})}
+          (fn []
+            (pyx/ensure-python-extensions-loaded! {:dirs []})
+            (expect (zero? @preparations))
+            (pyx/ensure-python-extensions-loaded! {:global-only? true})
+            (expect (= 1 @preparations))
+            (pyx/ensure-python-extensions-loaded! {:global-only? true})
+            (expect (= 1 @preparations)))))))
+
+(defn- with-blocked-scope-load
+  "Run discovery checks with completed global and project catalogs."
+  [f]
+  (let [global-dir
+        (temp-dir)
+
+        project-dir
+        (temp-dir)
+
+        root
+        (.getCanonicalPath project-dir)
+
+        fingerprint
+        (atom {})
+
+        entered
+        (promise)
+
+        release
+        (promise)
+
+        blocked-root
+        (atom ::none)]
+
+    (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                     #'pyx/prepared-scopes (atom #{nil root})
+                     #'pyx/loaded (atom {})
+                     #'pyx/failures (atom [])
+                     #'pyx/default-extension-dirs (constantly [global-dir project-dir])
+                     #'pyx/load-scope!
+                     (fn [{:keys [project-root]}]
+                       (when (= project-root @blocked-root) (deliver entered true) @release)
+                       (swap! fingerprint assoc project-root [])
+                       {:loaded 0 :failed 0 :changed? true})}
+      (fn []
+        (binding [workspace/*workspace-root* root]
+          (pyx/ensure-python-extensions-loaded!)
+          (try (f {:root root :blocked-root blocked-root :entered entered :release release})
+               (finally (deliver release true))))))))
+
+(defdescribe scope-discovery-concurrency-test
+             (it "serves completed scopes while an unrelated scope loads"
+                 (with-blocked-scope-load
+                   (fn [{:keys [blocked-root entered release]}]
+                     (reset! blocked-root "unrelated")
+                     (let [loader (future (pyx/load-python-extensions!
+                                            {:dirs [] :project-root "unrelated"}))]
+                       (try (expect (= true (deref entered 5000 ::timeout)))
+                            (let [reader (future (pyx/ensure-python-extensions-loaded!))
+                                  result (deref reader 500 ::timeout)]
+
+                              (deliver release true)
+                              (expect (map? result))
+                              (expect (= 2 (count (:scopes (deref reader 5000 ::timeout))))))
+                            (finally (deliver release true) (deref loader 5000 ::timeout)))))))
+             (it "waits until all requested scopes finish a forced reload"
+                 (with-blocked-scope-load
+                   (fn [{:keys [root blocked-root entered release]}]
+                     (reset! blocked-root root)
+                     (let [loader (future (pyx/load-python-extensions!))]
+                       (try (expect (= true (deref entered 5000 ::timeout)))
+                            (let [reader (future (pyx/ensure-python-extensions-loaded!))]
+                              (expect (= ::waiting (deref reader 100 ::waiting)))
+                              (deliver release true)
+                              (expect (= 2 (count (:scopes (deref reader 5000 ::timeout))))))
+                            (finally (deliver release true) (deref loader 5000 ::timeout))))))))
+
+(defdescribe
   extension-freshness-test
   (it "an implicit load never adopts an edited file - only /reload does"
       ;; `ensure-python-extensions-loaded!` is what a session env cache miss, an
