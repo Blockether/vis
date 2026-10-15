@@ -2977,6 +2977,43 @@
       (expect (not= (str fork-state) (str cid)))
       ;; Unknown pick ⇒ nil, nothing copied.
       (expect (nil? (h/fork-session-at-turn! s cid {:through-turn-id (random-uuid)})))))
+  ;; Regression, user report: forking a session while its turn ran copied that turn as
+  ;; `running`, so the TUI and the web showed the fork as live although nothing ran there.
+  (it
+    "fork-at-turn settles a copied running turn, and the source keeps running"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :tui :title "Src"})
+
+          _t1
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q1" :status :done})
+
+          t2
+          (vis/db-store-session-turn! s
+                                      {:parent-session-id cid :user-request "Q2" :status :running})
+
+          fork-id
+          (h/fork-session-at-turn! s cid {:through-turn-id t2})
+
+          statuses
+          (fn [sid]
+            (mapv :status
+                  (raw-query s
+                             {:select [:ts.status]
+                              :from [[:session_turn_soul :t]]
+                              :join [[:session_turn_state :ts] [:= :ts.session_turn_soul_id :t.id]]
+                              :where [:= :t.session_state_id
+                                      {:select [:id]
+                                       :from :session_state
+                                       :where [:= :session_soul_id (str sid)]
+                                       :order-by [[:version :desc]]
+                                       :limit 1}]
+                              :order-by [[:t.position :asc]]})))]
+
+      (expect (= ["done" "interrupted"] (statuses fork-id)))
+      (expect (= ["done" "running"] (statuses cid)))))
   (it "returns nil instead of throwing when there is no state to fork"
       (let [s (h/store)]
         (expect (nil? (h/fork-session! s (random-uuid) {}))))))

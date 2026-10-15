@@ -5370,12 +5370,13 @@
    `session_turn_state`, that state's `session_turn_iteration` rows, and the
    turn's `session_attachment` rows (ids remapped). The SOURCE session is left
    completely untouched; the fork is a separate tab/session whose history is
-   exactly those turns and which continues fresh from there.
+   exactly those turns and which continues fresh from there. A copied turn that still
+   runs in the source is settled as interrupted: the fork runs nothing.
 
    Optional `:agent` metadata creates a managed child instead: it persists lineage,
    budget and a complete model-input checkpoint, hides the child from the leader
-   list, copies model preferences and settles inherited running turns. The caller
-   validates delegation ownership and supplies a fresh shared-root workspace.
+   list and copies model preferences. The caller validates delegation ownership and
+   supplies a fresh shared-root workspace.
 
    Copies rows generically (`SELECT *` → re-insert with remapped id/FK columns),
    so it stays correct as columns evolve. Required opt: `:workspace-id`. Returns
@@ -5532,7 +5533,10 @@
                                                   :session_turn_soul_id new-turn-soul-id
                                                   :version 0
                                                   :forked_from_session_turn_state_id nil)
-                                          (and agent (= "running" (:status ts-row)))
+                                          ;; The fork runs nothing: a turn still running in the
+                                          ;; source is settled here, or every client paints the
+                                          ;; fork as live.
+                                          (= "running" (:status ts-row))
                                           (assoc :status (normalize-status :cancelled)))]}))
                   (doseq [it iters
                           :let [forms (<-blob (:tool_calls it))
