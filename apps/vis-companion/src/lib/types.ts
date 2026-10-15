@@ -283,12 +283,27 @@ export interface SessionUsage {
   prompt_cache_rebuild_count?: number;
   /** Calls whose prefix survived but had aged out of the provider cache. */
   prompt_cache_expired_count?: number;
+  /** The session's own cost, without its subagents. */
   cost_usd?: number;
+  /** The session's own cost plus every subagent below it. */
+  total_cost_usd?: number;
+  /** Every subagent below the session, at any depth. Absent without subagents. */
+  subagents?: SubagentUsage;
   duration_ms?: number;
   first_turn_at?: number;
   last_turn_at?: number;
   provider?: string;
   model?: string;
+}
+
+/** Summed usage of every subagent below one session, read in one gateway query. */
+export interface SubagentUsage {
+  agent_count?: number;
+  active_count?: number;
+  iteration_count?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
 }
 
 export interface SlashCommand {

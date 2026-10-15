@@ -332,6 +332,52 @@
               "A fold resets local turn positions but must not hide the child's own usage"))))))
 
 (defdescribe
+  subagent-usage-sums-the-whole-tree-test
+  (it
+    "sums every descendant in one rollup and splits the cost on the wire"
+    (let [db
+          (h/store)
+
+          leader
+          (h/store-session! db {:channel :api})
+
+          turn
+          (ps/db-store-session-turn! db {:parent-session-id leader :user-request "Parent work"})]
+
+      (h/store-iteration!
+        db
+        {:session-turn-id turn :code "" :tokens {"input" 9000 "output" 100} :cost-usd 1.0})
+      (expect (nil? (ps/db-session-subagent-usage db leader)))
+      (let [children
+            (vec (repeatedly 100 #(child! db leader {:status "completed"})))
+
+            grandchild
+            (child! db (first children) {})]
+
+        (doseq [sid (conj children grandchild)]
+          (let [own (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Work"})]
+            (h/store-iteration!
+              db
+              {:session-turn-id own :code "" :tokens {"input" 100 "output" 10} :cost-usd 0.25})))
+        (expect (= {:agent-count 101
+                    :active-count 1
+                    :iteration-count 101
+                    :input-tokens 10100
+                    :output-tokens 1010
+                    :cost-usd 25.25}
+                   (ps/db-session-subagent-usage db leader))
+                "Inherited parent work is not counted again")
+        (expect (= 1 (:agent-count (ps/db-session-subagent-usage db (first children))))
+                "A child counts only its own descendants")
+        (with-redefs [lp/db-info (constantly db)]
+          (let [usage (gateway/session-usage-info leader)]
+            (expect (= 1.0 (get usage "cost_usd")))
+            (expect (= 26.25 (get usage "total_cost_usd")))
+            (expect (= 101 (get-in usage ["subagents" "agent_count"])))
+            (expect (= 25.25 (get-in usage ["subagents" "cost_usd"]))))
+          (expect (not (contains? (gateway/session-usage-info grandchild) "subagents"))))))))
+
+(defdescribe
   terminal-outcomes-report-to-the-persisted-leader-test
   (it "terminal outcomes report to the persisted leader"
       (let [db

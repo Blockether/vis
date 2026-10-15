@@ -1004,12 +1004,34 @@ export function SessionStatsPanel({
           <dl className="mt-3 grid grid-cols-4 gap-x-3 gap-y-3">
             <Stat label="Total input" value={compactCount(usage.input_tokens)} />
             <Stat label="Total output" value={compactCount(usage.output_tokens)} />
-            <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
+            <Stat
+              label={usage.subagents ? 'Session cost' : 'Cost'}
+              value={formatUsd(usage.cost_usd)}
+            />
             <Stat label="Folds" value={compactCount(usage.fold_count)} />
             <Stat label="Turns" value={compactCount(usage.turn_count)} />
             <Stat label="Calls" value={compactCount(usage.iteration_count)} />
             <Stat label="Tools" value={compactCount(usage.tool_call_count)} />
           </dl>
+          {usage.subagents && (
+            <section aria-label="Subagents" className="mt-2.5 border-t border-dialog-edge/40 pt-2">
+              <h4 className="text-ui font-bold text-white">Subagents</h4>
+              <p className="mt-1 text-ui text-dialog-hint">
+                Every subagent below this session, at any depth.
+              </p>
+              <dl className="mt-3 grid grid-cols-4 gap-x-3 gap-y-3">
+                <Stat
+                  label="Subagents"
+                  value={`${compactCount(usage.subagents.agent_count)} · ${compactCount(usage.subagents.active_count)} active`}
+                />
+                <Stat label="Calls" value={compactCount(usage.subagents.iteration_count)} />
+                <Stat label="Total input" value={compactCount(usage.subagents.input_tokens)} />
+                <Stat label="Total output" value={compactCount(usage.subagents.output_tokens)} />
+                <Stat label="Subagent cost" value={formatUsd(usage.subagents.cost_usd)} />
+                <Stat label="Total cost" value={formatUsd(usage.total_cost_usd)} />
+              </dl>
+            </section>
+          )}
           <dl
             aria-label="Prompt cache"
             className="mt-2.5 grid grid-cols-2 gap-3 border-t border-dialog-edge/40 pt-2"

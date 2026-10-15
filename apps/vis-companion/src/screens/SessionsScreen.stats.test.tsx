@@ -59,12 +59,12 @@ describe('the expanded session card', () => {
     top_errors: [{ name: 'python_execution', count: 3 }],
   };
 
-  const open = async () => {
+  const open = async (body: Record<string, unknown> = usage) => {
     const view = renderSessionsScreen({
       machines: [
         {
           sessions: [listSession({ id: 's1', title: 'Chat session' })],
-          routes: { '/v1/sessions/s1/usage': { usage } },
+          routes: { '/v1/sessions/s1/usage': { usage: body } },
         },
       ],
     });
@@ -102,6 +102,33 @@ describe('the expanded session card', () => {
     expect(screen.queryByText('Top tools')).toBeNull();
     expect(screen.queryByText('Top errors')).toBeNull();
     expect(screen.queryByText(/python_execution/)).toBeNull();
+  });
+
+  it('splits the cost between the session and its subagents', async () => {
+    await open({
+      ...usage,
+      total_cost_usd: 25.46,
+      subagents: {
+        agent_count: 100,
+        active_count: 4,
+        iteration_count: 1_659,
+        input_tokens: 154_000_000,
+        output_tokens: 768_000,
+        cost_usd: 25.25,
+      },
+    });
+    const subagents = await screen.findByRole('region', { name: 'Subagents' });
+    expect(screen.getByText('Session cost')).toBeVisible();
+    expect(screen.queryByText('Cost')).toBeNull();
+    for (const text of ['100 · 4 active', '1.7k', '154M', '768k', '$25.25', '$25.46']) {
+      expect(subagents).toHaveTextContent(text);
+    }
+  });
+
+  it('shows no subagent block for a session without subagents', async () => {
+    await open();
+    expect(await screen.findByText('Cost')).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Subagents' })).toBeNull();
   });
 
   it('puts both cache metrics in a separate explained row', async () => {

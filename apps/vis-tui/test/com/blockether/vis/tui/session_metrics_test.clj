@@ -151,6 +151,33 @@
         (expect (= 0.17 (some :meter rows))))))
 
 (defdescribe
+  subagent-cost-split
+  (it "shows the session, subagent and total cost only when subagents exist"
+      (let [text
+            (fn [usage]
+              (let [component (dlg/session-metrics-component {} {:phase :ready :usage usage})]
+                (str/replace (lines component (:init component) 160 120) #"\s+" " ")))
+
+            plain
+            (text measured-usage)
+
+            split
+            (text (assoc measured-usage
+                    "total_cost_usd" 3.5249
+                    "subagents" {"agent_count" 100
+                                 "active_count" 4
+                                 "iteration_count" 1659
+                                 "input_tokens" 154022665
+                                 "output_tokens" 768430
+                                 "cost_usd" 2.25}))]
+
+        (expect (str/includes? plain "Cost $1.2749"))
+        (expect (not (str/includes? plain "Subagent")))
+        (doseq [value ["Session cost $1.2749" "Subagents 100 · 4 active" "Calls 1659"
+                       "Total input 154022665" "Subagent cost $2.2500" "Total cost $3.5249"]]
+          (expect (str/includes? split value) value)))))
+
+(defdescribe
   supplied-cache-metrics-are-not-reclassified
   (it "supplied cache metrics are not reclassified"
       ;; #186: deliberately conflicting counts must not override the supplied metric.

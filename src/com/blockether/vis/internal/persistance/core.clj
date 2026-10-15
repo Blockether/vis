@@ -166,6 +166,8 @@
      unwrapped (nil when unknown), so a single-session read never scans the
      whole store.")
   (db-session-usage-stats [db-info session-id])
+  (db-session-subagent-usage [db-info session-id]
+    "Summed usage of every subagent below one session, at any depth, in one query.")
   (db-retry-session-turn! [db-info session-turn-soul-id opts])
   (db-list-session-turn-states [db-info session-turn-id])
   (db-list-turn-attachments [db-info session-turn-soul-id])

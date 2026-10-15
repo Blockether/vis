@@ -396,7 +396,8 @@
                     "input_cache_read_tokens" 209408
                     "prompt_cache_reusable_tokens" 212752
                     "prompt_cache_reused_tokens" 209408
-                    "prompt_cache_sample_count" 7}
+                    "prompt_cache_sample_count" 7
+                    "total_cost_usd" 0.0}
                    (state/session-usage-info "session"))))))
 
 (defdescribe session-usage-estimated-cache-metrics-test

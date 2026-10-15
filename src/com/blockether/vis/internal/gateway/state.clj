@@ -1635,6 +1635,10 @@
    and denominators ride beside both percentages. `health` is the persisted request
    enriched by `request-health-metrics`, the single owner of metric calculations
    for Companion and TUI. Clients format values but never reconstruct them.
+
+   `cost_usd` is the session's own cost. `subagents` sums every subagent below
+   the session in one query and is absent without subagents. `total_cost_usd`
+   is the own cost plus the subagent cost.
    Never throws."
   [sid]
   (try (when-let [db (lp/db-info)]
@@ -1642,9 +1646,15 @@
            (let [input (long (or (:input-tokens u) 0))
                  cached (long (or (:input-cache-read-tokens u) 0))
                  reusable (long (or (:prompt-cache-reusable-tokens u) 0))
-                 reused (long (or (:prompt-cache-reused-tokens u) 0))]
+                 reused (long (or (:prompt-cache-reused-tokens u) 0))
+                 subagents (persistance/db-session-subagent-usage db sid)
+                 total-cost (+ (double (or (:cost-usd u) 0.0))
+                               (double (or (:cost-usd subagents) 0.0)))]
 
-             (wire/canonical (cond-> u
+             (wire/canonical (cond-> (assoc u :total-cost-usd total-cost)
+                               subagents
+                               (assoc :subagents subagents)
+
                                (:health u)
                                (update :health request-health-metrics)
 

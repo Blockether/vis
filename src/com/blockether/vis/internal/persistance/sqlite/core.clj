@@ -2523,6 +2523,56 @@
             (:llm_root_model latest)
             (assoc :model (str (:llm_root_model latest)))))))))
 
+(def ^:private subagent-usage-sql
+  "Descendant tree of one session over `session_agent.parent_id`, then ONE
+   aggregate over the current chain of every descendant. `UNION` (not
+   `UNION ALL`) stops a cycle. Each child excludes the parent turns it copied,
+   exactly like `session-usage-scope` does for a single session.
+
+   `CROSS JOIN` fixes the join order, because SQLite never reorders it. With a
+   plain `JOIN`, the planner scanned all of `session_turn_iteration` first:
+   34 s on a 16 GB store for a leader with 72 children, 5 ms with this order.
+   The query must start from the small tree and use an index at each step."
+  "WITH RECURSIVE tree(id) AS (
+     SELECT session_id FROM session_agent WHERE parent_id = ?
+     UNION
+     SELECT a.session_id FROM session_agent a JOIN tree t ON a.parent_id = t.id)
+   SELECT (SELECT COUNT(*) FROM tree) AS agents,
+          (SELECT COUNT(*) FROM tree t JOIN session_agent a ON a.session_id = t.id
+            WHERE a.status IN ('queued', 'running')) AS active,
+          COUNT(qti.id) AS iterations,
+          SUM(qti.input_tokens) AS input_tokens,
+          SUM(qti.output_tokens) AS output_tokens,
+          SUM(qti.cost_usd) AS cost_usd
+     FROM tree t
+     CROSS JOIN session_agent sa ON sa.session_id = t.id
+     CROSS JOIN session_state ss ON ss.session_soul_id = t.id
+     CROSS JOIN session_turn_soul ts ON ts.session_state_id = ss.id
+     CROSS JOIN session_turn_state sts ON sts.session_turn_soul_id = ts.id
+     CROSS JOIN session_turn_iteration qti ON qti.session_turn_state_id = sts.id
+    WHERE (ss.parent_state_id IS NOT NULL OR ts.position > sa.inherited_turns)
+      AND sts.version = (SELECT MAX(s2.version) FROM session_turn_state s2
+                          WHERE s2.session_turn_soul_id = sts.session_turn_soul_id)")
+
+(defn db-session-subagent-usage
+  "Usage of EVERY subagent below `session-id`, at any depth, summed in ONE SQL
+   query: `{:agent-count :active-count :iteration-count :input-tokens
+   :output-tokens :cost-usd}`, or nil when the session has no subagents.
+
+   It is one indexed query for the whole tree, not one query for each child. It
+   reads no tool-call blob. The session's own usage stays in
+   `db-session-usage-stats`."
+  [db-info session-id]
+  (when (and (ds db-info) session-id)
+    (let [row (first (query-sql! db-info [subagent-usage-sql (->ref session-id)]))]
+      (when (pos? (long (or (:agents row) 0)))
+        {:agent-count (long (:agents row))
+         :active-count (long (or (:active row) 0))
+         :iteration-count (long (or (:iterations row) 0))
+         :input-tokens (long (or (:input_tokens row) 0))
+         :output-tokens (long (or (:output_tokens row) 0))
+         :cost-usd (double (or (:cost_usd row) 0))}))))
+
 (defn db-find-session-by-external
   [db-info channel external-id]
   (when (and (ds db-info) external-id)

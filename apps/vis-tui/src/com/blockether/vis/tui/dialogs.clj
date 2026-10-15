@@ -1220,6 +1220,10 @@
 
 (defn- metric-count [n] (if (number? n) (str (long n)) "—"))
 
+(defn- metric-usd
+  [n]
+  (if (number? n) (String/format Locale/US "$%.4f" (object-array [(double n)])) "—"))
+
 (defn- metric-percent [n] (if (number? n) (str n "%") "—"))
 
 (defn- metric-tokens [^long n] (String/format Locale/US "%,d tokens" (object-array [n])))
@@ -1431,14 +1435,27 @@
             (map (fn [[label field]]
                    (stat label (metric-count (get usage field))))
                  [["Total input" "input_tokens"] ["Total output" "output_tokens"]])
-            [(stat "Cost"
-                   (if-let [cost (get usage "cost_usd")]
-                     (String/format Locale/US "$%.4f" (object-array [(double cost)]))
-                     "—"))]
+            [(stat (if (get usage "subagents") "Session cost" "Cost")
+                   (metric-usd (get usage "cost_usd")))]
             (map (fn [[label field]]
                    (stat label (metric-count (get usage field))))
                  [["Folds" "fold_count"] ["Turns" "turn_count"] ["Calls" "iteration_count"]
                   ["Tools" "tool_call_count"]])
+            (when-let [subagents (get usage "subagents")]
+              (concat [(row "") (head "Subagents")
+                       (hint "Every subagent below this session, at any depth.")
+                       (stat "Subagents"
+                             (str (metric-count (get subagents "agent_count"))
+                                  " · "
+                                  (metric-count (get subagents "active_count"))
+                                  " active"))]
+                      (map (fn [[label field]]
+                             (stat label (metric-count (get subagents field))))
+                           [["Calls" "iteration_count"] ["Total input" "input_tokens"]
+                            ["Total output" "output_tokens"]])
+                      [(stat "Subagent cost" (metric-usd (get subagents "cost_usd")))
+                       (stat "Total cost" (metric-usd (get usage "total_cost_usd")))
+                       (hint "Session cost plus subagent cost")]))
             [(row "") (head "Prompt cache")
              (stat "Cached input" (metric-percent (get usage "cache_read_share_percent")))
              (hint "Share of all input served from provider cache")
