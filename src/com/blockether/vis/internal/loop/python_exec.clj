@@ -343,17 +343,27 @@
              (Math/round (* 1000.0 (+ secs (* 86400.0 (Double/parseDouble days))))))))
        (catch Throwable _ nil)))
 
+(defn- handle-cpu-ms
+  [^java.lang.ProcessHandle handle]
+  (let [^java.util.Optional cpu (.totalCpuDuration (.info handle))]
+    (when (.isPresent cpu) (.toMillis ^java.time.Duration (.get cpu)))))
+
 (defn- process-cpu-ms
-  "Total CPU time of process `pid` in milliseconds, or nil when the OS does not
-   report it. On macOS, `ProcessHandle` reports the CPU of this process only, so
-   another process falls back to `ps`."
+  "Total CPU time of process `pid` and its descendants in milliseconds, or nil when the
+   OS does not report it. A worker can run under a launcher process, so its CPU is in a
+   descendant. For this process, only its own CPU counts. On macOS, `ProcessHandle`
+   reports the CPU of this process only, so another process falls back to `ps`."
   [pid]
   (when pid
-    (or (try (let [^java.util.Optional handle (java.lang.ProcessHandle/of (long pid))]
-               (when (.isPresent handle)
-                 (let [^java.util.Optional cpu (.totalCpuDuration (.info ^java.lang.ProcessHandle
-                                                                         (.get handle)))]
-                   (when (.isPresent cpu) (.toMillis ^java.time.Duration (.get cpu))))))
+    (or (try (let [^java.util.Optional found (java.lang.ProcessHandle/of (long pid))]
+               (when (.isPresent found)
+                 (let [^java.lang.ProcessHandle handle (.get found)
+                       tree (if (= (long pid) (.pid (java.lang.ProcessHandle/current)))
+                              [handle]
+                              (cons handle (iterator-seq (.iterator (.descendants handle)))))
+                       cpus (keep handle-cpu-ms tree)]
+
+                   (when (seq cpus) (reduce + cpus)))))
              (catch Throwable _ nil))
         (ps-cpu-ms pid))))
 
