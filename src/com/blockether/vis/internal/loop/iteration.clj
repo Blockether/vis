@@ -1901,7 +1901,11 @@
         ;; are per turn too: only a turn that used the last iteration gets a handoff.
         _
         (some-> (:turn-state-atom environment)
-                (swap! assoc :best-answer nil :agent-claimed? false :agent-handoff? false))
+                (swap! assoc :best-answer
+                  nil
+                  :agent-claimed? false
+                  :agent-handoff? false
+                  :agent-handoff-renewed? false))
 
         has-reasoning?
         (and (nil? reasoning-effort) (transcript/reasoning-effort-configurable? resolved-model))

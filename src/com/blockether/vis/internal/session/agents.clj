@@ -624,8 +624,17 @@
                         opts)
 
          after
-         (:iteration_budget (info db sid))]
+         (:iteration_budget (info db sid))
 
+         state
+         (ctx-loop/read-turn-state env)]
+
+     ;; A request in the handoff iteration used that iteration. Without new iterations, the
+     ;; turn gets one more handoff iteration, once, so the child can still report its state.
+     (when (and (<= (long after) (long before))
+                (:agent-handoff? state)
+                (not (:agent-handoff-renewed? state)))
+       (ctx-loop/set-turn-state! env :agent-handoff? false :agent-handoff-renewed? true))
      (result
        :council.ask_budget
        {:granted (max 0 (- (long after) (long before))) :iteration_budget after :reply reply}))))

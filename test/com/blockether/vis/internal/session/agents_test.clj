@@ -395,6 +395,33 @@
             (expect (= :invalid-request (outcome #(agents/deny-agent env child "No request")))))
           (expect (= :invalid-request (outcome #(agents/ask-budget child-env 601 "Too many"))))
           (expect (= :invalid-request (outcome #(agents/ask-budget env 5 "Not a child"))))))))
+  ;; Review of #388: a budget request in the handoff iteration used that iteration. After a
+  ;; refusal, the child stopped without a report.
+  (it "gives one more handoff iteration once after a refused request in the handoff"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {:iteration_budget 1})
+
+            child-env
+            {:db-info db :session-id child :turn-state-atom (atom {})}]
+
+        (with-fake-runtime
+          db
+          leader
+          (atom #{})
+          (fn [_]
+            (expect (agents/claim-iteration! child-env))
+            (expect (agents/claim-iteration! child-env) "The handoff iteration")
+            (expect (= 0 (get (outcome #(agents/ask-budget child-env 10 "More files")) "granted")))
+            (expect (agents/claim-iteration! child-env) "A refusal renews the handoff")
+            (outcome #(agents/ask-budget child-env 10 "More files"))
+            (expect (not (agents/claim-iteration! child-env)) "Only one renewal in a turn")
+            (expect (= "budget_limited" (:status (agents/info db child))))))))
   (it
     "resumes a finished child with a follow-up task and never returns its old answer"
     (let [db
