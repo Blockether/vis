@@ -14,7 +14,7 @@
          babashka/fs {:mvn/version "0.5.34"}
         babashka/process {:mvn/version "0.6.25"}
         com.blockether/anomaly {:mvn/version "1.0.1"}
-        com.blockether/fff {:mvn/version "0.12.10"}
+        com.blockether/fff {:mvn/version "0.12.12"}
         ;; Imaging over a Rust cdylib with embedded fonts, replacing AWT/Java2D/ImageIO/jsvg:
         ;; no headless bootstrap, no fontconfig. `java.desktop` still loads, for mic capture.
         com.blockether/imaging {:mvn/version "0.1.12"}
