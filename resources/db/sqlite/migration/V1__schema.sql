@@ -171,6 +171,9 @@ CREATE TABLE session_agent (
   spawn_fingerprint TEXT NOT NULL,
   checkpoint       BLOB NOT NULL,
   created_at       INTEGER NOT NULL,
+  -- council.resume: the turn count before the follow-up task, and when it started.
+  resumed_turns    INTEGER NOT NULL DEFAULT 0 CHECK (resumed_turns >= 0),
+  resumed_at       INTEGER,
   UNIQUE (parent_id, spawn_key),
   CHECK (session_id <> parent_id AND session_id <> leader_id)
 );

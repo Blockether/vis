@@ -5335,7 +5335,8 @@
 
 (def ^:private agent-columns
   [:session_id :parent_id :leader_id :team_id :task :status :depth :iteration_budget
-   :iterations_used :inherited_turns :allowed_models :spawn_key :spawn_fingerprint :created_at])
+   :iterations_used :inherited_turns :allowed_models :spawn_key :spawn_fingerprint :created_at
+   :resumed_turns :resumed_at])
 
 (defn- agent-row
   [row]
@@ -5376,7 +5377,7 @@
 
 (defn db-agent-update!
   [db sid changes]
-  (let [changes (select-keys changes [:status])]
+  (let [changes (select-keys changes [:status :resumed_turns :resumed_at])]
     (when (seq changes)
       (execute! db {:update :session_agent :set changes :where [:= :session_id (str sid)]})))
   (db-agent-info db sid))
@@ -5409,10 +5410,11 @@
               0))))
 
 (defn db-agent-extend-budget!
-  "Add `iterations` to one child budget atomically, within the schema maximum. A child that
-   used its budget becomes idle again. With a `from` session, the same transaction takes the
-   iterations from that subagent's remaining budget. Answers the new row, or nil when the child
-   is cancelled or missing, the budget would pass the maximum, or `from` has too few iterations."
+  "Add `iterations` to one child budget atomically, within the schema maximum. The status stays:
+   a `budget_limited` child stays idle until council.resume. With a `from` session, the same
+   transaction takes the iterations from that subagent's remaining budget. Answers the new row,
+   or nil when the child is cancelled or missing, the budget would pass the maximum, or `from`
+   has too few iterations."
   [db sid iterations from]
   (let [max-budget
         (long (get-in agent-schema ["$defs" "spawn" "properties" "iteration_budget" "maximum"]))
@@ -5438,9 +5440,7 @@
                      (throw (ex-info "Too few iterations" {::refused true})))
                    (when-not (changed? tx-info
                                        {:update :session_agent
-                                        :set {:iteration_budget [:+ :iteration_budget n]
-                                              :status [:case [:= :status "budget_limited"]
-                                                       "completed" :else :status]}
+                                        :set {:iteration_budget [:+ :iteration_budget n]}
                                         :where [:and [:= :session_id (str sid)]
                                                 [:<> :status "cancelled"]
                                                 [:<= [:+ :iteration_budget n] max-budget]]})
@@ -5448,6 +5448,36 @@
                    true))
                (catch clojure.lang.ExceptionInfo e (when-not (::refused (ex-data e)) (throw e))))
       (db-agent-info db sid))))
+
+(defn db-agent-resume!
+  "Queue one idle child for a follow-up task. One write transaction checks that the child is
+   idle, not cancelled and has iterations left, and that its leader stays under the active
+   cap, so parallel resumes and spawns cannot pass it. `turns` is the turn count before the
+   task. Answers the new row, or nil when the child cannot resume."
+  [db sid turns now]
+  (when (pos?
+          (long
+            (or (:next.jdbc/update-count
+                  (first
+                    (sqlite-write-tx!
+                      db
+                      (fn [tx-info]
+                        (execute!
+                          tx-info
+                          {:update :session_agent
+                           :set
+                           {:status "queued" :resumed_turns (long turns) :resumed_at (long now)}
+                           :where [:and [:= :session_id (str sid)]
+                                   [:not-in :status ["queued" "running" "cancelled"]]
+                                   [:< :iterations_used :iteration_budget]
+                                   [:<
+                                    {:select [[[:count :*]]]
+                                     :from [[:session_agent :active]]
+                                     :where [:and [:= :active.leader_id :session_agent.leader_id]
+                                             [:in :active.status ["queued" "running"]]]}
+                                    max-active-children]]})))))
+                0)))
+    (db-agent-info db sid)))
 
 (defn db-fork-session-at-turn!
   "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is

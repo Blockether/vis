@@ -283,7 +283,7 @@
         (agents/finish! db cut "completed")
         (expect (= "budget_limited" (:status (agents/info db cut))))))
   (it
-    "extends a budget within the limits and makes the child wakeable again"
+    "extends a budget within the limits and keeps the child idle until council.resume"
     (let [db
           (h/store)
 
@@ -312,10 +312,13 @@
             (agents/claim-iteration! child-env))
           (agents/finish! db child "completed")
           (expect (not (agents/wake-allowed? db leader child)))
-          (expect (= {"status" "completed" "iteration_budget" 6 "iterations_used" 1}
+          (expect (= {"status" "budget_limited" "iteration_budget" 6 "iterations_used" 1}
                      (select-keys (first (outcome #(agents/extend-agent env child 5)))
                                   ["status" "iteration_budget" "iterations_used"])))
-          (expect (agents/wake-allowed? db leader child))
+          (expect (not (agents/wake-allowed? db leader child))
+                  "An extended child stays idle until council.resume")
+          ;; council.resume runs the child again; only a running child can give iterations away.
+          (ps/db-agent-update! db child {:status "running"})
           (expect (= :budget-exceeded (outcome #(agents/extend-agent env child 595))))
           (expect (= :invalid-request (outcome #(agents/extend-agent env child 0))))
           (expect (= :not-owner
@@ -434,6 +437,8 @@
                   (outcome
                     #(agents/resume-agent env child "Fix the parser test too" {:timeout_secs 1}))]
               (expect (= "queued" (get (first records) "status")))
+              (expect (= 1 (:resumed_turns (agents/info db child)))
+                      "The stale-answer guard is stored with the child, so a restart keeps it")
               (expect (= :invalid-request (outcome #(agents/resume-agent env child "Again")))
                       "A queued follow-up task blocks a second resume")
               (expect (= {:kind "coordination"
@@ -457,8 +462,40 @@
           (agents/finish! db child "completed")
           (expect (= :budget-exceeded (outcome #(agents/resume-agent env child "More")))
                   "Extend first")
+          (ps/db-agent-update! db child {:status "budget_limited"})
+          (outcome #(agents/extend-agent env child 2))
+          (expect (= "budget_limited" (:status (agents/info db child))))
+          (expect (= "queued"
+                     (get (first (outcome
+                                   #(agents/resume-agent env child "More" {:timeout_secs 1})))
+                          "status"))
+                  "An extended budget_limited child resumes")
           (ps/db-agent-update! db child {:status "cancelled"})
-          (expect (= :invalid-request (outcome #(agents/resume-agent env child "More")))))))))
+          (expect (= :invalid-request (outcome #(agents/resume-agent env child "More"))))))))
+  (it "refuses a resume past the active cap and changes nothing"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {})
+
+            env
+            {:db-info db :session-id leader}]
+
+        (with-fake-runtime
+          db
+          leader
+          (atom #{})
+          (fn [_]
+            (agents/finish! db child "completed")
+            (dotimes [_ agents/max-active-children]
+              (child! db leader {}))
+            (expect (= :agent-limit (outcome #(agents/resume-agent env child "More"))))
+            (expect (= {:status "completed" :resumed_turns 0}
+                       (select-keys (agents/info db child) [:status :resumed_turns]))))))))
 
 ;; Regression: Subagents was on only in the leader's session settings. A child starts without
 ;; those overrides, so its turn snapshot read the default and refused its first iteration.
