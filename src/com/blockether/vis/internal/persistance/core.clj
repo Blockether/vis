@@ -277,15 +277,21 @@
   (db-store-queued-turn-attachments! [db-info session-turn-soul-id queued-turn-id attachments])
   (db-list-queued-turn-attachments [db-info queued-turn-ids]))
 
+(defprotocol AgentStore
+  "Subagent budget operations of a persistence backend, with the `Store` dispatch. They
+   are a separate protocol for the same JVM method-size limit as `AutomationStore`."
+  (db-agent-extend-budget! [db-info session-id iterations]
+    "Add iterations to one child budget within the schema maximum. Answer the new row or nil."))
+
 (defmacro store-implementation
-  "Expand, inside a backend namespace, to its op map for `Store`, `AutomationStore`
-   and `QueueStore`: every op keyed to the backend's own fn of the same name. A
+  "Expand, inside a backend namespace, to its op map for `Store`, `AutomationStore`,
+   `QueueStore` and `AgentStore`: every op keyed to the backend's own fn of the same name. A
    backend missing an op fails to compile instead of failing at its first call."
   []
   (into {}
         (map (fn [op]
                [op (symbol (name op))]))
-        (keys (merge (:sigs Store) (:sigs AutomationStore) (:sigs QueueStore)))))
+        (keys (merge (:sigs Store) (:sigs AutomationStore) (:sigs QueueStore) (:sigs AgentStore)))))
 
 ;; Turn outcome
 
@@ -417,6 +423,10 @@
   "Every `QueueStore` op forwarded to the backend."
   (into {} (map (juxt identity forward)) (keys (:sigs QueueStore))))
 
+(def ^:private agent-ops
+  "Every `AgentStore` op forwarded to the backend."
+  (into {} (map (juxt identity forward)) (keys (:sigs AgentStore))))
+
 ;; Extended once, while this namespace loads: re-exports copy the protocol fns,
 ;; and a later `extend` would rebind them behind those copies.
 (extend nil
@@ -425,7 +435,9 @@
     AutomationStore
     automation-ops
     QueueStore
-    queue-ops)
+    queue-ops
+    AgentStore
+    agent-ops)
 
 (extend Object
   Store
@@ -433,7 +445,9 @@
     AutomationStore
     automation-ops
     QueueStore
-    queue-ops)
+    queue-ops
+    AgentStore
+    agent-ops)
 
 ;; Connection lifecycle
 

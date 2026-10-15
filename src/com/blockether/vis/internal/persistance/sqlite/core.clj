@@ -5408,6 +5408,26 @@
                                             max-active-children]]]})))
               0))))
 
+(defn db-agent-extend-budget!
+  "Add `iterations` to one child budget atomically, within the schema maximum. A child that
+   used its budget becomes idle again. Answers the new row, or nil when the child is cancelled,
+   missing or would pass the maximum."
+  [db sid iterations]
+  (let [max-budget
+        (long (get-in agent-schema ["$defs" "spawn" "properties" "iteration_budget" "maximum"]))
+
+        updated
+        (:next.jdbc/update-count
+          (first (execute! db
+                           {:update :session_agent
+                            :set {:iteration_budget [:+ :iteration_budget (long iterations)]
+                                  :status [:case [:= :status "budget_limited"] "completed" :else
+                                           :status]}
+                            :where [:and [:= :session_id (str sid)] [:<> :status "cancelled"]
+                                    [:<= [:+ :iteration_budget (long iterations)] max-budget]]})))]
+
+    (when (pos? (long (or updated 0))) (db-agent-info db sid))))
+
 (defn db-fork-session-at-turn!
   "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is
    `:through-turn-id`, into a new independent session by default.

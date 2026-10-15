@@ -90,6 +90,30 @@
 
 (defn install-runtime! [callbacks] (reset! runtime callbacks) nil)
 
+(defn- budget-notice
+  "Reminder for a subagent near the end of its iteration budget, or nil. It rides in
+   `session[\"agent\"]`, so the model sees it as a context change after each iteration."
+  [{:keys [iteration_budget iterations_used]}]
+  (when (and iteration_budget iterations_used)
+    (let [budget
+          (long iteration_budget)
+
+          left
+          (- budget (long iterations_used))]
+
+      (cond (<= left 0)
+            (str "Your iteration budget is used. Your next response is your handoff. If the task "
+                 "needs more, call council.ask_budget(iterations, reason). Else do not call other "
+                 "tools: give your parent the done work, the changed files and the next step.")
+            (<= left (max 5 (quot budget 5)))
+            (str
+              left
+              " of "
+              budget
+              " iterations left. Finish the task, or call council.ask_budget(iterations, reason) "
+              "for more. Before the budget ends, report the done work, the changed files and the "
+              "next step.")))))
+
 (defn context
   [env]
   (let [sid
@@ -98,11 +122,14 @@
         child
         (info (:db-info env) sid)]
 
-    (wire/->wire (merge {:role (if child "subagent" "leader") :session_id sid :leader_id sid}
-                        (select-keys child
-                                     [:parent_id :leader_id :team_id :task :depth :iteration_budget
-                                      :iterations_used :status :allowed_models])
-                        {:routing_locked (ps/db-routing-locked? (:db-info env) sid)}))))
+    (wire/->wire
+      (cond-> (merge {:role (if child "subagent" "leader") :session_id sid :leader_id sid}
+                     (select-keys child
+                                  [:parent_id :leader_id :team_id :task :depth :iteration_budget
+                                   :iterations_used :status :allowed_models])
+                     {:routing_locked (ps/db-routing-locked? (:db-info env) sid)})
+        (budget-notice child)
+        (assoc :budget_notice (budget-notice child))))))
 
 (defn checkpoint!
   "Capture the last complete model input, before its in-flight tool call. Never copy runtime handles."
@@ -135,7 +162,9 @@
        :resumed? true})))
 
 (defn claim-iteration!
-  "Reserve one model iteration. A child budget is durable across replies, turns and restarts."
+  "Reserve one model iteration. A child budget is durable across replies, turns and restarts.
+   When the budget ends in a turn, that turn gets one more iteration without a claim for the
+   handoff of the child. A later claim refuses, and the child becomes `budget_limited`."
   [env]
   (let [db
         (:db-info env)
@@ -146,16 +175,25 @@
     (if (info db sid)
       (let [on? (enabled? db sid)]
         (if (and on? (ps/db-agent-claim-iteration! db sid))
-          true
-          (let [child (info db sid)]
-            (when (and on? (not= "cancelled" (:status child)))
-              (ps/db-agent-update! db
-                                   sid
-                                   {:status (if (>= (long (:iterations_used child))
-                                                    (long (:iteration_budget child)))
-                                              "budget_limited"
-                                              "failed")}))
-            false)))
+          (do (ctx-loop/set-turn-state! env :agent-handoff? false)
+              (ctx-loop/set-turn-state! env :agent-claimed? true)
+              true)
+          (let [child (info db sid)
+                exhausted? (>= (long (:iterations_used child)) (long (:iteration_budget child)))]
+
+            (cond (and on?
+                       exhausted?
+                       (not (contains? #{"cancelled" "budget_limited"} (:status child)))
+                       (:turn-state-atom env)
+                       (:agent-claimed? (ctx-loop/read-turn-state env))
+                       (not (:agent-handoff? (ctx-loop/read-turn-state env))))
+                  (do (ctx-loop/set-turn-state! env :agent-handoff? true) true)
+                  :else (do (when (and on? (not= "cancelled" (:status child)))
+                              (ps/db-agent-update! db
+                                                   sid
+                                                   {:status
+                                                    (if exhausted? "budget_limited" "failed")}))
+                            false)))))
       true)))
 
 (defn stop-reason
@@ -175,27 +213,27 @@
       "Subagent stopped: Subagents are disabled for this team. Enable Subagents in Experimental settings."
       (= "cancelled" (:status child)) "Subagent stopped: it is cancelled."
       (and child (>= (long (:iterations_used child)) (long (:iteration_budget child))))
-      (str "Subagent stopped: it used its full iteration budget of "
-           (:iteration_budget child)
-           ". Retry with a larger budget.")
+      (str "Subagent stopped: it used its full iteration budget of " (:iteration_budget child)
+           " and its handoff iteration. Its parent can add iterations with council.extend and "
+           "continue it with council.resume.")
       :else (str "Subagent stopped: its leader already runs "
                  max-active-children
                  " active subagents. Retry when one of them finishes."))))
 
 (defn finish!
+  "Store the status of a finished child turn. A child that used its whole budget becomes
+   `budget_limited`, so its parent knows that it needs council.extend before council.resume."
   [db sid status]
   (when-let [child (info db sid)]
     (when-not (contains? #{"cancelled" "budget_limited"} (:status child))
       (ps/db-agent-update! db
                            sid
-                           {:status (case status
-                                      ("completed" "success")
-                                      "completed"
-
-                                      "cancelled"
-                                      "cancelled"
-
-                                      "failed")}))))
+                           {:status (cond (= "cancelled" status) "cancelled"
+                                          (>= (long (:iterations_used child))
+                                              (long (:iteration_budget child)))
+                                          "budget_limited"
+                                          (contains? #{"completed" "success"} status) "completed"
+                                          :else "failed")}))))
 
 (defn reconcile-orphans!
   "Fail the children that a dead process left queued or running. Spare a child or a leader
@@ -236,11 +274,13 @@
   (when-not (enabled? db sid)
     (fail! :feature-disabled "Subagents are disabled. Enable Subagents in Experimental settings.")))
 
-(defn operation!
+(defn- checked
+  "Validate `opts` for `operation` and the ownership of its target session. Answers the
+   keywordized opts."
   [env operation opts]
   (let [opts (walk/keywordize-keys opts)]
     ;; Reads and cancellation remain available for previously created teams.
-    (when (or (= :spawn operation)
+    (when (or (contains? #{:spawn :resume} operation)
               (and (= :route operation)
                    (:session_id opts)
                    (not= (str (:session-id env)) (:session_id opts))))
@@ -252,6 +292,11 @@
     (when-let [target (:session_id opts)]
       (when-not (controls? (:db-info env) (:session-id env) target)
         (fail! :not-owner "This session does not own that subagent")))
+    opts))
+
+(defn operation!
+  [env operation opts]
+  (let [opts (checked env operation opts)]
     (if-let [f (get @runtime operation)]
       (f env opts)
       (fail! :unavailable "Managed subagents require the gateway runtime"))))
@@ -260,21 +305,29 @@
 
 (def ^:private terminal-statuses #{"completed" "failed" "cancelled" "budget_limited" "lost"})
 
-;; Open child questions by child session id: {:question text :entry_id id}.
+;; Open child questions by child session id: {:question text :entry_id id}, plus
+;; `:budget {:iterations n :reason text}` for a budget request.
 (defonce ^:private questions (atom {}))
+
+;; Resumed children by session id: {:at epoch-ms :turns n}. `:turns` is the turn count
+;; before the follow-up task, so a wait never returns the answer of an earlier turn.
+(defonce ^:private resumed (atom {}))
 
 (defn- runtime-fn
   [k]
   (or (get @runtime k) (fail! :unavailable "Managed subagents require the gateway runtime")))
 
 (defn- final-answer
+  "The prose answer of the last turn of `sid`, or nil. After council.resume, only a turn of
+   the follow-up task counts."
   [db sid]
-  (when-let [row (last (ps/db-list-session-turns db sid))]
-    (some->> (:content row)
-             (filterv #(contains? #{"prose" "speech"} (get % "type")))
-             content/text-projection
-             str/trim
-             not-empty)))
+  (let [turns (ps/db-list-session-turns db sid)]
+    (when (> (count turns) (long (get-in @resumed [(str sid) :turns] 0)))
+      (some->> (:content (last turns))
+               (filterv #(contains? #{"prose" "speech"} (get % "type")))
+               content/text-projection
+               str/trim
+               not-empty))))
 
 (defn- record
   "One wait record. A queued or running child without a live turn after 30 s is lost."
@@ -289,7 +342,11 @@
         (contains? #{"queued" "running"} status)
 
         status
-        (if (and open? (> (- (long now) (long (or (:created_at row) now))) 30000) (not (live? sid)))
+        (if (and open?
+                 (> (- (long now)
+                       (max (long (or (:created_at row) now)) (long (get-in @resumed [sid :at] 0))))
+                    30000)
+                 (not (live? sid)))
           "lost"
           status)
 
@@ -304,6 +361,12 @@
              :answer (when (terminal-statuses status) (final-answer db sid))
              :question (:question question)
              :question_entry_id (:entry_id question)}
+      (:budget question)
+      (assoc :budget_request (:budget question))
+
+      (:iteration_budget row)
+      (assoc :iteration_budget (:iteration_budget row))
+
       (:iterations_used row)
       (assoc :iterations_used (:iterations_used row)))))
 
@@ -378,13 +441,18 @@
 
 (defn run
   "Run each task in its own subagent and wait for all of them. A task is a string or a dict with
-   task and optional model, provider, iteration_budget and context. A child uses your model and
-   your full context. A child on another model gets only the system prompt and its task, unless
-   context is \"full\". Children share the checkout.
+   task and optional model, provider, iteration_budget and context. iteration_budget defaults to
+   120 (max 600). Give a large task more at the start.
+
+   A child uses your model and your full context. A child on another model gets only the system
+   prompt and its task, unless context is \"full\". Children share the checkout.
 
    Records have session_id, status, answer and question. More than 16 tasks start as earlier ones
    finish. timeout_secs defaults to 240 (max 1800). If a status is still running, call
-   council.wait. lost means the child stopped without an answer."
+   council.wait. lost means the child stopped without an answer.
+
+   asking with budget_request needs council.extend or council.deny. budget_limited needs
+   council.extend before council.resume."
   ([env tasks] (run env tasks {}))
   ([env tasks opts]
    (let [opts
@@ -443,63 +511,230 @@
   (operation! env :cancel {:session_id session-id})
   (result :council.cancel (wait-records env [session-id] 5)))
 
+(defn- parent-reply!
+  "Publish `question` to the parent of the calling child and wait for the reply text. Answers
+   nil when the parent is not running, the child is cancelled or `timeout_secs` (default 600)
+   ends. `budget` marks a budget request in the records of the parent."
+  [env op question budget opts]
+  (let [db
+        (:db-info env)
+
+        sid
+        (str (:session-id env))
+
+        me
+        (info db sid)
+
+        _
+        (when-not me (fail! :invalid-request (str op " works only in a subagent")))
+
+        timeout
+        (wait-timeout (walk/keywordize-keys opts) 600)
+
+        deadline
+        (+ (util/now-ms) (* 1000 (long timeout)))
+
+        parent
+        (str (:parent_id me))
+
+        live?
+        (runtime-fn :live?)]
+
+    (when (live? parent)
+      (let [entry
+            ((runtime-fn :publish)
+              env
+              {:kind "coordination" :content question :ping [parent] :reply_required true})
+
+            entry-id
+            (:entry_id entry)]
+
+        (swap! questions assoc
+          sid
+          (cond-> {:question question :entry_id entry-id}
+            budget
+            (assoc :budget budget)))
+        (try (loop []
+
+               (let [reply-id (some :reply_entry_id (:replies (ps/db-council-get db entry-id)))]
+                 (cond reply-id (:content (ps/db-council-get db reply-id))
+                       (or (> (util/now-ms) deadline)
+                           (= "cancelled" (:status (info db sid)))
+                           (not (live? parent)))
+                       nil
+                       :else (do (Thread/sleep 1000) (recur)))))
+             (finally (swap! questions #(if (= entry-id (get-in % [sid :entry_id]))
+                                          (dissoc % sid)
+                                          %))))))))
+
 (defn ask
   "As a subagent, ask your parent for a decision and wait for the reply text. Returns None when
    the parent is not running or does not reply within timeout_secs (default 600). Then choose the
    safest option and say so in your answer."
   ([env question] (ask env question {}))
   ([env question opts]
+   (when (or (not (string? question)) (str/blank? question))
+     (fail! :invalid-request "question must be a nonblank string"))
+   (result :council.ask (parent-reply! env "council.ask" question nil opts))))
+
+(def ^:private max-budget
+  (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "maximum"]))
+
+(defn ask-budget
+  "As a subagent, ask your parent for more model iterations and wait for the answer. Ask before
+   your budget ends, with the number that you need and the reason. Returns a dict with granted
+   (0 when the parent refuses), iteration_budget and reply. reply is None when the parent is not
+   running or does not answer within timeout_secs (default 600)."
+  ([env iterations reason] (ask-budget env iterations reason {}))
+  ([env iterations reason opts]
+   (when-not (and (integer? iterations) (<= 1 (long iterations) (long max-budget)))
+     (fail! :invalid-request (str "iterations must be an integer from 1 to " max-budget)))
+   (when (or (not (string? reason)) (str/blank? reason))
+     (fail! :invalid-request "reason must be a nonblank string"))
    (let [db
          (:db-info env)
 
          sid
          (str (:session-id env))
 
-         me
-         (info db sid)
+         before
+         (:iteration_budget (info db sid))
 
-         _
-         (when-not me (fail! :invalid-request "council.ask works only in a subagent"))
+         reply
+         (parent-reply! env
+                        "council.ask_budget"
+                        (str "Budget request: " iterations " more iterations. Reason: " reason)
+                        {:iterations iterations :reason reason}
+                        opts)
 
-         _
-         (when (or (not (string? question)) (str/blank? question))
-           (fail! :invalid-request "question must be a nonblank string"))
+         after
+         (:iteration_budget (info db sid))]
+
+     (result
+       :council.ask_budget
+       {:granted (max 0 (- (long after) (long before))) :iteration_budget after :reply reply}))))
+
+(defn- answer-budget!
+  "Reply with `text` to the open budget request of child `sid`. Answers true when a budget
+   request was open."
+  [env sid text]
+  (let [{:keys [entry_id budget]} (get @questions sid)]
+    (when budget
+      ((runtime-fn :publish) env {:kind "informational" :content text :reply_to entry_id})
+      (swap! questions #(if (= entry_id (get-in % [sid :entry_id])) (dissoc % sid) %))
+      true)))
+
+(defn- current-record
+  "A list with the one current record of child `sid`."
+  [env sid]
+  [(record (:db-info env) (runtime-fn :live?) (util/now-ms) (info (:db-info env) sid))])
+
+(defn extend-agent
+  "Give a subagent more model iterations. Use it to answer a budget request (status asking with
+   budget_request), or before council.resume of a budget_limited child. A budget stays at most
+   600, and a subagent can give only its own remaining iterations. Returns the record."
+  [env session-id iterations]
+  (let [{:keys [session_id iterations]}
+        (checked env :extend {:session_id session-id :iterations iterations})
+
+        db
+        (:db-info env)
+
+        caller
+        (info db (:session-id env))
+
+        child
+        (info db session_id)]
+
+    (when (= (str (:session-id env)) session_id)
+      (fail! :not-owner "A subagent cannot extend its own budget"))
+    (when (= "cancelled" (:status child))
+      (fail! :invalid-request "A cancelled subagent cannot get more iterations"))
+    (when (> (+ (long (:iteration_budget child)) (long iterations)) (long max-budget))
+      (fail! :budget-exceeded
+             (str "The budget of a subagent stays at most " max-budget " iterations")))
+    (when (and caller
+               (or (contains? #{"cancelled" "budget_limited"} (:status caller))
+                   (> (long iterations)
+                      (- (long (:iteration_budget caller)) (long (:iterations_used caller))))))
+      (fail! :budget-exceeded "The extension exceeds your remaining iteration budget"))
+    (let [row (or (ps/db-agent-extend-budget! db session_id iterations)
+                  (fail! :budget-exceeded "The subagent budget did not change"))]
+      (answer-budget!
+        env
+        session_id
+        (str "Granted " iterations " more iterations. New budget: " (:iteration_budget row) ".")))
+    (result :council.extend (current-record env session_id))))
+
+(defn deny-agent
+  "Refuse the open budget request of a subagent, with a short reason. The child keeps its budget
+   and ends with a handoff. Returns the record."
+  [env session-id reason]
+  (let [{:keys [session_id reason]} (checked env :deny {:session_id session-id :reason reason})]
+    (when-not (answer-budget! env
+                              session_id
+                              (str
+                                "Denied: "
+                                reason
+                                " Finish with the iterations that you have and report your state."))
+      (fail! :invalid-request "That subagent has no open budget request"))
+    (result :council.deny (current-record env session_id))))
+
+(defn resume-agent
+  "Give a finished subagent a follow-up task. It continues in its own session with its whole
+   context, so it does not do its earlier work again. Then wait like council.run and return
+   the records. A budget_limited child needs council.extend first. A running child needs
+   council.wait. timeout_secs defaults to 240 (max 1800)."
+  ([env session-id task] (resume-agent env session-id task {}))
+  ([env session-id task opts]
+   (let [{:keys [session_id task]}
+         (checked env :resume {:session_id session-id :task task})
 
          timeout
-         (wait-timeout (walk/keywordize-keys opts) 600)
+         (wait-timeout (walk/keywordize-keys opts) 240)
 
-         deadline
-         (+ (util/now-ms) (* 1000 (long timeout)))
+         db
+         (:db-info env)
 
-         parent
-         (str (:parent_id me))
+         child
+         (info db session_id)
 
          live?
          (runtime-fn :live?)]
 
-     (if-not (live? parent)
-       (result :council.ask nil)
-       (let [entry
-             ((runtime-fn :publish)
-               env
-               {:kind "coordination" :content question :ping [parent] :reply_required true})
-
-             entry-id
-             (:entry_id entry)]
-
-         (swap! questions assoc sid {:question question :entry_id entry-id})
-         (try (loop []
-
-                (let [reply-id (some :reply_entry_id (:replies (ps/db-council-get db entry-id)))]
-                  (cond reply-id (result :council.ask (:content (ps/db-council-get db reply-id)))
-                        (or (> (util/now-ms) deadline)
-                            (= "cancelled" (:status (info db sid)))
-                            (not (live? parent)))
-                        (result :council.ask nil)
-                        :else (do (Thread/sleep 1000) (recur)))))
-              (finally (swap! questions #(if (= entry-id (get-in % [sid :entry_id]))
-                                           (dissoc % sid)
-                                           %)))))))))
+     (when (= (str (:session-id env)) session_id)
+       (fail! :not-owner "A subagent cannot resume itself"))
+     (when (live? session_id)
+       (fail! :invalid-request "The subagent still runs. Call council.wait."))
+     (when (= "cancelled" (:status child))
+       (fail! :invalid-request "A cancelled subagent cannot resume"))
+     (when (or (= "budget_limited" (:status child))
+               (>= (long (:iterations_used child)) (long (:iteration_budget child))))
+       (fail!
+         :budget-exceeded
+         "The subagent has no iterations left. Call council.extend(session_id, iterations) first."))
+     (when (>= (count (filter #(contains? #{"queued" "running"} (:status %))
+                              (ps/db-agent-list db (:leader_id child))))
+               (long max-active-children))
+       (fail! :agent-limit "The leader already has the maximum active subagents"))
+     (swap! resumed assoc
+       session_id
+       {:at (util/now-ms) :turns (count (ps/db-list-session-turns db session_id))})
+     (ps/db-agent-update! db session_id {:status "queued"})
+     (let [entry (try ((runtime-fn :publish)
+                        env
+                        {:kind "coordination"
+                         :title "Follow-up task"
+                         :content task
+                         :ping [session_id]
+                         :reply_required true})
+                      (catch Throwable t
+                        (ps/db-agent-update! db session_id {:status (:status child)})
+                        (throw t)))]
+       (when (= "unavailable" (get-in entry [:replies 0 :state]))
+         (ps/db-agent-update! db session_id {:status (:status child)})
+         (fail! :unavailable "The subagent could not start its follow-up task")))
+     (result :council.resume (wait-records env [session_id] timeout)))))
 
 (def symbols
   (mapv
@@ -521,12 +756,17 @@
                                   params)))))
     (let
       [records
-       "A list of records with `session_id`, `status`, `answer`, `question` and `question_entry_id`."]
+       "A list of records with `session_id`, `status`, `answer`, `question`, `question_entry_id`, `budget_request`, `iteration_budget` and `iterations_used`."]
       [[#'run 'council.run {:pos ["tasks"] :rest :always} ["timeout_secs"] records]
        [#'wait-agents 'council.wait {:opt-pos ["session_ids"] :rest :always} ["timeout_secs"]
         records] [#'cancel-agent 'council.cancel {:pos ["session_id"]} [] records]
+       [#'resume-agent 'council.resume {:pos ["session_id" "task"] :rest :always} ["timeout_secs"]
+        records] [#'extend-agent 'council.extend {:pos ["session_id" "iterations"]} [] records]
+       [#'deny-agent 'council.deny {:pos ["session_id" "reason"]} [] records]
        [#'ask 'council.ask {:pos ["question"] :rest :always} ["timeout_secs"]
-        "A plain string with the parent's reply, or None."]])))
+        "A plain string with the parent's reply, or None."]
+       [#'ask-budget 'council.ask_budget {:pos ["iterations" "reason"] :rest :always}
+        ["timeout_secs"] "A dict with `granted`, `iteration_budget` and `reply`."]])))
 
 (defn routing-change
   "The route command issued for this session since `before`, as
@@ -568,7 +808,10 @@
     "## Subagents (Council)
 - Use subagents only when the user asks or the work has two or more independent parts. Do critical-path work, small tasks and single-file edits yourself.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.
+- A child gets 120 iterations by default (maximum 600). For a large or multi-step task, set a larger iteration_budget in its task dict at the start.
 - A child uses your model and your context. Set model and provider in a task dict only when the user or project names a model for that work. A child on another model gets only the system prompt and its task, so write a task that stands alone.
-- Each record has session_id, status, answer, question and question_entry_id. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer. Verify answers before you use them.
-- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again.
-- As a subagent, do only your task and end with a short answer for your parent. If you need a decision that your task does not give, call council.ask(question) and follow the reply; if it returns None, choose the safest option and say so. Use council.publish for other messages to your parent or siblings."))
+- Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer. Verify answers before you use them.
+- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead.
+- Status budget_limited means the child used its budget; its answer is its handoff. To continue it, call council.extend, then council.resume.
+- For follow-up work on the same files or findings, call council.resume(session_id, task) on the finished child. It keeps its context, so it costs less than a new child.
+- As a subagent, do only your task and end with a short answer for your parent. If you need a decision that your task does not give, call council.ask(question) and follow the reply; if it returns None, choose the safest option and say so. If session[\"agent\"] has budget_notice, follow it: ask early with council.ask_budget(iterations, reason) when the task needs more. Use council.publish for other messages to your parent or siblings."))

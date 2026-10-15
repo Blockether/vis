@@ -27,7 +27,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 600,
-          "default": 64
+          "default": 120
         },
         "allowed_models": {
           "type": "array",
@@ -77,6 +77,62 @@
       },
       "required": [
         "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "extend": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        }
+      },
+      "required": [
+        "session_id",
+        "iterations"
+      ],
+      "additionalProperties": false
+    },
+    "deny": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "session_id",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "resume": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "$ref": "#/$defs/spawn/properties/task"
+        }
+      },
+      "required": [
+        "session_id",
+        "task"
       ],
       "additionalProperties": false
     },

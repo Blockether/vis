@@ -2,6 +2,8 @@
   (:require [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -38,7 +40,7 @@
 
         (expect (= agents/default-iterations
                    (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"])
-                   64))
+                   120))
         (expect
           (= agents/max-depth (get-in schema ["$defs" "agent" "properties" "depth" "maximum"]) 2))
         (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 128))
@@ -149,8 +151,9 @@
       (expect (not (agents/claim-iteration! env)))
       (expect (= "budget_limited" (:status (agents/info db child))))
       (expect
-        (= "Subagent stopped: it used its full iteration budget of 1. Retry with a larger budget."
-           (agents/stop-reason env)))
+        (=
+          "Subagent stopped: it used its full iteration budget of 1 and its handoff iteration. Its parent can add iterations with council.extend and continue it with council.resume."
+          (agents/stop-reason env)))
       (expect (not (agents/wake-allowed? db leader child)))
       (expect (agents/wake-allowed? db child leader)
               "Exhaustion can be reported without rerunning the child")
@@ -160,6 +163,274 @@
       (expect (ps/db-routing-locked? db leader))
       (smodel/set-model! db leader nil nil)
       (expect (not (ps/db-routing-locked? db leader))))))
+
+(defn- with-fake-runtime
+  "Call `(f entries)` with a runtime whose Council lives in memory. A reply to an entry is
+   visible through `ps/db-council-get`, as in the gateway. `entries` is the atom of the
+   published entries. Restores the gateway runtime, and registers the Council ops for
+   direct calls."
+  [db leader live f]
+  (let [entries
+        (atom {})
+
+        saved
+        @@#'agents/runtime
+
+        registered?
+        (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions))]
+
+    (when-not registered? (foundation/register!))
+    (agents/install-runtime!
+      {:live? (fn [sid]
+                (contains? @live (str sid)))
+       :list (fn [_ _]
+               (ps/db-agent-list db leader))
+       :publish (fn [env opts]
+                  (let [id (inc (count @entries))]
+                    (swap! entries assoc id (assoc opts :author (str (:session-id env))))
+                    (when-let [to (:reply_to opts)]
+                      (swap! entries update-in [to :replies] (fnil conj []) {:reply_entry_id id}))
+                    {:entry_id id :replies [{:state "delivered"}]}))})
+    (try (f entries)
+         (finally (agents/install-runtime! saved)
+                  (when-not registered? (extension/deregister-extension! "foundation-core"))))))
+
+(defn- outcome [f] (try (:result (f)) (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))
+
+(defn- asking-record
+  "Poll the record of `child` until it asks, for at most 5 s."
+  [env child]
+  (loop [n 0]
+    (let [r (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))]
+      (if (or (= "asking" (get r "status")) (> n 50)) r (do (Thread/sleep 100) (recur (inc n)))))))
+
+;; Issue #388: a child had 64 iterations, no warning and a hard stop without a handoff. A
+;; parent could not add iterations, so the only option was a new child without the context.
+(defdescribe
+  subagent-budget-test
+  (it
+    "warns the child near the end of its budget"
+    (let [db
+          (h/store)
+
+          leader
+          (h/store-session! db {:channel :api})
+
+          child
+          (child! db leader {:iteration_budget 40})
+
+          env
+          {:db-info db :session-id child}]
+
+      (expect (nil? (get (agents/context env) "budget_notice")))
+      (dotimes [_ 32]
+        (agents/claim-iteration! env))
+      (expect
+        (=
+          "8 of 40 iterations left. Finish the task, or call council.ask_budget(iterations, reason) for more. Before the budget ends, report the done work, the changed files and the next step."
+          (get (agents/context env) "budget_notice")))
+      (dotimes [_ 8]
+        (agents/claim-iteration! env))
+      (expect (re-find #"^Your iteration budget is used\. Your next response is your handoff\."
+                       (get (agents/context env) "budget_notice")))))
+  (it "gives one handoff iteration after the budget and then stops"
+      (let [db
+            (h/store)
+
+            leader
+            (h/store-session! db {:channel :api})
+
+            child
+            (child! db leader {:iteration_budget 1})
+
+            env
+            {:db-info db :session-id child :turn-state-atom (atom {})}]
+
+        (expect (agents/claim-iteration! env))
+        (expect (agents/claim-iteration! env) "The handoff iteration runs without a claim")
+        (expect (= 1 (:iterations_used (agents/info db child))))
+        (expect (not= "budget_limited" (:status (agents/info db child))))
+        (expect (not (agents/claim-iteration! env)) "Only one handoff iteration")
+        (expect (= "budget_limited" (:status (agents/info db child))))
+        (expect (re-find #"council\.extend" (agents/stop-reason env)))))
+  (it "marks a child that ends its turn at the budget as budget_limited"
+      (let [db
+            (h/store)
+
+            leader
+            (h/store-session! db {:channel :api})
+
+            child
+            (child! db leader {:iteration_budget 1})]
+
+        (agents/claim-iteration! {:db-info db :session-id child})
+        (agents/finish! db child "completed")
+        (expect (= "budget_limited" (:status (agents/info db child))))))
+  (it
+    "extends a budget within the limits and makes the child wakeable again"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          other
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:iteration_budget 1})
+
+          grandchild
+          (child! db child {:iteration_budget 1})
+
+          env
+          {:db-info db :session-id leader}]
+
+      (with-fake-runtime
+        db
+        leader
+        (atom #{})
+        (fn [_]
+          (agents/claim-iteration! {:db-info db :session-id child})
+          (agents/finish! db child "completed")
+          (expect (not (agents/wake-allowed? db leader child)))
+          (expect (= {"status" "completed" "iteration_budget" 6 "iterations_used" 1}
+                     (select-keys (first (outcome #(agents/extend-agent env child 5)))
+                                  ["status" "iteration_budget" "iterations_used"])))
+          (expect (agents/wake-allowed? db leader child))
+          (expect (= :budget-exceeded (outcome #(agents/extend-agent env child 595))))
+          (expect (= :invalid-request (outcome #(agents/extend-agent env child 0))))
+          (expect (= :not-owner
+                     (outcome #(agents/extend-agent {:db-info db :session-id other} child 1))))
+          (expect (= :not-owner
+                     (outcome #(agents/extend-agent {:db-info db :session-id child} child 1))))
+          (expect (= :budget-exceeded
+                     (outcome #(agents/extend-agent {:db-info db :session-id child} grandchild 6)))
+                  "A subagent gives at most its own remaining iterations")
+          (expect (= 3
+                     (get (first (outcome #(agents/extend-agent {:db-info db :session-id child}
+                                                                grandchild
+                                                                2)))
+                          "iteration_budget")))
+          (ps/db-agent-update! db grandchild {:status "cancelled"})
+          (expect (= :invalid-request (outcome #(agents/extend-agent env grandchild 1))))))))
+  (it
+    "lets a child ask for iterations and the parent grant or deny them"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:iteration_budget 4})
+
+          env
+          {:db-info db :session-id leader}
+
+          child-env
+          {:db-info db :session-id child}]
+
+      (with-fake-runtime
+        db
+        leader
+        (atom #{leader})
+        (fn [entries]
+          (with-redefs [ps/db-council-get (fn [_ id]
+                                            (get @entries id))]
+            (let [asked (future (outcome #(agents/ask-budget child-env
+                                                             10
+                                                             "The suite has 40 files"
+                                                             {:timeout_secs 10})))
+                  r (asking-record env child)]
+
+              (expect (= {"iterations" 10 "reason" "The suite has 40 files"}
+                         (get r "budget_request")))
+              (expect (= "Budget request: 10 more iterations. Reason: The suite has 40 files"
+                         (get r "question")))
+              (outcome #(agents/extend-agent env child 10))
+              (expect (= {"granted" 10
+                          "iteration_budget" 14
+                          "reply" "Granted 10 more iterations. New budget: 14."}
+                         (deref asked 5000 ::timeout))))
+            (let [asked (future
+                          (outcome
+                            #(agents/ask-budget child-env 50 "More tests" {:timeout_secs 10})))]
+              (asking-record env child)
+              (expect (nil? (get (first (outcome
+                                          #(agents/deny-agent env child "Stop at the parser.")))
+                                 "budget_request"))
+                      "The answered request leaves the record")
+              (let [denied (deref asked 5000 ::timeout)]
+                (expect (= 0 (get denied "granted")))
+                (expect (re-find #"^Denied: Stop at the parser\." (get denied "reply")))))
+            (expect (= :invalid-request (outcome #(agents/deny-agent env child "No request")))))
+          (expect (= :invalid-request (outcome #(agents/ask-budget child-env 601 "Too many"))))
+          (expect (= :invalid-request (outcome #(agents/ask-budget env 5 "Not a child"))))))))
+  (it
+    "resumes a finished child with a follow-up task and never returns its old answer"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:iteration_budget 4})
+
+          live
+          (atom #{})
+
+          env
+          {:db-info db :session-id leader}
+
+          turns
+          (atom [{:id "old" :content [{"type" "prose" "markdown" "Old answer"}]}])]
+
+      (with-fake-runtime
+        db
+        leader
+        live
+        (fn [entries]
+          (with-redefs [ps/db-list-session-turns (fn [_ sid]
+                                                   (if (= child (str sid)) @turns []))]
+            (agents/finish! db child "completed")
+            (expect (= "Old answer"
+                       (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
+                            "answer")))
+            (swap! live conj child)
+            (expect (= :invalid-request (outcome #(agents/resume-agent env child "Next")))
+                    "A running child needs council.wait")
+            (swap! live disj child)
+            (expect (= :not-owner
+                       (outcome
+                         #(agents/resume-agent {:db-info db :session-id child} child "Next"))))
+            (let [records
+                  (outcome
+                    #(agents/resume-agent env child "Fix the parser test too" {:timeout_secs 1}))]
+              (expect (= "queued" (get (first records) "status")))
+              (expect (= {:kind "coordination"
+                          :title "Follow-up task"
+                          :content "Fix the parser test too"
+                          :ping [child]
+                          :reply_required true
+                          :author leader}
+                         (get @entries (count @entries)))))
+            ;; The gateway stores the status before the turn, so the old turn is still the last.
+            (agents/finish! db child "completed")
+            (expect (nil? (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
+                               "answer")))
+            (swap! turns conj {:id "new" :content [{"type" "prose" "markdown" "New answer"}]})
+            (expect (= "New answer"
+                       (get (first (:result (agents/wait-agents env [child] {:timeout_secs 1})))
+                            "answer"))))
+          (agents/claim-iteration! {:db-info db :session-id child})
+          (dotimes [_ 3]
+            (agents/claim-iteration! {:db-info db :session-id child}))
+          (expect (= :budget-exceeded (outcome #(agents/resume-agent env child "More")))
+                  "Extend first")
+          (ps/db-agent-update! db child {:status "cancelled"})
+          (expect (= :invalid-request (outcome #(agents/resume-agent env child "More")))))))))
 
 ;; Regression: Subagents was on only in the leader's session settings. A child starts without
 ;; those overrides, so its turn snapshot read the default and refused its first iteration.

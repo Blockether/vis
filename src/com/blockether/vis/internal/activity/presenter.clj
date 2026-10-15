@@ -529,7 +529,11 @@
    "council.run" ["Run subagents" "Ran subagents" true]
    "council.wait" ["Wait for subagents" "Waited for subagents" true]
    "council.cancel" ["Cancel subagent" "Cancelled subagent" false]
+   "council.resume" ["Resume subagent" "Resumed subagent" true]
+   "council.extend" ["Extend subagent budget" "Extended subagent budget" false]
+   "council.deny" ["Deny subagent budget" "Denied subagent budget" false]
    "council.ask" ["Ask parent" "Asked parent" true]
+   "council.ask_budget" ["Ask parent for iterations" "Asked parent for iterations" true]
    "automations.list" ["List automations" "Listed automations" false]
    "automations.get" ["Read automation" "Read automation" false]
    "automations.create" ["Create automation" "Created automation" false]
@@ -726,8 +730,13 @@
    "summary" (str/join " · "
                        (remove str/blank?
                          [(label (field value "status"))
+                          (when-let [request (field value "budget_request")]
+                            (str "asks for "
+                                 (counted-label (field request "iterations") "iteration")))
                           (when-let [used (field value "iterations_used")]
-                            (counted-label used "iteration"))]))
+                            (if-let [budget (field value "iteration_budget")]
+                              (str used " of " (counted-label budget "iteration"))
+                              (counted-label used "iteration")))]))
    "content" (council-body value (if (not-empty (field value "question")) "question" "answer"))})
 
 (defn- council-presentation
@@ -768,7 +777,12 @@
           sections?
           (assoc "sections" (mapv council-message items))))
 
-      ("council.run" "council.wait" "council.cancel")
+      ("council.run"
+       "council.wait"
+       "council.cancel"
+       "council.resume"
+       "council.extend"
+       "council.deny")
       {"headline" headline
        "summary" (if (seq value)
                    (str/join " · "
@@ -782,7 +796,17 @@
       "council.ask"
       {"headline" headline
        "summary" (if (util/non-blank-string? value) "Parent replied" "No reply")
-       "content" (if (string? value) (council-body {"content" value} "content") [])})))
+       "content" (if (string? value) (council-body {"content" value} "content") [])}
+
+      "council.ask_budget"
+      (let [granted (field value "granted")]
+        {"headline" headline
+         "summary" (cond (and (number? granted) (pos? (long granted)))
+                         (str "Granted " (counted-label granted "iteration"))
+                         (util/non-blank-string? (field value "reply")) "No iterations granted"
+                         :else "No reply")
+         "content"
+         (if (util/non-blank-string? (field value "reply")) (council-body value "reply") [])}))))
 
 (defn- automation-state [value] (if (true? (field value "enabled")) "On" "Paused"))
 

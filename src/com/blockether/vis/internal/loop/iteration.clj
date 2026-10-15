@@ -1897,10 +1897,11 @@
 
         ;; Clear any sticky best-answer from a PRIOR turn (the atom lives on the
         ;; per-session env) so this turn's cancel-fallback and its answer only ever
-        ;; surface what THIS turn actually produced.
+        ;; surface what THIS turn actually produced. The subagent handoff marks
+        ;; are per turn too: only a turn that used the last iteration gets a handoff.
         _
         (some-> (:turn-state-atom environment)
-                (swap! assoc :best-answer nil))
+                (swap! assoc :best-answer nil :agent-claimed? false :agent-handoff? false))
 
         has-reasoning?
         (and (nil? reasoning-effort) (transcript/reasoning-effort-configurable? resolved-model))
@@ -2351,12 +2352,17 @@
                             :iteration-count iteration}
                            (accounting/turn-cost @accounting-atom turn-pricing))
           (not (agents/claim-iteration! environment))
-          (merge {:status :error
-                  :status-id (loop-router/status->id :error)
-                  :answer (agents/stop-reason environment)
-                  :trace trace
-                  :iteration-count iteration}
-                 (accounting/turn-cost @accounting-atom turn-pricing)))))
+          ;; The last report of the child stays in the answer, so the parent gets a handoff
+          ;; and not only the stop reason.
+          (let [sticky (:value (:best-answer (ctx-loop/read-turn-state environment)))]
+            (merge {:status :error
+                    :status-id (loop-router/status->id :error)
+                    :answer (cond-> (agents/stop-reason environment)
+                              (util/non-blank-string? sticky)
+                              (str "\n\nLast report:\n" sticky))
+                    :trace trace
+                    :iteration-count iteration}
+                   (accounting/turn-cost @accounting-atom turn-pricing))))))
 
 (defn- plan-request
   "Plans the iteration's request: the route, the model and reasoning level, the
