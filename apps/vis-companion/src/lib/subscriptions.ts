@@ -64,9 +64,10 @@ export class SessionSubscriptionHub {
   private fleetStreaming = false;
   private readonly connectionListeners = new Set<ConnectionListener>();
   private readonly buffers = new Map<string, SseEvent[]>();
-  // Sessions whose last seen lifecycle frame ENDED a turn. Absence means
-  // "unknown" (e.g. the hub attached mid-turn), which is treated as in-flight.
-  private readonly ended = new Set<string>();
+  // Sessions whose last seen lifecycle frame ENDED a turn, with that turn's id ('' when
+  // the frame named none). Absence means "unknown" (e.g. the hub attached mid-turn),
+  // which is treated as in-flight.
+  private readonly ended = new Map<string, string>();
   private stopStream: (() => void) | null = null;
   private connected = false;
   private disposed = false;
@@ -137,10 +138,13 @@ export class SessionSubscriptionHub {
    *
    * A screen seeding its running-turn bubble from a cache needs to know that the answer
    * it remembers has since finished — the settled row is in the transcript, and
-   * repainting the bubble would render it twice.
+   * repainting the bubble would render it twice. With `turnId`, only that turn's own
+   * terminal frame counts: an earlier turn's ending never settles a later turn.
    */
-  hasEndedTurn(sid: string): boolean {
-    return this.ended.has(sid);
+  hasEndedTurn(sid: string, turnId?: string): boolean {
+    const ended = this.ended.get(sid);
+    if (ended === undefined) return false;
+    return !turnId || !ended || ended === turnId;
   }
 
   watchedSessionIds(): ReadonlySet<string> {
@@ -433,7 +437,7 @@ export class SessionSubscriptionHub {
     // between `turn.started` and its terminal frame, and the terminal frame
     // drops the buffer outright.
     if (TURN_TERMINAL_EVENTS.has(event.type)) {
-      this.ended.add(sid);
+      this.ended.set(sid, typeof event.turn_id === 'string' ? event.turn_id : '');
       this.buffers.delete(sid);
     } else if (event.type === 'turn.started') {
       this.ended.delete(sid);

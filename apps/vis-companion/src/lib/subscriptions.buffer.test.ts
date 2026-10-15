@@ -88,3 +88,22 @@ describe('running-turn replay buffer', () => {
     expect(replayed).toEqual(reduce(turn));
   });
 });
+
+// Regression, Vis session 034e287e-9fcc-4a95-b993-65bea2053f60: one ended turn marked the
+// whole session as ended, so a later running turn was settled as cancelled on re-entry.
+describe('ended turns', () => {
+  it('reports the ending of the turn that ended, not of a later one', () => {
+    const { client, streams } = streamClient();
+    hub = new SessionSubscriptionHub(client);
+    hub.watchSessions(['s']);
+    streams.at(-1)!.emit(frame({ type: 'turn.started', seq: 1, turn_id: 't-done' }));
+    streams.at(-1)!.emit(frame({ type: 'turn.completed', seq: 2, turn_id: 't-done' }));
+
+    expect(hub.hasEndedTurn('s')).toBe(true);
+    expect(hub.hasEndedTurn('s', 't-done')).toBe(true);
+    expect(hub.hasEndedTurn('s', 't-live')).toBe(false);
+
+    streams.at(-1)!.emit(frame({ type: 'turn.started', seq: 3, turn_id: 't-live' }));
+    expect(hub.hasEndedTurn('s', 't-done')).toBe(false);
+  });
+});

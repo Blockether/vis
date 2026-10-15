@@ -636,7 +636,10 @@ function seedRunningTurn(
   if (cached.turn.id && settledTurnRow(client.cachedTranscript(sid), cached.turn.id)) return null;
 
   if (cached.turn.status === 'running') {
-    if (!subscriptions.hasEndedTurn(sid)) return cached;
+    // Only THIS turn's terminal frame settles it. The hub can still hold an earlier
+    // turn's ending (a missed `turn.started`), and settling on that showed every
+    // running step of a live turn as cancelled after a session switch.
+    if (!subscriptions.hasEndedTurn(sid, cached.turn.id)) return cached;
     // If a terminal frame arrived off-screen, retain and settle painted content until
     // persistence catches up; discard an optimistic bubble that never painted anything.
     if (!runningTurnCarriesOutput(cached.turn)) return null;
