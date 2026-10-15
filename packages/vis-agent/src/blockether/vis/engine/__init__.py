@@ -33,6 +33,7 @@ from ._council import (
     CouncilSource,
     CouncilThread,
 )
+from ._install import InstallError, ensure_installed, install
 from ._local import LocalEngine
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "ExecutionLayer",
     "GatewayClient",
     "GatewayError",
+    "InstallError",
     "JobEvent",
     "JobEvents",
     "JSONValue",
@@ -63,4 +65,6 @@ __all__ = [
     "TransportError",
     "Turn",
     "VisTimeout",
+    "ensure_installed",
+    "install",
 ]

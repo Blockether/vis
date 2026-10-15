@@ -33,7 +33,7 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from pydantic import Field
 
-from ..engine._install import ensure_vis_agent
+from ..engine._install import ensure_installed
 from .environment import HostEnvironment
 from .grade import RUN_FILE, STDERR_FILE, TRACE_FILE, TRAJECTORY_FILE
 from .trajectory import load_trajectory as load_vis_trajectory
@@ -163,8 +163,8 @@ class VisAgent(BaseAgent):
 
     The engine comes from the first option that is set: ``command``, ``native_bin``
     (``VIS_HARBOR_NATIVE_BIN``), ``source`` (``VIS_HARBOR_SOURCE``). Without them, the
-    agent runs the installed ``vis-agent`` CLI. When it is missing, setup downloads the
-    matching Vis release once into the SDK cache.
+    agent runs the ``vis-agent`` CLI of the SDK's release. When the installed CLI is
+    missing or another release, setup downloads that release once into the SDK cache.
     """
 
     capabilities = AgentCapabilities(atif=True)
@@ -286,7 +286,7 @@ class VisAgent(BaseAgent):
                 source_classpath, self.clojure, self.source
             )
             return
-        self.installed_command = await asyncio.to_thread(ensure_vis_agent)
+        self.installed_command = await asyncio.to_thread(ensure_installed)
 
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext

@@ -265,7 +265,7 @@ def test_setup_downloads_vis_when_the_cli_is_missing(
     from blockether.vis.evals.environment import HostEnvironment
 
     downloaded = str(tmp_path / "sdk" / "v0.2.46" / DEFAULT_COMMAND)
-    monkeypatch.setattr(agent_module, "ensure_vis_agent", lambda: downloaded)
+    monkeypatch.setattr(agent_module, "ensure_installed", lambda: downloaded)
     agent = make_agent(tmp_path)
     asyncio.run(agent.setup(object.__new__(HostEnvironment)))
     assert agent.process_env("go", tmp_path)["VIS_HARBOR_ENGINE"] == downloaded

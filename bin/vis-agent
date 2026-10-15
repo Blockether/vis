@@ -516,7 +516,12 @@ configure_system_trust() {
 
 # A selected native track never falls back to source. Direct checkout execution
 # remains available before an installation is selected; dev always ignores native.
+# A pinned bundle (the Python SDK's own download) always runs the runtime beside it.
 runtime_effective() {
+  if [[ -f "$bin_dir/vis-agent.pinned" && -x "$bundled_native" ]]; then
+    printf 'native\n'
+    return 0
+  fi
   case "$(read_state "$vis_track_file")" in
     dev) printf 'jvm\n' ;;
     release|beta) printf 'native\n' ;;

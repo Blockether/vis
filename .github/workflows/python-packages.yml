@@ -111,12 +111,16 @@ jobs:
           pyproject.write_text(text)
           PY
       - name: Build wheels from sdists
+        env:
+          # A beta SDK records the beta-<sha> tag of its engine; a release SDK uses vX.Y.Z.
+          VIS_SDK_RELEASE_TAG: ${{ contains(inputs.version, '.dev') && format('beta-{0}', inputs.ref) || '' }}
         run: |
           python -m build packages/vis-agent --outdir dist
           python -m twine check --strict dist/*
       - name: Verify versions and installed distributions outside the checkout
         env:
           EXPECTED_VERSION: ${{ inputs.version }}
+          EXPECTED_TAG: ${{ contains(inputs.version, '.dev') && format('beta-{0}', inputs.ref) || '' }}
         run: |
           python -m pip install dist/*.whl
           cd "$RUNNER_TEMP"
@@ -136,6 +140,9 @@ jobs:
           assert metadata.version('vis-agent') == expected
           assert not str(Path(vis.__file__).resolve()).startswith(os.environ['GITHUB_WORKSPACE'])
           assert _contracts.schema('gateway')['$defs']['handshake']['required']
+          # The installed SDK downloads exactly the engine of its own release.
+          from blockether.vis.engine import _install
+          assert _install._sdk_tag() == (os.environ.get('EXPECTED_TAG') or f'v{expected}'), _install._sdk_tag()
           PY
           VIS_TEST_INSTALLED=1 python -m pytest "$GITHUB_WORKSPACE/packages/vis-agent/tests" -q
       - uses: actions/upload-artifact@v6

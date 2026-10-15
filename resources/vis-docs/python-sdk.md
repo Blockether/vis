@@ -39,11 +39,28 @@ python3 -m venv .venv
 python -m pip install --upgrade vis-agent
 ```
 
-You do not have to install Vis first. When your program starts a private agent and no
-`vis-agent` command is installed, the SDK downloads the Vis release of the same version.
-It checks the download against the release checksums and keeps it in `~/.vis/sdk`. Later
-runs use that copy, so only the first run needs network access. The download does not
-change your shell profile or an installed Vis. To turn it off, set `VIS_NO_AUTO_INSTALL=1`.
+You do not have to install Vis first. When your program starts a private agent, the SDK uses
+the Vis engine of its own release:
+
+- If the installed `vis-agent` runs that release, the SDK uses it.
+- Otherwise the SDK downloads that release once into `~/.vis/sdk` and uses that copy.
+
+The download has only the engine and its Python runtime, not the terminal, web or desktop app.
+The SDK checks it against the release checksums. It does not change your shell profile or your
+installed Vis. Only the first run needs network access. To turn off the download, set
+`VIS_NO_AUTO_INSTALL=1`.
+
+To download the engine ahead of time, for example in a container image, call `install()`:
+
+```python
+from blockether.vis.engine import ensure_installed, install
+
+print(install())  # downloads now and prints the path of the vis-agent command
+print(ensure_installed())  # the command that a private agent uses, downloaded if missing
+```
+
+`install()` always uses the copy in `~/.vis/sdk`, also when you have Vis installed. Pass
+`force=True` to download it again. Both functions raise `InstallError` when the download fails.
 
 Before the first task, configure a [provider and model](configuration.md). A gateway
 client needs only the Python package, because the provider runs on the gateway machine.

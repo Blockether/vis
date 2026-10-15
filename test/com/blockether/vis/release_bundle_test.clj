@@ -5600,3 +5600,44 @@
         ;; A locally built asset is published the same way, so it is checked the
         ;; same way.
         (expect (str/includes? (slurp "bin/release-native") "bin/smoke-gateway-routes")))))
+
+(defdescribe
+  sdk-pinned-launcher-test
+  (it
+    "runs the native engine beside a pinned launcher even when the selected track is dev"
+    (let [root
+          (.toFile (Files/createTempDirectory "vis-pinned-launcher-" (make-array FileAttribute 0)))
+
+          bundle
+          (io/file root "sdk" "v9.9.9")
+
+          vis-home
+          (io/file root "vis")
+
+          launcher
+          (io/file bundle "vis-agent")
+
+          run!
+          (fn []
+            (run-bash ["bash" (.getAbsolutePath launcher) "stdio"]
+                      {"HOME" (.getAbsolutePath root)
+                       "VIS_HOME" (.getAbsolutePath vis-home)
+                       "VIS_NO_AUTO_INSTALL" "1"
+                       "VIS_GATEWAY_URL" ""}))]
+
+      (try (.mkdirs bundle)
+           (.mkdirs (io/file vis-home "install"))
+           (spit (io/file vis-home "install" "track") "dev\n")
+           (write-executable! launcher (slurp "bin/vis-agent"))
+           (write-executable! (io/file bundle "vis-agent-native")
+                              "#!/usr/bin/env bash\necho \"pinned-native $*\"\n")
+           (let [{:keys [exit output]} (run!)]
+             ;; Without the pin, the dev track selects source, which is not installed.
+             (expect (not (zero? exit)) output)
+             (expect (not (str/includes? output "pinned-native")) output))
+           (spit (io/file bundle "vis-agent.pinned") "v9.9.9\n")
+           (let [{:keys [exit output]} (run!)]
+             (expect (zero? exit) output)
+             (expect (str/includes? output "pinned-native") output)
+             (expect (str/includes? output "stdio") output))
+           (finally (delete-tree! root))))))

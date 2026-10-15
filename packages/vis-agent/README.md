@@ -7,9 +7,11 @@ pip install vis-agent
 ```
 
 You need Python 3.12+ on Linux or macOS and a configured model provider. You do not
-have to install Vis first: on the first local run, the SDK downloads the Vis release of
-the same version into `~/.vis/sdk` and checks it against the release checksums. Set
-`VIS_NO_AUTO_INSTALL=1` to turn this off.
+have to install Vis first. A local run uses the installed `vis-agent` only when it is
+the same release as the SDK. Otherwise the SDK downloads only that release's engine into
+`~/.vis/sdk` and checks it against the release checksums. Set `VIS_NO_AUTO_INSTALL=1` to
+turn this off. To download the engine ahead of time, for example in a container image, run
+`python -c "from blockether.vis.engine import install; print(install())"`.
 
 ## Run a local agent
 

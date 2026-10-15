@@ -1,10 +1,15 @@
-"""Find the `vis-agent` command, or download the matching Vis release once.
+"""Install the Vis engine that matches this SDK.
 
-A local engine needs the Vis command. When `vis-agent` is not on `PATH` or in
-`~/.local/bin`, the SDK downloads the release launcher into its own cache. It checks
-the launcher against the release `SHA256SUMS`, and the launcher checks the native
-engine bundle. The download does not change shell profiles, the user's installed
-track or a running gateway. Set `VIS_NO_AUTO_INSTALL=1` to turn it off.
+`ensure_installed()` returns the `vis-agent` command for this SDK. It uses an
+installed Vis only when that build is the same release as the SDK. Otherwise it
+downloads the release once into `$VIS_HOME/sdk/<tag>`. `install()` makes that
+download now, for example while you build a container image.
+
+The download is the engine bundle of one platform: the `vis-agent` launcher, the
+native engine and its Python runtime. It has no terminal client, web app or desktop
+app. The SDK checks the archive against the release `SHA256SUMS` and the build stamp
+against the release tag. It does not change shell profiles, the installed track or a
+running gateway. Set `VIS_NO_AUTO_INSTALL=1` to turn off the automatic download.
 """
 
 from __future__ import annotations
@@ -12,76 +17,113 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import importlib.metadata
+import importlib.resources
+import json
 import os
+import platform
 import re
 import shutil
-import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 _COMMAND = "vis-agent"
+_NATIVE = "vis-agent-native"
+# A launcher with this file beside it always runs the native engine beside it.
+_PINNED = "vis-agent.pinned"
 _RELEASE = re.compile(r"^\d+\.\d+\.\d+$")
-_TAG = re.compile(r"^v\d+\.\d+\.\d+$")
+_STABLE = re.compile(r"^v\d+\.\d+\.\d+$")
+_TAG = re.compile(r"^(v\d+\.\d+\.\d+|beta-[0-9a-f]{40})$")
 _OFF = {"1", "true", "yes", "on"}
-# The native bundle is large; a slow network still completes in this time.
-_UPDATE_TIMEOUT = 1800
+_CHUNK = 1 << 20
+# Each network read must progress within this time; the engine bundle is large.
+_READ_TIMEOUT = 120
 
 
 class InstallError(RuntimeError):
-    """The SDK could not find or download the Vis command."""
+    """The SDK could not find or download the Vis engine."""
 
 
 def _repository() -> str:
     return os.environ.get("VIS_REPO_SLUG") or "Blockether/vis"
 
 
+def _vis_home() -> Path:
+    return Path(os.environ.get("VIS_HOME") or Path.home() / ".vis")
+
+
 def _cache_root() -> Path:
-    home = os.environ.get("VIS_HOME") or str(Path.home() / ".vis")
-    return Path(home) / "sdk"
+    return _vis_home() / "sdk"
 
 
-def _installed() -> str | None:
-    found = shutil.which(_COMMAND)
-    if found:
-        return found
-    candidate = Path.home() / ".local/bin" / _COMMAND
-    if candidate.is_file() and os.access(candidate, os.X_OK):
-        return str(candidate)
-    return None
+def _embedded_tag() -> str | None:
+    """Return the release tag that the wheel build recorded, if any."""
+    try:
+        text = (
+            importlib.resources.files("blockether.vis.engine")
+            .joinpath("release-tag")
+            .read_text(encoding="utf-8")
+        )
+    except (OSError, ModuleNotFoundError):
+        return None
+    tag = text.strip()
+    return tag if _TAG.match(tag) else None
 
 
-def _complete(directory: Path) -> bool:
-    launcher = directory / _COMMAND
-    return (
-        launcher.is_file()
-        and os.access(launcher, os.X_OK)
-        and (directory / "vis-agent-native").is_file()
-        and (directory / "vis-agent-native.build").is_file()
-    )
+def _editable(distribution: importlib.metadata.Distribution) -> bool:
+    try:
+        url = json.loads(distribution.read_text("direct_url.json") or "{}")
+    except ValueError:
+        return False
+    return bool(url.get("dir_info", {}).get("editable"))
 
 
 def _sdk_tag() -> str | None:
-    """Return the release tag of this SDK, or None for a development build."""
+    """Return the release tag of this SDK, or None for a development build.
+
+    A release SDK `X.Y.Z` uses `vX.Y.Z`. A beta SDK `X.Y.Z.devN` uses the
+    `beta-<sha>` tag that its wheel build recorded. An editable checkout is a
+    development build.
+    """
     try:
-        version = importlib.metadata.version("vis-agent")
+        distribution = importlib.metadata.distribution("vis-agent")
     except importlib.metadata.PackageNotFoundError:
         return None
-    return f"v{version}" if _RELEASE.match(version) else None
+    if _editable(distribution):
+        return None
+    version = distribution.version
+    if _RELEASE.match(version):
+        return f"v{version}"
+    return _embedded_tag()
+
+
+def _open(url: str):
+    return urllib.request.urlopen(url, timeout=_READ_TIMEOUT)
 
 
 def _fetch(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=60) as response:
+    with _open(url) as response:
         return response.read()
+
+
+def _fetch_file(url: str, target: Path) -> str:
+    """Stream `url` into `target` and return its SHA-256."""
+    digest = hashlib.sha256()
+    with _open(url) as response, open(target, "wb") as output:
+        while chunk := response.read(_CHUNK):
+            digest.update(chunk)
+            output.write(chunk)
+    return digest.hexdigest()
 
 
 def _latest_tag() -> str:
     url = f"https://github.com/{_repository()}/releases/latest"
-    with urllib.request.urlopen(url, timeout=60) as response:
+    with _open(url) as response:
         tag = response.geturl().rstrip("/").rsplit("/", 1)[-1]
-    if not _TAG.match(tag):
+    if not _STABLE.match(tag):
         raise InstallError(f"could not find the latest Vis release at {url}")
     return tag
 
@@ -94,80 +136,180 @@ def _expected_hash(sums: bytes, name: str) -> str:
     raise InstallError(f"SHA256SUMS has no entry for {name}")
 
 
-def _download(tag: str, directory: Path) -> None:
-    base = f"https://github.com/{_repository()}/releases/download/{tag}"
-    launcher = _fetch(f"{base}/{_COMMAND}")
-    expected = _expected_hash(_fetch(f"{base}/SHA256SUMS"), _COMMAND)
-    if hashlib.sha256(launcher).hexdigest() != expected:
-        raise InstallError(f"the {_COMMAND} command of {tag} does not match SHA256SUMS")
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / _COMMAND
-    temporary = directory / f"{_COMMAND}.tmp"
-    temporary.write_bytes(launcher)
-    temporary.chmod(0o755)
-    temporary.replace(target)
-    # A private VIS_HOME keeps the user's track, components and gateway untouched.
-    state = directory / "home"
-    state.mkdir(exist_ok=True)
-    env = {**os.environ, "VIS_HOME": str(state)}
-    command = [str(target), "update", "--track", "release", tag, "--components", "none"]
-    with tempfile.TemporaryFile() as log:
-        result = subprocess.run(
-            command,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            timeout=_UPDATE_TIMEOUT,
-        )
-        if result.returncode != 0 or not _complete(directory):
-            log.seek(0)
-            tail = log.read().decode("utf-8", "replace")[-2000:]
-            raise InstallError(f"could not install Vis {tag}:\n{tail}")
+def _platform_asset() -> str:
+    """Return the engine bundle name for this computer."""
+    machine = platform.machine().lower()
+    if sys.platform == "darwin" and machine == "arm64":
+        return "vis-agent-macos-arm64.tar.gz"
+    if sys.platform == "linux" and machine in ("x86_64", "amd64"):
+        return "vis-agent-linux-x64.tar.gz"
+    if sys.platform == "linux" and machine in ("aarch64", "arm64"):
+        return "vis-agent-linux-arm64.tar.gz"
+    raise InstallError(
+        f"Vis has no engine for {sys.platform} {machine}. "
+        "Use Linux (x64 or arm64) or macOS on Apple silicon."
+    )
 
 
-def ensure_vis_agent() -> str:
-    """Return the path of the `vis-agent` command and download it when missing.
+def _stamp_matches(stamp: Path, tag: str) -> bool:
+    """True when the build stamp `version commit track …` is the build of `tag`."""
+    try:
+        fields = stamp.read_text(encoding="utf-8").split()
+    except OSError:
+        return False
+    if len(fields) < 3:
+        return False
+    version, commit, track = fields[:3]
+    if tag.startswith("beta-"):
+        return track == "beta" and commit == tag.removeprefix("beta-")
+    return track == "release" and version == tag.removeprefix("v")
 
-    Use an installed command first. Otherwise use the SDK cache under
-    `$VIS_HOME/sdk/<tag>`, and download the release of this SDK version (or the
-    latest release for a development build) into it.
+
+def _executable(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def _complete(directory: Path, tag: str) -> bool:
+    return (
+        _executable(directory / _COMMAND)
+        and _executable(directory / _NATIVE)
+        and (directory / _PINNED).is_file()
+        and (directory / "vis-agent-python" / "python").is_dir()
+        and _stamp_matches(directory / f"{_NATIVE}.build", tag)
+    )
+
+
+def _installed() -> str | None:
+    found = shutil.which(_COMMAND)
+    if found:
+        return found
+    candidate = Path.home() / ".local/bin" / _COMMAND
+    return str(candidate) if _executable(candidate) else None
+
+
+def _installed_matches(command: str, tag: str) -> bool:
+    """True when the launcher `command` runs the native build of `tag`.
+
+    This follows the launcher: a pinned bundle runs the engine beside it, the `dev`
+    track runs source, and otherwise the engine beside the launcher wins over the
+    one in `$VIS_HOME/install`.
     """
-    installed = _installed()
-    if installed:
-        return installed
-    root = _cache_root()
-    tag = _sdk_tag()
-    if tag and _complete(root / tag):
-        return str(root / tag / _COMMAND)
-    if (os.environ.get("VIS_NO_AUTO_INSTALL") or "").strip().lower() in _OFF:
+    bin_dir = Path(command).resolve().parent
+    install_dir = _vis_home() / "install"
+    bundled = bin_dir / _NATIVE
+    if not ((bin_dir / _PINNED).is_file() and _executable(bundled)):
+        try:
+            track = (install_dir / "track").read_text(encoding="utf-8").strip()
+        except OSError:
+            track = ""
+        if track == "dev":
+            return False
+    for native in (bundled, install_dir / _NATIVE):
+        if _executable(native):
+            return _stamp_matches(native.with_name(f"{_NATIVE}.build"), tag)
+    return False
+
+
+def _check_bundle(directory: Path, tag: str) -> None:
+    missing = [
+        name for name in (_COMMAND, _NATIVE) if not _executable(directory / name)
+    ]
+    python = directory / "vis-agent-python"
+    if not (python / "python").is_dir() or not list(python.glob("libvispython.*")):
+        missing.append("vis-agent-python")
+    if missing:
+        raise InstallError(f"the Vis {tag} bundle has no {', '.join(missing)}")
+    if not _stamp_matches(directory / f"{_NATIVE}.build", tag):
         raise InstallError(
-            f"the {_COMMAND} command is not installed, and VIS_NO_AUTO_INSTALL "
-            "turns off the download. Install Vis or pass executable=..."
+            f"the Vis {tag} bundle has the build stamp of another release"
         )
-    if sys.platform not in ("linux", "darwin"):
-        raise InstallError("the Vis download supports Linux and macOS")
-    try:
-        return _download_once(root, tag or _latest_tag())
-    except urllib.error.HTTPError as error:
-        # An SDK version without release assets falls back to the latest release.
-        if not tag or error.code != 404:
-            raise InstallError(f"could not download Vis {tag}: {error}") from None
-    except OSError as error:
-        raise InstallError(f"could not download Vis: {error}") from None
-    try:
-        return _download_once(root, _latest_tag())
-    except OSError as error:
-        raise InstallError(f"could not download Vis: {error}") from None
 
 
-def _download_once(root: Path, tag: str) -> str:
+def _download(tag: str, directory: Path) -> None:
+    """Download, check and unpack the engine bundle of `tag` into `directory`."""
+    asset = _platform_asset()
+    base = f"https://github.com/{_repository()}/releases/download/{tag}"
+    expected = _expected_hash(_fetch(f"{base}/SHA256SUMS"), asset)
+    with tempfile.TemporaryDirectory(dir=directory.parent, prefix=f".{tag}-") as work:
+        archive = Path(work) / asset
+        if _fetch_file(f"{base}/{asset}", archive) != expected:
+            raise InstallError(f"the {asset} of {tag} does not match SHA256SUMS")
+        bundle = Path(work) / "bundle"
+        with tarfile.open(archive) as tar:
+            tar.extractall(bundle, filter="data")
+        _check_bundle(bundle, tag)
+        (bundle / _PINNED).write_text(f"{tag}\n", encoding="utf-8")
+        if directory.exists():
+            shutil.rmtree(directory)
+        bundle.replace(directory)
+
+
+def _download_once(tag: str, *, force: bool = False) -> str:
+    root = _cache_root()
     directory = root / tag
     root.mkdir(parents=True, exist_ok=True)
     with open(root / f"{tag}.lock", "w") as lock:
         # A second process waits here and then uses the finished download.
         fcntl.flock(lock, fcntl.LOCK_EX)
-        if not _complete(directory):
+        if force or not _complete(directory, tag):
             print(f"vis-agent: downloading Vis {tag} into {directory}", file=sys.stderr)
-            _download(tag, directory)
+            try:
+                _download(tag, directory)
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    raise InstallError(
+                        f"Vis {tag} has no engine at {error.url}. "
+                        "Install the SDK version of a published Vis release."
+                    ) from None
+                raise InstallError(f"could not download Vis {tag}: {error}") from None
+            except (OSError, tarfile.TarError) as error:
+                raise InstallError(f"could not download Vis {tag}: {error}") from None
     return str(directory / _COMMAND)
+
+
+def install(*, force: bool = False) -> str:
+    """Download the Vis engine of this SDK now and return its `vis-agent` path.
+
+    Use it to prepare a computer or a container image before the first run. It
+    downloads into `$VIS_HOME/sdk/<tag>` even when another Vis is installed, and
+    reuses a complete download unless `force` is true. A development build of the
+    SDK installs the latest stable release. `VIS_NO_AUTO_INSTALL` does not apply.
+
+    Raises:
+        InstallError: The platform has no engine, the release has no bundle, or the
+            download fails its checks.
+    """
+    return _download_once(_sdk_tag() or _latest_tag(), force=force)
+
+
+def ensure_installed() -> str:
+    """Return the `vis-agent` command that matches this SDK, and download it when missing.
+
+    An installed `vis-agent` is used only when it runs the same release as the SDK.
+    Otherwise the SDK uses, or downloads, its own copy in `$VIS_HOME/sdk/<tag>`. A
+    development build of the SDK uses any installed command, or the latest stable
+    release.
+
+    Raises:
+        InstallError: The download is turned off with `VIS_NO_AUTO_INSTALL`, or
+            `install()` fails.
+    """
+    tag = _sdk_tag()
+    installed = _installed()
+    if tag is None and installed:
+        return installed
+    if tag is not None:
+        if installed and _installed_matches(installed, tag):
+            return installed
+        if _complete(_cache_root() / tag, tag):
+            return str(_cache_root() / tag / _COMMAND)
+    if (os.environ.get("VIS_NO_AUTO_INSTALL") or "").strip().lower() in _OFF:
+        wanted = f"Vis {tag}" if tag else f"the {_COMMAND} command"
+        raise InstallError(
+            f"{wanted} is not installed, and VIS_NO_AUTO_INSTALL turns off the "
+            "download. Install it, call install(), or pass executable=..."
+        )
+    try:
+        return install()
+    except OSError as error:
+        raise InstallError(f"could not download Vis: {error}") from None

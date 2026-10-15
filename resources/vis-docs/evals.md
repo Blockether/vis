@@ -63,8 +63,8 @@ python -m pip install vis-agent
 harbor --version
 ```
 
-The last command shows `0.24.0`. You do not have to install Vis. When `vis-agent` is not on `PATH`,
-the first run downloads the matching Vis release once. Each trial makes paid model calls. A task
+The last command shows `0.24.0`. You do not have to install Vis. When `vis-agent` is missing or another release,
+the first run downloads the Vis release of the SDK once. Each trial makes paid model calls. A task
 with one attempt costs one agent run.
 
 ## Step 2: Write a task
