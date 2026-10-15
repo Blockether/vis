@@ -382,6 +382,31 @@ describe('the speech-engines band', () => {
       expect.arrayContaining(['h-px', 'w-full', 'bg-dialog-edge']),
     );
   });
+  // Regression, user report: an engine whose model was not downloaded showed its Voices
+  // group with a "not ready" error. Voices belong to a downloaded model, so only the
+  // download action shows until then.
+  it('shows no voices for a TTS engine until its model is downloaded', async () => {
+    const { client } = machine(ready('parakeet-local'), {
+      status: 'absent',
+      engine: 'pocket-tts-local',
+    });
+    renderOpenBands(<Harness client={client} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /TTS/ }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Settings for Pocket TTS (gateway)' }),
+    );
+    const engine = choice(/Pocket TTS \(gateway\)/)!.closest(
+      '[data-speech-engine="pocket-tts-local"]',
+    ) as HTMLElement;
+    expect(
+      await within(engine).findByRole('button', { name: 'Download Pocket TTS model' }),
+    ).toBeVisible();
+    expect(within(engine).queryByRole('group', { name: 'Voices' })).toBeNull();
+    expect(client.speechVoices).not.toHaveBeenCalledWith(
+      expect.objectContaining({ engine: 'pocket-tts-local' }),
+    );
+  });
   it('reads and downloads an unselected engine from its own row', async () => {
     const { client, asked } = machine();
     vi.mocked(client.voiceModel).mockImplementation(

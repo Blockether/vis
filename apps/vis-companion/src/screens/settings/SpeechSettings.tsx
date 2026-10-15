@@ -345,7 +345,7 @@ export function VoicesPanel({
     <SettingsChoiceGroup label="Voices" isNested>
       <div className="divide-y divide-dialog-edge">
         {(err || note) && (
-          <div className="space-y-2 p-3">
+          <div className="space-y-2 py-3 pl-6 pr-3">
             {err && <Banner kind="err">{err}</Banner>}
             {note && <Banner kind="neutral">{note}</Banner>}
           </div>
@@ -1263,12 +1263,16 @@ export function SpeechEnginesPanel({
                               isBusy={busy === `tts:${engine.id}`}
                               onPrepare={() => void prepare('tts', engine.id)}
                             />
-                            <VoicesPanel
-                              client={client}
-                              prefs={prefs}
-                              engine={engine.id}
-                              onChange={onChange}
-                            />
+                            {/* Voices belong to a downloaded model. Until it is ready, the
+                                engine row offers only its download. */}
+                            {reading?.state?.status === 'ready' && (
+                              <VoicesPanel
+                                client={client}
+                                prefs={prefs}
+                                engine={engine.id}
+                                onChange={onChange}
+                              />
+                            )}
                           </div>
                         )}
                       </div>
