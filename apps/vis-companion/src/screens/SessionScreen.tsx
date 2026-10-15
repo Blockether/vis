@@ -5066,6 +5066,12 @@ export function SessionScreen({
   // route — which is exactly what the separate leave button used to do, so the
   // hold replaces it rather than leaving the route open behind a flag.
   const switchVoiceMode = async () => {
+    // Words already spoken belong to the user. A switch gesture during a recording
+    // only finishes it, so the words reach the box (or the turn) and the mode stays.
+    if (recordingRef.current) {
+      await toggleVoice();
+      return;
+    }
     if (voiceConversationRef.current) {
       await leaveVoiceConversation();
       setComposerNotice('Dictation · tap the microphone to write into the box');
@@ -5081,6 +5087,12 @@ export function SessionScreen({
     voiceModeSwitchedRef.current = false;
     if (voiceModeHoldRef.current != null) {
       clearTimeout(voiceModeHoldRef.current);
+    }
+    // During a recording, a long press is a slow tap: its click finishes the words.
+    if (recordingRef.current) {
+      voiceModeHoldRef.current = null;
+      setVoiceModeHolding(false);
+      return;
     }
     setVoiceModeHolding(true);
     voiceModeHoldRef.current = setTimeout(() => {
@@ -5131,9 +5143,14 @@ export function SessionScreen({
         onContextMenu={(event) => {
           event.preventDefault();
           cancelVoiceModeHold();
+          // A touch long press can also end in a click. When this press finishes a
+          // recording, that click must not start the next one.
+          if (recordingRef.current) voiceModeSwitchedRef.current = true;
           void switchVoiceMode();
         }}
         onKeyDown={(event) => {
+          // A key press is a new gesture: no click from an earlier long press is left.
+          voiceModeSwitchedRef.current = false;
           if (event.key === 'Enter' && event.shiftKey) {
             event.preventDefault();
             void switchVoiceMode();
@@ -5158,8 +5175,8 @@ export function SessionScreen({
             ? 'Stop speaking — hold to switch to dictation'
             : voicePhase === 'recording'
               ? voiceConversation
-                ? 'Finish voice utterance — hold to switch to dictation'
-                : 'Finish dictation — hold to switch to voice conversation'
+                ? 'Finish voice utterance'
+                : 'Finish dictation'
               : voiceConversation
                 ? 'Start voice utterance — hold to switch to dictation'
                 : 'Dictate message — hold to switch to voice conversation'
