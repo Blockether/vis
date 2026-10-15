@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.47] - 2026-10-15
+
+### Added
+- The Python SDK installs the engine release that matches its version. `install()` does this on
+  request. Without an installed Vis, the SDK downloads the matching release.
+- The sessions list has an Archive all action (#387).
+- Diagnostics show hung turns and virtual threads (#385).
+
+### Changed
+- `com.blockether/fff` is at 0.12.12. Its walk over ignored files costs less (#385).
+- The Companion dependencies are updated for audit findings.
+- Many guides are shorter, and their configuration and native build details are correct.
+
+### Fixed
+- File index rescans no longer stop turns (#384, #385).
+- You can safely retry session creation in the Companion (#384).
+- In the Companion, a running turn stays running after a session switch. A live turn that
+  ended during an earlier visit opens again.
+- Session lists show created and forked sessions at once.
+- The sessions list reads its data again after an archive (#387).
+- A fork of a session with a running turn shows that turn as cancelled.
+- After you stop a turn, its queued messages leave the queue at once.
+- A microphone press during dictation finishes the dictation.
+- The Companion shows TTS voices only after the speech model is ready.
+- Subagents follow the session setting of the leader.
+- Evaluations download Vis when the CLI is missing.
+- Development web and desktop builds print less output (#386).
+- The TUI compiles without reflection warnings.
+
 ## [v0.2.46] - 2026-10-14
 
 ### Changed
