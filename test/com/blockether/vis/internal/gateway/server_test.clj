@@ -7450,3 +7450,84 @@
             (expect (= 400 (:status response)))
             (expect (= {"type" "unknown" "message" "Unknown extension: spell."}
                        (get (wire/parse-json (:body response)) "error"))))))))
+
+(defdescribe create-session-idempotency-test
+             ;; Issue #384: a client that retried a slow create got a second session, and
+             ;; its message went to the session that the retry made.
+             (let [request
+                   (fn [body]
+                     {:body (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str body)
+                                                                      "UTF-8"))})
+
+                   handler
+                   #'sessions-api/create-session-handler]
+
+               (it "passes the idempotency key to the create and refuses a bad key"
+                   (let [seen (atom nil)]
+                     (with-redefs [state/create-session! (fn [opts]
+                                                           (reset! seen opts)
+                                                           {"id" "s1"})]
+                       (expect (= 201 (:status (handler (request {"idempotency_key" "create-1"})))))
+                       (expect (= "create-1" (:idempotency-key @seen)))
+                       (expect (= 400 (:status (handler (request {"idempotency_key" 7})))))
+                       (expect (= 400 (:status (handler (request {"idempotency_key" ""})))))
+                       (expect (= 400
+                                  (:status (handler (request {"idempotency_key"
+                                                              (apply str (repeat 201 "k"))}))))))))
+               (it
+                 "answers a retry with the session that the first create made, also while it runs"
+                 (let [creates
+                       (atom 0)
+
+                       release
+                       (java.util.concurrent.CountDownLatch. 1)
+
+                       key
+                       (str "create-" (random-uuid))]
+
+                   (with-redefs [state/create-session-cold!
+                                 (fn [opts]
+                                   (.await release)
+                                   {:id (str "s" (swap! creates inc)) :root (:root opts)})
+
+                                 state/session->wire
+                                 identity]
+
+                     (let [first-create
+                           (future (state/create-session! {:root "/a" :idempotency-key key}))
+
+                           retry
+                           (future (state/create-session! {:root "/a" :idempotency-key key}))]
+
+                       (Thread/sleep 50)
+                       (.countDown release)
+                       (expect (= {:id "s1" :root "/a"} (deref first-create 2000 nil)))
+                       (expect (= {:id "s1" :root "/a"} (deref retry 2000 nil)))
+                       (expect (= {:id "s1" :root "/a"}
+                                  (state/create-session! {:root "/a" :idempotency-key key})))
+                       (expect (= 1 @creates))
+                       (expect (= {:id "s2" :root "/a"} (state/create-session! {:root "/a"})))
+                       (expect (= {:id "s3" :root "/a"}
+                                  (state/create-session!
+                                    {:root "/a" :idempotency-key (str key "-other")})))))))
+               (it "forgets the key of a failed create, so a retry creates again"
+                   (let [attempts
+                         (atom 0)
+
+                         key
+                         (str "create-" (random-uuid))]
+
+                     (with-redefs [state/create-session-cold!
+                                   (fn [_]
+                                     (if (= 1 (swap! attempts inc))
+                                       (throw (ex-info "disk full" {}))
+                                       {:id "s-retry"}))
+
+                                   state/session->wire
+                                   identity]
+
+                       (expect (= "disk full"
+                                  (try (state/create-session! {:idempotency-key key})
+                                       (catch clojure.lang.ExceptionInfo e (ex-message e)))))
+                       (expect (= {:id "s-retry"} (state/create-session! {:idempotency-key key})))
+                       (expect (= 2 @attempts)))))))

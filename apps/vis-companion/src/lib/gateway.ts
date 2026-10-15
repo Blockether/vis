@@ -4079,18 +4079,23 @@ export class GatewayClient {
    * Start a session. `groupId` starts it INSIDE that session group, so a reader who
    * asked for it on a group's band sees the new row there and not loose in the
    * project (the gateway files it as it mints the soul).
+   *
+   * `idempotencyKey` makes a retry safe: the gateway answers a repeated key with the
+   * session that the first request made, also when that request is still running.
    */
   createSession(opts: {
     title?: string;
     channel?: string;
     root?: string;
     groupId?: string;
+    idempotencyKey?: string;
   }): Promise<Session> {
     return this.request<Session>('POST', '/v1/sessions', {
       title: opts.title,
       channel: opts.channel ?? 'web',
       root: opts.root,
       group_id: opts.groupId,
+      idempotency_key: opts.idempotencyKey,
     });
   }
 
@@ -5164,9 +5169,11 @@ export class GatewayClient {
       attachments?: GatewayAttachment[];
       extraBody?: Record<string, unknown>;
       turnFeatures?: Record<string, boolean>;
+      /** Reuse the key of an earlier attempt, so the gateway takes a retry as the same turn. */
+      idempotencyKey?: string;
     } = {},
   ): Promise<SubmittedTurn> {
-    const clientId = `companion:${randomUuid()}`;
+    const clientId = options.idempotencyKey ?? `companion:${randomUuid()}`;
     this.submissionKeys.set(sid, clientId);
     const attachments = await Promise.all(
       (options.attachments ?? []).map(async (attachment) => {

@@ -66,7 +66,10 @@
    extensions, turns off `-name` entries, or turns off every optional extension
    when it is empty. An optional `tools` list does the same for the tools of
    optional extensions (`py.lint_code`, `-py.repl_*`). A bad value refuses the
-   create with a 400 answer."
+   create with a 400 answer.
+
+   An optional `idempotency_key` makes a retry return the session that the
+   first create with the same key made."
   [request]
   (let [body
         (http/body-json request)
@@ -87,6 +90,9 @@
         tools
         (get body "tools")
 
+        idempotency-key
+        (get body "idempotency_key")
+
         string-list?
         #(or (nil? %) (and (sequential? %) (every? string? %)))]
 
@@ -99,6 +105,11 @@
           (http/error-response 400 :invalid-request "extensions must be a list of extension names")
           (not (string-list? tools))
           (http/error-response 400 :invalid-request "tools must be a list of tool names")
+          (not (or (nil? idempotency-key)
+                   (and (string? idempotency-key) (<= 1 (count idempotency-key) 200))))
+          (http/error-response 400
+                               :invalid-request
+                               "idempotency_key must be a string of 1 to 200 characters")
           :else (try (http/json-response 201
                                          (state/create-session!
                                            (cond-> {:channel (some-> (get body "channel")
@@ -109,7 +120,8 @@
                                                     :root (get body "root")
                                                     :sources sources
                                                     :extensions extensions
-                                                    :tools tools}
+                                                    :tools tools
+                                                    :idempotency-key idempotency-key}
                                              gid
                                              (assoc :group-id gid))))
                      (catch clojure.lang.ExceptionInfo e

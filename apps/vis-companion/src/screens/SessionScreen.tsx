@@ -187,6 +187,7 @@ import { OpenPathContext } from '../lib/open-path';
 import { projectPath } from '../lib/fleet';
 import { workspaceRelativePath } from '../lib/path';
 import { WorkspaceRootsContext } from '../lib/workspace-roots';
+import { randomUuid } from '../lib/uuid';
 
 const TERMINAL_EVENTS = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
 const RUNNING_TURN_BODY_THROTTLE_MS = 150;
@@ -1256,6 +1257,14 @@ export function SessionScreen({
   const submitsInFlightRef = useRef(0);
   const turnsRef = useRef<TranscriptTurn[]>([]);
   const cancelRef = useRef<() => void>(() => undefined);
+  // The keys and the created session of a `/new-session` that failed. A retry of the same
+  // request reuses them, so it never makes a second session or sends the message twice.
+  const newSessionAttemptRef = useRef<{
+    request: string;
+    createKey: string;
+    turnKey: string;
+    sid?: string;
+  } | null>(null);
   // A cold open stays covered until its first transcript page has been placed. A
   // cached re-entry still runs the same positioning pass, but paints immediately.
   const initialScrollPendingRef = useRef(!fresh);
@@ -3898,16 +3907,33 @@ export function SessionScreen({
       setPrompt('');
       setError(null);
       setRunning(true);
+      const attempt =
+        newSessionAttemptRef.current?.request === authoredRequest
+          ? newSessionAttemptRef.current
+          : {
+              request: authoredRequest,
+              createKey: `companion:${randomUuid()}`,
+              turnKey: `companion:${randomUuid()}`,
+            };
+      newSessionAttemptRef.current = attempt;
       try {
-        // Start in THIS session's project, as the TUI command does. Without a root,
-        // the gateway used its own launch folder, which can be another project.
-        const origin = session ?? (await client.session(sid));
-        const created = await client.createSession({
-          channel: 'web',
-          root: projectPath(origin) || undefined,
-        });
-        if (command === '/new-session' && args) await client.submitTurn(created.id, args);
-        onOpenSession(created.id, true);
+        let createdId = attempt.sid;
+        if (!createdId) {
+          // Start in THIS session's project, as the TUI command does. Without a root,
+          // the gateway used its own launch folder, which can be another project.
+          const origin = session ?? (await client.session(sid));
+          const created = await client.createSession({
+            channel: 'web',
+            root: projectPath(origin) || undefined,
+            idempotencyKey: attempt.createKey,
+          });
+          createdId = created.id;
+          // The message belongs to the session that the gateway answered with, also on a retry.
+          attempt.sid = createdId;
+        }
+        if (args) await client.submitTurn(createdId, args, { idempotencyKey: attempt.turnKey });
+        newSessionAttemptRef.current = null;
+        onOpenSession(createdId, true);
       } catch (cause) {
         setPrompt(request);
         setError((cause as Error).message);

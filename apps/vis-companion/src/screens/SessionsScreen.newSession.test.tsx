@@ -127,7 +127,42 @@ describe('where "New session" lives', () => {
     const create = view.requests.find(
       (request) => request.method === 'POST' && request.path === '/v1/sessions',
     );
-    expect(create?.body).toEqual({ channel: 'web', root: '/Users/dev/project' });
+    expect(create?.body).toEqual({
+      channel: 'web',
+      root: '/Users/dev/project',
+      idempotency_key: expect.stringMatching(/^companion:/),
+    });
+  });
+
+  // Regression, issue #384: a retry after a create that never answered made a second
+  // session. The retry now sends the same key, so the gateway answers the first session.
+  it('retries a failed create with the same key and uses a new key after success', async () => {
+    const opened: string[] = [];
+    const view = renderSessionsScreen({
+      machines: [{ ...alpha()[0], failCreates: 1 }],
+      onOpen: (_conn, sid) => opened.push(sid),
+    });
+    restore = view.restore;
+    await screen.findByText('First');
+
+    const createKeys = () =>
+      view.requests
+        .filter((request) => request.method === 'POST' && request.path === '/v1/sessions')
+        .map((request) => (request.body as { idempotency_key: string }).idempotency_key);
+
+    view.requests.length = 0;
+    await startSession();
+    await waitFor(() => expect(createKeys()).toHaveLength(1));
+    expect(opened).toHaveLength(0);
+
+    await startSession();
+    await waitFor(() => expect(opened).toHaveLength(1));
+    await startSession();
+    await waitFor(() => expect(opened).toHaveLength(2));
+
+    const [failed, retried, next] = createKeys();
+    expect(retried).toBe(failed);
+    expect(next).not.toBe(retried);
   });
 
   // Regression, user report, Vis session 2692dc5c-b2fd-4502-b7fa-5fe440a16c1d (paraphrased:
@@ -162,7 +197,11 @@ describe('where "New session" lives', () => {
       expect(
         view.requests.find((request) => request.method === 'POST' && request.path === '/v1/sessions')
           ?.body,
-      ).toEqual({ channel: 'web', root: '/Users/dev/notes' }),
+      ).toEqual({
+        channel: 'web',
+        root: '/Users/dev/notes',
+        idempotency_key: expect.stringMatching(/^companion:/),
+      }),
     );
   });
 

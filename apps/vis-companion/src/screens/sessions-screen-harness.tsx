@@ -18,6 +18,8 @@ export interface MachineFixture {
   /** Shown as the machine's name; the URL is assigned by the harness. */
   label?: string;
   sessions?: Session[];
+  /** The first N session creates fail, as a create whose answer never arrives does. */
+  failCreates?: number;
   /** This gateway is not answering — every read rejects, as an offline one does. */
   down?: boolean;
   /**
@@ -471,8 +473,13 @@ export function renderSessionsScreen({
     if (url.pathname === '/v1/sessions') {
       // The create answers a session with an id, the way the gateway's 201 does:
       // without one the screen has nothing to open.
-      if ((init?.method ?? 'GET') === 'POST')
+      if ((init?.method ?? 'GET') === 'POST') {
+        if ((machine.failCreates ?? 0) > 0) {
+          machine.failCreates = (machine.failCreates ?? 0) - 1;
+          throw new TypeError('Failed to fetch');
+        }
         return answer({ id: `created-${++created}`, channel: 'web', title: null });
+      }
       if (held) await held;
       const reads = (listReads.get(machine) ?? 0) + 1;
       listReads.set(machine, reads);

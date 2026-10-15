@@ -61,6 +61,7 @@ import {
 } from '../lib/draft-messages';
 import { shareSummary, type SharedPayload } from '../lib/share-intake';
 import { favoriteRank, nextFavoriteRank } from '../lib/favorites';
+import { randomUuid } from '../lib/uuid';
 import {
   fleetError,
   fleetRead,
@@ -470,6 +471,9 @@ export function SessionsScreen({
   // steps the screen paints. It changes at most twice per gesture, never per frame.
   const [pullPhase, setPullPhase] = useState<PullPhase>('none');
   const refreshAnchorRef = useRef<ListAnchor | null>(null);
+  // The create key of a new session whose request failed, by machine, project and group.
+  // A retry reuses it, so a create that reached the gateway is not made twice.
+  const createKeysRef = useRef(new Map<string, string>());
   // The reading position is put back at most once per mount, and never after the
   // reader has taken the scroller over.
   const restoredRef = useRef(false);
@@ -1536,13 +1540,14 @@ export function SessionsScreen({
     // `groupId`: the reader asked on a GROUP's band, so the session is minted inside
     // that group and the new row appears at the top of the band they started it in.
     async (on: GatewayConn, root: string, groupId?: string) => {
-      setCreating({
-        at: creationKey(clientFor(on).base, root, groupId),
-        label: 'Creating...',
-      });
+      const at = creationKey(clientFor(on).base, root, groupId);
+      const idempotencyKey = createKeysRef.current.get(at) ?? `companion:${randomUuid()}`;
+      createKeysRef.current.set(at, idempotencyKey);
+      setCreating({ at, label: 'Creating...' });
       setCreateError(null);
       try {
-        const session = await clientFor(on).createSession({ root, groupId });
+        const session = await clientFor(on).createSession({ root, groupId, idempotencyKey });
+        createKeysRef.current.delete(at);
         // Open before refreshing the fleet. The full list walk is background work,
         // while the session the reader just requested is their immediate destination.
         if (session.id) await onOpen(on, session.id, true);

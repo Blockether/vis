@@ -5722,6 +5722,23 @@
       (do (lp/assign-session-group! (:id created) group-id) (assoc created :group-id group-id))
       created)))
 
+(def ^:private SESSION_CREATE_KEY_TTL_MS
+  "How long a create key answers with the session that it made first."
+  (* 10 60 1000))
+
+(defonce ^:private session-creates
+  ;; idempotency key -> {:at epoch-ms :result (delay wire-map)}
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- forget-old-session-creates!
+  [now]
+  (doseq [^java.util.Map$Entry entry (vec (.entrySet ^java.util.concurrent.ConcurrentHashMap
+                                                     session-creates))]
+    (when (> (- (long now) (long (:at (.getValue entry)))) (long SESSION_CREATE_KEY_TTL_MS))
+      (.remove ^java.util.concurrent.ConcurrentHashMap session-creates
+               (.getKey entry)
+               (.getValue entry)))))
+
 (defn create-session!
   "Create one session and answer its wire map.
 
@@ -5732,9 +5749,30 @@
    save that one wait, and it paid for them while the gateway was still coming
    up. The wait belongs to whoever asks for a session.
 
-   `:group-id` starts the session INSIDE that session group (BLO-167)."
-  [{:keys [channel] :as opts}]
-  (session->wire (create-session-cold! (assoc opts :channel (or channel :api)))))
+   `:group-id` starts the session INSIDE that session group (BLO-167).
+
+   `:idempotency-key` makes a retry safe. For SESSION_CREATE_KEY_TTL_MS, the
+   same key answers with the session that the first create made, also while that
+   create still runs. A failed create forgets its key, so a retry creates again."
+  [{:keys [channel idempotency-key] :as opts}]
+  (let [create #(session->wire (create-session-cold! (-> opts
+                                                         (dissoc :idempotency-key)
+                                                         (assoc :channel (or channel :api)))))]
+    (if (str/blank? idempotency-key)
+      (create)
+      (let [now (util/now-ms)
+            _ (forget-old-session-creates! now)
+            mine {:at now :result (delay (create))}
+            entry (or (.putIfAbsent ^java.util.concurrent.ConcurrentHashMap session-creates
+                                    idempotency-key
+                                    mine)
+                      mine)]
+
+        (try
+          @(:result entry)
+          (catch Throwable t
+            (.remove ^java.util.concurrent.ConcurrentHashMap session-creates idempotency-key entry)
+            (throw t)))))))
 
 (def ^:private registry-in-flight-statuses
   "Registry turn statuses of a turn that has not ended, so its turn row can still be

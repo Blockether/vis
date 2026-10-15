@@ -195,6 +195,20 @@ rules.
 To continue a saved session, call `client.session(session_id)`. It returns a handle and does not
 create a session.
 
+If you retry a create after a timeout, add `idempotency_key`. Use one key for each session that you
+want:
+
+```python
+session = client.create_session(
+    **client.session_options(os.environ["VIS_PROJECT_ROOT"]),
+    idempotency_key="shop-review-2026-10-15",
+)
+```
+
+For 10 minutes, the same key returns the session that the first request made. This is also true
+while that request still runs. A failed request does not keep its key, so a retry creates the
+session.
+
 </div>
 
 <div data-variant="http">
@@ -216,6 +230,18 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/jso
 ```
 
 To continue a saved session, use its `id` in the paths of the next requests.
+
+If you retry a create after a timeout, add `idempotency_key`. Use one key for each session that you
+want:
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/json' \
+  --data '{"root": "/srv/projects/shop", "channel": "app", "idempotency_key": "shop-review-2026-10-15"}'
+```
+
+For 10 minutes, the same key returns the session that the first request made. This is also true
+while that request still runs. A failed request does not keep its key, so a retry creates the
+session. A key must have 1 to 200 characters.
 
 `sources` lists the configuration tiers that the session reads: `global`, `project`, both or none.
 `extensions` keeps the named extensions or turns off each `-name` entry. An empty list turns off
