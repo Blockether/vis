@@ -107,3 +107,34 @@ describe('Escape over a running turn', () => {
     expect(cancelTurn).not.toHaveBeenCalled();
   });
 });
+
+// Reported: after a stop, the queued rows stayed in the tray for seconds while their text
+// was already back in the composer. The gateway drops them when it accepts the stop.
+describe('Stop with a queued backlog', () => {
+  it('moves the queued rows into the composer as soon as the stop is accepted', async () => {
+    const cancelTurn = vi.fn(() => Promise.resolve(null));
+    const queuedRow = {
+      turnId: 'queued-1',
+      request: 'Queued words',
+      preview: 'Queued words',
+      attachments: [],
+    };
+    renderSessionScreen({
+      client: {
+        cachedRunningTurn: runningTurn,
+        cancelTurn,
+        cachedQueuedTurns: () => [queuedRow],
+        queuedTurns: () => Promise.resolve({ turns: [queuedRow], paused: null }),
+      },
+    });
+    expect(await screen.findByRole('region', { name: 'Queued messages' })).toBeInTheDocument();
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    await waitFor(() => expect(cancelTurn).toHaveBeenCalledWith('s1', 'turn-1'));
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Queued messages' })).not.toBeInTheDocument(),
+    );
+    expect((screen.getByLabelText('Message Vis') as HTMLTextAreaElement).value).toBe('Queued words');
+  });
+});

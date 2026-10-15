@@ -4778,9 +4778,9 @@
    terminal for a waiter), and leaves a message queued AFTER the cancel — the
    \"stop that, run THIS\" intent — untouched at the head.
 
-   The events are appended AFTER the `turn.cancelled` terminal, so a channel
-   restores its own queued text into the composer first and only then drops the
-   mirrors. Returns the dropped turn records."
+   [[cancel-turn!]] runs this when it accepts the cancel, so the stopped rows leave
+   every queue at once. [[after-turn-terminal!]] runs it again for a submit that
+   raced the cancel; a second run finds nothing. Returns the dropped turn records."
   [sid tid]
   (let [dropped (volatile! [])]
     (update-session! sid
@@ -5570,6 +5570,11 @@
            :else (do (tel/log! :info ["gateway: cancelling turn" tid (str "source=" (name source))])
                      ;; Arm the parent's terminal backstop before any child cancellation hook.
                      (update-turn! sid tid #(assoc % :cancelling_at (util/now-ms)))
+                     ;; Drop the pre-cancel backlog NOW, not when the worker unwinds:
+                     ;; that can take seconds, and every channel kept the stopped rows
+                     ;; in its queue while their text was already back in the editor.
+                     ;; The terminal path sweeps again for a submit that raced this.
+                     (drop-cancelled-backlog! sid tid)
                      (start-cancel-terminal-backstop! sid
                                                       tid
                                                       (:cancel-token turn)

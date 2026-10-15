@@ -4157,7 +4157,14 @@ export function SessionScreen({
       const liveTid = runningTurnRef.current?.id;
       if (liveTid) await client.cancelTurn(sid, liveTid);
       else await client.cancelCurrentTurn(sid);
-      for (const row of backlog) restoreCancelledQueued(row.turnId, row.request);
+      // The gateway dropped these rows when it accepted the stop. Take them out of the
+      // tray with their text, so the words never show in two places at once.
+      const restored = new Set(backlog.map((row) => row.turnId));
+      for (const row of backlog) {
+        restoreCancelledQueued(row.turnId, row.request);
+        noteQueueDelta(row.turnId, null);
+      }
+      if (restored.size) setQueued((current) => current.filter((item) => !restored.has(item.turnId)));
       requestAnimationFrame(() => composerRef.current?.focus());
     } catch (cause) {
       // The stop never landed, so the affordance has to come back.

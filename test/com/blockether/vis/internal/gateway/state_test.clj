@@ -2300,6 +2300,48 @@
         ;; "stop that, run THIS" still runs
         (expect (= [[sid "new"]] @launched))
         (finally (swap! registry dissoc sid)))))
+  ;; Regression, user report in this Vis session: after a stop, the stopped rows stayed
+  ;; in the TUI and web queues for seconds, until the cancelled worker unwound.
+  (it
+    "cancel-turn! drops the pre-cancel backlog before the worker unwinds"
+    (let [sid
+          (str "cancel-backlog-now-" (java.util.UUID/randomUUID))
+
+          token
+          (cancellation/cancellation-token)
+
+          seen
+          (atom [])
+
+          registry
+          (atom {sid {:next-seq 0
+                      :current-turn "r0"
+                      :subscribers {"test" #(swap! seen conj %)}
+                      :turns
+                      {"r0" {:turn_id "r0" :status "running" :cancel-token token}
+                       "old"
+                       {:turn_id "old" :status "queued" :request "queued before" :queued_at 1}}
+                      :turn-order ["r0" "old"]
+                      :idempotency {"k-old" "old"}}})]
+
+      (with-redefs-fn {#'state/registry registry
+                       #'state/start-cancel-terminal-backstop! (fn [& _]
+                                                                 nil)}
+        (fn []
+          (expect (= {:status "cancelling"} (state/cancel-turn! sid "r0")))
+          ;; No terminal landed, yet the stopped row is gone and every channel knows.
+          (expect (nil? (state/get-turn sid "old")))
+          (expect (= ["r0"] (get-in @registry [sid :turn-order])))
+          (expect (= [["turn.queued.deleted" "old" "cancelled" "queued before"]]
+                     (into []
+                           (comp (filter #(= "turn.queued.deleted" (get % "type")))
+                                 (map (juxt #(get % "type")
+                                            #(get % "turn_id")
+                                            #(get % "reason")
+                                            #(get % "request"))))
+                           @seen)))
+          (expect (= "running" (get-in @registry [sid :turns "r0" :status])))
+          (expect (cancellation/cancelled? token))))))
   (it "a stalled force-cancel is a failure, not a user stop: backlog survives"
       (let [sid
             (str "cancel-stall-" (java.util.UUID/randomUUID))
