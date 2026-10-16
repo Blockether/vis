@@ -36,7 +36,15 @@
            "child = await shell('sleep 30')\n" "stopped = await child.stop()\n"
            "assert stopped['status'] == 'stopped', str(stopped)\n"
            "print('NATIVE_PROCESS_CLEANUP_READY')\n"
-           "from pathlib import Path\n" "assert 'default.clj' in ls(Path('.'), depth=2)\n"
+           "from pathlib import Path\n"
+           ;; Cold root and subtree listings must keep native overlays without building an index.
+           "for _ in range(2):\n"
+           "    assert 'default.clj' in ls(Path('.'), depth=1)\n"
+           "    listing = ls(Path('cold-listing'), depth=2)\n"
+           "    assert 'keep.txt' in listing, listing\n"
+           "    assert 'hidden.txt' not in listing and 'blocked' not in listing, listing\n"
+           "    assert 'too-deep.txt' not in listing, listing\n"
+           "print('NATIVE_COLD_LISTING_READY')\n"
            "file_hit = grep({'query': ['defn f'], 'paths': [Path('default.clj')], 'context': 1})\n"
            "dir_hit = grep({'query': ['defn.*f'], 'paths': [Path('configured')], 'is_regex': True, 'context': 1})\n"
            "assert 'default.clj' in str(file_hit), str(file_hit)\n"
@@ -118,6 +126,15 @@
           (io/make-parents (io/file dir "configured/example.clj"))
           (spit (io/file dir "default.clj") source)
           (spit (io/file dir "configured/example.clj") source)
+          (doseq [[path content] {"cold-listing/.gitignore" "ignored/\n"
+                                  "cold-listing/.rgignore" "hidden.txt\n"
+                                  "cold-listing/hidden.txt" "hidden"
+                                  "cold-listing/blocked/blocked.txt" "excluded"
+                                  "cold-listing/ignored/keep.txt" "included"
+                                  "cold-listing/ignored/deep/too-deep.txt" "deeper"}]
+            (let [file (io/file dir path)]
+              (io/make-parents file)
+              (spit file content)))
           (with-redefs-fn {#'native/whole-body #(reply false %)
                            #'native/stream-body #(reply true %)}
             (fn []
@@ -125,7 +142,11 @@
                 (try
                   (#'native/overlay! dir port)
                   (let [config (io/file dir ".vis/config.yml")]
-                    (spit config (str/replace (slurp config) "stub-model" model)))
+                    (spit config
+                          (str (str/replace (slurp config) "stub-model" model)
+                               "\ngrep:\n"
+                               "  include_gitignored_paths: ['cold-listing/ignored/']\n"
+                               "  always_exclude: ['cold-listing/blocked/']\n")))
                   (let [log (io/file dir "run.log")
                         builder (doto (ProcessBuilder. ^java.util.List
                                                        [(.getAbsolutePath bin)
@@ -163,8 +184,8 @@
                              (expect (str/includes? (pr-str tool-results) "10000") output)
                              (expect (str/includes? (pr-str tool-results) "grep/ls") output)
                              (doseq [marker ["NATIVE_KEYWORDS_READY" "NATIVE_PROCESS_CLEANUP_READY"
-                                             "NATIVE_FFF_READY" "NATIVE_PATCH_READY"
-                                             "NATIVE_TRAVERSAL_RECOVERED"]]
+                                             "NATIVE_COLD_LISTING_READY" "NATIVE_FFF_READY"
+                                             "NATIVE_PATCH_READY" "NATIVE_TRAVERSAL_RECOVERED"]]
                                (expect (str/includes? (pr-str tool-results) marker) output))
                              (expect (.isDirectory (io/file dir ".vis/native/sqlite")) output)
                              (expect (every? #(= model

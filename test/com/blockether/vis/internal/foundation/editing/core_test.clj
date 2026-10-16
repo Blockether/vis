@@ -4630,6 +4630,83 @@
             (expect (= "dir" (get (row home) "type"))))))))
 
 (defdescribe
+  ls-cold-listing-test
+  "Cold listings must not build a recursive content index."
+  (it
+    "lists the root and subdirectories again without creating an index"
+    (let [creates
+          (atom 0)
+
+          waits
+          (atom 0)
+
+          listed
+          (atom [])]
+
+      (with-redefs [editing/fff-ls-workspace-items
+                    (fn [_ _ ^long _ _]
+                      nil)
+
+                    fff/create
+                    (fn [_]
+                      (swap! creates inc)
+                      (throw (ex-info "A listing must not build an index" {})))
+
+                    fff/wait-for-scan
+                    (fn [& _]
+                      (swap! waits inc)
+                      false)
+
+                    fff/list-directory
+                    (fn [path opts]
+                      (swap! listed conj [path opts])
+                      [{:relative-path "a.txt" :dir? false :size 1}])]
+
+        (doseq [path ["." "src" "." "src"]]
+          (expect (= ["a.txt"]
+                     (mapv #(get % "name")
+                           (get ((private-fn "ls-one") {"path" path "depth" 1}) "entries"))))))
+      (expect (zero? @creates))
+      (expect (zero? @waits))
+      (expect (= 4 (count @listed)))
+      (expect (every? #(= 1 (:max-depth (second %))) @listed))))
+  (it "passes rebased ignore overlays and listing options to the bounded walk"
+      (let [calls
+            (atom [])
+
+            root
+            (.getCanonicalFile (java.io.File. "src"))]
+
+        (with-redefs [editing/fff-ignore-overlay
+                      (constantly {:custom-ignore-filenames [".rgignore"]
+                                   :exclude-globs ["src/private/" "*.secret"]
+                                   :unignore-globs ["src/vendor/"]})
+
+                      fff/list-directory
+                      (fn [path opts]
+                        (swap! calls conj [path opts])
+                        [{:relative-path "a.txt" :dir? false :size 7}])]
+
+          (expect (= [{:relative-path "a.txt" :directory? false :size 7}]
+                     ((private-fn "fff-ls-target-items") root "src" 2 true))))
+        (expect (= [[(.getPath root)
+                     {:custom-ignore-filenames [".rgignore"]
+                      :exclude-globs ["private/" "*.secret"]
+                      :unignore-globs ["vendor/"]
+                      :max-depth 2
+                      :include-hidden? true
+                      :respect-ignore-files? true}]]
+                   @calls)))))
+
+(defn- warm-workspace-ls-index!
+  "Build the index that grep and find normally supply to warm listing tests."
+  []
+  (fff-index/with-index* (fff-index/lease (.getCanonicalFile (java.io.File. "."))
+                                          true
+                                          ((private-fn "fff-ignore-overlay")))
+                         (constantly nil)))
+
+(defdescribe
   ls-fff-index-reuse-test
   (it
     "ls serves a workspace subdirectory from the WARM workspace index, building no per-directory index"
@@ -4664,7 +4741,7 @@
                  set))
 
           _
-          (names ".")
+          (warm-workspace-ls-index!)
 
           ;; Pool state is PROCESS-WIDE and other namespaces in the same suite may
           ;; already hold an index here, so the pin is the DELTA: listing must not
@@ -4675,7 +4752,7 @@
           listed
           (names sub-rel)]
 
-      ;; Listing the workspace root warms the SAME pooled index grep/find use.
+      ;; The search index is warm before either listing runs.
       (expect (warm? (lease root true (ignore-overlay))))
       (expect (contains? listed "core.clj"))
       ;; The subdirectory listing came out of that index: no fresh index, no fresh
@@ -4687,9 +4764,7 @@
 ;; =============================================================================
 ;; `ls` vs the real filesystem, and the PYTHON SANDBOX surface.
 ;;
-;; `ls` is served out of the fff index (glob/search pages), never `File.listFiles`,
-;; so the listing has to be cross-validated against the OS: same names, minus the
-;; entries fff legitimately hides (dotfiles, gitignored paths).
+;; Cross-check both native listing sources against the OS, minus hidden and ignored entries.
 ;;
 ;; And `python_execution` is the model's main hand: reading a file is an ORDINARY
 ;; Python call (`cat`, engine-bound), and listing a directory is the `ls` SHIM — a
@@ -4837,12 +4912,8 @@
 ;; =============================================================================
 ;; `ls` ORDERING, and the two sources allowed to answer a listing.
 ;;
-;; A listing can come from the WARM workspace index (the fast path `grep`/`find`
-;; already keep hot) or from an index rooted at the listed directory (the
-;; fallback). Neither the rows nor their order may depend on which one answered,
-;; and the documented order — directories first, then alphabetical — has to hold
-;; at EVERY nesting level, not just the top one: a model reading a `depth 3` tree
-;; scans children the same way it scans the root.
+;; Warm index records and bounded listing records must render the same rows and order.
+;; Directories come first, then alphabetical names, at every nesting level.
 ;; =============================================================================
 
 (defn- ls-order-key
@@ -4906,7 +4977,7 @@
 (defdescribe
   ls-source-agreement-test
   "The fast path and the fallback are interchangeable."
-  (it "renders an identical listing whichever index answers"
+  (it "renders an identical listing from the warm index and bounded walk"
       (let [dir
             "src/com/blockether/vis/internal/foundation"
 
@@ -4915,7 +4986,7 @@
 
             ;; the workspace index has to be warm before it can serve anything
             _
-            ((private-fn "ls-one") {"path" "."})
+            (warm-workspace-ls-index!)
 
             warm-rows
             ((private-fn "fff-ls-workspace-items") root dir 2 false)
@@ -4951,7 +5022,7 @@
       ;; `grep`/`find` keep the workspace index hot, and `ls` of a subdirectory has
       ;; to ride it. A fallback listing is still CORRECT, so agreement alone cannot
       ;; catch a silently lost fast path — only counting the fallback can.
-      ((private-fn "ls-one") {"path" "."})
+      (warm-workspace-ls-index!)
       (let [fresh (atom 0)]
         (with-redefs [editing/fff-ls-target-items (fn [_ _ ^long _ _]
                                                     (swap! fresh inc)

@@ -1019,9 +1019,8 @@
 (defn- fff-ls-overlay
   "Rebase the global `vis.yml` overlay for an explicitly listed directory.
 
-   `ls` may name a directory already ignored by an ancestor (such as `target/`).
-   Opening the pooled native index at that directory preserves explicit-read
-   semantics, while paths configured beneath it must become local to fff's base."
+   List directly named ignored directories, such as `target/`, from that directory.
+   Rebase configured paths beneath it to the native listing root."
   [target-rel]
   (let [prefix
         (when (seq target-rel) (str target-rel "/"))
@@ -1045,40 +1044,24 @@
   "True when `rel-path` rendered a RELATIVE address for the listed directory, so
    `target-rel` is a usable PREFIX into the workspace index's own records.
 
-   This is a question about the ADDRESS, never about ownership: a context clone renders
-   as its trunk ABSOLUTE path and so answers false while still being the workspace —
-   `workspace-dir?` is what decides whether a directory may be indexed at all."
+   Context clones use absolute trunk addresses, so they cannot reuse relative index records."
   [target-rel]
   (not (str/starts-with? (str target-rel) "/")))
 
 (defn- warm-ls-lease
-  "The pooled WORKSPACE-root index — the one `grep` and `find` already keep hot — but
-   ONLY when it is ALREADY built. Reusing it turns `ls` of a subdirectory into a page
-   scan over an existing index instead of a fresh per-directory tree scan plus its
-   own watcher. A cold pool is left alone on purpose: indexing just the subtree is
-   then the cheaper of the two. The root is CANONICAL so the pool key is the very one
-   `grep`/`find`/`ls .` warm."
+  "Lease the workspace index only when `grep` or `find` already built it.
+   Cold listings use a bounded walk without an index or watcher."
   []
   (let [lease
         (fff-index/lease (.getCanonicalFile (io/file (workspace/cwd))) true (fff-ignore-overlay))]
     (when (fff-index/warm? lease) lease)))
 
 (def ^:private ls-workspace-reuse-limit
-  "Directory ceiling for answering a listing out of the warm workspace index. With the
-   file side natively prefix-filtered (`fff-ls-file-pages`), the directory index is the
-   only part of a reuse still scanned whole — about 1.1 µs a directory — so its size is
-   both the honest cost model and the cheapest gate to read (a 1-record directory probe
-   is ~0.01 ms against ~0.13 ms for a mixed one). Above this ceiling, indexing just the
-   listed subtree is the better trade and `ls` leases at the directory."
+  "Maximum directory count for warm index reuse. Larger indexes use a bounded listing."
   20000)
 
 (defn- fff-ls-workspace-items
-  "Listing rows for `target-rel` served from the ALREADY-WARM workspace index, or nil
-   when that index cannot or should not answer: nothing warm, an index too big to
-   scan (`ls-workspace-reuse-limit`), a directory outside the workspace, or one fff
-   ignores (`target/`, `node_modules/` …). The directory's OWN record proves
-   coverage, so an empty-but-indexed directory answers here instead of paying for a
-   fallback index."
+  "Use the warm workspace index when it covers this directory and is small enough."
   [^File root target-rel ^long levels is-hidden?]
   (when (and (seq target-rel) (workspace-relative-address? target-rel))
     (when-let [lease (warm-ls-lease)]
@@ -1101,12 +1084,14 @@
         (when (and (some? rows) (or @covered? (seq rows))) rows)))))
 
 (defn- fff-ls-target-items
-  "Listing rows from an index rooted AT the listed directory: the fallback that keeps
-   an explicitly named ignored directory (`target/`, `node_modules/` …) readable
-   INSIDE the workspace."
+  "List the named workspace directory with rebased ignore rules and no index."
   [^File root target-rel ^long levels is-hidden?]
-  (fff-index/with-index [idx (fff-index/lease root true (fff-ls-overlay target-rel))]
-                        (fff-ls-records idx "" (fff-ls-keeper root "" levels is-hidden?))))
+  (mapv (fn [{:keys [relative-path dir? size]}]
+          {:relative-path relative-path :directory? dir? :size (when-not dir? size)})
+        (fff/list-directory
+          (.getPath root)
+          (merge (fff-ls-overlay target-rel)
+                 {:max-depth levels :include-hidden? is-hidden? :respect-ignore-files? true}))))
 
 (defn- fff-ls-listing-items
   "Listing rows from fff's STATELESS directory listing — one bounded, ignore-aware walk
@@ -1129,34 +1114,12 @@
                              :respect-ignore-files? (boolean respect-ignore?)})))
 
 (defn- list-dir
-  "Directory listing as MODEL data, powered by fff — never a filesystem walk.
+  "Build directory rows from fff without creating an index.
 
-   fff owns `.gitignore`, `.ignore`, `.rgignore`, and the live `vis.yml` grep overlay;
-   this code only rebuilds the documented tree shape. Four fff sources, and which
-   one answers is decided FIRST by whether the directory is even ours:
-
-   1. a directory that is not OURS — under neither the primary cwd nor any bound
-      context-clone root, which only the FILE can say (`workspace-dir?`) — is
-      LISTED, never indexed. Naming a few entries must not cost a recursive walk,
-      a live filesystem watcher and a bigram CONTENT index over whatever lives
-      there: `~/.vis/models` is ~790 MB of model weights, and indexing it to
-      answer `ls` is what turned that listing into minutes and then a
-      `fff-scan-timeout`;
-   2. inside the workspace, the WARM workspace index `grep`/`find` already
-      maintain, prefix-filtered — no new index and no new watcher;
-   3. otherwise an index rooted at the directory itself, which is also what keeps
-      a directly listed ignored directory readable, as it was before;
-   4. and, when fff refuses to INDEX that root (`fff-unavailable`: a filesystem
-      root or a home directory), the stateless listing again —
-      `fff-ls-listing-items` builds no index and so is never refused.
-
-   Records are depth-filtered inside the paging loop (`fff-ls-scan`), so cost tracks
-   the rows RETURNED rather than the size of the tree, and rendered paths are joined
-   from the directory's own rendered path instead of canonicalizing per row. Results
-   remain directories-first then alphabetical, and are exhaustive.
-
-   `is_ignored` skips all four: every directory then gets the stateless listing with
-   ignore files off, so gitignored entries such as build output appear."
+   Reuse a warm workspace index when it covers a subdirectory. Otherwise use a
+   bounded listing with the workspace ignore overlay. Outside directories use
+   native ignore rules only. `is_ignored` disables ignore rules and overlays.
+   Results remain directories-first, alphabetical, and exhaustive at the requested depth."
   [^File d {:keys [depth is_hidden is_ignored] :or {depth 1 is_hidden false is_ignored false}}]
   (let [^File root
         (.getCanonicalFile d)
@@ -1177,11 +1140,7 @@
         (cond (boolean is_ignored) (fff-ls-listing-items root levels is-hidden? false)
               (not (workspace-dir? root)) (fff-ls-listing-items root levels is-hidden? true)
               :else (or (fff-ls-workspace-items root target-rel levels is-hidden?)
-                        (try (fff-ls-target-items root target-rel levels is-hidden?)
-                             (catch clojure.lang.ExceptionInfo e
-                               (if (= :ext.foundation.editing/fff-unavailable (:type (ex-data e)))
-                                 (fff-ls-listing-items root levels is-hidden? true)
-                                 (throw e))))))
+                        (fff-ls-target-items root target-rel levels is-hidden?)))
 
         render-prefix
         (if (= "." base) "" (str base "/"))
