@@ -1488,3 +1488,59 @@
 
           (expect (nil? (#'main/persisted-session "session-1")))
           (expect (= ["vis-agent: the trajectory has no session usage: no db"] @err))))))
+
+(defn- rebuild-streamed-text
+  "Rebuild each text with the consumer rule of `--full-trace-json-stream`: replace
+   the text when the frame has it, else append the delta."
+  [frames]
+  (:seen (reduce (fn [{:keys [texts] :as acc} {:strs [phase iteration delta] :as f}]
+                   (let [k
+                         ({"reasoning" "thinking" "content" "content"} phase)
+
+                         text
+                         (if (contains? f k) (get f k) (str (get texts [phase iteration]) delta))]
+
+                     (-> acc
+                         (assoc-in [:texts [phase iteration]] text)
+                         (update :seen conj text))))
+                 {:texts {} :seen []}
+                 frames)))
+
+(defdescribe full-trace-json-stream-test
+             ;; Each reasoning frame held the whole text so far: a two-hour trace reached 70 MB.
+             (it
+               "sends only deltas while they rebuild the text and loses no text"
+               (let [chunks
+                     [{:phase :reasoning :iteration 1 :thinking "I" :delta "I" :done? false}
+                      {:phase :reasoning :iteration 1 :thinking "I am" :delta " am" :done? false}
+                      {:phase :reasoning :iteration 1 :thinking "I am" :delta "" :done? false}
+                      {:phase :content :iteration 1 :content "ok" :delta "ok" :done? false}
+                      ;; A provider retry replays the text from the start.
+                      {:phase :reasoning :iteration 1 :thinking "I am" :delta "I am" :done? false}
+                      ;; A rewrite that is not a prefix sends an empty delta.
+                      {:phase :reasoning :iteration 1 :thinking "We are" :delta "" :done? false}
+                      {:phase :reasoning :iteration 2 :thinking "Go" :delta "Go" :done? false}
+                      {:phase :reasoning :iteration 2 :thinking nil :delta nil :done? true}
+                      {:phase :form-start :iteration 2 :code "x"}]
+
+                     out
+                     (atom [])
+
+                     _
+                     (with-redefs [commandline/stdout! #(swap! out conj %)]
+                       (run! (#'main/make-full-trace-json-printer) chunks))
+
+                     frames
+                     (mapv #(get (json/read-json %) "payload") @out)
+
+                     text-frames
+                     (filterv #(#{"reasoning" "content"} (get % "phase")) (butlast frames))]
+
+                 (expect (every? #(= "trace-chunk" (get (json/read-json %) "event")) @out))
+                 (expect (= [false false false false true true false true]
+                            (mapv
+                              #(contains? % (if (= "content" (get % "phase")) "content" "thinking"))
+                              text-frames)))
+                 (expect (= ["I" "I am" "I am" "ok" "I am" "We are" "Go" nil]
+                            (rebuild-streamed-text text-frames)))
+                 (expect (= "x" (get (last frames) "code"))))))

@@ -1062,6 +1062,53 @@
   (commandline/stdout! (json/write-json-str (json-safe (trace-safe {:event event
                                                                     :payload payload})))))
 
+(def ^:private streamed-text-key
+  "The field that holds the text so far in each streamed text phase."
+  {:reasoning :thinking :content :content})
+
+(defn- compact-streamed-chunk
+  "Drop the full text of a streamed text chunk when `:delta` rebuilds it.
+   `last-text` is a volatile map of phase to `{:iteration n :text s}`. A chunk
+   keeps its full text when the previous text of its phase and iteration plus
+   `:delta` is not that text, for example after a provider retry. Consumers
+   append `:delta`, or replace the text when the chunk carries it."
+  [last-text chunk]
+  (let [phase
+        (:phase chunk)
+
+        k
+        (streamed-text-key phase)
+
+        text
+        (when k (get chunk k))]
+
+    (if-not (string? text)
+      chunk
+      (let [{:keys [iteration] prev :text}
+            (get @last-text phase)
+
+            prev
+            (if (= iteration (:iteration chunk)) (str prev) "")
+
+            delta
+            (:delta chunk)]
+
+        (vswap! last-text assoc phase {:iteration (:iteration chunk) :text text})
+        (if (and (string? delta)
+                 (= (count text) (+ (count prev) (count delta)))
+                 (str/starts-with? text prev)
+                 (str/ends-with? text delta))
+          (dissoc chunk k)
+          chunk)))))
+
+(defn- make-full-trace-json-printer
+  "Return the chunk callback of `--full-trace-json-stream`. Each text chunk sends
+   only its delta, so the trace grows with the text, not with its square."
+  []
+  (let [last-text (volatile! {})]
+    (fn [chunk]
+      (print-full-trace-json-frame! :trace-chunk (compact-streamed-chunk last-text chunk)))))
+
 (defn- trace-terminal?
   []
   (boolean (and (System/console)
@@ -1734,6 +1781,8 @@
   (commandline/stdout! "                    happening, then print the answer.")
   (commandline/stdout! "  --full-trace-json-stream")
   (commandline/stdout! "                    Stream raw JSON trace frames, one object per line.")
+  (commandline/stdout! "                    Append the delta of each text frame. A text frame")
+  (commandline/stdout! "                    with its full text replaces the text so far.")
   (commandline/stdout! "  --trajectory PATH Write the run to PATH as an ATIF trajectory (JSON).")
   (commandline/stdout! "                    Known credentials become [REDACTED]. Only you can")
   (commandline/stdout! "                    read the file.")
@@ -2054,8 +2103,7 @@
           structured-output? (or json? code? full-trace-stream? full-trace-json-stream?)
           effective-raw? (or raw? (and (not structured-output?) (not (trace-terminal?))))
           agent-def (agent {:name (or agent-name "cli")})
-          trace-on-chunk (cond full-trace-json-stream? #(print-full-trace-json-frame! :trace-chunk
-                                                                                      %)
+          trace-on-chunk (cond full-trace-json-stream? (make-full-trace-json-printer)
                                full-trace-stream? (make-pretty-trace-printer))
           run-opts (cond-> (dissoc opts
                              :prompt
