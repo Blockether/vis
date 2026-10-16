@@ -958,8 +958,8 @@
                 (assoc :root root))))
 
 (defn update-session-group!
-  "PATCH /v1/session-groups/:gid - rename, recolour, reorder or archive one group."
-  [gid {:keys [name color position] :as fields}]
+  "PATCH /v1/session-groups/:gid - rename, recolour or archive one group."
+  [gid {:keys [name color] :as fields}]
   (send-json! "PATCH"
               (str "/v1/session-groups/" (enc gid))
               (cond-> {}
@@ -968,9 +968,6 @@
 
                 color
                 (assoc :color color)
-
-                position
-                (assoc :position position)
 
                 (contains? fields :archived)
                 (assoc :archived (boolean (:archived fields))))))

@@ -7452,7 +7452,8 @@
                      ;; A palette TOKEN, never a hex string: the TUI paints it on a
                      ;; terminal and the app out of a theme, from the SAME value.
                      :color (:color g)
-                     :position (:position g)
+                     ;; When the group LAST MOVED: the order of the list, freshest first.
+                     :active_at (:active-at g)
                      :session_count (:session-count g)
                      :created_at (:created-at g)
                      ;; The human's ARCHIVE of this division: null while it is active,
@@ -7461,7 +7462,7 @@
                      :archived_at (:archived-at g)})))
 
 (defn list-session-groups
-  "Wire groups of one project, in their manual order. `[]` when it has none.
+  "Wire groups of one project, freshest first. `[]` when it has none.
 
    `opts`: `:archived` - the ONE archive vocabulary (`:exclude` (the default),
    `:include` or `:only`, what a reveal asks for)."
@@ -7472,10 +7473,10 @@
   "One WINDOW of a project's groups, with the facts a pager prints:
    `{:groups … :total … :session-total … :limit … :offset … :has-more …}`.
 
-   A band's place is the human's own `position`, which no turn moves, so a page of
-   bands is an OFFSET and not a cursor: page 7 holds the same bands however long
-   the app sat idle, and a pager can jump straight to it. `nil` limit means \"the
-   rest\", so a caller that names no window still reads the whole wall.
+   Bands are ordered by when each LAST MOVED, like sessions, so an offset is a
+   window over the current order. Only the archive is paged, and its groups
+   rarely move. `nil` limit means \"the rest\", so a caller that names no window
+   still reads the whole wall.
 
    `:total` counts the BANDS and `:session-total` the sessions filed across ALL of
    them — both over the whole wall rather than this page, because a client prints
@@ -7511,12 +7512,12 @@
 
 (defn create-session-group!
   "Create a group inside `pid`. `opts` keys: :name (required), :color (palette
-   token), :position."
+   token)."
   [pid opts]
   (session-group-wire (lp/create-session-group! pid opts)))
 
 (defn update-session-group!
-  "Patch a group: :name, :color, :position and/or :archived?."
+  "Patch a group: :name, :color and/or :archived?."
   [gid opts]
   (session-group-wire (lp/update-session-group! gid opts)))
 

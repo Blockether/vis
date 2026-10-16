@@ -693,8 +693,9 @@ A group belongs to one project. Name the project with `root` or `project_id`. A 
 same name in a project raises `GatewayError` with the status 409.
 
 - `get_session_groups(query={"root": path})` lists the groups of one project. Use `project` with a
-  project ID instead of `root`. `archived` is `exclude`, `include` or `only`.
-- `patch_session_group(gid, body=...)` changes `name`, `color`, `position` or `archived`.
+  project ID instead of `root`. `archived` is `exclude`, `include` or `only`. The group with the
+  newest activity comes first. A new group counts as new activity.
+- `patch_session_group(gid, body=...)` changes `name`, `color` or `archived`.
 - `delete_session_group(gid, query={"sessions": "detach"})` deletes a group and keeps its sessions.
   With `"delete"`, the sessions are deleted too.
 - `put_session_group(sid, body={"group_id": None})` removes a session from its group.
@@ -715,8 +716,9 @@ the status 201 and the new group with its `id`. A second group with the same nam
 returns 409.
 
 - `GET /v1/session-groups?root=/srv/projects/shop` lists the groups of one project. Use `project`
-  with a project ID instead of `root`. `archived` is `exclude`, `include` or `only`.
-- `PATCH /v1/session-groups/{gid}` changes `name`, `color`, `position` or `archived`.
+  with a project ID instead of `root`. `archived` is `exclude`, `include` or `only`. The group with
+  the newest activity comes first. A new group counts as new activity.
+- `PATCH /v1/session-groups/{gid}` changes `name`, `color` or `archived`.
 - `DELETE /v1/session-groups/{gid}?sessions=detach` deletes a group and keeps its sessions. With
   `sessions=delete`, the sessions are deleted too.
 - `PUT /v1/sessions/{sid}/group` with `{"group_id": null}` removes a session from its group.

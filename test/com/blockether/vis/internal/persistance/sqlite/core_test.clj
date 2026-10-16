@@ -4354,7 +4354,7 @@
           gateway
           (persistance/db-create-session-group! s (:id p) {:name "Gateway"})
 
-          ;; created shape: project-scoped, appended, palette TOKEN (never a hex)
+          ;; created shape: project-scoped, palette TOKEN (never a hex)
           _
           (expect (= "Release apps" (:name release)))
 
@@ -4368,14 +4368,9 @@
           _
           (expect (= "slate" (:color gateway)))
 
+          ;; the newest group comes first
           _
-          (expect (= 0 (:position release)))
-
-          _
-          (expect (= 1 (:position gateway)))
-
-          _
-          (expect (= ["Release apps" "Gateway"]
+          (expect (= ["Gateway" "Release apps"]
                      (mapv :name (persistance/db-list-session-groups s (:id p) {}))))
 
           ;; file a session under a group
@@ -4448,6 +4443,48 @@
       (expect (nil? (:group-id cleared)))
       (expect (nil? (:group-name cleared)))
       (expect (= (:id p) (:project-id cleared)))))
+  ;; Regression, user report in this Vis session: a new group landed at the bottom of
+  ;; the list. Groups are ordered like sessions, by when they last moved.
+  (it
+    "lists the freshest group first: a new group, then the one whose sessions moved last"
+    (let [s
+          (h/store)
+
+          p
+          (persistance/db-create-project! s {:name "vis"})
+
+          older
+          (persistance/db-create-session-group! s (:id p) {:name "Older"})
+
+          busy
+          (persistance/db-create-session-group! s (:id p) {:name "Busy"})
+
+          fresh
+          (persistance/db-create-session-group! s (:id p) {:name "Fresh"})
+
+          sid
+          (h/store-session! s {:channel :tui :title "work"})
+
+          stamp!
+          (fn [table id at]
+            (jdbc/execute! (:datasource s)
+                           [(str "UPDATE " table " SET created_at = ? WHERE id = ?") at (str id)]))
+
+          names
+          #(mapv :name (persistance/db-list-session-groups s (:id p) {}))]
+
+      (stamp! "session_group" (:id older) 1000)
+      (stamp! "session_group" (:id busy) 2000)
+      (stamp! "session_group" (:id fresh) 3000)
+      (expect (= ["Fresh" "Busy" "Older"] (names)))
+      ;; A session that moved after every group was created lifts its group to the top.
+      (persistance/db-set-session-group! s sid (:id older))
+      (stamp! "session_soul" sid 4000)
+      (expect (= ["Older" "Fresh" "Busy"] (names)))
+      (expect (= 4000 (inst-ms (:active-at (persistance/db-get-session-group s (:id older))))))
+      ;; A group is never older than its own creation, whatever its sessions say.
+      (stamp! "session_soul" sid 500)
+      (expect (= ["Fresh" "Busy" "Older"] (names)))))
   (it "refuses a blank name and a duplicate name inside the same project"
       (let [s
             (h/store)
@@ -5211,7 +5248,7 @@
       (expect (inst? (:archived-at archived)))
       ;; the archive vocabulary sessions and projects already read
       (expect (= ["Gateway"] (mapv :name (persistance/db-list-session-groups s (:id p) {}))))
-      (expect (= ["Release apps" "Gateway"]
+      (expect (= ["Gateway" "Release apps"]
                  (mapv :name (persistance/db-list-session-groups s (:id p) {:archived :include}))))
       (expect (= ["Release apps"]
                  (mapv :name (persistance/db-list-session-groups s (:id p) {:archived :only}))))

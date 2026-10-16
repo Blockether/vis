@@ -31,7 +31,6 @@ describe('forking a session from its list row', () => {
               project_id: null,
               name: 'Forks',
               color: 'blue',
-              position: 0,
               session_count: 1,
             },
           ],

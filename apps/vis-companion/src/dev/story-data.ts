@@ -2321,7 +2321,6 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
         project_id: project.projectId,
         name: 'Group',
         color: 'slate',
-        position: named.size,
         session_count: 0,
       });
     }
@@ -2461,10 +2460,10 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
         project_id: owner?.projectId ?? null,
         name: typeof body.name === 'string' ? body.name : 'Group',
         color: typeof body.color === 'string' ? body.color : 'slate',
-        position: bandsOf(owner).length,
         session_count: 0,
       };
-      made.push(group);
+      // The gateway lists the freshest group first, and a new group is the freshest.
+      made.unshift(group);
       return answer(group);
     }
     if (url.pathname.startsWith('/v1/session-groups/')) {
@@ -2493,11 +2492,10 @@ export function storyFleetFetch(projects: StoryProject[] = STORY_FLEET_PROJECTS)
       const body = sent(init);
       // A band the fixture's own rows named is overridden by a made one with its id.
       const next: SessionGroup = {
-        ...(band ?? { id: gid, project_id: null, name: 'Group', color: 'slate', position: 0 }),
+        ...(band ?? { id: gid, project_id: null, name: 'Group', color: 'slate' }),
         session_count: band?.session_count ?? 0,
         ...(typeof body.name === 'string' ? { name: body.name } : {}),
         ...(typeof body.color === 'string' ? { color: body.color } : {}),
-        ...(typeof body.position === 'number' ? { position: body.position } : {}),
       };
       const held = made.findIndex((one) => one.id === gid);
       if (held === -1) made.push(next);

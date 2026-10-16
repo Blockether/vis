@@ -26,7 +26,6 @@ const WALLET: SessionGroup = {
   project_id: STORY_NEWER_PROJECT.projectId,
   name: 'Wallet work',
   color: 'blue',
-  position: 0,
   session_count: 2,
 };
 
@@ -36,7 +35,6 @@ const RECEIPTS: SessionGroup = {
   project_id: STORY_NEWER_PROJECT.projectId,
   name: 'Receipts',
   color: 'amber',
-  position: 1,
   session_count: 1,
   archived_at: 1730000000,
 };

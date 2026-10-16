@@ -209,7 +209,6 @@ const GROUPED_BANDS: SessionGroup[] = [
     project_id: fixture.projectId,
     name: 'Wallet work',
     color: 'blue',
-    position: 0,
     session_count: 2,
   },
   {
@@ -217,7 +216,6 @@ const GROUPED_BANDS: SessionGroup[] = [
     project_id: fixture.projectId,
     name: 'Receipts',
     color: 'amber',
-    position: 1,
     session_count: 1,
   },
 ];
@@ -605,7 +603,6 @@ const LONG_GROUPS: SessionGroup[] = [
     ...GROUPED_BANDS[1],
     id: `extra-group-${index}`,
     name: `Record group ${index}`,
-    position: index + 2,
     session_count: 0,
     archived_at: 1730000000,
   })),

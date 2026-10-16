@@ -25,7 +25,6 @@ const WALLET_GROUP: SessionGroup = {
   project_id: STORY_NEWER_PROJECT.projectId,
   name: 'Wallet work',
   color: 'blue',
-  position: 0,
   session_count: 2,
 };
 
@@ -63,7 +62,6 @@ const WIDE_WALL: SessionGroup[] = Array.from({ length: 24 }, (_, index) => ({
   ...WALLET_GROUP,
   id: `group-${String(index).padStart(2, '0')}`,
   name: `Band ${String(index).padStart(2, '0')}`,
-  position: index,
   session_count: 0,
 }));
 
@@ -2106,7 +2104,6 @@ describe('ProjectGroup groups', () => {
       ...WALLET_GROUP,
       id: 'group-other',
       name: 'Other work',
-      position: 1,
       session_count: 1,
     };
     const rows = ROWS.map((row) => (row.id === LOOSE.id ? { ...row, group_id: other.id } : row));

@@ -4473,10 +4473,10 @@ export class GatewayClient {
     return group;
   }
 
-  /** Rename, recolour, reorder, archive or restore a group. */
+  /** Rename, recolour, archive or restore a group. */
   async updateSessionGroup(
     gid: string,
-    fields: { name?: string; color?: string; position?: number; archived?: boolean },
+    fields: { name?: string; color?: string; archived?: boolean },
   ): Promise<SessionGroup> {
     const group = await this.request<SessionGroup>(
       'PATCH',

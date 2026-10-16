@@ -2966,14 +2966,27 @@
    :project-id (->uuid (:project_id row))
    :name (:name row)
    :color (:color row)
-   :position (:position row)
+   :active-at (->date (:active_at row))
    :created-at (->date (:created_at row))
    ;; The human's ARCHIVE of this whole division; nil while the group is active.
    :archived-at (->date (:archived_at row))
    :session-count (or (:session_count row) 0)})
 
+(def ^:private session-group-activity
+  "When a group LAST MOVED, epoch ms: the newest turn or session creation among its
+   sessions (the instant `session-activity-at` gives a session), and never earlier
+   than the group's own creation. A new, empty group is therefore the freshest one."
+  [:max :g.created_at
+   [:coalesce
+    {:select [[[:max [:coalesce :ts.created_at :cs.created_at]]]]
+     :from [[:session_soul :cs]]
+     :left-join [[:session_state :st] [:= :st.session_soul_id :cs.id] [:session_turn_soul :ts]
+                 [:= :ts.session_state_id :st.id]]
+     :where [:= :cs.group_id :g.id]} 0]])
+
 (def ^:private session-group-select-cols
-  [:g.id :g.project_id :g.name :g.color :g.position :g.created_at :g.archived_at
+  [:g.id :g.project_id :g.name :g.color :g.created_at :g.archived_at
+   [session-group-activity :active_at]
    [{:select [[[:count :*]]] :from [[:session_soul :ss]] :where [:= :ss.group_id :g.id]}
     :session_count]])
 
@@ -2989,8 +3002,8 @@
 
 (defn db-list-session-groups
   "List the `session_group`s of `project-id`, each with a live `:session-count`,
-   ordered by (position, created_at). Returns `[]` when there are none - a
-   project without groups is the normal case, not an error.
+   freshest first (see `session-group-activity`). Returns `[]` when there are
+   none - a project without groups is the normal case, not an error.
 
    `:archived` says which groups answer, in the ONE archive vocabulary sessions
    and projects also read: `:exclude` (the default) hides the archived ones,
@@ -3010,7 +3023,7 @@
                                   [[:not= :g.archived_at nil]]
 
                                   [[:= :g.archived_at nil]]))
-                   :order-by [[:g.position :asc] [:g.created_at :asc]]}))
+                   :order-by [[:active_at :desc] [:g.created_at :desc] [:g.rowid :desc]]}))
     []))
 
 (defn db-archived-session-group-ids
@@ -3030,9 +3043,8 @@
   "Create a `session_group` inside `project-id`. `:name` is required (non-blank)
    and is unique within the project - a group is addressed by the name a human
    typed. `:color` is a palette TOKEN (\"blue\", \"amber\", ...), never a hex
-   string, and defaults to \"slate\". `:position`, when omitted, appends after
-   the project's current groups. Returns the created group (canonical shape)."
-  [db-info project-id {:keys [name color position]}]
+   string, and defaults to \"slate\". Returns the created group (canonical shape)."
+  [db-info project-id {:keys [name color]}]
   (when (str/blank? (str name))
     (throw (ex-info "db-create-session-group! requires a non-blank :name"
                     {:type :persistance/invalid-group-name})))
@@ -3041,15 +3053,7 @@
                      db-info
                      (fn [tx-info]
                        (let [gid (new-uuid)
-                             now (now-ms)
-                             pid (->id project-id)
-                             pos (or position
-                                     (inc (long (or (:maxpos (query-one!
-                                                               tx-info
-                                                               {:select [[[:max :position] :maxpos]]
-                                                                :from :session_group
-                                                                :where [:= :project_id pid]}))
-                                                    -1))))]
+                             now (now-ms)]
 
                          (execute! tx-info
                                    {:insert-into :session_group
@@ -3057,17 +3061,16 @@
                                               :project_id (->ref project-id)
                                               :name (str/trim (str name))
                                               :color (or (not-empty (str/trim (str color))) "slate")
-                                              :position pos
                                               :created_at now}]})
                          gid)))]
       (db-get-session-group db-info group-id))))
 
 (defn db-update-session-group!
-  "Patch a `session_group`: any of `:name` (non-blank), `:color` (palette token),
-   `:position` and `:archived?` (true stamps `archived_at`=now, false clears it).
+  "Patch a `session_group`: any of `:name` (non-blank), `:color` (palette token)
+   and `:archived?` (true stamps `archived_at`=now, false clears it).
    Returns the updated group (canonical shape) or nil when there was nothing to
    change."
-  [db-info group-id {:keys [name color position archived?] :as opts}]
+  [db-info group-id {:keys [name color archived?] :as opts}]
   (when (and (ds db-info) group-id (seq opts))
     (when (and (contains? opts :name) (str/blank? (str name)))
       (throw (ex-info "db-update-session-group! :name must be non-blank"
@@ -3081,9 +3084,6 @@
 
                     (contains? opts :color)
                     (assoc :color (str/trim (str color)))
-
-                    (contains? opts :position)
-                    (assoc :position position)
 
                     ;; Archiving a group never stamps its sessions: the members keep
                     ;; their own state, so unarchiving brings back exactly the set

@@ -4597,10 +4597,10 @@
   "`list-session-groups-page` over a project holding four bands in manual order."
   [opts]
   (with-redefs-fn {#'lp/session-groups (fn [_pid _opts]
-                                         [{:id "g1" :name "One" :position 0 :session-count 2}
-                                          {:id "g2" :name "Two" :position 1 :session-count 3}
-                                          {:id "g3" :name "Three" :position 2 :session-count 5}
-                                          {:id "g4" :name "Four" :position 3 :session-count 7}])}
+                                         [{:id "g1" :name "One" :session-count 2}
+                                          {:id "g2" :name "Two" :session-count 3}
+                                          {:id "g3" :name "Three" :session-count 5}
+                                          {:id "g4" :name "Four" :session-count 7}])}
     (fn []
       (state/list-session-groups-page "p1" opts))))
 

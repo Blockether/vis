@@ -440,7 +440,6 @@ describe('GatewayClient project-page snapshots', () => {
       project_id: 'project-alpha',
       name: 'Wallet work',
       color: 'blue',
-      position: 0,
       session_count: 2,
     };
     const page = {

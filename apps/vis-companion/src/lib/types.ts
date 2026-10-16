@@ -883,8 +883,8 @@ export interface SessionGroup {
   project_id: string | null;
   name: string;
   color: string;
-  /** The manual order the human put the groups in, 0-based. */
-  position: number;
+  /** When the group last moved, epoch ms. The gateway lists the freshest group first. */
+  active_at?: number;
   session_count: number;
   created_at?: number;
   /**

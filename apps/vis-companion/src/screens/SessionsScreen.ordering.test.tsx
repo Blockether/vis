@@ -179,7 +179,6 @@ describe('the order the reader is looking at', () => {
               project_id: null,
               name: 'Forks',
               color: 'blue',
-              position: 0,
               session_count: 1,
             },
           ],

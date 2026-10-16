@@ -74,6 +74,7 @@ import {
 } from '../../lib/gateway';
 import { GROUP_COLORS, groupColor, groupSwatch } from '../../lib/group-colors';
 import { isIosAppOnMac } from '../../lib/host';
+import { MOTION_KEY, useListMotion } from '../../lib/list-motion';
 import { hasHardwarePointer } from '../../lib/pointer';
 import {
   groupFoldKey,
@@ -255,11 +256,14 @@ function SessionDropArea({
   onDropSession,
   areaRef,
   minHeight,
+  motionKey,
   children,
 }: {
   onDropSession?: (sids: string[]) => void;
   areaRef?: Ref<HTMLDivElement>;
   minHeight?: number;
+  /** Names this area to `useListMotion`, so it slides when the groups above it change. */
+  motionKey?: string;
   children: ReactNode;
 }) {
   const { isOver, dropProps } = useSessionDrop(onDropSession);
@@ -268,6 +272,7 @@ function SessionDropArea({
       ref={areaRef}
       style={{ minHeight }}
       className={isOver ? 'bg-white/10' : undefined}
+      {...(motionKey ? { [MOTION_KEY]: motionKey } : {})}
       {...dropProps}
     >
       {children}
@@ -732,9 +737,9 @@ export const ProjectGroup = memo(function ProjectGroup({
   const archived: ArchiveView = isSessionRevealing ? 'only' : 'exclude';
   const groupArchived: ArchiveView = isGroupRevealing ? 'only' : 'exclude';
   // ONLY THE ARCHIVED WALL OF BANDS IS PAGED, and by a NUMBER rather than a cursor: the
-  // human's own `position` orders the groups and no turn moves one, so the third page of
-  // them names the same shelves tomorrow (`state/list-session-groups-page`). The live wall
-  // is never paged: every live group is read, with every session filed under it.
+  // gateway orders groups by when each last moved, and archived groups rarely move, so the
+  // third page of them names the same shelves tomorrow (`state/list-session-groups-page`).
+  // The live wall is never paged: every live group is read, with every session filed under it.
   const [groupPage, setGroupPage] = useState(1);
   // ONE WINDOW OVER THE ARCHIVED WALL, ASKED FOR BY BOTH READS. The bands on this page and
   // the sessions filed under them are two halves of one answer, so the session read carries
@@ -1308,6 +1313,9 @@ export const ProjectGroup = memo(function ProjectGroup({
         .filter((group) => group.archived === isGroupRevealing),
     [shownGroups, isGroupRevealing, groupArchive],
   );
+  // A deleted, archived or new group moves the bands and sessions below it. They slide to
+  // their new places instead of jumping there.
+  useListMotion(rowsRef, bands.map((band) => band.id));
   // Both sides of the project header count the sets currently on display.
   const visibleCount = total + groupSessionTotal;
   // A ROW WEARS ITS GROUP'S COLOUR, NEVER A COPY OF IT. The rail down a row and the band
@@ -2165,6 +2173,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   return (
                     <SessionDropArea
                       key={band.id}
+                      motionKey={`group:${band.id}`}
                       onDropSession={isGroupRevealing ? undefined : (ids) => void dropSessions(ids, band.id)}
                     >
                       <GroupBand
@@ -2194,6 +2203,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             )}
             <SessionDropArea
               areaRef={sessionSetRef}
+              motionKey="sessions"
               minHeight={
                 pageCount > 1 && pageFootprint?.layout === pageLayout
                   ? pageFootprint.height

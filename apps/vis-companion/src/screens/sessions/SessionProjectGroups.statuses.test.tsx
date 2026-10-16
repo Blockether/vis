@@ -57,10 +57,10 @@ function mount(initialRows = statusRows()) {
     }),
     listSessionGroups: vi.fn(async () => ({
       groups: [
-        { id: GROUP, name: NAME, color: 'blue', position: 0,
+        { id: GROUP, name: NAME, color: 'blue',
           session_count: server.rows.filter((session) => session.group_id === GROUP).length },
-        { id: 'other-group', name: 'Other work', color: null, position: 1, session_count: 1 },
-        { id: 'empty-group', name: 'Empty work', color: null, position: 2, session_count: 0 },
+        { id: 'other-group', name: 'Other work', color: null, session_count: 1 },
+        { id: 'empty-group', name: 'Empty work', color: null, session_count: 0 },
       ],
       total: 3, session_total: server.rows.length, offset: 0, limit: null, has_more: false,
     })),

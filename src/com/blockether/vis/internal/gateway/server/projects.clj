@@ -205,7 +205,7 @@
 (defn- list-session-groups-handler
   "GET /v1/session-groups?project=<pid>|root=<path>[&owner=…&archived=exclude|include|only]
                          [&limit=<n>&offset=<n>]
-   — the groups inside ONE project, in the order the human put them in.
+   — the groups inside ONE project, freshest first, like sessions.
 
    `root` is accepted because a client can group its list by WORKSPACE ROOT
    without ever holding a project id (the companion does). A root with no project
@@ -217,10 +217,9 @@
 
    `limit`/`offset` cut ONE page out of a wall of bands a human can keep growing,
    and `total`/`has_more` are what a pager over them prints, with `session_total`
-   counting the sessions filed across the WHOLE wall. Their order is the human's own
-   `position`, which no turn moves, so an offset names the same page
-   tomorrow. Without `limit` the answer is every band. Clients read live groups
-   that way and page only the archive (`archived=only`).
+   counting the sessions filed across the WHOLE wall. Without `limit` the answer is
+   every band. Clients read live groups that way and page only the archive
+   (`archived=only`).
 
    Carries the same weak ETag contract as the session list and the project overview.
    No turn moves a band: only a human renaming, filing or putting one away does, and
@@ -307,11 +306,11 @@
                               (:limit page) (:offset page) (:has-more page)])))))
 
 (defn- create-session-group-handler
-  "POST /v1/session-groups {name, color?, position?, project_id?|root?, owner_id?}
+  "POST /v1/session-groups {name, color?, project_id?|root?, owner_id?}
    — create a group inside one project. With `root` the project is get-or-created
    first, so a client that groups by workspace root never resolves an id itself."
   [request]
-  (let [{:strs [name color position project_id root owner_id]}
+  (let [{:strs [name color project_id root owner_id]}
         (http/body-json request)
 
         owner
@@ -339,10 +338,7 @@
           :else (if-let [group (try (state/create-session-group! pid
                                                                  (cond-> {:name name}
                                                                    color
-                                                                   (assoc :color color)
-
-                                                                   position
-                                                                   (assoc :position position)))
+                                                                   (assoc :color color)))
                                     ;; the UNIQUE(project_id, name) index is the whole
                                     ;; check: a group is addressed by the name a human
                                     ;; typed, so a second one is a conflict, not a 500.
@@ -354,8 +350,8 @@
                                        :name (str name))))))
 
 (defn- patch-session-group-handler
-  "PATCH /v1/session-groups/:gid {name?, color?, position?, archived?} — rename,
-   recolour, reorder or archive a group. `color` is a palette TOKEN, never a hex
+  "PATCH /v1/session-groups/:gid {name?, color?, archived?} — rename, recolour or
+   archive a group. `color` is a palette TOKEN, never a hex
    string.
 
    Archiving a group takes its sessions out of sight WITH it and stamps none of
@@ -378,9 +374,6 @@
 
           (contains? body "color")
           (assoc :color (get body "color"))
-
-          (contains? body "position")
-          (assoc :position (get body "position"))
 
           (contains? body "archived")
           (assoc :archived? (boolean (get body "archived"))))]
