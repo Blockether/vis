@@ -136,6 +136,32 @@
         (expect (agents/controls? db child grandchild))
         (expect (not (agents/controls? db grandchild child)))))))
 
+;; Regression: a subagent sent its own session id as the OpenAI prompt cache key. Its first
+;; request held the leader's whole prefix but missed the leader's warm cache (0% cache read).
+(defdescribe
+  team-shares-the-leader-cache-key-test
+  (it "gives every subagent of a team the leader's id as its prompt cache key"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            other
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {})
+
+            grandchild
+            (child! db child {})]
+
+        (expect (= leader (agents/leader-id db leader)))
+        (expect (= leader (agents/leader-id db child)))
+        (expect (= leader (agents/leader-id db grandchild)) "A nested subagent keeps the team key")
+        (expect (= other (agents/leader-id db other)) "An independent session keeps its own key")
+        (expect (nil? (agents/leader-id db nil))))))
+
 (defdescribe
   durable-budget-cancellation-and-router-test
   (it

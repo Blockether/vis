@@ -597,9 +597,10 @@
                             :resend-limits (loop-router/provider-resend-limits provider-network)))))
           provider-start-ns (System/nanoTime)
           ;; An explicit session cache key preserves sticky routing across prompt changes.
+          ;; A subagent starts from its leader's prefix, so it uses the leader's key: the
+          ;; first child request then reaches the leader's warm OpenAI cache.
           ;; Anthropic ignores the field, so setting it unconditionally is harmless.
-          session-cache-key (some-> (:session-id environment)
-                                    str)
+          session-cache-key (agents/leader-id (:db-info environment) (:session-id environment))
           ;; Prepared turns opt into the cross-provider fleet. Direct callers that
           ;; omit a policy stay on a warm provider; disabling `provider_fallback`
           ;; pins the resolved model below.

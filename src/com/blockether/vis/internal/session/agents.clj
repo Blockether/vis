@@ -17,14 +17,19 @@
 
 (defn info [db sid] (when (and db sid) (ps/db-agent-info db sid)))
 
+(defn leader-id
+  "The leader of session `sid` as a string: the team leader for a subagent, else `sid`."
+  [db sid]
+  (some-> (or (:leader_id (info db sid)) sid)
+          str))
+
 (defn enabled?
   "Whether session `sid` can use managed subagents. A new session starts without the session
    settings of its source, so a managed child reads the setting of its leader. Without such a
    session setting, or with an invocation value, the configuration decides."
   [db sid]
   (let [owner
-        (some-> (or (:leader_id (info db sid)) sid)
-                str)
+        (leader-id db sid)
 
         row
         (when (and db
