@@ -591,23 +591,33 @@
 
 (defn- label-text [{:keys [label is-required]}] (str label (when is-required required-marker)))
 
+(def ^:private origin-title-cols
+  "The most columns one session title takes in the origin line. Each title is
+   shortened alone, so a long subagent title never hides the parent."
+  28)
+
 (defn origin-text
   "The line that names a subagent and its parent session, or nil for a form that a
    top-level session raised. A subagent's form also reaches every ancestor session,
-   so its header must say which session asks (issue #392)."
+   so its header must say which session asks (issue #392). Each title is shortened
+   with `…` to [[origin-title-cols]] columns."
   [origin]
   (let [text
         (fn [k]
           (some-> (get origin k)
                   str
                   str/trim
-                  not-empty))
+                  not-empty
+                  (p/ellipsize origin-title-cols)))
 
         short-id
         (fn [id]
           (subs id 0 (min 8 (count id))))]
 
-    (when-let [parent-id (text :parent-session-id)]
+    (when-let [parent-id (some-> (get origin :parent-session-id)
+                                 str
+                                 str/trim
+                                 not-empty)]
       (str "Subagent " (or (text :title)
                            (some-> (text :session-id)
                                    short-id)
@@ -907,8 +917,10 @@
   ([form] (form-rows form nil))
   ([{:keys [request focus stops] :as form} text-w]
    (let [head
+         ;; The origin stays on ONE row: the painter shortens it with `…` to the
+         ;; dialog width instead of wrapping it.
          (into (if-let [text (origin-text (:origin request))]
-                 (conj (vec (description-rows text text-w)) {:kind :blank})
+                 [{:kind :description :text text} {:kind :blank}]
                  [])
                (when-let [rows (seq (markdown-prose-rows (:description request) text-w))]
                  (conj (vec rows) {:kind :blank})))

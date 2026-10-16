@@ -2205,6 +2205,44 @@
       (expect (= "Subagent 01234567 · parent fedcba98"
                  (hi/origin-text {:session-id "0123456789abcdef"
                                   :parent-session-id "fedcba9876543210"}))))
+  (it "shortens each long title with an ellipsis, so the parent stays visible"
+      (let [text (hi/origin-text {:session-id "child-1"
+                                  :title (apply str (repeat 60 "a"))
+                                  :parent-session-id "leader-1"
+                                  :parent-title (apply str (repeat 60 "b"))})]
+        (expect (= (str "Subagent "
+                        (apply str (repeat 27 "a"))
+                        "… · parent "
+                        (apply str (repeat 27 "b"))
+                        "…")
+                   text))))
+  (it
+    "keeps the origin on one row and ellipsizes it in a narrow dialog"
+    (let [form
+          (hi/init-form (assoc (request)
+                          :origin {:session-id "child-1"
+                                   :title "Collect the CloudWatch logs of every service in DEV13"
+                                   :parent-session-id "leader-1"
+                                   :parent-title "Deploy the release candidate to DEV13"}))
+
+          plan
+          (hi/form-rows form 20)
+
+          {:keys [screen g]}
+          (virtual-screen)
+
+          _
+          (hi/paint! g 40 30 form 0 tr/prompt-rows 1)
+
+          row
+          (first (filter #(str/includes? % "Subagent") (mapv #(screen-row screen %) (range 30))))]
+
+      (expect (= :description (:kind (first plan))))
+      (expect (= :blank (:kind (second plan))))
+      (expect (str/includes? (:text (first plan)) " · parent "))
+      (expect (some? row))
+      (expect (str/includes? row "…"))
+      (expect (not (str/includes? row "DEV13")))))
   (it "shows no origin row for a top-level session"
       (expect (nil? (hi/origin-text {:session-id "leader-1" :title "Deploy DEV13"})))
       (expect (= (hi/form-rows (hi/init-form (request)))

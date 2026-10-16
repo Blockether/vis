@@ -531,3 +531,53 @@ describe('a pause stands in the session that asked it', () => {
     }
   });
 });
+
+// Issue #392: the origin line names a subagent and its parent. Long titles must
+// shorten with an ellipsis on one row, never wrap or push the parent away.
+describe('human input origin', () => {
+  const longAgent = 'Collect the CloudWatch logs of every service in DEV13';
+  const longParent = 'Deploy the release candidate to DEV13';
+
+  function originRow(origin?: Record<string, string>) {
+    cleanup();
+    const request = humanInputRequestFromWire({
+      id: 'r',
+      title: 'PingID code',
+      fields: [{ id: 'code', type: 'plaintext' }],
+      ...(origin ? { origin } : {}),
+    });
+    if (!request) throw new Error('the request must parse');
+    render(
+      <HumanInputSheet
+        request={request}
+        values={initialHumanInputValues(request)}
+        onChange={noop}
+        onSubmit={noop}
+        onCancel={noop}
+      />,
+    );
+    return screen.queryByTestId('human-input-origin');
+  }
+
+  it('keeps the origin on one row and ellipsizes each title on its own', () => {
+    const row = originRow({
+      session_id: 'child-1',
+      title: longAgent,
+      parent_session_id: 'leader-1',
+      parent_title: longParent,
+    });
+    expect(row?.tagName).toBe('P');
+    expect(row?.className).toContain('whitespace-nowrap');
+    expect(row?.className).toContain('min-w-0');
+    expect(row?.getAttribute('title')).toBe(`Subagent ${longAgent} · parent ${longParent}`);
+    const titles = Array.from(row?.querySelectorAll('span.truncate') ?? []).map(
+      (span) => span.textContent,
+    );
+    expect(titles).toEqual([longAgent, longParent]);
+  });
+
+  it('shows no origin row for a top-level session', () => {
+    expect(originRow({ session_id: 'leader-1', title: longParent })).toBeNull();
+    expect(originRow()).toBeNull();
+  });
+});

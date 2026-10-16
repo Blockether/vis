@@ -388,9 +388,17 @@ export function HumanInputSheet({
                 </p>
               )}
               {origin && (
-                <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                  subagent <span className="text-white">{origin.agent}</span> · parent{' '}
-                  <span className="text-white">{origin.parent}</span>
+                // One row: each title shortens with an ellipsis on its own, so a long
+                // subagent title never hides the parent. Hover shows both in full.
+                <p
+                  data-testid="human-input-origin"
+                  title={`Subagent ${origin.agent} · parent ${origin.parent}`}
+                  className="flex min-w-0 items-baseline gap-[1ch] whitespace-nowrap font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint"
+                >
+                  <span className="shrink-0">subagent</span>
+                  <span className="min-w-0 truncate text-white">{origin.agent}</span>
+                  <span className="shrink-0">· parent</span>
+                  <span className="min-w-0 truncate text-white">{origin.parent}</span>
                 </p>
               )}
             </div>
