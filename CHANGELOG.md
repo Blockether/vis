@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.51] - 2026-10-16
+
+### Fixed
+- The Companion desktop and web app share only the file, so apps such as Telegram receive the video, not only its name.
+- `ls` lists a directory that no search has indexed with a bounded walk, without a new index or watcher. FFF is at 0.12.14.
+
 ## [v0.2.50] - 2026-10-16
 
 ### Added
