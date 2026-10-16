@@ -88,8 +88,33 @@ export function syncPythonVersion({ quiet = false } = {}) {
   return version;
 }
 
+// The desktop install badges download the installers of the current release.
+const installerLinkFiles = [join(repoRoot, 'README.md'), join(repoRoot, 'resources', 'vis-docs', 'index.md')];
+
+/**
+ * Point the desktop installer links in `files` at the VIS_VERSION release.
+ * The docs site test rejects drift, so a release commit must carry them.
+ */
+export function syncInstallerLinks({ quiet = false, files = installerLinkFiles } = {}) {
+  const version = visVersion();
+  const link = /(releases\/download\/v)\d+\.\d+\.\d+(\/vis-companion-)\d+\.\d+\.\d+/g;
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    const next = text.replace(link, `$1${version}$2${version}`);
+    if (!next.includes(`releases/download/v${version}/vis-companion-${version}`)) {
+      throw new Error(`${file} has no desktop installer link to rewrite`);
+    }
+    if (next !== text) {
+      writeFileSync(file, next);
+      if (!quiet) console.log(`✓ installer links in ${file} point to ${version}`);
+    }
+  }
+  return version;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const version = syncPackageVersion();
   syncPythonVersion();
+  syncInstallerLinks();
   console.log(version);
 }

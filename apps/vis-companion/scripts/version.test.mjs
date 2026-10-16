@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { syncPythonVersion } from './version.mjs';
+import { syncInstallerLinks, syncPythonVersion } from './version.mjs';
 
 vi.mock('node:fs', () => ({ readFileSync: vi.fn(), writeFileSync: vi.fn() }));
 
@@ -44,4 +44,27 @@ it('rejects a missing version without writing the file', () => {
   sdkSource('[project]\nname = "vis-agent"\n');
   expect(() => syncPythonVersion({ quiet: true })).toThrow(/could not rewrite "version"/);
   expect(writeFileSync).not.toHaveBeenCalled();
+});
+
+describe('installer link mirroring', () => {
+  const link = (v) => `https://github.com/Blockether/vis/releases/download/v${v}/vis-companion-${v}-windows-x64.msi`;
+  const readme = (v) => `[Windows](${link(v)})\n<a href="${link(v)}">x</a>\n[latest](https://github.com/Blockether/vis/releases/latest)\n`;
+
+  it('points every desktop installer link at the VIS_VERSION release', () => {
+    sdkSource(readme('0.1.0'));
+    expect(syncInstallerLinks({ quiet: true, files: ['/repo/README.md'] })).toBe('1.2.3');
+    expect(writeFileSync).toHaveBeenCalledExactlyOnceWith('/repo/README.md', readme('1.2.3'));
+  });
+
+  it('does not write links that already point to the release', () => {
+    sdkSource(readme('1.2.3'));
+    expect(syncInstallerLinks({ quiet: true, files: ['/repo/README.md'] })).toBe('1.2.3');
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('rejects a file without an installer link', () => {
+    sdkSource('No installers here.\n');
+    expect(() => syncInstallerLinks({ quiet: true, files: ['/repo/index.md'] })).toThrow(/no desktop installer link/);
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
 });
