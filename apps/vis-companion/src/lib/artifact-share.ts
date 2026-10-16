@@ -5,6 +5,7 @@ import { blobAsDataUrl, sheetDismissed } from './image-file';
 
 /** Options for the same file hand-off wearing a more specific noun in its caller. */
 export type ArtifactShareOptions = {
+  /** The native share sheet subject. The browser share omits it. */
   title?: string;
   dialogTitle?: string;
   noun?: string;
@@ -88,7 +89,9 @@ export async function shareArtifact(
       type: mediaType || blob.type || 'application/octet-stream',
     });
     if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-      await navigator.share({ title, files: [file] });
+      // Share only the file. WebKit adds a title as a separate text item, and
+      // targets such as Telegram then post the filename instead of the file.
+      await navigator.share({ files: [file] });
       return `${noun} shared.`;
     }
 

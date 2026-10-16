@@ -65,4 +65,24 @@ describe('artifact sharing', () => {
     const file = webShare.mock.calls[0]?.[0].files?.[0];
     expect(file).toMatchObject({ name: 'jobs.csv', type: 'text/csv' });
   });
+
+  it('hands the browser share sheet only the file, without a title as text', async () => {
+    // WebKit adds a title as a text item beside the files; Telegram then posted
+    // only the filename instead of the shared video.
+    native.value = false;
+    const webShare = vi.fn(async (_data: ShareData) => undefined);
+    Object.defineProperty(navigator, 'share', { configurable: true, value: webShare });
+    Object.defineProperty(navigator, 'canShare', {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
+
+    await shareArtifact(new Blob(['clip'], { type: 'video/mp4' }), 'brag-long.mp4', 'video/mp4', {
+      title: 'brag-long.mp4',
+    });
+
+    const data = webShare.mock.calls[0]?.[0];
+    expect(Object.keys(data ?? {})).toEqual(['files']);
+    expect(data?.files?.[0]).toMatchObject({ name: 'brag-long.mp4', type: 'video/mp4' });
+  });
 });
