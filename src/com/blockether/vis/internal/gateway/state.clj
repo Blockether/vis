@@ -6047,13 +6047,15 @@
 
 (defn fork-points
   "Every turn of `sid` a fork can be cut AT, oldest-first, as lean wire rows
-   `{turn_id request status answer created_at}`.
+   `{turn_id request status answer is_forked created_at}`.
 
    The picker and the transcript outline need the id, the words that OPENED each
    turn, its status and the start of its answer, never the transcript hanging off it.
    `list-turns` carries whole content vectors, and a long session's list would pull
    megabytes to paint one list of lines. `status` is the wire status that
-   `list-turns` gives the same turn. A turn without a prose answer has no `answer`."
+   `list-turns` gives the same turn. A turn without a prose answer has no `answer`.
+   `is_forked` marks a turn that a fork settled: its status is `cancelled`, but nobody
+   cancelled it."
   [sid]
   (let [db
         (try (lp/db-info) (catch Throwable _ nil))
@@ -6071,7 +6073,10 @@
                                        :status (wire-turn-status row)
                                        :created_at (date->ms (:created-at row))}
                                 answer
-                                (assoc :answer answer)))))
+                                (assoc :answer answer)
+
+                                (some content/fork-notice? (:content row))
+                                (assoc :is_forked true)))))
           (or rows []))))
 
 (defn- agent-view

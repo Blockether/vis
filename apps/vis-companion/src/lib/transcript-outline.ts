@@ -26,7 +26,7 @@ export interface OutlineEntry {
 }
 
 /** The state of a turn's answer, as the outline preview names it. */
-export type OutlineStatus = 'done' | 'running' | 'queued' | 'waiting' | 'cancelled' | 'failed';
+export type OutlineStatus = 'done' | 'running' | 'queued' | 'waiting' | 'cancelled' | 'forked' | 'failed';
 
 /** The most lines the rail paints. In a longer session, turns share a line. */
 export const RAIL_MAX_LINES = 12;
@@ -209,9 +209,15 @@ export function outlineStatus(status?: string, priorOutcome?: string): OutlineSt
   return priorOutcome === 'cancelled' && state !== 'running' && state !== 'queued' ? 'cancelled' : state;
 }
 
+/** The notice of a turn that a fork copied while the turn still ran in the source. */
+export function isForkNotice(block: ContentBlock): boolean {
+  return block.type === 'notice' && block.code === 'turn_forked';
+}
+
 /**
  * The outline row of one turn. A transcript row gives its content, and a gateway fork
- * point gives the start of its answer.
+ * point gives the start of its answer. A turn that a fork settled has a cancelled status,
+ * but nobody cancelled it. Its fork notice or `is_forked` makes the row forked.
  */
 export function outlineEntry(turn: {
   turn_id: string;
@@ -223,13 +229,16 @@ export function outlineEntry(turn: {
   content?: readonly ContentBlock[];
   status?: string;
   prior_outcome?: string;
+  is_forked?: boolean;
 }): OutlineEntry {
   const answer = turn.content ? answerMarkdown(turn.content) : (turn.answer ?? '');
+  const status = outlineStatus(turn.status, turn.prior_outcome);
+  const forked = turn.is_forked || turn.content?.some(isForkNotice);
   return {
     id: turn.turn_id,
     label: promptLabel(turn.request || turn.council?.content, turn.attachments?.length ?? 0),
     answer: answerExcerpt(answer.slice(0, ANSWER_SOURCE_MAX)),
-    status: outlineStatus(turn.status, turn.prior_outcome),
+    status: status === 'cancelled' && forked ? 'forked' : status,
     isCouncil: turn.request_kind === 'council',
   };
 }

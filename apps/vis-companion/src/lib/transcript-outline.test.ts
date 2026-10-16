@@ -111,6 +111,14 @@ describe('outlineEntry', () => {
       outlineEntry({ turn_id: 't2', request: 'hi', request_kind: 'council', answer: '## Yes\n\nIt is.', status: 'failed' }),
     ).toEqual({ id: 't2', label: 'hi', answer: 'Yes It is.', status: 'failed', isCouncil: true });
   });
+
+  it('names a turn that a fork settled as forked, not as cancelled', () => {
+    const settled = { turn_id: 't3', request: 'go on', status: 'interrupted', prior_outcome: 'cancelled' };
+    const notice = { id: 'n', type: 'notice', code: 'turn_forked', message: 'Forked from this point.' } as const;
+    expect(outlineEntry({ ...settled, content: [notice] }).status).toBe('forked');
+    expect(outlineEntry({ turn_id: 't3', request: 'go on', status: 'cancelled', is_forked: true }).status).toBe('forked');
+    expect(outlineEntry({ ...settled, content: [] }).status).toBe('cancelled');
+  });
 });
 
 describe('outlineStatus', () => {

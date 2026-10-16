@@ -80,6 +80,7 @@ const STATUS_TEXT: Record<OutlineStatus, { label: string; tone: string }> = {
   queued: { label: 'Queued', tone: 'text-warn' },
   waiting: { label: 'Waiting', tone: 'text-warn' },
   cancelled: { label: 'Cancelled', tone: 'text-err' },
+  forked: { label: 'Forked', tone: 'text-muted' },
   failed: { label: 'Failed', tone: 'text-err' },
 };
 

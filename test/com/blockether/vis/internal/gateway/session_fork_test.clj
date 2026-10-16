@@ -136,8 +136,12 @@
                    ;; The web and the TUI read a running turn from these statuses.
                    (expect (= ["completed" "cancelled"]
                               (mapv #(get % "status") (state/fork-points fork-id))))
+                   ;; The web outline names the fork from this flag, not a cancel.
+                   (expect (= [nil true] (mapv #(get % "is_forked") (state/fork-points fork-id))))
                    ;; The TUI history shows a cancel notice only from the prior outcome.
                    (expect (= "cancelled" (get (last (state/transcript fork-id)) "prior_outcome")))
+                   ;; The web fixture of this turn has the same transcript status.
+                   (expect (= "interrupted" (get (last (state/transcript fork-id)) "status")))
                    ;; Regression, user report in this Vis session: the settled copy said
                    ;; "Cancelled by user." Its notice names the fork, which the TUI and the
                    ;; web show instead of a cancel notice.

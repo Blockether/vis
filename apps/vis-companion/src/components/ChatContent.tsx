@@ -42,6 +42,7 @@ import {
   type ActivityProjection,
 } from '../lib/activity';
 import { usePythonCodeShown, useStepsSummarized } from '../lib/transcript-display';
+import { isForkNotice } from '../lib/transcript-outline';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import { remarkParseCache } from '../lib/markdown-trees';
 import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
@@ -2525,11 +2526,6 @@ function releaseRamp(id: symbol): void {
 }
 
 /** Capture and restore the element crossing the scroller's top edge. */
-
-/** The notice of a turn that a fork copied while the turn still ran in the source. */
-function isForkNotice(block: ContentBlock): boolean {
-  return block.type === 'notice' && block.code === 'turn_forked';
-}
 
 /** Settled prose strings that are actually painted as the answer. */
 export function answeredProse(

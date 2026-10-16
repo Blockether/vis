@@ -270,6 +270,8 @@ the turn you choose and every turn before it.
 - **Settings:** your global, project and group
   [settings](configuration.md#project-group-and-session-settings), but not the
   settings you changed for the original session only.
+- **A turn that still runs:** the turn as it is at the moment of the fork. The
+  copy shows **Forked from this point.** The turn continues in the original session.
 
 A fork does not copy or restore your project files. Changes Vis made in later
 turns stay in place, so forking from an earlier turn does not undo them.

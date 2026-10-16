@@ -1388,7 +1388,8 @@ export interface CouncilRequest {
  * One turn of a session, named by the words that opened it, as the gateway lists
  * them for a fork or an outline: oldest first. `answer` is the start of the turn's
  * answer as Markdown, cut with `…`. It is absent when the turn has no prose answer.
- * `status` is the wire status that the transcript gives the same turn.
+ * `status` is the wire status that the transcript gives the same turn. `is_forked` marks
+ * a turn that a fork settled: its status is `cancelled`, but nobody cancelled it.
  */
 export interface ForkPoint {
   turn_id: string;
@@ -1397,6 +1398,7 @@ export interface ForkPoint {
   council?: CouncilRequest;
   answer?: string;
   status?: string;
+  is_forked?: boolean;
   created_at?: number;
 }
 
