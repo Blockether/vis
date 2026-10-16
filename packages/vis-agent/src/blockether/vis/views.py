@@ -42,7 +42,7 @@ class InputView(_ViewRecord):
 
     This describes the form, not a person's answers. Public close events do not
     include submitted values. Those values belong to the waiting extension.
-    `origin` names the session that asks and, for a subagent, its parent session.
+    `origin` names the session that asks and, for a child session, its parent session.
     """
 
     _definition = "input_view"

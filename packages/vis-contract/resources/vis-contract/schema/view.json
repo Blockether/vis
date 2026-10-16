@@ -175,7 +175,7 @@
       ]
     },
     "input_origin": {
-      "description": "The session that asks. A subagent form also names its parent, because it reaches every ancestor session.",
+      "description": "The session that asks. A form from a child session also names its parent, because it reaches every ancestor session.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

@@ -2215,4 +2215,27 @@
                                               "title" "T"
                                               "origin" {"session_id" "child-1"
                                                         "parent_session_id" "leader-1"
-                                                        "parent_title" "Lead"}}))))))
+                                                        "parent_title" "Lead"}})))))
+  (it "opens a subagent form on the leader tab that received it, and answers its owner"
+      ;; Before #392 the TUI routed by the form's own session, so a leader tab
+      ;; dropped the forwarded form of a subagent that has no tab.
+      (let [submitted
+            (atom nil)
+
+            child-form
+            (hi/init-form (assoc (request)
+                            :id "req-child"
+                            :session-id "child-1"))]
+
+        (reset! state/app-db {:session {:id "leader-1"} :render-version 0})
+        (state/dispatch [:human-input-open child-form])
+        (expect (nil? (:human-input @state/app-db)))
+        (state/dispatch [:human-input-open child-form "leader-1"])
+        (expect (= "req-child" (get-in @state/app-db [:human-input :request :id])))
+        (with-redefs [vis/gateway-view-action!
+                      (fn [sid id action]
+                        (reset! submitted [sid id action])
+                        {:action (:action action) :view-id id :is-accepted true})]
+          (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape)))
+        (expect (= ["child-1" "req-child" :cancel]
+                   [(first @submitted) (second @submitted) (get-in @submitted [2 :action])])))))

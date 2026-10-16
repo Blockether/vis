@@ -988,7 +988,7 @@
   [session-id]
   (try (doseq [wire (vis/gateway-input-views session-id)]
          (when-let [request (hi/request<-wire wire)]
-           (state/dispatch [:human-input-open (hi/init-form request)])))
+           (state/dispatch [:human-input-open (hi/init-form request) session-id])))
        (catch Throwable _ nil)))
 
 (defn- replay-live-views!
@@ -5435,7 +5435,7 @@
                   ;; still opens exactly one dialog.
                   :human-input-open
                   (when-let [request (hi/request<-wire (:request chunk))]
-                    (state/dispatch [:human-input-open (hi/init-form request)]))
+                    (state/dispatch [:human-input-open (hi/init-form request) session-id]))
 
                   ;; ANY surface answered it, or it timed out.
                   :human-input-close

@@ -3894,10 +3894,12 @@
           :else (or (tab-id-for-session db sid) :not-here))))
 
 (defn- human-input-target-tab
-  "The tab `form` is allowed to appear on — [[session-target-tab]] for the session
-   the request parks."
-  [db form]
-  (session-target-tab db (get-in form [:request :session-id])))
+  "The tab `form` is allowed to appear on — [[session-target-tab]] for `watched-sid`,
+   the session whose stream delivered the form, else for the session the request parks.
+   A subagent's form also reaches each ancestor session's stream (issue #392), so the
+   delivering session decides the tab, not the subagent that asks."
+  [db form watched-sid]
+  (session-target-tab db (or watched-sid (get-in form [:request :session-id]))))
 
 (defn- open-human-input
   "Install `form` in ONE tab's db half. IDEMPOTENT BY REQUEST ID: one request
@@ -3919,8 +3921,8 @@
           :else (assoc db :human-input form))))
 
 (reg-event-db :human-input-open
-              (fn [db [_ form]]
-                (let [target (human-input-target-tab db form)]
+              (fn [db [_ form watched-sid]]
+                (let [target (human-input-target-tab db form watched-sid)]
                   (if (= :not-here target) db (update-tab db target #(open-human-input % form))))))
 
 (reg-event-db :human-input-form
