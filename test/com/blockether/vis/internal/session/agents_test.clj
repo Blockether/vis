@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.session.agents-test
-  (:require [com.blockether.vis.contract.document :as document]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -76,6 +77,19 @@
                                                   :checkpoint [{:role :user
                                                                 :content "Full current context"}]}
                                                  opts)}))))
+
+;; The leader computed whole answers itself and spawned children only to confirm them. The rules
+;; follow the Codex and Claude Code delegation rules and the Vis subagent evaluation.
+(defdescribe
+  delegation-decision-rules-test
+  (it "tells the leader when to delegate, how many children to use and what to keep"
+      (let [text (agents/prompt {})]
+        (doseq [rule ["When in doubt, do the work yourself." "Do the critical-path step yourself"
+                      "Do shared work yourself before you split" "usually two to four in total"
+                      "give the child the code, not your conclusion" "Do not do their work again."]]
+          (expect (str/includes? text rule) rule))
+        (expect (not (str/includes? text "Verify answers before you use them"))
+                "A general verify rule made the leader redo the delegated work"))))
 
 (defdescribe
   managed-lineage-and-context-test
@@ -283,7 +297,7 @@
         (agents/finish! db cut "completed")
         (expect (= "budget_limited" (:status (agents/info db cut))))))
   (it
-    "extends a budget within the limits and keeps the child idle until council.resume"
+    "extends a budget within the limits and keeps the child budget_limited until it continues"
     (let [db
           (h/store)
 
@@ -315,8 +329,8 @@
           (expect (= {"status" "budget_limited" "iteration_budget" 6 "iterations_used" 1}
                      (select-keys (first (outcome #(agents/extend-agent env child 5)))
                                   ["status" "iteration_budget" "iterations_used"])))
-          (expect (not (agents/wake-allowed? db leader child))
-                  "An extended child stays idle until council.resume")
+          (expect (agents/wake-allowed? db leader child)
+                  "A ping continues an extended child, like council.resume")
           ;; council.resume runs the child again; only a running child can give iterations away.
           (ps/db-agent-update! db child {:status "running"})
           (expect (= :budget-exceeded (outcome #(agents/extend-agent env child 595))))
@@ -499,7 +513,48 @@
                   "An extended budget_limited child resumes")
           (ps/db-agent-update! db child {:status "cancelled"})
           (expect (= :invalid-request (outcome #(agents/resume-agent env child "More"))))))))
-  (it "refuses a resume past the active cap and changes nothing"
+  ;; A Council ping and council.resume are one follow-up step, so both pass the active cap.
+  (it
+    "queues a pinged child like council.resume, past the active cap, and undoes it on demand"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {})]
+
+      (with-redefs [ps/db-list-session-turns (fn [_ sid]
+                                               (if (= child (str sid)) [{:id "t1"}] []))]
+        (agents/finish! db child "completed")
+        (dotimes [_ agents/max-active-children]
+          (child! db leader {}))
+        (let [restore! (agents/queue-turn! db child)]
+          (expect (fn? restore!))
+          (expect (= {:status "queued" :resumed_turns 1}
+                     (select-keys (agents/info db child) [:status :resumed_turns]))
+                  "The stale-answer guard also holds for a ping")
+          (expect (some? (:resumed_at (agents/info db child))))
+          (expect (fn? (agents/queue-turn! db child)) "A queued child stays as is")
+          (expect (= 1 (:resumed_turns (agents/info db child))))
+          (restore!)
+          (expect (= {:status "completed" :resumed_turns 0}
+                     (select-keys (agents/info db child) [:status :resumed_turns]))))
+        (dotimes [_ (:iteration_budget (agents/info db child))]
+          (ps/db-agent-claim-iteration! db child))
+        (ps/db-agent-update! db child {:status "budget_limited"})
+        (expect (not (agents/wake-allowed? db leader child)) "An exhausted child stays idle")
+        (expect (nil? (agents/queue-turn! db child)) "A child without iterations stays idle")
+        (expect (some? (ps/db-agent-extend-budget! db child 2 nil)))
+        (expect (agents/wake-allowed? db leader child)
+                "A ping continues an extended budget_limited child, like council.resume")
+        (expect (fn? (agents/queue-turn! db child)))
+        (expect (= "queued" (:status (agents/info db child))))
+        (ps/db-agent-update! db child {:status "cancelled"})
+        (expect (not (agents/wake-allowed? db leader child)))
+        (expect (nil? (agents/queue-turn! db child))))))
+  (it "continues a resume past the active cap"
       (let [db
             (h/store)
 
@@ -520,9 +575,11 @@
             (agents/finish! db child "completed")
             (dotimes [_ agents/max-active-children]
               (child! db leader {}))
-            (expect (= :agent-limit (outcome #(agents/resume-agent env child "More"))))
-            (expect (= {:status "completed" :resumed_turns 0}
-                       (select-keys (agents/info db child) [:status :resumed_turns]))))))))
+            (expect (= "queued"
+                       (get (first (outcome
+                                     #(agents/resume-agent env child "More" {:timeout_secs 1})))
+                            "status")))
+            (expect (= "queued" (:status (agents/info db child)))))))))
 
 ;; Regression: Subagents was on only in the leader's session settings. A child starts without
 ;; those overrides, so its turn snapshot read the default and refused its first iteration.
@@ -944,24 +1001,13 @@
         (fork n))
       (expect (= :agent-limit (refusal agents/max-active-children)))
       (expect (= agents/max-active-children (count (ps/db-agent-list db leader))))
-      (let [[idle blocker] (map :session_id (ps/db-agent-list db leader))]
+      (let [[idle] (map :session_id (ps/db-agent-list db leader))]
         (ps/db-agent-update! db idle {:status "completed"})
         (fork agents/max-active-children)
-        (expect (not (ps/db-agent-claim-iteration! db idle))
-                "Resuming a completed child cannot bypass the active team limit")
-        (expect (= 0 (:iterations_used (agents/info db idle))))
-        (expect (= "completed" (:status (agents/info db idle))))
-        (expect (not (agents/claim-iteration! {:db-info db :session-id idle})))
-        (expect (= "failed" (:status (agents/info db idle)))
-                "Temporary capacity refusal must not permanently exhaust the child budget")
-        (expect
-          (=
-            "Subagent stopped: its leader already runs 16 active subagents. Retry when one of them finishes."
-            (agents/stop-reason {:db-info db :session-id idle})))
-        (expect (= 0 (:iterations_used (agents/info db idle))))
-        (ps/db-agent-update! db blocker {:status "completed"})
         (expect (agents/claim-iteration! {:db-info db :session-id idle})
-                "A capacity refusal is retryable after another child settles"))
+                "A woken child can pass the active cap; only a new spawn counts against it")
+        (expect (= {:status "running" :iterations_used 1}
+                   (select-keys (agents/info db idle) [:status :iterations_used]))))
       (doseq [child (ps/db-agent-list db leader)]
         (ps/db-agent-update! db (:session_id child) {:status "completed"}))
       (doseq [n (range (inc agents/max-active-children) agents/max-team-children)]

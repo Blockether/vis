@@ -5389,25 +5389,18 @@
 (def ^:private max-active-children (long (get agent-schema "x-vis-max-active-children")))
 
 (defn db-agent-claim-iteration!
-  "Reserve one child model iteration atomically, including admission under the active-team cap."
+  "Reserve one child model iteration atomically. A follow-up from a Council ping or council.resume
+   can pass the active cap; only a new spawn counts against it."
   [db sid]
-  (pos?
-    (long (or (:next.jdbc/update-count
-                (first (execute! db
-                                 {:update :session_agent
-                                  :set {:iterations_used [:+ :iterations_used 1] :status "running"}
-                                  :where [:and [:= :session_id (str sid)]
-                                          [:not-in :status ["cancelled" "budget_limited"]]
-                                          [:< :iterations_used :iteration_budget]
-                                          [:or [:in :status ["queued" "running"]]
-                                           [:<
-                                            {:select [[[:count :*]]]
-                                             :from [[:session_agent :active]]
-                                             :where [:and
-                                                     [:= :active.leader_id :session_agent.leader_id]
-                                                     [:in :active.status ["queued" "running"]]]}
-                                            max-active-children]]]})))
-              0))))
+  (pos? (long (or (:next.jdbc/update-count
+                    (first (execute! db
+                                     {:update :session_agent
+                                      :set {:iterations_used [:+ :iterations_used 1]
+                                            :status "running"}
+                                      :where [:and [:= :session_id (str sid)]
+                                              [:not-in :status ["cancelled" "budget_limited"]]
+                                              [:< :iterations_used :iteration_budget]]})))
+                  0))))
 
 (defn db-agent-extend-budget!
   "Add `iterations` to one child budget atomically, within the schema maximum. The status stays:
@@ -5450,33 +5443,25 @@
       (db-agent-info db sid))))
 
 (defn db-agent-resume!
-  "Queue one idle child for a follow-up task. One write transaction checks that the child is
-   idle, not cancelled and has iterations left, and that its leader stays under the active
-   cap, so parallel resumes and spawns cannot pass it. `turns` is the turn count before the
-   task. Answers the new row, or nil when the child cannot resume."
+  "Queue one idle child for a follow-up task from council.resume or a Council ping. One write
+   transaction checks that the child is idle, not cancelled and has iterations left. A follow-up
+   can pass the active cap. `turns` is the turn count before the task. Answers the new row, or nil
+   when the child cannot resume."
   [db sid turns now]
-  (when (pos?
-          (long
-            (or (:next.jdbc/update-count
-                  (first
-                    (sqlite-write-tx!
-                      db
-                      (fn [tx-info]
-                        (execute!
-                          tx-info
-                          {:update :session_agent
-                           :set
-                           {:status "queued" :resumed_turns (long turns) :resumed_at (long now)}
-                           :where [:and [:= :session_id (str sid)]
-                                   [:not-in :status ["queued" "running" "cancelled"]]
-                                   [:< :iterations_used :iteration_budget]
-                                   [:<
-                                    {:select [[[:count :*]]]
-                                     :from [[:session_agent :active]]
-                                     :where [:and [:= :active.leader_id :session_agent.leader_id]
-                                             [:in :active.status ["queued" "running"]]]}
-                                    max-active-children]]})))))
-                0)))
+  (when (pos? (long (or (:next.jdbc/update-count
+                          (first (sqlite-write-tx!
+                                   db
+                                   (fn [tx-info]
+                                     (execute! tx-info
+                                               {:update :session_agent
+                                                :set {:status "queued"
+                                                      :resumed_turns (long turns)
+                                                      :resumed_at (long now)}
+                                                :where
+                                                [:and [:= :session_id (str sid)]
+                                                 [:not-in :status ["queued" "running" "cancelled"]]
+                                                 [:< :iterations_used :iteration_budget]]})))))
+                        0)))
     (db-agent-info db sid)))
 
 (defn db-fork-session-at-turn!

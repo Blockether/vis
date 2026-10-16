@@ -41,7 +41,7 @@
 (defn- wakeable?
   [agent]
   (and agent
-       (not (contains? #{"cancelled" "budget_limited"} (:status agent)))
+       (not= "cancelled" (:status agent))
        (< (long (:iterations_used agent)) (long (:iteration_budget agent)))))
 
 (defn wake-allowed?
@@ -195,11 +195,8 @@
                   (do (ctx-loop/set-turn-state! env :agent-handoff? true)
                       (swap! handoffs conj (str sid))
                       true)
-                  :else (do (when (and on? (not= "cancelled" (:status child)))
-                              (ps/db-agent-update! db
-                                                   sid
-                                                   {:status
-                                                    (if exhausted? "budget_limited" "failed")}))
+                  :else (do (when (and on? exhausted? (not= "cancelled" (:status child)))
+                              (ps/db-agent-update! db sid {:status "budget_limited"}))
                             false)))))
       true)))
 
@@ -223,9 +220,8 @@
       (str "Subagent stopped: it used its full iteration budget of " (:iteration_budget child)
            " and its handoff iteration. Its parent can add iterations with council.extend and "
            "continue it with council.resume.")
-      :else (str "Subagent stopped: its leader already runs "
-                 max-active-children
-                 " active subagents. Retry when one of them finishes."))))
+      :else (str "Subagent stopped: its iteration budget ended. Its parent can continue it with "
+                 "council.resume or a Council ping."))))
 
 (defn refusal-answer
   "The answer of a child turn that `claim-iteration!` stopped: the stop reason, then the last
@@ -708,10 +704,21 @@
       (fail! :invalid-request "That subagent has no open budget request"))
     (result :council.deny (current-record env session_id))))
 
+(defn queue-turn!
+  "Queue subagent `sid` for a follow-up turn. A Council ping and council.resume both use it, so
+   council.wait reports only the answer of the new turn. A follow-up can pass the active cap; only
+   a new spawn counts against it. Answers a function that undoes the change, or nil when the child
+   is cancelled or has no iterations left. A child that already runs stays as is."
+  [db sid]
+  (let [child (info db sid)]
+    (cond (or (nil? child) (contains? #{"queued" "running"} (:status child))) (constantly nil)
+          (ps/db-agent-resume! db sid (count (ps/db-list-session-turns db sid)) (util/now-ms))
+          #(ps/db-agent-update! db sid (select-keys child [:status :resumed_turns :resumed_at])))))
+
 (defn resume-agent
-  "Give a finished subagent a follow-up task. It continues in its own session with its whole
-   context, so it does not do its earlier work again. Then wait like council.run and return
-   the records. A child without iterations left needs council.extend first. A running child
+  "Give a finished subagent a follow-up task in its own session, with its whole context. Then
+   wait like council.run and return the records. A Council ping continues the child the same way,
+   without the wait. A child without iterations left needs council.extend first. A running child
    needs council.wait. timeout_secs defaults to 240 (max 1800)."
   ([env session-id task] (resume-agent env session-id task {}))
   ([env session-id task opts]
@@ -737,25 +744,19 @@
                  (fail! :budget-exceeded
                         (str "The subagent has no iterations left. Call "
                              "council.extend(session_id, iterations) first."))
-                 :else (fail! :agent-limit "The leader already has the maximum active subagents")))
+                 :else (fail! :invalid-request "The subagent cannot resume now")))
 
          child
          (info db session_id)]
 
      (when (= (str (:session-id env)) session_id)
        (fail! :not-owner "A subagent cannot resume itself"))
-     (when (live? session_id) (refuse! child))
-     ;; The store checks the status, the budget and the active cap and marks the child queued
-     ;; in one transaction, so parallel resumes and spawns cannot both pass.
-     (when-not (ps/db-agent-resume! db
-                                    session_id
-                                    (count (ps/db-list-session-turns db session_id))
-                                    (util/now-ms))
-       (refuse! (info db session_id)))
+     (when (or (live? session_id) (contains? #{"queued" "running"} (:status child)))
+       (refuse! child))
+     ;; The store checks the status and the budget and marks the child queued in one
+     ;; transaction. A Council ping wake uses the same step.
      (let [restore!
-           #(ps/db-agent-update! db
-                                 session_id
-                                 (select-keys child [:status :resumed_turns :resumed_at]))
+           (or (queue-turn! db session_id) (refuse! (info db session_id)))
 
            entry
            (try ((runtime-fn :publish)
@@ -842,12 +843,18 @@
   [env]
   (when (enabled? (:db-info env) (:session-id env))
     "## Subagents (Council)
-- Use subagents only when the user asks or the work has two or more independent parts. Do critical-path work, small tasks and single-file edits yourself.
+- Use subagents only when the user asks or the work has two or more large independent parts. When in doubt, do the work yourself.
+- First make a short plan. Do the critical-path step yourself: the step that your next action waits for.
+- Do shared work yourself before you split, for example a file that every part uses or changes.
+- Do small tasks, single-file edits, one search or one check yourself. A child costs more time than a few tool calls.
+- Give each large independent part one child, usually two to four in total. Do not split one small task into many children.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.
+- Write each task as a brief for a peer: the goal, what you already know or ruled out, and the output that you need. For an independent review, give the child the code, not your conclusion.
 - A child gets 120 iterations by default (maximum 600). For a large or multi-step task, set a larger iteration_budget in its task dict at the start.
 - A child uses your model and your context. Set model and provider in a task dict only when the user or project names a model for that work. A child on another model gets only the system prompt and its task, so write a task that stands alone.
-- Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer. Verify answers before you use them.
+- Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer.
+- While children run, do other work that they do not do. Do not do their work again. Before you use an answer, check its changed files and test results.
 - Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead.
-- Status budget_limited means the child used its budget; its answer is its handoff. To continue it, call council.extend, then council.resume. The status stays budget_limited until council.resume.
-- For follow-up work on the same files or findings, call council.resume(session_id, task) on the finished child. It keeps its context, so it costs less than a new child.
+- Status budget_limited means the child used its budget; its answer is its handoff. To continue it, call council.extend, then council.resume. The status stays budget_limited until the child continues.
+- For follow-up work on the same files or findings, call council.resume(session_id, task) on the finished child. It keeps its context, so it costs less than a new child. A ping with council.publish continues a finished child the same way, without the wait.
 - As a subagent, do only your task and end with a short answer for your parent. If you need a decision that your task does not give, call council.ask(question) and follow the reply; if it returns None, choose the safest option and say so. If session[\"agent\"] has budget_notice, follow it: ask early with council.ask_budget(iterations, reason) when the task needs more. Use council.publish for other messages to your parent or siblings."))

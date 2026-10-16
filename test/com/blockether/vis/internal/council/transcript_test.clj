@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.session.titling :as titling]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -193,6 +194,40 @@
           (expect (str/includes? (:request @submitted) (str "council.get(" (:entry_id entry) ")")))
           (expect (= required? (str/includes? (:request @submitted) "before ending this turn")))
           (expect (not (str/includes? (:request @submitted) (:content entry))))))))
+
+;; A ping to a finished subagent is a follow-up task, the same store step as council.resume.
+(defdescribe
+  council-wake-continues-a-finished-subagent-like-resume
+  (it "queues the child with its turn count and restores it when the turn cannot start"
+      (let [{:keys [db sid entry]}
+            (managed-fixture "coordination")
+
+            submit
+            (atom (fn [_]
+                    {:turn {}}))]
+
+        (agents/finish! db sid "completed")
+        (with-redefs-fn {#'toggles/enabled? (constantly true)
+                         #'state/council-wake-eligible? (constantly true)
+                         #'state/submit-turn! (fn [_ opts]
+                                                (@submit opts))}
+          (fn []
+            (state/council-wake! db sid entry)
+            (expect (= "queued" (:status (agents/info db sid))))
+            (expect (= (count (ps/db-list-session-turns db sid))
+                       (:resumed_turns (agents/info db sid))))
+            (expect (some? (:resumed_at (agents/info db sid))))
+            (agents/finish! db sid "completed")
+            (let [before (select-keys (agents/info db sid) [:status :resumed_turns :resumed_at])]
+              (reset! submit (fn [_]
+                               {:error :busy :message "No start"}))
+              (expect (= :busy
+                         (try (state/council-wake! db sid entry)
+                              nil
+                              (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+              (expect (= before
+                         (select-keys (agents/info db sid) [:status :resumed_turns :resumed_at]))
+                      "A failed start leaves the child as it was")))))))
 
 (defdescribe request-provenance-is-enforced-by-sqlite
              (it "request provenance is enforced by sqlite"

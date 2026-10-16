@@ -5158,27 +5158,36 @@
                  (or (nil? (rooms/selected-room db sid)) (rooms/wake-allowed? db sid))
                  (agents/wake-allowed? db (:author_session_id entry) sid))
     (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
-  (let [result
-        (submit-turn!
-          sid
-          {:request
-           (str "Council notification #" (:entry_id entry)
-                ". Read the attributed Council input; if missing or truncated, use council.get("
-                (:entry_id entry)
-                ")." (when (:reply_required entry)
-                       (str " Reply before ending this turn with await council.publish(content, "
-                            "kind=\"informational\", reply_to="
-                            (:entry_id entry)
-                            ").")))
-           :display-request (:content entry)
-           :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
-           :idempotency-key (when (rooms/selected-room db sid)
-                              (str "room:" (:group_id entry) ":" (:entry_id entry)))
-           :council-ping {:db db
-                          :entry-id (:entry_id entry)
-                          :entry entry
-                          :remote? (boolean (rooms/selected-room db sid))}})]
+  ;; A ping to a finished subagent is a follow-up task, the same step as council.resume.
+  (let [restore!
+        (or (agents/queue-turn! db sid)
+            (throw (ex-info "Subagent cannot take a follow-up turn" {:error :invalid-recipient})))
+
+        result
+        (try (submit-turn!
+               sid
+               {:request
+                (str
+                  "Council notification #" (:entry_id entry)
+                  ". Read the attributed Council input; if missing or truncated, use council.get("
+                  (:entry_id entry)
+                  ")." (when (:reply_required entry)
+                         (str " Reply before ending this turn with await council.publish(content, "
+                              "kind=\"informational\", reply_to="
+                              (:entry_id entry)
+                              ").")))
+                :display-request (:content entry)
+                :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
+                :idempotency-key (when (rooms/selected-room db sid)
+                                   (str "room:" (:group_id entry) ":" (:entry_id entry)))
+                :council-ping {:db db
+                               :entry-id (:entry_id entry)
+                               :entry entry
+                               :remote? (boolean (rooms/selected-room db sid))}})
+             (catch Throwable t (restore!) (throw t)))]
+
     (when (:error result)
+      (restore!)
       (throw (ex-info (:message result "Council target cannot be started")
                       {:error (:error result)})))
     result))
