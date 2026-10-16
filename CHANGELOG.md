@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.49] - 2026-10-16
+
+### Fixed
+- `--full-trace-json-stream` sends only the new text of each reasoning and content frame. A long trace is about ten times smaller.
+- A release now points the README and documentation installer links to the new version.
+
 ## [v0.2.48] - 2026-10-16
 
 ### Added
