@@ -522,3 +522,33 @@ describe("the wait for a finished turn's persisted row", () => {
     }
   });
 });
+
+// Regression, reported in a Vis session: a fork of a session with a running turn said
+// "Cancelled by user." under the copied turn. Nobody cancelled it; the person forked it.
+describe('a turn that a fork settled', () => {
+  it('names the fork, not a cancel', async () => {
+    const forked = {
+      turn_id: 'gw-forked',
+      request: 'refactor the parser',
+      status: 'interrupted',
+      prior_outcome: 'cancelled',
+      created_at: Date.now(),
+      content: [
+        { id: 'gw-forked:forked', type: 'notice', code: 'turn_forked', message: 'Forked from this point.' },
+      ],
+      iterations: [],
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedTranscript: () => [],
+        transcript: () => Promise.resolve([forked]),
+      },
+    });
+
+    // The terminal phase line paints the sentence twice, like a cancel; the notice adds no box.
+    expect(await screen.findAllByText('Forked from this point.')).toHaveLength(2);
+    expect(document.querySelector('.bg-answer')).toBeNull();
+    expect(screen.queryByText('Cancelled by user.')).toBeNull();
+  });
+});

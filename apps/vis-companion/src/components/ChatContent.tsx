@@ -2526,6 +2526,11 @@ function releaseRamp(id: symbol): void {
 
 /** Capture and restore the element crossing the scroller's top edge. */
 
+/** The notice of a turn that a fork copied while the turn still ran in the source. */
+function isForkNotice(block: ContentBlock): boolean {
+  return block.type === 'notice' && block.code === 'turn_forked';
+}
+
 /** Settled prose strings that are actually painted as the answer. */
 export function answeredProse(
   blocks: readonly ContentBlock[] | undefined,
@@ -4412,6 +4417,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   // the row carries no content blocks (issue #145).
   const answered = useMemo(() => answeredProse(turn.content, fallback), [turn.content, fallback]);
   const cancelled = turn.status === 'cancelled' || turn.prior_outcome === 'cancelled';
+  // A fork settles the copy of a turn that still ran in the source with this notice
+  // (`content/fork-notice` in the engine). The phase line says it; nobody cancelled the turn.
+  const forkNotice = cancelled ? blocks.find(isForkNotice) : undefined;
+  const shownBlocks = forkNotice ? blocks.filter((block) => block !== forkNotice) : blocks;
   const emptyStatus =
     !streaming &&
     !blocks.length &&
@@ -4484,12 +4493,12 @@ export const AssistantMessage = memo(function AssistantMessage({
         />
         {/* Desktop messages share the reading scale with the composer and session title.
             Controls and tool payloads stay compact; touch keeps its existing density. */}
-        {(blocks.length > 0 || fallback || emptyStatus) && (
+        {(shownBlocks.length > 0 || fallback || emptyStatus) && (
           <div
             className={`bg-answer text-ui mouse:text-title ${cancelled ? 'italic text-cancelled-foreground' : 'text-answer-foreground'}`}
             data-transcript-part
           >
-            {blocks.map((block) => (
+            {shownBlocks.map((block) => (
               <ContentBlockView key={block.id} block={block} onOpenAttachment={onOpenAttachment} />
             ))}
             {fallback && <Markdown onOpenAttachment={onOpenAttachment}>{fallback}</Markdown>}
@@ -4504,7 +4513,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             busy={pythonBusy}
           />
         ) : cancelled ? (
-          <TurnPhaseLine phase="Cancelled by user." terminal />
+          <TurnPhaseLine phase={forkNotice?.message ?? 'Cancelled by user.'} terminal />
         ) : pending ? (
           <TurnPhaseLine phase={pending} />
         ) : turn.status === 'running' ? (

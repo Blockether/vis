@@ -175,6 +175,35 @@
           (expect (= :cancelled (:status assistant)))
           (expect (= "notice" (get-in blocks [0 "type"])))
           (expect (str/includes? (:text assistant) "Cancelled by user")))))
+  ;; Regression, user report in this Vis session: a fork of a running turn said
+  ;; "Cancelled by user." The engine stores a fork notice, which the history shows instead.
+  (it "rebuild-history shows the fork notice of a turn that a fork settled"
+      (with-redefs [db-info
+                    (fn []
+                      :db)
+
+                    vis/gateway-transcript
+                    compose-transcript
+
+                    db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-forked
+                        :user-request "still running"
+                        :prior-outcome :cancelled
+                        :content [{"id" "n1"
+                                   "type" "notice"
+                                   "code" "turn_forked"
+                                   "message" "Forked from this point."}]}])
+
+                    db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [])]
+
+        (let [assistant (second ((var-get (resolve 'com.blockether.vis.tui.chat/rebuild-history))
+                                  "c1"))]
+          (expect (= :cancelled (:status assistant)))
+          (expect (= "Forked from this point." (:text assistant)))
+          (expect (not (str/includes? (:text assistant) "Cancelled by user"))))))
   (it "rebuild-history honors an explicitly silent persisted form"
       ;; Visibility is data on the form; no return-value sentinel participates.
       (with-redefs [db-info

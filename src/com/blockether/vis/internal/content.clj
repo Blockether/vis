@@ -87,6 +87,21 @@
   ([id code message]
    (assert-block! {"id" (str id) "type" "notice" "code" (str code) "message" (str message)})))
 
+(def ^:const fork-notice-code
+  "Notice code of a turn that still ran in the source session when a fork copied it."
+  "turn_forked")
+
+(defn fork-notice
+  "The notice that settles a running turn that a fork copied. Clients show it instead of
+   a cancel notice: the person forked the session, nobody cancelled the turn."
+  [id]
+  (notice id fork-notice-code "Forked from this point."))
+
+(defn fork-notice?
+  "True when `block` is the notice of a turn that a fork settled."
+  [block]
+  (and (= "notice" (get block "type")) (= fork-notice-code (get block "code"))))
+
 (defn message
   [{:keys [id role status content created-at completed-at model provider author]
     :or {status "streaming" content [] created-at (util/now-ms)}}]

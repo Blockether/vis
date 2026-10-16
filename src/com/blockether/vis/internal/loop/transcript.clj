@@ -997,7 +997,10 @@
                 (let [turn (persistance/db-read-session-turn db session-id turn-id)
                       status (:status turn)
                       unfinished? (terminal-incomplete-turn-status? status)
-                      answer (answer-markdown (:content turn))
+                      ;; A fork notice ends the copy of a turn that still ran in the source.
+                      ;; It is not prose the model said, so it never counts as an answer.
+                      {notices true blocks false} (group-by content/fork-notice? (:content turn))
+                      answer (answer-markdown (vec blocks))
                       {recordings true files false}
                       (group-by #(boolean (attachments/audio-media-type? (:media-type %)))
                                 (get attached (str turn-id)))]
@@ -1030,6 +1033,7 @@
                       (when (and unfinished? (not-any? #(= "error" (get % "type")) (:content turn)))
                         answer)
                       :interrupted? (interrupted-turn-status? status)
+                      :forked? (boolean (seq notices))
                       :cancelled? (= :cancelled status)})])))
             turns))))
 

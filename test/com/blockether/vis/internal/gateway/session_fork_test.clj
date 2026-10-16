@@ -138,6 +138,12 @@
                               (mapv #(get % "status") (state/fork-points fork-id))))
                    ;; The TUI history shows a cancel notice only from the prior outcome.
                    (expect (= "cancelled" (get (last (state/transcript fork-id)) "prior_outcome")))
+                   ;; Regression, user report in this Vis session: the settled copy said
+                   ;; "Cancelled by user." Its notice names the fork, which the TUI and the
+                   ;; web show instead of a cancel notice.
+                   (expect
+                     (= [{"type" "notice" "code" "turn_forked" "message" "Forked from this point."}]
+                        (mapv #(dissoc % "id") (get (last (state/transcript fork-id)) "content"))))
                    ;; The source turn keeps running.
                    (expect (= ["completed" "streaming"]
                               (mapv #(get % "status") (state/fork-points sid)))))))

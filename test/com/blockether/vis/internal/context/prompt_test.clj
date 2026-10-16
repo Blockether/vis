@@ -1548,6 +1548,16 @@
         (expect (str/includes? (:content notice)
                                "persisted results remain valid; do not repeat settled work"))
         (expect (not (str/includes? (:content notice) "INTERRUPTED before it finished")))))
+  ;; Regression, user report in this Vis session: a fork of a running turn reached the
+  ;; next turn as a user cancel. The copy closes with a fork marker instead.
+  (it "closes a turn that a fork settled with a fork marker, not a cancel"
+      (let [[notice :as closing]
+            (:closing (prompt/prior-turn-messages
+                        {:turn 1 :request "inspect and fix" :cancelled? true :forked? true}))]
+        (expect (= 1 (count closing)))
+        (expect (= "user" (:role notice)))
+        (expect (str/includes? (:content notice) "<turn_forked>"))
+        (expect (not (str/includes? (:content notice) "<turn_cancelled>")))))
   ;; Reported from the app: cancelling a turn also dropped the prose the model
   ;; had already sent, so the next turn resumed as if it had said nothing.
   (it "keeps the partial answer a cancelled turn had already produced"

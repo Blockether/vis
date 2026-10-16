@@ -53,9 +53,9 @@
    `:request` is the user message that opened turn `turn`: the turn marker and
    the user's request, in the shape the current turn is sent in. `:closing` is
    the turn's answer as an assistant message. An unfinished turn closes with
-   what the model had said by then plus an explicit cancellation or
+   what the model had said by then plus an explicit fork, cancellation or
    interruption notice. A finished turn without an answer closes with nothing."
-  [{:keys [turn request answer partial-answer interrupted? cancelled?]}]
+  [{:keys [turn request answer partial-answer interrupted? cancelled? forked?]}]
   (let
     [trimmed
      (fn [s]
@@ -79,6 +79,11 @@
      notice
      (when-not answer
        (cond
+         forked? (str
+                   "<turn_forked>This session was forked while this turn still ran in the source "
+                   "session. Completed tool calls and their persisted results remain valid; do not "
+                   "repeat settled work. The unfinished edge did not run here. Follow the latest "
+                   "user request.</turn_forked>")
          cancelled?
          (str "<turn_cancelled>The user cancelled this turn. Completed tool calls and their "
               "persisted results remain valid; do not repeat settled work. The unfinished edge "

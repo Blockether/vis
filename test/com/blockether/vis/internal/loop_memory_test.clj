@@ -487,3 +487,25 @@
           (expect (= [["local"] ["remote"]] @reads))
           (expect (= ["t2/request" "remote" "t2/closing"] (mapv first entries)))
           (expect (= ["t2/i1"] (keep (comp :iteration-scope second) entries))))))))
+
+;; Regression, user report in this Vis session: the next turn of a fork read the copied
+;; running turn as a user cancel, and the fork notice as words that the model had said.
+(defdescribe
+  fork-boundary-test
+  (it "closes a turn that a fork settled with a fork marker and no partial answer"
+      (with-redefs [db/db-list-session-attachments-meta
+                    (fn [& _]
+                      [])
+
+                    db/db-read-session-turn
+                    (fn [_ _ id]
+                      {:id id
+                       :status :cancelled
+                       :user-request "question"
+                       :content [(content/fork-notice "n1")]})]
+
+        (let [closing (get-in (#'transcript/turn-boundary-messages :db "s" [["forked" 1]])
+                              ["forked" :closing])]
+          (expect (= ["user"] (mapv :role closing)))
+          (expect (str/includes? (:content (first closing)) "<turn_forked>"))
+          (expect (not (str/includes? (:content (first closing)) "Forked from this point.")))))))

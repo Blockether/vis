@@ -22,6 +22,7 @@
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.diff :as diff]
@@ -5641,11 +5642,17 @@
                                                   :forked_from_session_turn_state_id nil)
                                           ;; The fork runs nothing: a turn still running in the
                                           ;; source is settled here the way a cancel settles
-                                          ;; it, or every client paints the fork as live.
+                                          ;; it, or every client paints the fork as live. The
+                                          ;; fork notice tells people and the next turn that a
+                                          ;; fork, not a cancel, ended the copy.
                                           (= "running" (:status ts-row))
                                           (assoc :status
                                             (normalize-status :interrupted) :prior_outcome
-                                            "cancelled"))]}))
+                                            "cancelled" :content_json
+                                            (->json (conj (vec (<-json (:content_json ts-row)))
+                                                          (content/fork-notice (str
+                                                                                 new-turn-soul-id
+                                                                                 ":forked"))))))]}))
                   (doseq [it iters
                           :let [forms (<-blob (:tool_calls it))
                                 history-id-map (fork-activity-histories! tx-info new-soul-id forms)]]
