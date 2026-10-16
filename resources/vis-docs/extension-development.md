@@ -340,10 +340,15 @@ With this setting, Vis prepares each uv project of the project's extensions like
 `vis-agent python --shared uv sync`. It does not create or read `.venv`. The trusted worker
 imports the shared packages in `~/.vis/python/packages` (or `VIS_PYTHON_PACKAGES`).
 
-- When you open the project or run `/reload`, Vis first checks the lock offline. It installs only
-  when the shared packages differ from the lock.
-- An unmanaged scan only checks. If the shared packages differ, the error names the
-  `vis-agent python --shared uv sync --project` command to run before `/reload`.
+- When you open the project or run `/reload`, Vis first checks offline that the shared packages
+  satisfy the version ranges of the extension project. Another lock can install a newer version in
+  the same range, and the check accepts it. Vis installs the locked versions only when a range is
+  not satisfied.
+- When Vis prepares extensions, it does not install or check `vis-agent` in the shared packages.
+  The extensions always use the bundled SDK.
+- An unmanaged scan only checks. If a range is not satisfied, the error names the packages that uv
+  must change. It also names the `vis-agent python --shared uv sync --project` command to run before
+  `/reload`.
 - The setting applies only to uv projects inside the project directory. Installed extension
   packages and global extensions keep their own environments.
 

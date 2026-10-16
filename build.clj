@@ -1091,6 +1091,9 @@
              "-H:IncludeResources=vis-shims/.*"
              ;; Host modules are materialized for the runtime worker at first use.
              "-H:IncludeResources=vis-guest/.*"
+             ;; The shared-package range check (resources/vis-python/*.py), run by the
+             ;; embedded interpreter while Vis prepares extensions (#391).
+             "-H:IncludeResources=vis-python/.*"
              ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/blockether/vis/*.py, on
              ;; :paths as a resource root): the body every extension context execs, and
              ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an

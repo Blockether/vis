@@ -902,74 +902,125 @@
       (throw (ex-info "python.tls_strict must be a boolean" {:type ::invalid-tls-strict})))
     strict))
 
+(def ^:private bundled-sdk
+  "Vis runs its bundled SDK. Extension preparation never installs or checks it in shared packages,
+   because each extension lock pins another version of it (#391)."
+  "vis-agent")
+
+(def ^:private shared-check-source
+  "Python source that writes range requirements from a pylock and `uv.lock` (#391)."
+  (delay (slurp (or (io/resource "vis-python/shared_check.py")
+                    (throw (ex-info "Missing Vis resource vis-python/shared_check.py" {}))))))
+
+(defn- shared-workspace
+  "uv's workspace directory of `project`, where uv resolves local sources."
+  ^File [^File project uv]
+  (let [workspace (io/file (str/trim (run-uv! project [uv "workspace" "dir" "--offline"])))]
+    (when-not (and (.isAbsolute workspace) (.isDirectory workspace))
+      (throw (ex-info "uv did not report an existing workspace directory" {})))
+    workspace))
+
+(defn- workspace-temp-file
+  "A new temporary file in `workspace`. uv writes local sources relative to the workspace root,
+   and reads them relative to the file's parent. Never put this file in the system temp dir."
+  ^java.nio.file.Path [^File workspace ^String suffix]
+  (Files/createTempFile (.toPath workspace)
+                        "pylock.vis-"
+                        suffix
+                        (make-array java.nio.file.attribute.FileAttribute 0)))
+
 (defn- shared-project-install!
   "Install `project`'s locked dependencies into shared packages, as `--shared uv sync` does.
-   With `check?`, install nothing, stay offline and keep the lock unchanged.
-   Answer true when uv plans no change or after an installation."
-  [^File project check?]
+   Skip the bundled SDK."
+  [^File project]
   (let [uv
         (bundled-uv!)
 
         workspace
-        (io/file (str/trim (run-uv! project [uv "workspace" "dir" "--offline"])))]
+        (shared-workspace project uv)
 
-    (when-not (and (.isAbsolute workspace) (.isDirectory workspace))
-      (throw (ex-info "uv did not report an existing workspace directory" {})))
-    ;; uv writes local sources relative to the workspace root, and reads them
-    ;; relative to the pylock's parent. Never put this file in the system temp dir.
-    (let [lock-file
-          (Files/createTempFile (.toPath workspace)
-                                "pylock.vis-"
-                                ".toml"
-                                (make-array java.nio.file.attribute.FileAttribute 0))
+        lock-file
+        (workspace-temp-file workspace ".toml")
 
-          packages
-          (runtime/packages-dir)]
+        packages
+        (runtime/packages-dir)]
 
-      (try (run-uv! project
-                    (into [uv "export" "--format" "pylock.toml" "--output-file" (str lock-file)]
-                          (concat (when check? ["--locked" "--offline"]) (embedded-python))))
-           (let [before
-                 (when-not check? (editable-installs packages))
+    (try (run-uv! project
+                  (into [uv "export" "--format" "pylock.toml" "--output-file" (str lock-file)
+                         "--no-emit-package" bundled-sdk]
+                        (embedded-python)))
+         (let [before (editable-installs packages)]
+           (run-uv! project
+                    (into [uv "pip" "install" "--target" packages "--requirements" (str lock-file)
+                           "--no-deps" "--directory" (.getCanonicalPath workspace)]
+                          (embedded-python)))
+           (warn-repointed-editables! before (editable-installs packages)))
+         (finally (Files/deleteIfExists lock-file)))))
 
-                 output
-                 (run-uv! project
-                          (into
-                            [uv "pip" "install" "--target" packages "--requirements" (str lock-file)
-                             "--no-deps" "--directory" (.getCanonicalPath workspace)]
-                            (concat (when check? ["--offline" "--dry-run"]) (embedded-python))))]
+(defn- shared-project-plan
+  "Check offline, without an installation, that shared packages satisfy `project`. Answer nil when
+   they do, else uv's planned changes. Every extension lock installs into the same packages, so the
+   check uses the declared ranges, not the exact lock pins (#391)."
+  [^File project]
+  (let [uv
+        (bundled-uv!)
 
-             (when-not check? (warn-repointed-editables! before (editable-installs packages)))
-             (or (not check?) (str/includes? output "Would make no changes")))
-           (finally (Files/deleteIfExists lock-file))))))
+        workspace
+        (shared-workspace project uv)
+
+        [lock-file requirements overrides excludes :as files]
+        (mapv #(workspace-temp-file workspace %) [".toml" ".txt" "-overrides.txt" "-excludes.txt"])]
+
+    (try (run-uv! project
+                  (into [uv "export" "--format" "pylock.toml" "--output-file" (str lock-file)
+                         "--no-emit-package" bundled-sdk "--locked" "--offline"]
+                        (embedded-python)))
+         (spit (.toFile ^java.nio.file.Path excludes) (str bundled-sdk "\n"))
+         (run-uv! project
+                  (into [uv "run" "--no-project" "--offline"]
+                        (concat (embedded-python)
+                                ["python" "-I" "-B" "-c" @shared-check-source (str lock-file)
+                                 (str (io/file workspace "uv.lock")) (str requirements)
+                                 (str overrides) bundled-sdk])))
+         (let [output (run-uv! project
+                               (into [uv "pip" "install" "--target" (runtime/packages-dir)
+                                      "--requirements" (str requirements) "--overrides"
+                                      (str overrides) "--excludes" (str excludes) "--directory"
+                                      (.getCanonicalPath workspace) "--offline" "--dry-run"]
+                                     (embedded-python)))]
+           (when-not (str/includes? output "Would make no changes") output))
+         (finally (run! #(Files/deleteIfExists ^java.nio.file.Path %) files)))))
 
 (defn ensure-shared-project!
   "Prepare an extension project in shared packages, as `vis-agent python --shared uv sync` does.
-   Install only when uv's offline plan differs from the lock. Never create or read `.venv`."
+   Install only when shared packages do not satisfy the project. Never create or read `.venv`."
   ^File [^File project]
   (locking preparation-lock
     (binding [*extension-preparation?* true]
-      (try (let [ready? (try (shared-project-install! project true)
+      (try (let [ready? (try (nil? (shared-project-plan project))
                              (catch clojure.lang.ExceptionInfo _ false))]
              (when-not ready?
                (preparation-stage! project "installing")
-               (shared-project-install! project false))
+               (shared-project-install! project))
              (preparation-stage! project (if ready? "cached" "ready"))
              (.getCanonicalFile (io/file (runtime/packages-dir))))
            (catch Throwable t (throw (preparation-failure project t)))))))
 
 (defn prepared-shared-project
-  "Check that shared packages hold an extension project's lock. Never install."
+  "Check that shared packages satisfy an extension project's lock. Never install."
   ^File [^File project]
   (let [hint (str "Run vis-agent python --shared uv sync --project "
                   (project-argument project)
                   ", then /reload.")]
-    (when-not (try (shared-project-install! project true)
-                   (catch clojure.lang.ExceptionInfo e
-                     (throw (ex-info (str (.getMessage e) "\n" hint)
-                                     (assoc (ex-data e) :type ::project-sync-required)
-                                     e))))
-      (throw (ex-info (str "Shared packages differ from the extension project's lock.\n" hint)
+    (when-let [plan (try (shared-project-plan project)
+                         (catch clojure.lang.ExceptionInfo e
+                           (throw (ex-info (str (.getMessage e) "\n" hint)
+                                           (assoc (ex-data e) :type ::project-sync-required)
+                                           e))))]
+      ;; Name the packages, so a real conflict between two extension locks is visible.
+      (throw (ex-info (str/join "\n"
+                                ["Shared packages differ from the extension project's lock."
+                                 (str/trim plan) hint])
                       {:type ::project-sync-required})))
     (.getCanonicalFile (io/file (runtime/packages-dir)))))
 

@@ -623,52 +623,62 @@
 
 (defdescribe
   shared-project-preparation-test
-  (it "uses shared packages when the lock matches them, and installs into them when it does not"
-      (python-runtime/ensure-library!)
-      (let [project
-            (temp-dir "vis-shared-project")
+  (it
+    "uses shared packages when the lock matches them, and installs into them when it does not"
+    (python-runtime/ensure-library!)
+    (let [project
+          (temp-dir "vis-shared-project")
 
-            packages
-            (temp-dir "vis-shared-packages")
+          packages
+          (temp-dir "vis-shared-packages")
 
-            stage
-            #(:stage (first (filter (fn [row]
-                                      (= (.getName project) (:name row)))
-                                    (python-runtime/preparation-status))))]
+          stage
+          #(:stage (first (filter (fn [row]
+                                    (= (.getName project) (:name row)))
+                                  (python-runtime/preparation-status))))]
 
-        (try (let [{:keys [result calls]} (shared-preparation-calls
-                                            project
-                                            packages
-                                            true
-                                            #(python-runtime/ensure-shared-project! project))]
-               (expect (= (.getCanonicalFile packages) result))
-               (expect (= [["workspace" "dir" "--offline"] ["export" "pip"] ["pip" "install"]]
-                          [(first calls) [(first (second calls)) (first (nth calls 2))]
-                           (vec (take 2 (nth calls 2)))]))
-               (expect (every? (set (second calls)) ["pylock.toml" "--locked" "--offline"]))
-               (expect (every? (set (nth calls 2)) ["--dry-run" "--offline" "--no-deps"]))
-               (expect (= (str packages) (second (drop-while #(not= "--target" %) (nth calls 2)))))
-               (expect (= "cached" (stage))))
-             (let [{:keys [result calls]}
-                   (shared-preparation-calls project
-                                             packages
-                                             false
-                                             #(python-runtime/ensure-shared-project! project))
+      (try
+        (let [{:keys [result calls]} (shared-preparation-calls
+                                       project
+                                       packages
+                                       true
+                                       #(python-runtime/ensure-shared-project! project))]
+          (expect (= (.getCanonicalFile packages) result))
+          (expect (= [["workspace" "dir" "--offline"] ["export" "run" "pip"] ["pip" "install"]]
+                     [(first calls) (mapv first (take 3 (rest calls)))
+                      (vec (take 2 (nth calls 3)))]))
+          (expect (every? (set (second calls))
+                          ["pylock.toml" "--locked" "--offline" "--no-emit-package" "vis-agent"]))
+          (expect (every? (set (nth calls 2)) ["--no-project" "--offline" "-I" "-c"])
+                  "the range check script runs offline on the embedded interpreter")
+          (expect (every? (set (nth calls 3)) ["--dry-run" "--offline" "--overrides" "--excludes"]))
+          (expect (not-any? #{"--no-deps"} (nth calls 3))
+                  "the check resolves the declared ranges, not the exact lock pins (#391)")
+          (expect (= (str packages) (second (drop-while #(not= "--target" %) (nth calls 3)))))
+          (expect (= "cached" (stage))))
+        (let [{:keys [result calls]}
+              (shared-preparation-calls project
+                                        packages
+                                        false
+                                        #(python-runtime/ensure-shared-project! project))
 
-                   install
-                   (last calls)]
+              install
+              (last calls)]
 
-               (expect (= (.getCanonicalFile packages) result))
-               (expect (= ["export" "pip"] [(first (nth calls 4)) (first install)]))
-               (expect (not-any? #{"--locked" "--offline"} (nth calls 4)))
-               (expect (not-any? #{"--dry-run" "--offline"} install))
-               (expect (= "ready" (stage))))
-             (expect (not (.exists (io/file project ".venv"))))
-             (expect (empty? (filter #(str/starts-with? (.getName ^java.io.File %) "pylock.vis-")
-                                     (.listFiles project)))
-                     "the temporary lock export is removed")
-             (finally (#'python-runtime/delete-tree! project)
-                      (#'python-runtime/delete-tree! packages))))))
+          (expect (= (.getCanonicalFile packages) result))
+          (expect (= ["export" "pip"] [(first (nth calls 5)) (first install)]))
+          (expect (not-any? #{"--locked" "--offline"} (nth calls 5)))
+          (expect (some #{"vis-agent"} (nth calls 5))
+                  "extension preparation never installs the SDK")
+          (expect (some #{"--no-deps"} install) "an installation keeps the exact lock pins")
+          (expect (not-any? #{"--dry-run" "--offline"} install))
+          (expect (= "ready" (stage))))
+        (expect (not (.exists (io/file project ".venv"))))
+        (expect (empty? (filter #(str/starts-with? (.getName ^java.io.File %) "pylock.vis-")
+                                (.listFiles project)))
+                "the temporary lock export is removed")
+        (finally (#'python-runtime/delete-tree! project)
+                 (#'python-runtime/delete-tree! packages))))))
 
 (defdescribe
   prepared-shared-project-test
@@ -686,7 +696,7 @@
                                             true
                                             #(python-runtime/prepared-shared-project project))]
                (expect (= (.getCanonicalFile packages) result))
-               (expect (= 3 (count calls))))
+               (expect (= ["workspace" "export" "run" "pip"] (mapv first calls))))
              (let [{:keys [result calls]} (shared-preparation-calls
                                             project
                                             packages
@@ -700,6 +710,116 @@
                        "manual validation never installs"))
              (finally (#'python-runtime/delete-tree! project)
                       (#'python-runtime/delete-tree! packages))))))
+
+;; Issue #391: every extension lock installs into the same shared packages. A check of the exact
+;; lock pins failed each project whose versions a later installation replaced.
+(defn- wheel!
+  "Write a minimal pure-Python wheel of `package` at `version` into `dir`."
+  [^java.io.File dir ^String package ^String version]
+  (let [module
+        (str/replace package "-" "_")
+
+        dist
+        (str module "-" version ".dist-info")
+
+        files
+        {(str module "/__init__.py") (str "VERSION = '" version "'\n")
+         (str dist "/METADATA")
+         (str "Metadata-Version: 2.1\nName: " package "\nVersion: " version "\n")
+         (str dist "/WHEEL")
+         "Wheel-Version: 1.0\nGenerator: vis-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"}
+
+        files
+        (assoc files
+          (str dist "/RECORD")
+          (str (str/join (map #(str % ",,\n") (keys files))) dist "/RECORD,,\n"))]
+
+    (with-open [zip (java.util.zip.ZipOutputStream.
+                      (io/output-stream (io/file dir
+                                                 (str module "-" version "-py3-none-any.whl"))))]
+      (doseq [[^String path ^String text] files]
+        (.putNextEntry zip (java.util.zip.ZipEntry. path))
+        (.write zip (.getBytes text "UTF-8"))
+        (.closeEntry zip)))))
+
+(defn- locked-project!
+  "Create and lock a uv project `project-name` in `root` that needs `dependencies` from `wheels`."
+  ^java.io.File [^java.io.File root project-name dependencies ^java.io.File wheels]
+  (let [project (io/file root project-name)]
+    (.mkdirs project)
+    (spit (io/file project "pyproject.toml")
+          (str "[project]\nname = \""
+               project-name
+               "\"\nversion = \"0.1.0\"\n"
+               "requires-python = \">=3.12\"\ndependencies = ["
+               (str/join ", " (map #(str "\"" % "\"") dependencies))
+               "]\n\n[tool.uv]\npackage = false\nno-index = true\nfind-links = [\""
+               (.getCanonicalPath wheels)
+               "\"]\n"))
+    (#'python-runtime/run-uv!
+     project
+     (into [(#'python-runtime/bundled-uv!) "lock" "--offline"] (#'python-runtime/embedded-python)))
+    project))
+
+(defn- installed-versions
+  "The versions of distribution `module` in shared `packages`, from the dist-info names."
+  [^java.io.File packages module]
+  (sort (keep #(second (re-matches (re-pattern (str module "-(.+)\\.dist-info"))
+                                   (.getName ^java.io.File %)))
+              (.listFiles packages))))
+
+(defdescribe
+  shared-project-ranges-test
+  (it
+    "accepts versions from another extension lock that satisfy the declared ranges"
+    (python-runtime/ensure-library!)
+    (let [root
+          (temp-dir "vis-shared-ranges")
+
+          wheels
+          (doto (io/file root "wheels") .mkdirs)
+
+          packages
+          (doto (io/file root "packages") .mkdirs)]
+
+      (try
+        (wheel! wheels "dep" "1.0")
+        (wheel! wheels "vis-agent" "0.0.1")
+        (let [older
+              (locked-project! root "older" ["dep>=1.0" "vis-agent>=0.0.1"] wheels)
+
+              _
+              (wheel! wheels "dep" "1.1")
+
+              newer
+              (locked-project! root "newer" ["dep>=1.0"] wheels)
+
+              strict
+              (locked-project! root "strict" ["dep<1.1"] wheels)
+
+              failure
+              #(try (python-runtime/prepared-shared-project %)
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+
+          (with-redefs [runtime/packages-dir (constantly (str packages))]
+            (python-runtime/ensure-shared-project! older)
+            (expect (= ["1.0"] (installed-versions packages "dep")))
+            (expect (empty? (installed-versions packages "vis_agent"))
+                    "extension preparation never installs the bundled SDK")
+            (#'python-runtime/shared-project-install! newer)
+            (expect (= ["1.1"] (installed-versions packages "dep")))
+            (expect (= (.getCanonicalFile packages) (python-runtime/prepared-shared-project older))
+                    "dep 1.1 satisfies dep>=1.0, although the older lock pins 1.0")
+            (expect (= (.getCanonicalFile packages) (python-runtime/prepared-shared-project newer)))
+            (let [e (failure strict)]
+              (expect (= ::python-runtime/project-sync-required (:type (ex-data e))))
+              (expect (str/includes? (ex-message e) "dep==1.0")
+                      "a real conflict names the package and the version it needs"))
+            (python-runtime/ensure-shared-project! older)
+            (expect (= ["1.1"] (installed-versions packages "dep"))
+                    "a satisfied project installs nothing")))
+        (finally (#'python-runtime/delete-tree! root))))))
 
 (defdescribe
   shared-environment-setting-test
