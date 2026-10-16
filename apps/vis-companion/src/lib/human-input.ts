@@ -101,12 +101,22 @@ export interface HumanInputField {
   text?: string;
 }
 
+/** The session that asks. A subagent's form also names its parent session. */
+export interface HumanInputOrigin {
+  session_id: string;
+  title?: string;
+  parent_session_id?: string;
+  parent_title?: string;
+}
+
 export interface HumanInputRequest {
   id: string;
   title: string;
   description?: string;
   source?: string;
   session_id?: string;
+  /** Present on forms from the gateway. See {@link originLabel}. */
+  origin?: HumanInputOrigin;
   fields: HumanInputField[];
   submit_label: string;
   cancel_label: string;
@@ -238,6 +248,7 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
   const description = optionalText(row.description);
   const source = optionalText(row.source);
   const sessionId = optionalText(row.session_id);
+  const origin = originFromWire(row.origin);
   // `0` is the engine's INDEFINITE wait, not a deadline that already passed:
   // drop it so nothing downstream counts down to zero on a form that is
   // simply parked until the operator answers it.
@@ -254,7 +265,38 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
     ...(description ? { description } : {}),
     ...(source ? { source } : {}),
     ...(sessionId ? { session_id: sessionId } : {}),
+    ...(origin ? { origin } : {}),
     ...(timeoutMs ? { timeout_ms: timeoutMs } : {}),
+  };
+}
+
+function originFromWire(raw: unknown): HumanInputOrigin | undefined {
+  const row = record(raw);
+  const sessionId = row ? optionalText(row.session_id) : undefined;
+  if (!row || !sessionId) return undefined;
+  const title = optionalText(row.title);
+  const parentId = optionalText(row.parent_session_id);
+  const parentTitle = optionalText(row.parent_title);
+  return {
+    session_id: sessionId,
+    ...(title ? { title } : {}),
+    ...(parentId ? { parent_session_id: parentId } : {}),
+    ...(parentTitle ? { parent_title: parentTitle } : {}),
+  };
+}
+
+/**
+ * The subagent and parent names a form header shows, or null for a form that a
+ * top-level session raised. A subagent's form also reaches every ancestor
+ * session, so the header must say which session asks.
+ */
+export function originLabel(
+  origin: HumanInputOrigin | undefined,
+): { agent: string; parent: string } | null {
+  if (!origin?.parent_session_id) return null;
+  return {
+    agent: origin.title ?? origin.session_id.slice(0, 8),
+    parent: origin.parent_title ?? origin.parent_session_id.slice(0, 8),
   };
 }
 

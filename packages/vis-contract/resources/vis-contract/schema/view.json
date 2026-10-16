@@ -115,7 +115,7 @@
       ]
     },
     "input_view": {
-      "description": "Public input View projection. Routing, validation rules and secret-storage flags stay at the host; created_at is the engine timestamp.",
+      "description": "Public input View projection. Routing, validation rules and secret-storage flags stay at the host; created_at and origin are engine stamps.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -157,6 +157,10 @@
           "type": "integer",
           "minimum": 1,
           "readOnly": true
+        },
+        "origin": {
+          "$ref": "#/$defs/input_origin",
+          "readOnly": true
         }
       },
       "required": [
@@ -168,6 +172,28 @@
         "is_cancellable",
         "timeout_ms",
         "created_at"
+      ]
+    },
+    "input_origin": {
+      "description": "The session that asks. A subagent form also names its parent, because it reaches every ancestor session.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "title": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "parent_session_id": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "parent_title": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        }
+      },
+      "required": [
+        "session_id"
       ]
     },
     "input_field": {

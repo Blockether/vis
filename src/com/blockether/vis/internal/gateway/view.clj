@@ -9,12 +9,18 @@
    An `:input` View blocks while a `:live` View streams coalesced patches on
    [[live-flush-ms]]. Operator intent for either kind enters through one [[action!]]
    and one kind-independent REST resource; the engine owns the closed action
-   vocabulary and capability checks."
+   vocabulary and capability checks.
+
+   An input View raised in a managed subagent also reaches every ancestor session,
+   so the person who watches the leader sees and answers it. Each input View
+   carries an `:origin` that names the session which asks and its parent."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.channel.events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.contract.view :as view-spec]
@@ -35,18 +41,104 @@
           str/trim
           not-empty))
 
+(defn- session-link
+  "Title and parent session of `sid` as `{:title … :parent-id …}`, or nil when the
+   store does not know the session. A lookup failure answers nil: origin data is
+   help for the reader, never a reason to lose the form."
+  [sid]
+  (try (when-let [db (lp/db-info)]
+         (let [record (lp/by-id sid)
+               parent (some-> (agents/info db sid)
+                              :parent_id
+                              str
+                              str/trim
+                              not-empty)]
+
+           (when (or record parent)
+             (cond-> {}
+               (some-> (:title record)
+                       str/trim
+                       not-empty)
+               (assoc :title (str/trim (:title record)))
+
+               parent
+               (assoc :parent-id parent)))))
+       (catch Throwable _ nil)))
+
+(def ^:private max-ancestors
+  "The most parent steps an origin walk takes. Subagent depth is far below this;
+   the bound only stops a broken parent chain."
+  16)
+
+(defn- ancestors-of
+  "Parent, grandparent and further sessions of `sid`, nearest first."
+  [sid]
+  (loop [id
+         (str sid)
+
+         found
+         []
+
+         seen
+         #{(str sid)}]
+
+    (let [parent (:parent-id (session-link id))]
+      (if (and parent (not (contains? seen parent)) (< (count found) (long max-ancestors)))
+        (recur parent (conj found parent) (conj seen parent))
+        found))))
+
+(defn- origin-of
+  "The `:origin` stamp of an input View raised in session `sid`."
+  [sid]
+  (let [{:keys [title parent-id]}
+        (session-link sid)
+
+        parent-title
+        (when parent-id (:title (session-link parent-id)))]
+
+    (cond-> {:session-id sid}
+      title
+      (assoc :title title)
+
+      parent-id
+      (assoc :parent-session-id parent-id)
+
+      parent-title
+      (assoc :parent-title parent-title))))
+
+(defn- with-origin
+  "Input View `view` with its `:origin` stamp."
+  [view]
+  (if-let [sid (session-of view)]
+    (assoc view :origin (origin-of sid))
+    view))
+
+(defn- input-sessions
+  "Sessions that show the input Views of session `sid`: `sid` and its ancestors."
+  [sid]
+  (into [sid] (ancestors-of sid)))
+
 (defn view-of
-  "Open View `view-id` when it belongs to session `sid`, as a kind/document
-   descriptor, else nil. This is the ownership gate for the shared action route."
+  "Open View `view-id` when session `sid` may act on it, as a kind/document
+   descriptor, else nil. This is the ownership gate for the shared action route.
+   An input View belongs to its session and to each ancestor session; a live View
+   belongs only to its session."
   [sid view-id]
-  (when-let [{:keys [view] :as descriptor} (view/open-view (str view-id))]
-    (when (= (str sid) (session-of view)) descriptor)))
+  (when-let [{:keys [kind view] :as descriptor} (view/open-view (str view-id))]
+    (when-let [owner (session-of view)]
+      (when (or (= (str sid) owner) (and (= :input kind) (some #{(str sid)} (ancestors-of owner))))
+        descriptor))))
 
 (defn input-views
-  "Input Views session `sid` is BLOCKED on right now, oldest first."
+  "Input Views session `sid` or one of its subagents is BLOCKED on right now,
+   oldest first, each with its `:origin`."
   [sid]
   (let [sid (str sid)]
-    (filterv #(= sid (session-of %)) (view/pending-requests))))
+    (into []
+          (comp (filter #(when-let [owner (session-of %)] (or (= sid owner)
+                                                              (some #{sid} (ancestors-of owner)))))
+                (map with-origin))
+          (view/pending-requests))))
 
 (defn input-view-of
   "Input View `view-id` when it is pending in `sid`, else nil."
@@ -229,9 +321,15 @@
   (case (:op event)
     :view/open
     (when-let [sid (session-of event)]
-      (state/append-event! sid
-                           gateway-contract/view-open-event
-                           {:kind (:kind event) :view-id (:view-id event) :view (:view event)}))
+      (if (= :input (:kind event))
+        (let [payload {:kind :input
+                       :view-id (:view-id event)
+                       :view (assoc (:view event) :origin (origin-of sid))}]
+          (doseq [target (input-sessions sid)]
+            (state/append-event! target gateway-contract/view-open-event payload)))
+        (state/append-event! sid
+                             gateway-contract/view-open-event
+                             {:kind (:kind event) :view-id (:view-id event) :view (:view event)})))
 
     :view/patch
     (when (and (= :live (:kind event)) (session-of event))
@@ -241,9 +339,11 @@
     (when-let [sid (session-of event)]
       ;; An ending never overtakes buffered live work.
       (when (= :live (:kind event)) (flush-view! (:view-id event)))
-      (state/append-event! sid
-                           gateway-contract/view-close-event
-                           {:kind (:kind event) :view-id (:view-id event) :result (:result event)}))
+      (doseq [target (if (= :input (:kind event)) (input-sessions sid) [sid])]
+        (state/append-event!
+          target
+          gateway-contract/view-close-event
+          {:kind (:kind event) :view-id (:view-id event) :result (:result event)})))
 
     nil)
   nil)

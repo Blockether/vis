@@ -42,6 +42,7 @@ class InputView(_ViewRecord):
 
     This describes the form, not a person's answers. Public close events do not
     include submitted values. Those values belong to the waiting extension.
+    `origin` names the session that asks and, for a subagent, its parent session.
     """
 
     _definition = "input_view"
@@ -56,6 +57,7 @@ class InputView(_ViewRecord):
     description: str | None = None
     source: str | None = None
     session_id: str | None = None
+    origin: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

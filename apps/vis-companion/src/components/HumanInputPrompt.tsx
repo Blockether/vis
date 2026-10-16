@@ -24,6 +24,7 @@ import {
   humanInputOtpDigits,
   humanInputRange,
   isInputViewEvent,
+  originLabel,
   toggleHumanInputOption,
   HUMAN_INPUT_CHOICE_MARKS,
   type HumanInputField,
@@ -313,6 +314,8 @@ export function HumanInputSheet({
   // read like a screen the operator had navigated to, with the verbs that end the
   // pause stranded a phone's length below the question. Above `sm:` it is the same
   // box every other dialog is, minus the fixed height.
+  // A subagent's form also reaches its ancestor sessions: name who asks.
+  const origin = originLabel(request.origin);
   return (
     <Modal
       size="fit"
@@ -368,7 +371,7 @@ export function HumanInputSheet({
           ref={bodyRef}
           className="max-h-[55svh] space-y-3 overflow-y-auto overscroll-contain p-4 sm:max-h-[60vh]"
         >
-          {(request.description || request.source) && (
+          {(request.description || request.source || origin) && (
             <div className="space-y-1">
               {request.description && (
                 <div className="font-mono text-meta italic text-dialog-hint">
@@ -382,6 +385,12 @@ export function HumanInputSheet({
               {request.source && (
                 <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
                   asked by <span className="text-white">{request.source}</span>
+                </p>
+              )}
+              {origin && (
+                <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                  subagent <span className="text-white">{origin.agent}</span> · parent{' '}
+                  <span className="text-white">{origin.parent}</span>
                 </p>
               )}
             </div>

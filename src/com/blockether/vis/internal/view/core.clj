@@ -1668,7 +1668,8 @@
     (let [stamps (into {}
                        (keep (fn [[wire-key k]]
                                (when-some [v (get wire wire-key)]
-                                 [k v])))
+                                 ;; A map stamp such as `origin` takes engine keys too.
+                                 [k (if (map? v) (wire/->engine v) v)])))
                        request-stamps)]
       (merge (request->view (normalize-request (spec<-json
                                                  (apply dissoc wire (keys request-stamps)))))

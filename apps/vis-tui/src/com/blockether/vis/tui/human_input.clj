@@ -591,6 +591,29 @@
 
 (defn- label-text [{:keys [label is-required]}] (str label (when is-required required-marker)))
 
+(defn origin-text
+  "The line that names a subagent and its parent session, or nil for a form that a
+   top-level session raised. A subagent's form also reaches every ancestor session,
+   so its header must say which session asks (issue #392)."
+  [origin]
+  (let [text
+        (fn [k]
+          (some-> (get origin k)
+                  str
+                  str/trim
+                  not-empty))
+
+        short-id
+        (fn [id]
+          (subs id 0 (min 8 (count id))))]
+
+    (when-let [parent-id (text :parent-session-id)]
+      (str "Subagent " (or (text :title)
+                           (some-> (text :session-id)
+                                   short-id)
+                           "?")
+           " · parent " (or (text :parent-title) (short-id parent-id))))))
+
 (defn- description-rows
   "`text` as `:description` rows, WORD-WRAPPED to `text-w` columns.
 
@@ -884,8 +907,11 @@
   ([form] (form-rows form nil))
   ([{:keys [request focus stops] :as form} text-w]
    (let [head
-         (when-let [rows (seq (markdown-prose-rows (:description request) text-w))]
-           (conj (vec rows) {:kind :blank}))
+         (into (if-let [text (origin-text (:origin request))]
+                 (conj (vec (description-rows text text-w)) {:kind :blank})
+                 [])
+               (when-let [rows (seq (markdown-prose-rows (:description request) text-w))]
+                 (conj (vec rows) {:kind :blank})))
 
          ;; ONE context per paint — including the stop index the whole tree shares,
          ;; so nested groups cost lookups, not rescans.

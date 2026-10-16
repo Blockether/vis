@@ -14,6 +14,7 @@ import {
   humanInputOtp,
   humanInputInputFields,
   humanInputIsDecoration,
+  originLabel,
   humanInputOtpDigits,
   initialHumanInputValues,
   isInputViewEvent,
@@ -161,6 +162,41 @@ describe('humanInputRequestFromWire', () => {
     expect('timeout_ms' in (forever ?? {})).toBe(false);
   });
 
+  // Issue #392: a subagent's form also reaches its parent session, so the header
+  // names the subagent and its parent.
+  it('names the subagent and parent that ask, and nothing for a top-level form', () => {
+    const child = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: 'a' }],
+      origin: {
+        session_id: 'child-1',
+        title: 'Read logs',
+        parent_session_id: 'leader-1',
+        parent_title: 'Deploy DEV13',
+      },
+    });
+    expect(child?.origin).toEqual({
+      session_id: 'child-1',
+      title: 'Read logs',
+      parent_session_id: 'leader-1',
+      parent_title: 'Deploy DEV13',
+    });
+    expect(originLabel(child?.origin)).toEqual({ agent: 'Read logs', parent: 'Deploy DEV13' });
+    expect(
+      originLabel({ session_id: '0123456789abcdef', parent_session_id: 'fedcba9876543210' }),
+    ).toEqual({ agent: '01234567', parent: 'fedcba98' });
+
+    const top = humanInputRequestFromWire({
+      id: 'r',
+      title: 'T',
+      fields: [{ id: 'a' }],
+      origin: { session_id: 'leader-1', title: 'Deploy DEV13' },
+    });
+    expect(originLabel(top?.origin)).toBeNull();
+    expect(humanInputRequestFromWire({ id: 'r', title: 'T', fields: [{ id: 'a' }], origin: {} })?.origin)
+      .toBeUndefined();
+  });
   it('refuses a frame it could not render as an answerable form', () => {
     expect(humanInputRequestFromWire(null)).toBeNull();
     expect(humanInputRequestFromWire({ title: 'T', fields: [{ id: 'a' }] })).toBeNull();

@@ -36,9 +36,10 @@
     overrides))
 
 (defn- await-true
-  "Poll `pred` for up to a second. Requests settle on another thread."
+  "Poll `pred` for up to ten seconds. Requests settle on another thread, and the
+   first `view.open` of a cold JVM also opens the shared store for its origin."
   [pred]
-  (loop [attempts 200]
+  (loop [attempts 2000]
     (cond (pred) true
           (zero? attempts) false
           :else (do (Thread/sleep 5) (recur (dec attempts))))))
@@ -126,6 +127,75 @@
                   (expect (= "input" (get event "kind")))
                   (expect (= "submitted" (get-in event ["result" "reason"]))))
                 (finally (hi/cancel! rid "cleanup")))))))))
+
+;; Issue #392: a form raised in a subagent showed only in the subagent session, with
+;; no origin. The person who watched the leader saw a run that hung for hours.
+(defdescribe
+  subagent-form-reaches-the-parent-session-test
+  (it
+    "a subagent form reaches its ancestors, names its origin and is answerable there"
+    (gw-hi/install!)
+    (let [leader
+          (str (random-uuid))
+
+          child
+          (str (random-uuid))
+
+          grandchild
+          (str (random-uuid))
+
+          stranger
+          (str (random-uuid))
+
+          rid
+          (str "req-" (random-uuid))
+
+          links
+          {leader {:title "Deploy DEV13"}
+           child {:title "Read logs" :parent-id leader}
+           grandchild {:title "Fetch" :parent-id child}}
+
+          sessions
+          #{leader child grandchild}]
+
+      (with-redefs-fn {#'gw-hi/session-link links}
+        (fn []
+          (with-events
+            (fn [seen]
+              (let [answer (future (hi/request! (spec :id rid :session-id grandchild)))]
+                (try (expect (await-true #(= 3 (count (events-of seen "view.open" rid)))))
+                     (expect (= sessions (set (map first (events-of seen "view.open" rid)))))
+                     (let [[_ event] (first (events-of seen "view.open" rid))]
+                       (expect (= {"session_id" grandchild
+                                   "title" "Fetch"
+                                   "parent_session_id" child
+                                   "parent_title" "Read logs"}
+                                  (get-in event ["view" "origin"])))
+                       ;; a process that rebuilds the form from the event keeps the origin
+                       (expect (= {:session-id grandchild
+                                   :title "Fetch"
+                                   :parent-session-id child
+                                   :parent-title "Read logs"}
+                                  (:origin (hi/view<-wire (get event "view"))))))
+                     ;; the leader lists the form and can answer it; a stranger cannot
+                     (expect (= [rid] (filterv #{rid} (mapv :id (gw-hi/input-views leader)))))
+                     (expect (= {:session-id grandchild
+                                 :title "Fetch"
+                                 :parent-session-id child
+                                 :parent-title "Read logs"}
+                                (:origin (first (filterv #(= rid (:id %))
+                                                  (gw-hi/input-views leader))))))
+                     (expect (empty? (filterv #(= rid (:id %)) (gw-hi/input-views stranger))))
+                     (expect (some? (gw-hi/input-view-of leader rid)))
+                     (expect (nil? (gw-hi/input-view-of stranger rid)))
+                     (expect (true? (:is-accepted (gw-hi/action! rid
+                                                                 {:action :submit
+                                                                  :values {"confirm" true}}))))
+                     (expect (true? (:is-submitted (deref answer 2000 ::timeout))))
+                     ;; every session that showed the form drops it
+                     (expect (await-true #(= 3 (count (events-of seen "view.close" rid)))))
+                     (expect (= sessions (set (map first (events-of seen "view.close" rid)))))
+                     (finally (hi/cancel! rid "cleanup")))))))))))
 
 (defdescribe rejected-answer-keeps-the-request-open-test
              (it "rejected answer keeps the request open"

@@ -2182,3 +2182,37 @@
             (mapv #(screen-row screen %) (range 30))]
 
         (expect (some #(str/includes? % "1 more waiting") rows)))))
+
+;; Issue #392: a subagent's form also reaches its parent session, so the dialog
+;; must say which subagent asks and which session is its parent.
+(defdescribe
+  subagent-origin-test
+  (it "names the subagent and its parent above the form"
+      (let [form
+            (hi/init-form (assoc (request)
+                            :origin {:session-id "child-1"
+                                     :title "Read logs"
+                                     :parent-session-id "leader-1"
+                                     :parent-title "Deploy DEV13"}))
+
+            rows
+            (hi/form-rows form)]
+
+        (expect (= {:kind :description :text "Subagent Read logs · parent Deploy DEV13"}
+                   (first rows)))
+        (expect (= {:kind :blank} (second rows)))))
+  (it "falls back to short session ids without titles"
+      (expect (= "Subagent 01234567 · parent fedcba98"
+                 (hi/origin-text {:session-id "0123456789abcdef"
+                                  :parent-session-id "fedcba9876543210"}))))
+  (it "shows no origin row for a top-level session"
+      (expect (nil? (hi/origin-text {:session-id "leader-1" :title "Deploy DEV13"})))
+      (expect (= (hi/form-rows (hi/init-form (request)))
+                 (hi/form-rows (hi/init-form (assoc (request) :origin {:session-id "leader-1"}))))))
+  (it "keeps the origin when a view crosses the wire"
+      (expect (= {:session-id "child-1" :parent-session-id "leader-1" :parent-title "Lead"}
+                 (:origin (engine/view<-wire {"id" "r"
+                                              "title" "T"
+                                              "origin" {"session_id" "child-1"
+                                                        "parent_session_id" "leader-1"
+                                                        "parent_title" "Lead"}}))))))
