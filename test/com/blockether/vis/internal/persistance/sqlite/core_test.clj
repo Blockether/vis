@@ -5366,6 +5366,51 @@
                               [:turn-count :iteration-count :input-tokens :input-cache-read-tokens
                                :output-tokens]))))))
 
+;; Regression, user report: a fork copies its source turns, and the fork's usage counted
+;; their cost and LLM calls as its own. A fresh fork must start at zero.
+(defdescribe
+  fork-usage-excludes-copied-turns-test
+  "A fork's usage rollup counts only the turns that run in the fork."
+  (it
+    "starts a fork at zero and counts only its own new turns"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api :title "source usage"})
+
+          first-turn
+          (persistance/db-store-session-turn! s {:parent-session-id (str sid) :user-request "one"})
+
+          second-turn
+          (persistance/db-store-session-turn! s {:parent-session-id (str sid) :user-request "two"})]
+
+      (doseq [tid [first-turn second-turn]]
+        (h/store-iteration!
+          s
+          {:session-turn-id tid :code "" :tokens {"input" 1000 "output" 10} :cost-usd 1.0}))
+      (let [fork-id
+            (h/fork-session-at-turn! s sid {:through-turn-id second-turn})
+
+            usage
+            (fn [id]
+              (select-keys (persistance/db-session-usage-stats s (str id))
+                           [:turn-count :iteration-count :input-tokens :cost-usd]))]
+
+        (expect (= {:turn-count 2 :iteration-count 2 :input-tokens 2000 :cost-usd 2.0} (usage sid)))
+        ;; No own turn yet, so the fork has no usage at all.
+        (expect (= {} (usage fork-id)))
+        (let [own-turn (persistance/db-store-session-turn! s
+                                                           {:parent-session-id (str fork-id)
+                                                            :user-request "three"})]
+          (h/store-iteration!
+            s
+            {:session-turn-id own-turn :code "" :tokens {"input" 300 "output" 3} :cost-usd 0.25})
+          (expect (= {:turn-count 1 :iteration-count 1 :input-tokens 300 :cost-usd 0.25}
+                     (usage fork-id)))
+          (expect (= {:turn-count 2 :iteration-count 2 :input-tokens 2000 :cost-usd 2.0}
+                     (usage sid))))))))
+
 (defdescribe
   usage-model-survives-an-unstamped-turn-test
   "A turn row is stamped with provider/model only when the turn FINISHES, so the

@@ -2196,12 +2196,11 @@
    [[:session_turn_soul :ts] [:= :ts.id :sts.session_turn_soul_id] [:session_state :ss]
     [:= :ss.id :ts.session_state_id]]
    [:and [:= :ss.session_soul_id soul-id-s]
-    ;; Only the root state contains the copied parent transcript. Later folds
-    ;; restart local turn positions, but every turn in those states is child work.
-    [:or [:not= :ss.parent_state_id nil]
-     [:> :ts.position
-      [:coalesce {:select [:inherited_turns] :from :session_agent :where [:= :session_id soul-id-s]}
-       0]]]
+    ;; Only the root state contains a copied parent transcript. A fork copy keeps
+    ;; its source `created_at`, which is before the fork's root state, so it
+    ;; never counts. Later folds restart local turn positions, but every turn in
+    ;; those states is child work.
+    [:or [:not= :ss.parent_state_id nil] [:>= :ts.created_at :ss.created_at]]
     [:= :sts.version
      {:select [[[:max :s2.version]]]
       :from [[:session_turn_state :s2]]
@@ -5631,7 +5630,11 @@
                                :values [(assoc soul-row
                                           :id new-turn-soul-id
                                           :session_state_id new-state-id
-                                          :position (inc (long idx)))]}))
+                                          :position (inc (long idx))
+                                          ;; Usage counts only turns created at or after the
+                                          ;; fork's root state, so a copy stays before it.
+                                          :created_at (min (long (:created_at soul-row))
+                                                           (dec (long now))))]}))
                   (when ts-row
                     (execute! tx-info
                               {:insert-into :session_turn_state
