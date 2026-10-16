@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.50] - 2026-10-16
+
+### Added
+- A form shows which session asks and the title of its parent session (#392).
+- A form from a subagent also opens in its parent and in each session above it, up to the leader (#392). One answer closes it in every session.
+
+### Changed
+- vis-lang-interface is at 2.11.2, vis-lang-python at 1.11.4 and vis-lang-clojure at 1.15.5 (#389).
+- Groups sort by their newest activity, like sessions.
+
+### Fixed
+- The TUI and the Companion cut long session titles in the form origin line with "…" (#392).
+- The TUI opens a forwarded form in the leader tab (#392).
+- A REPL that starts correctly no longer shows as stopped (#389).
+- Shared Python packages are checked against the declared version ranges, so a project no longer installs its pins again at each load (#391).
+- The Companion keeps the reading position when earlier steps load during a scroll.
+- Group bands no longer jump when you delete or archive a group.
+
 ## [v0.2.49] - 2026-10-16
 
 ### Fixed
