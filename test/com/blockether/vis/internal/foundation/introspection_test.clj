@@ -1218,3 +1218,38 @@
         (finally (vis/db-dispose-connection! s)
                  (doseq [^java.io.File file (reverse (file-seq dir))]
                    (.delete file)))))))
+
+(defdescribe
+  read-session-fork-origin-test
+  ;; Regression, user report in this Vis session: `read_session` of a fork called the settled
+  ;; copy of a running turn cancelled, and it did not say where the fork came from.
+  (it "names the source of a fork and reads the current outcome of the source turn"
+      (let [s (vis/db-create-connection! :memory)]
+        (try
+          (let [cid (h/store-session! s {:channel :tui :title "Source"})
+                _ (vis/db-store-session-turn!
+                    s
+                    {:parent-session-id cid :user-request "Q1" :status :done})
+                t2 (vis/db-store-session-turn!
+                     s
+                     {:parent-session-id cid :user-request "Q2" :status :running})
+                fork-id (h/fork-session-at-turn! s cid {:through-turn-id t2})
+                read-of (fn [sid]
+                          (:result (introspection/read-session {:session-id sid :db-info s} sid)))
+                running (read-of fork-id)]
+
+            (expect (= {"session_id" (str cid) "turn_id" (str t2) "outcome" "running"}
+                       (update-vals (get-in running ["session" "forked_from"]) str)))
+            ;; Nobody cancelled the copy: every read names it forked.
+            (expect (= ["done" "forked"]
+                       (mapv #(get % "outcome") (get-in running ["session" "turns"]))))
+            (expect (= "forked" (get-in running ["transcript" "turns" 1 "prior_outcome"])))
+            (expect (= "forked"
+                       (get-in (:result (introspection/get-session {:session-id fork-id :db-info s}
+                                                                   fork-id))
+                               ["last_turn" "outcome"])))
+            (expect (not (contains? (get (read-of cid) "session") "forked_from")))
+            ;; The source turn ends after the fork, and the fork reads its new outcome.
+            (vis/db-update-session-turn! s t2 {:status :done :prior-outcome :complete})
+            (expect (= "complete" (get-in (read-of fork-id) ["session" "forked_from" "outcome"]))))
+          (finally (vis/db-dispose-connection! s))))))

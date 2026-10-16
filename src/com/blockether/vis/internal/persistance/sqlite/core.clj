@@ -1522,6 +1522,12 @@
             (not-empty (:llm_pref_model soul))
             (assoc :model-pref {:provider (:llm_pref_provider soul) :model (:llm_pref_model soul)})
 
+            ;; Where a fork came from: the source session and the turn it copied last.
+            (:forked_from_session_id soul)
+            (assoc :forked-from
+              {:session-id (->uuid (:forked_from_session_id soul))
+               :turn-id (->uuid (:forked_from_turn_id soul))})
+
             project
             (assoc :project-name (:name project))))))))
 
@@ -5477,7 +5483,8 @@
    turn's `session_attachment` rows (ids remapped). The SOURCE session is left
    completely untouched; the fork is a separate tab/session whose history is
    exactly those turns and which continues fresh from there. A copied turn that still
-   runs in the source is settled as interrupted: the fork runs nothing.
+   runs in the source is settled as interrupted: the fork runs nothing. The fork keeps
+   the source session and its last copied turn as its origin.
 
    Optional `:agent` metadata creates a managed child instead: it persists lineage,
    budget and a complete model-input checkpoint, hides the child from the leader
@@ -5565,7 +5572,9 @@
                                            :channel (:channel src-soul)
                                            :created_at now
                                            :owner_id (or (:owner_id src-soul) "local")
-                                           :claimed_at now}
+                                           :claimed_at now
+                                           :forked_from_session_id soul-id-s
+                                           :forked_from_turn_id through-s}
                                     agent
                                     (assoc :parent_state_id
                                       (:id current) :llm_pref_provider

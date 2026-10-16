@@ -27,6 +27,7 @@
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.util :as util]))
 
 ;; ---------------------------------------------------------------------------
@@ -414,9 +415,28 @@
            (elapsed-ms turn)
            (assoc :elapsed-ms (elapsed-ms turn))))))))
 
+(defn- turn-outcome
+  "How `turn` ended. A turn that a fork settled is `:forked`, not the `:cancelled` that
+   its row stores: nobody cancelled it."
+  [turn]
+  (if (some content/fork-notice? (:content turn))
+    :forked
+    (or (:prior-outcome turn) (:status turn))))
+
+(defn- fork-origin
+  "The `origin` of a fork with the current `:outcome` of its source turn. That turn can
+   still run in the source or end after the fork. Without the source turn, no `:outcome`."
+  [db-info {:keys [session-id turn-id] :as origin}]
+  (let [turn (try (persistance/db-read-session-turn db-info session-id turn-id)
+                  (catch Throwable _ nil))]
+    (cond-> origin
+      turn
+      (assoc :outcome (turn-outcome turn)))))
+
 (defn- session-snapshot
   "Map for a single session: identity + every persisted turn rolled up to a
-   compact `{:id :user-request :outcome :answer :iteration-count}` shape.
+   compact `{:id :user-request :outcome :answer :iteration-count}` shape. A fork also
+   has `:forked-from`, see [[fork-origin]].
 
    Iteration rows are authoritative while a turn is live: the denormalized
    count on `session_turn_soul` is finalized only when the turn settles. Reading
@@ -429,7 +449,7 @@
                  turns (mapv (fn [turn]
                                (let [iteration-count (count (iteration-rows db-info (:id turn)))]
                                  (cond-> {:id (:id turn)
-                                          :outcome (or (:prior-outcome turn) (:status turn))
+                                          :outcome (turn-outcome turn)
                                           :iteration-count iteration-count}
                                    (:user-request turn)
                                    (assoc :user-request (:user-request turn))
@@ -449,6 +469,9 @@
                       :created-at (:created-at session)
                       :turns turns
                       :turn-count (count turns)}
+               (:forked-from session)
+               (assoc :forked-from (fork-origin db-info (:forked-from session)))
+
                (:provider session)
                (assoc :provider (:provider session))
 
@@ -604,8 +627,7 @@
 
                   last-turn
                   (assoc :last-turn
-                    (cond-> {:id (:id last-turn)
-                             :outcome (or (:prior-outcome last-turn) (:status last-turn))}
+                    (cond-> {:id (:id last-turn) :outcome (turn-outcome last-turn)}
                       (:user-request last-turn)
                       (assoc :user-request (preview (:user-request last-turn) 200)))))))
             (catch Throwable _ nil))))))
@@ -1478,7 +1500,10 @@
      :result
      (str
        "String-keyed `{session, current_turn, failures, diagnosis, session_forks, turn_retries, "
-       "usage, transcript}`. `session.goal` is the persisted goal or None. Printing shows a summary, "
+       "usage, transcript}`. `session.goal` is the persisted goal or None. In a fork, "
+       "`session.forked_from` has the source `session_id`, the last copied `turn_id` and the "
+       "current `outcome` of that turn. A turn that the fork settled has the outcome `forked`. "
+       "Printing shows a summary, "
        "and all fields stay available by key or through `dict(r)`/`json.dumps(r)`.\n\n"
        "The transcript has one `turns`/`iterations`/`blocks` projection, with folded history and "
        "block timing and call metadata. It has no duplicate `forms`, `dialog` or `timeline`, and no "

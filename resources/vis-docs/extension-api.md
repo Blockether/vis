@@ -1120,7 +1120,8 @@ takes a bare id, an unambiguous prefix or the `vis_session_id#<uuid>` marker tha
 from the TUI or the Companion app. The dict has `session`, `current_turn`, `failures`,
 `diagnosis`, `session_forks`, `turn_retries`, `usage` and `transcript`. Each turn has `position`,
 `user_request`, `status`, `content` and `iterations`. Each iteration has `blocks` with `code`,
-`stdout` and `error`.
+`stdout` and `error`. In a fork, `session.forked_from` has the source `session_id`, the last copied
+`turn_id` and the current `outcome` of that turn.
 
 The `introspection` setting does not apply, because an extension is trusted code. The setting
 controls only the model's own session tools. Outside a Vis process, both functions raise an

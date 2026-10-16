@@ -209,7 +209,9 @@
              :duration-ms (:duration-ms turn)
              :user-request (or (:user-request turn) "")
              :status (:status turn)
-             :prior-outcome (:prior-outcome turn)
+             ;; A fork settles a copied running turn like a cancel. Reads name it forked.
+             :prior-outcome
+             (if (some content/fork-notice? (:content turn)) :forked (:prior-outcome turn))
              :iteration-count (count iters)
              :failure-count (reduce + 0 (map :failure-count iters))
              :iterations iters

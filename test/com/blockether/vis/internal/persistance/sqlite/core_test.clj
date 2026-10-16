@@ -3015,7 +3015,12 @@
       ;; The fork settles the copy the way a cancel settles a turn: interrupted, with the
       ;; cancelled outcome that the TUI and the next turn's handover read.
       (expect (= [["done" nil] ["interrupted" "cancelled"]] (outcomes fork-id)))
-      (expect (= [["done" nil] ["running" nil]] (outcomes cid)))))
+      (expect (= [["done" nil] ["running" nil]] (outcomes cid)))
+      ;; The fork keeps its origin for reads: the source and its last copied turn.
+      (expect
+        (= [(str cid) (str t2)]
+           (mapv str ((juxt :session-id :turn-id) (:forked-from (vis/db-get-session s fork-id))))))
+      (expect (nil? (:forked-from (vis/db-get-session s cid))))))
   (it "returns nil instead of throwing when there is no state to fork"
       (let [s (h/store)]
         (expect (nil? (h/fork-session! s (random-uuid) {}))))))

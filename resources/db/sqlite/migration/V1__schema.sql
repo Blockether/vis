@@ -101,6 +101,10 @@ CREATE TABLE session_soul (
   -- are independent leaders and leave this link NULL. Child sessions are
   -- discoverable through their team, not the top-level conversation list.
   parent_state_id   TEXT REFERENCES session_state(id) ON DELETE CASCADE,
+  -- The session and the turn that a fork copied last. NULL when the session is not
+  -- a fork. No foreign key: a fork keeps its origin after the source is deleted.
+  forked_from_session_id TEXT,
+  forked_from_turn_id    TEXT,
   -- Per-session model preference: the PROVIDER + MODEL this session routes
   -- through, set via the web picker or the TUI (Ctrl+T). Both NULL = router
   -- default.
