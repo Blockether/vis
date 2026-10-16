@@ -3295,6 +3295,31 @@
           (assoc-in [:project-sidebar :index] next-index)))
       db)))
 
+;; A rename shows at once in every loaded page. The project refresh after it reads the
+;; pages again, after several gateway requests.
+(defn- retitle-page
+  [page sid title]
+  (let [retitle #(if (= sid (str (get % "id"))) (assoc % "title" title) %)]
+    (cond-> page
+      (seq (:sessions page))
+      (update :sessions (partial mapv retitle))
+
+      (seq (:grouped page))
+      (update :grouped (partial mapv retitle))
+
+      (seq (:awaiting page))
+      (update :awaiting (partial mapv retitle))
+
+      (map? (:current page))
+      (update :current retitle))))
+
+(reg-event-db
+  :project-session-retitled
+  (fn [db [_ sid title]]
+    (cond-> db
+      (map? (get-in db [:project-sidebar :pages]))
+      (update-in [:project-sidebar :pages] update-vals #(retitle-page % (str sid) title)))))
+
 (reg-event-db :project-page-failed
               (fn [db [_ pid request-id focus-index]]
                 (if (= request-id (get-in db [:project-sidebar :pages pid :request-id]))

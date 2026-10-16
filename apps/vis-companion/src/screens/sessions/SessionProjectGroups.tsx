@@ -119,22 +119,31 @@ type GroupStatusCounts = {
 };
 
 /**
+ * A name this band just gave a row: the title the stale copy wears, and the new one
+ * (`ProjectGroup`).
+ */
+type Retitle = { from: Session['title']; to: string };
+
+/**
  * The row to paint for one session: what the list holds, unless this band has just
- * re-filed it or put it away and the list's own window has not caught up yet
+ * re-filed it, put it away or renamed it and the list's own window has not caught up yet
  * (`ProjectGroup`).
  */
 function settled(
   session: Session,
   local: Map<string, Session>,
   refiled: ReadonlyMap<string, Session>,
+  retitled: ReadonlyMap<string, Retitle>,
 ): Session {
   const current = local.get(session.id) ?? session;
   const held = refiled.get(session.id);
-  if (!held) return current;
   const moved =
-    held.group_id !== current.group_id ||
-    sessionIsArchived(held) !== sessionIsArchived(current);
-  return moved ? held : current;
+    held !== undefined &&
+    (held.group_id !== current.group_id || sessionIsArchived(held) !== sessionIsArchived(current));
+  const row = moved ? held : current;
+  // Only the copy read before the rename is stale. Any other title is a newer read.
+  const name = retitled.get(session.id);
+  return name && row.title === name.from ? { ...row, title: name.to } : row;
 }
 
 /** What a session is called in a list of choices. */
@@ -1104,6 +1113,10 @@ export const ProjectGroup = memo(function ProjectGroup({
   // next poll — 5.5s later. Until then the move is held here, or a row would sit in
   // the band it just left for a whole cycle after the tap that moved it.
   const [refiled, setRefiled] = useState<ReadonlyMap<string, Session>>(() => new Map());
+  // A RENAMED ROW WEARS ITS NEW NAME AT ONCE. The screen echoes a rename into the machine's
+  // window only, and a filed row is rarely in it, so the shelf painted the old name until
+  // the next read. The name is held here over that stale copy.
+  const [retitled, setRetitled] = useState<ReadonlyMap<string, Retitle>>(() => new Map());
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const shownGroups = presentedGroups?.view === groupArchived ? presentedGroups.groups : NO_GROUPS;
   const archivedGroupIds = useMemo(
@@ -1128,7 +1141,7 @@ export const ProjectGroup = memo(function ProjectGroup({
     const api = getClient(conn);
     const shown = painting
       .filter((session) => !api.isSessionDeleted(session.id))
-      .map((session) => settled(session, local, refiled))
+      .map((session) => settled(session, local, refiled, retitled))
       .filter(paints);
     if (searching) return shown;
     // A RUN PARKED ON A HUMAN IS SAID WHERE IT LIVES, however deep it sits. The
@@ -1140,10 +1153,10 @@ export const ProjectGroup = memo(function ProjectGroup({
     const onPage = new Set(shown.map((session) => session.id));
     const parked = (paged?.awaiting ?? NO_ROWS)
       .filter((session) => !onPage.has(session.id) && !api.isSessionDeleted(session.id))
-      .map((session) => settled(session, local, refiled))
+      .map((session) => settled(session, local, refiled, retitled))
       .filter(paints);
     return parked.length === 0 ? shown : [...parked, ...shown];
-  }, [searching, painting, local, refiled, paints, paged, getClient, conn, ownRows]);
+  }, [searching, painting, local, refiled, retitled, paints, paged, getClient, conn, ownRows]);
   // Each response can land first: never put a new band's name over the previous page's
   // sessions, or create an unnamed band from rows whose own page has not arrived yet.
   const matchedRows =
@@ -1183,11 +1196,11 @@ export const ProjectGroup = memo(function ProjectGroup({
         : NO_ROWS;
     return [...presentedGroups.rows, ...landed]
       .filter((session) => !api.isSessionDeleted(session.id))
-      .map((session) => settled(session, local, refiled))
+      .map((session) => settled(session, local, refiled, retitled))
       .filter(paints);
   }, [
-    searching, presentedGroups, groupArchived, matchedRows, bandOffset, local, refiled, paints,
-    getClient, conn,
+    searching, presentedGroups, groupArchived, matchedRows, bandOffset, local, refiled, retitled,
+    paints, getClient, conn,
   ]);
   // Every row this project is painting: the shelves, and the page under them. A verb
   // aimed at a row - a drop, a `Move to...` - has to find it wherever it stands.
@@ -1790,11 +1803,19 @@ export const ProjectGroup = memo(function ProjectGroup({
     },
     [rowActions.commands],
   );
+  const renameRow = useCallback(
+    async (session: Session, rowConn: GatewayConn, title: string) => {
+      await rowActions.commands.rename(session, rowConn, title);
+      setRetitled((held) => new Map(held).set(session.id, { from: session.title, to: title }));
+    },
+    [rowActions.commands],
+  );
   // The row's own verb opens an anchored popup only when there is a group to choose.
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       ...rowActions.commands,
       requestDelete,
+      rename: renameRow,
       archive: archiveSession,
       retain,
       ...(bands.length > 0 && {
@@ -1807,7 +1828,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         },
       }),
     }),
-    [archiveSession, bands.length, requestDelete, retain, rowActions.commands],
+    [archiveSession, bands.length, renameRow, requestDelete, retain, rowActions.commands],
   );
   // The project's only group is the one this row is under, so there is no other
   // destination to choose: Ungroup acts directly. A refused move leaves the row put.
@@ -1827,11 +1848,12 @@ export const ProjectGroup = memo(function ProjectGroup({
     () => ({
       ...rowActions.commands,
       requestDelete,
+      rename: renameRow,
       archive: archiveSession,
       ungroup: ungroupSession,
       retain,
     }),
-    [archiveSession, requestDelete, retain, rowActions.commands, ungroupSession],
+    [archiveSession, renameRow, requestDelete, retain, rowActions.commands, ungroupSession],
   );
   const row = (session: Session) => {
     const pending = pendingDeleteId === session.id;

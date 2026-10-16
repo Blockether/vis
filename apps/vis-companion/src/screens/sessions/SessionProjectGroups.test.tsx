@@ -344,6 +344,41 @@ describe('ProjectGroup groups', () => {
     expect(wallet.querySelectorAll('.bg-group-violet')).toHaveLength(3);
   });
 
+  // Regression, user report (paraphrased: a renamed session in a group kept its old name for a
+  // while). The screen echoes a rename only into the machine's own window, and a filed row is
+  // rarely in it, so the shelf painted the stale page copy until the next read.
+  it('paints a renamed filed row with its new name before the next read', async () => {
+    finePointer();
+    const page = {
+      rows: [ROWS[2], ROWS[3]],
+      total: 2,
+      awaiting: [],
+      grouped: [ROWS[0], ROWS[1]],
+      nextCursor: '',
+    };
+    const listProjectPage = vi.fn(async () => page);
+    const { user } = mount(
+      machine({ heldProjectPage: () => page, listProjectPage }),
+      undefined,
+      '',
+      [ROWS[2], ROWS[3]],
+    );
+    const wallet = await band('Wallet work');
+    const filed = ROWS[0];
+    const reads = listProjectPage.mock.calls.length;
+    const actions = within(wallet).getByRole('group', { name: `${filed.title} actions` });
+    await user.click(within(actions).getByRole('button', { name: 'Rename' }));
+    const field = within(wallet).getByRole('textbox', { name: `Rename ${filed.title}` });
+    await user.clear(field);
+    await user.type(field, 'Wallet release notes{Enter}');
+
+    await waitFor(() => expect(within(wallet).queryByRole('textbox')).toBeNull());
+    const row = wallet.querySelector(`[data-session-id="${filed.id}"]`) as HTMLElement;
+    expect(within(row).getByText('Wallet release notes')).toBeVisible();
+    expect(within(row).queryByText(filed.title as string)).toBeNull();
+    expect(listProjectPage.mock.calls.length).toBe(reads);
+  });
+
   // The two sets name their rows without repeating counts from the project header.
   // Filing a session moves it into its group, not into the loose Sessions set.
   it('names both sets without repeated tallies and keeps filed sessions out of Sessions', async () => {

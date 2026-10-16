@@ -2148,6 +2148,45 @@
             (#'screen/sidebar-row-menu! nil entry nil))
           (expect (= [[:warning "Could not change favorite"]] @calls)))))))
 
+;; Regression, user report (paraphrased: a renamed session in a group kept its old name for a
+;; while). The sidebar showed the new name only after the project refresh had read every page.
+(defdescribe
+  renamed-session-shows-its-new-name-at-once-test
+  (it
+    "renames the row in every loaded page before the refresh reads them"
+    (let [filed
+          {"id" "saved" "title" "Saved elsewhere" "group_id" "g1"}
+
+          db
+          (assoc-in (fixture-db)
+            [:project-sidebar :pages]
+            {"a" {:sessions [{"id" "loose" "title" "Loose"}] :grouped [filed] :current filed}})
+
+          seen
+          (atom nil)
+
+          entry
+          {:kind :project-session :label "Saved elsewhere" :project project-a :session filed}]
+
+      (with-redefs-fn {#'state/app-db (atom db)
+                       #'screen/with-dialog-lock (fn [f]
+                                                   (f))
+                       #'screen/refresh-projects!
+                       #(reset! seen (get-in @state/app-db [:project-sidebar :pages "a"]))
+                       #'vis/worker-future (fn [_ f]
+                                             (f))
+                       #'vis/gateway-set-session-title! (fn [_ _]
+                                                          {})
+                       #'dlg/select-dialog! (fn [& _]
+                                              {:id :rename-session})
+                       #'dlg/text-input-dialog! (fn [& _]
+                                                  "  New title  ")}
+        (fn []
+          (#'screen/sidebar-row-menu! nil entry nil)
+          (expect (= "New title" (get-in @seen [:grouped 0 "title"])))
+          (expect (= "New title" (get-in @seen [:current "title"])))
+          (expect (= "Loose" (get-in @seen [:sessions 0 "title"]))))))))
+
 (defdescribe
   saved-session-archive-view-is-independent-and-gateway-paged-test
   (it

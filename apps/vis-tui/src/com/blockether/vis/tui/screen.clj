@@ -6703,6 +6703,8 @@
             (vis/worker-future "tui-session-rename"
                                (fn []
                                  (try (vis/gateway-set-session-title! sid (str/trim (str entered)))
+                                      (state/dispatch [:project-session-retitled sid
+                                                       (str/trim (str entered))])
                                       (refresh-projects!)
                                       (catch Throwable _
                                         (vis/notify! "Could not rename session"
