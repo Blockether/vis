@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.48] - 2026-10-16
+
+### Added
+- A leader can extend, resume and hand off the budget of a subagent (#388).
+- A ping to a subagent continues it like `council.resume`.
+- Session cost shows the session's own cost, the subagent cost and the total.
+
+### Changed
+- `com.blockether/fff` is at 0.12.13. A small rescan no longer waits for other scans to finish.
+- Context projections and token counts are reused, and ready Python catalogs load without locks.
+
+### Fixed
+- File index rescans no longer time out on machines with few CPU cores.
+- A busy Python block stops at its time limit and shows its progress live.
+- The CPU limit counts the whole worker process tree.
+- A subagent keeps its resume state after a refused budget request (#388).
+- Attachments keep their source links outside report delivery.
+- Session stats headings in the Companion match their sections.
 ## [v0.2.47] - 2026-10-15
 
 ### Added
