@@ -2133,6 +2133,16 @@ const AttachmentTile = memo(function AttachmentTile({
         transcription={attachment.transcription}
         transcriptionSegments={attachment.transcription_segments}
         transcriptionStatus={attachment.transcription_status}
+        action={
+          failed ? null : (
+            <MediaShareButton
+              name={name}
+              mediaType={attachment.media_type}
+              noun="Recording"
+              load={() => client.attachmentBlob(sid, iterationId, index)}
+            />
+          )
+        }
       >
         {failed ? (
           <span className="flex min-w-0 items-center gap-1.5 font-mono text-chip text-footer-muted">
@@ -2206,6 +2216,7 @@ const AttachmentTile = memo(function AttachmentTile({
           <MediaShareButton
             name={name}
             mediaType={attachment.media_type}
+            noun="Video"
             load={() => client.attachmentBlob(sid, iterationId, index)}
           />
         ) : null
@@ -2228,6 +2239,8 @@ type RecordedFile = {
   media: string;
   size?: number;
   count: number;
+  /** The first copy, whose bytes the row shares. */
+  attachment: IterationAttachment;
 };
 
 // Same file written by three attempts of the same block is ONE recorded thing
@@ -2246,6 +2259,7 @@ function recordedFiles(attachments: IterationAttachment[]): RecordedFile[] {
         media: attachment.media_type ?? '',
         size: attachment.size,
         count: 1,
+        attachment,
       });
     }
   });
@@ -2469,20 +2483,34 @@ export const AttachmentRail = memo(function AttachmentRail({
           </Disclosure>
           {open && (
             <ul className="grid min-w-0 gap-0.5 pl-4">
-              {files.map((file) => (
-                <li
-                  key={file.key}
-                  className="min-w-0 truncate font-mono text-chip text-footer-muted"
-                >
-                  {[
-                    file.count > 1 ? `${file.name} ×${file.count}` : file.name,
-                    file.media,
-                    attachmentBytes(file.size),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </li>
-              ))}
+              {files.map((file) => {
+                const iterationId = file.attachment.iteration_id;
+                return (
+                  <li
+                    key={file.key}
+                    className="flex min-w-0 items-center gap-2 font-mono text-chip text-footer-muted"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {[
+                        file.count > 1 ? `${file.name} ×${file.count}` : file.name,
+                        file.media,
+                        attachmentBytes(file.size),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                    {iterationId ? (
+                      <MediaShareButton
+                        name={file.name}
+                        mediaType={file.media}
+                        load={() =>
+                          client.attachmentBlob(sid, iterationId, file.attachment.index ?? 0)
+                        }
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -4857,6 +4885,16 @@ export const UserMessage = memo(function UserMessage({
               transcription={att.transcription}
               transcriptionSegments={att.transcription_segments}
               transcriptionStatus={att.transcription_status}
+              action={
+                att.base64 ? (
+                  <MediaShareButton
+                    name={att.filename || 'recording'}
+                    mediaType={att.media_type}
+                    noun="Recording"
+                    load={async () => (await fetch(attachmentSrc(att))).blob()}
+                  />
+                ) : null
+              }
             >
               <RecordingPlayer src={attachmentSrc(att)} />
             </MediaRecording>
@@ -4871,6 +4909,7 @@ export const UserMessage = memo(function UserMessage({
                   <MediaShareButton
                     name={att.filename || 'video'}
                     mediaType={att.media_type}
+                    noun="Video"
                     load={async () => (await fetch(attachmentSrc(att))).blob()}
                   />
                 ) : null

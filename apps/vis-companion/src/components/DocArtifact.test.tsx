@@ -347,6 +347,68 @@ describe('an opened document', () => {
     expect(markup).toContain('aria-label="Close report.pdf"');
   });
 
+  // Shares from a document opened in the session, like the artifacts sheet does.
+  // The outcome must not become a second header line: the band grew after Share.
+  it('shares the original document and keeps the outcome out of the band', async () => {
+    const blob = new Blob(['%PDF'], { type: 'application/pdf' });
+    const share = vi.fn(async (_data: ShareData) => undefined);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(blob)));
+    Object.defineProperty(navigator, 'share', { value: share, configurable: true });
+    try {
+      render(
+        <DocOverlay
+          name="shared.pdf"
+          mime="application/pdf"
+          sizeLabel="1.2 MB"
+          url="blob:shared"
+          failed={false}
+          onClose={() => undefined}
+        />,
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Share' }));
+      expect(await screen.findByRole('status')).toHaveTextContent('Artifact shared.');
+      expect(share.mock.calls[0]?.[0]).toEqual({ files: [expect.any(File)] });
+      expect(share.mock.calls[0]?.[0].files?.[0]).toMatchObject({
+        name: 'shared.pdf',
+        type: 'application/pdf',
+      });
+      const band = screen.getByRole('heading', { name: 'shared.pdf' }).closest('header');
+      expect(band).toHaveTextContent('shared.pdf');
+      expect(band).not.toHaveTextContent('Artifact shared.');
+    } finally {
+      Reflect.deleteProperty(navigator, 'share');
+    }
+  });
+
+  it('reports a failed share over the body, not in the band', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))));
+    Object.defineProperty(navigator, 'share', { value: vi.fn(), configurable: true });
+    try {
+      render(
+        <DocOverlay
+          name="offline.pdf"
+          mime="application/pdf"
+          url="blob:offline"
+          failed={false}
+          onClose={() => undefined}
+        />,
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Share' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not share artifact.');
+      const band = screen.getByRole('heading', { name: 'offline.pdf' }).closest('header');
+      expect(band).not.toHaveTextContent('Could not share artifact.');
+    } finally {
+      Reflect.deleteProperty(navigator, 'share');
+    }
+  });
+
+  it('offers no share before the document bytes arrive', () => {
+    render(
+      <DocOverlay name="pending.pdf" mime="application/pdf" url={null} failed={false} onClose={() => undefined} />,
+    );
+    expect(screen.queryByRole('button', { name: 'Share' })).toBe(null);
+  });
+
   // One document per test: `useStickyOverlay` remembers an opened document BY NAME
   // across mounts, so a second test reusing the name opens on arrival.
   const openPreview = async (name: string) => {

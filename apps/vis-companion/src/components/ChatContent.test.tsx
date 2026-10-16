@@ -1950,6 +1950,39 @@ describe('the attachment rail', () => {
       Reflect.deleteProperty(navigator, 'share');
     }
   });
+  // Shares a recording and a recorded file from the session, not only from Artifacts.
+  it('shares a produced recording and a recorded file from the session', async () => {
+    const attachmentBlob = vi.fn(async () => new Blob(['bytes']));
+    const share = vi.fn(async (_data: ShareData) => undefined);
+    Object.defineProperty(navigator, 'share', { value: share, configurable: true });
+    const view = render(
+      <AttachmentRail
+        client={{ ...client, attachmentBlob } as unknown as GatewayClient}
+        sid="s1"
+        attachments={[
+          { filename: 'memo.m4a', media_type: 'audio/mp4', size: 4_000, iteration_id: 'i1', index: 0 },
+          { filename: 'bundle.zip', media_type: 'application/zip', size: 9_000, iteration_id: 'i1', index: 1 },
+        ]}
+      />,
+    );
+
+    try {
+      fireEvent.click(view.getByRole('button', { name: 'Share memo.m4a' }));
+      expect(await view.findByText('Recording shared.')).toBeVisible();
+      expect(attachmentBlob).toHaveBeenCalledWith('s1', 'i1', 0);
+      fireEvent.click(view.getByText('bundle.zip'));
+      fireEvent.click(view.getByRole('button', { name: 'Share bundle.zip' }));
+      expect(await view.findByText('File shared.')).toBeVisible();
+      expect(attachmentBlob).toHaveBeenCalledWith('s1', 'i1', 1);
+      expect(share.mock.calls.map((call) => call[0].files?.[0]?.name)).toEqual([
+        'memo.m4a',
+        'bundle.zip',
+      ]);
+    } finally {
+      view.unmount();
+      Reflect.deleteProperty(navigator, 'share');
+    }
+  });
   // Regression, user report: "the model attached a document, I commented on it and
   // saved, and now instead of one there are two". Saving files the same filename
   // as the NEXT VERSION of the same artifact; this rail painted a row per

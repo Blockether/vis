@@ -20,6 +20,7 @@ import { DiffArtifact } from './DiffArtifact';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText, TextFrame } from './TextArtifact';
 import { ChevronIcon } from './icons';
+import { useArtifactShare } from './Media';
 import { BandButton, DialogHeader, ListRow, overlayLayer } from './ui';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import { useBackLayer } from '../lib/edge-back';
@@ -92,7 +93,7 @@ export function OverlayScreen({
         closeLabel={`Close ${title}`}
         onClose={onClose}
       />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
     </div>
   );
 }
@@ -432,6 +433,13 @@ export const DocOverlay = memo(function DocOverlay({
         v{shown?.version ?? 1} of {cuts.length}
       </BandButton>
     ) : null;
+  // The shown cut's original bytes, so a document read in the session leaves the
+  // app exactly as one opened from the artifacts sheet does.
+  const share = useArtifactShare(
+    url && !failed
+      ? { name, mediaType: mime, load: async () => (await fetch(url)).blob() }
+      : null,
+  );
 
   const chrome: DocumentChrome = ({ actions, note, body }) => (
     <OverlayScreen
@@ -441,10 +449,12 @@ export const DocOverlay = memo(function DocOverlay({
         <>
           {versionCell}
           {actions}
+          {share.cell}
         </>
       }
       onClose={onClose}
     >
+      {share.notice}
       {body}
     </OverlayScreen>
   );

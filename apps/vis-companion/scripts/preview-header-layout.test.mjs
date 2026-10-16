@@ -38,6 +38,10 @@ function Preview() {
       <ImageViewer src={STORY_PICTURES[0].src} name={name} onClose={onClose} />
     ) : kind === 'artifact' ? (
       <ArtifactsSheet client={client} sid="preview" artifacts={[artifact]} initialArtifact={artifact} onClose={onClose} />
+    ) : kind === 'bare' ? (
+      <OverlayScreen title={name} onClose={onClose}>
+        <p>Document preview</p>
+      </OverlayScreen>
     ) : (
       <OverlayScreen title={name} subtitle="12 rows · 2 columns" actions={<BandButton label="Download"><DownloadIcon /></BandButton>} onClose={onClose}>
         <p>Document preview</p>
@@ -48,8 +52,7 @@ function Preview() {
 createRoot(document.getElementById('root')!).render(<Preview />);
 `;
 
-// A long filename must not turn the phone's preview header into a multi-line banner.
-it.runIf(process.env.CI)('keeps image and artifact headers compact with long names', async () => {
+async function buildFixture() {
   const { output } = await build({
     root: fileURLToPath(new URL('..', import.meta.url)),
     logLevel: 'error',
@@ -62,22 +65,41 @@ it.runIf(process.env.CI)('keeps image and artifact headers compact with long nam
     }],
     build: { write: false },
   });
+  return output;
+}
+
+async function openContext(browser, output, options) {
+  const context = await browser.newContext(options);
+  const page = await context.newPage();
+  await page.route('http://127.0.0.1/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname.slice(1) || 'index.html';
+    const asset = output.find((entry) => entry.fileName === pathname);
+    if (!asset) return route.fulfill({ status: 404, body: '' });
+    await route.fulfill({
+      contentType: pathname.endsWith('.js') ? 'text/javascript'
+        : pathname.endsWith('.css') ? 'text/css'
+          : pathname.endsWith('.html') ? 'text/html' : 'application/octet-stream',
+      body: asset.type === 'chunk' ? asset.code : Buffer.from(asset.source),
+    });
+  });
+  return { context, page };
+}
+
+async function headerHeight(page, name) {
+  return page.getByRole('heading', { name, exact: true }).evaluate((element) => {
+    const header = element.closest('header');
+    const band = getComputedStyle(header);
+    return header.getBoundingClientRect().height - parseFloat(band.paddingTop) - parseFloat(band.borderTopWidth);
+  });
+}
+
+// A long filename must not turn the phone's preview header into a multi-line banner.
+it.runIf(process.env.CI)('keeps image and artifact headers compact with long names', async () => {
+  const output = await buildFixture();
   const browser = await chromium.launch();
   try {
     for (const viewport of [{ width: 320, height: 568 }, { width: 393, height: 852 }, { width: 852, height: 393 }]) {
-      const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true });
-      const page = await context.newPage();
-      await page.route('http://127.0.0.1/**', async (route) => {
-        const pathname = new URL(route.request().url()).pathname.slice(1) || 'index.html';
-        const asset = output.find((entry) => entry.fileName === pathname);
-        if (!asset) return route.fulfill({ status: 404, body: '' });
-        await route.fulfill({
-          contentType: pathname.endsWith('.js') ? 'text/javascript'
-            : pathname.endsWith('.css') ? 'text/css'
-              : pathname.endsWith('.html') ? 'text/html' : 'application/octet-stream',
-          body: asset.type === 'chunk' ? asset.code : Buffer.from(asset.source),
-        });
-      });
+      const { context, page } = await openContext(browser, output, { viewport, isMobile: true, hasTouch: true });
       const cdp = await context.newCDPSession(page);
       await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: viewport.width < viewport.height ? 47 : 0 } });
       const rows = [];
@@ -125,6 +147,34 @@ it.runIf(process.env.CI)('keeps image and artifact headers compact with long nam
       }
       expect(new Set(rows.map((row) => row.font)).size).toBe(1);
       expect(new Set(rows.map((row) => row.height)).size).toBe(1);
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+}, 60_000);
+
+// Regression: the share outcome became a second header line, so the band grew after Share.
+it.runIf(process.env.CI)('keeps the artifact header height when the file is shared', async () => {
+  const output = await buildFixture();
+  const browser = await chromium.launch();
+  try {
+    for (const options of [
+      { viewport: { width: 1280, height: 800 } },
+      { viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true },
+    ]) {
+      const { context, page } = await openContext(browser, output, options);
+      const name = 'report.bin';
+      await page.goto('http://127.0.0.1/?' + new URLSearchParams({ kind: 'bare', name }));
+      const bare = await headerHeight(page, name);
+      await page.goto('http://127.0.0.1/?' + new URLSearchParams({ kind: 'artifact', name }));
+      await page.getByText('BIN · 1 B · ready to share').waitFor();
+      expect(await headerHeight(page, name)).toBeCloseTo(bare, 1);
+      const download = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      await download;
+      await page.getByText('Artifact downloaded.', { exact: true }).waitFor();
+      expect(await headerHeight(page, name)).toBeCloseTo(bare, 1);
       await context.close();
     }
   } finally {

@@ -11,8 +11,9 @@ import {
   type VideoHTMLAttributes,
 } from 'react';
 
+import { openSpreadsheet, spreadsheetOpenVerb } from '../lib/artifact-open';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
-import { artifactMedia, attachmentBytes } from '../lib/artifacts';
+import { artifactMedia, attachmentBytes, isXlsxMedia } from '../lib/artifacts';
 import {
   mediaCaptionClass,
   mediaFrameClass,
@@ -23,8 +24,8 @@ import {
 } from '../lib/media-frame';
 import { ImageGallery } from '../lib/gallery';
 import type { TranscriptionSegment } from '../lib/types';
-import { DownloadIcon, PauseIcon, PlayIcon, ShareIcon } from './icons';
-import { Disclosure, IconButton, PROSE } from './ui';
+import { ArrowOutIcon, DownloadIcon, PauseIcon, PlayIcon, ShareIcon } from './icons';
+import { BandButton, Disclosure, IconButton, PROSE } from './ui';
 
 /**
  * ONE picture on its own plate: the reserved frame from `lib/media-frame` with
@@ -135,7 +136,7 @@ export function ClipVideo({
 }
 
 /**
- * A clip's share control, docked in its plate's caption. A `<video>`'s own
+ * A file's share control, docked in its caption or row. A `<video>`'s own
  * controls offer no way to send a clip on, so one the model produced could be
  * watched and never shared. The bytes are asked for on each press, and the
  * outcome is said beside the button.
@@ -143,14 +144,17 @@ export function ClipVideo({
 export function MediaShareButton({
   name,
   mediaType = '',
+  noun = 'File',
   load,
 }: {
   name: string;
   mediaType?: string;
-  /** Resolves the clip's original bytes. */
+  /** What the outcome and the share sheet call this file, e.g. `Video`. */
+  noun?: string;
+  /** Resolves the file's original bytes. */
   load: () => Promise<Blob>;
 }) {
-  // Probed once: the share sheet cannot appear or disappear under a mounted clip.
+  // Probed once: the share sheet cannot appear or disappear under a mounted file.
   const [verb] = useState(() => artifactShareVerb(name, mediaType));
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -160,10 +164,13 @@ export function MediaShareButton({
     try {
       const blob = await load();
       setNotice(
-        await shareArtifact(blob, name, mediaType, { dialogTitle: 'Share video', noun: 'Video' }),
+        await shareArtifact(blob, name, mediaType, {
+          dialogTitle: `Share ${noun.toLowerCase()}`,
+          noun,
+        }),
       );
     } catch {
-      setNotice('Could not share video. Try again.');
+      setNotice(`Could not share ${noun.toLowerCase()}. Try again.`);
     } finally {
       setBusy(false);
     }
@@ -187,6 +194,73 @@ export function MediaShareButton({
       </IconButton>
     </>
   );
+}
+
+/** The original bytes that an opened artifact gives to the platform. */
+export type ArtifactShareSource = {
+  name: string;
+  mediaType: string;
+  load: () => Promise<Blob>;
+};
+
+/**
+ * The share cell of an opened artifact's band, and the outcome it reports.
+ *
+ * The outcome is never a header line. As the band's subtitle it added a second
+ * line, so the band grew after each press. A success is announced only; the
+ * share sheet or the download is its visible result. A failure floats over the
+ * body, which must be the `relative` box that `notice` is rendered in.
+ */
+export function useArtifactShare(source: ArtifactShareSource | null): {
+  cell: ReactNode;
+  notice: ReactNode;
+} {
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  if (!source) return { cell: null, notice: null };
+  const workbook = isXlsxMedia(source.mediaType, source.name);
+  const verb = workbook
+    ? spreadsheetOpenVerb()
+    : artifactShareVerb(source.name, source.mediaType);
+  const cell = (
+    <BandButton
+      label={busy ? `${verb}…` : verb}
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        setStatus('');
+        setError('');
+        const handoff = workbook ? openSpreadsheet : shareArtifact;
+        void source
+          .load()
+          .then((blob) => handoff(blob, source.name, source.mediaType))
+          .then(setStatus)
+          .catch(() =>
+            setError(workbook ? 'Could not open workbook. Try again.' : 'Could not share artifact.'),
+          )
+          .finally(() => setBusy(false));
+      }}
+    >
+      {verb === 'Share' ? <ShareIcon /> : verb === 'Open in app' ? <ArrowOutIcon /> : <DownloadIcon />}
+    </BandButton>
+  );
+  const notice = (
+    <>
+      <span role="status" className="sr-only">
+        {status}
+      </span>
+      {error ? (
+        <div
+          role="alert"
+          className="absolute inset-x-4 top-3 z-20 mx-auto max-w-lg border border-warn-edge bg-warn-surface px-3 py-2 text-center font-mono text-chip text-answer-foreground shadow-float"
+        >
+          {error}
+        </div>
+      ) : null}
+    </>
+  );
+  return { cell, notice };
 }
 
 /**
@@ -383,6 +457,7 @@ export function MediaRecording({
   transcription,
   transcriptionSegments,
   transcriptionStatus,
+  action,
   children,
 }: {
   /** The caption's file name. Without one the row carries no caption at all. */
@@ -407,6 +482,8 @@ export function MediaRecording({
    * `silent` when it read the whole thing and nobody spoke.
    */
   transcriptionStatus?: string;
+  /** A control docked at the caption's end, e.g. a `MediaShareButton`. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -451,7 +528,7 @@ export function MediaRecording({
             {children}
           </RecordingTimelineContext.Provider>
         </div>
-        {name || meta || statusLabel ? (
+        {name || meta || statusLabel || action ? (
           <figcaption className="flex min-w-0 items-center gap-2 border-t border-code-edge bg-thinking-surface px-2 py-1 font-mono text-chip text-footer-muted">
             <span className="min-w-0 flex-1 truncate">{name}</span>
             {/* Its OWN word beside the format, never joined to it: what the
@@ -462,6 +539,7 @@ export function MediaRecording({
               </span>
             ) : null}
             {meta ? <span className="shrink-0 uppercase tracking-wider">{meta}</span> : null}
+            {action}
           </figcaption>
         ) : null}
       </div>

@@ -44,19 +44,18 @@ import { useAttachImage } from '../lib/attach-image';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { editedFilename } from '../lib/image-file';
 import type { GatewayClient } from '../lib/gateway';
-import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
-import { openSpreadsheet, spreadsheetOpenVerb } from '../lib/artifact-open';
+import { spreadsheetOpenVerb } from '../lib/artifact-open';
 import { useBackLayer } from '../lib/edge-back';
 import { DataTable, parseCsv } from './DataTable';
 import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
 import { MarkdownArtifact } from './MarkdownArtifact';
 import { DiffArtifact } from './DiffArtifact';
-import { ClipVideo, MediaRecording, RecordingPlayer } from './Media';
+import { ClipVideo, MediaRecording, RecordingPlayer, useArtifactShare } from './Media';
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText } from './TextArtifact';
-import { AlertIcon, ArrowOutIcon, DotsIcon, DownloadIcon, MicIcon, PlayIcon, ShareIcon } from './icons';
-import { BandButton, Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
+import { AlertIcon, DotsIcon, MicIcon, PlayIcon } from './icons';
+import { Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
 
 /**
  * Two documents produced by the same turn have to stay distinguishable at a
@@ -720,42 +719,13 @@ function DetailOverlay({
   fill?: boolean;
   children: ReactNode;
 }) {
-  const [shareState, setShareState] = useState<'idle' | 'sharing'>('idle');
-  const [shareStatus, setShareStatus] = useState('');
-  // Honest about the platform — a share sheet where there is one, a download where
-  // there is not — so the mark follows the verb, and the verb stays on the cell as
-  // the name it answers to instead of a second title in a band that has one.
-  const workbook = share && isXlsxMedia(share.mediaType, share.name);
-  const shareVerb = workbook
-    ? spreadsheetOpenVerb()
-    : share
-      ? artifactShareVerb(share.name, share.mediaType)
-      : 'Share';
-  const shareAction = share ? (
-    <BandButton
-      label={shareState === 'sharing' ? `${shareVerb}…` : shareVerb}
-      disabled={shareState === 'sharing'}
-      onClick={() => {
-        setShareState('sharing');
-        setShareStatus('');
-        const handoff = workbook ? openSpreadsheet : shareArtifact;
-        void handoff(share.blob, share.name, share.mediaType)
-          .then(setShareStatus)
-          .catch(() =>
-            setShareStatus(workbook ? 'Could not open workbook. Try again.' : 'Could not share artifact.'),
-          )
-          .finally(() => setShareState('idle'));
-      }}
-    >
-      {shareVerb === 'Share' ? (
-        <ShareIcon />
-      ) : shareVerb === 'Open in app' ? (
-        <ArrowOutIcon />
-      ) : (
-        <DownloadIcon />
-      )}
-    </BandButton>
-  ) : null;
+  // The cell follows the platform: a share sheet where there is one, a download
+  // where there is not. Its outcome never takes a header line; see `useArtifactShare`.
+  const { cell: shareAction, notice: shareNotice } = useArtifactShare(
+    share
+      ? { name: share.name, mediaType: share.mediaType, load: async () => share.blob }
+      : null,
+  );
   return (
     <div
       role="dialog"
@@ -768,7 +738,7 @@ function DetailOverlay({
         isStacked
         title={name}
         isTitleTruncated
-        subtitle={shareStatus || subtitle}
+        subtitle={subtitle}
         actions={
           shareAction || actions ? (
             <>
@@ -783,10 +753,11 @@ function DetailOverlay({
       <div
         className={
           fill
-            ? 'flex min-h-0 min-w-0 flex-1 flex-col'
-            : 'min-h-0 flex-1 overflow-y-auto p-3 sm:p-4'
+            ? 'relative flex min-h-0 min-w-0 flex-1 flex-col'
+            : 'relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4'
         }
       >
+        {shareNotice}
         {children}
       </div>
     </div>
