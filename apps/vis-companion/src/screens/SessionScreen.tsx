@@ -173,6 +173,7 @@ import {
 import { onWake } from '../lib/wake';
 import {
   applyScrollAnchor,
+  applyScrollAnchorGrowth,
   isViewportRotating,
   onViewportRotation,
   scrollAnchorFor,
@@ -1787,6 +1788,11 @@ export function SessionScreen({
     // the end of a turn (BLO-170). Connected or not, a scroller sitting where the
     // corrector left it has not been touched by the reader.
     if (scrollAnchorRef.current && isCorrectionEcho(viewport, correctedTopRef.current)) return;
+    // A gesture moves the scroller between two readings, and history that a commit
+    // landed above the reader in between is in the next reading already. Bill that
+    // growth from the held anchor first, or no corrector ever sees it.
+    if (!followingRef.current && readerOwnsScroll())
+      applyScrollAnchorGrowth(viewport, scrollAnchorRef.current);
     // Following the running turn needs no anchor: the bottom IS the anchor.
     scrollAnchorRef.current = followingRef.current ? null : scrollAnchorFor(viewport, transcript);
   }, []);
@@ -1838,6 +1844,7 @@ export function SessionScreen({
       if (submitScrollActiveRef.current && !readerOwns) return;
       // The end is its own anchor, and a hand on the glass owns the scroller: in
       // both cases the reader's line is wherever they just put it, so re-read it.
+      // Under a hand, `captureScrollAnchor` first bills growth that landed above it.
       if (followingRef.current || readerOwns) {
         // For a reader following the end, the end IS the anchor. This callback
         // sees every content change before paint, regardless of whether a stream

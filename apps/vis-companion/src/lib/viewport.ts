@@ -383,6 +383,26 @@ export function applyScrollAnchor(viewport: AnchorScroller, anchor: ScrollAnchor
   return true;
 }
 
+/**
+ * Moves the scroller by the growth above the anchor since it was taken, and by nothing
+ * else. The reader's own scroll since then stays: the anchor's `top` takes it out.
+ * False means there was no connected anchor to measure.
+ */
+export function applyScrollAnchorGrowth(
+  viewport: AnchorScroller,
+  anchor: ScrollAnchor | null,
+): boolean {
+  if (!anchor || !anchor.el.isConnected) return false;
+  const growth =
+    anchor.el.getBoundingClientRect().top -
+    viewport.getBoundingClientRect().top -
+    anchor.offset +
+    viewport.scrollTop -
+    anchor.top;
+  if (Math.abs(growth) > 0.5) viewport.scrollTop = Math.max(0, viewport.scrollTop + growth);
+  return true;
+}
+
 /** True while the viewport metrics are mid-rotation and must not be trusted. */
 export function isViewportRotating(): boolean {
   return rotating;
