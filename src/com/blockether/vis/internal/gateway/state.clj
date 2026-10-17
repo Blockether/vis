@@ -6215,11 +6215,6 @@
 
 (defonce ^:private agent-spawn-lock (Object.))
 
-(defn- system-prefix
-  "The leading system messages of a model input."
-  [messages]
-  (into [] (take-while #(= :system (keyword (:role %)))) messages))
-
 (defn- agent-spawn
   [env opts]
   (locking agent-spawn-lock
@@ -6287,24 +6282,25 @@
               allowed
               (or (:allowed_models opts) (:allowed_models parent))
 
-              ;; A child gets only the system prompt and its task unless it asks for full context.
+              ;; A task-context child gets the parent's conversation without its tool work.
               context
               (or (:context opts) "task")
 
               checkpoint
-              (if (= "task" context) (system-prefix checkpoint) checkpoint)
+              (if (= "task" context) (agents/handoff checkpoint) checkpoint)
 
-              ;; A task-context child reads its parent's conversation only on ambiguity.
+              ;; A task-context child reads the parent's tool output only when it must.
               message
               (cond-> (:task opts)
                 (= "task" context)
-                (str "\n\nThis task gives the context for your work. "
-                     "You do not see the conversation of your parent session "
+                (str "\n\nYou see the requests, notes and answers of your parent session "
                      sid
-                     ". Only when the task is ambiguous or misses a fact that you need, "
-                     "read it: await read_session(\""
-                     sid
-                     "\")."))]
+                     ", not its tool calls or their output. When the task is ambiguous or "
+                     "needs a fact from that tool output, read it: s = await read_session(\"" sid
+                     "\"). Each block in "
+                     "s[\"transcript\"][\"turns\"][i][\"iterations\"][j][\"blocks\"] "
+                     "has its code and stdout. The running turn is in "
+                     "s[\"current_turn\"][\"attempts\"]."))]
 
           (when-not (and (council/enabled?)
                          (= (get-in (ctx-loop/read-turn-state env) [:council :activation-id])

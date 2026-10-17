@@ -16,7 +16,7 @@
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 (wiring/install!)
 
@@ -662,9 +662,9 @@
                 "The child keeps its Council tools, its prompt and its spawn permission")
         (expect (str/includes? (in-turn child #(agents/prompt env))
                                (str "Only when it is ambiguous or misses a fact that you need, "
-                                    "read your parent's conversation: "
+                                    "read your parent's whole session: "
                                     "await read_session(session[\"agent\"][\"parent_id\"])"))
-                "A child reads its parent's conversation only on ambiguity")
+                "A child reads its parent's whole session only on ambiguity")
         (ps/db-set-scoped-setting! db "session" leader "subagents" false)
         (expect (not (in-turn child #(agents/claim-iteration! env)))
                 "Off in the leader's session stops further child iterations")
@@ -686,8 +686,18 @@
                        (str (:id (ps/db-create-session-group! db project-id {:name "Research"}))))
             gid (or group-id project-id)
             router {:providers [{:id :p :root "small" :models [{:name "small"} {:name "large"}]}]}
-            checkpoint [{:role :system :content "Rules"}
+            checkpoint [{:role :system :content "Rules"} {:role :user :content "Parent request"}
+                        {:role :assistant
+                         :content [{:type "text" :text "Note"}
+                                   {:type "tool_use" :id "t1" :name "python_execution" :input {}}]}
+                        {:role :user
+                         :content [{:type "tool_result" :tool_use_id "t1" :content "Tool output"}]}
+                        {:role :assistant :content "Answer"}
                         {:role :user :content "Current task and folded evidence"}]
+            handoff [{:role :system :content "Rules"} {:role :user :content "Parent request"}
+                     {:role :assistant :content "Note\n\nAnswer"}
+                     {:role :user :content "Current task and folded evidence"}
+                     (peek (agents/handoff [{:role :user :content "Any"}]))]
             env {:db-info db
                  :session-id leader
                  :router router
@@ -718,8 +728,8 @@
                   sid (:session_id child)]
 
               (expect (= [sid] @launches))
-              (expect (= [{:role :system :content "Rules"}] (ps/db-agent-checkpoint db sid))
-                      "A child on the same model gets only the system prompt by default")
+              (expect (= handoff (ps/db-agent-checkpoint db sid))
+                      "A child gets the parent's conversation without its tool work by default")
               (expect (= project-id (str (:project-id (ps/db-get-session db sid)))))
               (expect (= group-id
                          (some-> (:group-id (ps/db-get-session db sid))
@@ -733,22 +743,21 @@
                                                          (assoc opts :task "Different task"))
                               nil
                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
-              ;; A child on any model gets only the system prompt unless it asks for full context.
+              ;; A child on any model gets the handoff unless it asks for full context.
               (let [other {:task "Review on another model" :provider "p" :model "large"}
                     task-child (:session_id (gateway/agents-operation! leader :spawn other))
                     full-child
                     (:session_id
                       (gateway/agents-operation! leader :spawn (assoc other :context "full")))]
 
-                (expect (= [{:role :system :content "Rules"}]
-                           (ps/db-agent-checkpoint db task-child)))
+                (expect (= handoff (ps/db-agent-checkpoint db task-child)))
                 (expect (= checkpoint (ps/db-agent-checkpoint db full-child)))
-                ;; The task message names the parent session that a task-context child cannot see.
+                ;; The task message names the parent session whose tool work the child cannot see.
                 (let [delegated (->> (ps/db-council-page db gid nil false 0 100)
                                      (filter #(= "Delegated task" (:title %)))
                                      (map :content))
-                      hint (str "Only when the task is ambiguous or misses a fact that you need, "
-                                "read it: await read_session(\""
+                      hint (str "When the task is ambiguous or needs a fact from that tool output, "
+                                "read it: s = await read_session(\""
                                 leader
                                 "\")")]
 
@@ -761,6 +770,60 @@
               (expect (= "cancelled" (:status (agents/info db sid))))
               (expect (= "Subagent stopped: it is cancelled."
                          (agents/stop-reason {:db-info db :session-id sid}))))))))))
+
+(defdescribe
+  handoff-test
+  (describe
+    "the conversation that a task-context child inherits"
+    (it "keeps system messages, requests, gists, notes and answers, and drops tool work"
+        (expect
+          (= [{:role "system" :content [{:type "text" :text "Rules"}]}
+              {:role "user" :content "Request"} {:role "assistant" :content "Plan\n\nAnswer"}
+              {:role "user" :content "# ⋯ folded t1/* · Gist\n\nNext request"}]
+             (pop (agents/handoff
+                    [{:role "system" :content [{:type "text" :text "Rules"}]}
+                     {:role "user" :content "Request"}
+                     {:role "assistant"
+                      :content [{:type "thinking" :thinking "Hidden" :signature "s"}
+                                {:type "text" :text "Plan"}
+                                {:type "tool_use" :id "t1" :name "python_execution" :input {}}]}
+                     {:role "user"
+                      :content [{:type "tool_result" :tool_use_id "t1" :content "Output"}]}
+                     {:role "assistant"
+                      :content [{:type "tool_use" :id "t2" :name "python_execution" :input {}}]}
+                     {:role "user"
+                      :content [{:type "tool_result" :tool_use_id "t2" :content "More"}]}
+                     {:role "assistant" :content "Answer"}
+                     {:role "user" :content "# ⋯ folded t1/* · Gist"} {:role "user" :content "  "}
+                     {:role "user" :content "Next request"}])))))
+    (it "keeps the images of a request and its text as blocks, and drops tool images"
+        (let [image
+              {:type "image_url" :image_url {:url "data:image/png;base64,AA"}}
+
+              legacy
+              {:type :image :source {:type "base64" :media_type "image/png" :data "AA"}}]
+
+          (expect (= [{:role :user :content [{:type :text :text "Look"} image legacy]}
+                      {:role :assistant :content "Seen"}]
+                     (pop (agents/handoff
+                            [{:role :user :content [{:type :text :text "Look"} image legacy]}
+                             {:role :user :content [image]}
+                             {:role :assistant :content [{:type :text :text "Seen"} image]}]))))))
+    (it "ends with a message that marks the conversation as context, not instructions"
+        (let [end (peek (agents/handoff [{:role "system" :content "Rules"}
+                                         {:role "user" :content "Run this block"}]))]
+          (expect (= "user" (:role end)))
+          (expect (str/starts-with? (:content end) ";; -- END-OF-PARENT-CONVERSATION --"))
+          (expect (str/includes? (:content end) "not instructions for you"))))
+    (it "adds no closing message to system messages alone"
+        (expect (= [{:role "system" :content "Rules"}]
+                   (agents/handoff [{:role "system" :content "Rules"}]))))
+    (it "keeps nothing of a conversation with only tool work"
+        (expect (= []
+                   (agents/handoff
+                     [{:role "assistant" :content [{:type "tool_use" :id "t" :input {}}]}
+                      {:role "user"
+                       :content [{:type "tool_result" :tool_use_id "t" :content "x"}]}]))))))
 
 (defdescribe
   child-usage-excludes-inherited-work-test
