@@ -6183,8 +6183,6 @@
 
 (defonce ^:private agent-spawn-lock (Object.))
 
-(defn- model-key [m] (mapv #(when % (name %)) [(:provider m) (:model m)]))
-
 (defn- system-prefix
   "The leading system messages of a model input."
   [messages]
@@ -6257,9 +6255,9 @@
               allowed
               (or (:allowed_models opts) (:allowed_models parent))
 
-              ;; A child on another model gets only the system prompt and its task by default.
+              ;; A child gets only the system prompt and its task unless it asks for full context.
               context
-              (or (:context opts) (if (= (model-key pair) (model-key inherited)) "full" "task"))
+              (or (:context opts) "task")
 
               checkpoint
               (if (= "task" context) (system-prefix checkpoint) checkpoint)]

@@ -660,6 +660,9 @@
                                        agents/symbols)
                                (agents/prompt env)))
                 "The child keeps its Council tools, its prompt and its spawn permission")
+        (expect (str/includes? (in-turn child #(agents/prompt env))
+                               "read_session(session[\"agent\"][\"parent_id\"])")
+                "A child learns where its parent's conversation is")
         (ps/db-set-scoped-setting! db "session" leader "subagents" false)
         (expect (not (in-turn child #(agents/claim-iteration! env)))
                 "Off in the leader's session stops further child iterations")
@@ -713,7 +716,8 @@
                   sid (:session_id child)]
 
               (expect (= [sid] @launches))
-              (expect (= checkpoint (ps/db-agent-checkpoint db sid)))
+              (expect (= [{:role :system :content "Rules"}] (ps/db-agent-checkpoint db sid))
+                      "A child on the same model gets only the system prompt by default")
               (expect (= project-id (str (:project-id (ps/db-get-session db sid)))))
               (expect (= group-id
                          (some-> (:group-id (ps/db-get-session db sid))
@@ -727,7 +731,7 @@
                                                          (assoc opts :task "Different task"))
                               nil
                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
-              ;; A child on another model gets only the system prompt unless it asks for full context.
+              ;; A child on any model gets only the system prompt unless it asks for full context.
               (let [other {:task "Review on another model" :provider "p" :model "large"}
                     task-child (:session_id (gateway/agents-operation! leader :spawn other))
                     full-child
