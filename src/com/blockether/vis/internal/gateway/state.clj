@@ -6294,13 +6294,15 @@
               checkpoint
               (if (= "task" context) (system-prefix checkpoint) checkpoint)
 
-              ;; A task-context child learns where the conversation that it cannot see is.
+              ;; A task-context child reads its parent's conversation only on ambiguity.
               message
               (cond-> (:task opts)
                 (= "task" context)
-                (str "\n\nYou see only this task, not the conversation of your parent session "
+                (str "\n\nThis task gives the context for your work. "
+                     "You do not see the conversation of your parent session "
                      sid
-                     ". For a fact that the task does not give, read it: await read_session(\""
+                     ". Only when the task is ambiguous or misses a fact that you need, "
+                     "read it: await read_session(\""
                      sid
                      "\")."))]
 

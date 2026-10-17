@@ -661,8 +661,10 @@
                                (agents/prompt env)))
                 "The child keeps its Council tools, its prompt and its spawn permission")
         (expect (str/includes? (in-turn child #(agents/prompt env))
-                               "read_session(session[\"agent\"][\"parent_id\"])")
-                "A child learns where its parent's conversation is")
+                               (str "Only when it is ambiguous or misses a fact that you need, "
+                                    "read your parent's conversation: "
+                                    "await read_session(session[\"agent\"][\"parent_id\"])"))
+                "A child reads its parent's conversation only on ambiguity")
         (ps/db-set-scoped-setting! db "session" leader "subagents" false)
         (expect (not (in-turn child #(agents/claim-iteration! env)))
                 "Off in the leader's session stops further child iterations")
@@ -745,7 +747,10 @@
                 (let [delegated (->> (ps/db-council-page db gid nil false 0 100)
                                      (filter #(= "Delegated task" (:title %)))
                                      (map :content))
-                      hint (str "await read_session(\"" leader "\")")]
+                      hint (str "Only when the task is ambiguous or misses a fact that you need, "
+                                "read it: await read_session(\""
+                                leader
+                                "\")")]
 
                   (expect (= 2 (count (filter #(str/includes? % hint) delegated))))
                   (expect (some #(= "Review on another model" %) delegated)
