@@ -6292,7 +6292,17 @@
               (or (:context opts) "task")
 
               checkpoint
-              (if (= "task" context) (system-prefix checkpoint) checkpoint)]
+              (if (= "task" context) (system-prefix checkpoint) checkpoint)
+
+              ;; A task-context child learns where the conversation that it cannot see is.
+              message
+              (cond-> (:task opts)
+                (= "task" context)
+                (str "\n\nYou see only this task, not the conversation of your parent session "
+                     sid
+                     ". For a fact that the task does not give, read it: await read_session(\""
+                     sid
+                     "\")."))]
 
           (when-not (and (council/enabled?)
                          (= (get-in (ctx-loop/read-turn-state env) [:council :activation-id])
@@ -6362,7 +6372,7 @@
                                                                        [:council :activation-id])}
                                                {:kind "coordination"
                                                 :title "Delegated task"
-                                                :content (:task opts)
+                                                :content message
                                                 :ping [child-id]
                                                 :reply_required true
                                                 :idempotency_key (str "agent:" child-id)})]

@@ -740,7 +740,16 @@
 
                 (expect (= [{:role :system :content "Rules"}]
                            (ps/db-agent-checkpoint db task-child)))
-                (expect (= checkpoint (ps/db-agent-checkpoint db full-child))))
+                (expect (= checkpoint (ps/db-agent-checkpoint db full-child)))
+                ;; The task message names the parent session that a task-context child cannot see.
+                (let [delegated (->> (ps/db-council-page db gid nil false 0 100)
+                                     (filter #(= "Delegated task" (:title %)))
+                                     (map :content))
+                      hint (str "await read_session(\"" leader "\")")]
+
+                  (expect (= 2 (count (filter #(str/includes? % hint) delegated))))
+                  (expect (some #(= "Review on another model" %) delegated)
+                          "A full-context child gets its task unchanged")))
               (expect (= "cancelled"
                          (:status (gateway/agents-operation! leader :cancel {:session_id sid}))))
               (expect (not (agents/claim-iteration! {:db-info db :session-id sid})))
