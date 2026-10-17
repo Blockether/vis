@@ -639,6 +639,37 @@
         (conj-ring (assoc entry :events events) event))
       entry)))
 
+(defn- materialize-turn-progress
+  "Keep exactly the latest `turn.progress` ticker of the session in the replay ring.
+   The ticker is transient, but a client that attaches mid-wait must see the current
+   phase, not a generic fallback until the next notice."
+  [entry event]
+  (if (= "turn.progress" (get event "type"))
+    (let [events (into clojure.lang.PersistentQueue/EMPTY
+                       (remove #(= "turn.progress" (get % "type")))
+                       (:events entry))]
+      (conj-ring (assoc entry :events events) event))
+    entry))
+
+(defn- countdown-progress?
+  "True for a progress notice with clocks: a silent provider attempt or a busy Python
+   block. Its clocks are stale after a reconnect, so the replay ring never keeps it."
+  [event]
+  (boolean (some #(contains? event %) ["silent_ms" "busy_ms" "deadline_in_ms"])))
+
+(defn- materialized-transient?
+  "True for a transient event whose latest value the replay ring keeps: one Activity
+   snapshot per form and one progress ticker without clocks per session."
+  [event]
+  (case (get event "type")
+    "block.activity"
+    (some? (form-coordinate event))
+
+    "turn.progress"
+    (not (countdown-progress? event))
+
+    false))
+
 (defn- retain-event
   [entry descriptor store?]
   (cond (::event-store/missing? descriptor) (assoc entry
@@ -647,7 +678,8 @@
         descriptor (-> (cond-> entry
                          store?
                          (conj-ring descriptor))
-                       (materialize-form-activity descriptor))
+                       (materialize-form-activity descriptor)
+                       (materialize-turn-progress descriptor))
         :else entry))
 
 (def ^:private unknown-chunk-type-prefix
@@ -751,10 +783,11 @@
    reads the IDENTICAL string-keyed map.
 
    Assigns the next monotonic seq atomically. `:store? false` events are
-   normally fanned out live but kept out of the replay ring. `block.activity` is
-   the deliberate exception: the ring materializes exactly its latest snapshot
-   per running form, replacing the previous one, so SSE reconnect and `/poll`
-   recover canonical current state without retaining the transient stream.
+   normally fanned out live but kept out of the replay ring. Two are deliberate
+   exceptions. The ring materializes the latest `block.activity` snapshot per running
+   form and the latest `turn.progress` ticker per session, each replacing the previous
+   one. SSE reconnect and `/poll` then recover canonical current state without
+   retaining the transient stream.
    A subscriber sink that throws is dropped - one dead SSE connection must never
    poison the appender or sibling subscribers."
   ([sid type payload] (append-event! sid type payload {:store? true}))
@@ -784,8 +817,7 @@
                                                        (wire/->wire type))
 
                  descriptor
-                 (when (or store?
-                           (and (= "block.activity" (get event "type")) (form-coordinate event)))
+                 (when (or store? (materialized-transient? event))
                    (event-store/write-event! event))]
 
              (update-session! sid
@@ -842,7 +874,7 @@
               n (inc (long (:next-seq before 0)))
               ev (assoc event "seq" n)
               terminal? (contains? #{"turn.completed" "turn.failed" "turn.cancelled"} type)
-              descriptor (when (or store? (and (= "block.activity" type) (form-coordinate ev)))
+              descriptor (when (or store? (materialized-transient? ev))
                            (event-store/write-event! ev))]
 
           (update-session!

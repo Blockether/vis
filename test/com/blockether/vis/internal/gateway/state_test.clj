@@ -3217,8 +3217,11 @@
                                      ["turn_id" "iteration" "model" "silent_ms" "connection"
                                       "awaiting_output" "deadline_in_ms" "deadline_action"])))
              (expect (nil? @shown))
-             ;; Live only: a reconnect must not replay an old countdown.
-             (expect (empty? (state/events-since sid 0)))
+             ;; A reconnect must not replay an old countdown. It replays only the
+             ;; latest ticker without clocks: the provider call.
+             (expect (= [["turn.progress" "provider-call"]]
+                        (mapv (juxt #(get % "type") #(get % "progress"))
+                              (state/events-since sid 0))))
              (finally (swap! @#'state/registry dissoc sid)))))
     (it "comes from the turn watchdog while the model is silent"
         (let [sid
@@ -4760,6 +4763,54 @@
                (expect (= 1 (count activities)))
                (expect (= 3 (get-in activities [0 "activity" "revision"]))))
              (finally (state/unsubscribe! sid "activity-resume") (reset! registry saved)))))))
+
+(defdescribe
+  running-turn-progress-resume-test
+  "A client that attaches mid-wait replays the current progress ticker, not a generic phase."
+  (it
+    "keeps only the latest turn.progress of the session in the replay ring"
+    (let [sid
+          (str (java.util.UUID/randomUUID))
+
+          tid
+          "turn-progress"
+
+          registry
+          @#'state/registry
+
+          saved
+          @registry]
+
+      (with-redefs [bus/publish! (fn [& _])]
+        (try
+          (reset! registry {sid {:next-seq 0 :current-turn tid :turns {tid {:turn_id tid}}}})
+          (state/append-event! sid "turn.started" {:turn_id tid :request "Wait"})
+          (state/append-event! sid
+                               "turn.progress"
+                               {:turn_id tid :progress "provider-call" :iteration 1}
+                               {:store? false})
+          (state/append-event! sid "block.started" {:turn_id tid :iteration 1 :form_index 0})
+          (state/append-event!
+            sid
+            "turn.progress"
+            {:turn_id tid :progress "tool" :iteration 1 :phrase "waiting up to 320s for: sleep 280"}
+            {:store? false})
+          ;; A notice with clocks stays live only and never replaces the kept ticker.
+          (state/append-event! sid
+                               "turn.progress"
+                               {:turn_id tid :progress "python" :iteration 1 :busy_ms 60000}
+                               {:store? false})
+          (let [replay (state/subscribe! sid
+                                         "progress-resume"
+                                         (fn [_])
+                                         (state/running-turn-start-cursor sid))
+                progress (filterv #(= "turn.progress" (get % "type")) replay)]
+
+            (expect (= 1 (count progress)))
+            (expect (= "waiting up to 320s for: sleep 280" (get-in progress [0 "phrase"])))
+            (expect (= ["turn.started" "block.started" "turn.progress"]
+                       (mapv #(get % "type") replay))))
+          (finally (state/unsubscribe! sid "progress-resume") (reset! registry saved)))))))
 
 (defdescribe
   queue-failure-pause-test

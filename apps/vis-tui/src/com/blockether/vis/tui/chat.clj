@@ -1352,7 +1352,10 @@
            :iteration iteration
            :tool-event (cond-> {:op op}
                          label
-                         (assoc :label label))}
+                         (assoc :label label)
+
+                         (event-get event :phrase)
+                         (assoc :phrase (str (event-get event :phrase))))}
 
           nil))
 

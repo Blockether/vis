@@ -648,6 +648,18 @@
                     "op" "shell"
                     "label" "clojure -M:test"
                     "iteration" 2}))))
+    ;; A private tool names its wait in `phrase`. Without it the spinner read
+    ;; "running: tool sleep-70", and a long shell wait looked stuck.
+    (it "a nested tool progress event keeps the tool's own phrase"
+        (expect (= {:phase :tool-start
+                    :iteration 72
+                    :tool-event
+                    {:op nil :label "sleep-70" :phrase "waiting up to 320s for: sleep 280"}}
+                   (g->c {"type" "turn.progress"
+                          "progress" "tool"
+                          "label" "sleep-70"
+                          "phrase" "waiting up to 320s for: sleep 280"
+                          "iteration" 72}))))
     (it "a shell-run progress event projects to :shell-run with its command"
         (expect (= {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}
                    (g->c {"type" "turn.progress"
