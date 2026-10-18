@@ -2033,6 +2033,30 @@
                       :id ::change-listener-failed
                       :data {:listener id :error (ex-message t)}})))))
 
+;; Reload listeners — fired ONCE when a requested reload finished every part: the `/reload`
+;; slash and POST /v1/extensions/reload. The gateway tells every client to refresh what it
+;; derived from extensions, such as providers and slash commands (#393).
+(defonce ^:private reload-listeners (atom {}))
+
+(defn add-reload-listener!
+  "Subscribe `f` to finished reloads. `f` receives `{:reload-id id}`. Re-registering the same
+   `listener-id` replaces the old listener. Returns `listener-id`."
+  [listener-id f]
+  (swap! reload-listeners assoc listener-id f)
+  listener-id)
+
+(defn announce-reload!
+  "Tell every reload listener that a reload finished. Returns the new reload id."
+  []
+  (let [reload-id (str (random-uuid))]
+    (doseq [[id f] @reload-listeners]
+      (try (f {:reload-id reload-id})
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::reload-listener-failed
+                        :data {:listener id :error (ex-message t)}}))))
+    reload-id))
+
 (defn load-failures
   "Load failures visible in a project, including global extensions; the current
    project by default, and global extensions alone for a nil `root`.
@@ -3268,6 +3292,8 @@
            :context-error guidance
            :duration-ms (- (long (util/now-ms)) (long started))}]
 
+      ;; Announce after every part, so clients read the new providers and slash commands.
+      (announce-reload!)
       (assoc (reload-report data)
         :slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
         :slash/data data))))

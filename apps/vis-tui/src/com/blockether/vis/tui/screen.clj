@@ -1200,6 +1200,15 @@
                                          :data {:error (ex-message t)}}
                                         "Gateway slash-command loading failed."))))))
 
+(defonce ^:private last-extensions-reload (atom nil))
+
+(defn- refresh-slash-commands-after-reload!
+  "Load the gateway slash catalog again after a reload in any client (#393). Each tab
+   stream carries the same reload id, so one reload loads the catalog once."
+  [session-id reload-id]
+  (when (and reload-id (not= reload-id (first (reset-vals! last-extensions-reload reload-id))))
+    (start-deferred-gateway-slash-load! session-id)))
+
 (defn- template-slash-commands
   "Prompt templates as typed-`/` palette entries: `.vis/prompts/*.md`,
    `~/.vis/prompts/*.md`, and provider-contributed dynamic templates
@@ -5413,6 +5422,10 @@
                   ;; Auth can complete while this tab is idle or waiting for its first token.
                   :provider-limits-changed
                   (state/dispatch [:force-provider-limits-refresh])
+
+                  ;; Extensions in another client changed the slash commands.
+                  :extensions-reloaded
+                  (refresh-slash-commands-after-reload! session-id (:reload-id chunk))
 
                   ;; Model preference changed for THIS session somewhere else —
                   ;; keep the tab's chip in sync with the shared store.

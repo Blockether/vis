@@ -50,6 +50,7 @@
     [com.blockether.vis.internal.provider.limits :as provider-limits]
     [com.blockether.vis.internal.provider.service :as providers]
     [com.blockether.vis.internal.python.env :as python-env]
+    [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.internal.sandbox.policy :as security-policy]
     [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
@@ -7873,6 +7874,18 @@
 
 (defonce provider-limits-listener
   (swap! provider-limits/auth-change-listeners conj #'broadcast-provider-limits-change!))
+
+(defn- broadcast-extensions-reload!
+  "Tell every client that a reload finished, so each one reads its extension data again.
+   The live fleet frame reaches session lists. The stored copy on every session ring reaches
+   session streams and poll clients. A client skips a `reload_id` that it already saw (#393)."
+  [{:keys [reload-id]}]
+  (publish-fleet! [{"schema" 1 "type" "extensions.reloaded" "reload_id" (str reload-id)}])
+  (doseq [sid (keys @registry)]
+    (append-event! sid "extensions.reloaded" {:reload-id (str reload-id)})))
+
+(defonce extensions-reload-listener
+  (python-extensions/add-reload-listener! ::extensions-reloaded #'broadcast-extensions-reload!))
 
 (defonce title-listener
   ;; Registered ONCE at namespace load: loop.clj's single title mutation

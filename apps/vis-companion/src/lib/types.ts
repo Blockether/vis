@@ -443,6 +443,8 @@ export interface ExtensionReload {
   loaded: number;
   failed: number;
   scopes: ExtensionReloadScope[];
+  /** The id of the `extensions.reloaded` event that every client gets for this reload. */
+  reload_id: string;
 }
 
 export interface SettingsResponse {

@@ -502,7 +502,10 @@
                                                  "loaded" loaded
                                                  "failed" failed
                                                  "extensions" extensions})
-                                              scopes)}))))))
+                                              scopes)
+                               ;; Every client gets this id in `extensions.reloaded`; the caller
+                               ;; uses it to skip its own reload event.
+                               "reload_id" (python-extensions/announce-reload!)}))))))
 
 (defn- apply-settings-handler
   "PATCH /v1/settings; apply one versioned owner batch, or write nothing."

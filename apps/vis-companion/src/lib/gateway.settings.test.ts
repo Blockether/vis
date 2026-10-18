@@ -124,4 +124,34 @@ describe('extension reload', () => {
     await vi.waitFor(() => expect(routerReads()).toHaveLength(4));
     expect(painted).toHaveLength(2);
   });
+
+  // #393: the gateway sends `extensions.reloaded` to every client, also to the client that
+  // asked for the reload, on the fleet feed and on each session stream. One reload reads once.
+  it('reads the fleet once for each reload id', async () => {
+    const fetching = vi.fn((url: RequestInfo | URL) =>
+      Promise.resolve(
+        new URL(String(url)).pathname === '/v1/router'
+          ? json({ providers: [{ id: 'anthropic' }] })
+          : json({ loaded: 1, failed: 0, scopes: [], reload_id: 'r1' }),
+      ),
+    );
+    const { GatewayClient } = await relaunch(fetching as unknown as typeof fetch);
+    const client = new GatewayClient(conn);
+    const routerReads = () =>
+      (fetching.mock.calls as unknown as [RequestInfo | URL][]).filter(
+        ([url]) => new URL(String(url)).pathname === '/v1/router',
+      ).length;
+
+    await client.reloadExtensions();
+    await vi.waitFor(() => expect(routerReads()).toBe(1));
+    client.extensionsReloaded('r1');
+    new GatewayClient(conn).extensionsReloaded('r1');
+    expect(routerReads()).toBe(1);
+
+    // A reload from another client has a new id.
+    client.extensionsReloaded('r2');
+    await vi.waitFor(() => expect(routerReads()).toBe(2));
+    await new Promise((done) => setTimeout(done, 50));
+    expect(routerReads()).toBe(2);
+  });
 });

@@ -2371,6 +2371,9 @@
           "const": "context.updated"
         },
         {
+          "const": "extensions.reloaded"
+        },
+        {
           "const": "iteration.completed",
           "x-vis-turn-stream": true
         },
@@ -2979,12 +2982,17 @@
       "required": [
         "loaded",
         "failed",
-        "scopes"
+        "scopes",
+        "reload_id"
       ],
       "properties": {
         "loaded": {
           "type": "integer",
           "minimum": 0
+        },
+        "reload_id": {
+          "type": "string",
+          "minLength": 1
         },
         "failed": {
           "type": "integer",

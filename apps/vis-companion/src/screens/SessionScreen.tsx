@@ -497,11 +497,6 @@ function mergeSlashCommands(remote: SlashCommand[]): SlashCommand[] {
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** True for the `/reload` slash command, with or without arguments. */
-function isReloadCommand(request: string | undefined): boolean {
-  return /^\/reload(\s|$)/.test(request?.trimStart() ?? '');
-}
-
 function slashCommandMatches(command: SlashCommand, query: string): boolean {
   const name = command.name.toLowerCase();
   if (name.startsWith(query)) return true;
@@ -2689,8 +2684,6 @@ export function SessionScreen({
       endedTurnIdsRef.current.add(finishedId);
       const ownsTerminal = (turn: RunningTurn | null) => turn?.id === finishedId;
       const streamedTurn = runningTurnRef.current;
-      // `/reload` runs extension code again, and extensions register providers (#393).
-      if (ownsTerminal(streamedTurn) && isReloadCommand(streamedTurn?.request)) client.extensionsReloaded();
       if (
         type === 'turn.cancelled' &&
         streamedTurn !== null &&

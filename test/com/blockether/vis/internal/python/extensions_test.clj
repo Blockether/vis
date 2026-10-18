@@ -5290,6 +5290,29 @@ vis.register_extension(vis.Extension(
            (expect (false? (toggles/enabled? "shell")))
            (finally (toggles/set-value! "shell" before))))))
 
+(defdescribe reload-slash-announce-test
+             (it "announces the reload once, after configuration and reload hooks — #393"
+                 (let [steps (atom [])]
+                   (with-redefs [pyx/reload-python-extensions! (fn []
+                                                                 (swap! steps conj :extensions)
+                                                                 {:loaded 1 :failed 0})
+                                 config/current-config (constantly {})
+                                 config/reload-config! (fn []
+                                                         (swap! steps conj :config)
+                                                         {})
+                                 config/load-config-raw (constantly {})
+                                 extension/run-reload-hooks! (fn []
+                                                               (swap! steps conj :hooks)
+                                                               {})
+                                 agents/reload! (constantly nil)
+                                 prompt-templates/reload! (constantly [])
+                                 pyx/announce-reload! (fn []
+                                                        (swap! steps conj :announce)
+                                                        "reload-1")]
+
+                     (expect (= :ok (:slash/status (#'pyx/reload-slash {:command/argv []}))))
+                     (expect (= [:extensions :config :hooks :announce] @steps))))))
+
 (defdescribe
   reload-diagnostic-report-test
   (it

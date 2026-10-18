@@ -316,6 +316,7 @@ export class SessionSubscriptionHub {
     const stop = this.client.streamSessionEvents(
       this.cursors,
       (event) => {
+        this.noticeReload(event);
         if (event.scope === 'fleet') {
           if (event.type === 'subscription.ready') this.setFleetStreaming(true);
           if (event.type === 'session.deleted') this.ingest(event);
@@ -364,6 +365,7 @@ export class SessionSubscriptionHub {
     }
     const stop = this.client.streamFleetStatus(
       (event) => {
+        this.noticeReload(event);
         if (event.type === 'session.deleted') this.ingest(event);
         else for (const listener of [...this.fleetListeners]) listener(event);
       },
@@ -398,6 +400,16 @@ export class SessionSubscriptionHub {
     if (this.fleetStreaming === streaming) return;
     this.fleetStreaming = streaming;
     for (const listener of [...this.fleetStateListeners]) listener(streaming);
+  }
+
+  /**
+   * The gateway sends `extensions.reloaded` to every client after each reload, on the
+   * fleet feed and on each session stream. Extensions register providers, so the fleet
+   * is read again (#393). The client skips a reload id that it already handled.
+   */
+  private noticeReload(event: SseEvent): void {
+    if (event.type !== 'extensions.reloaded') return;
+    this.client.extensionsReloaded(typeof event.reload_id === 'string' ? event.reload_id : undefined);
   }
 
   private ingest(event: SseEvent): void {

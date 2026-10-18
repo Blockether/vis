@@ -577,6 +577,9 @@ export function onSettingChange(base: string, receive: (updated: Toggle) => void
 }
 /** Mounted provider lists per gateway base URL, given the fleet after an extension reload. */
 const routerRefreshListeners = new Map<string, Set<(rows: RouterProvider[]) => void>>();
+/** Recent reload ids per gateway base URL, so each reload refreshes the fleet once. */
+const seenReloads = new Map<string, string[]>();
+const SEEN_RELOADS_LIMIT = 16;
 
 /**
  * Hear the provider fleet on the gateway at `base` after an extension reload.
@@ -2526,13 +2529,16 @@ export class GatewayClient {
    * router cache goes stale whatever the outcome.
    */
   async reloadExtensions(target?: SettingsTarget): Promise<ExtensionReload> {
+    let reloadId: string | undefined;
     try {
-      return await this.request<ExtensionReload>('POST', '/v1/extensions/reload', {
+      const reload = await this.request<ExtensionReload>('POST', '/v1/extensions/reload', {
         scope: target?.scope ?? 'global',
         target_id: target?.target_id,
       });
+      reloadId = reload.reload_id;
+      return reload;
     } finally {
-      this.extensionsReloaded();
+      this.extensionsReloaded(reloadId);
     }
   }
 
@@ -2851,14 +2857,22 @@ export class GatewayClient {
 
   /**
    * Read the fleet again after an extension reload, and give the rows to mounted
-   * provider lists. Settings and the `/reload` command both end here.
+   * provider lists. Settings and the `extensions.reloaded` event both end here.
+   *
+   * The gateway sends that event to every client after each reload, also for the
+   * reload that this client requested. A `reloadId` that was seen before is skipped.
    *
    * The read asks live only the providers that the reload added or changed, so
    * its cost does not grow with the fleet. Until it lands, the old rows still
    * paint but no longer count as fresh.
    */
-  extensionsReloaded(): void {
+  extensionsReloaded(reloadId?: string): void {
     const key = this.base;
+    if (reloadId) {
+      const seen = seenReloads.get(key) ?? [];
+      if (seen.includes(reloadId)) return;
+      seenReloads.set(key, [...seen, reloadId].slice(-SEEN_RELOADS_LIMIT));
+    }
     const entry = routerCache.get(key);
     if (entry) routerCache.set(key, { ...entry, at: 0 });
     // A read that started before the reload can carry the old fleet.

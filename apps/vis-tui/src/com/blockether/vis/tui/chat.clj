@@ -1516,6 +1516,10 @@
       "provider.limits_changed"
       {:phase :provider-limits-changed :provider-id (event-get event :provider-id)}
 
+      ;; A reload in any client (#393). Every tab stream carries a copy with the same id.
+      "extensions.reloaded"
+      {:phase :extensions-reloaded :reload-id (event-get event :reload-id)}
+
       ;; The session's model preference was changed in ANOTHER channel (the
       ;; companion app, a sibling TUI, an embedded caller). Project it so the
       ;; footer chip tracks the shared pref live instead of this process's last

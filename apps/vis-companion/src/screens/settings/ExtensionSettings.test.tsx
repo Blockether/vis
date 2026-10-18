@@ -116,6 +116,7 @@ it('keeps a failed project extension visible and runs its code only on request',
       { scope: 'global', dirs: ['~/.vis/extensions'], loaded: 0, failed: 0, extensions: [] },
       { scope: 'project', dirs: ['/work/app/.vis/extensions'], loaded: 1, failed: 1, extensions: ['notifier'] },
     ],
+    reload_id: 'reload-1',
   });
   const note = (await within(band).findByText('No machine extensions in ~/.vis/extensions.')).closest('[role="status"]')!;
   const lines = [...note.querySelectorAll('p')].map((line) => line.textContent);
@@ -160,6 +161,7 @@ it('reloads machine extensions from machine settings and explains an older gatew
       loaded: 0,
       failed: 0,
       scopes: [{ scope: 'global', dirs: ['~/.vis/extensions'], loaded: 0, failed: 0, extensions: [] }],
+      reload_id: 'reload-1',
     })
     .mockRejectedValueOnce(
       new GatewayError(404, 'no such route', { error: { type: 'not-found', message: 'no such route' } }),
@@ -261,6 +263,7 @@ it('names project extensions after a machine reload and opens Project settings',
     loaded: 0,
     failed: 0,
     scopes: [{ scope: 'global', dirs: ['~/.vis/extensions'], loaded: 0, failed: 0, extensions: [] }],
+    reload_id: 'reload-1',
   });
   const openScoped = vi.fn();
   renderOpenBands(

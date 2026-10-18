@@ -1056,7 +1056,11 @@
                                    :dirs ["/home/user/.vis/extensions"]
                                    :loaded 2
                                    :failed 1
-                                   :extensions ["memo" "spel"]}]})]
+                                   :extensions ["memo" "spel"]}]})
+
+                      ;; Issue #393: the response names the event that every client gets.
+                      python-extensions/announce-reload!
+                      (constantly "reload-1")]
 
           ;; Issue #348: the response names each scanned scope and its directory.
           (expect (= [200
@@ -1066,7 +1070,8 @@
                                   "dirs" ["/home/user/.vis/extensions"]
                                   "loaded" 2
                                   "failed" 1
-                                  "extensions" ["memo" "spel"]}]}]
+                                  "extensions" ["memo" "spel"]}]
+                       "reload_id" "reload-1"}]
                      (reload {"scope" "project" "target_id" (str (:id project))})))
           (expect (= 200 (first (reload {"scope" "global"}))))
           (expect (= 400 (first (reload {"scope" "project"}))))
