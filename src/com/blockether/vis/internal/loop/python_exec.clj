@@ -805,7 +805,15 @@
       (throw
         (ex-info
           "Draft policy changed. Start the next turn to rebuild the Python context safely; existing variables are not silently migrated."
-          {:type :draft/policy-changed}))))
+          {:type :draft/policy-changed})))
+    ;; A subagent file grant changed the OS policy of this session. A built worker keeps its
+    ;; launch policy, so it restarts here and restores the saved helpers.
+    (when (and (process-jail/take-stale-worker! (:session-id environment))
+               (:python-sandbox-factory environment)
+               (env/sandbox-if-built environment))
+      (some-> (:python-context-retired-atom environment)
+              (reset! true))
+      (env/renew-python-sandbox! environment)))
   ;; Running a block is exactly what a sandbox is FOR, so this is the ask that
   ;; builds one on a session whose first turn executes code.
   (let [python-context
@@ -825,12 +833,18 @@
       ;; `<context>` block and reflects intra-iter changes across blocks.
       ;; The snapshot is immutable/read-only — see ctx-loop/session-snapshot for
       ;; the guarantee. Re-binding also erases any model-created shadow binding.
-      (let [opts (get-in environment [:sandbox-caps :network])]
+      (let [opts (get-in environment [:sandbox-caps :network])
+            granted (process-jail/live-jail (:session-id environment) nil)]
+
         (when-let [policy-fn (:filesystem-policy-fn opts)]
-          (env/refresh-confinement! python-context
-                                    #(get (policy-fn) :read-write)
-                                    (select-keys opts [:jail-enabled? :write-limited? :write-rules])
-                                    policy-fn)))
+          (env/refresh-confinement!
+            python-context
+            #(get (policy-fn) :read-write)
+            (cond-> (select-keys opts [:jail-enabled? :write-limited? :write-rules])
+              granted
+              (merge {:write-limited? (boolean (:write-limited? granted))
+                      :write-rules (:write-rules granted)}))
+            policy-fn)))
       (when-let [snap (ctx-loop/session-snapshot environment)]
         ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
         (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))

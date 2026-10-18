@@ -5387,7 +5387,11 @@
 
 (defn db-agent-update!
   [db sid changes]
-  (let [changes (select-keys changes [:status :resumed_turns :resumed_at])]
+  (let [changes (cond-> (select-keys changes [:status :resumed_turns :resumed_at])
+                  (contains? changes :files)
+                  (assoc :files
+                    (some-> (:files changes)
+                            ->json)))]
     (when (seq changes)
       (execute! db {:update :session_agent :set changes :where [:= :session_id (str sid)]})))
   (db-agent-info db sid))

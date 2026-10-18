@@ -531,9 +531,11 @@
    "council.cancel" ["Cancel subagent" "Cancelled subagent" false]
    "council.resume" ["Resume subagent" "Resumed subagent" true]
    "council.extend" ["Extend subagent budget" "Extended subagent budget" false]
-   "council.deny" ["Deny subagent budget" "Denied subagent budget" false]
+   "council.deny" ["Deny subagent request" "Denied subagent request" false]
+   "council.grant" ["Grant subagent files" "Granted subagent files" false]
    "council.ask" ["Ask parent" "Asked parent" true]
    "council.ask_budget" ["Ask parent for iterations" "Asked parent for iterations" true]
+   "council.ask_files" ["Ask parent for files" "Asked parent for files" true]
    "automations.list" ["List automations" "Listed automations" false]
    "automations.get" ["Read automation" "Read automation" false]
    "automations.create" ["Create automation" "Created automation" false]
@@ -782,7 +784,8 @@
        "council.cancel"
        "council.resume"
        "council.extend"
-       "council.deny")
+       "council.deny"
+       "council.grant")
       {"headline" headline
        "summary" (if (seq value)
                    (str/join " · "
@@ -797,6 +800,17 @@
       {"headline" headline
        "summary" (if (util/non-blank-string? value) "Parent replied" "No reply")
        "content" (if (string? value) (council-body {"content" value} "content") [])}
+
+      "council.ask_files"
+      {"headline" headline
+       "summary" (cond (true? (field value "granted")) "Files granted"
+                       (and (seq (field value "missing"))
+                            (str/starts-with? (str (field value "reply")) "Granted files:"))
+                       "Files partly granted"
+                       (util/non-blank-string? (field value "reply")) "No files granted"
+                       :else "No reply")
+       "content"
+       (if (util/non-blank-string? (field value "reply")) (council-body value "reply") [])}
 
       "council.ask_budget"
       (let [granted (field value "granted")]

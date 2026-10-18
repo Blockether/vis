@@ -52,6 +52,7 @@
     [com.blockether.vis.internal.python.env :as python-env]
     [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.internal.sandbox.policy :as security-policy]
+    [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.foundation.shell-log :as shell-log]
     [com.blockether.vis.internal.util :as util]
@@ -6209,6 +6210,94 @@
       (cancel-session-turns! id :agent-cancel))
     {:session_id sid :status "cancelled" :cancelled ids}))
 
+(defn- agent-files
+  "Resolve and check the file grant `grant` of the calling parent `env`. Rules resolve against
+   the parent's workspace `current`, so they keep their meaning in the child. A grant narrows the
+   parent's policy and never widens it. Answers the resolved `{:write :read_only :deny}` map, or
+   nil for an empty grant."
+  [env current grant]
+  (let [files
+        (when (seq grant)
+          (into {}
+                (keep (fn [k]
+                        (when-let [rules (seq (get grant k (get grant (name k))))]
+                          [k
+                           (security-policy/resolve-rules
+                             rules
+                             (or (:root current) (:repo-root current) (workspace/trunk-root))
+                             (System/getProperty "user.home"))])))
+                [:write :read_only :deny]))
+
+        policy
+        (:security-policy env)
+
+        outside
+        (security-policy/outside-write-rules policy
+                                             (:write files)
+                                             (concat [(:root current) (:repo-root current)]
+                                                     (:security/filesystem-roots env)))
+
+        denied
+        (some #(process-jail/deny-refusal env "file-write" (security-policy/rule-root %))
+              (:write files))]
+
+    (when (seq outside)
+      (agents/fail! :invalid-request
+                    (str "files.write cannot grant " (str/join ", " outside)
+                         ": the parent cannot write there. Writable roots: "
+                         (str/join ", "
+                                   (distinct (keep #(some-> %
+                                                            str
+                                                            not-empty)
+                                                   (concat [(:root current) (:repo-root current)]
+                                                           (:security/filesystem-roots env)
+                                                           (security-policy/read-write-roots
+                                                             policy))))))))
+    (when denied (agents/fail! :invalid-request (str "files.write cannot grant it. " denied)))
+    (not-empty files)))
+
+(defn- agent-grant
+  "Add the rules of `opts` to the file grant of a child of the calling parent. The child gets the
+   new policy at its next block. Answers the child row."
+  [env opts]
+  (let [db
+        (:db-info env)
+
+        sid
+        (str (:session-id env))
+
+        child-id
+        (str (:session_id opts))
+
+        child
+        (or (agents/info db child-id)
+            (agents/fail! :not-owner "Only a managed subagent can get a file grant"))
+
+        _
+        (when-not (= sid (str (:parent_id child)))
+          (agents/fail! :not-owner "Only the parent of a subagent can grant it files"))
+
+        _
+        (when (= "cancelled" (:status child))
+          (agents/fail! :invalid-request "A cancelled subagent cannot get a file grant"))
+
+        ;; Without the parent's policy, a grant cannot prove that it narrows it.
+        _
+        (when-not (:security-policy env)
+          (agents/fail! :inactive-session "A file grant needs the parent's live session"))
+
+        added
+        (or (agent-files env (resolve-workspace db sid) (:files opts))
+            (agents/fail! :invalid-request "files needs at least one rule"))
+
+        merged
+        (merge-with #(vec (distinct (concat %1 %2))) (:files child) added)]
+
+    (persistance/db-agent-update! db child-id {:files merged})
+    ;; The child's environment builds its policy the same way, from the store.
+    (process-jail/grant-jail! child-id (:process-jail (scoped-policy/snapshot db child-id)))
+    (agents/info db child-id)))
+
 (defonce ^:private agent-spawn-lock (Object.))
 
 (defn- agent-spawn
@@ -6304,42 +6393,7 @@
 
                 ;; Rules resolve against the parent's root, so they keep their meaning in the child.
                 files
-                (when-let [grant (not-empty (:files opts))]
-                  (into {}
-                        (keep
-                          (fn [k]
-                            (when-let [rules (seq (get grant k (get grant (name k))))]
-                              [k
-                               (security-policy/resolve-rules
-                                 rules
-                                 (or (:root current) (:repo-root current) (workspace/trunk-root))
-                                 (System/getProperty "user.home"))])))
-                        [:write :read_only :deny]))
-
-                ;; A grant narrows the parent's policy and never widens it.
-                _
-                (let [policy
-                      (:security-policy env)
-
-                      outside
-                      (security-policy/outside-write-rules policy
-                                                           (:write files)
-                                                           (concat
-                                                             [(:root current) (:repo-root current)]
-                                                             (:security/filesystem-roots env)))
-
-                      denied
-                      (some
-                        #(process-jail/deny-refusal env "file-write" (security-policy/rule-root %))
-                        (:write files))]
-
-                  (when (seq outside)
-                    (agents/fail! :invalid-request
-                                  (str "files.write cannot grant " (str/join ", " outside)
-                                       ": the parent cannot write there. Writable roots: "
-                                       (str/join ", " (security-policy/read-write-roots policy)))))
-                  (when denied
-                    (agents/fail! :invalid-request (str "files.write cannot grant it. " denied))))
+                (agent-files env current (:files opts))
 
                 ws
                 (:id (workspace/create-trunk-at!
@@ -6414,6 +6468,7 @@
    :list #'agent-list
    :cancel #'agent-cancel
    :route #'agent-route
+   :grant #'agent-grant
    :live? #'agent-live?
    :publish #'agent-publish})
 
@@ -6429,8 +6484,9 @@
       (agents/fail! :session-not-found "Unknown session"))
     (when (= :spawn operation) (agents/require-enabled! db sid))
     ;; Reads and controls need durable state, not a newly bootstrapped interpreter.
-    ;; Only spawn consumes the running parent's safe model checkpoint.
-    (agents/operation! (assoc (when (= :spawn operation) (live-env sid))
+    ;; Only spawn consumes the running parent's safe model checkpoint. Spawn and grant check
+    ;; the parent's security policy.
+    (agents/operation! (assoc (when (contains? #{:spawn :grant} operation) (live-env sid))
                          :db-info db
                          :session-id sid)
                        operation

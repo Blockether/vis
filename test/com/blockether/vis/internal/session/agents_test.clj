@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.sandbox.jail :as pj]
             [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.core :refer [defdescribe describe expect it]]))
@@ -25,37 +26,43 @@
 
 (defdescribe
   schema-owned-agent-bounds-test
-  (it "schema owned agent bounds"
-      (let [schema
-            (document/schema-document "agents")
+  (it
+    "schema owned agent bounds"
+    (let [schema
+          (document/schema-document "agents")
 
-            agent
-            {"session_id" "child"
-             "parent_id" "parent"
-             "leader_id" "parent"
-             "team_id" "task"
-             "task" "Inspect the existing tests"
-             "status" "queued"
-             "iteration_budget" 32
-             "iterations_used" 0}]
+          agent
+          {"session_id" "child"
+           "parent_id" "parent"
+           "leader_id" "parent"
+           "team_id" "task"
+           "task" "Inspect the existing tests"
+           "status" "queued"
+           "iteration_budget" 32
+           "iterations_used" 0}]
 
-        (expect (= agents/default-iterations
-                   (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"])
-                   120))
-        (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 128))
-        (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 16))
-        (expect (document/valid? "agents" agent))
-        (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
-        (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
-        (expect (document/valid-json? "agents"
-                                      "spawn"
-                                      {"task" "Edit one owner"
-                                       "files" {"write" ["src/a/**"] "deny" [".env"]}}))
-        (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {}})))
-        (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {"exec" ["a"]}})))
-        (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {"write" []}})))
-        (expect
-          (not (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8193 "x"))}))))))
+      (expect (= agents/default-iterations
+                 (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"])
+                 120))
+      (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 128))
+      (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 16))
+      (expect (document/valid? "agents" agent))
+      (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
+      (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
+      (expect (document/valid-json? "agents"
+                                    "spawn"
+                                    {"task" "Edit one owner"
+                                     "files" {"write" ["src/a/**"] "deny" [".env"]}}))
+      (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {}})))
+      (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {"exec" ["a"]}})))
+      (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {"write" []}})))
+      (expect (document/valid-json? "agents" "grant" {"session_id" "c" "files" {"write" ["a"]}}))
+      (expect (not (document/valid-json? "agents" "grant" {"session_id" "c"})))
+      (expect (document/valid-json? "agents" "ask_files" {"files" {"write" ["a"]} "reason" "Fix"}))
+      (expect (not
+                (document/valid-json? "agents" "ask_files" {"files" {"write" ["a"]} "reason" " "})))
+      (expect (not
+                (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8193 "x"))}))))))
 
 (defn child!
   [db parent opts]
@@ -218,6 +225,13 @@
                 (contains? @live (str sid)))
        :list (fn [_ _]
                (ps/db-agent-list db leader))
+       ;; The gateway also resolves and checks the rules; here they stay as given.
+       :grant (fn [_ {:keys [session_id files]}]
+                (let [old (:files (ps/db-agent-info db session_id))]
+                  (ps/db-agent-update! db
+                                       session_id
+                                       {:files
+                                        (merge-with #(vec (distinct (concat %1 %2))) old files)})))
        :publish (fn [env opts]
                   (let [id (inc (count @entries))]
                     (swap! entries assoc id (assoc opts :author (str (:session-id env))))
@@ -410,6 +424,85 @@
             (expect (= :invalid-request (outcome #(agents/deny-agent env child "No request")))))
           (expect (= :invalid-request (outcome #(agents/ask-budget child-env 601 "Too many"))))
           (expect (= :invalid-request (outcome #(agents/ask-budget env 5 "Not a child"))))))))
+  (it
+    "lets a child ask for files and the parent grant or deny them"
+    (let [db
+          (h/store)
+
+          leader
+          (str (h/store-session! db {:channel :api}))
+
+          child
+          (child! db leader {:files {:write ["/w/a/**"]}})
+
+          sibling
+          (child! db leader {:files {:write ["/w/b/**"]}})
+
+          env
+          {:db-info db :session-id leader}
+
+          child-env
+          {:db-info db :session-id child}]
+
+      (ps/db-agent-update! db sibling {:status "running"})
+      (with-fake-runtime
+        db
+        leader
+        (atom #{leader})
+        (fn [entries]
+          (with-redefs [ps/db-council-get (fn [_ id]
+                                            (get @entries id))]
+            (let [asked (future (outcome #(agents/ask-files child-env
+                                                            {"write" ["/w/b/x.txt"]}
+                                                            "The fix touches b"
+                                                            {:timeout_secs 10})))
+                  r (asking-record env child)]
+
+              (expect (= {"files" {"write" ["/w/b/x.txt"]} "reason" "The fix touches b"}
+                         (get r "files_request")))
+              (expect (= "File request: write /w/b/x.txt. Reason: The fix touches b"
+                         (get r "question")))
+              (let [granted (first (outcome
+                                     #(agents/grant-files env child {"write" ["/w/b/x.txt"]})))]
+                (expect (= ["/w/a/**" "/w/b/x.txt"] (get-in granted ["files" "write"])))
+                ;; A real gateway run showed the answered request still in the grant record.
+                (expect (nil? (get granted "files_request"))
+                        "The returned record no longer shows the answered request")
+                (expect (str/includes? (get granted "warning") sibling)
+                        "A sibling that writes the same files gets a warning"))
+              (let [answer (deref asked 5000 ::timeout)]
+                (expect (true? (get answer "granted")))
+                (expect (= ["/w/a/**" "/w/b/x.txt"] (get-in answer ["files" "write"])))
+                (expect (str/starts-with? (get answer "reply")
+                                          "Granted files: write /w/a/**, /w/b/x.txt."))))
+            (let [asked (future (outcome #(agents/ask-files child-env
+                                                            {"write" ["/w/c"]}
+                                                            "More"
+                                                            {:timeout_secs 10})))]
+              (asking-record env child)
+              (outcome #(agents/deny-agent env child "Use a/ only"))
+              (let [denied (deref asked 5000 ::timeout)]
+                (expect (false? (get denied "granted")))
+                (expect (= "Denied: Use a/ only. Continue without these files."
+                           (get denied "reply"))
+                        "A reason without a final period still reads as a sentence")))
+            ;; A real gateway run granted another file and ask_files still answered granted.
+            (let [asked (future (outcome #(agents/ask-files child-env
+                                                            {"write" ["/w/a/c/y.txt" "/w/d.txt"]}
+                                                            "Two files"
+                                                            {:timeout_secs 10})))]
+              (asking-record env child)
+              (outcome #(agents/grant-files env child {"write" ["/w/e.txt"]}))
+              (let [partial (deref asked 5000 ::timeout)]
+                (expect (false? (get partial "granted"))
+                        "A grant that misses a requested file is not a grant")
+                (expect (= ["/w/d.txt"] (get partial "missing"))
+                        "A granted glob covers /w/a/c/y.txt; only /w/d.txt is missing"))))
+          (expect (= :invalid-request
+                     (outcome #(agents/ask-files env {"write" ["/w/x"]} "Not a child"))))
+          (expect (= :invalid-request (outcome #(agents/ask-files child-env {} "Empty"))))
+          (expect (= :not-owner
+                     (outcome #(agents/grant-files child-env child {"write" ["/w/x"]}))))))))
   ;; Review of #388: a budget request in the handoff iteration used that iteration. After a
   ;; refusal, the child stopped without a report.
   (it "gives one more handoff iteration once after a refused request in the handoff"
@@ -677,7 +770,9 @@
                  :session-id leader
                  :router router
                  :turn-state-atom (atom {:agent-checkpoint checkpoint
-                                         :council {:activation-id "parent"}})}
+                                         :council {:activation-id "parent"}})
+                 ;; A disabled jail: a grant passes the parent's write roots check.
+                 :security-policy {:process-jail {}}}
             launches (atom [])]
 
         (ps/db-set-session-project! db leader project-id)
@@ -730,15 +825,56 @@
                              (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
                 ;; A file grant resolves against the parent's root and stays on the record.
                 (let [grant {:task "Edit one owner" :files {:write ["src/owner/**"] :deny [".env"]}}
-                      files (:files (ps/db-agent-info
-                                      db
-                                      (:session_id
-                                        (gateway/agents-operation! leader :spawn grant))))]
+                      owner (:session_id (gateway/agents-operation! leader :spawn grant))
+                      files (:files (ps/db-agent-info db owner))]
 
                   (expect (str/ends-with? (first (:write files)) "/src/owner/**"))
                   (expect (str/starts-with? (first (:write files)) "/"))
                   (expect (str/ends-with? (first (:deny files)) "/.env"))
-                  (expect (nil? (:read_only files))))
+                  (expect (nil? (:read_only files)))
+                  ;; council.grant adds rules, keeps the old ones and replaces the live jail.
+                  (try (let [granted (gateway/agents-operation! leader
+                                                                :grant
+                                                                {:session_id owner
+                                                                 :files {:write ["docs/**"]}})]
+                         (expect (= [(first (:write files))
+                                     (str/replace (first (:write files)) "src/owner/**" "docs/**")]
+                                    (get-in granted [:files :write])))
+                         (expect (= (:deny files) (get-in granted [:files :deny])))
+                         (expect (= (get-in granted [:files :write])
+                                    (:write-rules (pj/live-jail owner nil))))
+                         (expect (pj/take-stale-worker! owner))
+                         (expect (not (pj/take-stale-worker! owner))))
+                       (finally (pj/clear-granted-jail! owner)))
+                  ;; Only the parent grants: a child cannot widen its own access.
+                  (expect (= :not-owner
+                             (try (gateway/agents-operation! owner
+                                                             :grant
+                                                             {:session_id owner
+                                                              :files {:write ["/tmp/x"]}})
+                                  nil
+                                  (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+                  (with-redefs [security-policy/outside-write-rules (fn [_ rules _]
+                                                                      (vec rules))]
+                    (expect (str/includes? (try (gateway/agents-operation!
+                                                  leader
+                                                  :grant
+                                                  {:session_id owner
+                                                   :files {:write ["/elsewhere"]}})
+                                                nil
+                                                (catch clojure.lang.ExceptionInfo e (ex-message e)))
+                                           "files.write cannot grant /elsewhere"))
+                    ;; A real gateway run listed only ~/.vis, not the workspace that the parent writes.
+                    (with-redefs-fn {#'gateway/resolve-workspace (fn [_ _]
+                                                                   {:root "/project"})}
+                      #(expect (re-find #"Writable roots: /project"
+                                        (try (gateway/agents-operation!
+                                               leader
+                                               :grant
+                                               {:session_id owner :files {:write ["/elsewhere"]}})
+                                             nil
+                                             (catch clojure.lang.ExceptionInfo e (ex-message e))))
+                               "The error names the workspace root that the parent can write"))))
                 ;; A grant never widens the parent's policy: the spawn names the problem.
                 (with-redefs [security-policy/outside-write-rules (fn [_ rules _]
                                                                     (vec rules))]

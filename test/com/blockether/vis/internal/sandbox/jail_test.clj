@@ -583,10 +583,21 @@
         (expect (str/includes? (pj/deny-refusal env "file-write" "/ws/README.md")
                                "Subagent file grant"))
         (expect (nil? (pj/deny-refusal env "file-read" "/ws/README.md"))))
+      ;; council.grant replaces the jail of a live child; a new environment clears it.
+      (let [env {:session-id "grant-child"
+                 :security-policy {:process-jail {:write-rules ["/ws/src/**"]}}}]
+        (try (expect (some? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
+             (pj/grant-jail! "grant-child" {:write-rules ["/ws/src/**" "/ws/docs/**"]})
+             (expect (nil? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
+             (expect (pj/take-stale-worker! "grant-child") "The worker restarts once")
+             (expect (not (pj/take-stale-worker! "grant-child")))
+             (pj/clear-granted-jail! "grant-child")
+             (expect (some? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
+             (finally (pj/clear-granted-jail! "grant-child"))))
       ;; A grant left without rules inside the parent's ceiling writes nothing.
       ;; The refusal stays short: three rules at most, home paths as ~.
       (expect (= (str "Subagent file grant: write only ~/a, /b, /c (+2 more). "
-                      "Ask your parent with council.ask.")
+                      "Ask your parent with council.ask_files.")
                  (pj/grant-refusal [(str (System/getProperty "user.home") "/a") "/b" "/c" "/d"
                                     "/e"])))
       (let [env {:security-policy {:process-jail {:write-limited? true :write-rules []}}}]

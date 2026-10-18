@@ -550,7 +550,9 @@
             ;; Security configuration is resolved exactly once per environment; it never
             ;; re-reads model-writable vis.yml mid-life. `/reload` bumps
             ;; `policy-reload-epoch`, so each live env recycles at its next turn and
-            ;; rebuilds this snapshot.
+            ;; rebuilds this snapshot. The snapshot already holds the subagent file grants of the
+            ;; store, so a grant from before this env no longer applies.
+            _ (process-jail/clear-granted-jail! session-id)
             security-config (binding [workspace/*workspace-root* (or (:root active-workspace)
                                                                      workspace/*workspace-root*)]
                               (security-config-snapshot db-info session-id))
@@ -613,9 +615,12 @@
                                       (process-jail/draft-source-roots draft-env)))
             draft-env (assoc draft-env :workspace/draft-protected-roots draft-protected-roots)
             jail-config (:process-jail security-config)
-            filesystem-policy-fn
-            #(process-jail/runtime-policy
-               (process-jail/draft-policy (assoc jail-config :roots-fn sandbox-roots-fn) draft-env))
+            ;; A later council.grant replaces the jail value of this child session.
+            live-jail-config #(process-jail/live-jail session-id jail-config)
+            filesystem-policy-fn #(process-jail/runtime-policy (process-jail/draft-policy
+                                                                 (assoc (live-jail-config)
+                                                                   :roots-fn sandbox-roots-fn)
+                                                                 draft-env))
             jail-enabled? (not (:disabled? jail-config))
             net-cfg (:network security-config)
             ;; Host sockets stay available to the interpreter; the jail is the ONE
@@ -648,7 +653,7 @@
                                           (gateway-sandbox/ensure-session-proxy! sandbox-token))]
 
                   (process-jail/draft-policy
-                    (merge jail-config
+                    (merge (live-jail-config)
                            {:roots-fn sandbox-roots-fn
                             :net-enabled? net-on?
                             ;; Resolved per spawn (never baked into the session snapshot), so a

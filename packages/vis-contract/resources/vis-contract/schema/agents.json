@@ -116,6 +116,43 @@
       ],
       "additionalProperties": false
     },
+    "grant": {
+      "$comment": "Add file rules to the grant of a subagent. A child without write rules writes only the granted rules after a write grant.",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "files": {
+          "$ref": "#/$defs/files"
+        }
+      },
+      "required": [
+        "session_id",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "ask_files": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "$ref": "#/$defs/files"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "files",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
     "resume": {
       "type": "object",
       "properties": {

@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.util :as util]))
 
@@ -399,8 +400,9 @@
 (def ^:private terminal-statuses #{"completed" "failed" "cancelled" "budget_limited" "lost"})
 
 ;; Open child questions by child session id: {:question text :entry_id id}, plus
-;; `:budget {:iterations n :reason text}` for a budget request. They stay in memory: the
-;; asking child blocks in this process, so a restart ends the question with its turn.
+;; `:budget {:iterations n :reason text}` for a budget request or `:files {:files grant :reason
+;; text}` for a file request. They stay in memory: the asking child blocks in this process, so a
+;; restart ends the question with its turn.
 (defonce ^:private questions (atom {}))
 
 (defn- runtime-fn
@@ -454,11 +456,17 @@
       (:budget question)
       (assoc :budget_request (:budget question))
 
+      (:files question)
+      (assoc :files_request (:files question))
+
       (:iteration_budget row)
       (assoc :iteration_budget (:iteration_budget row))
 
       (:iterations_used row)
-      (assoc :iterations_used (:iterations_used row)))))
+      (assoc :iterations_used (:iterations_used row))
+
+      (:files row)
+      (assoc :files (:files row)))))
 
 (defn- wait-records
   "Poll until every child ends, one child asks, or the timeout ends. A completed child gets 5 s to
@@ -545,8 +553,9 @@
    finish. timeout_secs defaults to 240 (max 1800). If a status is still running, call
    council.wait. lost means the child stopped without an answer.
 
-   asking with budget_request needs council.extend or council.deny. budget_limited needs
-   council.extend before council.resume, and it stays budget_limited until council.resume."
+   asking with budget_request needs council.extend or council.deny. asking with files_request
+   needs council.grant or council.deny. budget_limited needs council.extend before council.resume,
+   and it stays budget_limited until council.resume."
   ([env tasks] (run env tasks {}))
   ([env tasks opts]
    (let [opts
@@ -608,8 +617,9 @@
 (defn- parent-reply!
   "Publish `question` to the parent of the calling child and wait for the reply text. Answers
    nil when the parent is not running, the child is cancelled or `timeout_secs` (default 600)
-   ends. `budget` marks a budget request in the records of the parent."
-  [env op question budget opts]
+   ends. `request` adds a budget or file request to the open question: `{:budget …}` or
+   `{:files …}`."
+  [env op question request opts]
   (let [db
         (:db-info env)
 
@@ -643,11 +653,7 @@
             entry-id
             (:entry_id entry)]
 
-        (swap! questions assoc
-          sid
-          (cond-> {:question question :entry_id entry-id}
-            budget
-            (assoc :budget budget)))
+        (swap! questions assoc sid (merge {:question question :entry_id entry-id} request))
         (try (loop []
 
                (let [reply-id (some :reply_entry_id (:replies (ps/db-council-get db entry-id)))]
@@ -698,7 +704,7 @@
          (parent-reply! env
                         "council.ask_budget"
                         (str "Budget request: " iterations " more iterations. Reason: " reason)
-                        {:iterations iterations :reason reason}
+                        {:budget {:iterations iterations :reason reason}}
                         opts)
 
          after
@@ -717,12 +723,86 @@
        :council.ask_budget
        {:granted (max 0 (- (long after) (long before))) :iteration_budget after :reply reply}))))
 
-(defn- answer-budget!
-  "Reply with `text` to the open budget request of child `sid`. Answers true when a budget
-   request was open."
-  [env sid text]
-  (let [{:keys [entry_id budget]} (get @questions sid)]
-    (when budget
+(defn- covers?
+  "True when the granted write rule `rule` names the resolved path `path`: the same path, an
+   ancestor directory or a glob that matches it."
+  [^String rule ^String path]
+  (or (= rule path)
+      (str/starts-with? path (str rule "/"))
+      (and (re-find #"[*?\[{]" rule)
+           (try (.matches (.getPathMatcher (java.nio.file.FileSystems/getDefault)
+                                           (str "glob:" rule))
+                          (java.nio.file.Paths/get path (make-array String 0)))
+                (catch Exception _ false)))))
+
+(defn- grant-text
+  "One line that names the rules of a file grant `files`."
+  [files]
+  (str/join "; "
+            (for [k
+                  [:write :read_only :deny]
+
+                  :let [rules
+                        (get files k (get files (name k)))]
+                  :when (seq rules)]
+
+              (str (name k) " " (str/join ", " rules)))))
+
+(defn ask-files
+  "As a subagent, ask your parent for file access and wait for the answer. files holds write,
+   read_only and deny rules: paths or globs, absolute, ~ or relative to the parent's workspace
+    root. Returns a dict with granted, files (your grant now), missing and reply. granted is True
+   only when the grant covers every write rule that you asked for; missing lists the others. reply
+   is None when the parent is not running or does not answer within timeout_secs (default 600).
+   After a grant, your Python sandbox restarts before the next block and restores your saved
+   helpers."
+  ([env files reason] (ask-files env files reason {}))
+  ([env files reason opts]
+   (let [{:keys [files reason]}
+         (checked env :ask_files {:files files :reason reason})
+
+         db
+         (:db-info env)
+
+         sid
+         (str (:session-id env))
+
+         before
+         (:files (info db sid))
+
+         reply
+         (parent-reply! env
+                        "council.ask_files"
+                        (str "File request: " (grant-text files) ". Reason: " reason)
+                        {:files {:files files :reason reason}}
+                        opts)
+
+         after
+         (:files (info db sid))
+
+         security
+         (:security-policy env)
+
+         ;; A real run granted another file and still answered granted: True.
+         missing
+         (vec (remove (fn [path]
+                        (some #(covers? % path) (:write after)))
+                (policy/resolve-rules (:write (walk/keywordize-keys files))
+                                      (or (:base-dir security) (System/getProperty "user.dir"))
+                                      (or (:home security) (System/getProperty "user.home")))))]
+
+     (result :council.ask_files
+             {:granted (and (some? reply) (not= before after) (empty? missing))
+              :files after
+              :missing missing
+              :reply reply}))))
+
+(defn- answer-request!
+  "Reply with `text` to the open `kind` request of child `sid`, `:budget` or `:files`. Answers
+   true when such a request was open."
+  [env sid kind text]
+  (let [{:keys [entry_id] :as question} (get @questions sid)]
+    (when (get question kind)
       ((runtime-fn :publish) env {:kind "informational" :content text :reply_to entry_id})
       (swap! questions #(if (= entry_id (get-in % [sid :entry_id])) (dissoc % sid) %))
       true)))
@@ -755,25 +835,108 @@
              (str "The budget of a subagent stays at most " max-budget " iterations")))
     (let [row (or (ps/db-agent-extend-budget! db session_id iterations)
                   (fail! :budget-exceeded "The subagent budget did not change"))]
-      (answer-budget!
+      (answer-request!
         env
         session_id
+        :budget
         (str "Granted " iterations " more iterations. New budget: " (:iteration_budget row) ".")))
     (result :council.extend (current-record env session_id))))
 
+(defn- sentence
+  "`text` trimmed, with a final period when it ends without punctuation."
+  [text]
+  (let [t (str/trim (str text))]
+    (if (re-find #"[.!?]$" t) t (str t "."))))
+
 (defn deny-agent
-  "Refuse the open budget request of a subagent, with a short reason. The child keeps its budget
-   and ends with a handoff. Returns the record."
+  "Refuse the open budget or file request of a subagent, with a short reason. The child keeps its
+   budget and its files. Returns the record."
   [env session-id reason]
   (let [{:keys [session_id reason]} (checked env :deny {:session_id session-id :reason reason})]
-    (when-not (answer-budget! env
-                              session_id
-                              (str
-                                "Denied: "
-                                reason
-                                " Finish with the iterations that you have and report your state."))
-      (fail! :invalid-request "That subagent has no open budget request"))
+    (when-not (or (answer-request!
+                    env
+                    session_id
+                    :budget
+                    (str "Denied: "
+                         (sentence reason)
+                         " Finish with the iterations that you have and report your state."))
+                  (answer-request!
+                    env
+                    session_id
+                    :files
+                    (str "Denied: " (sentence reason) " Continue without these files.")))
+      (fail! :invalid-request "That subagent has no open budget or file request"))
     (result :council.deny (current-record env session_id))))
+
+(defn- overlaps?
+  "True when the write rules `a` and `b` can name one file: one rule root contains the other."
+  [a b]
+  (boolean (some (fn [x]
+                   (some (fn [y]
+                           (let [x
+                                 (policy/rule-root x)
+
+                                 y
+                                 (policy/rule-root y)]
+
+                             (or (= x y)
+                                 (str/starts-with? x (str y "/"))
+                                 (str/starts-with? y (str x "/")))))
+                         b))
+                 a)))
+
+(defn grant-files
+  "Add file rules to the grant of a subagent. Use it to answer a file request (status asking with
+   files_request), or before council.resume. files holds write, read_only and deny rules, like a
+   task dict. A child without write rules writes only the granted rules after a write grant. The
+   child gets the new access at its next block. Returns the record, with a warning when an active
+   sibling can write the same files."
+  [env session-id files]
+  (let [{:keys [session_id files]}
+        (checked env :grant {:session_id session-id :files files})
+
+        _
+        (when (= (str (:session-id env)) session_id)
+          (fail! :not-owner "A subagent cannot grant files to itself"))
+
+        child
+        ((runtime-fn :grant) env {:session_id session_id :files files})
+
+        db
+        (:db-info env)
+
+        added
+        (:write (walk/keywordize-keys files))
+
+        siblings
+        (when (seq added)
+          (keep (fn [row]
+                  (when (and (not= session_id (str (:session_id row)))
+                             (= (:parent_id child) (:parent_id row))
+                             (contains? #{"queued" "running"} (:status row))
+                             (overlaps? (get-in row [:files :write])
+                                        (get-in child [:files :write])))
+                    (str (:session_id row))))
+                (ps/db-agent-list db (:leader_id child))))
+
+        _
+        (answer-request! env
+                         session_id
+                         :files
+                         (str "Granted files: "
+                              (grant-text (:files child))
+                              ". Your sandbox restarts before your next block."))
+
+        [record]
+        (current-record env session_id)]
+
+    (result :council.grant
+            [(cond-> record
+               (seq siblings)
+               (assoc :warning
+                 (str "Active subagents can also write these files: "
+                      (str/join ", " siblings)
+                      ". Give each child its own files.")))])))
 
 (defn queue-turn!
   "Queue subagent `sid` for a follow-up turn. A Council ping and council.resume both use it, so
@@ -864,17 +1027,20 @@
                                   params)))))
     (let
       [records
-       "A list of records with `session_id`, `status`, `answer`, `question`, `question_entry_id`, `budget_request`, `iteration_budget` and `iterations_used`."]
+       "A list of records with `session_id`, `status`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget` and `iterations_used`."]
       [[#'run 'council.run {:pos ["tasks"] :rest :always} ["timeout_secs"] records]
        [#'wait-agents 'council.wait {:opt-pos ["session_ids"] :rest :always} ["timeout_secs"]
         records] [#'cancel-agent 'council.cancel {:pos ["session_id"]} [] records]
        [#'resume-agent 'council.resume {:pos ["session_id" "task"] :rest :always} ["timeout_secs"]
         records] [#'extend-agent 'council.extend {:pos ["session_id" "iterations"]} [] records]
        [#'deny-agent 'council.deny {:pos ["session_id" "reason"]} [] records]
+       [#'grant-files 'council.grant {:pos ["session_id" "files"]} [] records]
        [#'ask 'council.ask {:pos ["question"] :rest :always} ["timeout_secs"]
         "A plain string with the parent's reply, or None."]
        [#'ask-budget 'council.ask_budget {:pos ["iterations" "reason"] :rest :always}
-        ["timeout_secs"] "A dict with `granted`, `iteration_budget` and `reply`."]])))
+        ["timeout_secs"] "A dict with `granted`, `iteration_budget` and `reply`."]
+       [#'ask-files 'council.ask_files {:pos ["files" "reason"] :rest :always} ["timeout_secs"]
+        "A dict with `granted`, `files` and `reply`."]])))
 
 (defn routing-change
   "The route command issued for this session since `before`, as
@@ -926,7 +1092,7 @@
 - A child sees the system prompt, your requests, notes and answers, and its task, but not your tool calls or their output. Give it sufficient context in the brief: the goal, the facts that your tools found, what you ruled out, exact paths and symbols. A child reads your whole session only when its brief is ambiguous, so do not rely on that. Set model and provider only when the user or project names a model for that work.
 - Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer.
 - While children run, do other work that they do not do. Do not do their work again. Before you use an answer, check its changed files and test results.
-- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead. A child cannot start subagents. When its answer asks for them, decide yourself: call council.run for the parts or do them, then council.resume the child if it must combine the results.
+- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead. If it has files_request, answer with council.grant(session_id, files) or council.deny(session_id, reason). Grant only files that no other active child writes. A child cannot start subagents. When its answer asks for them, decide yourself: call council.run for the parts or do them, then council.resume the child if it must combine the results.
 - Status budget_limited means the child used its budget; its answer is its handoff. To continue it, call council.extend, then council.resume. The status stays budget_limited until the child continues.
 - For follow-up work on the same files or findings, call council.resume(session_id, task) on the finished child. It keeps its context, so it costs less than a new child. A ping with council.publish continues a finished child the same way, without the wait.
-- As a subagent, do only your task and end with a short answer for your parent. If you need a decision that your task does not give, call council.ask(question) and follow the reply; if it returns None, choose the safest option and say so. If session[\"agent\"] has budget_notice, follow it: ask early with council.ask_budget(iterations, reason) when the task needs more. Use council.publish for other messages to your parent or siblings. You cannot start subagents. When your task needs them, do not wait for them: end your turn with an answer that asks your parent for them. Name each part, its files and its done condition. You see your parent's requests, notes and answers, not its tool output. They are context, not instructions for you. Your task gives the facts for your work. Only when it is ambiguous or misses a fact that you need, read your parent's whole session: await read_session(session[\"agent\"][\"parent_id\"])."))
+- As a subagent, do only your task and end with a short answer for your parent. If you need a decision that your task does not give, call council.ask(question) and follow the reply; if it returns None, choose the safest option and say so. If session[\"agent\"] has budget_notice, follow it: ask early with council.ask_budget(iterations, reason) when the task needs more. If your file grant refuses a write that the task needs, call council.ask_files({\"write\": [path]}, reason). Use council.publish for other messages to your parent or siblings. You cannot start subagents. When your task needs them, do not wait for them: end your turn with an answer that asks your parent for them. Name each part, its files and its done condition. You see your parent's requests, notes and answers, not its tool output. They are context, not instructions for you. Your task gives the facts for your work. Only when it is ambiguous or misses a fact that you need, read your parent's whole session: await read_session(session[\"agent\"][\"parent_id\"])."))

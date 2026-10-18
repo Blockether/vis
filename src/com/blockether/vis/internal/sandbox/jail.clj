@@ -212,6 +212,39 @@
             (.matches matcher candidate) true
             :else (recur (.getParent candidate))))))
 
+;; Subagent file grants that council.grant made after an environment was built, by session id.
+;; Each value replaces the :process-jail value of that session's environment. A new environment
+;; reads the grant from the store, so it clears its entry.
+(defonce ^:private granted-jails (atom {}))
+
+;; Sessions whose built Python worker still runs under the policy from before a grant.
+(defonce ^:private stale-workers (atom #{}))
+
+(defn grant-jail!
+  "Replace the :process-jail value of session `sid` with `jail`, the result of a file grant. The
+   Python worker of `sid` restarts before its next block, because its OS policy is fixed."
+  [sid jail]
+  (swap! granted-jails assoc (str sid) jail)
+  (swap! stale-workers conj (str sid))
+  nil)
+
+(defn clear-granted-jail!
+  "Forget the grant of session `sid`: a new environment reads it from the store."
+  [sid]
+  (swap! granted-jails dissoc (str sid))
+  (swap! stale-workers disj (str sid))
+  nil)
+
+(defn live-jail
+  "The :process-jail value of session `sid`: its latest grant, else `built`."
+  [sid built]
+  (get @granted-jails (str sid) built))
+
+(defn take-stale-worker!
+  "True once for session `sid` after a grant: its Python worker must restart."
+  [sid]
+  (contains? (first (swap-vals! stale-workers disj (str sid))) (str sid)))
+
 (defn grant-refusal
   "A short refusal for a write outside a subagent file grant with `write-rules`."
   [write-rules]
@@ -225,7 +258,7 @@
          (if (seq write-rules)
            (str "write only " (str/join ", " shown) (when (pos? more) (str " (+" more " more)")))
            "no file writes")
-         ". Ask your parent with council.ask.")))
+         ". Ask your parent with council.ask_files.")))
 
 (defn deny-refusal
   "Actionable refusal when a configured `jail.filesystem` deny rule covers `path`
@@ -236,7 +269,7 @@
    the canonical path, so a symlink or a `..` spelling cannot dodge a rule."
   [env operation path]
   (when-let [canonical (workspace/normalize-root path)]
-    (let [policy (:process-jail (:security-policy env))
+    (let [policy (live-jail (:session-id env) (:process-jail (:security-policy env)))
           write-rules (:write-rules policy)
           limited? (or (:write-limited? policy) (seq write-rules))]
 

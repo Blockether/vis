@@ -252,6 +252,83 @@
                (finally (loop-env/dispose-environment! child))))
         (finally (loop-env/dispose-environment! parent))))))
 
+(defdescribe
+  subagent-file-grant-reaches-a-running-child-test
+  (it
+    "a later grant reaches a running child at its next block"
+    (let [root
+          (.getCanonicalPath (doto (java.io.File. (str "target/agent-grant-" (System/nanoTime)))
+                               (.mkdirs)))
+
+          parent
+          (loop-env/create-environment (router) {:db :memory})]
+
+      (try
+        (with-redefs [svar/ask-code! (fn [_ _]
+                                       {:stop-reason :end :content "Parent result"})]
+          (turn/run-turn! parent "Delegate with a file grant." {}))
+        (let [checkpoint
+              (:agent-checkpoint (ctx-loop/read-turn-state parent))
+
+              child
+              (child-environment parent checkpoint 4 nil {:write [(str root "/out/**")]})
+
+              db
+              (:db-info child)
+
+              sid
+              (str (:session-id child))
+
+              target
+              (str root "/later.txt")
+
+              ;; The gateway's council.grant stores the rules, then replaces the live jail.
+              grant!
+              (fn []
+                (ps/db-agent-update! db sid {:files {:write [(str root "/out/**") target]}})
+                (pj/grant-jail! sid (:process-jail (scoped-policy/snapshot db sid))))
+
+              calls
+              (atom [])]
+
+          (try (with-redefs [svar/ask-code!
+                             (fn [_ opts]
+                               (swap! calls conj (:messages opts))
+                               (case (count @calls)
+                                 1
+                                 (code-response (str "kept = 41\n"
+                                                     "try:\n"
+                                                     "    open('"
+                                                     target
+                                                     "', 'w').write('no')\n"
+                                                     "except PermissionError:\n"
+                                                     "    print('before grant refused')"))
+
+                                 2
+                                 (do (grant!)
+                                     (code-response (str "open('" target
+                                                         "', 'w').write('yes')\n"
+                                                         "print('after grant kept', kept)")))
+
+                                 {:stop-reason :end :content "Grant used"}))]
+                 (turn/run-turn! child "Write later.txt after the grant" {}))
+               (let [before
+                     (str/join "\n" (map message-text (second @calls)))
+
+                     after
+                     (str/join "\n" (map message-text (nth @calls 2)))]
+
+                 (expect (str/includes? before "before grant refused"))
+                 (expect (= "yes" (slurp target)))
+                 ;; The worker restarts with the new policy and restores the saved variables.
+                 (expect (str/includes? after "after grant kept 41"))
+                 (expect (nil? (pj/deny-refusal child "file-write" target)))
+                 (expect (some? (pj/deny-refusal child "file-write" (str root "/other.txt"))))
+                 (expect (= [(str root "/out/**") target]
+                            (get-in (agents/info db sid) [:files :write]))))
+               (finally (pj/clear-granted-jail! sid) (loop-env/dispose-environment! child))))
+        (finally (loop-env/dispose-environment! parent))))))
+
 (defdescribe session-route-changes-at-the-next-model-request-test
              (it "session route changes at the next model request"
                  (let [shared

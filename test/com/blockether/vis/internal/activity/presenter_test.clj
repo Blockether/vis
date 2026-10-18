@@ -621,46 +621,60 @@
                [[{:session_id "a" :status "completed"} {:session_id "b" :status "running"}
                  {:session_id "c" :status "completed"}] "2 completed · 1 running"]]]
         (expect (= expected (get (result-view {:operation :council.wait} value) "summary")))))
-  (it "keeps all agent result views valid and shows open questions"
-      (let [projection
-            (result-fixture
-              [[:council.run "" [{:session_id "child" :status "asking" :question "Which file?"}]
-                nil] [:council.wait "" [{:session_id "child" :status "lost"}] nil]
-               [:council.cancel "" [{:session_id "child" :status "cancelled"}] nil]
-               [:council.ask "" "Use the parser file." nil] [:council.ask "" nil nil]
-               [:council.extend ""
-                [{:session_id "child" :status "completed" :iteration_budget 20 :iterations_used 10}]
-                nil]
-               [:council.run ""
-                [{:session_id "child"
-                  :status "asking"
-                  :question "Budget request"
-                  :budget_request {:iterations 10 :reason "More files"}}] nil]
-               [:council.ask_budget "" {:granted 10 :iteration_budget 20 :reply "Granted"} nil]
-               [:council.ask_budget "" {:granted 0 :iteration_budget 10 :reply "Denied: stop."} nil]
-               [:council.ask_budget "" nil nil]])]
-        (expect (contract/valid-projection? projection))
-        (let [views (mapv #(get % "presentation") (get projection "rows"))]
-          (expect (= ["1 asking" "1 lost" "1 cancelled" "Parent replied" "No reply" "1 completed"
-                      "1 asking" "Granted 10 iterations" "No iterations granted" "No reply"]
-                     (mapv #(get % "summary") views)))
-          (expect (= [{"type" "markdown" "text" "Which file?"}]
-                     (get-in views [0 "sections" 0 "content"])))
-          (expect (= [{"type" "markdown" "text" "Use the parser file."}]
-                     (get-in views [3 "content"])))
-          (expect (not (re-find #"child|Session|Parent:" (pr-str views)))))))
+  (it
+    "keeps all agent result views valid and shows open questions"
+    (let [projection
+          (result-fixture
+            [[:council.run "" [{:session_id "child" :status "asking" :question "Which file?"}] nil]
+             [:council.wait "" [{:session_id "child" :status "lost"}] nil]
+             [:council.cancel "" [{:session_id "child" :status "cancelled"}] nil]
+             [:council.ask "" "Use the parser file." nil] [:council.ask "" nil nil]
+             [:council.extend ""
+              [{:session_id "child" :status "completed" :iteration_budget 20 :iterations_used 10}]
+              nil]
+             [:council.run ""
+              [{:session_id "child"
+                :status "asking"
+                :question "Budget request"
+                :budget_request {:iterations 10 :reason "More files"}}] nil]
+             [:council.ask_budget "" {:granted 10 :iteration_budget 20 :reply "Granted"} nil]
+             [:council.ask_budget "" {:granted 0 :iteration_budget 10 :reply "Denied: stop."} nil]
+             [:council.ask_budget "" nil nil]
+             [:council.grant "" [{:session_id "child" :status "running" :files {:write ["/a"]}}]
+              nil]
+             [:council.ask_files "" {:granted true :files {:write ["/a"]} :reply "Granted files"}
+              nil]
+             [:council.ask_files ""
+              {:granted false
+               :files {:write ["/a"]}
+               :missing ["/b"]
+               :reply "Granted files: write /a."} nil]
+             [:council.ask_files "" {:granted false :missing ["/b"] :reply "Denied: no."} nil]
+             [:council.ask_files "" {:granted false :reply nil} nil]])]
+      (expect (contract/valid-projection? projection))
+      (let [views (mapv #(get % "presentation") (get projection "rows"))]
+        (expect (= ["1 asking" "1 lost" "1 cancelled" "Parent replied" "No reply" "1 completed"
+                    "1 asking" "Granted 10 iterations" "No iterations granted" "No reply"
+                    "1 running" "Files granted" "Files partly granted" "No files granted"
+                    "No reply"]
+                   (mapv #(get % "summary") views)))
+        (expect (= [{"type" "markdown" "text" "Which file?"}]
+                   (get-in views [0 "sections" 0 "content"])))
+        (expect (= [{"type" "markdown" "text" "Use the parser file."}]
+                   (get-in views [3 "content"])))
+        (expect (not (re-find #"child|Session|Parent:" (pr-str views)))))))
   (it "shows slow agent work as running"
-      (doseq [[operation visible?] [[:council.run true] [:council.wait true] [:council.ask true]
-                                    [:council.resume true] [:council.ask_budget true]
-                                    [:council.cancel false] [:council.extend false]
-                                    [:council.deny false]]]
+      (doseq [[operation visible?]
+              [[:council.run true] [:council.wait true] [:council.ask true] [:council.resume true]
+               [:council.ask_budget true] [:council.cancel false] [:council.extend false]
+               [:council.deny false] [:council.grant false] [:council.ask_files true]]]
         (expect (= visible? (:show-start (presenter/for-tool operation))))))
   (it
     "preserves failures and cancellation across every Council binding"
     (doseq [operation
             [:council.publish :council.get :council.read :council.threads :council.members
              :council.run :council.wait :council.cancel :council.ask :council.resume :council.extend
-             :council.deny :council.ask_budget]
+             :council.deny :council.ask_budget :council.grant :council.ask_files]
 
             outcome
             [:failed :cancelled]]
