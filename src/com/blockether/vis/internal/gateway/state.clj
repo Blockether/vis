@@ -6282,25 +6282,21 @@
               allowed
               (or (:allowed_models opts) (:allowed_models parent))
 
-              ;; A task-context child gets the parent's conversation without its tool work.
-              context
-              (or (:context opts) "task")
-
+              ;; A child gets the parent's conversation without its tool work.
               checkpoint
-              (if (= "task" context) (agents/handoff checkpoint) checkpoint)
+              (agents/handoff checkpoint)
 
-              ;; A task-context child reads the parent's tool output only when it must.
+              ;; A child reads the parent's tool output only when it must.
               message
-              (cond-> (:task opts)
-                (= "task" context)
-                (str "\n\nYou see the requests, notes and answers of your parent session "
-                     sid
-                     ", not its tool calls or their output. When the task is ambiguous or "
-                     "needs a fact from that tool output, read it: s = await read_session(\"" sid
-                     "\"). Each block in "
-                     "s[\"transcript\"][\"turns\"][i][\"iterations\"][j][\"blocks\"] "
-                     "has its code and stdout. The running turn is in "
-                     "s[\"current_turn\"][\"attempts\"]."))]
+              (str (:task opts)
+                   "\n\nYou see the requests, notes and answers of your parent session "
+                   sid
+                   ", not its tool calls or their output. When the task is ambiguous or "
+                   "needs a fact from that tool output, read it: s = await read_session(\"" sid
+                   "\"). Each block in "
+                   "s[\"transcript\"][\"turns\"][i][\"iterations\"][j][\"blocks\"] "
+                   "has its code and stdout. The running turn is in "
+                   "s[\"current_turn\"][\"attempts\"].")]
 
           (when-not (and (council/enabled?)
                          (= (get-in (ctx-loop/read-turn-state env) [:council :activation-id])

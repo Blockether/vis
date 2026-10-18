@@ -42,12 +42,6 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
-        },
-        "context": {
-          "enum": [
-            "full",
-            "task"
-          ]
         }
       },
       "required": [
@@ -212,7 +206,7 @@
         "depth": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 2
+          "maximum": 1
         },
         "iteration_budget": {
           "$ref": "#/$defs/spawn/properties/iteration_budget"

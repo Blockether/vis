@@ -43,11 +43,11 @@
                    (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"])
                    120))
         (expect
-          (= agents/max-depth (get-in schema ["$defs" "agent" "properties" "depth" "maximum"]) 2))
+          (= agents/max-depth (get-in schema ["$defs" "agent" "properties" "depth" "maximum"]) 1))
         (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 128))
         (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 16))
         (expect (document/valid? "agents" agent))
-        (expect (not (document/valid? "agents" (assoc agent "depth" 3))))
+        (expect (not (document/valid? "agents" (assoc agent "depth" 2))))
         (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
         (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
         (expect
@@ -743,15 +743,21 @@
                                                          (assoc opts :task "Different task"))
                               nil
                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
-              ;; A child on any model gets the handoff unless it asks for full context.
+              ;; A child on any model gets the handoff, and the spawn takes no context option.
               (let [other {:task "Review on another model" :provider "p" :model "large"}
-                    task-child (:session_id (gateway/agents-operation! leader :spawn other))
-                    full-child
-                    (:session_id
-                      (gateway/agents-operation! leader :spawn (assoc other :context "full")))]
+                    task-child (:session_id (gateway/agents-operation! leader :spawn other))]
 
                 (expect (= handoff (ps/db-agent-checkpoint db task-child)))
-                (expect (= checkpoint (ps/db-agent-checkpoint db full-child)))
+                (expect (= :invalid-request
+                           (try
+                             (gateway/agents-operation! leader :spawn (assoc other :context "full"))
+                             nil
+                             (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+                ;; Only a leader delegates: a child asks its parent for more subagents.
+                (expect (= :not-allowed
+                           (try (gateway/agents-operation! task-child :spawn {:task "Nested"})
+                                nil
+                                (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
                 ;; The task message names the parent session whose tool work the child cannot see.
                 (let [delegated (->> (ps/db-council-page db gid nil false 0 100)
                                      (filter #(= "Delegated task" (:title %)))
@@ -761,9 +767,7 @@
                                 leader
                                 "\")")]
 
-                  (expect (= 2 (count (filter #(str/includes? % hint) delegated))))
-                  (expect (some #(= "Review on another model" %) delegated)
-                          "A full-context child gets its task unchanged")))
+                  (expect (= 2 (count (filter #(str/includes? % hint) delegated))))))
               (expect (= "cancelled"
                          (:status (gateway/agents-operation! leader :cancel {:session_id sid}))))
               (expect (not (agents/claim-iteration! {:db-info db :session-id sid})))
