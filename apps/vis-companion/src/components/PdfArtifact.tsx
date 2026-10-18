@@ -4,6 +4,7 @@ import { EDGE_ZONE_PX } from '../lib/edge-back';
 import type { GatewayClient } from '../lib/gateway';
 import { openPdf, stampPdfPage, type PdfPages, type RenderedPage } from '../lib/pdf-annotate';
 import { FIT_SCALE, type Transform } from '../lib/zoom-pan';
+import { isKeyboardInputElement } from '../lib/viewport';
 import { useZoomPan, ZOOM_FRAME_CLASS, ZOOMED_CLASS } from '../lib/zoom-surface';
 import { ImageViewer } from './ImageViewer';
 import type { DocumentChrome } from './MarkdownArtifact';
@@ -141,6 +142,26 @@ export const PdfAnnotator = memo(function PdfAnnotator({
     },
     [pageCount],
   );
+
+  // THE ARROW KEYS TURN THE PAGE, AS THE ‹ › OF THE BAND DO.
+  //
+  // A reader at a keyboard presses ← and → before reaching for a button. A shortcut
+  // with a modifier, a key typed into a field, and the arrows of the drawing viewer
+  // that is open over the page are left to their owners.
+  useEffect(() => {
+    if (drawn) return;
+    const keyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      const by = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+      if (!by) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (isKeyboardInputElement(target) || target?.closest('select, input[type="range"]')) return;
+      event.preventDefault();
+      turn(by);
+    };
+    window.addEventListener('keydown', keyDown);
+    return () => window.removeEventListener('keydown', keyDown);
+  }, [drawn, turn]);
 
   // THE PAGE ZOOMS, PANS AND TURNS LIKE A PICTURE IN THE DRAWING VIEWER.
   //

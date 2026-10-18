@@ -394,6 +394,60 @@ describe('an artifact opened from the transcript', () => {
     expect(band.textContent).toContain('Page 2 of 3');
   });
 
+  // Requested: the left and right arrow keys turn the page, as the ‹ › of the band do.
+  it('turns the page with the left and right arrow keys inside the document bounds', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]))),
+    );
+    await act(async () => {
+      root.render(
+        <DocOverlay
+          name="report.pdf"
+          mime="application/pdf"
+          url="blob:pdf"
+          failed={false}
+          commentable
+          annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
+          onClose={() => undefined}
+        />,
+      );
+    });
+    await settle();
+    const band = host.querySelector('header')!;
+    const key = async (name: string, target: EventTarget = window, init: KeyboardEventInit = {}) => {
+      await act(async () => {
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, ...init }));
+      });
+      await settle();
+    };
+
+    await key('ArrowRight');
+    expect(band.textContent).toContain('Page 2 of 3');
+    await key('ArrowRight');
+    expect(band.textContent).toContain('Page 3 of 3');
+    // The last page is a bound, not a wrap.
+    await key('ArrowRight');
+    expect(band.textContent).toContain('Page 3 of 3');
+    await key('ArrowLeft');
+    expect(band.textContent).toContain('Page 2 of 3');
+
+    // A shortcut with a modifier, or a key typed into a field, is not a page turn.
+    await key('ArrowLeft', window, { metaKey: true });
+    await key('ArrowLeft', window, { altKey: true });
+    const field = document.createElement('textarea');
+    host.appendChild(field);
+    await key('ArrowLeft', field);
+    field.remove();
+    expect(band.textContent).toContain('Page 2 of 3');
+
+    // While the page is open for drawing, the arrows belong to the drawing viewer.
+    press('button[aria-label="Annotate page 2"]');
+    await settle();
+    await key('ArrowLeft');
+    expect(band.textContent).toContain('Page 2 of 3');
+  });
+
   // Requested: a PDF page zooms exactly as a picture does in the drawing viewer —
   // both take their gestures from `lib/zoom-surface`.
   it('zooms the page with the gestures of the drawing viewer', async () => {
