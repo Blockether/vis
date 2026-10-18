@@ -575,6 +575,26 @@ export function onSettingChange(base: string, receive: (updated: Toggle) => void
     if (!listeners.size) settingListeners.delete(base);
   };
 }
+/** Mounted provider lists per gateway base URL, told when their fleet goes stale. */
+const routerStaleListeners = new Map<string, Set<() => void>>();
+
+/**
+ * Hear when the provider fleet on the gateway at `base` goes stale. Extension code
+ * registers providers, so an extension reload can add or remove one (#393). A
+ * mounted list then reads the router again instead of waiting for `ROUTER_TTL_MS`.
+ */
+export function onRouterStale(base: string, receive: () => void): () => void {
+  let listeners = routerStaleListeners.get(base);
+  if (!listeners) {
+    listeners = new Set();
+    routerStaleListeners.set(base, listeners);
+  }
+  listeners.add(receive);
+  return () => {
+    listeners.delete(receive);
+    if (!listeners.size) routerStaleListeners.delete(base);
+  };
+}
 // A retry on another screen/client still represents the same account operation.
 const providerResetInflight = new Map<string, Promise<ProviderResetOutcome>>();
 /** In-flight router reads per base URL, so concurrent opens cost one request. */
@@ -2501,12 +2521,19 @@ export class GatewayClient {
    * Run trusted extension code again where `target` runs. Machine settings reload
    * machine extensions only. Reading the catalog with `settings` never runs extension
    * code. Gateways without this route answer 404.
+   *
+   * A reload can change the provider fleet even when some extensions fail, so the
+   * router cache goes stale whatever the outcome.
    */
   async reloadExtensions(target?: SettingsTarget): Promise<ExtensionReload> {
-    return await this.request<ExtensionReload>('POST', '/v1/extensions/reload', {
-      scope: target?.scope ?? 'global',
-      target_id: target?.target_id,
-    });
+    try {
+      return await this.request<ExtensionReload>('POST', '/v1/extensions/reload', {
+        scope: target?.scope ?? 'global',
+        target_id: target?.target_id,
+      });
+    } finally {
+      this.extensionsReloaded();
+    }
   }
 
   private hasSettingsCatalogRevision(data: SettingsResponse | null): data is SettingsResponse {
@@ -2820,6 +2847,15 @@ export class GatewayClient {
     // signed in on the next open, which is exactly what a kept snapshot would
     // do until the re-probe landed.
     snapshots.delete(this.snapshotKey('router'));
+  }
+
+  /**
+   * Forget the cached fleet after an extension reload, and tell mounted provider
+   * lists to read it again. Settings and the `/reload` command both end here.
+   */
+  extensionsReloaded(): void {
+    this.invalidateRouter();
+    for (const receive of routerStaleListeners.get(this.base) ?? []) receive();
   }
 
   /**

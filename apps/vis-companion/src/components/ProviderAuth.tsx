@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GatewayClient } from '../lib/gateway';
+import { onRouterStale, type GatewayClient } from '../lib/gateway';
 import type {
   AuthFlow,
   ProviderAuthState,
@@ -431,6 +431,17 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
     void reload(controller.signal);
     return () => controller.abort();
   }, [reload]);
+
+  // An extension reload can add or remove a provider (#393). Read the fleet again
+  // at once, so an open list does not wait for the router cache to expire.
+  useEffect(() => {
+    const controller = new AbortController();
+    const stop = onRouterStale(client.base, () => void reload(controller.signal));
+    return () => {
+      stop();
+      controller.abort();
+    };
+  }, [client, reload]);
 
   return {
     providers,

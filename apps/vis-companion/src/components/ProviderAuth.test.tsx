@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AuthFlow, ProviderLimits, ProviderPreset, RouterProvider } from '../lib/types';
-import type { GatewayClient } from '../lib/gateway';
+import { GatewayClient } from '../lib/gateway';
 import {
   AddProviderButton,
   AddProviderPicker,
@@ -423,6 +423,28 @@ describe('live provider authentication', () => {
       auth_state: 'verified',
     });
     expect(result.current.providers?.[0].status?.error).toBeUndefined();
+  });
+
+  // #393: a provider that an extension registers on reload shows in an open list
+  // at once, not after the router cache expires.
+  it('reads the fleet again when extensions reload', async () => {
+    const gateway = new GatewayClient({ url: 'http://gateway.example.com:7890' });
+    let fleet = [provider('anthropic')];
+    const client = {
+      base: gateway.base,
+      cachedRouter: () => null,
+      router: async () => fleet,
+      onProviderLimits: () => () => {},
+    } as unknown as GatewayClient;
+    const { result, unmount } = renderHook(() => useProviderFleet(client));
+    await waitFor(() => expect(result.current.providers?.map((row) => row.id)).toEqual(['anthropic']));
+
+    fleet = [provider('anthropic'), provider('token-provider')];
+    act(() => gateway.extensionsReloaded());
+    await waitFor(() =>
+      expect(result.current.providers?.map((row) => row.id)).toEqual(['anthropic', 'token-provider']),
+    );
+    unmount();
   });
 });
 
