@@ -5,8 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayClient } from '../lib/gateway';
 import { DocOverlay } from './DocArtifact';
+import { PAGE_SWIPE_PX, swipeTurn } from './PdfArtifact';
 import { AttachmentRail } from './ChatContent';
 import { resetAnnotationDraftCache } from '../lib/annotation-drafts';
+import { EDGE_ZONE_PX } from '../lib/edge-back';
+import { drag, fireTouch } from '../lib/pull-to-search.fixture';
 
 // An opened document keeps unsaved remarks on the device (`lib/annotation-drafts`); these
 // tests own what it holds, so its native half is a map they can empty.
@@ -292,6 +295,74 @@ describe('an artifact opened from the transcript', () => {
     await settle();
     expect(band.textContent).toContain('Page 2 of 3');
     expect(band.querySelector('button[aria-label="Annotate page 2"]')).not.toBe(null);
+  });
+
+  // Requested: a sideways swipe on the page turns it, as the ‹ › of the band do.
+  it('turns the page with a sideways swipe inside the document bounds', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]))),
+    );
+    await act(async () => {
+      root.render(
+        <DocOverlay
+          name="report.pdf"
+          mime="application/pdf"
+          url="blob:pdf"
+          failed={false}
+          annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
+          onClose={() => undefined}
+        />,
+      );
+    });
+    await settle();
+    const band = host.querySelector('header')!;
+    const page = () => host.querySelector('img[aria-label^="Page "]')!;
+    const stroke = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
+      act(() => drag(page(), from, [to]));
+      await settle();
+    };
+    const far = PAGE_SWIPE_PX + 12;
+
+    // A stroke to the left brings the next page in.
+    await stroke({ x: 200, y: 300 }, { x: 200 - far, y: 310 });
+    expect(band.textContent).toContain('Page 2 of 3');
+    await stroke({ x: 200, y: 300 }, { x: 200 - far, y: 290 });
+    expect(band.textContent).toContain('Page 3 of 3');
+    // The last page is a bound, not a wrap.
+    await stroke({ x: 200, y: 300 }, { x: 200 - far, y: 300 });
+    expect(band.textContent).toContain('Page 3 of 3');
+    // A stroke to the right goes back.
+    await stroke({ x: 120, y: 300 }, { x: 120 + far, y: 300 });
+    expect(band.textContent).toContain('Page 2 of 3');
+
+    // Too short, mostly vertical, or from the back-stroke edge strip: no turn.
+    await stroke({ x: 200, y: 300 }, { x: 200 - (PAGE_SWIPE_PX - 8), y: 300 });
+    await stroke({ x: 200, y: 300 }, { x: 200 - far, y: 300 + far * 2 });
+    await stroke({ x: EDGE_ZONE_PX - 4, y: 300 }, { x: EDGE_ZONE_PX - 4 + far, y: 300 });
+    expect(band.textContent).toContain('Page 2 of 3');
+
+    // A second finger is a pinch, and a cancelled stroke belongs to the browser.
+    act(() => {
+      fireTouch(page(), 'touchstart', [{ x: 200, y: 300 }]);
+      fireTouch(page(), 'touchmove', [
+        { x: 200 - far, y: 300 },
+        { x: 260, y: 360 },
+      ]);
+      fireTouch(page(), 'touchend', []);
+    });
+    await settle();
+    act(() => drag(page(), { x: 200, y: 300 }, [{ x: 200 - far, y: 300 }], 'cancel'));
+    await settle();
+    expect(band.textContent).toContain('Page 2 of 3');
+  });
+
+  it('reads a stroke as a page turn only when it is long and mostly sideways', () => {
+    const from = { x: 200, y: 300 };
+    expect(swipeTurn(from, { x: 200 - PAGE_SWIPE_PX, y: 300 })).toBe(1);
+    expect(swipeTurn(from, { x: 200 + PAGE_SWIPE_PX, y: 300 })).toBe(-1);
+    expect(swipeTurn(from, { x: 200 - PAGE_SWIPE_PX + 1, y: 300 })).toBe(0);
+    expect(swipeTurn(from, { x: 200 - PAGE_SWIPE_PX, y: 300 + PAGE_SWIPE_PX })).toBe(0);
   });
 
   // Regression, user report: clicking ‹ › flickered the very cells being clicked,
