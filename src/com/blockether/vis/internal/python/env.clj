@@ -37,6 +37,7 @@
             [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.python.runtime :as python-runtime]
             [com.blockether.vis.internal.python.worker :as pyext]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel]))
@@ -1163,6 +1164,14 @@
   ^String []
   (str "vis_sandbox_" (swap! session-counter inc)))
 
+(def ^:private process-refusal
+  "What the guest reads when Python tries to start a process."
+  "Refused: Python cannot start a process here. Start each process with the sandbox shell verb.")
+
+(defonce ^:private write-grants
+  ;; Session -> the write rules of its subagent file grant, for error hints.
+  (atom {}))
+
 (defn- tmp-roots
   "Canonical temporary directories that a write-limited sandbox keeps writable."
   []
@@ -1177,36 +1186,32 @@
    The worker kernel remains the deny-precedence boundary; this audit backstop
    narrows its reserved session store to the currently active draft copies. A subagent
    file grant (`write-limited?`) limits writes also when the jail is off."
-  [session roots-fn {:keys [jail-enabled? write-limited?]} & [policy-fn]]
-  (cond
-    (and jail-enabled? roots-fn)
-    (let [policy
-          (when policy-fn (policy-fn))
+  [session roots-fn {:keys [jail-enabled? write-limited? write-rules]} & [policy-fn]]
+  (when write-limited? (swap! write-grants assoc session (vec write-rules)))
+  (cond (and jail-enabled? roots-fn)
+        (let [policy
+              (when policy-fn (policy-fn))
 
-          roots
-          (vec (distinct (map str (roots-fn))))
+              roots
+              (vec (distinct (map str (roots-fn))))
 
-          write
-          (if policy (vec (:read-write policy)) roots)
+              write
+              (if policy (vec (:read-write policy)) roots)
 
-          read
-          (if policy (vec (distinct (concat write (:read-only policy)))) roots)]
+              read
+              (if policy (vec (distinct (concat write (:read-only policy)))) roots)]
 
-      (when (empty? read)
-        (throw (ex-info "No readable sandbox roots; refusing an empty confinement policy."
-                        {:type ::empty-confinement})))
-      (py-confine!
-        session
-        read
-        write
-        "Refused: this path is not writable in the current sandbox. When drafts are enabled, use draft_create with roots=[...] before editing, then use the next block's Path bindings."))
-    (and write-limited? policy-fn)
-    (py-confine!
-      session
-      (mapv #(.getCanonicalPath ^java.io.File %) (java.io.File/listRoots))
-      (vec (distinct (concat (:read-write (policy-fn)) (tmp-roots))))
-      "Refused: the subagent file grant does not cover this path. Ask your parent with council.ask when the task needs another file.")
-    :else (py-confine! session [] [] "")))
+          (when (empty? read)
+            (throw (ex-info "No readable sandbox roots; refusing an empty confinement policy."
+                            {:type ::empty-confinement})))
+          (when-not write-limited? (swap! write-grants dissoc session))
+          (py-confine! session read write process-refusal))
+        (and write-limited? policy-fn)
+        (py-confine! session
+                     (mapv #(.getCanonicalPath ^java.io.File %) (java.io.File/listRoots))
+                     (vec (distinct (concat (:read-write (policy-fn)) (tmp-roots))))
+                     process-refusal)
+        :else (do (swap! write-grants dissoc session) (py-confine! session [] [] process-refusal))))
 
 (defn- install-network!
   "Set the runtime's fail-closed socket capability. A jailed worker's kernel policy
@@ -1326,7 +1331,7 @@
       (ensure-interpreter!))
     (refresh-confinement! session
                           roots-fn
-                          (select-keys network-opts [:jail-enabled? :write-limited?])
+                          (select-keys network-opts [:jail-enabled? :write-limited? :write-rules])
                           (:filesystem-policy-fn network-opts))
     (py-stdin! session (guest-stdin-text stdin))
     (py-install-runtime! session)
@@ -1455,6 +1460,7 @@
     (try (py-close-session! session) (catch Throwable _ nil))
     (pyext/forget-policy! session)
     (swap! session-workers dissoc session)
+    (swap! write-grants dissoc session)
     nil))
 
 (defn dispose-sandbox!
@@ -1894,6 +1900,8 @@
                            "a smart em-dash, en-dash, curly quote, or multiplication sign that you "
                            "meant as prose. Replace it with plain ASCII, or move that whole line "
                            "into a `#` comment. Original parser error: ")
+              (and denied-write? (contains? @write-grants session))
+              (str (process-jail/grant-refusal (get @write-grants session)) " Original error: ")
               denied-root?
               (str "Sandbox policy denied "
                    (if denied-write? "file-write" "file-read")

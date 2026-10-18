@@ -829,7 +829,7 @@
         (when-let [policy-fn (:filesystem-policy-fn opts)]
           (env/refresh-confinement! python-context
                                     #(get (policy-fn) :read-write)
-                                    (select-keys opts [:jail-enabled? :write-limited?])
+                                    (select-keys opts [:jail-enabled? :write-limited? :write-rules])
                                     policy-fn)))
       (when-let [snap (ctx-loop/session-snapshot environment)]
         ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).

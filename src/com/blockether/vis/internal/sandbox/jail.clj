@@ -211,6 +211,15 @@
             (.matches matcher candidate) true
             :else (recur (.getParent candidate))))))
 
+(defn grant-refusal
+  "The refusal for a write outside a subagent file grant with `write-rules`."
+  [write-rules]
+  (str "Blocked by the subagent file grant: "
+       (if (seq write-rules)
+         (str "this session can write only " (str/join ", " write-rules))
+         "this session cannot write files")
+       ". Ask your parent with council.ask when the task needs another file."))
+
 (defn deny-refusal
   "Actionable refusal when a configured `jail.filesystem` deny rule covers `path`
    for `operation` (`\"file-read\"` / `\"file-write\"`), else nil.
@@ -221,7 +230,8 @@
   [env operation path]
   (when-let [canonical (workspace/normalize-root path)]
     (let [policy (:process-jail (:security-policy env))
-          write-rules (:write-rules policy)]
+          write-rules (:write-rules policy)
+          limited? (or (:write-limited? policy) (seq write-rules))]
 
       (or (some (fn [{:keys [rules paths setting closure operations]}]
                   (when (contains? operations (str operation))
@@ -235,11 +245,9 @@
                 deny-rule-settings)
           ;; A subagent file grant: only its write rules stay writable.
           (when (and (= "file-write" (str operation))
-                     (seq write-rules)
+                     limited?
                      (not-any? #(rule-covers? % canonical) write-rules))
-            (str "Blocked by the subagent file grant: this session can write only "
-                 (str/join ", " write-rules)
-                 ". Ask your parent with council.ask when the task needs another file."))))))
+            (grant-refusal write-rules))))))
 
 (defn draft-policy-expanded?
   "True when a live repository was not covered by the worker's launch-time write denials."
@@ -265,15 +273,15 @@
    themselves, so a pattern keeps closing files the session creates after the
    snapshot (#263)."
   [{:keys [roots-fn net-enabled? allow-read-write allow-read deny-write deny-read deny-exec
-           deny-read-rules deny-write-rules write-rules proxy-port loopback-port keychain?
-           unix-connect]
+           deny-read-rules deny-write-rules write-rules write-limited? proxy-port loopback-port
+           keychain? unix-connect]
     :as policy}]
   (let [session-roots
         (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
 
         ;; A subagent file grant keeps the session roots readable only.
         limited?
-        (boolean (seq write-rules))]
+        (boolean (or write-limited? (seq write-rules)))]
 
     {:read-write (vec (if limited? allow-read-write (concat session-roots allow-read-write)))
      :read-only (vec (if limited? (concat allow-read session-roots) allow-read))

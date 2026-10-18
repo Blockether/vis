@@ -582,6 +582,14 @@
                    (expect (str/includes? (pj/deny-refusal env "file-write" "/ws/README.md")
                                           "subagent file grant"))
                    (expect (nil? (pj/deny-refusal env "file-read" "/ws/README.md"))))
+                 ;; A grant left without rules inside the parent's ceiling writes nothing.
+                 (let [env {:security-policy {:process-jail {:write-limited? true
+                                                             :write-rules []}}}]
+                   (expect (str/includes? (pj/deny-refusal env "file-write" "/ws/a.clj")
+                                          "this session cannot write files"))
+                   (expect (= []
+                              (:read-write (pj/runtime-policy {:roots-fn (constantly ["/ws"])
+                                                               :write-limited? true})))))
                  (let [limited (pj/runtime-policy {:roots-fn (constantly ["/ws"])
                                                    :allow-read-write ["/ws/src"]
                                                    :allow-read ["/opt"]

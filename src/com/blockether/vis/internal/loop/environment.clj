@@ -677,7 +677,8 @@
                           :draft-required? draft-required?
                           :enabled? net-on?
                           :jail-enabled? jail-enabled?
-                          :write-limited? (boolean (seq (:write-rules jail-config)))
+                          :write-limited? (boolean (:write-limited? jail-config))
+                          :write-rules (:write-rules jail-config)
                           :allowed-domains (:allowed-domains net-cfg)
                           :denied-domains (:denied-domains net-cfg)
                           :exclude-domains (:exclude-domains net-cfg)

@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -738,6 +739,17 @@
                   (expect (str/starts-with? (first (:write files)) "/"))
                   (expect (str/ends-with? (first (:deny files)) "/.env"))
                   (expect (nil? (:read_only files))))
+                ;; A grant never widens the parent's policy: the spawn names the problem.
+                (with-redefs [security-policy/outside-write-rules (fn [_ rules _]
+                                                                    (vec rules))]
+                  (expect (str/includes?
+                            (try (gateway/agents-operation! leader
+                                                            :spawn
+                                                            {:task "Write outside"
+                                                             :files {:write ["/elsewhere"]}})
+                                 nil
+                                 (catch clojure.lang.ExceptionInfo e (ex-message e)))
+                            "files.write cannot grant /elsewhere: the parent cannot write there")))
                 ;; Only a leader delegates: a child asks its parent for more subagents.
                 (expect (= :not-allowed
                            (try (gateway/agents-operation! task-child :spawn {:task "Nested"})

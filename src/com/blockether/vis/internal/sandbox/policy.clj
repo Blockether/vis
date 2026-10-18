@@ -306,7 +306,7 @@
   [rules base-dir home]
   (resolve-paths rules base-dir home))
 
-(defn- rule-root
+(defn rule-root
   "The directory that an OS sandbox can grant for one write rule: a literal rule itself, or
    the literal ancestor directory of a glob."
   [rule]
@@ -319,10 +319,26 @@
     (-> (update rules-key #(vec (distinct (concat % rules))))
         (update paths-key #(vec (distinct (concat % (deny-target-paths rules base-dir home))))))))
 
+(defn outside-write-rules
+  "The resolved write rules that `policy` cannot grant: with the jail on, a rule whose
+   directory lies outside every writable root of `policy` and `extra-roots`. A disabled jail
+   writes everywhere that no deny rule closes."
+  [policy rules extra-roots]
+  (let [ceiling
+        (keep identity (concat (get-in policy [:process-jail :allow-read-write]) extra-roots))
+
+        inside?
+        (fn [rule]
+          (let [path (Paths/get ^String (rule-root rule) (make-array String 0))]
+            (some #(.startsWith path (Paths/get (str %) (make-array String 0))) ceiling)))]
+
+    (if (:jail-enabled policy) (vec (remove inside? rules)) [])))
+
 (defn restrict
-  "Narrow `policy` with a subagent file grant. `files` holds the `:write`, `:read_only` and
-   `:deny` rules. Each rule also covers files that are created later. `:write` limits writes
-   to its rules: other writable roots stay readable only."
+  "Narrow `policy`, the parent's policy, with a subagent file grant. `files` holds the
+   `:write`, `:read_only` and `:deny` rules. Each rule also covers files that are created
+   later. `:write` limits writes to its rules: other writable roots stay readable only. A
+   write rule that `policy` cannot grant grants nothing."
   [policy {:keys [write read_only deny]}]
   (if-not (or (seq write) (seq read_only) (seq deny))
     policy
@@ -332,8 +348,11 @@
           home
           (:home policy)
 
-          write
+          requested
           (resolve-rules write base-dir home)
+
+          write
+          (vec (remove (set (outside-write-rules policy requested [base-dir])) requested))
 
           jail
           (->
@@ -345,25 +364,15 @@
                        base-dir
                        home))
 
-          ;; An enabled jail grants only rule roots inside its writable ceiling.
-          ceiling
-          (conj (vec (:allow-read-write (:process-jail policy))) (str base-dir))
-
-          inside?
-          (fn [path]
-            (or (not (:jail-enabled policy))
-                (some #(.startsWith (Paths/get ^String path (make-array String 0))
-                                    (Paths/get ^String % (make-array String 0)))
-                      ceiling)))
-
           jail
           (cond-> jail
-            (seq write)
-            (assoc :write-rules
+            (seq requested)
+            (assoc :write-limited?
+              true :write-rules
               write :allow-read
               (vec (distinct (concat (:allow-read jail) (:allow-read-write jail))))
               :allow-read-write
-              (vec (distinct (filter inside? (map rule-root write))))))
+              (vec (distinct (map rule-root write)))))
 
           narrowed
           (assoc policy :process-jail jail)]

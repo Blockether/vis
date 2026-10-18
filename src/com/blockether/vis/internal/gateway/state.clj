@@ -50,6 +50,7 @@
     [com.blockether.vis.internal.provider.limits :as provider-limits]
     [com.blockether.vis.internal.provider.service :as providers]
     [com.blockether.vis.internal.python.env :as python-env]
+    [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.internal.sandbox.policy :as security-policy]
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.foundation.shell-log :as shell-log]
@@ -6314,6 +6315,31 @@
                                  (or (:root current) (:repo-root current) (workspace/trunk-root))
                                  (System/getProperty "user.home"))])))
                         [:write :read_only :deny]))
+
+                ;; A grant narrows the parent's policy and never widens it.
+                _
+                (let [policy
+                      (:security-policy env)
+
+                      outside
+                      (security-policy/outside-write-rules policy
+                                                           (:write files)
+                                                           (concat
+                                                             [(:root current) (:repo-root current)]
+                                                             (:security/filesystem-roots env)))
+
+                      denied
+                      (some
+                        #(process-jail/deny-refusal env "file-write" (security-policy/rule-root %))
+                        (:write files))]
+
+                  (when (seq outside)
+                    (agents/fail! :invalid-request
+                                  (str "files.write cannot grant " (str/join ", " outside)
+                                       ": the parent cannot write there. Writable roots: "
+                                       (str/join ", " (security-policy/read-write-roots policy)))))
+                  (when denied
+                    (agents/fail! :invalid-request (str "files.write cannot grant it. " denied))))
 
                 ws
                 (:id (workspace/create-trunk-at!

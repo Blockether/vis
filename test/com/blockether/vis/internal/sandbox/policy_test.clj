@@ -510,15 +510,22 @@
 
       (expect (= base (policy/restrict base nil)))
       (expect (not= (:generation base) (:generation narrowed)))
-      ;; Rules resolve against the root and keep a missing tail.
-      (expect (= [(str root "/src/**") "/elsewhere/**"] (:write-rules jail)))
+      ;; Rules resolve against the root and keep a missing tail. The parent's policy stays
+      ;; the ceiling: a rule outside its writable roots grants nothing.
+      (expect (= ["/elsewhere/**"] (policy/outside-write-rules base ["/elsewhere/**"] [root])))
+      (expect (= [(str root "/src/**")] (:write-rules jail)))
+      (expect (true? (:write-limited? jail)))
       (expect (some #{(str root "/.env")} (:deny-read-rules jail)))
       (expect (some #{(str root "/src/vendor")} (:deny-write-rules jail)))
       ;; An enabled jail grants only rule roots inside its writable ceiling.
       (expect (= [(str root "/src")] (:allow-read-write jail)))
       ;; Other writable roots stay readable only.
       (expect (every? (set (:allow-read jail)) (get-in base [:process-jail :allow-read-write])))
-      (expect (= [(str root "/src/**") "/elsewhere/**"]
+      (expect (= [(str root "/src/**")]
                  (get-in (policy/access-view narrowed [root]) ["filesystem" "read_write"])))
+      ;; A grant whose only rule is outside the ceiling writes nothing at all.
+      (let [none (:process-jail (policy/restrict base {:write ["/elsewhere/**"]}))]
+        (expect (true? (:write-limited? none)))
+        (expect (= [] (:write-rules none) (:allow-read-write none))))
       (expect (some #{root}
                     (get-in (policy/access-view narrowed [root]) ["filesystem" "read_only"]))))))

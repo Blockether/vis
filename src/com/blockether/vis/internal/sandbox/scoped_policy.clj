@@ -149,10 +149,14 @@
 
 (defn snapshot
   "Use the current host ceiling if a later ancestor edit invalidates a local grant. A
-   subagent's file grant narrows the result."
+   subagent gets its parent's policy, narrowed by its file grant."
   [db session-id]
-  (let [target
-        (scoped/target db "session" session-id)
+  (let [agent
+        (when session-id (store/db-agent-info db session-id))
+
+        ;; A subagent runs under its parent's policy: its own settings never widen it.
+        target
+        (scoped/target db "session" (or (:parent_id agent) session-id))
 
         root
         (or (:root target) (.getCanonicalPath (workspace/cwd)))
@@ -161,7 +165,7 @@
         (host-config)
 
         files
-        (when session-id (:files (store/db-agent-info db session-id)))]
+        (:files agent)]
 
     (policy/restrict (try (assert-bounded! host (effective-config db target) root)
                           (catch clojure.lang.ExceptionInfo e

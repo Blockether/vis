@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.session.agents-integration-test
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -12,6 +13,7 @@
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.sandbox.jail :as pj]
+            [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
             [com.blockether.vis.internal.session.model :as smodel]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
@@ -172,6 +174,16 @@
         (with-redefs [svar/ask-code! (fn [_ _]
                                        {:stop-reason :end :content "Parent result"})]
           (turn/run-turn! parent "Delegate with a file grant." {}))
+        ;; The parent's own session policy closes a file; the child must keep that rule.
+        (let [host (#'scoped-policy/host-config)]
+          (scoped/set-definition! (:db-info parent)
+                                  (scoped/target (:db-info parent) "session" (:session-id parent))
+                                  ["jail"]
+                                  "filesystem"
+                                  (update (get-in host ["jail" "filesystem"] {})
+                                          "deny_read"
+                                          (fnil conj [])
+                                          (str root "/parent-secret.txt"))))
         (let [checkpoint
               (:agent-checkpoint (ctx-loop/read-turn-state parent))
 
@@ -200,12 +212,21 @@
 
           (try (with-redefs [svar/ask-code! (fn [_ opts]
                                               (swap! calls conj (:messages opts))
-                                              (if (= 1 (count @calls))
+                                              (case (count @calls)
+                                                1
                                                 (code-response code)
+
+                                                2
+                                                (code-response
+                                                  (str "open('" root "/other.txt', 'w')"))
+
                                                 {:stop-reason :end :content "Grant checked"}))]
                  (turn/run-turn! child "Write only inside out/" {}))
                (let [output
                      (str/join "\n" (map message-text (second @calls)))
+
+                     refusal
+                     (str/join "\n" (map message-text (nth @calls 2)))
 
                      rules
                      (get-in child [:security-policy :process-jail :write-rules])]
@@ -221,7 +242,13 @@
                  (expect (str/includes? (pj/deny-refusal child "file-write" (str root "/other.txt"))
                                         "subagent file grant"))
                  (expect (some? (pj/deny-refusal child "file-read" (str root "/secret.txt"))))
-                 (expect (nil? (pj/deny-refusal child "file-read" (str root "/other.txt")))))
+                 (expect (nil? (pj/deny-refusal child "file-read" (str root "/other.txt"))))
+                 ;; The parent's policy still applies to the child.
+                 (expect (some?
+                           (pj/deny-refusal child "file-read" (str root "/parent-secret.txt"))))
+                 ;; An uncaught refusal explains the grant and keeps the runtime's own text.
+                 (expect (str/includes? refusal "Blocked by the subagent file grant"))
+                 (expect (str/includes? refusal "is outside the writable roots")))
                (finally (loop-env/dispose-environment! child))))
         (finally (loop-env/dispose-environment! parent))))))
 
