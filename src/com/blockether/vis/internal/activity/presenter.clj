@@ -803,12 +803,12 @@
 
       "council.ask_files"
       {"headline" headline
-       "summary" (cond (true? (field value "granted")) "Files granted"
-                       (and (seq (field value "missing"))
-                            (str/starts-with? (str (field value "reply")) "Granted files:"))
-                       "Files partly granted"
-                       (util/non-blank-string? (field value "reply")) "No files granted"
-                       :else "No reply")
+       "summary" (let [missing (count (field value "missing"))]
+                   (cond (true? (field value "granted")) "Files granted"
+                         (not (util/non-blank-string? (field value "reply"))) "No reply"
+                         (= 1 missing) "1 file not granted"
+                         (pos? missing) (str missing " files not granted")
+                         :else "No files granted"))
        "content"
        (if (util/non-blank-string? (field value "reply")) (council-body value "reply") [])}
 

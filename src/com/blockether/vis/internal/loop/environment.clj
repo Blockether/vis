@@ -253,7 +253,10 @@
               ;; both the context and the engine, and nothing else ever drops it
               ;; (see `env-python/forget-session-defs!`).
               [:session-defs
-               #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]]]
+               #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]
+              [:file-grant
+               #(process-jail/release-grants! (:session-id environment)
+                                              (:grant-owner environment))]]]
        (try (run!)
             (catch Throwable t
               (tel/log! :warn
@@ -550,9 +553,10 @@
             ;; Security configuration is resolved exactly once per environment; it never
             ;; re-reads model-writable vis.yml mid-life. `/reload` bumps
             ;; `policy-reload-epoch`, so each live env recycles at its next turn and
-            ;; rebuilds this snapshot. The snapshot already holds the subagent file grants of the
-            ;; store, so a grant from before this env no longer applies.
-            _ (process-jail/clear-granted-jail! session-id)
+            ;; rebuilds this snapshot. The snapshot holds the subagent file grants of the store, so
+            ;; this env takes over the live grant of its session.
+            grant-owner (Object.)
+            _ (process-jail/own-grants! session-id grant-owner)
             security-config (binding [workspace/*workspace-root* (or (:root active-workspace)
                                                                      workspace/*workspace-root*)]
                               (security-config-snapshot db-info session-id))
@@ -736,6 +740,7 @@
                         (throw t)))))))
             env (cond-> {:environment-id environment-id
                          :session-id session-id
+                         :grant-owner grant-owner
                          :session/state-id session-state-id
                          :channel resolved-channel
                          ;; Immutable canonical security policy plus its live workspace overlay.

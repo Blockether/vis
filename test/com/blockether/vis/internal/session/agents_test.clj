@@ -442,7 +442,10 @@
           {:db-info db :session-id leader}
 
           child-env
-          {:db-info db :session-id child}]
+          {:db-info db :session-id child}
+
+          delivered
+          (atom [])]
 
       (ps/db-agent-update! db sibling {:status "running"})
       (with-fake-runtime
@@ -450,13 +453,22 @@
         leader
         (atom #{leader})
         (fn [entries]
-          (with-redefs [ps/db-council-get (fn [_ id]
-                                            (get @entries id))]
-            (let [asked (future (outcome #(agents/ask-files child-env
-                                                            {"write" ["/w/b/x.txt"]}
-                                                            "The fix touches b"
-                                                            {:timeout_secs 10})))
-                  r (asking-record env child)]
+          (with-redefs [ps/db-council-get
+                        (fn [_ id]
+                          (get @entries id))
+
+                        ps/db-council-delivered!
+                        (fn [_ sid ids]
+                          (swap! delivered conj [sid ids]))]
+
+            (let [asked
+                  (future (outcome #(agents/ask-files child-env
+                                                      {"write" ["/w/b/x.txt"]}
+                                                      "The fix touches b"
+                                                      {:timeout_secs 10})))
+
+                  r
+                  (asking-record env child)]
 
               (expect (= {"files" {"write" ["/w/b/x.txt"]} "reason" "The fix touches b"}
                          (get r "files_request")))
@@ -473,8 +485,12 @@
               (let [answer (deref asked 5000 ::timeout)]
                 (expect (true? (get answer "granted")))
                 (expect (= ["/w/a/**" "/w/b/x.txt"] (get-in answer ["files" "write"])))
-                (expect (str/starts-with? (get answer "reply")
-                                          "Granted files: write /w/a/**, /w/b/x.txt."))))
+                (expect (=
+                          "Granted: write /w/b/x.txt. Your sandbox restarts before your next block."
+                          (get answer "reply")))
+                ;; A real run delivered each reply twice: as the result and as Council input.
+                (expect (= child (ffirst @delivered))
+                        "The child's call consumes the reply, so Council input skips it")))
             (let [asked (future (outcome #(agents/ask-files child-env
                                                             {"write" ["/w/c"]}
                                                             "More"
@@ -833,6 +849,7 @@
                   (expect (str/ends-with? (first (:deny files)) "/.env"))
                   (expect (nil? (:read_only files)))
                   ;; council.grant adds rules, keeps the old ones and replaces the live jail.
+                  (pj/own-grants! owner ::live-env)
                   (try (let [granted (gateway/agents-operation! leader
                                                                 :grant
                                                                 {:session_id owner
@@ -845,7 +862,15 @@
                                     (:write-rules (pj/live-jail owner nil))))
                          (expect (pj/take-stale-worker! owner))
                          (expect (not (pj/take-stale-worker! owner))))
-                       (finally (pj/clear-granted-jail! owner)))
+                       (finally (pj/release-grants! owner ::live-env)))
+                  ;; A write grant would take access from a child that can write everything.
+                  (expect (= :invalid-request
+                             (try (gateway/agents-operation! leader
+                                                             :grant
+                                                             {:session_id sid
+                                                              :files {:write ["docs/**"]}})
+                                  nil
+                                  (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
                   ;; Only the parent grants: a child cannot widen its own access.
                   (expect (= :not-owner
                              (try (gateway/agents-operation! owner

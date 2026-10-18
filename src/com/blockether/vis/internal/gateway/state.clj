@@ -53,7 +53,6 @@
     [com.blockether.vis.internal.python.extensions :as python-extensions]
     [com.blockether.vis.internal.sandbox.jail :as process-jail]
     [com.blockether.vis.internal.sandbox.policy :as security-policy]
-    [com.blockether.vis.internal.sandbox.scoped-policy :as scoped-policy]
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.foundation.shell-log :as shell-log]
     [com.blockether.vis.internal.util :as util]
@@ -6257,53 +6256,65 @@
     (when denied (agents/fail! :invalid-request (str "files.write cannot grant it. " denied)))
     (not-empty files)))
 
+(defonce ^:private agent-lock
+  ;; Serializes spawns and grants, so two concurrent grants cannot lose a rule.
+  (Object.))
+
 (defn- agent-grant
   "Add the rules of `opts` to the file grant of a child of the calling parent. The child gets the
    new policy at its next block. Answers the child row."
   [env opts]
-  (let [db
-        (:db-info env)
+  (locking agent-lock
+    (let [db
+          (:db-info env)
 
-        sid
-        (str (:session-id env))
+          sid
+          (str (:session-id env))
 
-        child-id
-        (str (:session_id opts))
+          child-id
+          (str (:session_id opts))
 
-        child
-        (or (agents/info db child-id)
-            (agents/fail! :not-owner "Only a managed subagent can get a file grant"))
+          child
+          (or (agents/info db child-id)
+              (agents/fail! :not-owner "Only a managed subagent can get a file grant"))
 
-        _
-        (when-not (= sid (str (:parent_id child)))
-          (agents/fail! :not-owner "Only the parent of a subagent can grant it files"))
+          _
+          (when-not (= sid (str (:parent_id child)))
+            (agents/fail! :not-owner "Only the parent of a subagent can grant it files"))
 
-        _
-        (when (= "cancelled" (:status child))
-          (agents/fail! :invalid-request "A cancelled subagent cannot get a file grant"))
+          _
+          (when (= "cancelled" (:status child))
+            (agents/fail! :invalid-request "A cancelled subagent cannot get a file grant"))
 
-        ;; Without the parent's policy, a grant cannot prove that it narrows it.
-        _
-        (when-not (:security-policy env)
-          (agents/fail! :inactive-session "A file grant needs the parent's live session"))
+          ;; Without the parent's policy, a grant cannot prove that it narrows it.
+          _
+          (when-not (:security-policy env)
+            (agents/fail! :inactive-session "A file grant needs the parent's live session"))
 
-        added
-        (or (agent-files env (resolve-workspace db sid) (:files opts))
-            (agents/fail! :invalid-request "files needs at least one rule"))
+          added
+          (or (agent-files env (resolve-workspace db sid) (:files opts))
+              (agents/fail! :invalid-request "files needs at least one rule"))
 
-        merged
-        (merge-with #(vec (distinct (concat %1 %2))) (:files child) added)]
+          _
+          (when (and (seq (:write added)) (empty? (get-in child [:files :write])))
+            (agents/fail! :invalid-request
+                          (str
+                            "That subagent can write every file that you can write. A write grant"
+                            " would limit it to the granted files.")))
 
-    (persistance/db-agent-update! db child-id {:files merged})
-    ;; The child's environment builds its policy the same way, from the store.
-    (process-jail/grant-jail! child-id (:process-jail (scoped-policy/snapshot db child-id)))
-    (agents/info db child-id)))
+          merged
+          (merge-with #(vec (distinct (concat %1 %2))) (:files child) added)]
 
-(defonce ^:private agent-spawn-lock (Object.))
+      (persistance/db-agent-update! db child-id {:files merged})
+      ;; Narrow the parent's live policy, so the grant stays a subset of the parent's access.
+      (process-jail/grant-jail! child-id
+                                (:process-jail (security-policy/restrict (:security-policy env)
+                                                                         merged)))
+      (agents/info db child-id))))
 
 (defn- agent-spawn
   [env opts]
-  (locking agent-spawn-lock
+  (locking agent-lock
     (let [db
           (:db-info env)
 

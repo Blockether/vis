@@ -576,41 +576,53 @@
 
 (defdescribe
   subagent-file-grant-limits-host-writes
-  (it "a subagent file grant limits host writes and keeps session roots readable"
-      (let [env {:security-policy {:process-jail {:write-rules ["/ws/src/**/*.clj"]}}}]
-        ;; A rule also covers a file that does not exist yet.
-        (expect (nil? (pj/deny-refusal env "file-write" "/ws/src/new/later.clj")))
-        (expect (str/includes? (pj/deny-refusal env "file-write" "/ws/README.md")
-                               "Subagent file grant"))
-        (expect (nil? (pj/deny-refusal env "file-read" "/ws/README.md"))))
-      ;; council.grant replaces the jail of a live child; a new environment clears it.
-      (let [env {:session-id "grant-child"
-                 :security-policy {:process-jail {:write-rules ["/ws/src/**"]}}}]
-        (try (expect (some? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
-             (pj/grant-jail! "grant-child" {:write-rules ["/ws/src/**" "/ws/docs/**"]})
-             (expect (nil? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
-             (expect (pj/take-stale-worker! "grant-child") "The worker restarts once")
-             (expect (not (pj/take-stale-worker! "grant-child")))
-             (pj/clear-granted-jail! "grant-child")
-             (expect (some? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
-             (finally (pj/clear-granted-jail! "grant-child"))))
-      ;; A grant left without rules inside the parent's ceiling writes nothing.
-      ;; The refusal stays short: three rules at most, home paths as ~.
-      (expect (= (str "Subagent file grant: write only ~/a, /b, /c (+2 more). "
-                      "Ask your parent with council.ask_files.")
-                 (pj/grant-refusal [(str (System/getProperty "user.home") "/a") "/b" "/c" "/d"
-                                    "/e"])))
-      (let [env {:security-policy {:process-jail {:write-limited? true :write-rules []}}}]
-        (expect (str/includes? (pj/deny-refusal env "file-write" "/ws/a.clj") "no file writes"))
-        (expect (= []
-                   (:read-write (pj/runtime-policy {:roots-fn (constantly ["/ws"])
-                                                    :write-limited? true})))))
-      (let [limited (pj/runtime-policy {:roots-fn (constantly ["/ws"])
-                                        :allow-read-write ["/ws/src"]
-                                        :allow-read ["/opt"]
-                                        :write-rules ["/ws/src/**/*.clj"]})]
-        (expect (= ["/ws/src"] (:read-write limited)))
-        (expect (= ["/opt" "/ws"] (:read-only limited))))
-      (expect (= ["/ws" "/ws/src"]
+  (it
+    "a subagent file grant limits host writes and keeps session roots readable"
+    (let [env {:security-policy {:process-jail {:write-rules ["/ws/src/**/*.clj"]}}}]
+      ;; A rule also covers a file that does not exist yet.
+      (expect (nil? (pj/deny-refusal env "file-write" "/ws/src/new/later.clj")))
+      (expect (str/includes? (pj/deny-refusal env "file-write" "/ws/README.md")
+                             "Subagent file grant"))
+      (expect (nil? (pj/deny-refusal env "file-read" "/ws/README.md"))))
+    ;; council.grant replaces the jail of a live child. Only the environment that holds the grant
+    ;; can drop it, so an older environment never clears the grant of a newer one.
+    (let [env
+          {:session-id "grant-child" :security-policy {:process-jail {:write-rules ["/ws/src/**"]}}}
+
+          jail
+          {:write-rules ["/ws/src/**" "/ws/docs/**"]}]
+
+      (pj/grant-jail! "grant-child" jail)
+      (expect (nil? (pj/live-jail "grant-child" nil)) "Without a live environment, nothing is kept")
+      (try (pj/own-grants! "grant-child" ::old)
+           (pj/own-grants! "grant-child" ::new)
+           (expect (some? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
+           (pj/grant-jail! "grant-child" jail)
+           (expect (nil? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
+           (expect (pj/take-stale-worker! "grant-child") "The worker restarts once")
+           (expect (not (pj/take-stale-worker! "grant-child")))
+           (pj/release-grants! "grant-child" ::old)
+           (expect (= jail (pj/live-jail "grant-child" nil)))
+           (pj/release-grants! "grant-child" ::new)
+           (expect (some? (pj/deny-refusal env "file-write" "/ws/docs/a.md")))
+           (finally (pj/release-grants! "grant-child" ::new))))
+    ;; A grant left without rules inside the parent's ceiling writes nothing.
+    ;; The refusal stays short: three rules at most, home paths as ~.
+    (expect (= (str "Subagent file grant: write only ~/a, /b, /c (+2 more). "
+                    "Ask your parent with council.ask_files.")
+               (pj/grant-refusal [(str (System/getProperty "user.home") "/a") "/b" "/c" "/d"
+                                  "/e"])))
+    (let [env {:security-policy {:process-jail {:write-limited? true :write-rules []}}}]
+      (expect (str/includes? (pj/deny-refusal env "file-write" "/ws/a.clj") "no file writes"))
+      (expect (= []
                  (:read-write (pj/runtime-policy {:roots-fn (constantly ["/ws"])
-                                                  :allow-read-write ["/ws/src"]}))))))
+                                                  :write-limited? true})))))
+    (let [limited (pj/runtime-policy {:roots-fn (constantly ["/ws"])
+                                      :allow-read-write ["/ws/src"]
+                                      :allow-read ["/opt"]
+                                      :write-rules ["/ws/src/**/*.clj"]})]
+      (expect (= ["/ws/src"] (:read-write limited)))
+      (expect (= ["/opt" "/ws"] (:read-only limited))))
+    (expect (= ["/ws" "/ws/src"]
+               (:read-write (pj/runtime-policy {:roots-fn (constantly ["/ws"])
+                                                :allow-read-write ["/ws/src"]}))))))

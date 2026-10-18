@@ -282,7 +282,7 @@
               target
               (str root "/later.txt")
 
-              ;; The gateway's council.grant stores the rules, then replaces the live jail.
+              ;; Like council.grant: store the rules, then replace the live jail.
               grant!
               (fn []
                 (ps/db-agent-update! db sid {:files {:write [(str root "/out/**") target]}})
@@ -326,7 +326,7 @@
                  (expect (some? (pj/deny-refusal child "file-write" (str root "/other.txt"))))
                  (expect (= [(str root "/out/**") target]
                             (get-in (agents/info db sid) [:files :write]))))
-               (finally (pj/clear-granted-jail! sid) (loop-env/dispose-environment! child))))
+               (finally (loop-env/dispose-environment! child))))
         (finally (loop-env/dispose-environment! parent))))))
 
 (defdescribe session-route-changes-at-the-next-model-request-test

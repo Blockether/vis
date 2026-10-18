@@ -642,20 +642,20 @@
              [:council.ask_budget "" nil nil]
              [:council.grant "" [{:session_id "child" :status "running" :files {:write ["/a"]}}]
               nil]
-             [:council.ask_files "" {:granted true :files {:write ["/a"]} :reply "Granted files"}
-              nil]
+             [:council.ask_files ""
+              {:granted true :files {:write ["/a"]} :reply "Granted: write /a."} nil]
              [:council.ask_files ""
               {:granted false
                :files {:write ["/a"]}
-               :missing ["/b"]
-               :reply "Granted files: write /a."} nil]
+               :missing ["/b" "/c"]
+               :reply "Granted: write /a."} nil]
              [:council.ask_files "" {:granted false :missing ["/b"] :reply "Denied: no."} nil]
-             [:council.ask_files "" {:granted false :reply nil} nil]])]
+             [:council.ask_files "" {:granted false :missing ["/b"] :reply nil} nil]])]
       (expect (contract/valid-projection? projection))
       (let [views (mapv #(get % "presentation") (get projection "rows"))]
         (expect (= ["1 asking" "1 lost" "1 cancelled" "Parent replied" "No reply" "1 completed"
                     "1 asking" "Granted 10 iterations" "No iterations granted" "No reply"
-                    "1 running" "Files granted" "Files partly granted" "No files granted"
+                    "1 running" "Files granted" "2 files not granted" "1 file not granted"
                     "No reply"]
                    (mapv #(get % "summary") views)))
         (expect (= [{"type" "markdown" "text" "Which file?"}]

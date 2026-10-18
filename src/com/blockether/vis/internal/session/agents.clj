@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.util :as util]))
@@ -657,7 +658,9 @@
         (try (loop []
 
                (let [reply-id (some :reply_entry_id (:replies (ps/db-council-get db entry-id)))]
-                 (cond reply-id (:content (ps/db-council-get db reply-id))
+                 ;; The call returns the reply, so Council input must not deliver it again.
+                 (cond reply-id (do (ps/db-council-delivered! db sid [reply-id])
+                                    (:content (ps/db-council-get db reply-id)))
                        (or (> (util/now-ms) deadline)
                            (= "cancelled" (:status (info db sid)))
                            (not (live? parent)))
@@ -723,18 +726,6 @@
        :council.ask_budget
        {:granted (max 0 (- (long after) (long before))) :iteration_budget after :reply reply}))))
 
-(defn- covers?
-  "True when the granted write rule `rule` names the resolved path `path`: the same path, an
-   ancestor directory or a glob that matches it."
-  [^String rule ^String path]
-  (or (= rule path)
-      (str/starts-with? path (str rule "/"))
-      (and (re-find #"[*?\[{]" rule)
-           (try (.matches (.getPathMatcher (java.nio.file.FileSystems/getDefault)
-                                           (str "glob:" rule))
-                          (java.nio.file.Paths/get path (make-array String 0)))
-                (catch Exception _ false)))))
-
 (defn- grant-text
   "One line that names the rules of a file grant `files`."
   [files]
@@ -751,7 +742,7 @@
 (defn ask-files
   "As a subagent, ask your parent for file access and wait for the answer. files holds write,
    read_only and deny rules: paths or globs, absolute, ~ or relative to the parent's workspace
-    root. Returns a dict with granted, files (your grant now), missing and reply. granted is True
+   root. Returns a dict with granted, files (your grant now), missing and reply. granted is True
    only when the grant covers every write rule that you asked for; missing lists the others. reply
    is None when the parent is not running or does not answer within timeout_secs (default 600).
    After a grant, your Python sandbox restarts before the next block and restores your saved
@@ -783,15 +774,15 @@
          security
          (:security-policy env)
 
-         ;; A real run granted another file and still answered granted: True.
          missing
          (vec (remove (fn [path]
-                        (some #(covers? % path) (:write after)))
+                        (some #(process-jail/rule-covers? % path) (:write after)))
                 (policy/resolve-rules (:write (walk/keywordize-keys files))
                                       (or (:base-dir security) (System/getProperty "user.dir"))
                                       (or (:home security) (System/getProperty "user.home")))))]
 
      (result :council.ask_files
+             ;; A deny leaves the grant as it was, also when nothing is missing.
              {:granted (and (some? reply) (not= before after) (empty? missing))
               :files after
               :missing missing
@@ -869,7 +860,7 @@
     (result :council.deny (current-record env session_id))))
 
 (defn- overlaps?
-  "True when the write rules `a` and `b` can name one file: one rule root contains the other."
+  "True when the write rules `a` and `b` can name one file: one rule root covers the other."
   [a b]
   (boolean (some (fn [x]
                    (some (fn [y]
@@ -879,9 +870,7 @@
                                  y
                                  (policy/rule-root y)]
 
-                             (or (= x y)
-                                 (str/starts-with? x (str y "/"))
-                                 (str/starts-with? y (str x "/")))))
+                             (or (process-jail/rule-covers? x y) (process-jail/rule-covers? y x))))
                          b))
                  a)))
 
@@ -921,12 +910,11 @@
                 (ps/db-agent-list db (:leader_id child))))
 
         _
-        (answer-request! env
-                         session_id
-                         :files
-                         (str "Granted files: "
-                              (grant-text (:files child))
-                              ". Your sandbox restarts before your next block."))
+        (answer-request!
+          env
+          session_id
+          :files
+          (str "Granted: " (grant-text files) ". Your sandbox restarts before your next block."))
 
         [record]
         (current-record env session_id)]
@@ -1041,7 +1029,7 @@
        [#'ask-budget 'council.ask_budget {:pos ["iterations" "reason"] :rest :always}
         ["timeout_secs"] "A dict with `granted`, `iteration_budget` and `reply`."]
        [#'ask-files 'council.ask_files {:pos ["files" "reason"] :rest :always} ["timeout_secs"]
-        "A dict with `granted`, `files` and `reply`."]])))
+        "A dict with `granted`, `files`, `missing` and `reply`."]])))
 
 (defn routing-change
   "The route command issued for this session since `before`, as

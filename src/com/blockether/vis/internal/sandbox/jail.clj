@@ -200,10 +200,10 @@
     :closure "is closed to writes in this session: nothing here can change it"
     :operations #{"file-write"}}])
 
-(defn- rule-covers?
-  "True when `path` is the file a deny rule names or lies beneath it. Every
-   ancestor is tested too, so a rule naming a directory closes the whole subtree
-   and `**/.env` closes each file it matches, without a second spelling."
+(defn rule-covers?
+  "True when `path` is the file that `rule` names or lies beneath it. Every ancestor is tested
+   too, so a rule naming a directory covers the whole subtree and `**/.env` covers each file it
+   matches, without a second spelling."
   [rule ^String path]
   (when-let [^PathMatcher matcher (try (.getPathMatcher (FileSystems/getDefault) (str "glob:" rule))
                                        (catch Throwable _ nil))]
@@ -212,38 +212,47 @@
             (.matches matcher candidate) true
             :else (recur (.getParent candidate))))))
 
-;; Subagent file grants that council.grant made after an environment was built, by session id.
-;; Each value replaces the :process-jail value of that session's environment. A new environment
-;; reads the grant from the store, so it clears its entry.
-(defonce ^:private granted-jails (atom {}))
+;; Live subagent file grants, by session id: {:owner env-token :jail value :stale? bool}. Only a
+;; session with a live environment has an entry; a new environment reads its grant from the store.
+(defonce ^:private grants (atom {}))
 
-;; Sessions whose built Python worker still runs under the policy from before a grant.
-(defonce ^:private stale-workers (atom #{}))
-
-(defn grant-jail!
-  "Replace the :process-jail value of session `sid` with `jail`, the result of a file grant. The
-   Python worker of `sid` restarts before its next block, because its OS policy is fixed."
-  [sid jail]
-  (swap! granted-jails assoc (str sid) jail)
-  (swap! stale-workers conj (str sid))
+(defn own-grants!
+  "Make environment `owner` the holder of the live grant of session `sid`. Its policy comes from
+   the store, so an older live grant no longer applies."
+  [sid owner]
+  (swap! grants assoc (str sid) {:owner owner})
   nil)
 
-(defn clear-granted-jail!
-  "Forget the grant of session `sid`: a new environment reads it from the store."
-  [sid]
-  (swap! granted-jails dissoc (str sid))
-  (swap! stale-workers disj (str sid))
+(defn release-grants!
+  "Forget the live grant of session `sid` when environment `owner` still holds it."
+  [sid owner]
+  (swap! grants #(if (identical? owner (get-in % [(str sid) :owner])) (dissoc % (str sid)) %))
+  nil)
+
+(defn grant-jail!
+  "Replace the :process-jail value of the live environment of session `sid` with `jail`, the
+   result of a file grant. Its Python worker restarts before its next block, because its OS policy
+   is fixed. Without a live environment, nothing changes."
+  [sid jail]
+  (swap! grants
+    #(cond-> % (contains? % (str sid)) (update (str sid) assoc :jail jail :stale? true)))
   nil)
 
 (defn live-jail
-  "The :process-jail value of session `sid`: its latest grant, else `built`."
+  "The :process-jail value of session `sid`: its latest live grant, else `built`."
   [sid built]
-  (get @granted-jails (str sid) built))
+  (get-in @grants [(str sid) :jail] built))
 
 (defn take-stale-worker!
   "True once for session `sid` after a grant: its Python worker must restart."
   [sid]
-  (contains? (first (swap-vals! stale-workers disj (str sid))) (str sid)))
+  (let [k
+        (str sid)
+
+        [old]
+        (swap-vals! grants #(cond-> % (get-in % [k :stale?]) (assoc-in [k :stale?] false)))]
+
+    (boolean (get-in old [k :stale?]))))
 
 (defn grant-refusal
   "A short refusal for a write outside a subagent file grant with `write-rules`."
