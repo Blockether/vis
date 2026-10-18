@@ -38,6 +38,9 @@
           "maxItems": 64,
           "uniqueItems": true
         },
+        "files": {
+          "$ref": "#/$defs/files"
+        },
         "key": {
           "type": "string",
           "minLength": 1,
@@ -170,6 +173,35 @@
       ],
       "additionalProperties": false
     },
+    "files": {
+      "$comment": "A subagent file grant. Each rule is a path or a glob, absolute, ~ or relative to the parent's workspace root. Rules also cover files that do not exist yet.",
+      "type": "object",
+      "properties": {
+        "write": {
+          "$ref": "#/$defs/file_rules"
+        },
+        "read_only": {
+          "$ref": "#/$defs/file_rules"
+        },
+        "deny": {
+          "$ref": "#/$defs/file_rules"
+        }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "file_rules": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "\\S"
+      },
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true
+    },
     "agent": {
       "type": "object",
       "properties": {
@@ -237,6 +269,9 @@
             "object",
             "null"
           ]
+        },
+        "files": {
+          "$ref": "#/$defs/files"
         }
       },
       "required": [

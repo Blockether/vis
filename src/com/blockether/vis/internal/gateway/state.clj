@@ -12,49 +12,51 @@
    stream, `ctx-loop/session-snapshot` for the context. No engine state
    lives here - this namespace owns wire bookkeeping (events, turn
    records, subscribers), nothing else."
-  (:require [clojure.string :as str]
-            [com.blockether.svar.core :as svar]
-            [com.blockether.vis.internal.config.core :as config]
-            [com.blockether.vis.internal.config.improve :as improve-settings]
-            [com.blockether.vis.internal.config.toggles :as toggles]
-            [com.blockether.vis.internal.config.scoped :as scoped]
-            [com.blockether.vis.internal.improve.core :as improve]
-            [com.blockether.vis.internal.improve.review :as improve-review]
-            [com.blockether.vis.contract.gateway :as gateway-contract]
-            [com.blockether.vis.internal.attachment.storage :as attachment-storage]
-            [com.blockether.vis.internal.attachment.core :as attachments]
-            [com.blockether.vis.internal.session.cancellation :as cancellation]
-            [com.blockether.vis.internal.council.core :as council]
-            [com.blockether.vis.internal.council.rooms :as rooms]
-            [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.channel.form :as form]
-            [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.workspace.git :as git]
-            [com.blockether.vis.internal.session.model :as smodel]
-            [com.blockether.vis.internal.session.goals :as goals]
-            [com.blockether.vis.internal.session.agents :as agents]
-            [com.blockether.vis.internal.context.loop :as ctx-loop]
-            [com.blockether.vis.internal.gateway.bus :as bus]
-            [com.blockether.vis.internal.gateway.turn-archive :as turn-archive]
-            [com.blockether.vis.internal.gateway.event-store :as event-store]
-            [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
-            [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.loop.environment :as loop-env]
-            [com.blockether.vis.internal.loop.router :as loop-router]
-            [com.blockether.vis.internal.session.titling :as titling]
-            [com.blockether.vis.internal.persistance.core :as persistance]
-            [com.blockether.vis.internal.provider.auth-health :as auth-health]
-            [com.blockether.vis.internal.provider.error :as provider-error]
-            [com.blockether.vis.internal.provider.limits :as provider-limits]
-            [com.blockether.vis.internal.provider.service :as providers]
-            [com.blockether.vis.internal.python.env :as python-env]
-            [com.blockether.vis.internal.gateway.resources :as resources]
-            [com.blockether.vis.internal.foundation.shell-log :as shell-log]
-            [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace.core :as workspace]
-            [com.blockether.vis.internal.workspace.drafts :as drafts]
-            [taoensso.telemere :as tel]))
+  (:require
+    [clojure.string :as str]
+    [com.blockether.svar.core :as svar]
+    [com.blockether.vis.internal.config.core :as config]
+    [com.blockether.vis.internal.config.improve :as improve-settings]
+    [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.config.scoped :as scoped]
+    [com.blockether.vis.internal.improve.core :as improve]
+    [com.blockether.vis.internal.improve.review :as improve-review]
+    [com.blockether.vis.contract.gateway :as gateway-contract]
+    [com.blockether.vis.internal.attachment.storage :as attachment-storage]
+    [com.blockether.vis.internal.attachment.core :as attachments]
+    [com.blockether.vis.internal.session.cancellation :as cancellation]
+    [com.blockether.vis.internal.council.core :as council]
+    [com.blockether.vis.internal.council.rooms :as rooms]
+    [com.blockether.vis.internal.content :as content]
+    [com.blockether.vis.internal.channel.form :as form]
+    [com.blockether.vis.internal.format :as fmt]
+    [com.blockether.vis.internal.workspace.git :as git]
+    [com.blockether.vis.internal.session.model :as smodel]
+    [com.blockether.vis.internal.session.goals :as goals]
+    [com.blockether.vis.internal.session.agents :as agents]
+    [com.blockether.vis.internal.context.loop :as ctx-loop]
+    [com.blockether.vis.internal.gateway.bus :as bus]
+    [com.blockether.vis.internal.gateway.turn-archive :as turn-archive]
+    [com.blockether.vis.internal.gateway.event-store :as event-store]
+    [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
+    [com.blockether.vis.contract.wire :as wire]
+    [com.blockether.vis.internal.loop :as lp]
+    [com.blockether.vis.internal.loop.environment :as loop-env]
+    [com.blockether.vis.internal.loop.router :as loop-router]
+    [com.blockether.vis.internal.session.titling :as titling]
+    [com.blockether.vis.internal.persistance.core :as persistance]
+    [com.blockether.vis.internal.provider.auth-health :as auth-health]
+    [com.blockether.vis.internal.provider.error :as provider-error]
+    [com.blockether.vis.internal.provider.limits :as provider-limits]
+    [com.blockether.vis.internal.provider.service :as providers]
+    [com.blockether.vis.internal.python.env :as python-env]
+    [com.blockether.vis.internal.sandbox.policy :as security-policy]
+    [com.blockether.vis.internal.gateway.resources :as resources]
+    [com.blockether.vis.internal.foundation.shell-log :as shell-log]
+    [com.blockether.vis.internal.util :as util]
+    [com.blockether.vis.internal.workspace.core :as workspace]
+    [com.blockether.vis.internal.workspace.drafts :as drafts]
+    [taoensso.telemere :as tel]))
 
 (def ^:private EVENT_RING_MAX
   "Per-session event-log ring size. Older events stay durable in the session
@@ -6299,6 +6301,20 @@
           (let [current
                 (resolve-workspace db sid)
 
+                ;; Rules resolve against the parent's root, so they keep their meaning in the child.
+                files
+                (when-let [grant (not-empty (:files opts))]
+                  (into {}
+                        (keep
+                          (fn [k]
+                            (when-let [rules (seq (get grant k (get grant (name k))))]
+                              [k
+                               (security-policy/resolve-rules
+                                 rules
+                                 (or (:root current) (:repo-root current) (workspace/trunk-root))
+                                 (System/getProperty "user.home"))])))
+                        [:write :read_only :deny]))
+
                 ws
                 (:id (workspace/create-trunk-at!
                        db
@@ -6317,6 +6333,7 @@
                                 :task (:task opts)
                                 :iteration_budget budget
                                 :allowed_models allowed
+                                :files (not-empty files)
                                 :spawn_key key
                                 :spawn_fingerprint fingerprint
                                 :checkpoint checkpoint}}))]

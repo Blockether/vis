@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.validation :as validation]
+            [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
@@ -147,7 +148,8 @@
     desired))
 
 (defn snapshot
-  "Use the current host ceiling if a later ancestor edit invalidates a local grant."
+  "Use the current host ceiling if a later ancestor edit invalidates a local grant. A
+   subagent's file grant narrows the result."
   [db session-id]
   (let [target
         (scoped/target db "session" session-id)
@@ -156,14 +158,19 @@
         (or (:root target) (.getCanonicalPath (workspace/cwd)))
 
         host
-        (host-config)]
+        (host-config)
 
-    (try (assert-bounded! host (effective-config db target) root)
-         (catch clojure.lang.ExceptionInfo e
-           (assoc (policy/snapshot host {:base-dir root})
-             :config-error {"message" (ex-message e)
-                            "hint"
-                            "Review local access settings; the host policy is in effect."})))))
+        files
+        (when session-id (:files (store/db-agent-info db session-id)))]
+
+    (policy/restrict (try (assert-bounded! host (effective-config db target) root)
+                          (catch clojure.lang.ExceptionInfo e
+                            (assoc (policy/snapshot host {:base-dir root})
+                              :config-error
+                              {"message" (ex-message e)
+                               "hint"
+                               "Review local access settings; the host policy is in effect."})))
+                     files)))
 
 (defn settings
   [db target]

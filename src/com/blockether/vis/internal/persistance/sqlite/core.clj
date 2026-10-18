@@ -5341,17 +5341,21 @@
 
 (def ^:private agent-columns
   [:session_id :parent_id :leader_id :team_id :task :status :iteration_budget :iterations_used
-   :inherited_turns :allowed_models :spawn_key :spawn_fingerprint :created_at :resumed_turns
+   :inherited_turns :allowed_models :files :spawn_key :spawn_fingerprint :created_at :resumed_turns
    :resumed_at])
 
 (defn- agent-row
   [row]
   (when row
-    (update row
-            :allowed_models
-            (fn [value]
-              (some->> (<-json value)
-                       (mapv #(update-keys % keyword)))))))
+    (-> row
+        (update :allowed_models
+                (fn [value]
+                  (some->> (<-json value)
+                           (mapv #(update-keys % keyword)))))
+        (update :files
+                #(some-> %
+                         <-json
+                         (update-keys keyword))))))
 
 (defn db-agent-info
   "Managed-child metadata, without its potentially large context snapshot."
@@ -5683,6 +5687,8 @@
                                       :depth 1
                                       :checkpoint (->blob (:checkpoint agent))
                                       :allowed_models (->json (:allowed_models agent))
+                                      :files (some-> (:files agent)
+                                                     ->json)
                                       :created_at now)]}))
               ;; Return the fork's soul, never a state id.
               new-soul-id)))))))

@@ -23,6 +23,7 @@ class Subagent:
     routing_locked: bool = False
     pending_input: bool = False
     usage: dict[str, Any] | None = None
+    files: dict[str, list[str]] | None = None
 
     @classmethod
     def from_wire(cls, value: dict[str, Any]) -> Subagent:

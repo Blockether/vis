@@ -299,6 +299,77 @@
        :base-dir (str base-dir)
        :home (str home)))))
 
+(defn resolve-rules
+  "Resolve path rules to canonical absolute patterns, like the configured deny rules. A
+   relative rule resolves against `base-dir`; a missing tail stays, so a rule can name a
+   file that does not exist yet."
+  [rules base-dir home]
+  (resolve-paths rules base-dir home))
+
+(defn- rule-root
+  "The directory that an OS sandbox can grant for one write rule: a literal rule itself, or
+   the literal ancestor directory of a glob."
+  [rule]
+  (if (re-find glob-characters rule) (first (glob-split rule)) rule))
+
+(defn- add-rules
+  [jail rules-key paths-key rules base-dir home]
+  (cond-> jail
+    (seq rules)
+    (-> (update rules-key #(vec (distinct (concat % rules))))
+        (update paths-key #(vec (distinct (concat % (deny-target-paths rules base-dir home))))))))
+
+(defn restrict
+  "Narrow `policy` with a subagent file grant. `files` holds the `:write`, `:read_only` and
+   `:deny` rules. Each rule also covers files that are created later. `:write` limits writes
+   to its rules: other writable roots stay readable only."
+  [policy {:keys [write read_only deny]}]
+  (if-not (or (seq write) (seq read_only) (seq deny))
+    policy
+    (let [base-dir
+          (:base-dir policy)
+
+          home
+          (:home policy)
+
+          write
+          (resolve-rules write base-dir home)
+
+          jail
+          (->
+            (:process-jail policy)
+            (add-rules :deny-read-rules :deny-read (resolve-rules deny base-dir home) base-dir home)
+            (add-rules :deny-write-rules
+                       :deny-write
+                       (resolve-rules read_only base-dir home)
+                       base-dir
+                       home))
+
+          ;; An enabled jail grants only rule roots inside its writable ceiling.
+          ceiling
+          (conj (vec (:allow-read-write (:process-jail policy))) (str base-dir))
+
+          inside?
+          (fn [path]
+            (or (not (:jail-enabled policy))
+                (some #(.startsWith (Paths/get ^String path (make-array String 0))
+                                    (Paths/get ^String % (make-array String 0)))
+                      ceiling)))
+
+          jail
+          (cond-> jail
+            (seq write)
+            (assoc :write-rules
+              write :allow-read
+              (vec (distinct (concat (:allow-read jail) (:allow-read-write jail))))
+              :allow-read-write
+              (vec (distinct (filter inside? (map rule-root write))))))
+
+          narrowed
+          (assoc policy :process-jail jail)]
+
+      (assoc narrowed :generation (sha256 (dissoc narrowed :generation :base-dir :home))))))
+
 (defn draft-policies
   "Canonical `{root-path -> draft policy}` for catalog roots that opt out of the
    default `:shared` isolation. Empty for a catalog that declares no `draft` key."
@@ -357,6 +428,11 @@
              distinct
              (mapv #(home-relative % home)))
 
+        ;; A subagent file grant writes only its rules; its other roots stay readable.
+        write-rules
+        (some->> (seq (:write-rules jail))
+                 (mapv #(home-relative % home)))
+
         ro
         (->> (:allow-read jail)
              distinct
@@ -389,12 +465,15 @@
 
     (cond-> {"generation" (:generation policy)
              "is_jailed" (boolean (:jail-enabled policy))
-             "filesystem" (cond-> {"read_write" rw
+             "filesystem" (cond-> {"read_write" (or write-rules rw)
                                    "process_read_only" ro
                                    "deny_read" deny-read
                                    "deny_write" deny-write
                                    "no_search" no-search
                                    "descriptions" descriptions}
+                            write-rules
+                            (assoc "read_only" rw)
+
                             (seq draft)
                             (assoc "draft" draft))
              "network" {"enabled" true

@@ -1163,12 +1163,23 @@
   ^String []
   (str "vis_sandbox_" (swap! session-counter inc)))
 
+(defn- tmp-roots
+  "Canonical temporary directories that a write-limited sandbox keeps writable."
+  []
+  (->> [(System/getProperty "java.io.tmpdir") (System/getenv "TMPDIR") "/tmp"]
+       (keep #(when-not (str/blank? %)
+                (try (.getCanonicalPath (io/file %)) (catch Throwable _ nil))))
+       distinct
+       vec))
+
 (defn refresh-confinement!
   "Install live read/write grants before a block. A failed policy update stops execution.
    The worker kernel remains the deny-precedence boundary; this audit backstop
-   narrows its reserved session store to the currently active draft copies."
-  [session roots-fn jail-enabled? & [policy-fn]]
-  (if (and jail-enabled? roots-fn)
+   narrows its reserved session store to the currently active draft copies. A subagent
+   file grant (`write-limited?`) limits writes also when the jail is off."
+  [session roots-fn {:keys [jail-enabled? write-limited?]} & [policy-fn]]
+  (cond
+    (and jail-enabled? roots-fn)
     (let [policy
           (when policy-fn (policy-fn))
 
@@ -1189,7 +1200,13 @@
         read
         write
         "Refused: this path is not writable in the current sandbox. When drafts are enabled, use draft_create with roots=[...] before editing, then use the next block's Path bindings."))
-    (py-confine! session [] [] "")))
+    (and write-limited? policy-fn)
+    (py-confine!
+      session
+      (mapv #(.getCanonicalPath ^java.io.File %) (java.io.File/listRoots))
+      (vec (distinct (concat (:read-write (policy-fn)) (tmp-roots))))
+      "Refused: the subagent file grant does not cover this path. Ask your parent with council.ask when the task needs another file.")
+    :else (py-confine! session [] [] "")))
 
 (defn- install-network!
   "Set the runtime's fail-closed socket capability. A jailed worker's kernel policy
@@ -1309,7 +1326,7 @@
       (ensure-interpreter!))
     (refresh-confinement! session
                           roots-fn
-                          (:jail-enabled? network-opts)
+                          (select-keys network-opts [:jail-enabled? :write-limited?])
                           (:filesystem-policy-fn network-opts))
     (py-stdin! session (guest-stdin-text stdin))
     (py-install-runtime! session)

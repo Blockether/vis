@@ -62,6 +62,7 @@ def test_managed_team_transport():
             model="small",
             iteration_budget=4,
             allowed_models=[{"provider": "p", "model": "small"}],
+            files={"write": ["src/owner/**"]},
             key="contract",
         )
         assert isinstance(child, Subagent)
@@ -85,6 +86,7 @@ def test_managed_team_transport():
                     "provider": "p",
                     "model": "small",
                     "allowed_models": [{"provider": "p", "model": "small"}],
+                    "files": {"write": ["src/owner/**"]},
                     "key": "contract",
                 },
             ),
@@ -166,6 +168,9 @@ def test_group_members_are_not_the_managed_team():
         {"task": "x", "iteration_budget": 601},
         {"task": "x", "model": "small"},
         {"task": "x", "allowed_models": []},
+        {"task": "x", "files": {}},
+        {"task": "x", "files": {"exec": ["a"]}},
+        {"task": "x", "files": {"write": []}},
     ],
 )
 def test_spawn_rejects_invalid_input_before_http(opts):

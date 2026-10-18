@@ -241,7 +241,8 @@
 
 (def process-jail-config-keys
   #{:disabled? :inherit-host-env? :allow-read-write :allow-read :deny-read :deny-write :deny-exec
-    :deny-read-rules :deny-write-rules :no-search :inbound-ports :path-descriptions :keychain?})
+    :deny-read-rules :deny-write-rules :write-rules :no-search :inbound-ports :path-descriptions
+    :keychain?})
 
 (defn- process-jail-config?
   [policy]
@@ -253,6 +254,7 @@
        (every? deny-rule-list? ((juxt :deny-read :deny-write) policy))
        (deny-rule-list? (or (:deny-read-rules policy) []))
        (deny-rule-list? (or (:deny-write-rules policy) []))
+       (deny-rule-list? (or (:write-rules policy) []))
        (rooted-path-list? (or (:no-search policy) []))
        (rooted-path-list? (or (:deny-exec policy) []))
        (vector? (:inbound-ports policy))

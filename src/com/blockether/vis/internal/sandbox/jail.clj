@@ -220,17 +220,26 @@
    the canonical path, so a symlink or a `..` spelling cannot dodge a rule."
   [env operation path]
   (when-let [canonical (workspace/normalize-root path)]
-    (let [policy (:process-jail (:security-policy env))]
-      (some (fn [{:keys [rules paths setting closure operations]}]
-              (when (contains? operations (str operation))
-                (when-let [rule (first (filter #(rule-covers? % canonical)
-                                               (or (get policy rules) (get policy paths))))]
-                  (str "Blocked by " setting
-                       " in vis.yml: " rule
-                       " " closure
-                       " — continue without that file, or ask the operator to change"
-                       " the rule."))))
-            deny-rule-settings))))
+    (let [policy (:process-jail (:security-policy env))
+          write-rules (:write-rules policy)]
+
+      (or (some (fn [{:keys [rules paths setting closure operations]}]
+                  (when (contains? operations (str operation))
+                    (when-let [rule (first (filter #(rule-covers? % canonical)
+                                                   (or (get policy rules) (get policy paths))))]
+                      (str "Blocked by " setting
+                           " in vis.yml: " rule
+                           " " closure
+                           " — continue without that file, or ask the operator to change"
+                           " the rule."))))
+                deny-rule-settings)
+          ;; A subagent file grant: only its write rules stay writable.
+          (when (and (= "file-write" (str operation))
+                     (seq write-rules)
+                     (not-any? #(rule-covers? % canonical) write-rules))
+            (str "Blocked by the subagent file grant: this session can write only "
+                 (str/join ", " write-rules)
+                 ". Ask your parent with council.ask when the task needs another file."))))))
 
 (defn draft-policy-expanded?
   "True when a live repository was not covered by the worker's launch-time write denials."
@@ -256,11 +265,18 @@
    themselves, so a pattern keeps closing files the session creates after the
    snapshot (#263)."
   [{:keys [roots-fn net-enabled? allow-read-write allow-read deny-write deny-read deny-exec
-           deny-read-rules deny-write-rules proxy-port loopback-port keychain? unix-connect]
+           deny-read-rules deny-write-rules write-rules proxy-port loopback-port keychain?
+           unix-connect]
     :as policy}]
-  (let [session-roots (when roots-fn (try (roots-fn) (catch Throwable _ nil)))]
-    {:read-write (vec (concat session-roots allow-read-write))
-     :read-only (vec allow-read)
+  (let [session-roots
+        (when roots-fn (try (roots-fn) (catch Throwable _ nil)))
+
+        ;; A subagent file grant keeps the session roots readable only.
+        limited?
+        (boolean (seq write-rules))]
+
+    {:read-write (vec (if limited? allow-read-write (concat session-roots allow-read-write)))
+     :read-only (vec (if limited? (concat allow-read session-roots) allow-read))
      :deny-write (vec (distinct (concat deny-write deny-write-rules)))
      :deny-read (vec (distinct (concat deny-read deny-read-rules)))
      :deny-exec (vec deny-exec)

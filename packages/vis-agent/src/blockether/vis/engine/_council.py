@@ -235,6 +235,7 @@ class Council:
         model: str | None = None,
         iteration_budget: int | None = None,
         allowed_models: list[dict[str, str]] | None = None,
+        files: dict[str, list[str]] | None = None,
         key: str | None = None,
     ) -> Subagent:
         """Create a subagent and publish its delegated task through Council.
@@ -244,7 +245,8 @@ class Council:
         share the checkout, inherit authorization and use their own bounded model
         iterations. A key makes retries idempotent within the parent turn, and reusing
         it with different input is rejected. This is not an ordinary independent fork,
-        and it does not grant broader permissions.
+        and it does not grant broader permissions. ``files`` narrows file access with
+        ``write``, ``read_only`` and ``deny`` rules: paths or globs, also for future files.
         """
         body = {"task": task}
         body.update(
@@ -255,6 +257,7 @@ class Council:
                     "iteration_budget": iteration_budget,
                     "model": model,
                     "allowed_models": allowed_models,
+                    "files": files,
                     "key": key,
                 }.items()
                 if value is not None

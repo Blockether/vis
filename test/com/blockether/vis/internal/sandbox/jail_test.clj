@@ -573,3 +573,21 @@
                     (expect (not (str/includes? (:out late-read) "TOKEN=secret"))))))))
           (finally (doseq [file (reverse (file-seq (io/file root)))]
                      (io/delete-file file true)))))))
+
+(defdescribe subagent-file-grant-limits-host-writes
+             (it "a subagent file grant limits host writes and keeps session roots readable"
+                 (let [env {:security-policy {:process-jail {:write-rules ["/ws/src/**/*.clj"]}}}]
+                   ;; A rule also covers a file that does not exist yet.
+                   (expect (nil? (pj/deny-refusal env "file-write" "/ws/src/new/later.clj")))
+                   (expect (str/includes? (pj/deny-refusal env "file-write" "/ws/README.md")
+                                          "subagent file grant"))
+                   (expect (nil? (pj/deny-refusal env "file-read" "/ws/README.md"))))
+                 (let [limited (pj/runtime-policy {:roots-fn (constantly ["/ws"])
+                                                   :allow-read-write ["/ws/src"]
+                                                   :allow-read ["/opt"]
+                                                   :write-rules ["/ws/src/**/*.clj"]})]
+                   (expect (= ["/ws/src"] (:read-write limited)))
+                   (expect (= ["/opt" "/ws"] (:read-only limited))))
+                 (expect (= ["/ws" "/ws/src"]
+                            (:read-write (pj/runtime-policy {:roots-fn (constantly ["/ws"])
+                                                             :allow-read-write ["/ws/src"]}))))))

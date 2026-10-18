@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.sandbox.jail :as pj]
             [com.blockether.vis.internal.session.model :as smodel]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
@@ -58,7 +59,7 @@
   (or (get-in opts [:routing :model]) (get-in request-router [:providers 0 :root])))
 
 (defn- child-environment
-  [parent checkpoint budget allowed]
+  [parent checkpoint budget allowed & [files]]
   (let [db
         (:db-info parent)
 
@@ -78,6 +79,7 @@
                                           :task "Verify the delegated boundary only"
                                           :iteration_budget budget
                                           :allowed_models allowed
+                                          :files files
                                           :spawn_key (str turn)
                                           :spawn_fingerprint "boundary-fixture"
                                           :checkpoint checkpoint}})]
@@ -153,6 +155,74 @@
                 (nil? (agents/inherited-base child 2 [{:role "user" :content "Post-fold task"}] []))
                 "A later state must not reinherit the parent's checkpoint at a repeated turn position"))
             (finally (loop-env/dispose-environment! child))))
+        (finally (loop-env/dispose-environment! parent))))))
+
+(defdescribe
+  subagent-file-grant-test
+  (it
+    "a file grant limits a child's writes to its rules, also for future files"
+    (let [root
+          (.getCanonicalPath (doto (java.io.File. (str "target/agent-files-" (System/nanoTime)))
+                               (.mkdirs)))
+
+          parent
+          (loop-env/create-environment (router) {:db :memory})]
+
+      (try
+        (with-redefs [svar/ask-code! (fn [_ _]
+                                       {:stop-reason :end :content "Parent result"})]
+          (turn/run-turn! parent "Delegate with a file grant." {}))
+        (let [checkpoint
+              (:agent-checkpoint (ctx-loop/read-turn-state parent))
+
+              child
+              (child-environment parent
+                                 checkpoint
+                                 4
+                                 nil
+                                 {:write [(str root "/out/**")] :deny [(str root "/secret.txt")]})
+
+              calls
+              (atom [])
+
+              code
+              (str "import pathlib\n"
+                   "pathlib.Path('"
+                   root
+                   "/out').mkdir(exist_ok=True)\n"
+                   "pathlib.Path('" root
+                   "/out/new.txt').write_text('ok')\n" "try:\n"
+                   "    pathlib.Path('" root
+                   "/other.txt').write_text('no')\n" "    print('other written')\n"
+                   "except Exception as e:\n" "    print('other refused', type(e).__name__, e)\n"
+                   "print(session['access']['filesystem']['read_write'])\n"
+                   "print(session['agent']['files']['write'])")]
+
+          (try (with-redefs [svar/ask-code! (fn [_ opts]
+                                              (swap! calls conj (:messages opts))
+                                              (if (= 1 (count @calls))
+                                                (code-response code)
+                                                {:stop-reason :end :content "Grant checked"}))]
+                 (turn/run-turn! child "Write only inside out/" {}))
+               (let [output
+                     (str/join "\n" (map message-text (second @calls)))
+
+                     rules
+                     (get-in child [:security-policy :process-jail :write-rules])]
+
+                 ;; The rule names a file that did not exist before the grant.
+                 (expect (= "ok" (slurp (str root "/out/new.txt"))))
+                 (expect (not (.exists (java.io.File. (str root "/other.txt")))))
+                 (expect (str/includes? output "other refused PermissionError"))
+                 (expect (str/includes? output (str root "/out/**")))
+                 (expect (= [(str root "/out/**")] rules))
+                 ;; Host tools ask the same policy: deny closes reads, write rules close the rest.
+                 (expect (nil? (pj/deny-refusal child "file-write" (str root "/out/later/a.clj"))))
+                 (expect (str/includes? (pj/deny-refusal child "file-write" (str root "/other.txt"))
+                                        "subagent file grant"))
+                 (expect (some? (pj/deny-refusal child "file-read" (str root "/secret.txt"))))
+                 (expect (nil? (pj/deny-refusal child "file-read" (str root "/other.txt")))))
+               (finally (loop-env/dispose-environment! child))))
         (finally (loop-env/dispose-environment! parent))))))
 
 (defdescribe session-route-changes-at-the-next-model-request-test

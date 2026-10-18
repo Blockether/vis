@@ -484,3 +484,41 @@
                        (get-in (policy/access-view snapshot []) ["filesystem" "deny_read"])))
             (expect (= [(str root "/service")]
                        (get-in (policy/access-view snapshot []) ["filesystem" "deny_write"]))))))))
+
+(defdescribe
+  subagent-file-grant-narrows-a-snapshot
+  (it
+    "a subagent file grant narrows a snapshot, also for files created later"
+    (let [root
+          (.getCanonicalPath (doto (File. (System/getProperty "java.io.tmpdir")
+                                          (str "visgrant-" (System/nanoTime)))
+                               (.mkdirs)))
+
+          config
+          {"workspace" {"filesystem" [{"id" "project" "path" root}]} "jail" {"enabled" true}}
+
+          base
+          (policy/snapshot config {:base-dir root})
+
+          narrowed
+          (policy/restrict
+            base
+            {:write ["src/**" "/elsewhere/**"] :read_only ["src/vendor"] :deny [".env"]})
+
+          jail
+          (:process-jail narrowed)]
+
+      (expect (= base (policy/restrict base nil)))
+      (expect (not= (:generation base) (:generation narrowed)))
+      ;; Rules resolve against the root and keep a missing tail.
+      (expect (= [(str root "/src/**") "/elsewhere/**"] (:write-rules jail)))
+      (expect (some #{(str root "/.env")} (:deny-read-rules jail)))
+      (expect (some #{(str root "/src/vendor")} (:deny-write-rules jail)))
+      ;; An enabled jail grants only rule roots inside its writable ceiling.
+      (expect (= [(str root "/src")] (:allow-read-write jail)))
+      ;; Other writable roots stay readable only.
+      (expect (every? (set (:allow-read jail)) (get-in base [:process-jail :allow-read-write])))
+      (expect (= [(str root "/src/**") "/elsewhere/**"]
+                 (get-in (policy/access-view narrowed [root]) ["filesystem" "read_write"])))
+      (expect (some #{root}
+                    (get-in (policy/access-view narrowed [root]) ["filesystem" "read_only"]))))))

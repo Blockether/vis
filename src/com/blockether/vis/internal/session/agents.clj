@@ -133,7 +133,7 @@
                            {:role (if child "subagent" "leader") :session_id sid :leader_id sid}
                            (select-keys child
                                         [:parent_id :leader_id :team_id :task :iteration_budget
-                                         :iterations_used :status :allowed_models])
+                                         :iterations_used :status :allowed_models :files])
                            {:routing_locked (ps/db-routing-locked? (:db-info env) sid)})
                    (budget-notice child)
                    (assoc :budget_notice (budget-notice child))))))
@@ -525,13 +525,18 @@
 (defn- task-spec
   [t]
   (cond (string? t) {:task t}
-        (map? t) (select-keys (walk/keywordize-keys t) [:task :model :provider :iteration_budget])
+        (map? t) (select-keys (walk/keywordize-keys t)
+                              [:task :model :provider :iteration_budget :files])
         :else (fail! :invalid-request "Each task must be a string or a dict with task")))
 
 (defn run
   "Run each task in its own subagent and wait for all of them. A task is a string or a dict with
-   task and optional model, provider and iteration_budget. iteration_budget defaults to
+   task and optional model, provider, iteration_budget and files. iteration_budget defaults to
    120 (max 600). Give a large task more at the start.
+
+   files is a file grant: {\"write\": [...], \"read_only\": [...], \"deny\": [...]}. Each rule is a
+   path or a glob, relative to your workspace root, ~ or absolute, and also covers files that do
+   not exist yet. With write, the child can change only the files that its rules match.
 
    A child gets the system prompt, your requests, notes and answers, and its task. It does not get
    your tool calls or their output. Children share the checkout. Only a leader starts subagents.
@@ -915,6 +920,7 @@
 - Do small tasks, single-file edits, one search or one check yourself. A child costs more time than a few tool calls.
 - Give each large independent part one child, usually two to four in total. Do not split one small task into many children.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.
+- To enforce that split, give a task dict files={\"write\": [...], \"read_only\": [...], \"deny\": [...]}. Rules are paths or globs, also for files that do not exist yet.
 - Write each task as a brief for a peer: the goal, what you already know or ruled out, and the output that you need. For an independent review, give the child the code, not your conclusion.
 - A child gets 120 iterations by default (maximum 600). For a large or multi-step task, set a larger iteration_budget in its task dict at the start.
 - A child sees the system prompt, your requests, notes and answers, and its task, but not your tool calls or their output. Give it sufficient context in the brief: the goal, the facts that your tools found, what you ruled out, exact paths and symbols. A child reads your whole session only when its brief is ambiguous, so do not rely on that. Set model and provider only when the user or project names a model for that work.

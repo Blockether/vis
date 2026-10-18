@@ -46,6 +46,13 @@
         (expect (document/valid? "agents" agent))
         (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
         (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
+        (expect (document/valid-json? "agents"
+                                      "spawn"
+                                      {"task" "Edit one owner"
+                                       "files" {"write" ["src/a/**"] "deny" [".env"]}}))
+        (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {}})))
+        (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {"exec" ["a"]}})))
+        (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {"write" []}})))
         (expect
           (not (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8193 "x"))}))))))
 
@@ -720,6 +727,17 @@
                              (gateway/agents-operation! leader :spawn (assoc other :context "full"))
                              nil
                              (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+                ;; A file grant resolves against the parent's root and stays on the record.
+                (let [grant {:task "Edit one owner" :files {:write ["src/owner/**"] :deny [".env"]}}
+                      files (:files (ps/db-agent-info
+                                      db
+                                      (:session_id
+                                        (gateway/agents-operation! leader :spawn grant))))]
+
+                  (expect (str/ends-with? (first (:write files)) "/src/owner/**"))
+                  (expect (str/starts-with? (first (:write files)) "/"))
+                  (expect (str/ends-with? (first (:deny files)) "/.env"))
+                  (expect (nil? (:read_only files))))
                 ;; Only a leader delegates: a child asks its parent for more subagents.
                 (expect (= :not-allowed
                            (try (gateway/agents-operation! task-child :spawn {:task "Nested"})
@@ -734,7 +752,7 @@
                                 leader
                                 "\")")]
 
-                  (expect (= 2 (count (filter #(str/includes? % hint) delegated))))))
+                  (expect (= 3 (count (filter #(str/includes? % hint) delegated))))))
               (expect (= "cancelled"
                          (:status (gateway/agents-operation! leader :cancel {:session_id sid}))))
               (expect (not (agents/claim-iteration! {:db-info db :session-id sid})))
