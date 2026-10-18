@@ -29,7 +29,16 @@ export type RenderedPage = {
   /** The page as a PNG data URL, ready for the image viewer's pen. */
   src: string;
   pageCount: number;
+  /** The raster's size in pixels, so the reader can fit the page before it decodes. */
+  width?: number;
+  height?: number;
 };
+
+/**
+ * The largest raster drawn, in pixels. A WebKit canvas past about 16.7 million pixels
+ * draws nothing, and a phone pays for every pixel in memory and in PNG encoding.
+ */
+const MAX_RASTER_PIXELS = 12_000_000;
 
 /** Rasterise one 1-based page at a readable density. */
 export async function renderPdfPage(
@@ -42,14 +51,21 @@ export async function renderPdfPage(
   const doc = await lib.getDocument({ data: bytes.slice(0) }).promise;
   const pageCount = doc.numPages;
   const page = await doc.getPage(Math.min(Math.max(pageNumber, 1), pageCount));
-  const viewport = page.getViewport({ scale });
+  const base = page.getViewport({ scale: 1 });
+  const most = Math.sqrt(MAX_RASTER_PIXELS / Math.max(1, base.width * base.height));
+  const viewport = page.getViewport({ scale: Math.min(scale, most) });
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(viewport.width);
   canvas.height = Math.ceil(viewport.height);
   const context = canvas.getContext('2d');
   if (!context) throw new Error('no 2d context');
   await page.render({ canvas, canvasContext: context, viewport }).promise;
-  return { src: canvas.toDataURL('image/png'), pageCount };
+  return {
+    src: canvas.toDataURL('image/png'),
+    pageCount,
+    width: canvas.width,
+    height: canvas.height,
+  };
 }
 
 /**

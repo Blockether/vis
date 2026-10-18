@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayClient } from '../lib/gateway';
 import { DocOverlay } from './DocArtifact';
-import { PAGE_SWIPE_PX, swipeTurn } from './PdfArtifact';
+import { PAGE_SWIPE_PX, rasterScale, scrollToKeep, spotUnder, swipeTurn } from './PdfArtifact';
+import { renderPdfPage } from '../lib/pdf-annotate';
 import { AttachmentRail } from './ChatContent';
 import { resetAnnotationDraftCache } from '../lib/annotation-drafts';
 import { EDGE_ZONE_PX } from '../lib/edge-back';
@@ -42,6 +43,8 @@ vi.mock('../lib/pdf-annotate', () => ({
     return {
       src: `data:image/png;base64,page-${++pdfMocks.renders}`,
       pageCount: 3,
+      width: 600,
+      height: 800,
     };
   }),
   stampPdfPage: vi.fn(async () => new Uint8Array([1, 2, 3])),
@@ -137,6 +140,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('an artifact opened from the transcript', () => {
@@ -355,6 +359,116 @@ describe('an artifact opened from the transcript', () => {
     act(() => drag(page(), { x: 200, y: 300 }, [{ x: 200 - far, y: 300 }], 'cancel'));
     await settle();
     expect(band.textContent).toContain('Page 2 of 3');
+  });
+
+  // Requested: on iOS and on a desk, a PDF page scrolls and zooms like a page of the
+  // phone's own reader, instead of standing fitted and still.
+  it('zooms the page with a pinch, a ctrl+wheel and a double click, and scrolls it natively', async () => {
+    // jsdom lays nothing out: the scroller is a 400 x 600 box.
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]))),
+    );
+    await act(async () => {
+      root.render(
+        <DocOverlay
+          name="report.pdf"
+          mime="application/pdf"
+          url="blob:pdf"
+          failed={false}
+          annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
+          onClose={() => undefined}
+        />,
+      );
+    });
+    await settle();
+    const img = () => host.querySelector<HTMLImageElement>('img[aria-label^="Page "]')!;
+    const sheet = () => img().parentElement!;
+    const scroller = () => sheet().parentElement!;
+    const width = () => parseFloat(sheet().style.width);
+
+    // Fitted: the 3:4 page takes the width of the box. The scroller scrolls natively,
+    // and the browser keeps every pan but no zoom of its own.
+    expect(width()).toBe(400);
+    expect(sheet().style.height).toBe(`${400 / 0.75}px`);
+    expect(scroller().className).toContain('overflow-auto');
+    expect(scroller().className).toContain('[touch-action:pan-x_pan-y]');
+
+    // A plain wheel is a scroll, left to the browser.
+    const plain = new WheelEvent('wheel', { deltaY: 120, cancelable: true, bubbles: true });
+    act(() => {
+      scroller().dispatchEvent(plain);
+    });
+    expect(plain.defaultPrevented).toBe(false);
+    expect(width()).toBe(400);
+
+    // A ctrl+wheel (a trackpad pinch) zooms in, and the browser does not zoom the app.
+    const pinchWheel = new WheelEvent('wheel', {
+      deltaY: -40,
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    act(() => {
+      scroller().dispatchEvent(pinchWheel);
+    });
+    expect(pinchWheel.defaultPrevented).toBe(true);
+    expect(width()).toBeGreaterThan(400);
+
+    // A zoomed page is panned by a sideways stroke, never turned.
+    act(() => drag(img(), { x: 300, y: 300 }, [{ x: 300 - PAGE_SWIPE_PX - 20, y: 300 }]));
+    await settle();
+    expect(host.querySelector('header')!.textContent).toContain('Page 1 of 3');
+
+    // A page turn starts the next page fitted.
+    press('button[aria-label="Next page"]');
+    await settle();
+    expect(width()).toBe(400);
+
+    // Two fingers drawn twice as far apart zoom in twice; the app keeps the move.
+    let move: Event | undefined;
+    act(() => {
+      fireTouch(img(), 'touchstart', [
+        { x: 150, y: 300 },
+        { x: 250, y: 300 },
+      ]);
+      move = fireTouch(img(), 'touchmove', [
+        { x: 100, y: 300 },
+        { x: 300, y: 300 },
+      ]);
+      fireTouch(img(), 'touchend', []);
+    });
+    expect(move?.defaultPrevented).toBe(true);
+    expect(width()).toBe(800);
+    // Once the zoom rests, the page is drawn again more sharply.
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 260));
+    });
+    expect(vi.mocked(renderPdfPage)).toHaveBeenLastCalledWith(expect.anything(), 2, 4);
+
+    // A double click goes back to the fitted page, and another one zooms in again.
+    act(() => {
+      scroller().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 200 }));
+    });
+    expect(width()).toBe(400);
+    act(() => {
+      scroller().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 200 }));
+    });
+    expect(width()).toBe(800);
+  });
+
+  it('keeps the point under the fingers where it was while the page zooms', () => {
+    const at = { x: 120, y: 340 };
+    const offset = { x: 8, y: 8 };
+    const spot = spotUnder(at, { x: 50, y: 70 }, offset, 1.5);
+    const scroll = scrollToKeep(spot, 3, at, offset);
+    const back = spotUnder(at, scroll, offset, 3);
+    expect(back.x).toBeCloseTo(spot.x, 9);
+    expect(back.y).toBeCloseTo(spot.y, 9);
+    expect(rasterScale(1)).toBe(2);
+    expect(rasterScale(2)).toBe(4);
   });
 
   it('reads a stroke as a page turn only when it is long and mostly sideways', () => {
