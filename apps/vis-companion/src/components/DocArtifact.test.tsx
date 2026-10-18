@@ -352,7 +352,8 @@ describe('an opened document', () => {
   it('shares the original document and keeps the outcome out of the band', async () => {
     const blob = new Blob(['%PDF'], { type: 'application/pdf' });
     const share = vi.fn(async (_data: ShareData) => undefined);
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(blob)));
+    // Node's Response cannot read a jsdom Blob: Node 22 throws, and later versions send "[object Blob]".
+    vi.stubGlobal('fetch', vi.fn(async () => ({ blob: async () => blob }) as Response));
     Object.defineProperty(navigator, 'share', { value: share, configurable: true });
     try {
       render(
@@ -372,6 +373,7 @@ describe('an opened document', () => {
       expect(share.mock.calls[0]?.[0].files?.[0]).toMatchObject({
         name: 'shared.pdf',
         type: 'application/pdf',
+        size: blob.size,
       });
       const band = screen.getByRole('heading', { name: 'shared.pdf' }).closest('header');
       expect(band).toHaveTextContent('shared.pdf');
