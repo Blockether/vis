@@ -2670,8 +2670,15 @@ export function Modal({
   // stands in, so the same cap left an opened run as a small window in the middle of a pane it
   // could have had. Reported: opening a live run should fill the session it belongs to.
   const fillsPane = within === 'session' && !stopsAtContent;
+  // A sheet with a typed field stands where the keyboard will put it. A short one sits
+  // above the reserved band. A tall one stands under the notch and lets the band run
+  // under its foot (`items-end-safe`), so it keeps its full height until the keys rise.
+  const isReserving = isKeyboardReserved && stopsAtContent;
+  const phoneCeiling = isReserving
+    ? 'mt-[env(safe-area-inset-top)] max-h-[calc(100%+var(--keyboard-reserve,0px)-env(safe-area-inset-top))] sm:mt-0 sm:max-h-[calc(100%-env(safe-area-inset-top))]'
+    : 'max-h-[calc(100%-env(safe-area-inset-top))]';
   const boxHeight = stopsAtContent
-    ? `max-h-[calc(100%-env(safe-area-inset-top))] ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
+    ? `${phoneCeiling} ${size === 'fit' ? 'sm:h-auto' : DIALOG_DESKTOP_HEIGHT}`
     : fillsPane
       ? 'sm:h-full'
       : DIALOG_DESKTOP_HEIGHT;
@@ -2683,13 +2690,13 @@ export function Modal({
   return createPortal(
     <div
       className={`${position} inset-0 z-50 flex justify-center pb-[var(--keyboard-reserve,0px)] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom),var(--keyboard-reserve,0px))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
-        stopsAtContent ? 'items-end' : 'items-stretch'
+        stopsAtContent ? (isReserving ? 'items-end-safe' : 'items-end') : 'items-stretch'
       }`}
       // A focus shrinks the shell by the keyboard in the same frame. Without this band
       // a sheet docked to the bottom jumped up under the finger, and the second tap of
       // a double tap (paste) missed the field. The band is scoped to this element.
       style={
-        isKeyboardReserved && keyboardReserve > 0
+        isReserving && keyboardReserve > 0
           ? ({ '--keyboard-reserve': `${keyboardReserve}px` } as CSSProperties)
           : undefined
       }

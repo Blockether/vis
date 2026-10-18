@@ -7,6 +7,8 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HumanInputSheet } from './HumanInputPrompt';
+import { DialogFrame, Modal } from './ui';
+import settingsSource from '../screens/SettingsScreen.tsx?raw';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
 import { initialHumanInputValues, type HumanInputRequest, type HumanInputValues } from '../lib/human-input';
 import { useVisualViewportShell } from '../lib/viewport';
@@ -83,13 +85,28 @@ function SessionWithForm({ request }: { request: HumanInputRequest }) {
   );
 }
 
+/** The app shell with a wide sheet that stops at its content, like Settings. */
+function ShellWithSettingsSheet() {
+  const shell = useRef<HTMLDivElement>(null);
+  useVisualViewportShell(shell);
+  return (
+    <div ref={shell} data-viewport-shell="" data-testid="shell">
+      <Modal size="wide" isKeyboardReserved onDismiss={() => undefined}>
+        <DialogFrame title="Settings">
+          <input aria-label="Machine name" />
+        </DialogFrame>
+      </Modal>
+    </div>
+  );
+}
+
 const shellHeight = () => {
   const height = screen.getByTestId('shell').style.height;
   return height === '' ? HEIGHT : Number.parseFloat(height);
 };
 
 const reserve = () => {
-  const scrim = document.querySelector<HTMLElement>('[data-session-surface] > [role="presentation"]');
+  const scrim = document.querySelector<HTMLElement>('[data-testid="shell"] [role="presentation"]');
   const value = scrim?.style.getPropertyValue('--keyboard-reserve') ?? '';
   return value === '' ? 0 : Number.parseFloat(value);
 };
@@ -145,5 +162,25 @@ describe('a form with a typed field on the iPhone', () => {
     pointing('fine');
     render(<SessionWithForm request={HUMAN_INPUT_REQUESTS.otp} />);
     expect(reserve()).toBe(0);
+  });
+});
+
+// The same jump in Settings: a tap on a machine name or a provider key field.
+describe('the settings sheet on the iPhone', () => {
+  it('reserves the keyboard band and lets a tall sheet keep its height', () => {
+    pointing('coarse');
+    render(<ShellWithSettingsSheet />);
+    const scrim = document.querySelector<HTMLElement>('[data-testid="shell"] [role="presentation"]');
+    const resting = sheetBottom();
+    expect(reserve()).toBeGreaterThan(0);
+    expect(scrim).toHaveClass('items-end-safe');
+
+    act(() => screen.getByRole('textbox', { name: 'Machine name' }).focus());
+    expect(shellHeight()).toBeLessThan(HEIGHT);
+    expect(sheetBottom()).toBe(resting);
+  });
+
+  it('is the sheet that Settings opens', () => {
+    expect(settingsSource).toContain('<Modal size="wide" isKeyboardReserved onDismiss={onClose}>');
   });
 });
