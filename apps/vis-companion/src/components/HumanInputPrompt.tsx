@@ -20,6 +20,7 @@ import {
   humanInputFormChange,
   humanInputFormRefused,
   humanInputFormStart,
+  humanInputInputFields,
   humanInputOtp,
   humanInputOtpDigits,
   humanInputRange,
@@ -278,6 +279,9 @@ export function HumanInputPrompt({
   );
 }
 
+/** The fields a phone answers with its software keyboard. */
+const KEYBOARD_FIELD_TYPES = new Set<string>(['plaintext', 'password', 'multiline', 'otp']);
+
 /**
  * The pause itself, with no gateway behind it: a request, the answers typed so
  * far, whatever the engine last refused, and three callbacks. The container
@@ -316,6 +320,11 @@ export function HumanInputSheet({
   // box every other dialog is, minus the fixed height.
   // A subagent's form also reaches its ancestor sessions: name who asks.
   const origin = originLabel(request.origin);
+  // A field that raises the keyboard keeps the sheet where the keyboard puts it.
+  // Reported: a double tap on the one-time code made the keyboard and screen jump.
+  const isKeyboardReserved = humanInputInputFields(request.fields).some((field) =>
+    KEYBOARD_FIELD_TYPES.has(field.type),
+  );
   return (
     <Modal
       size="fit"
@@ -324,6 +333,7 @@ export function HumanInputSheet({
       // so the whole application read as blocked while a single session waited. The
       // sheet stands in that session's own pane instead, where an opened run stands.
       within="session"
+      isKeyboardReserved={isKeyboardReserved}
       // A pause with no way out is not dismissed by tapping the glass either: the
       // scrim answers exactly what the header's X and Esc answer, and for an
       // uncancellable request all three do nothing.

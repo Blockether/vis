@@ -545,6 +545,43 @@ export function useKeyboardInset(): number {
   );
 }
 
+// The band a sheet that holds a field keeps free below itself while the software
+// keyboard is still down: the predicted keyboard height, less what the keyboard
+// already covers. A focus shrinks the shell by that height in the same frame, so a
+// sheet docked to the bottom jumped up under the finger. The second tap of a double
+// tap then missed the field, focus dropped and the keyboard fell again.
+let keyboardReserve = 0;
+const keyboardReserveListeners = new Set<() => void>();
+
+const setKeyboardReserve = (value: number): void => {
+  const next = Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+  if (keyboardReserve === next) return;
+  keyboardReserve = next;
+  for (const listener of keyboardReserveListeners) listener();
+};
+
+const subscribeKeyboardReserve = (listener: () => void): (() => void) => {
+  keyboardReserveListeners.add(listener);
+  return () => {
+    keyboardReserveListeners.delete(listener);
+  };
+};
+
+/**
+ * Pixels a sheet docked to the bottom keeps free for a keyboard that is not up yet.
+ *
+ * With this band under it, the sheet already stands where the keyboard puts it, so
+ * a focus does not move the field. `0` while the keyboard is up, with a hardware
+ * keyboard, and on every platform except native iOS.
+ */
+export function useKeyboardReserve(): number {
+  return useSyncExternalStore(
+    subscribeKeyboardReserve,
+    () => keyboardReserve,
+    () => 0,
+  );
+}
+
 /** The shell's current height in CSS pixels, keyboard pin included. */
 export function shellViewportHeight(): number {
   const metrics = readViewportMetrics();
@@ -605,6 +642,10 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     const vv = window.visualViewport;
     if (!shell || !vv) return;
 
+    // iOS only: Android resizes the webview itself, so `visualViewport` already
+    // tells the whole truth there and a second driver would subtract the
+    // keyboard twice.
+    const nativeKeyboard = Capacitor.getPlatform() === 'ios';
     let currentBox: Box | null = null;
     // Geometry is latency-sensitive: a React state update costs a render and a
     // frame after focus. Mutate only this root's inline geometry synchronously;
@@ -614,9 +655,14 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       // and portaled UI has to give up the same. `--safe-bottom` at 0 is this
       // driver's own word for "the keyboard owns the bottom edge", so a wake-time
       // oversize pin - a shorter shell with no keyboard - publishes nothing.
-      setKeyboardInset(
+      const inset =
         next && safeBottom === SAFE_BOTTOM_KEYBOARD
           ? layoutHeight(readViewportMetrics()) - next.height - next.top
+          : 0;
+      setKeyboardInset(inset);
+      setKeyboardReserve(
+        nativeKeyboard && !hasHardwarePointer()
+          ? keyboardHeightForPrepin(layoutHeight(readViewportMetrics())) - inset
           : 0,
       );
       if (
@@ -636,10 +682,6 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     };
 
     let frame = 0;
-    // iOS only: Android resizes the webview itself, so `visualViewport` already
-    // tells the whole truth there and a second driver would subtract the
-    // keyboard twice.
-    const nativeKeyboard = Capacitor.getPlatform() === 'ios';
     // Set while the native driver owns the box.
     let keyboardPinned = false;
     // A pin rebuilt from the CSS root can already belong to the new physical
@@ -1144,6 +1186,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       disposeKeyboard();
       pinnedShellHeight = null;
       setBox(null);
+      setKeyboardReserve(0);
     };
   }, [shellRef]);
 }

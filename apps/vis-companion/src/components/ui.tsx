@@ -41,6 +41,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type CSSProperties,
   type HTMLAttributes,
   type InputHTMLAttributes,
   type KeyboardEvent,
@@ -55,6 +56,7 @@ import viewSchema from '../../../../packages/vis-contract/resources/vis-contract
 
 import { EDGE_MARGIN, menuPosition } from '../lib/anchored-menu';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
+import { useKeyboardReserve } from '../lib/viewport';
 import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
 
 /**
@@ -2609,6 +2611,7 @@ export function Modal({
   onDismiss,
   size = 'full',
   within = 'app',
+  isKeyboardReserved = false,
   children,
 }: {
   onDismiss: () => void;
@@ -2641,9 +2644,15 @@ export function Modal({
    * stops at its content, centred in the pane it belongs to.
    */
   within?: 'app' | 'session';
+  /**
+   * The sheet holds a field that raises the software keyboard. It then stands where
+   * the keyboard will put it, so a tap on the field does not move the field.
+   */
+  isKeyboardReserved?: boolean;
   children: ReactNode;
 }) {
   const { host: portalHost, position } = within === 'session' ? sessionLayer() : overlayLayer();
+  const keyboardReserve = useKeyboardReserve();
   const dismissOnClick = useRef(false);
   // BACK IS A STROKE IN HERE TOO. A dialog that took the glass is a place the reader
   // arrived at, and a finger drawn in from its left edge is how the phone in their hand
@@ -2673,9 +2682,17 @@ export function Modal({
 
   return createPortal(
     <div
-      className={`${position} inset-0 z-50 flex justify-center transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
+      className={`${position} inset-0 z-50 flex justify-center pb-[var(--keyboard-reserve,0px)] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom),var(--keyboard-reserve,0px))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
         stopsAtContent ? 'items-end' : 'items-stretch'
       }`}
+      // A focus shrinks the shell by the keyboard in the same frame. Without this band
+      // a sheet docked to the bottom jumped up under the finger, and the second tap of
+      // a double tap (paste) missed the field. The band is scoped to this element.
+      style={
+        isKeyboardReserved && keyboardReserve > 0
+          ? ({ '--keyboard-reserve': `${keyboardReserve}px` } as CSSProperties)
+          : undefined
+      }
       role="presentation"
       onPointerDown={(event) => {
         dismissOnClick.current = event.target === event.currentTarget;
