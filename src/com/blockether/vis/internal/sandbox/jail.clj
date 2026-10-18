@@ -47,6 +47,7 @@
             [com.blockether.vis-python-runtime :as python-runtime]
             [com.blockether.vis.internal.python.runtime :as vis-python-runtime]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import (java.nio.file FileSystems Path PathMatcher Paths)
@@ -212,13 +213,19 @@
             :else (recur (.getParent candidate))))))
 
 (defn grant-refusal
-  "The refusal for a write outside a subagent file grant with `write-rules`."
+  "A short refusal for a write outside a subagent file grant with `write-rules`."
   [write-rules]
-  (str "Blocked by the subagent file grant: "
-       (if (seq write-rules)
-         (str "this session can write only " (str/join ", " write-rules))
-         "this session cannot write files")
-       ". Ask your parent with council.ask when the task needs another file."))
+  (let [shown
+        (map paths/abbreviate-home (take 3 write-rules))
+
+        more
+        (- (count write-rules) 3)]
+
+    (str "Subagent file grant: "
+         (if (seq write-rules)
+           (str "write only " (str/join ", " shown) (when (pos? more) (str " (+" more " more)")))
+           "no file writes")
+         ". Ask your parent with council.ask.")))
 
 (defn deny-refusal
   "Actionable refusal when a configured `jail.filesystem` deny rule covers `path`

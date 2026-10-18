@@ -1901,7 +1901,7 @@
                            "meant as prose. Replace it with plain ASCII, or move that whole line "
                            "into a `#` comment. Original parser error: ")
               (and denied-write? (contains? @write-grants session))
-              (str (process-jail/grant-refusal (get @write-grants session)) " Original error: ")
+              (str (process-jail/grant-refusal (get @write-grants session)) " Runtime: ")
               denied-root?
               (str "Sandbox policy denied "
                    (if denied-write? "file-write" "file-read")

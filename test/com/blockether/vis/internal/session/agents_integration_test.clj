@@ -240,14 +240,14 @@
                  ;; Host tools ask the same policy: deny closes reads, write rules close the rest.
                  (expect (nil? (pj/deny-refusal child "file-write" (str root "/out/later/a.clj"))))
                  (expect (str/includes? (pj/deny-refusal child "file-write" (str root "/other.txt"))
-                                        "subagent file grant"))
+                                        "Subagent file grant"))
                  (expect (some? (pj/deny-refusal child "file-read" (str root "/secret.txt"))))
                  (expect (nil? (pj/deny-refusal child "file-read" (str root "/other.txt"))))
                  ;; The parent's policy still applies to the child.
                  (expect (some?
                            (pj/deny-refusal child "file-read" (str root "/parent-secret.txt"))))
                  ;; An uncaught refusal explains the grant and keeps the runtime's own text.
-                 (expect (str/includes? refusal "Blocked by the subagent file grant"))
+                 (expect (str/includes? refusal "Subagent file grant: write only"))
                  (expect (str/includes? refusal "is outside the writable roots")))
                (finally (loop-env/dispose-environment! child))))
         (finally (loop-env/dispose-environment! parent))))))
