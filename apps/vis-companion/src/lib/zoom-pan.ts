@@ -125,6 +125,34 @@ export function zoomedAbout(
   });
 }
 
+/** The zoom a double tap or a double click goes to from a fitted picture. */
+export const DOUBLE_TAP_ZOOM = 2;
+
+/**
+ * A double tap or a double click: a zoomed picture goes back to fitted, and any
+ * other one zooms in about `point`, so the part that was tapped is what grows.
+ */
+export function toggledZoom(current: Transform, point: Point, center: Point): Transform {
+  if (current.scale > FIT_SCALE) return { ...NO_TRANSFORM };
+  return zoomedAbout(current, DOUBLE_TAP_ZOOM / current.scale, point, center);
+}
+
+/** Two taps this close in time and space are one double tap. */
+export const DOUBLE_TAP_MS = 300;
+export const DOUBLE_TAP_PX = 24;
+
+/** One finger that landed and lifted without travelling: where, and when it lifted. */
+export type Tap = { at: Point; time: number };
+
+/** Whether `second` completes a double tap that `first` started. */
+export function isDoubleTap(first: Tap | null, second: Tap): boolean {
+  return (
+    first !== null &&
+    second.time - first.time <= DOUBLE_TAP_MS &&
+    distance(first.at, second.at) <= DOUBLE_TAP_PX
+  );
+}
+
 /** The transform a pinch has reached: scaled by the spread, following the midpoint. */
 export function pinchTransform(gesture: PinchGesture, a: Point, b: Point): Transform {
   const center = midpoint(a, b);

@@ -633,6 +633,37 @@ it("zooms with Safari's own trackpad pinch", () => {
   expect(control('Reset zoom').textContent).toBe('200%');
 });
 
+// A phone sends no double click for a double tap on a surface that keeps every touch,
+// so the viewer reads the two taps itself — the same way a PDF page does.
+it('zooms in and back out with a double tap of a finger', () => {
+  const surface = document.querySelector<HTMLDivElement>('[role="dialog"] .cursor-grab');
+  if (!surface) throw new Error('viewer surface not found');
+  Element.prototype.setPointerCapture = vi.fn();
+  const tap = () => {
+    for (const type of ['pointerdown', 'pointerup']) {
+      act(() => {
+        surface.dispatchEvent(
+          new PointerEvent(type, {
+            pointerId: 3,
+            pointerType: 'touch',
+            clientX: 0,
+            clientY: 0,
+            bubbles: true,
+          }),
+        );
+      });
+    }
+  };
+
+  tap();
+  expect(control('Reset zoom').textContent).toBe('100%');
+  tap();
+  expect(control('Reset zoom').textContent).toBe('200%');
+  tap();
+  tap();
+  expect(control('Reset zoom').textContent).toBe('100%');
+});
+
 // Regression, user report ("when I click the image I cannot jump to the next
 // one with the arrows left/right"): a gallery opened one picture at a time —
 // the viewer showed only what was tapped and the arrow keys did nothing, so

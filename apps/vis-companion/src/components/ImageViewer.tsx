@@ -4,34 +4,13 @@ import {
   useMemo,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { PEN_COLORS, flattenAnnotations, type PenToken } from '../lib/annotate';
 import { copyImage, shareImage, shareVerb } from '../lib/image-share';
-import {
-  NO_TRANSFORM,
-  FIT_SCALE,
-  clampTransform,
-  panFrom,
-  panTransform,
-  pinchFrom,
-  pinchTransform,
-  swipeFrom,
-  swipeShift,
-  swipeStep,
-  transformCss,
-  zoomLabel,
-  wheelFactor,
-  zoomedAbout,
-  zoomedBy,
-  partPixels,
-  visiblePart,
-  type Gesture,
-  type Point,
-  type Transform,
-} from '../lib/zoom-pan';
+import { partPixels, visiblePart } from '../lib/zoom-pan';
+import { useZoomPan, ZOOM_FRAME_CLASS, ZOOMED_CLASS } from '../lib/zoom-surface';
 import { AnnotationLayer, PenToolbar, type AnnotationSurface } from './AnnotationLayer';
 import {
   CheckIcon,
@@ -165,24 +144,13 @@ export function ExpandableImage({
 }
 
 /**
- * Safari's own trackpad pinch. No other engine sends it, and TypeScript's DOM
- * library does not declare it, but it is the ONLY way a Safari pinch reaches a page:
- * the ctrl+wheel Chrome and Firefox send never arrives there.
- */
-type SafariGestureEvent = Event & {
-  scale: number;
-  clientX: number;
-  clientY: number;
-};
-
-/**
  * A picture, full screen: pinch/scroll/double-click zoom, pan, and a pen. Given
  * `onApply` it also hands the flattened result back, which is what makes an
  * attachment editable and a rendered document page sendable.
  *
- * The viewer itself owns only the SCREEN: which gesture is in flight, what to
- * announce, which button is busy. The geometry it applies comes from
- * `lib/zoom-pan`, the strokes belong to {@link AnnotationLayer}, flattening to
+ * The viewer itself owns only the SCREEN: what to announce, which button is busy.
+ * The zoom, pan and swipe come from `lib/zoom-surface`, which a PDF page shares,
+ * the strokes belong to {@link AnnotationLayer}, flattening to
  * `lib/annotate` and the platform sheets to `lib/image-share` — so each of
  * those can be used, and tested, without opening a full-screen dialog.
  */
@@ -197,14 +165,7 @@ export function ImageViewer({
   commentable = false,
 }: ImageViewerProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const transformedRef = useRef<HTMLDivElement | null>(null);
-  const zoomLabelRef = useRef<HTMLSpanElement | null>(null);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
   const annotationRef = useRef<AnnotationSurface | null>(null);
-  const transformRef = useRef<Transform>({ ...NO_TRANSFORM });
-  const pointersRef = useRef(new Map<number, Point>());
-  const gestureRef = useRef<Gesture>(null);
-  const shiftRef = useRef(0);
   const [drawingRequested, setDrawing] = useState(false);
   const [drawingToolsOpen, setDrawingToolsOpen] = useState(true);
   const [penColor, setPenColor] = useState<PenToken>(PEN_COLORS[0].token);
@@ -245,46 +206,6 @@ export function ImageViewer({
   const shown = trimmed ?? untrimmed;
   const hasEdits = strokeCount > 0 || trimmed !== null;
 
-  // The transform is written to style rather than to state: a pinch that
-  // re-rendered React on every frame would stutter on exactly the devices that
-  // pinch. A live swipe rides the same one property — the zoom and pan the
-  // picture is at, plus however far a finger has carried it toward its
-  // neighbour — so both are painted together instead of overwriting each other.
-  const paint = useCallback(() => {
-    const node = transformedRef.current;
-    if (!node) return;
-    const css = transformCss(transformRef.current);
-    node.style.transform = shiftRef.current
-      ? `translate3d(${shiftRef.current}px, 0, 0) ${css}`
-      : css;
-  }, []);
-
-  const applyTransform = useCallback(
-    (next: Transform) => {
-      const transform = clampTransform(next);
-      transformRef.current = transform;
-      paint();
-      if (zoomLabelRef.current) zoomLabelRef.current.textContent = zoomLabel(transform);
-    },
-    [paint],
-  );
-
-  /** How far a live swipe has dragged the picture; 0 puts it back in its frame. */
-  const slide = useCallback(
-    (shift: number) => {
-      shiftRef.current = shift;
-      paint();
-    },
-    [paint],
-  );
-
-  const resetTransform = useCallback(() => {
-    pointersRef.current.clear();
-    gestureRef.current = null;
-    shiftRef.current = 0;
-    applyTransform({ ...NO_TRANSFORM });
-  }, [applyTransform]);
-
   /**
    * Walk to another picture of the same gallery.
    *
@@ -300,13 +221,26 @@ export function ImageViewer({
       if (target === step) return;
       annotationRef.current?.clear();
       dropTrim();
-      resetTransform();
       setStatus('');
       setError('');
       setShownSrc(gallery[target].src);
     },
-    [gallery, drawing, step, resetTransform, dropTrim],
+    [gallery, drawing, step, dropTrim],
   );
+
+  // The zoom, the pan and the swipe are the ones a PDF page takes too
+  // (`lib/zoom-surface`). A new picture opens fitted.
+  const zoom = useZoomPan({
+    resetKey: shown.src,
+    pen: drawing ? annotationRef : null,
+    swipe: gallery
+      ? {
+          back: step > 0,
+          forward: step < gallery.length - 1,
+          onStep: (direction) => stepTo(step + direction),
+        }
+      : null,
+  });
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -331,222 +265,6 @@ export function ImageViewer({
     if (image) annotationRef.current?.fit(image.naturalWidth, image.naturalHeight);
   }
 
-  function beginGesture(event: ReactPointerEvent<HTMLDivElement>) {
-    const point = { x: event.clientX, y: event.clientY };
-    pointersRef.current.set(event.pointerId, point);
-    const pointers = [...pointersRef.current.values()];
-    const [a, b] = pointers;
-    const pinching = Boolean(a && b);
-    // A lone finger while drawing is a stroke owned by the annotation layer
-    // above this handler, not a pan — only a SECOND finger starts a gesture
-    // here, so a pinch still works while the pen is out.
-    // A lone finger while drawing is a stroke, and it is the VIEWPORT that owns
-    // the pointer: the sheet only covers the picture, so a stroke begun on the
-    // dark margin beside it would otherwise never start and the line would only
-    // appear for someone who touched down exactly inside the edge.
-    if (drawing && !pinching) {
-      event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      annotationRef.current?.beginAt(event.clientX, event.clientY);
-      return;
-    }
-    // A second finger arrived: the mark the first one was leaving belongs to a
-    // pinch, not to the picture. Drop it before the zoom starts, or every
-    // two-finger zoom on a phone scribbles a line across the page.
-    if (drawing && pinching) annotationRef.current?.cancelStroke();
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    // A live pinch/pan writes the transform every frame; the CSS transition
-    // meant for button/reset snaps fights that at exactly the frame rate a
-    // finger moves, which is what read as stutter and a lagging, rubber-banded
-    // pinch. Only a finger on the glass suspends it.
-    if (transformedRef.current) transformedRef.current.style.transitionDuration = '0ms';
-    // A picture that is not zoomed in has nothing to pan, so the finger's whole
-    // travel means the NEIGHBOURING picture instead — the gallery is walked by
-    // swiping it, which is why no pair of arrows is left on the toolbar. A second
-    // finger is a pinch, so whatever the first one had dragged goes back first.
-    if (pinching) slide(0);
-    const isSwiping = gallery !== null && transformRef.current.scale <= FIT_SCALE;
-    gestureRef.current = pinching
-      ? pinchFrom(a, b, transformRef.current)
-      : isSwiping
-        ? swipeFrom(event.pointerId, point)
-        : panFrom(event.pointerId, point, transformRef.current);
-  }
-
-  function moveGesture(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!pointersRef.current.has(event.pointerId)) return;
-    pointersRef.current.set(event.pointerId, {
-      x: event.clientX,
-      y: event.clientY,
-    });
-    const gesture = gestureRef.current;
-    if (drawing && !gesture && pointersRef.current.size === 1) {
-      event.preventDefault();
-      annotationRef.current?.extendTo(event.clientX, event.clientY);
-      return;
-    }
-    if (!gesture) return;
-    if (gesture.kind === 'swipe' && gesture.pointerId === event.pointerId) {
-      event.preventDefault();
-      slide(
-        swipeShift(
-          gesture,
-          { x: event.clientX, y: event.clientY },
-          { back: step > 0, forward: step < (gallery?.length ?? 1) - 1 },
-        ),
-      );
-      return;
-    }
-    const [a, b] = [...pointersRef.current.values()];
-    if (gesture.kind === 'pinch' && a && b) {
-      event.preventDefault();
-      applyTransform(pinchTransform(gesture, a, b));
-    } else if (!drawing && gesture.kind === 'pan' && gesture.pointerId === event.pointerId) {
-      event.preventDefault();
-      applyTransform(panTransform(gesture, { x: event.clientX, y: event.clientY }));
-    }
-  }
-
-  function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
-    const swipe = gestureRef.current;
-    pointersRef.current.delete(event.pointerId);
-    if (drawing) annotationRef.current?.endStroke();
-    if (swipe?.kind === 'swipe' && swipe.pointerId === event.pointerId) {
-      // Let go with the transition back on, so a swipe that never reached its
-      // neighbour GLIDES home instead of snapping there.
-      if (transformedRef.current) transformedRef.current.style.transitionDuration = '';
-      slide(0);
-      // A CANCELLED pointer is the system taking the touch away — a call, a
-      // notification, the edge of the screen — and never a reader's decision, so
-      // the picture goes home and the gallery stays where it was.
-      const direction =
-        event.type === 'pointercancel'
-          ? 0
-          : swipeStep(swipe, { x: event.clientX, y: event.clientY });
-      if (direction) stepTo(step + direction);
-    }
-    // Lifting one finger of a pinch continues as a pan from where the other one
-    // is, instead of jumping the picture on the next move — unless the pen is
-    // out, where the remaining finger belongs to the stroke, never a pan.
-    const [remaining] = [...pointersRef.current.entries()];
-    gestureRef.current =
-      remaining && !drawing ? panFrom(remaining[0], remaining[1], transformRef.current) : null;
-    // Last finger up: restore the CSS transition so a clamp snap-back (e.g.
-    // pinching past 1x) and the toolbar's own zoom buttons animate again.
-    if (!gestureRef.current && transformedRef.current)
-      transformedRef.current.style.transitionDuration = '';
-  }
-
-  function zoomBy(factor: number) {
-    applyTransform(zoomedBy(transformRef.current, factor));
-  }
-
-  /**
-   * THE WHEEL AND THE TRACKPAD ARE TAKEN NATIVELY, NON-PASSIVE.
-   *
-   * React registers `onWheel` PASSIVE at the root, so a `preventDefault()` inside it
-   * is dropped on the floor and the browser zooms the whole page under the open
-   * picture — which on Safari, where a page zoom does not reset, is the "not
-   * reliable" half of the report. Safari also reports a trackpad pinch as its own
-   * `gesture*` events INSTEAD of the ctrl+wheel every other engine sends, so without
-   * these three listeners the viewer never sees a Safari pinch at all.
-   *
-   * Both paths go through {@link zoomedAbout}, so the pixel under the pointer stays
-   * under it, and through {@link wheelFactor}, so the step follows the distance
-   * scrolled instead of the number of events the browser happened to send.
-   */
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-
-    // A wheel burst writes the transform every frame, and the snap transition meant
-    // for the toolbar's buttons fights it exactly as a finger's does. It is restored
-    // once the burst stops — never while a finger still owns the picture.
-    let settle: ReturnType<typeof setTimeout> | undefined;
-    const direct = () => {
-      const node = transformedRef.current;
-      if (!node) return;
-      node.style.transitionDuration = '0ms';
-      clearTimeout(settle);
-      settle = setTimeout(() => {
-        if (!gestureRef.current) node.style.transitionDuration = '';
-      }, 120);
-    };
-    const frameCenter = (): Point => {
-      const box = viewport.getBoundingClientRect();
-      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-    };
-
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      if (drawing) return;
-      direct();
-      applyTransform(
-        zoomedAbout(
-          transformRef.current,
-          wheelFactor(event.deltaY, event.deltaMode, event.ctrlKey),
-          { x: event.clientX, y: event.clientY },
-          frameCenter(),
-        ),
-      );
-    };
-
-    // A Safari pinch reports its scale CUMULATIVELY from the gesture's start, so the
-    // transform it started from is what every change is measured against.
-    let base: Transform | null = null;
-    let baseScale = 1;
-    const onGestureStart = (event: SafariGestureEvent) => {
-      event.preventDefault();
-      if (drawing) return;
-      base = { ...transformRef.current };
-      baseScale = event.scale || 1;
-      direct();
-    };
-    const onGestureChange = (event: SafariGestureEvent) => {
-      event.preventDefault();
-      if (!base) return;
-      direct();
-      applyTransform(
-        zoomedAbout(
-          base,
-          (event.scale || 1) / baseScale,
-          { x: event.clientX, y: event.clientY },
-          frameCenter(),
-        ),
-      );
-    };
-    const onGestureEnd = (event: SafariGestureEvent) => {
-      event.preventDefault();
-      base = null;
-    };
-
-    const gestures: [string, (event: SafariGestureEvent) => void][] = [
-      ['gesturestart', onGestureStart],
-      ['gesturechange', onGestureChange],
-      ['gestureend', onGestureEnd],
-    ];
-    viewport.addEventListener('wheel', onWheel, { passive: false });
-    for (const [type, handler] of gestures) {
-      viewport.addEventListener(type, handler as EventListener, {
-        passive: false,
-      });
-    }
-    return () => {
-      clearTimeout(settle);
-      viewport.removeEventListener('wheel', onWheel);
-      for (const [type, handler] of gestures) {
-        viewport.removeEventListener(type, handler as EventListener);
-      }
-    };
-  }, [applyTransform, drawing]);
-
-  function toggleZoom() {
-    if (drawing) return;
-    if (transformRef.current.scale > 1) resetTransform();
-    else applyTransform({ scale: 2, x: 0, y: 0 });
-  }
-
   /**
    * Trim the picture to what the frame is SHOWING.
    *
@@ -558,7 +276,7 @@ export function ImageViewer({
    */
   async function trimToView() {
     const image = imageRef.current;
-    const frame = viewportRef.current;
+    const frame = zoom.viewportRef.current;
     if (!image || !frame) return;
     const part = visiblePart(image.getBoundingClientRect(), frame.getBoundingClientRect());
     if (!part) {
@@ -577,7 +295,7 @@ export function ImageViewer({
       // The strokes went INTO the trim; left on the layer they would be
       // painted a second time, stretched across the pixels that survived.
       annotationRef.current?.clear();
-      resetTransform();
+      zoom.reset();
       setTrimmed({ src: url, name: shown.name });
       setStatus(`Trimmed to ${size.width} × ${size.height}.`);
     } catch (cause) {
@@ -710,17 +428,13 @@ export function ImageViewer({
           viewport declares itself unselectable too, not only the sheet over the
           picture. */}
       <div
-        className="absolute inset-0 grid cursor-grab select-none place-items-center overflow-hidden overscroll-none px-4 pb-24 pt-[calc(5rem+env(safe-area-inset-top))] active:cursor-grabbing [touch-action:none] sm:pt-20"
-        onPointerDownCapture={beginGesture}
-        onPointerMove={moveGesture}
-        onPointerUp={endGesture}
-        onPointerCancel={endGesture}
-        onDoubleClick={toggleZoom}
-        ref={viewportRef}
+        className={`absolute inset-0 grid cursor-grab place-items-center px-4 pb-24 pt-[calc(5rem+env(safe-area-inset-top))] active:cursor-grabbing sm:pt-20 ${ZOOM_FRAME_CLASS}`}
+        {...zoom.handlers}
+        ref={zoom.viewportRef}
       >
         <div
-          ref={transformedRef}
-          className="relative inline-block origin-center transform-gpu transition-transform duration-100 motion-reduce:transition-none"
+          ref={zoom.transformedRef}
+          className={`relative inline-block ${ZOOMED_CLASS}`}
         >
           <img
             ref={imageRef}
@@ -752,7 +466,7 @@ export function ImageViewer({
           >
             <IconButton
               variant="secondary"
-              onClick={() => zoomBy(1 / 1.35)}
+              onClick={() => zoom.zoomBy(1 / 1.35)}
               label="Zoom out"
               title="Zoom out"
             >
@@ -761,14 +475,14 @@ export function ImageViewer({
             <Button
               variant="secondary"
               className="min-w-14"
-              onClick={resetTransform}
+              onClick={zoom.reset}
               aria-label="Reset zoom"
             >
-              <span ref={zoomLabelRef}>100%</span>
+              <span ref={zoom.labelRef}>100%</span>
             </Button>
             <IconButton
               variant="secondary"
-              onClick={() => zoomBy(1.35)}
+              onClick={() => zoom.zoomBy(1.35)}
               label="Zoom in"
               title="Zoom in"
             >
@@ -810,7 +524,7 @@ export function ImageViewer({
                   void applyEdit();
                   return;
                 }
-                resetTransform();
+                zoom.reset();
                 setDrawing((current) => !current);
                 setStatus('');
                 setError('');
@@ -846,7 +560,7 @@ export function ImageViewer({
               onClick={() => {
                 annotationRef.current?.clear();
                 dropTrim();
-                resetTransform();
+                zoom.reset();
                 setStatus('');
                 setError('');
               }}

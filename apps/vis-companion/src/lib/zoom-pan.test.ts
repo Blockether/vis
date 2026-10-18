@@ -20,6 +20,11 @@ import {
   swipeFrom,
   swipeShift,
   swipeStep,
+  DOUBLE_TAP_MS,
+  DOUBLE_TAP_PX,
+  DOUBLE_TAP_ZOOM,
+  isDoubleTap,
+  toggledZoom,
 } from './zoom-pan';
 
 // The viewer's geometry, stated without a screen: pinching a phone used to be
@@ -244,5 +249,23 @@ describe('a swipe through a gallery', () => {
 
   it('stays still under a finger sliding down the picture', () => {
     expect(swipeShift(swipe, { x: 210, y: 400 }, both)).toBe(0);
+  });
+});
+
+describe('a double tap', () => {
+  const center = { x: 200, y: 300 };
+
+  it('zooms a fitted picture in about the tapped point, and a zoomed one back', () => {
+    const zoomed = toggledZoom(NO_TRANSFORM, { x: 300, y: 300 }, center);
+    expect(zoomed).toEqual({ scale: DOUBLE_TAP_ZOOM, x: -100, y: 0 });
+    expect(toggledZoom(zoomed, { x: 50, y: 50 }, center)).toEqual(NO_TRANSFORM);
+  });
+
+  it('is two taps close in time and space', () => {
+    const first = { at: { x: 100, y: 100 }, time: 1000 };
+    expect(isDoubleTap(null, first)).toBe(false);
+    expect(isDoubleTap(first, { at: { x: 110, y: 100 }, time: 1000 + DOUBLE_TAP_MS })).toBe(true);
+    expect(isDoubleTap(first, { at: { x: 100, y: 100 }, time: 1001 + DOUBLE_TAP_MS })).toBe(false);
+    expect(isDoubleTap(first, { at: { x: 101 + DOUBLE_TAP_PX, y: 100 }, time: 1100 })).toBe(false);
   });
 });

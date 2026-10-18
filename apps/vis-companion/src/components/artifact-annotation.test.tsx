@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayClient } from '../lib/gateway';
 import { DocOverlay } from './DocArtifact';
-import { PAGE_SWIPE_PX, rasterScale, scrollToKeep, spotUnder, swipeTurn } from './PdfArtifact';
+import { rasterScale } from './PdfArtifact';
 import { renderPdfPage } from '../lib/pdf-annotate';
 import { AttachmentRail } from './ChatContent';
 import { resetAnnotationDraftCache } from '../lib/annotation-drafts';
 import { EDGE_ZONE_PX } from '../lib/edge-back';
-import { drag, fireTouch } from '../lib/pull-to-search.fixture';
+import { SWIPE_TRAVEL } from '../lib/zoom-pan';
 
 // An opened document keeps unsaved remarks on the device (`lib/annotation-drafts`); these
 // tests own what it holds, so its native half is a map they can empty.
@@ -123,6 +123,47 @@ async function settle() {
     await Promise.resolve();
     await new Promise((done) => setTimeout(done, 0));
   });
+}
+
+/** Open a three-page PDF in its overlay and wait for its first page. */
+async function openPdf() {
+  // jsdom does not capture pointers; the gestures ask for it all the same.
+  Element.prototype.setPointerCapture = vi.fn();
+  await act(async () => {
+    root.render(
+      <DocOverlay
+        name="report.pdf"
+        mime="application/pdf"
+        url="blob:pdf"
+        failed={false}
+        annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
+        onClose={() => undefined}
+      />,
+    );
+  });
+  await settle();
+}
+
+function pageImage() {
+  const image = host.querySelector<HTMLImageElement>('img[aria-label^="Page "]');
+  if (!image) throw new Error('no page on screen');
+  return image;
+}
+
+/** One finger event on `target`, as a phone sends it. */
+function finger(target: Element, type: string, pointerId: number, at: { x: number; y: number }) {
+  const event = new PointerEvent(type, {
+    pointerId,
+    pointerType: 'touch',
+    clientX: at.x,
+    clientY: at.y,
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => {
+    target.dispatchEvent(event);
+  });
+  return event;
 }
 
 beforeEach(() => {
@@ -307,26 +348,19 @@ describe('an artifact opened from the transcript', () => {
       'fetch',
       vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]))),
     );
-    await act(async () => {
-      root.render(
-        <DocOverlay
-          name="report.pdf"
-          mime="application/pdf"
-          url="blob:pdf"
-          failed={false}
-          annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
-          onClose={() => undefined}
-        />,
-      );
-    });
-    await settle();
+    await openPdf();
     const band = host.querySelector('header')!;
-    const page = () => host.querySelector('img[aria-label^="Page "]')!;
-    const stroke = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
-      act(() => drag(page(), from, [to]));
+    const stroke = async (
+      from: { x: number; y: number },
+      to: { x: number; y: number },
+      end: 'pointerup' | 'pointercancel' = 'pointerup',
+    ) => {
+      finger(pageImage(), 'pointerdown', 1, from);
+      finger(pageImage(), 'pointermove', 1, to);
+      finger(pageImage(), end, 1, to);
       await settle();
     };
-    const far = PAGE_SWIPE_PX + 12;
+    const far = SWIPE_TRAVEL + 12;
 
     // A stroke to the left brings the next page in.
     await stroke({ x: 200, y: 300 }, { x: 200 - far, y: 310 });
@@ -341,107 +375,76 @@ describe('an artifact opened from the transcript', () => {
     expect(band.textContent).toContain('Page 2 of 3');
 
     // Too short, mostly vertical, or from the back-stroke edge strip: no turn.
-    await stroke({ x: 200, y: 300 }, { x: 200 - (PAGE_SWIPE_PX - 8), y: 300 });
+    await stroke({ x: 200, y: 300 }, { x: 200 - (SWIPE_TRAVEL - 8), y: 300 });
     await stroke({ x: 200, y: 300 }, { x: 200 - far, y: 300 + far * 2 });
     await stroke({ x: EDGE_ZONE_PX - 4, y: 300 }, { x: EDGE_ZONE_PX - 4 + far, y: 300 });
+    // A cancelled stroke belongs to the system.
+    await stroke({ x: 200, y: 300 }, { x: 200 - far, y: 300 }, 'pointercancel');
     expect(band.textContent).toContain('Page 2 of 3');
 
-    // A second finger is a pinch, and a cancelled stroke belongs to the browser.
-    act(() => {
-      fireTouch(page(), 'touchstart', [{ x: 200, y: 300 }]);
-      fireTouch(page(), 'touchmove', [
-        { x: 200 - far, y: 300 },
-        { x: 260, y: 360 },
-      ]);
-      fireTouch(page(), 'touchend', []);
-    });
-    await settle();
-    act(() => drag(page(), { x: 200, y: 300 }, [{ x: 200 - far, y: 300 }], 'cancel'));
+    // A second finger is a pinch.
+    finger(pageImage(), 'pointerdown', 1, { x: 200, y: 300 });
+    finger(pageImage(), 'pointerdown', 2, { x: 260, y: 360 });
+    finger(pageImage(), 'pointermove', 1, { x: 200 - far, y: 300 });
+    finger(pageImage(), 'pointerup', 1, { x: 200 - far, y: 300 });
+    finger(pageImage(), 'pointerup', 2, { x: 260, y: 360 });
     await settle();
     expect(band.textContent).toContain('Page 2 of 3');
   });
 
-  // Requested: on iOS and on a desk, a PDF page scrolls and zooms like a page of the
-  // phone's own reader, instead of standing fitted and still.
-  it('zooms the page with a pinch, a ctrl+wheel and a double click, and scrolls it natively', async () => {
-    // jsdom lays nothing out: the scroller is a 400 x 600 box.
+  // Requested: a PDF page zooms exactly as a picture does in the drawing viewer —
+  // both take their gestures from `lib/zoom-surface`.
+  it('zooms the page with the gestures of the drawing viewer', async () => {
+    // jsdom lays nothing out: the frame is a 400 x 600 box.
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400);
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]))),
     );
-    await act(async () => {
-      root.render(
-        <DocOverlay
-          name="report.pdf"
-          mime="application/pdf"
-          url="blob:pdf"
-          failed={false}
-          annotate={{ client: gatewayStub(2), sid: 's1', iterationId: 'i1' }}
-          onClose={() => undefined}
-        />,
-      );
-    });
-    await settle();
-    const img = () => host.querySelector<HTMLImageElement>('img[aria-label^="Page "]')!;
-    const sheet = () => img().parentElement!;
-    const scroller = () => sheet().parentElement!;
-    const width = () => parseFloat(sheet().style.width);
+    await openPdf();
+    const sheet = () => pageImage().parentElement!;
+    const frame = () => sheet().parentElement!;
+    const scale = () => Number(/scale\(([\d.]+)\)/.exec(sheet().style.transform)?.[1]);
 
-    // Fitted: the 3:4 page takes the width of the box. The scroller scrolls natively,
-    // and the browser keeps every pan but no zoom of its own.
-    expect(width()).toBe(400);
+    // Fitted: the 3:4 page takes the width of the box, and the browser keeps no
+    // gesture of its own.
+    expect(sheet().style.width).toBe('400px');
     expect(sheet().style.height).toBe(`${400 / 0.75}px`);
-    expect(scroller().className).toContain('overflow-auto');
-    expect(scroller().className).toContain('[touch-action:pan-x_pan-y]');
+    expect(frame().className).toContain('[touch-action:none]');
+    expect(scale()).toBe(1);
 
-    // A plain wheel is a scroll, left to the browser.
-    const plain = new WheelEvent('wheel', { deltaY: 120, cancelable: true, bubbles: true });
+    // The wheel zooms, as in the drawing viewer, and the browser does not zoom the app.
+    const wheel = new WheelEvent('wheel', { deltaY: -120, cancelable: true, bubbles: true });
     act(() => {
-      scroller().dispatchEvent(plain);
+      frame().dispatchEvent(wheel);
     });
-    expect(plain.defaultPrevented).toBe(false);
-    expect(width()).toBe(400);
-
-    // A ctrl+wheel (a trackpad pinch) zooms in, and the browser does not zoom the app.
-    const pinchWheel = new WheelEvent('wheel', {
-      deltaY: -40,
-      ctrlKey: true,
-      cancelable: true,
-      bubbles: true,
-    });
-    act(() => {
-      scroller().dispatchEvent(pinchWheel);
-    });
-    expect(pinchWheel.defaultPrevented).toBe(true);
-    expect(width()).toBeGreaterThan(400);
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(scale()).toBeGreaterThan(1);
 
     // A zoomed page is panned by a sideways stroke, never turned.
-    act(() => drag(img(), { x: 300, y: 300 }, [{ x: 300 - PAGE_SWIPE_PX - 20, y: 300 }]));
+    const before = sheet().style.transform;
+    finger(pageImage(), 'pointerdown', 1, { x: 300, y: 300 });
+    finger(pageImage(), 'pointermove', 1, { x: 300 - SWIPE_TRAVEL - 20, y: 300 });
+    finger(pageImage(), 'pointerup', 1, { x: 300 - SWIPE_TRAVEL - 20, y: 300 });
     await settle();
     expect(host.querySelector('header')!.textContent).toContain('Page 1 of 3');
+    expect(sheet().style.transform).not.toBe(before);
 
     // A page turn starts the next page fitted.
     press('button[aria-label="Next page"]');
     await settle();
-    expect(width()).toBe(400);
+    expect(scale()).toBe(1);
 
     // Two fingers drawn twice as far apart zoom in twice; the app keeps the move.
-    let move: Event | undefined;
-    act(() => {
-      fireTouch(img(), 'touchstart', [
-        { x: 150, y: 300 },
-        { x: 250, y: 300 },
-      ]);
-      move = fireTouch(img(), 'touchmove', [
-        { x: 100, y: 300 },
-        { x: 300, y: 300 },
-      ]);
-      fireTouch(img(), 'touchend', []);
-    });
-    expect(move?.defaultPrevented).toBe(true);
-    expect(width()).toBe(800);
+    finger(pageImage(), 'pointerdown', 1, { x: 150, y: 300 });
+    finger(pageImage(), 'pointerdown', 2, { x: 250, y: 300 });
+    finger(pageImage(), 'pointermove', 1, { x: 100, y: 300 });
+    const move = finger(pageImage(), 'pointermove', 2, { x: 300, y: 300 });
+    finger(pageImage(), 'pointerup', 1, { x: 100, y: 300 });
+    finger(pageImage(), 'pointerup', 2, { x: 300, y: 300 });
+    expect(move.defaultPrevented).toBe(true);
+    expect(scale()).toBe(2);
     // Once the zoom rests, the page is drawn again more sharply.
     await act(async () => {
       await new Promise((done) => setTimeout(done, 260));
@@ -450,33 +453,25 @@ describe('an artifact opened from the transcript', () => {
 
     // A double click goes back to the fitted page, and another one zooms in again.
     act(() => {
-      scroller().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 200 }));
+      frame().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 200 }));
     });
-    expect(width()).toBe(400);
+    expect(scale()).toBe(1);
     act(() => {
-      scroller().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 200 }));
+      frame().dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 200 }));
     });
-    expect(width()).toBe(800);
+    expect(scale()).toBe(2);
+
+    // A double tap of a finger does the same on a phone.
+    for (let tap = 0; tap < 2; tap += 1) {
+      finger(pageImage(), 'pointerdown', 1, { x: 200, y: 300 });
+      finger(pageImage(), 'pointerup', 1, { x: 200, y: 300 });
+    }
+    expect(scale()).toBe(1);
   });
 
-  it('keeps the point under the fingers where it was while the page zooms', () => {
-    const at = { x: 120, y: 340 };
-    const offset = { x: 8, y: 8 };
-    const spot = spotUnder(at, { x: 50, y: 70 }, offset, 1.5);
-    const scroll = scrollToKeep(spot, 3, at, offset);
-    const back = spotUnder(at, scroll, offset, 3);
-    expect(back.x).toBeCloseTo(spot.x, 9);
-    expect(back.y).toBeCloseTo(spot.y, 9);
+  it('draws a zoomed page again at a higher density', () => {
     expect(rasterScale(1)).toBe(2);
     expect(rasterScale(2)).toBe(4);
-  });
-
-  it('reads a stroke as a page turn only when it is long and mostly sideways', () => {
-    const from = { x: 200, y: 300 };
-    expect(swipeTurn(from, { x: 200 - PAGE_SWIPE_PX, y: 300 })).toBe(1);
-    expect(swipeTurn(from, { x: 200 + PAGE_SWIPE_PX, y: 300 })).toBe(-1);
-    expect(swipeTurn(from, { x: 200 - PAGE_SWIPE_PX + 1, y: 300 })).toBe(0);
-    expect(swipeTurn(from, { x: 200 - PAGE_SWIPE_PX, y: 300 + PAGE_SWIPE_PX })).toBe(0);
   });
 
   // Regression, user report: clicking ‹ › flickered the very cells being clicked,
