@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -366,7 +366,8 @@ describe('an opened document', () => {
         />,
       );
       await userEvent.click(screen.getByRole('button', { name: 'Share' }));
-      expect(await screen.findByRole('status')).toHaveTextContent('Artifact shared.');
+      // The status region exists before the share ends, so wait for its text, not for the region.
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Artifact shared.'));
       expect(share.mock.calls[0]?.[0]).toEqual({ files: [expect.any(File)] });
       expect(share.mock.calls[0]?.[0].files?.[0]).toMatchObject({
         name: 'shared.pdf',
