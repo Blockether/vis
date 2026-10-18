@@ -11,11 +11,12 @@ import {
   EDGE_PARALLAX,
   EDGE_SETTLE_MS,
   EDGE_STEP_WAIT_MS,
-  EDGE_UNDER_DIM,
+  EDGE_DIM,
   EDGE_ZONE_PX,
   dismissTopLayer,
   edgeIsFree,
   edgeMove,
+  edgeSettleMs,
   edgeStart,
   useBackLayer,
   useEdgeBack,
@@ -170,6 +171,13 @@ function settle(): void {
   });
 }
 
+/** The veil the stroke stands over the list, just before the pane. */
+const veilOf = (pane: HTMLElement): HTMLElement => {
+  const veil = pane.previousElementSibling;
+  if (!(veil instanceof HTMLElement) || !('edgeVeil' in veil.dataset)) throw new Error('no veil');
+  return veil;
+};
+
 /** Where a pane has been carried, in px. */
 const xOf = (element: HTMLElement): number =>
   Number(/translateX\((-?[\d.]+)px\)/.exec(element.style.transform)?.[1] ?? NaN);
@@ -291,13 +299,97 @@ describe('the pop the stroke draws', () => {
     // it down, and it follows the finger one for one.
     expect(pane.style.position).toBe('absolute');
     expect(xOf(pane)).toBe(60);
-    // The list waits a third of the width back, dimmed, and has already begun to
+    // The list waits a third of the width back, in the shade, and has already begun to
     // come home.
     const parked = window.innerWidth * EDGE_PARALLAX;
     expect(xOf(list)).toBeGreaterThan(-parked);
     expect(xOf(list)).toBeLessThan(0);
-    expect(Number(list.style.opacity)).toBeGreaterThan(EDGE_UNDER_DIM);
-    expect(Number(list.style.opacity)).toBeLessThan(1);
+    const veil = veilOf(pane);
+    expect(Number(veil.style.opacity)).toBeLessThan(EDGE_DIM);
+    expect(Number(veil.style.opacity)).toBeGreaterThan(0);
+  });
+
+  // Reported: the swipe back did not feel like the iOS one. The list behind the page
+  // turned pale instead of dark, because its own opacity let the light shell through.
+  it('puts the list in the shade with a veil between it and the transcript', () => {
+    const { getByTestId } = render(<OpenSession onBack={vi.fn()} />);
+    const pane = getByTestId('pane');
+    const list = getByTestId('list');
+
+    act(() => {
+      fireTouch(getByTestId('line'), 'touchstart', [AT]);
+      fireTouch(getByTestId('line'), 'touchmove', [across(60)]);
+    });
+
+    const veil = veilOf(pane);
+    expect(veil.getAttribute('aria-hidden')).toBe('true');
+    expect(veil.style.background).toBe('rgb(0, 0, 0)');
+    expect(veil.style.pointerEvents).toBe('none');
+    // Above the list, below the page that leaves.
+    expect(veil.nextElementSibling).toBe(pane);
+    expect(list.compareDocumentPosition(veil) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    // The list is never made see-through.
+    expect(list.style.opacity).toBe('');
+  });
+
+  // Reported with the same: the first move of the stroke stuck, then jumped, because
+  // the app bar and the list came back in a React commit inside that move's frame.
+  it('sets the stage under the finger before it moves, and takes it down after a tap', () => {
+    const onBack = vi.fn();
+    const { getByTestId } = render(<OpenSession onBack={onBack} />);
+    const pane = getByTestId('pane');
+    const list = getByTestId('list');
+
+    act(() => {
+      fireTouch(getByTestId('line'), 'touchstart', [AT]);
+    });
+    expect(pane.style.position).toBe('absolute');
+    expect(xOf(pane)).toBe(0);
+    // Nothing of the stage shows behind a page that has not moved.
+    expect(pane.style.boxShadow).toBe('');
+
+    act(() => {
+      fireTouch(getByTestId('line'), 'touchend', []);
+    });
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(pane.style.cssText).toBe('');
+    expect(list.style.cssText).toBe('');
+    expect(document.querySelector('[data-edge-veil]')).toBe(null);
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it('carries on at the speed of the finger instead of lurching ahead of it', () => {
+    // The curve starts at 0.72 / 0.32 of its average speed.
+    const launch = (remaining: number, velocity: number) =>
+      ((0.72 / 0.32) * remaining) / edgeSettleMs(remaining, velocity);
+    expect(launch(300, 2)).toBeCloseTo(2, 1);
+    expect(launch(150, 1.5)).toBeCloseTo(1.5, 1);
+    // A slow finger still gets the whole pop, never a crawl.
+    expect(edgeSettleMs(300, 0.1)).toBe(EDGE_SETTLE_MS);
+  });
+
+  it('completes a short throw, but not a finger that stopped before it let go', () => {
+    const throwIn = (holdMs: number) => {
+      const onBack = vi.fn();
+      const { getByTestId, unmount } = render(<OpenSession onBack={onBack} />);
+      const line = getByTestId('line');
+      act(() => {
+        fireTouch(line, 'touchstart', [AT], 1000);
+        fireTouch(line, 'touchmove', [across(15)], 1010);
+        fireTouch(line, 'touchmove', [across(30)], 1020);
+        fireTouch(line, 'touchend', [], 1020 + holdMs);
+      });
+      settle();
+      const calls = onBack.mock.calls.length;
+      unmount();
+      return calls;
+    };
+    expect(throwIn(10)).toBe(1);
+    expect(throwIn(300)).toBe(0);
   });
 
   it("carries the rest of the way on iOS' own curve, and only then takes the step", () => {
@@ -311,7 +403,7 @@ describe('the pop the stroke draws', () => {
     expect(pane.style.transition).toContain(EDGE_EASING);
     expect(xOf(pane)).toBe(window.innerWidth);
     expect(xOf(list)).toBe(0);
-    expect(list.style.opacity).toBe('1');
+    expect(veilOf(pane).style.opacity).toBe('0');
     // The transcript is off the glass BEFORE it is off the shell, or the list
     // would appear under a pane that is still sliding.
     expect(onBack).not.toHaveBeenCalled();
@@ -374,7 +466,7 @@ describe('the pop the stroke draws', () => {
 
     expect(xOf(pane)).toBe(0);
     expect(xOf(list)).toBe(-window.innerWidth * EDGE_PARALLAX);
-    expect(list.style.opacity).toBe(`${EDGE_UNDER_DIM}`);
+    expect(veilOf(pane).style.opacity).toBe(`${EDGE_DIM}`);
 
     settle();
     expect(onBack).not.toHaveBeenCalled();

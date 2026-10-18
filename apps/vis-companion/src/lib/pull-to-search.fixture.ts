@@ -15,13 +15,22 @@ export type TouchPhase = 'touchstart' | 'touchmove' | 'touchend' | 'touchcancel'
 
 /**
  * Dispatch one touch event on `element` with `fingers` down. Answers the event, so a
- * test can also ask what the gesture under it was allowed to do.
+ * test can also ask what the gesture under it was allowed to do. `timeStamp`, in ms,
+ * is when the finger was there, for a gesture that reads the finger's speed. It
+ * defaults to `performance.now()`, the clock a browser stamps events with; jsdom
+ * stamps the wall clock instead, which fake timers do not hold still.
  */
-export function fireTouch(element: Element, type: TouchPhase, fingers: PullPoint[]): Event {
+export function fireTouch(
+  element: Element,
+  type: TouchPhase,
+  fingers: PullPoint[],
+  timeStamp?: number,
+): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
   const touches = fingers.map((finger) => ({ clientX: finger.x, clientY: finger.y }));
   Object.defineProperty(event, 'touches', { value: touches });
   Object.defineProperty(event, 'changedTouches', { value: touches });
+  Object.defineProperty(event, 'timeStamp', { value: timeStamp ?? performance.now() });
   element.dispatchEvent(event);
   return event;
 }

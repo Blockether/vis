@@ -12,15 +12,15 @@
  *
  * AND IT HAS TO LOOK LIKE THE PHONE'S OWN. A way back that only jumps reads as a
  * bug on iOS, so the stroke DRAGS: the transcript rides the finger with the list
- * already standing behind it — a third of the width back and dimmed, the way
+ * already standing behind it — a third of the width back and darkened, the way
  * UIKit parks the page underneath — and the lift finishes the pop in whichever
  * direction the finger was going, at the speed it was going.
  *
  * The numbers are UIKit's, read off the implementation Apple's own shape is
  * measured against (`ios.transition.ts` and `swipe-back.ts` in Ionic): a 0.33
- * parallax, a 0.8 dim under the page being left, `cubic-bezier(0.32, 0.72, 0, 1)`
- * and at most 540ms for the rest of the way. A reader who asked for less motion
- * keeps the plain step, with no slide at all.
+ * parallax, a 10% black veil over the page underneath, `cubic-bezier(0.32, 0.72,
+ * 0, 1)` and at most 540ms for the rest of the way. A reader who asked for less
+ * motion keeps the plain step, with no slide at all.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -136,8 +136,24 @@ export const EDGE_STEP_WAIT_MS = 1000;
 /** How far behind the page being left the one underneath waits: a third of the width. */
 export const EDGE_PARALLAX = 0.33;
 
-/** How dim that page is while it waits, and 1 once it is back in front. */
-export const EDGE_UNDER_DIM = 0.8;
+/**
+ * How dark the veil over that page is while it waits, and 0 once it is back in front.
+ *
+ * It is a black veil, never the page's own opacity: a page made translucent shows
+ * the shell through it, and on a light theme that WASHES the list out instead of
+ * putting it in the shade the way UIKit's dimming view does.
+ */
+export const EDGE_DIM = 0.1;
+
+/**
+ * How much faster than its average speed the curve starts: the slope of
+ * {@link EDGE_EASING} at 0, `0.72 / 0.32`. The rest of the stroke is timed so that
+ * the page leaves the finger at the finger's own speed instead of lurching ahead.
+ */
+const EDGE_LAUNCH = 0.72 / 0.32;
+
+/** A finger held still this long before the lift was not thrown, in ms. */
+const EDGE_STILL_MS = 80;
 
 /** A throw, in px/ms: past this speed the lift completes however short the stroke was. */
 export const EDGE_FLICK_PX_MS = 0.2;
@@ -168,15 +184,17 @@ export function edgeCompletes(across: number, velocity: number): boolean {
 }
 
 /**
- * How long the rest of the stroke takes. It carries on at the speed the finger
- * was already travelling, never longer than a full-length pop — and a page that
- * is as good as home is simply put there.
+ * How long the rest of the stroke takes. The curve starts at {@link EDGE_LAUNCH}
+ * times its average speed, so a duration of that many times `remaining / speed`
+ * makes the page carry on at the speed the finger was already travelling. It is
+ * never longer than a full-length pop, and a page that is as good as home is
+ * simply put there.
  */
 export function edgeSettleMs(remainingPx: number, velocity: number): number {
   if (remainingPx <= 5) return 0;
   const speed = Math.abs(velocity);
   if (speed < 0.01) return EDGE_SETTLE_MS;
-  return Math.min(Math.round(remainingPx / speed), EDGE_SETTLE_MS);
+  return Math.min(Math.round((EDGE_LAUNCH * remainingPx) / speed), EDGE_SETTLE_MS);
 }
 
 /**
@@ -187,6 +205,8 @@ export function edgeSettleMs(remainingPx: number, velocity: number): number {
 interface EdgeStage {
   readonly pane: HTMLElement;
   readonly under: HTMLElement | null;
+  /** The black veil that puts `under` in the shade, between it and the pane. */
+  readonly veil: HTMLElement | null;
   /** How far the transcript has to travel to be gone. */
   readonly width: number;
   readonly paneStyle: string;
@@ -215,9 +235,11 @@ function edgeOpen(pane: HTMLElement, under: HTMLElement | null, isLayer: boolean
   const frame = shell?.getBoundingClientRect();
   const width = box.width || frame?.width || view?.innerWidth || 0;
   const height = box.height || frame?.height || view?.innerHeight || 0;
+  const veil = under && frame && !isLayer && pane.parentElement ? edgeVeil(pane) : null;
   const stage: EdgeStage = {
     pane,
     under,
+    veil,
     width,
     paneStyle: pane.style.cssText,
     underStyle: under?.style.cssText ?? '',
@@ -234,12 +256,28 @@ function edgeOpen(pane: HTMLElement, under: HTMLElement | null, isLayer: boolean
   }
   pane.style.transition = '';
   pane.style.willChange = 'transform';
-  pane.style.boxShadow = EDGE_SHADOW;
   if (under) {
     under.style.transition = '';
-    under.style.willChange = 'transform, opacity';
+    under.style.willChange = 'transform';
   }
   return stage;
+}
+
+/**
+ * The veil stands just before the pane, in the same parent: later in the tree than
+ * the list and the app bar that come back, so above them at the same z-index, and
+ * below the transcript that leaves. It is pinned to the shell as the pane is, and it
+ * never takes a touch.
+ */
+function edgeVeil(pane: HTMLElement): HTMLElement {
+  const veil = pane.ownerDocument.createElement('div');
+  veil.setAttribute('aria-hidden', 'true');
+  veil.dataset.edgeVeil = '';
+  veil.style.cssText =
+    'position:absolute;inset:0;z-index:30;pointer-events:none;background:#000;will-change:opacity;';
+  veil.style.opacity = `${EDGE_DIM}`;
+  pane.before(veil);
+  return veil;
 }
 
 /** Stand both panes where a stroke this far across puts them. */
@@ -247,9 +285,12 @@ function edgePaint(stage: EdgeStage, across: number): void {
   const travelled = Math.max(0, Math.min(across, stage.width));
   const step = stage.width > 0 ? travelled / stage.width : 0;
   stage.pane.style.transform = `translateX(${travelled}px)`;
+  // The shadow only once the page has moved: a stage set up under a finger that has not
+  // moved yet must not show anything at all.
+  if (travelled > 0 && !stage.pane.style.boxShadow) stage.pane.style.boxShadow = EDGE_SHADOW;
+  if (stage.veil) stage.veil.style.opacity = `${EDGE_DIM * (1 - step)}`;
   if (!stage.under) return;
   stage.under.style.transform = `translateX(${-(1 - step) * stage.width * EDGE_PARALLAX}px)`;
-  stage.under.style.opacity = `${EDGE_UNDER_DIM + (1 - EDGE_UNDER_DIM) * step}`;
 }
 
 /** Carry both panes the rest of the way, out of the stack or home again. */
@@ -257,6 +298,7 @@ function edgeSettle(stage: EdgeStage, completes: boolean, ms: number): void {
   const ride = ms > 0 ? `transform ${ms}ms ${EDGE_EASING}, opacity ${ms}ms ${EDGE_EASING}` : '';
   stage.pane.style.transition = ride;
   if (stage.under) stage.under.style.transition = ride;
+  if (stage.veil) stage.veil.style.transition = ride;
   edgePaint(stage, completes ? stage.width : 0);
 }
 
@@ -264,6 +306,7 @@ function edgeSettle(stage: EdgeStage, completes: boolean, ms: number): void {
 function edgeClose(stage: EdgeStage): void {
   stage.pane.style.cssText = stage.paneStyle;
   if (stage.under) stage.under.style.cssText = stage.underStyle;
+  stage.veil?.remove();
 }
 
 /** Does this reader want the motion at all? */
@@ -421,10 +464,10 @@ export function useEdgeBack(
 
     // The finger's own speed, smoothed, because the last pair of points alone is
     // as likely to describe a stumble as a throw.
-    const track = (at: EdgePoint) => {
-      const now = performance.now();
+    const track = (at: EdgePoint, now: number) => {
       const since = now - lastAt;
-      if (since <= 0) return;
+      // Moves that arrive together, under a millisecond apart, describe no speed.
+      if (since < 1) return;
       const instant = (at.x - lastX) / since;
       velocity = Math.max(
         -EDGE_TOP_PX_MS,
@@ -497,8 +540,16 @@ export function useEdgeBack(
       // the few touches that landed where the gesture could begin at all.
       gesture = started && edgeIsFree(touchEvent.target, pane, isLayer) ? started : null;
       velocity = 0;
-      lastAt = performance.now();
+      lastAt = event.timeStamp;
       lastX = at?.x ?? 0;
+      // THE STAGE IS SET UNDER THE FINGER, BEFORE IT MOVES. Bringing the app bar and the
+      // list back is a React commit; made at the first move, it took that move's frame
+      // and the page stuck, then jumped. Behind a page that has not moved, it is unseen.
+      if (gesture && !isLayer && wantsMotion(view)) {
+        stage = edgeOpen(pane, under.current, isLayer);
+        edgePaint(stage, 0);
+        setSwiping(true);
+      }
     };
 
     const onMove = (event: Event) => {
@@ -506,7 +557,7 @@ export function useEdgeBack(
       const touchEvent = event as TouchEvent;
       const at = pointOf(touchEvent);
       const next = at ? edgeMove(gesture, touchEvent.touches.length, at) : null;
-      if (at) track(at);
+      if (at) track(at, event.timeStamp);
       if (!next) {
         // The stroke stopped being a way back — the finger turned into a scroll,
         // or carried the page home. Whatever it had already dragged goes back.
@@ -523,8 +574,10 @@ export function useEdgeBack(
     };
 
     // The lift is the commitment.
-    const onEnd = () => {
+    const onEnd = (event: Event) => {
       if (!gesture) return;
+      // A finger that stopped before it let go throws nothing, whatever it did before.
+      if (event.timeStamp - lastAt > EDGE_STILL_MS) velocity = 0;
       const completes = edgeCompletes(gesture.across, velocity);
       finish(completes, gesture.across);
     };
