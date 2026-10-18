@@ -888,9 +888,10 @@
 (defn grant-files
   "Add file rules to the grant of a subagent. Use it to answer a file request (status asking with
    files_request), or before council.resume. files holds write, read_only and deny rules, like a
-   task dict. A child without write rules writes only the granted rules after a write grant. The
-   child gets the new access at its next block. Returns the record, with a warning when an active
-   sibling can write the same files."
+   task dict. A grant gives at most your own access: a write rule outside your writable roots or
+   under your deny rules fails, and your deny rules stay closed to the child. A child without write
+   rules writes only the granted rules after a write grant. The child gets the new access at its
+   next block. Returns the record, with a warning when an active sibling can write the same files."
   [env session-id files]
   (let [{:keys [session_id files]}
         (checked env :grant {:session_id session-id :files files})

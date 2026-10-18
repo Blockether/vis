@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.sandbox.policy-test
   (:require [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
@@ -528,4 +529,31 @@
         (expect (true? (:write-limited? none)))
         (expect (= [] (:write-rules none) (:allow-read-write none))))
       (expect (some #{root}
-                    (get-in (policy/access-view narrowed [root]) ["filesystem" "read_only"]))))))
+                    (get-in (policy/access-view narrowed [root]) ["filesystem" "read_only"])))))
+  (it
+    "never gives a child more than its parent: the parent's deny rules survive a wide grant"
+    (let [root
+          (.getCanonicalPath (doto (File. (System/getProperty "java.io.tmpdir")
+                                          (str "visgrant-" (System/nanoTime)))
+                               (.mkdirs)))
+
+          config
+          (fn [jail?]
+            {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+             "jail" {"enabled" jail?
+                     "filesystem"
+                     {"allow" ["project"] "deny_read" [".env"] "deny_write" ["src/secret"]}}})]
+
+      (doseq [jail? [true false]]
+        (let [narrowed (policy/restrict (policy/snapshot (config jail?) {:base-dir root})
+                                        {:write ["**"]})
+              jail (:process-jail narrowed)
+              env {:security-policy narrowed}]
+
+          (expect (= [(str root "/**")] (:write-rules jail)))
+          (expect (some #{(str root "/src/secret")} (:deny-write-rules jail)))
+          (expect (some #{(str root "/.env")} (:deny-read-rules jail)))
+          ;; The host file tools ask the same rules, so a grant never opens a closed path.
+          (expect (some? (process-jail/deny-refusal env "file-write" (str root "/src/secret/key"))))
+          (expect (some? (process-jail/deny-refusal env "file-read" (str root "/.env"))))
+          (expect (nil? (process-jail/deny-refusal env "file-write" (str root "/src/ok.txt")))))))))
