@@ -5347,15 +5347,18 @@
 (defn- agent-row
   [row]
   (when row
-    (-> row
-        (update :allowed_models
-                (fn [value]
-                  (some->> (<-json value)
-                           (mapv #(update-keys % keyword)))))
-        (update :files
-                #(some-> %
-                         <-json
-                         (update-keys keyword))))))
+    (let [files (some-> (:files row)
+                        <-json
+                        (update-keys keyword))]
+      ;; A child without a file grant has no files key: the agent contract allows only an object.
+      (cond-> (-> row
+                  (dissoc :files)
+                  (update :allowed_models
+                          (fn [value]
+                            (some->> (<-json value)
+                                     (mapv #(update-keys % keyword))))))
+        files
+        (assoc :files files)))))
 
 (defn db-agent-info
   "Managed-child metadata, without its potentially large context snapshot."

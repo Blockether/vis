@@ -1268,6 +1268,8 @@
         (fork n))
       (expect (= :agent-limit (refusal agents/max-active-children)))
       (expect (= agents/max-active-children (count (ps/db-agent-list db leader))))
+      ;; The agent contract allows files only as an object, so a child without a grant has no key.
+      (expect (not-any? #(contains? % :files) (ps/db-agent-list db leader)))
       (let [[idle] (map :session_id (ps/db-agent-list db leader))]
         (ps/db-agent-update! db idle {:status "completed"})
         (fork agents/max-active-children)
