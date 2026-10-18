@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
 import { DocOverlay } from './DocArtifact';
 import { rasterScale } from './PdfArtifact';
-import { renderPdfPage } from '../lib/pdf-annotate';
 import { AttachmentRail } from './ChatContent';
 import { resetAnnotationDraftCache } from '../lib/annotation-drafts';
 import { EDGE_ZONE_PX } from '../lib/edge-back';
@@ -33,19 +32,20 @@ vi.mock('@capacitor/preferences', () => ({
 // The pen and rasteriser are the browser’s job; these tests hold the wiring from a
 // transcript artifact through a visible PDF revision and back to the same filename.
 const pdfMocks = vi.hoisted(() => ({
-  renders: 0,
+  /** How many documents were opened: a saved drawing opens the stamped bytes. */
+  opens: 0,
   /** A raster a test can hold open, to watch the band DURING a page turn. */
   hold: null as Promise<void> | null,
+  render: vi.fn(async (page: number, _scale?: number) => {
+    if (pdfMocks.hold) await pdfMocks.hold;
+    return { src: `data:image/png;base64,doc-${pdfMocks.opens}-page-${page}`, width: 600, height: 800 };
+  }),
+  keep: vi.fn(),
 }));
 vi.mock('../lib/pdf-annotate', () => ({
-  renderPdfPage: vi.fn(async () => {
-    if (pdfMocks.hold) await pdfMocks.hold;
-    return {
-      src: `data:image/png;base64,page-${++pdfMocks.renders}`,
-      pageCount: 3,
-      width: 600,
-      height: 800,
-    };
+  openPdf: vi.fn(async () => {
+    pdfMocks.opens += 1;
+    return { pageCount: 3, render: pdfMocks.render, keep: pdfMocks.keep, close: () => undefined };
   }),
   stampPdfPage: vi.fn(async () => new Uint8Array([1, 2, 3])),
 }));
@@ -168,8 +168,10 @@ function finger(target: Element, type: string, pointerId: number, at: { x: numbe
 
 beforeEach(() => {
   native.store.clear();
-  pdfMocks.renders = 0;
+  pdfMocks.opens = 0;
   pdfMocks.hold = null;
+  pdfMocks.render.mockClear();
+  pdfMocks.keep.mockClear();
   globalThis.localStorage.clear();
   resetAnnotationDraftCache();
   host = document.createElement('div');
@@ -290,7 +292,7 @@ describe('an artifact opened from the transcript', () => {
 
     expect(host.querySelector('iframe')).toBe(null);
     const page = host.querySelector<HTMLImageElement>('img[aria-label="Page 1 of report.pdf"]');
-    expect(page?.src).toContain('page-1');
+    expect(page?.src).toContain('doc-1-page-1');
 
     press('button[aria-label="Annotate page 1"]');
     press('button[aria-label="apply"]');
@@ -304,7 +306,7 @@ describe('an artifact opened from the transcript', () => {
       expect.anything(),
     );
     expect(host.textContent).toContain('Saved as v4');
-    expect(page?.src).toContain('page-2');
+    expect(page?.src).toContain('doc-2-page-1');
   });
 
   // Reported: the pager and the pen stood in a strip of their own under the page, at the
@@ -449,7 +451,7 @@ describe('an artifact opened from the transcript', () => {
     await act(async () => {
       await new Promise((done) => setTimeout(done, 260));
     });
-    expect(vi.mocked(renderPdfPage)).toHaveBeenLastCalledWith(expect.anything(), 2, 4);
+    expect(pdfMocks.render).toHaveBeenCalledWith(2, 4);
 
     // A double click goes back to the fitted page, and another one zooms in again.
     act(() => {
@@ -472,6 +474,31 @@ describe('an artifact opened from the transcript', () => {
   it('draws a zoomed page again at a higher density', () => {
     expect(rasterScale(1)).toBe(2);
     expect(rasterScale(2)).toBe(4);
+  });
+
+  // Regression, user report: turning a page with ‹ › lagged, because a page was parsed
+  // and drawn only once the turn asked for it.
+  it('draws the neighbouring pages ahead of a turn and keeps only those', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]))),
+    );
+    await openPdf();
+    expect(pdfMocks.render.mock.calls).toEqual([
+      [1, 2],
+      [2, 2],
+    ]);
+    expect(pdfMocks.keep).toHaveBeenLastCalledWith([0, 1, 2]);
+
+    pdfMocks.render.mockClear();
+    press('button[aria-label="Next page"]');
+    await settle();
+    expect(pdfMocks.render.mock.calls).toEqual([
+      [2, 2],
+      [3, 2],
+      [1, 2],
+    ]);
+    expect(pdfMocks.keep).toHaveBeenLastCalledWith([1, 2, 3]);
   });
 
   // Regression, user report: clicking ‹ › flickered the very cells being clicked,

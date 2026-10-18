@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 
 import { EDGE_ZONE_PX } from '../lib/edge-back';
 import type { GatewayClient } from '../lib/gateway';
-import { renderPdfPage, stampPdfPage, type RenderedPage } from '../lib/pdf-annotate';
+import { openPdf, stampPdfPage, type PdfPages, type RenderedPage } from '../lib/pdf-annotate';
 import { FIT_SCALE, type Transform } from '../lib/zoom-pan';
 import { useZoomPan, ZOOM_FRAME_CLASS, ZOOMED_CLASS } from '../lib/zoom-surface';
 import { ImageViewer } from './ImageViewer';
@@ -59,7 +59,9 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [drawn, setDrawn] = useState<string | null>(null);
   const [status, setStatus] = useState('');
-  const pageCount = rendered?.pageCount ?? 0;
+  // The document opened once per file, so a page turn only draws a page.
+  const [doc, setDoc] = useState<PdfPages | null>(null);
+  const pageCount = doc?.pageCount ?? 0;
 
   // THE FILE IS DOWNLOADED ONCE PER URL; A PAGE TURN IS ONLY A RASTER.
   //
@@ -83,19 +85,41 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   useEffect(() => {
     if (!source) return;
     let live = true;
+    let opened: PdfPages | null = null;
     void (async () => {
       try {
-        const next = await renderPdfPage(source, page, raster);
-        // A fresh data URL paints as an EMPTY frame while it decodes, so the page
-        // being left stays up until the next one can be shown whole.
-        const ready = new Image();
-        ready.src = next.src;
-        try {
-          await ready.decode();
-        } catch {
-          // No decoder on this platform — the <img> paints it regardless.
+        opened = await openPdf(source);
+        if (live) setDoc(opened);
+        else opened.close();
+      } catch {
+        if (live) setStatus('This PDF could not be opened.');
+      }
+    })();
+    return () => {
+      live = false;
+      opened?.close();
+    };
+  }, [source]);
+
+  // THE PAGES NEXT TO THE ONE ON SCREEN ARE DRAWN WHILE IT IS READ.
+  //
+  // A page was drawn only once ‹ › asked for it, so every turn waited for a raster.
+  // Now the page before and the page after are ready when the reader turns to them,
+  // and only those three are kept.
+  useEffect(() => {
+    if (!doc) return;
+    let live = true;
+    void (async () => {
+      try {
+        const next = await doc.render(page, raster);
+        if (!live) return;
+        setRendered(next);
+        doc.keep([page - 1, page, page + 1]);
+        for (const near of [page + 1, page - 1]) {
+          if (near >= 1 && near <= doc.pageCount) {
+            doc.render(near, rasterScale(FIT_SCALE)).catch(() => undefined);
+          }
         }
-        if (live) setRendered(next);
       } catch {
         if (live) setStatus('This page could not be rendered.');
       }
@@ -103,7 +127,7 @@ export const PdfAnnotator = memo(function PdfAnnotator({
     return () => {
       live = false;
     };
-  }, [source, page, raster]);
+  }, [doc, page, raster]);
 
   // A page turn drops what the band reported about the page being left: `Saved as
   // v4` belongs to the page it was stamped on.
