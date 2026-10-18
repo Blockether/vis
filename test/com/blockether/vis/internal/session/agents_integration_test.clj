@@ -542,6 +542,38 @@
         (expect (every? #(= (:session-id env) (first %)) @calls))
         (finally (loop-env/dispose-environment! env))))))
 
+;; Regression: a turn with a CLI `--model` gave its subagents the router default model.
+(defdescribe turn-route-reaches-agent-operations-test
+             (it "a per-turn model reaches agent operations without a session pick"
+                 (let [env
+                       (loop-env/create-environment (router) {:db :memory})
+
+                       routes
+                       (atom [])
+
+                       requests
+                       (atom 0)]
+
+                   (try
+                     (with-redefs [agents/operation!
+                                   (fn [host _ _]
+                                     (swap! routes conj (:route (ctx-loop/read-turn-state host)))
+                                     {:session_id "child-1"})
+
+                                   agents/wait-records
+                                   (fn [_ _ _]
+                                     [{:session_id "child-1" :status "completed" :answer "Done"}])
+
+                                   svar/ask-code!
+                                   (fn [_ _]
+                                     (if (= 1 (swap! requests inc))
+                                       (code-response "council.run(['Check docs'], timeout_secs=5)")
+                                       {:stop-reason :end :content "Spawned"}))]
+
+                       (turn/turn! env [(svar/user "Spawn on the turn model")] {:model "large"}))
+                     (expect (= [{:provider "fixture" :model "large"}] @routes))
+                     (finally (loop-env/dispose-environment! env))))))
+
 (defdescribe
   child-allowlist-survives-router-rehydration-and-retries-test
   (it

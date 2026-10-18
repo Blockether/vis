@@ -2032,6 +2032,14 @@
         initial-resolved-model
         (loop-router/resolve-effective-model (:router environment) (or routing {}))
 
+        ;; Subagents inherit the model that this turn calls, also without a session pick.
+        _
+        (ctx-loop/set-turn-state! environment
+                                  :route
+                                  {:provider (some-> (:provider initial-resolved-model)
+                                                     name)
+                                   :model (:name initial-resolved-model)})
+
         initial-extra-body
         (request-extra-body extra-body initial-resolved-model)
 

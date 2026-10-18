@@ -6355,7 +6355,8 @@
               (or (:router env) (loop-router/get-router))
 
               inherited
-              (or (smodel/model-of db sid)
+              (or (:route (ctx-loop/read-turn-state env))
+                  (smodel/model-of db sid)
                   (let [m (loop-router/resolve-effective-model router)]
                     {:provider (:provider m) :model (:name m)}))
 
