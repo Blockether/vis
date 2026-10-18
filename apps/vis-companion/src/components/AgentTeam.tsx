@@ -62,14 +62,8 @@ export function AgentTeamView({
               {agent.provider && `${agent.provider} / `}{agent.model ?? 'Router default'}
               {agent.routing_locked && ' · Human model lock'}
             </p>
-            <p className="text-ui text-dialog-hint">
-              Depth {agent.depth}
-              {agent.usage?.cost_usd != null && ` · $${agent.usage.cost_usd.toFixed(4)}`}
-            </p>
-            {agent.depth > 1 && (
-              <p className="break-words text-ui text-dialog-hint">
-                Parent task: {agents.find((parent) => parent.session_id === agent.parent_id)?.task ?? agent.parent_id}
-              </p>
+            {agent.usage?.cost_usd != null && (
+              <p className="text-ui text-dialog-hint">${agent.usage.cost_usd.toFixed(4)}</p>
             )}
             <div className="flex flex-wrap gap-2">
               <Button variant="quiet" onClick={() => onOpen(agent.session_id)}>Inspect agent</Button>

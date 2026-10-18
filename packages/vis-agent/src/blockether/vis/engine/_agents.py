@@ -16,7 +16,6 @@ class Subagent:
     team_id: str
     task: str
     status: str
-    depth: int
     iteration_budget: int
     iterations_used: int
     provider: str | None = None

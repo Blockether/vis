@@ -5340,9 +5340,9 @@
                :do-update-set [:locked]})))
 
 (def ^:private agent-columns
-  [:session_id :parent_id :leader_id :team_id :task :status :depth :iteration_budget
-   :iterations_used :inherited_turns :allowed_models :spawn_key :spawn_fingerprint :created_at
-   :resumed_turns :resumed_at])
+  [:session_id :parent_id :leader_id :team_id :task :status :iteration_budget :iterations_used
+   :inherited_turns :allowed_models :spawn_key :spawn_fingerprint :created_at :resumed_turns
+   :resumed_at])
 
 (defn- agent-row
   [row]
@@ -5410,42 +5410,23 @@
 
 (defn db-agent-extend-budget!
   "Add `iterations` to one child budget atomically, within the schema maximum. The status stays:
-   a `budget_limited` child stays idle until council.resume. With a `from` session, the same
-   transaction takes the iterations from that subagent's remaining budget. Answers the new row,
-   or nil when the child is cancelled or missing, the budget would pass the maximum, or `from`
-   has too few iterations."
-  [db sid iterations from]
+   a `budget_limited` child stays idle until council.resume. Answers the new row, or nil when the
+   child is cancelled or missing, or the budget would pass the maximum."
+  [db sid iterations]
   (let [max-budget
         (long (get-in agent-schema ["$defs" "spawn" "properties" "iteration_budget" "maximum"]))
 
         n
-        (long iterations)
+        (long iterations)]
 
-        changed?
-        (fn [tx-info q]
-          (pos? (long (or (:next.jdbc/update-count (first (execute! tx-info q))) 0))))]
-
-    (when (try (sqlite-write-tx!
-                 db
-                 (fn [tx-info]
-                   (when-not (or (nil? from)
-                                 (changed? tx-info
-                                           {:update :session_agent
-                                            :set {:iteration_budget [:- :iteration_budget n]}
-                                            :where [:and [:= :session_id (str from)]
-                                                    [:not-in :status ["cancelled" "budget_limited"]]
-                                                    [:>= [:- :iteration_budget n] :iterations_used]
-                                                    [:>= [:- :iteration_budget n] 1]]}))
-                     (throw (ex-info "Too few iterations" {::refused true})))
-                   (when-not (changed? tx-info
-                                       {:update :session_agent
-                                        :set {:iteration_budget [:+ :iteration_budget n]}
-                                        :where [:and [:= :session_id (str sid)]
-                                                [:<> :status "cancelled"]
-                                                [:<= [:+ :iteration_budget n] max-budget]]})
-                     (throw (ex-info "Budget unchanged" {::refused true})))
-                   true))
-               (catch clojure.lang.ExceptionInfo e (when-not (::refused (ex-data e)) (throw e))))
+    (when (pos? (long (or (:next.jdbc/update-count
+                            (first (execute! db
+                                             {:update :session_agent
+                                              :set {:iteration_budget [:+ :iteration_budget n]}
+                                              :where [:and [:= :session_id (str sid)]
+                                                      [:<> :status "cancelled"]
+                                                      [:<= [:+ :iteration_budget n] max-budget]]})))
+                          0)))
       (db-agent-info db sid))))
 
 (defn db-agent-resume!
@@ -5698,6 +5679,8 @@
                            :values [(assoc agent
                                       :session_id new-soul-id
                                       :inherited_turns (count cut)
+                                      ;; Stores keep this NOT NULL column; every child is a leader's child.
+                                      :depth 1
                                       :checkpoint (->blob (:checkpoint agent))
                                       :allowed_models (->json (:allowed_models agent))
                                       :created_at now)]}))

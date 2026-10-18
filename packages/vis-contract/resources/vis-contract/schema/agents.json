@@ -203,11 +203,6 @@
             "budget_limited"
           ]
         },
-        "depth": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1
-        },
         "iteration_budget": {
           "$ref": "#/$defs/spawn/properties/iteration_budget"
         },
@@ -251,7 +246,6 @@
         "team_id",
         "task",
         "status",
-        "depth",
         "iteration_budget",
         "iterations_used"
       ],

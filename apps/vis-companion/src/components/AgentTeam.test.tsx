@@ -6,7 +6,7 @@ import type { Subagent } from '../lib/types';
 import { AgentTeam, AgentTeamView } from './AgentTeam';
 
 const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'task',
-  task: 'Verify the contract', status: 'running', depth: 1, iteration_budget: 4, iterations_used: 2,
+  task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
   provider: 'p', model: 'small', pending_input: true, routing_locked: true, usage: { cost_usd: 0.0123 } };
 const props = { agents: [child], loading: false, error: null, pending: null,
   onRefresh: vi.fn(), onOpen: vi.fn(), onCancel: vi.fn() };

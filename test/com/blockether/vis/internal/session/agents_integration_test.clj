@@ -76,7 +76,6 @@
                                           :leader_id (str sid)
                                           :team_id (str turn)
                                           :task "Verify the delegated boundary only"
-                                          :depth 1
                                           :iteration_budget budget
                                           :allowed_models allowed
                                           :spawn_key (str turn)

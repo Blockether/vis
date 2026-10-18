@@ -35,19 +35,15 @@
              "team_id" "task"
              "task" "Inspect the existing tests"
              "status" "queued"
-             "depth" 1
              "iteration_budget" 32
              "iterations_used" 0}]
 
         (expect (= agents/default-iterations
                    (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"])
                    120))
-        (expect
-          (= agents/max-depth (get-in schema ["$defs" "agent" "properties" "depth" "maximum"]) 1))
         (expect (= agents/max-team-children (get schema "x-vis-max-team-children") 128))
         (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 16))
         (expect (document/valid? "agents" agent))
-        (expect (not (document/valid? "agents" (assoc agent "depth" 2))))
         (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
         (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
         (expect
@@ -55,21 +51,15 @@
 
 (defn child!
   [db parent opts]
-  (let [turn
-        (ps/db-store-session-turn!
-          db
-          {:parent-session-id parent :user-request "Parent task" :status :running})
-
-        ancestor
-        (agents/info db parent)]
-
+  (let [turn (ps/db-store-session-turn!
+               db
+               {:parent-session-id parent :user-request "Parent task" :status :running})]
     (str (h/fork-session-at-turn! db
                                   parent
                                   {:through-turn-id turn
                                    :agent (merge {:parent_id (str parent)
-                                                  :leader_id (or (:leader_id ancestor) (str parent))
-                                                  :team_id (or (:team_id ancestor) (str turn))
-                                                  :depth (inc (or (:depth ancestor) 0))
+                                                  :leader_id (str parent)
+                                                  :team_id (str turn)
                                                   :task "Read existing evidence"
                                                   :iteration_budget 4
                                                   :spawn_key (str turn)
@@ -131,36 +121,31 @@
       (expect (nil? (agents/inherited-base env 3 [] [])))
       (expect (not= :running (:status (last (ps/db-list-session-turns db child)))))
       (expect (not (some #(= child (str (:id %))) (ps/db-list-sessions db :all))))
-      (let [grandchild (child! db child {})]
-        (expect (agents/controls? db leader grandchild))
-        (expect (agents/controls? db child grandchild))
-        (expect (not (agents/controls? db grandchild child)))))))
+      (expect (agents/controls? db leader child))
+      (expect (agents/controls? db child child))
+      (expect (not (agents/controls? db child leader))))))
 
 ;; Regression: a subagent sent its own session id as the OpenAI prompt cache key. Its first
 ;; request held the leader's whole prefix but missed the leader's warm cache (0% cache read).
-(defdescribe
-  team-shares-the-leader-cache-key-test
-  (it "gives every subagent of a team the leader's id as its prompt cache key"
-      (let [db
-            (h/store)
+(defdescribe team-shares-the-leader-cache-key-test
+             (it "gives every subagent of a team the leader's id as its prompt cache key"
+                 (let [db
+                       (h/store)
 
-            leader
-            (str (h/store-session! db {:channel :api}))
+                       leader
+                       (str (h/store-session! db {:channel :api}))
 
-            other
-            (str (h/store-session! db {:channel :api}))
+                       other
+                       (str (h/store-session! db {:channel :api}))
 
-            child
-            (child! db leader {})
+                       child
+                       (child! db leader {})]
 
-            grandchild
-            (child! db child {})]
-
-        (expect (= leader (agents/leader-id db leader)))
-        (expect (= leader (agents/leader-id db child)))
-        (expect (= leader (agents/leader-id db grandchild)) "A nested subagent keeps the team key")
-        (expect (= other (agents/leader-id db other)) "An independent session keeps its own key")
-        (expect (nil? (agents/leader-id db nil))))))
+                   (expect (= leader (agents/leader-id db leader)))
+                   (expect (= leader (agents/leader-id db child)))
+                   (expect (= other (agents/leader-id db other))
+                           "An independent session keeps its own key")
+                   (expect (nil? (agents/leader-id db nil))))))
 
 (defdescribe
   durable-budget-cancellation-and-router-test
@@ -336,9 +321,6 @@
           child
           (child! db leader {:iteration_budget 1})
 
-          grandchild
-          (child! db child {:iteration_budget 1})
-
           env
           {:db-info db :session-id leader}]
 
@@ -357,7 +339,7 @@
                                   ["status" "iteration_budget" "iterations_used"])))
           (expect (agents/wake-allowed? db leader child)
                   "A ping continues an extended child, like council.resume")
-          ;; council.resume runs the child again; only a running child can give iterations away.
+          ;; council.resume runs the child again.
           (ps/db-agent-update! db child {:status "running"})
           (expect (= :budget-exceeded (outcome #(agents/extend-agent env child 595))))
           (expect (= :invalid-request (outcome #(agents/extend-agent env child 0))))
@@ -365,23 +347,8 @@
                      (outcome #(agents/extend-agent {:db-info db :session-id other} child 1))))
           (expect (= :not-owner
                      (outcome #(agents/extend-agent {:db-info db :session-id child} child 1))))
-          (expect (= :budget-exceeded
-                     (outcome #(agents/extend-agent {:db-info db :session-id child} grandchild 6)))
-                  "A subagent gives at most its own remaining iterations")
-          (expect (= 3
-                     (get (first (outcome #(agents/extend-agent {:db-info db :session-id child}
-                                                                grandchild
-                                                                2)))
-                          "iteration_budget")))
-          (expect (= 4 (:iteration_budget (agents/info db child)))
-                  "A subagent gives its own iterations away")
-          (expect (some? (outcome
-                           #(agents/extend-agent {:db-info db :session-id child} grandchild 3))))
-          (expect (= :budget-exceeded
-                     (outcome #(agents/extend-agent {:db-info db :session-id child} grandchild 1)))
-                  "Repeated extensions cannot pass the remaining budget")
-          (ps/db-agent-update! db grandchild {:status "cancelled"})
-          (expect (= :invalid-request (outcome #(agents/extend-agent env grandchild 1))))))))
+          (ps/db-agent-update! db child {:status "cancelled"})
+          (expect (= :invalid-request (outcome #(agents/extend-agent env child 1))))))))
   (it
     "lets a child ask for iterations and the parent grant or deny them"
     (let [db
@@ -572,7 +539,7 @@
         (ps/db-agent-update! db child {:status "budget_limited"})
         (expect (not (agents/wake-allowed? db leader child)) "An exhausted child stays idle")
         (expect (nil? (agents/queue-turn! db child)) "A child without iterations stays idle")
-        (expect (some? (ps/db-agent-extend-budget! db child 2 nil)))
+        (expect (some? (ps/db-agent-extend-budget! db child 2)))
         (expect (agents/wake-allowed? db leader child)
                 "A ping continues an extended budget_limited child, like council.resume")
         (expect (fn? (agents/queue-turn! db child)))
@@ -868,7 +835,7 @@
 (defdescribe
   subagent-usage-sums-the-whole-tree-test
   (it
-    "sums every descendant in one rollup and splits the cost on the wire"
+    "sums every child in one rollup and splits the cost on the wire"
     (let [db
           (h/store)
 
@@ -882,34 +849,30 @@
         db
         {:session-turn-id turn :code "" :tokens {"input" 9000 "output" 100} :cost-usd 1.0})
       (expect (nil? (ps/db-session-subagent-usage db leader)))
-      (let [children
-            (vec (repeatedly 100 #(child! db leader {:status "completed"})))
-
-            grandchild
-            (child! db (first children) {})]
-
-        (doseq [sid (conj children grandchild)]
+      (let [children (conj (vec (repeatedly 99 #(child! db leader {:status "completed"})))
+                           (child! db leader {}))]
+        (doseq [sid children]
           (let [own (ps/db-store-session-turn! db {:parent-session-id sid :user-request "Work"})]
             (h/store-iteration!
               db
               {:session-turn-id own :code "" :tokens {"input" 100 "output" 10} :cost-usd 0.25})))
-        (expect (= {:agent-count 101
+        (expect (= {:agent-count 100
                     :active-count 1
-                    :iteration-count 101
-                    :input-tokens 10100
-                    :output-tokens 1010
-                    :cost-usd 25.25}
+                    :iteration-count 100
+                    :input-tokens 10000
+                    :output-tokens 1000
+                    :cost-usd 25.0}
                    (ps/db-session-subagent-usage db leader))
                 "Inherited parent work is not counted again")
-        (expect (= 1 (:agent-count (ps/db-session-subagent-usage db (first children))))
-                "A child counts only its own descendants")
+        (expect (nil? (ps/db-session-subagent-usage db (first children)))
+                "A child has no subagents")
         (with-redefs [lp/db-info (constantly db)]
           (let [usage (gateway/session-usage-info leader)]
             (expect (= 1.0 (get usage "cost_usd")))
-            (expect (= 26.25 (get usage "total_cost_usd")))
-            (expect (= 101 (get-in usage ["subagents" "agent_count"])))
-            (expect (= 25.25 (get-in usage ["subagents" "cost_usd"]))))
-          (expect (not (contains? (gateway/session-usage-info grandchild) "subagents"))))))))
+            (expect (= 26.0 (get usage "total_cost_usd")))
+            (expect (= 100 (get-in usage ["subagents" "agent_count"])))
+            (expect (= 25.0 (get-in usage ["subagents" "cost_usd"]))))
+          (expect (not (contains? (gateway/session-usage-info (first children)) "subagents"))))))))
 
 (defdescribe
   terminal-outcomes-report-to-the-persisted-leader-test
@@ -1098,7 +1061,6 @@
                                            :agent {:parent_id leader
                                                    :leader_id leader
                                                    :team_id (str turn)
-                                                   :depth 1
                                                    :task "Check evidence"
                                                    :iteration_budget 1
                                                    :spawn_key (str n)

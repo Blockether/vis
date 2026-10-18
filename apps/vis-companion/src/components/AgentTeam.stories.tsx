@@ -7,7 +7,7 @@ import { SessionHeader } from './SessionHeader';
 
 const child: Subagent = {
   session_id: 'contract-review', parent_id: 'leader', leader_id: 'leader', team_id: 'task',
-  task: 'Verify the SDK contract and report remaining risks', status: 'running', depth: 1,
+  task: 'Verify the SDK contract and report remaining risks', status: 'running',
   iteration_budget: 32, iterations_used: 4, provider: 'openai', model: 'gpt-5', pending_input: true,
   routing_locked: true, usage: { cost_usd: 0.0123 },
 };
@@ -78,20 +78,5 @@ export const BudgetReached: Story = {
     const page = within(document.body);
     expect(page.getByText('Budget reached')).toBeVisible();
     expect(page.queryByRole('button', { name: 'Stop agent' })).toBeNull();
-  },
-};
-export const Hierarchy: Story = {
-  args: { parentId: 'leader', agents: [child, {
-    ...child, session_id: 'schema-check', parent_id: child.session_id,
-    task: 'Check required schema fields', depth: 2, pending_input: false,
-    status: 'queued', iterations_used: 0,
-  }] },
-  play: async (context) => {
-    await openTeam(context);
-    const page = within(document.body);
-    expect(page.getByText(`Parent task: ${child.task}`)).toBeVisible();
-    await userEvent.click(page.getByRole('button', { name: 'Open parent' }));
-    expect(context.args.onOpen).toHaveBeenCalledWith('leader');
-    expect(page.queryByRole('dialog')).toBeNull();
   },
 };

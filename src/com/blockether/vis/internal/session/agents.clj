@@ -83,8 +83,6 @@
 
 (def ^:private schema (document/schema-document "agents"))
 
-(def max-depth (get-in schema ["$defs" "agent" "properties" "depth" "maximum"]))
-
 (def default-iterations (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"]))
 
 (def max-team-children (get schema "x-vis-max-team-children"))
@@ -131,14 +129,14 @@
         child
         (info (:db-info env) sid)]
 
-    (wire/->wire
-      (cond-> (merge {:role (if child "subagent" "leader") :session_id sid :leader_id sid}
-                     (select-keys child
-                                  [:parent_id :leader_id :team_id :task :depth :iteration_budget
-                                   :iterations_used :status :allowed_models])
-                     {:routing_locked (ps/db-routing-locked? (:db-info env) sid)})
-        (budget-notice child)
-        (assoc :budget_notice (budget-notice child))))))
+    (wire/->wire (cond-> (merge
+                           {:role (if child "subagent" "leader") :session_id sid :leader_id sid}
+                           (select-keys child
+                                        [:parent_id :leader_id :team_id :task :iteration_budget
+                                         :iterations_used :status :allowed_models])
+                           {:routing_locked (ps/db-routing-locked? (:db-info env) sid)})
+                   (budget-notice child)
+                   (assoc :budget_notice (budget-notice child))))))
 
 (defn checkpoint!
   "Capture the last complete model input, before its in-flight tool call. Never copy runtime handles."
@@ -343,7 +341,7 @@
     (count orphans)))
 
 (defn controls?
-  "Leaders control their descendants. Subagents control themselves and their direct children."
+  "A leader controls its children. A subagent controls only itself."
   [db actor-id target-id]
   (let [actor-id
         (str actor-id)
@@ -354,7 +352,7 @@
         child
         (info db target-id)]
 
-    (or (= actor-id target-id) (= actor-id (:parent_id child)) (= actor-id (:leader_id child)))))
+    (or (= actor-id target-id) (= actor-id (:parent_id child)))))
 
 (defn fail! [error message] (throw (ex-info message {:error error})))
 
@@ -597,7 +595,7 @@
      (result :council.wait (wait-records env ids (wait-timeout opts 240))))))
 
 (defn cancel-agent
-  "Cancel a subagent and its descendants, including queued work. Returns its record."
+  "Cancel a subagent, including its queued work. Returns its record."
   [env session-id]
   (operation! env :cancel {:session_id session-id})
   (result :council.cancel (wait-records env [session-id] 5)))
@@ -732,16 +730,13 @@
 (defn extend-agent
   "Give a subagent more model iterations. Use it to answer a budget request (status asking with
    budget_request), or before council.resume of a budget_limited child. A budget stays at most
-   600, and a subagent can give only its own remaining iterations. Returns the record."
+   600. Returns the record."
   [env session-id iterations]
   (let [{:keys [session_id iterations]}
         (checked env :extend {:session_id session-id :iterations iterations})
 
         db
         (:db-info env)
-
-        caller
-        (info db (:session-id env))
 
         child
         (info db session_id)]
@@ -753,15 +748,7 @@
     (when (> (+ (long (:iteration_budget child)) (long iterations)) (long max-budget))
       (fail! :budget-exceeded
              (str "The budget of a subagent stays at most " max-budget " iterations")))
-    (when (and caller
-               (or (contains? #{"cancelled" "budget_limited"} (:status caller))
-                   (> (long iterations)
-                      (- (long (:iteration_budget caller)) (long (:iterations_used caller))))))
-      (fail! :budget-exceeded "The extension exceeds your remaining iteration budget"))
-    (let [row (or (ps/db-agent-extend-budget! db
-                                              session_id
-                                              iterations
-                                              (when caller (str (:session-id env))))
+    (let [row (or (ps/db-agent-extend-budget! db session_id iterations)
                   (fail! :budget-exceeded "The subagent budget did not change"))]
       (answer-budget!
         env

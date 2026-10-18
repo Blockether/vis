@@ -123,14 +123,10 @@
        " · "
        (or (get row "model") "Router default")
        (when (get row "routing_locked") " (locked)")
-       " · "
-       (get row "iterations_used")
-       "/"
-       (get row "iteration_budget")
-       " iterations · depth "
-       (get row "depth")
-       (when-let [cost (get-in row ["usage" "cost_usd"])]
-         (when (number? cost) (str " · $" cost)))))
+       " · " (get row "iterations_used")
+       "/" (get row "iteration_budget")
+       " iterations" (when-let [cost (get-in row ["usage" "cost_usd"])]
+                       (when (number? cost) (str " · $" cost)))))
 
 (defn items
   [rows parent-id]
@@ -141,7 +137,7 @@
                {:label (str/replace (row-label row) #"\s+" " ")
                 :search-text (get row "task")
                 :agent row})
-             (sort-by (juxt #(get % "depth" 1) #(get % "parent_id" "") #(get % "task")) rows))))
+             (sort-by (juxt #(get % "parent_id" "") #(get % "task")) rows))))
 
 (defn component
   "Production list component. Snapshot is read off-thread; the modal remains dismissible."
@@ -224,7 +220,6 @@
                                           (when (get row "routing_locked") " (locked)"))}
                              {:label (str "Iterations: " (get row "iterations_used")
                                           "/" (get row "iteration_budget"))}
-                             {:label (str "Hierarchy: depth " (get row "depth"))}
                              {:label (str "Cost: "
                                           (if-let [cost (get-in row ["usage" "cost_usd"])]
                                             (str "$" cost)

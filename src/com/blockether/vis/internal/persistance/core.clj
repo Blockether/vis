@@ -280,9 +280,8 @@
 (defprotocol AgentStore
   "Subagent budget operations of a persistence backend, with the `Store` dispatch. They
    are a separate protocol for the same JVM method-size limit as `AutomationStore`."
-  (db-agent-extend-budget! [db-info session-id iterations from]
-    "Add iterations to one child budget within the schema maximum. A non-nil `from` session gives
-     them from its own remaining budget in the same transaction. Answer the new row or nil.")
+  (db-agent-extend-budget! [db-info session-id iterations]
+    "Add iterations to one child budget within the schema maximum. Answer the new row or nil.")
   (db-agent-resume! [db-info session-id turns now]
     "Queue one idle child for a follow-up task in one transaction, under the active cap. `turns`
      is its turn count before the task. Answer the new row or nil."))

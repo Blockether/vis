@@ -60,7 +60,6 @@ export interface Subagent {
   team_id: string;
   task: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'budget_limited';
-  depth: number;
   iteration_budget: number;
   iterations_used: number;
   provider?: string | null;

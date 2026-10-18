@@ -13,7 +13,6 @@ CHILD = {
     "team_id": "task",
     "task": "Check the contract",
     "status": "running",
-    "depth": 1,
     "iteration_budget": 4,
     "iterations_used": 1,
     "provider": "p",
@@ -293,7 +292,6 @@ def test_all_lifecycle_states_and_optional_response_defaults(status):
             "leader_id",
             "team_id",
             "task",
-            "depth",
             "iteration_budget",
             "iterations_used",
         )

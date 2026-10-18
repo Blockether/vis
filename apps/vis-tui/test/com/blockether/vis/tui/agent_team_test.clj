@@ -86,7 +86,6 @@
                  (let [row
                        {"session_id" "child"
                         "parent_id" "parent"
-                        "depth" 2
                         "task" "Verify routing"
                         "status" "budget_limited"
                         "model" "small"
@@ -101,14 +100,12 @@
                    (expect (str/includes? label "budget limited"))
                    (expect (str/includes? label "4/4"))
                    (expect (str/includes? label "$0.025"))
-                   (expect (str/includes? label "depth 2"))
                    (expect (str/includes? label "locked"))
                    (expect (= :inspect (:action (second (team/items [] "parent"))))))))
 
 (def review-agent
   {"session_id" "child"
    "parent_id" "parent"
-   "depth" 1
    "task" "Verify routing"
    "status" "running"
    "model" "small"

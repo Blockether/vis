@@ -634,7 +634,6 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         "team_id": "task",
         "task": "Check the contract",
         "status": "running",
-        "depth": 1,
         "iteration_budget": 4,
         "iterations_used": 1,
         "provider": "fixture",

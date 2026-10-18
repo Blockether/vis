@@ -5645,17 +5645,14 @@
                                                       cancel-waiting-turn!)
                      (let [db (lp/db-info)
                            owner (agents/info db sid)
-                           descendants (filter #(or (= (str sid) (:parent_id %))
-                                                    (and (nil? owner) (= (str sid) (:leader_id %))))
-                                               (persistance/db-agent-list db
-                                                                          (or (:leader_id owner)
-                                                                              (str sid))))]
+                           ;; Only a leader has children.
+                           children (when-not owner (persistance/db-agent-list db (str sid)))]
 
                        ;; Persist the stop before signalling workers so no new iteration can start.
                        (when owner (persistance/db-agent-update! db sid {:status "cancelled"}))
                        (some-> (:cancel-token turn)
                                (cancellation/cancel! source))
-                       (doseq [child descendants
+                       (doseq [child children
                                :when (contains? #{"queued" "running"} (:status child))]
 
                          (let [child-id (:session_id child)]
@@ -6192,16 +6189,12 @@
         sid
         (str (:session_id opts))
 
-        child
+        _
         (or (agents/info db sid)
             (agents/fail! :not-owner "Only a managed subagent can be cancelled here"))
 
-        descendants
-        (filter #(or (= sid (:session_id %)) (= sid (:parent_id %)))
-                (persistance/db-agent-list db (:leader_id child)))
-
         ids
-        (mapv :session_id descendants)]
+        [sid]]
 
     (doseq [id ids]
       ;; Persist before cancelling: delayed pings and queued work cannot resume it.
@@ -6224,12 +6217,6 @@
           sid
           (str (:session-id env))
 
-          parent
-          (agents/info db sid)
-
-          leader
-          (or (:leader_id parent) sid)
-
           turns
           (vec (persistance/db-list-session-turns db sid))
 
@@ -6238,11 +6225,8 @@
                   :id
                   str)
 
-          team
-          (or (:team_id parent) through)
-
           children
-          (persistance/db-agent-list db leader)
+          (persistance/db-agent-list db sid)
 
           fingerprint
           (util/sha256-hex (pr-str (into (sorted-map) opts)))
@@ -6257,10 +6241,7 @@
         (if (= fingerprint (:spawn_fingerprint previous))
           (agent-view db previous)
           (agents/fail! :idempotency-conflict "The spawn key already names a different delegation"))
-        (let [depth
-              (inc (long (or (:depth parent) 0)))
-
-              checkpoint
+        (let [checkpoint
               (:agent-checkpoint (ctx-loop/read-turn-state env))
 
               budget
@@ -6280,7 +6261,7 @@
                             (or (:model opts) (:model inherited)))
 
               allowed
-              (or (:allowed_models opts) (:allowed_models parent))
+              (:allowed_models opts)
 
               ;; A child gets the parent's conversation without its tool work.
               checkpoint
@@ -6306,24 +6287,14 @@
           (when-not (and through (seq checkpoint))
             (agents/fail! :no-checkpoint
                           "Spawn requires the parent's complete model-input checkpoint"))
-          (when (or (> depth (long agents/max-depth))
-                    (and parent
-                         (or (contains? #{"cancelled" "budget_limited"} (:status parent))
-                             (> budget
-                                (- (long (:iteration_budget parent))
-                                   (long (:iterations_used parent)))))))
-            (agents/fail! :budget-exceeded
-                          "Delegation exceeds the parent's depth or remaining iteration budget"))
-          (when (>= (count (filter #(= team (:team_id %)) children))
+          (when (>= (count (filter #(= through (:team_id %)) children))
                     (long agents/max-team-children))
             (agents/fail! :budget-exceeded "The task already has the maximum number of subagents"))
           (when (>= (count (filter #(contains? #{"queued" "running"} (:status %)) children))
                     (long agents/max-active-children))
             (agents/fail! :budget-exceeded "The leader already has the maximum active subagents"))
           (doseq [candidate allowed]
-            (agent-model! router (:provider candidate) (:model candidate))
-            (allowed-agent-model! parent candidate))
-          (allowed-agent-model! parent pair)
+            (agent-model! router (:provider candidate) (:model candidate)))
           (allowed-agent-model! {:allowed_models allowed} pair)
           (let [current
                 (resolve-workspace db sid)
@@ -6341,10 +6312,9 @@
                         :through-turn-id through
                         :title (subs (:task opts) 0 (min 80 (count (:task opts))))
                         :agent {:parent_id sid
-                                :leader_id leader
-                                :team_id team
+                                :leader_id sid
+                                :team_id through
                                 :task (:task opts)
-                                :depth depth
                                 :iteration_budget budget
                                 :allowed_models allowed
                                 :spawn_key key
