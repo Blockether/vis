@@ -2428,10 +2428,11 @@
                                 (when (.isFile file) (util/sha256-hex (slurp file)))))
                             ["pyproject.toml" "uv.lock"]))}))
 
-(defn- shared-packages
-  "A digest of the shared `packages`: the installed `dist-info` names and the `.py` sources
-   that its `.pth` files put on `sys.path`. A shared sync or an editable edit changes them,
-   not the extension file (#196, #393)."
+(defn- package-sources
+  "A digest of one package directory: its `dist-info` names and the `.py` sources of its
+   editable roots. `package_paths` takes these roots from `.pth` path lines and from an
+   editable `direct_url.json`. A sync or an editable edit changes them, not the extension
+   file (#196, #393)."
   [packages]
   (let [skip?
         #(let [n (.getName ^File %)] (or (str/starts-with? n ".")
@@ -2444,9 +2445,12 @@
                           (str/ends-with? (.getName f) ".py") [f]))
                   (sort (.listFiles dir))))
 
-        dirs
+        entries
+        (sort (.listFiles (io/file packages)))
+
+        path-lines
         (for [^File pth
-              (sort (.listFiles (io/file packages)))
+              entries
 
               :when (str/ends-with? (.getName pth) ".pth")
               line
@@ -2458,22 +2462,50 @@
                              (str/starts-with? line "#")
                              (str/starts-with? line "import")))
               :let [raw
-                    (io/file line)
+                    (io/file line)]]
 
-                    dir
-                    (if (.isAbsolute raw) raw (io/file packages line))]
-              :when (.isDirectory dir)]
+          (if (.isAbsolute raw) raw (io/file packages line)))
 
-          (.getCanonicalFile dir))]
+        editable-urls
+        (for [^File info
+              entries
+
+              :when (str/ends-with? (.getName info) ".dist-info")
+              :let [file
+                    (io/file info "direct_url.json")
+
+                    data
+                    (when (.isFile file)
+                      (try (json/read-json (slurp file) :key-fn identity) (catch Throwable _ nil)))
+
+                    url
+                    (get data "url")]
+              :when (and (map? data)
+                         (get-in data ["dir_info" "editable"])
+                         (string? url)
+                         (str/starts-with? url "file:"))
+              :let [dir
+                    (try (io/file (java.net.URI. url)) (catch Throwable _ nil))]
+              :when dir]
+
+          dir)
+
+        dirs
+        (distinct (for [^File dir
+                        (concat path-lines editable-urls)
+
+                        :when (.isDirectory dir)]
+
+                    (.getCanonicalFile dir)))]
 
     (util/sha256-hex (pr-str [(vec (for [^File f
-                                         (sort (.listFiles (io/file packages)))
+                                         entries
 
                                          :when (str/ends-with? (.getName f) ".dist-info")]
 
                                      (.getName f)))
                               (vec (for [^File dir
-                                         (distinct dirs)
+                                         dirs
 
                                          ^File f
                                          (walk dir)]
@@ -2915,12 +2947,13 @@
          env-value
          (memoize config/extension-env-value)
 
-         ;; One digest for each pass: every extension can import shared packages.
-         shared
-         (delay (shared-packages (runtime/packages-dir)))
+         ;; One digest for each package directory and pass: many extensions share one.
+         package-digest
+         (memoize (fn [packages]
+                    (package-sources (or packages (runtime/packages-dir)))))
 
          file-inputs
-         (fn [^File f declared]
+         (fn [^File f declared packages]
            (let [path
                  (.getCanonicalPath f)
 
@@ -2930,13 +2963,19 @@
              {:sha sha
               :code-sha source-sha
               :plan (plan-inputs (get plans f))
-              :shared @shared
+              :environment (when-let [project (:project (get plans f))]
+                             (try (shared-environment? project-root project)
+                                  (catch Throwable _ ::unknown-environment)))
+              :packages (package-digest packages)
               :env (util/sha256-hex (pr-str (into (sorted-map)
                                                   (resolve-declared-env (map :name declared)
                                                                         env-value))))}))
 
          failed-before
-         (into #{} (keep #(when (= project-root (:project-root %)) (:file %))) @failures)
+         (into #{}
+               (keep #(when (= project-root (:project-root %))
+                        (.getCanonicalPath (io/file (:file %)))))
+               @failures)
 
          reloaded
          (atom 0)]
@@ -2980,7 +3019,10 @@
                (if (and (not all?)
                         previous
                         (not (failed-before path))
-                        (= (:inputs previous) (file-inputs f (get-in previous [:ext :ext/env]))))
+                        (not (context-dead? prev-ctx))
+                        (pyext/worker-live? (worker-for prev-ctx))
+                        (= (:inputs previous)
+                           (file-inputs f (get-in previous [:ext :ext/env]) (:packages previous))))
                  ;; Unchanged: keep the live entry; only its scan position can move.
                  (swap! loaded assoc-in [entry-key :order] (.indexOf ^java.util.List files f))
                  (try (swap! reloaded inc)
@@ -2989,7 +3031,8 @@
                               entry
                               (assoc entry
                                 :order (.indexOf ^java.util.List files f)
-                                :inputs (file-inputs f (get-in entry [:ext :ext/env]))))]
+                                :inputs
+                                (file-inputs f (get-in entry [:ext :ext/env]) (:packages entry))))]
                         ;; A later file (project dir) registering the same extension
                         ;; name supersedes an earlier one at a DIFFERENT path — the
                         ;; registry already swapped the registration; close the
@@ -3370,14 +3413,16 @@
           all?
           (= ["--all"] argv)
 
-          {:keys [loaded failed reloaded scopes]}
-          (if all? (reload-python-extensions! {:all? true}) (reload-python-extensions!))
-
           old-config
           (config/current-config)
 
+          ;; Read `vis.yml` first: the reload compares each extension's env values with
+          ;; the new configuration, so a changed `environment:` value loads it again.
           _config
           (config/reload-config!)
+
+          {:keys [loaded failed reloaded scopes]}
+          (if all? (reload-python-extensions! {:all? true}) (reload-python-extensions!))
 
           ;; Feature toggles live in the `toggles:` slot of the merged YAML and are
           ;; otherwise hydrated ONLY at process start (gateway

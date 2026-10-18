@@ -5401,30 +5401,77 @@ vis.register_extension(vis.Extension(
               (expect (= 1 (reload)))
               (expect (= (get edited "alpha") (get (contexts) "alpha")))
               (expect (not= (get edited "beta") (get (contexts) "beta")))
-              (expect (= 2 (reload {:all? true}))))))))))
+              (expect (= 2 (reload {:all? true})))
+              ;; A context that died after its load cannot serve calls, so it loads again.
+              (swap! @#'pyx/live-contexts disj (get (contexts) "alpha"))
+              (expect (= 1 (reload))))))))))
+
+(defdescribe
+  package-sources-test
+  (it
+    "changes with installed distributions and editable sources — #393"
+    (let [dir
+          (temp-dir)
+
+          packages
+          (doto (io/file dir "packages") .mkdirs)
+
+          hooked
+          (io/file dir "hooked")
+
+          listed
+          (io/file dir "listed")
+
+          digest
+          #(#'pyx/package-sources packages)]
+
+      (try (write-ext! hooked "hooked_pkg/__init__.py" "VALUE = 1\n")
+           (write-ext! listed "listed_pkg/__init__.py" "VALUE = 1\n")
+           (write-ext! packages "hooked.pth" "import __editable___hooked_finder\n")
+           (write-ext! packages
+                       "hooked-1.0.dist-info/direct_url.json"
+                       (str "{\"dir_info\":{\"editable\":true},\"url\":"
+                            (pr-str (str (.toURI (.getCanonicalFile hooked))))
+                            "}"))
+           (write-ext! packages "listed.pth" (str (.getCanonicalPath listed) "\n"))
+           (let [initial (digest)]
+             (expect (= initial (digest)))
+             ;; An import-hook editable install has no path line, only its direct_url.json.
+             (write-ext! hooked "hooked_pkg/__init__.py" "VALUE = 2\n")
+             (let [hooked-edit (digest)]
+               (expect (not= initial hooked-edit))
+               (write-ext! listed "listed_pkg/__init__.py" "VALUE = 2\n")
+               (let [listed-edit (digest)]
+                 (expect (not= hooked-edit listed-edit))
+                 (write-ext! listed "listed_pkg/__pycache__/x.cpython-312.pyc" "cache")
+                 (expect (= listed-edit (digest)))
+                 (.mkdirs (io/file packages "other-2.0.dist-info"))
+                 (expect (not= listed-edit (digest))))))
+           (finally (#'pyx/delete-tree! dir))))))
 
 (defdescribe reload-slash-announce-test
-             (it "announces the reload once, after configuration and reload hooks — #393"
-                 (let [steps (atom [])]
-                   (with-redefs [pyx/reload-python-extensions! (fn []
-                                                                 (swap! steps conj :extensions)
-                                                                 {:loaded 1 :failed 0})
-                                 config/current-config (constantly {})
-                                 config/reload-config! (fn []
-                                                         (swap! steps conj :config)
-                                                         {})
-                                 config/load-config-raw (constantly {})
-                                 extension/run-reload-hooks! (fn []
-                                                               (swap! steps conj :hooks)
-                                                               {})
-                                 agents/reload! (constantly nil)
-                                 prompt-templates/reload! (constantly [])
-                                 pyx/announce-reload! (fn []
-                                                        (swap! steps conj :announce)
-                                                        "reload-1")]
+             (it
+               "reads configuration before extensions and announces once after reload hooks — #393"
+               (let [steps (atom [])]
+                 (with-redefs [pyx/reload-python-extensions! (fn []
+                                                               (swap! steps conj :extensions)
+                                                               {:loaded 1 :failed 0})
+                               config/current-config (constantly {})
+                               config/reload-config! (fn []
+                                                       (swap! steps conj :config)
+                                                       {})
+                               config/load-config-raw (constantly {})
+                               extension/run-reload-hooks! (fn []
+                                                             (swap! steps conj :hooks)
+                                                             {})
+                               agents/reload! (constantly nil)
+                               prompt-templates/reload! (constantly [])
+                               pyx/announce-reload! (fn []
+                                                      (swap! steps conj :announce)
+                                                      "reload-1")]
 
-                     (expect (= :ok (:slash/status (#'pyx/reload-slash {:command/argv []}))))
-                     (expect (= [:extensions :config :hooks :announce] @steps))))))
+                   (expect (= :ok (:slash/status (#'pyx/reload-slash {:command/argv []}))))
+                   (expect (= [:config :extensions :hooks :announce] @steps))))))
 
 (defdescribe
   reload-diagnostic-report-test
