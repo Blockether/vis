@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.52] - 2026-10-18
+
+### Added
+- A subagent can ask its parent for files, and the parent can grant write, read-only or deny access. A grant never goes past the parent's own access.
+- Every client gets an `extensions.reloaded` event after a reload, and the Companion then refreshes its provider list (#393).
+- `read_session` shows where a forked session comes from.
+- The Companion PDF viewer scrolls and zooms like a native reader, and turns pages with a sideways swipe or the arrow keys.
+
+### Changed
+- `/reload` loads only the extensions that changed. Use `/reload --all` for a full reload (#393).
+- After a reload, the router checks only the providers that changed (#393).
+- Only a leader starts subagents. A subagent gets a handoff of its parent and uses the model of the parent turn.
+- The Companion turns PDF pages without a wait, and the swipe back to the list feels like iOS.
+
+### Fixed
+- The Companion form and Settings sheets stay still when the keyboard opens.
+- A client that attaches to a running turn sees its current progress.
+- A fork of a running turn gets its name, shows as forked in the outline and does not count copied turns in usage.
+- A filed session shows its new name at once after a rename.
+- Sharing an artifact in the Companion no longer makes the header grow.
+
 ## [v0.2.51] - 2026-10-16
 
 ### Fixed
