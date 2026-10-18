@@ -11,7 +11,7 @@ import {
 } from '@testing-library/react';
 import { useState } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthFlow, ProviderLimits, ProviderPreset, RouterProvider } from '../lib/types';
 import { GatewayClient } from '../lib/gateway';
 import {
@@ -426,25 +426,37 @@ describe('live provider authentication', () => {
   });
 
   // #393: a provider that an extension registers on reload shows in an open list
-  // at once, not after the router cache expires.
-  it('reads the fleet again when extensions reload', async () => {
+  // at once, from the one read the client makes after the reload.
+  it('paints the fleet that the client read after an extension reload', async () => {
+    const fleet = [provider('anthropic'), provider('token-provider')];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ providers: fleet }), {
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      ),
+    );
     const gateway = new GatewayClient({ url: 'http://gateway.example.com:7890' });
-    let fleet = [provider('anthropic')];
+    const router = vi.fn(async () => [provider('anthropic')]);
     const client = {
       base: gateway.base,
       cachedRouter: () => null,
-      router: async () => fleet,
+      router,
       onProviderLimits: () => () => {},
     } as unknown as GatewayClient;
     const { result, unmount } = renderHook(() => useProviderFleet(client));
     await waitFor(() => expect(result.current.providers?.map((row) => row.id)).toEqual(['anthropic']));
 
-    fleet = [provider('anthropic'), provider('token-provider')];
     act(() => gateway.extensionsReloaded());
     await waitFor(() =>
       expect(result.current.providers?.map((row) => row.id)).toEqual(['anthropic', 'token-provider']),
     );
+    expect(router).toHaveBeenCalledTimes(1);
     unmount();
+    vi.unstubAllGlobals();
   });
 });
 

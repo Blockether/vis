@@ -4171,6 +4171,47 @@
             (expect (= 200 (:status (#'providers-api/router-handler {}))))
             (expect (= 2 @probes)))))))
 
+;; Regression, issue #393: after an extension reload the companion asked every
+;; provider live again. `?probe=changed` asks only the new or changed ones.
+(defdescribe
+  router-handler-probes-only-changed-providers
+  (it
+    "GET /v1/router?probe=changed asks live only providers without a current verdict"
+    (let [probed
+          (atom [])
+
+          cached
+          (atom [])
+
+          fleet
+          [{:id :kept :base-url "https://gateway.example.com/v1" :models [{:name "m"}]}
+           {:id :added :base-url "https://gateway.example.com/v1" :models [{:name "m"}]}]]
+
+      (with-redefs-fn {#'providers/picker-fleet (constantly fleet)
+                       #'providers/default-selection (constantly nil)
+                       #'providers/fallback-selection (constantly nil)
+                       #'providers/provider-status-current? (fn [p]
+                                                              (= :kept (:id p)))
+                       #'providers/provider-status (fn [p]
+                                                     (swap! probed conj (:id p))
+                                                     {:is-authenticated true})
+                       #'providers/provider-limits-safe (constantly nil)
+                       #'providers/provider-status-cached (fn [p]
+                                                            (swap! cached conj (:id p))
+                                                            {:is-authenticated true})
+                       #'provider-limits/limits-without-fetching (constantly nil)}
+        (fn []
+          (let [resp (#'providers-api/router-handler {:query-params {"probe" "changed"}})]
+            (expect (= 200 (:status resp)))
+            (expect (= ["kept" "added"]
+                       (mapv #(get % "id") (get (wire/parse-json (:body resp)) "providers")))))
+          (expect (= [:added] @probed))
+          (expect (= [:kept] @cached))
+          (reset! probed [])
+          (#'providers-api/router-handler {})
+          (expect (= #{:kept :added} (set @probed))
+                  "a plain read still asks every provider live"))))))
+
 (defdescribe
   a-provider-recheck-also-refreshes-its-catalog
   (it "a provider recheck also refreshes its catalog"

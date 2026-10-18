@@ -575,24 +575,24 @@ export function onSettingChange(base: string, receive: (updated: Toggle) => void
     if (!listeners.size) settingListeners.delete(base);
   };
 }
-/** Mounted provider lists per gateway base URL, told when their fleet goes stale. */
-const routerStaleListeners = new Map<string, Set<() => void>>();
+/** Mounted provider lists per gateway base URL, given the fleet after an extension reload. */
+const routerRefreshListeners = new Map<string, Set<(rows: RouterProvider[]) => void>>();
 
 /**
- * Hear when the provider fleet on the gateway at `base` goes stale. Extension code
- * registers providers, so an extension reload can add or remove one (#393). A
- * mounted list then reads the router again instead of waiting for `ROUTER_TTL_MS`.
+ * Hear the provider fleet on the gateway at `base` after an extension reload.
+ * Extension code registers providers, so a reload can add, change or remove one
+ * (#393). A mounted list paints the new rows without waiting for `ROUTER_TTL_MS`.
  */
-export function onRouterStale(base: string, receive: () => void): () => void {
-  let listeners = routerStaleListeners.get(base);
+export function onRouterRefresh(base: string, receive: (rows: RouterProvider[]) => void): () => void {
+  let listeners = routerRefreshListeners.get(base);
   if (!listeners) {
     listeners = new Set();
-    routerStaleListeners.set(base, listeners);
+    routerRefreshListeners.set(base, listeners);
   }
   listeners.add(receive);
   return () => {
     listeners.delete(receive);
-    if (!listeners.size) routerStaleListeners.delete(base);
+    if (!listeners.size) routerRefreshListeners.delete(base);
   };
 }
 // A retry on another screen/client still represents the same account operation.
@@ -2850,12 +2850,24 @@ export class GatewayClient {
   }
 
   /**
-   * Forget the cached fleet after an extension reload, and tell mounted provider
-   * lists to read it again. Settings and the `/reload` command both end here.
+   * Read the fleet again after an extension reload, and give the rows to mounted
+   * provider lists. Settings and the `/reload` command both end here.
+   *
+   * The read asks live only the providers that the reload added or changed, so
+   * its cost does not grow with the fleet. Until it lands, the old rows still
+   * paint but no longer count as fresh.
    */
   extensionsReloaded(): void {
-    this.invalidateRouter();
-    for (const receive of routerStaleListeners.get(this.base) ?? []) receive();
+    const key = this.base;
+    const entry = routerCache.get(key);
+    if (entry) routerCache.set(key, { ...entry, at: 0 });
+    // A read that started before the reload can carry the old fleet.
+    routerInflight.delete(key);
+    void this.router(undefined, { probe: 'changed' })
+      .then((rows) => {
+        for (const receive of routerRefreshListeners.get(key) ?? []) receive(rows);
+      })
+      .catch(() => undefined);
   }
 
   /**
@@ -2887,10 +2899,17 @@ export class GatewayClient {
     this.prefetchRouter();
   }
 
-  async router(signal?: AbortSignal, opts?: { force?: boolean }): Promise<RouterProvider[]> {
+  /**
+   * The provider fleet. `force` asks every provider live. `probe: 'changed'` asks
+   * live only the providers without a verdict for their current definition.
+   */
+  async router(
+    signal?: AbortSignal,
+    opts?: { force?: boolean; probe?: 'changed' },
+  ): Promise<RouterProvider[]> {
     const key = this.base;
     if (opts?.force) this.invalidateRouter();
-    else {
+    else if (!opts?.probe) {
       const entry = routerCache.get(key);
       if (entry && Date.now() - entry.at < ROUTER_TTL_MS) return entry.rows;
     }
@@ -2899,16 +2918,20 @@ export class GatewayClient {
     // daemon one probe, and an aborted caller never cancels the others.
     let inflight = routerInflight.get(key);
     if (!inflight) {
-      inflight = this.request<{ providers: RouterProvider[] }>('GET', '/v1/router')
+      const path = opts?.probe === 'changed' ? '/v1/router?probe=changed' : '/v1/router';
+      const read: Promise<RouterProvider[]> = this.request<{ providers: RouterProvider[] }>('GET', path)
         .then((response) => {
           const rows = response.providers;
+          // A newer read replaced this one, for example after an extension reload.
+          if (routerInflight.get(key) !== read) return rows;
           routerCache.set(key, { at: Date.now(), rows });
           writeSnapshot(this.snapshotKey('router'), rows);
           return rows;
         })
         .finally(() => {
-          routerInflight.delete(key);
+          if (routerInflight.get(key) === read) routerInflight.delete(key);
         });
+      inflight = read;
       routerInflight.set(key, inflight);
     }
     // The shared request is deliberately NOT tied to one caller's signal:

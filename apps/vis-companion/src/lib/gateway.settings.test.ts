@@ -81,36 +81,47 @@ describe('extension reload', () => {
   });
 
   // #393: extension code registers providers, so a reload must not leave the old
-  // fleet in the router cache for `ROUTER_TTL_MS`.
-  it('drops the cached provider fleet and tells mounted lists, also when the reload fails', async () => {
+  // fleet in the router cache for `ROUTER_TTL_MS`. With many providers, it must
+  // also not ask each one live again: the read asks only for the changed ones.
+  it('reads only the changed providers after a reload, also when the reload fails', async () => {
     let fleet = ['anthropic'];
     let reloadStatus = 200;
     const fetching = vi.fn((url: RequestInfo | URL) =>
       Promise.resolve(
-        String(url).endsWith('/v1/router')
+        new URL(String(url)).pathname === '/v1/router'
           ? json({ providers: fleet.map((id) => ({ id })) })
           : json({ loaded: 1, failed: 0 }, reloadStatus),
       ),
     );
-    const { GatewayClient, onRouterStale } = await relaunch(fetching as unknown as typeof fetch);
+    const { GatewayClient, onRouterRefresh } = await relaunch(fetching as unknown as typeof fetch);
     const client = new GatewayClient(conn);
-    const stale = vi.fn();
-    const stop = onRouterStale(client.base, stale);
+    const painted: string[][] = [];
+    const stop = onRouterRefresh(client.base, (rows) => painted.push(rows.map((row) => row.id)));
+    const routerReads = () =>
+      (fetching.mock.calls as unknown as [RequestInfo | URL][])
+        .map(([url]) => new URL(String(url)))
+        .filter((url) => url.pathname === '/v1/router')
+        .map((url) => url.search);
 
     expect((await client.router()).map((row) => row.id)).toEqual(['anthropic']);
     fleet = ['anthropic', 'token-provider'];
     await client.reloadExtensions({ scope: 'project', target_id: 'p', label: 'Workspace' });
-    expect(stale).toHaveBeenCalledTimes(1);
-    expect(client.cachedRouter()).toBeNull();
+    // The old rows still paint while the read runs, but they are not fresh.
+    expect(client.cachedRouter()?.map((row) => row.id)).toEqual(['anthropic']);
+    expect(client.isRouterFresh()).toBe(false);
     expect((await client.router()).map((row) => row.id)).toEqual(['anthropic', 'token-provider']);
+    expect(painted).toEqual([['anthropic', 'token-provider']]);
+    expect(routerReads()).toEqual(['', '?probe=changed']);
+    expect(client.isRouterFresh()).toBe(true);
 
     reloadStatus = 500;
     await expect(client.reloadExtensions()).rejects.toThrow();
-    expect(stale).toHaveBeenCalledTimes(2);
-    expect(client.isRouterFresh()).toBe(false);
+    await vi.waitFor(() => expect(painted).toHaveLength(2));
+    expect(routerReads()).toEqual(['', '?probe=changed', '?probe=changed']);
 
     stop();
     await client.reloadExtensions().catch(() => undefined);
-    expect(stale).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(routerReads()).toHaveLength(4));
+    expect(painted).toHaveLength(2);
   });
 });

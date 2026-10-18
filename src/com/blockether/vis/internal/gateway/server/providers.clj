@@ -302,13 +302,15 @@
    no second read, and no window where the phone shows a fleet the daemon no
    longer has.
 
-   `probe?` is what that costs. `GET /v1/router` asks every provider live. A
+   `probe` is what that costs. `GET /v1/router` asks every provider live. A
    MUTATION passes false: adding a provider used to re-probe the auth and quota
    endpoints of every OTHER provider before answering, so tapping Add sat on a
    spinner for seconds before the API-key box — which needs neither — appeared.
-   The payload shape is identical either way."
+   `:changed` asks live only a provider without a verdict for its current
+   definition. An extension reload then pays for the providers that it added or
+   changed, not for the whole fleet (#393). The payload shape is identical."
   ([] (router-fleet-json true))
-  ([probe?]
+  ([probe]
    (let [fleet
          (providers/picker-fleet)
 
@@ -326,13 +328,18 @@
      ;; answers a report rather than throwing.
      {:providers (->> fleet
                       (mapv (fn [provider]
-                              (future (router-provider-entry provider primary fallback probe?))))
+                              (let [probe? (if (= :changed probe)
+                                             (not (providers/provider-status-current? provider))
+                                             probe)]
+                                (future (router-provider-entry provider primary fallback probe?)))))
                       (mapv deref))})))
 
 (defn- router-handler
-  "GET /v1/router — the whole provider catalog and both explicit tags."
-  [_]
-  (http/json-response (router-fleet-json)))
+  "GET /v1/router — the whole provider catalog and both explicit tags.
+   `?probe=changed` asks live only the providers that are new or changed."
+  [request]
+  (http/json-response (router-fleet-json
+                        (if (= "changed" (get-in request [:query-params "probe"])) :changed true))))
 
 (defn- router-default-handler
   "PATCH /v1/router — tag one provider/model pair, or set a provider's thinking default.

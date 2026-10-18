@@ -161,6 +161,33 @@
                        (:auth-state (providers/provider-status-cached {:id :cached-status-test}))))
             (expect (= calls @probes)))))))
 
+;; Regression, issue #393: an extension reload made the companion re-check every
+;; provider live. Only a provider without a verdict for its current definition needs one.
+(defdescribe provider-status-current-follows-the-definition
+             (it "a verdict stays current for the same data and expires when the data changes"
+                 (with-redefs [registry/provider-by-id (constantly {:provider/status-fn
+                                                                    (constantly {:is-authenticated
+                                                                                 true})})]
+                   (let [provider {:id :definition-test
+                                   :base-url "https://gateway.example.com/v1"
+                                   :token-fn (fn []
+                                               "a")}]
+                     (providers/forget-provider-status! :definition-test)
+                     (expect (false? (providers/provider-status-current? provider))
+                             "a new provider has no verdict")
+                     (providers/provider-status provider)
+                     (expect (true? (providers/provider-status-current? provider)))
+                     (expect (true? (providers/provider-status-current? (assoc provider
+                                                                          :token-fn (fn []
+                                                                                      "a"))))
+                             "a reload registers new function objects for the same definition")
+                     (expect (false? (providers/provider-status-current?
+                                       (assoc provider :base-url "http://10.0.0.5:8080/v1")))
+                             "changed data needs a new live check")
+                     (providers/forget-provider-status! :definition-test)
+                     (expect (false? (providers/provider-status-current? provider))
+                             "an auth change drops the verdict")))))
+
 (defdescribe
   cached-provider-status-outlives-the-memo-window
   (it "cached provider status keeps the last live verdict after the memo window"

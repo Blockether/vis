@@ -16,6 +16,7 @@
    automatically works in every channel."
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
+            [clojure.walk :as walk]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.session.cancellation :as cancel]
             [com.blockether.vis.internal.config.core :as config]
@@ -394,11 +395,30 @@
   [limits fallback]
   (or (get-in limits [:dynamic :note]) (get-in limits [:error :message]) fallback))
 
+(defn- provider-definition
+  "A value hash of the data in a provider map. A function or another value without
+   value equality counts as one opaque marker. An extension reload registers new
+   function objects, so an unchanged definition then keeps the same hash."
+  [provider]
+  (hash (walk/postwalk (fn [x]
+                         (if (or (coll? x)
+                                 (string? x)
+                                 (number? x)
+                                 (keyword? x)
+                                 (symbol? x)
+                                 (boolean? x)
+                                 (char? x)
+                                 (nil? x))
+                           x
+                           ::opaque))
+                       provider)))
+
 (defonce ^:private last-provider-status
-  ;; provider id -> {:status … :at-ms …}: what the last LIVE `provider-status`
-  ;; concluded for it, so a non-probing read can repeat that verdict instead
-  ;; of greying out a fleet the human is already looking at. It has no age limit:
-  ;; only an auth change makes it wrong, and every auth change forgets it.
+  ;; provider id -> {:status … :at-ms … :definition …}: what the last LIVE
+  ;; `provider-status` concluded for it, so a non-probing read can repeat that
+  ;; verdict instead of greying out a fleet the human is already looking at. It
+  ;; has no age limit: only an auth change makes it wrong, and every auth change
+  ;; forgets it.
   (atom {}))
 
 (defn forget-provider-status!
@@ -525,7 +545,9 @@
    remembered for `provider-status-cached`."
   [provider]
   (let [status (status-of provider true)]
-    (swap! last-provider-status assoc (:id provider) {:status status :at-ms (util/now-ms)})
+    (swap! last-provider-status assoc
+      (:id provider)
+      {:status status :at-ms (util/now-ms) :definition (provider-definition provider)})
     status))
 
 (defn provider-status-cached
@@ -541,6 +563,14 @@
    `GET /v1/router` still reads live."
   [provider]
   (or (get-in @last-provider-status [(:id provider) :status]) (status-of provider false)))
+
+(defn provider-status-current?
+  "True when the last live verdict was reached for this exact provider definition.
+   An extension reload can add a provider or change one (#393). Only those need a
+   new live check; every other provider can repeat its verdict."
+  [provider]
+  (let [{:keys [status definition]} (get @last-provider-status (:id provider))]
+    (and (some? status) (= definition (provider-definition provider)))))
 
 (defn provider-reachable?
   "Cheap ROUTING-time liveness verdict: local providers (Ollama /
