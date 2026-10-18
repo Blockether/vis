@@ -660,6 +660,7 @@
                               :dirs [(.getAbsolutePath ^java.io.File global-dir)]
                               :loaded 2
                               :failed 0
+                              :reloaded 1
                               :extensions ["broken-package-fixture" "healthy-package-fixture"]}]
                             (:scopes result))))
                (expect (= [] (pyx/load-failures nil)))
@@ -4077,8 +4078,9 @@ vis.register_extension(vis.Extension(
                   (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
                   (expect (= 43 (invoke)))
                   (reset! fail? true)
+                  ;; Unchanged code does not install again, so ask for a full reload.
                   (expect (= {:loaded 1 :failed 1 :changed? true}
-                             (select-keys (pyx/reload-python-extensions! opts)
+                             (select-keys (pyx/reload-python-extensions! (assoc opts :all? true))
                                           [:loaded :failed :changed?])))
                   (expect (= 43 (invoke)))
                   ;; #183: retain useful installer errors, redact only the credential.
@@ -5290,6 +5292,117 @@ vis.register_extension(vis.Extension(
            (expect (false? (toggles/enabled? "shell")))
            (finally (toggles/set-value! "shell" before))))))
 
+;; Issue #393: with many extensions, a reload must load again only what changed.
+(def ^:private reload-alpha-py
+  "\"\"\"Changed-only reload fixture.\"\"\"
+import blockether.vis.extension as vis
+
+
+def alpha_version():
+    \"\"\"await alpha_version() -> str -- report the fixture version.\"\"\"
+    return \"1\"
+
+
+vis.register_extension(vis.Extension(
+    name=\"reload-alpha\",
+    alias=\"ralpha\",
+    description=\"Changed-only reload fixture.\",
+    version=\"0.1.0\",
+    kind=\"integration\",
+    symbols=[vis.Symbol(alpha_version, tag=\"observation\")],
+))
+")
+
+(def ^:private reload-alpha-edited-py
+  "\"\"\"Changed-only reload fixture.\"\"\"
+import blockether.vis.extension as vis
+
+
+def alpha_version():
+    \"\"\"await alpha_version() -> str -- report the fixture version.\"\"\"
+    return \"2\"
+
+
+vis.register_extension(vis.Extension(
+    name=\"reload-alpha\",
+    alias=\"ralpha\",
+    description=\"Changed-only reload fixture.\",
+    version=\"0.1.0\",
+    kind=\"integration\",
+    symbols=[vis.Symbol(alpha_version, tag=\"observation\")],
+))
+")
+
+(def ^:private reload-beta-py
+  "\"\"\"Changed-only reload fixture.\"\"\"
+import blockether.vis.extension as vis
+
+
+def beta_version():
+    \"\"\"await beta_version() -> str -- report the fixture version.\"\"\"
+    return \"1\"
+
+
+vis.register_extension(vis.Extension(
+    name=\"reload-beta\",
+    alias=\"rbeta\",
+    description=\"Changed-only reload fixture.\",
+    version=\"0.1.0\",
+    kind=\"integration\",
+    symbols=[vis.Symbol(beta_version, tag=\"observation\")],
+    env=[\"VIS_TEST_RELOAD_393\"],
+))
+")
+
+(defdescribe
+  changed-only-reload-test
+  (it
+    "loads again only new, changed and failed files, and all of them with :all?"
+    (with-fresh-loaded
+      {"alpha/current/extension.py" reload-alpha-py "beta/current/extension.py" reload-beta-py}
+      (fn [result {:keys [ext-dir]}]
+        (let [contexts
+              (fn []
+                (into {}
+                      (keep (fn [[[_ path] entry]]
+                              (when (str/starts-with? path
+                                                      (.getCanonicalPath ^java.io.File ext-dir))
+                                [(.getName (.getParentFile (.getParentFile (io/file path))))
+                                 (:context entry)])))
+                      @@#'pyx/loaded))
+
+              reload
+              (fn [& [opts]]
+                (:reloaded (pyx/reload-python-extensions! (merge {:dirs [(str ext-dir)]} opts))))
+
+              env-value
+              config/extension-env-value
+
+              ;; The fixture loaded outside this workspace binding, so its env values can
+              ;; differ once. Settle them before the first unchanged reload.
+              _
+              (reload)
+
+              first-load
+              (contexts)]
+
+          (expect (= 2 (:reloaded result)))
+          (expect (= 0 (reload)))
+          (expect (= first-load (contexts)))
+          (write-ext! ext-dir "alpha/current/extension.py" reload-alpha-edited-py)
+          (expect (= 1 (reload)))
+          (expect (not= (get first-load "alpha") (get (contexts) "alpha")))
+          (expect (= (get first-load "beta") (get (contexts) "beta")))
+          ;; Only beta declares the variable, so only beta sees the new value.
+          (let [edited (contexts)]
+            (with-redefs [config/extension-env-value
+                          (fn [n]
+                            (if (= "VIS_TEST_RELOAD_393" n) "token-2" (env-value n)))]
+              (expect (= 1 (reload)))
+              (expect (= (get edited "alpha") (get (contexts) "alpha")))
+              (expect (not= (get edited "beta") (get (contexts) "beta")))
+              (expect (= 2 (reload {:all? true}))))))))))
+
 (defdescribe reload-slash-announce-test
              (it "announces the reload once, after configuration and reload hooks — #393"
                  (let [steps (atom [])]
@@ -6193,39 +6306,44 @@ vis.register_extension(vis.Extension(name='sidecar', description='sidecar', alia
 (defdescribe
   initialized-discovery-lock-test
   ;; Regression: ready catalogs waited behind unrelated extension preparation.
-  (it "returns an admitted catalog while another scope holds the loading lock"
-      (let [entered
-            (promise)
+  (it
+    "returns an admitted catalog while another scope holds the loading lock"
+    (let [entered
+          (promise)
 
-            release
-            (promise)
+          release
+          (promise)
 
-            fingerprint
-            (atom {})]
+          fingerprint
+          (atom {})]
 
-        (with-redefs-fn {#'pyx/last-fingerprint fingerprint
-                         #'pyx/loaded (atom {"fixture" {:project-root nil :ext-name "ready"}})
-                         #'pyx/failures (atom [])
-                         #'pyx/load-scope! (fn [_]
-                                             (swap! fingerprint assoc nil [])
-                                             {:loaded 1 :failed 0 :changed? true})}
-          (fn []
-            (pyx/ensure-python-extensions-loaded! {:dirs []})
-            (let [holder (future (locking @#'pyx/ensure-load-lock (deliver entered true) @release))]
-              (try (expect (= true (deref entered 5000 ::timeout)))
-                   (let [reader (future (pyx/ensure-python-extensions-loaded! {:dirs []}))
-                         result (deref reader 500 ::timeout)]
+      (with-redefs-fn {#'pyx/last-fingerprint fingerprint
+                       #'pyx/loaded (atom {"fixture" {:project-root nil :ext-name "ready"}})
+                       #'pyx/failures (atom [])
+                       #'pyx/load-scope! (fn [_]
+                                           (swap! fingerprint assoc nil [])
+                                           {:loaded 1 :failed 0 :changed? true})}
+        (fn []
+          (pyx/ensure-python-extensions-loaded! {:dirs []})
+          (let [holder (future (locking @#'pyx/ensure-load-lock (deliver entered true) @release))]
+            (try (expect (= true (deref entered 5000 ::timeout)))
+                 (let [reader (future (pyx/ensure-python-extensions-loaded! {:dirs []}))
+                       result (deref reader 500 ::timeout)]
 
-                     (deliver release true)
-                     (expect (map? result))
-                     (expect
-                       (= {:loaded 1
-                           :failed 0
-                           :changed? false
-                           :scopes
-                           [{:scope :global :dirs [] :loaded 1 :failed 0 :extensions ["ready"]}]}
-                          (deref reader 5000 ::timeout))))
-                   (finally (deliver release true) (deref holder 5000 ::timeout)))))))))
+                   (deliver release true)
+                   (expect (map? result))
+                   (expect (= {:loaded 1
+                               :failed 0
+                               :reloaded 0
+                               :changed? false
+                               :scopes [{:scope :global
+                                         :dirs []
+                                         :loaded 1
+                                         :failed 0
+                                         :reloaded 0
+                                         :extensions ["ready"]}]}
+                              (deref reader 5000 ::timeout))))
+                 (finally (deliver release true) (deref holder 5000 ::timeout)))))))))
 
 (defdescribe
   scope-discovery-admission-test

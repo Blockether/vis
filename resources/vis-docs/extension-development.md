@@ -176,11 +176,16 @@ environment. They do not become sandbox imports.
 | Edit existing editable Python source or the entry file | `/reload`, with no reinstall or gateway restart |
 | Change dependencies or packaging metadata | Review/update the lock, sync again, then `/reload` |
 | Move the checkout | Sync from the new location, then `/reload` |
-| Change Vis runtime or the project interpreter | Sync with a compatible interpreter, then reload |
+| Change Vis runtime or the project interpreter | Sync with a compatible interpreter, then `/reload --all` |
 | Replace compiled extension code | Rebuild and install it, then use a fresh Vis process |
 
-Readiness is checked by `uv sync --check`, not a Vis fingerprint or readiness file.
-Editing existing editable Python source does not require another sync.
+`/reload` loads again only the extensions that changed. This includes new, edited and failed entry
+files. It also includes changes to source roots, dependencies, the project lock, `vis.yml`
+environment values and shared packages. Run `/reload --all` to load every extension again, for
+example after a change outside these inputs.
+
+Vis does not run uv for an unchanged extension. For a changed extension, `uv sync --check` decides
+if its environment is ready. Editing existing editable Python source does not require another sync.
 
 Reload switches live sessions at the next turn boundary. Calls that are already running can finish
 with old code. A failed reload keeps the last good tools and docs and marks them stale. The reload

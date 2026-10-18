@@ -429,15 +429,16 @@
 
    Names that resolve to nothing are simply absent from the result (never an
    empty string, so an extension's `os.environ.get(...) or default` still works)."
-  [declared]
-  (let [names (normalize-env-names (concat (or declared [])
-                                           (config/declared-environment-names)
-                                           (keys (config/workspace-environment-values))))]
-    (into {}
-          (keep (fn [n]
-                  (when-let [v (config/extension-env-value n)]
-                    [n v])))
-          names)))
+  ([declared] (resolve-declared-env declared config/extension-env-value))
+  ([declared value-of]
+   (let [names (normalize-env-names (concat (or declared [])
+                                            (config/declared-environment-names)
+                                            (keys (config/workspace-environment-values))))]
+     (into {}
+           (keep (fn [n]
+                   (when-let [v (value-of n)]
+                     [n v])))
+           names))))
 
 (defonce
   ^:private
@@ -2413,6 +2414,74 @@
      :package-metadata (when package? metadata)
      :project project}))
 
+(defn- plan-inputs
+  "The parts of an extension plan beside its `.py` code that decide what a load installs:
+   import roots, declared dependencies and the `pyproject.toml` and `uv.lock` of its project."
+  [{:keys [roots dependencies project error]}]
+  (when-not error
+    {:roots (mapv #(.getCanonicalPath ^File %) roots)
+     :dependencies dependencies
+     :project (when project (.getCanonicalPath ^File project))
+     :project-files (when project
+                      (mapv (fn [file-name]
+                              (let [file (io/file project file-name)]
+                                (when (.isFile file) (util/sha256-hex (slurp file)))))
+                            ["pyproject.toml" "uv.lock"]))}))
+
+(defn- shared-packages
+  "A digest of the shared `packages`: the installed `dist-info` names and the `.py` sources
+   that its `.pth` files put on `sys.path`. A shared sync or an editable edit changes them,
+   not the extension file (#196, #393)."
+  [packages]
+  (let [skip?
+        #(let [n (.getName ^File %)] (or (str/starts-with? n ".")
+                                         (#{"__pycache__" "node_modules"} n)))
+
+        walk
+        (fn walk [^File dir]
+          (mapcat (fn [^File f]
+                    (cond (.isDirectory f) (when-not (skip? f) (walk f))
+                          (str/ends-with? (.getName f) ".py") [f]))
+                  (sort (.listFiles dir))))
+
+        dirs
+        (for [^File pth
+              (sort (.listFiles (io/file packages)))
+
+              :when (str/ends-with? (.getName pth) ".pth")
+              line
+              (str/split-lines (try (slurp pth) (catch Throwable _ "")))
+
+              :let [line
+                    (str/trim line)]
+              :when (not (or (str/blank? line)
+                             (str/starts-with? line "#")
+                             (str/starts-with? line "import")))
+              :let [raw
+                    (io/file line)
+
+                    dir
+                    (if (.isAbsolute raw) raw (io/file packages line))]
+              :when (.isDirectory dir)]
+
+          (.getCanonicalFile dir))]
+
+    (util/sha256-hex (pr-str [(vec (for [^File f
+                                         (sort (.listFiles (io/file packages)))
+
+                                         :when (str/ends-with? (.getName f) ".dist-info")]
+
+                                     (.getName f)))
+                              (vec (for [^File dir
+                                         (distinct dirs)
+
+                                         ^File f
+                                         (walk dir)]
+
+                                     [(.getPath f)
+                                      (try (util/sha256-hex (slurp f))
+                                           (catch Throwable _ ::unreadable-source))]))]))))
+
 (defn- import-root-files
   "Every regular file under an extension's import root as `[rel-path file]`,
    sorted, `__pycache__` aside. The root is the directory `load-file!` puts on
@@ -2771,22 +2840,27 @@
 
 (defn- load-scope!
   "Scan the Python extension dirs (default: `~/.vis/extensions` and
-   `<cwd>/.vis/extensions`) and (re)load every `*.py` file. Idempotent:
-   when no file changed since the last scan this is a cheap no-op. On any
-   change the whole set is torn down and rebuilt (contexts are ~40ms warm
-   on the shared engine) — deterministic ordering, no partial states.
+   `<cwd>/.vis/extensions`) and (re)load the `*.py` files that changed. Idempotent:
+   when no file changed since the last scan this is a cheap no-op.
 
    Change is measured over each extension's WHOLE import root, never its entry
    file alone — a package module the entry imports is part of the extension —
    and every root is FROZEN at load (`freeze-root!`), one freeze per root per
-   pass.
+   pass. A loaded entry also keeps a digest of the env values that it received,
+   so a `.env` edit counts as a change (#393).
+
+   A pass loads a file again only when its inputs changed, when it is new, or when
+   its last load failed. Other entries stay live with their open context, so the
+   cost of a reload follows the changes, not the number of extensions. `:all?` loads
+   every file again.
 
    A file that fails to load is recorded in `load-failures` (and surfaced
    by `vis-agent doctor`) — it never crashes the host.
 
-   Returns `{:loaded n :failed n :changed? bool}`."
+   Returns `{:loaded n :failed n :reloaded n :changed? bool}`; `:reloaded` counts the
+   files that this pass loaded again."
   ([] (load-scope! nil))
-  ([{:keys [dirs project-root sync-projects? site-packages preparation-failures]}]
+  ([{:keys [dirs project-root sync-projects? site-packages preparation-failures all?]}]
    (register-loader-extension!)
    (let [dirs
          (or dirs [])
@@ -2835,10 +2909,41 @@
                files)
 
          fp
-         (conj fp [::preparation preparation-failures])]
+         (conj fp [::preparation preparation-failures])
+
+         ;; One reload resolves each env name once: a name can run a keychain or helper.
+         env-value
+         (memoize config/extension-env-value)
+
+         ;; One digest for each pass: every extension can import shared packages.
+         shared
+         (delay (shared-packages (runtime/packages-dir)))
+
+         file-inputs
+         (fn [^File f declared]
+           (let [path
+                 (.getCanonicalPath f)
+
+                 [_ sha source-sha]
+                 (some #(when (= path (first %)) %) fp)]
+
+             {:sha sha
+              :code-sha source-sha
+              :plan (plan-inputs (get plans f))
+              :shared @shared
+              :env (util/sha256-hex (pr-str (into (sorted-map)
+                                                  (resolve-declared-env (map :name declared)
+                                                                        env-value))))}))
+
+         failed-before
+         (into #{} (keep #(when (= project-root (:project-root %)) (:file %))) @failures)
+
+         reloaded
+         (atom 0)]
 
      (if (= fp (get @last-fingerprint project-root))
        {:loaded (count (scope-entries project-root))
+        :reloaded 0
         :failed (count (filter #(= project-root (:project-root %)) @failures))
         :changed? false}
        (let [old-loaded
@@ -2869,34 +2974,45 @@
            (doseq [^File f files]
              (let [path (.getCanonicalPath f)
                    entry-key [project-root path]
-                   prev-ctx (get-in @loaded [entry-key :context])]
+                   previous (get @loaded entry-key)
+                   prev-ctx (:context previous)]
 
-               (try
-                 (let [{:keys [ext-name] :as entry}
-                       (assoc (load-file! f (per-root :frozen (get plans f) prepare-root!))
-                         :order (.indexOf ^java.util.List files f))]
-                   ;; A later file (project dir) registering the same extension
-                   ;; name supersedes an earlier one at a DIFFERENT path — the
-                   ;; registry already swapped the registration; close the
-                   ;; superseded context so its adapters can't linger.
-                   (doseq [[opath {oname :ext-name octx :context}] (scope-entries project-root)
-                           :when (and (= oname ext-name) (not= opath entry-key))]
+               (if (and (not all?)
+                        previous
+                        (not (failed-before path))
+                        (= (:inputs previous) (file-inputs f (get-in previous [:ext :ext/env]))))
+                 ;; Unchanged: keep the live entry; only its scan position can move.
+                 (swap! loaded assoc-in [entry-key :order] (.indexOf ^java.util.List files f))
+                 (try (swap! reloaded inc)
+                      (let [{:keys [ext-name] :as entry}
+                            (as-> (load-file! f (per-root :frozen (get plans f) prepare-root!))
+                              entry
+                              (assoc entry
+                                :order (.indexOf ^java.util.List files f)
+                                :inputs (file-inputs f (get-in entry [:ext :ext/env]))))]
+                        ;; A later file (project dir) registering the same extension
+                        ;; name supersedes an earlier one at a DIFFERENT path — the
+                        ;; registry already swapped the registration; close the
+                        ;; superseded context so its adapters can't linger.
+                        (doseq [[opath {oname :ext-name octx :context}] (scope-entries project-root)
+                                :when (and (= oname ext-name) (not= opath entry-key))]
 
-                     (close-context! octx)
-                     (swap! loaded dissoc opath))
-                   (swap! loaded assoc entry-key entry)
-                   (close-context! prev-ctx))
-                 (catch Throwable t
-                   (tel/log! {:level :warn
-                              :id ::load-failed
-                              :data {:file (str f) :error (ex-message t)}
-                              :msg (str "Python extension failed to load: " f
-                                        " — " (ex-message t))})
-                   (let [previous (get @loaded entry-key)
-                         [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
+                          (close-context! octx)
+                          (swap! loaded dissoc opath))
+                        (swap! loaded assoc entry-key entry)
+                        (close-context! prev-ctx))
+                      (catch Throwable t
+                        (tel/log! {:level :warn
+                                   :id ::load-failed
+                                   :data {:file (str f) :error (ex-message t)}
+                                   :msg (str "Python extension failed to load: " f
+                                             " — " (ex-message t))})
+                        (let [previous (get @loaded entry-key)
+                              [_ sha source-sha] (some #(when (= path (first %)) %) fp)]
 
-                     (swap! failures conj
-                       (merge (select-keys (ex-data t) [:changed-inputs :changed-distributions])
+                          (swap! failures conj
+                            (merge
+                              (select-keys (ex-data t) [:changed-inputs :changed-distributions])
                               {:file (str f)
                                :project-root project-root
                                :error (ex-message t)
@@ -2906,7 +3022,7 @@
                                (when previous
                                  (util/sha256-hex (pr-str (select-keys previous [:sha :code-sha]))))
                                :requested-fingerprint
-                               (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))})))))))
+                               (util/sha256-hex (pr-str {:sha sha :code-sha source-sha}))}))))))))
            ;; A package that could not install has no entrypoint to scan.
            (swap! failures into (remove #(scanned (:file %)) preparation-failures))
            ;; Files that vanished from disk since the last scan (deleted / renamed)
@@ -2937,6 +3053,7 @@
                                         :extensions (vec (keep :ext entries))
                                         :removed (vec (sort (remove new-names old-names)))}))
            {:loaded (count (scope-entries project-root))
+            :reloaded @reloaded
             :failed (count (filter #(= project-root (:project-root %)) @failures))
             :changed? true}
            (finally
@@ -3104,13 +3221,16 @@
 
     {:loaded (reduce + 0 (map :loaded results))
      :failed (reduce + 0 (map :failed results))
+     :reloaded (reduce + 0 (keep :reloaded results))
      :changed? (boolean (some :changed? results))
      ;; Issue #348: report each catalog's directories and admitted names.
-     :scopes (mapv (fn [{:keys [dirs project-root] :as scope} {:keys [loaded failed extensions]}]
+     :scopes (mapv (fn [{:keys [dirs project-root] :as scope}
+                        {:keys [loaded failed reloaded extensions]}]
                      {:scope (if (or (:project scope) (some? project-root)) :project :global)
                       :dirs (mapv #(.getAbsolutePath (io/file %)) dirs)
                       :loaded loaded
                       :failed failed
+                      :reloaded (or reloaded 0)
                       :extensions extensions})
                    scopes
                    results)}))
@@ -3140,7 +3260,8 @@
       (ensure-python-extensions-loaded!))))
 
 (defn reload-python-extensions!
-  "Reload global extensions and the calling project, preserving other project catalogs."
+  "Reload global extensions and the calling project, preserving other project catalogs.
+   Only new, changed and failed extension files load again; `{:all? true}` loads all (#393)."
   ([] (reload-python-extensions! nil))
   ([opts]
    (locking ensure-load-lock
@@ -3172,14 +3293,20 @@
 (defn- reload-report
   "Summary line and details of one `/reload` from its typed data (Vis #363).
    The line counts what changed and names failures; the body lists each part."
-  [{:keys [loaded failed scopes configuration-changes prompt-templates failed-hooks context-error
-           duration-ms]}]
+  [{:keys [loaded failed reloaded all? scopes configuration-changes prompt-templates failed-hooks
+           context-error duration-ms]}]
   (let [counted
         (fn [n word]
           (str n " " word (when-not (= 1 (long n)) "s")))
 
         summary
         (cond-> ["Reloaded" (counted loaded "extension")]
+          all?
+          (conj "all loaded again")
+
+          (and reloaded (not all?))
+          (conj (str reloaded " changed"))
+
           (pos? (long failed))
           (conj (str failed " failed"))
 
@@ -3231,8 +3358,8 @@
 
 (defn- reload-slash
   [{argv :command/argv}]
-  (if (seq argv)
-    {:slash/status :error :slash/title "Usage: /reload"}
+  (if (and (seq argv) (not= ["--all"] argv))
+    {:slash/status :error :slash/title "Usage: /reload [--all]"}
     ;; One user-facing reload for EVERY hot-reloadable resource: configuration,
     ;; Python extensions, project guidance (AGENTS.md/CLAUDE.md stack), prompt
     ;; templates, and any extension-owned discovery cache registered as a
@@ -3240,8 +3367,11 @@
     (let [started
           (util/now-ms)
 
-          {:keys [loaded failed scopes]}
-          (reload-python-extensions!)
+          all?
+          (= ["--all"] argv)
+
+          {:keys [loaded failed reloaded scopes]}
+          (if all? (reload-python-extensions! {:all? true}) (reload-python-extensions!))
 
           old-config
           (config/current-config)
@@ -3285,6 +3415,8 @@
           data
           {:loaded loaded
            :failed failed
+           :reloaded reloaded
+           :all? all?
            :scopes (vec scopes)
            :configuration-changes cfg-changes
            :prompt-templates template-cnt
@@ -3556,8 +3688,8 @@
        :ext/slash-commands
        [{:slash/name "reload"
          :slash/doc
-         "Reload configuration, extensions and context, preparing declared packages and extension environments."
-         :slash/usage "/reload"
+         "Reload configuration and context, and the extensions that changed; --all loads every extension again."
+         :slash/usage "/reload [--all]"
          :slash/run-fn reload-slash}
         {:slash/name "test"
          :slash/doc

@@ -693,9 +693,10 @@ installs dependencies, then evaluates the entry and registers its tools.
   wheel or failed install is a load failure, not a fallback to source builds.
 - `requires-python` checks the embedded interpreter. Vis does not download
   another Python version to satisfy it.
-- `/reload` takes new source snapshots and resolves declared dependencies again. An unchanged loader
-  scan does neither. Existing tools use source edits only after a reload. A failed reload keeps the
-  last working extension.
+- `/reload` takes new source snapshots and resolves declared dependencies again for each extension
+  that changed or failed. It skips unchanged extensions. `/reload --all` loads every extension again.
+  An unchanged loader scan does neither. Existing tools use source edits only after a reload. A
+  failed reload keeps the last working extension.
 
 Both embedded workers import shared installed dependencies. A tool call does not
 install them again. Each process has its own module cache. After package changes,

@@ -218,8 +218,8 @@
                       (expect (= ["--check" "--offline"] (subvec (nth @calls 2) 2 4)))
                       (reset! calls []))
                     (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
-                    (expect (= ["workspace" "export" "workspace" "sync" "run"] (mapv second @calls))
-                            "uv owns checking whether an unchanged environment needs updating")
+                    (expect (= [] (mapv second @calls))
+                            "A reload skips an unchanged extension and its environment (#393)")
                     (spit (io/file source "src/center_logic.py")
                           (str/replace code
                                        "return vis_center_dep.VALUE"
@@ -227,8 +227,7 @@
                     (expect (= 42 (invoke)))
                     (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
                     (expect (= 43 (invoke)))
-                    (expect (= ["workspace" "export" "workspace" "sync" "run" "workspace" "export"
-                                "workspace" "sync" "run"]
+                    (expect (= ["workspace" "export" "workspace" "sync" "run"]
                                (mapv second @calls)))
                     (spit (io/file source "extension.py") "raise ValueError('broken edit')\n")
                     (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))
