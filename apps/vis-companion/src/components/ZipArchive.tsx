@@ -164,7 +164,7 @@ export function ZipArchive({ blob, name }: { blob: Blob; name: string }) {
                   className="min-w-0 flex-1"
                   onClick={() => setSelected(isOpen ? null : entry.name)}
                 >
-                  <span className="flex min-w-0 items-center gap-2 font-mono text-meta">
+                  <span className="flex w-full min-w-0 items-center gap-2 font-mono text-meta">
                     <ChevronIcon className={`size-3 shrink-0 ${isOpen ? 'rotate-90' : ''}`} />
                     <span className="min-w-0 flex-1 truncate text-left">{entry.name}</span>
                     <span className="shrink-0 text-dialog-hint">
