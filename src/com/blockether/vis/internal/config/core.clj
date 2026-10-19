@@ -1322,11 +1322,21 @@
   []
   (deep-merge-config (load-project-root-config-raw) (load-project-config-raw)))
 
+(defn extension-glob-source?
+  "True when a declared extension `source` is a local glob pattern. A glob names
+   extension entries that load in place; it never names a package to install."
+  [source]
+  (boolean (and (string? source) (not (str/includes? source "://")) (re-find #"[*?\[]" source))))
+
 (defn extension-package-scopes
   "Read validated declarations without installing. Relative local sources belong to
    the declaring YAML directory. Global/state and project/overlay merge by package
    name, replacing complete declarations; they install into separate scopes. A tier
-   that the session does not read gives no scope."
+   that the session does not read gives no scope.
+
+   A glob `source` (#399) is not a package: it goes to the scope's `:entries` as
+   `{:name :source}`, sorted by name, and the loader expands it at each load. A glob
+   entry with other keys gets an `:error`."
   []
   (letfn
     [(read-tier [paths]
@@ -1347,7 +1357,21 @@
                                                                                             path))
                                                                           source))))])))
                        (get raw "extensions"))))
-             paths))]
+             paths))
+     (split [declared]
+       (let [glob? #(extension-glob-source? (get (val %) "source"))]
+         {:packages (into {} (remove glob?) declared)
+          :entries (into []
+                         (comp (filter glob?)
+                               (map (fn [[name spec]]
+                                      (cond-> {:name name :source (get spec "source")}
+                                        (not= #{"source"} (set (keys spec)))
+                                        (assoc :error
+                                          (str
+                                            "Extension entry `"
+                                            name
+                                            "` has a glob source, so it takes no other keys"))))))
+                         (sort-by key declared))}))]
     (let [global
           (merge (read-tier (global-config-yaml-paths)) (read-tier [(state-path)]))
 
@@ -1360,13 +1384,12 @@
                  (when-not same? (read-tier (project-config-yaml-paths))))]
 
       (filterv #(workspace/source-enabled? (:scope %))
-        (cond-> [{:scope "global"
-                  :directory (str (global-extensions-dir))
-                  :packages (if same? (merge global project) (or global {}))}]
+        (cond-> [(merge {:scope "global" :directory (str (global-extensions-dir))}
+                        (split (if same? (merge global project) global)))]
           (not same?)
-          (conj {:scope "project"
-                 :directory (str (io/file (workspace/cwd) ".vis" "extensions"))
-                 :packages (or project {})}))))))
+          (conj (merge {:scope "project"
+                        :directory (str (io/file (workspace/cwd) ".vis" "extensions"))}
+                       (split project))))))))
 
 (defn- config-source-paths
   "Every YAML path that can contribute to `load-config-raw`, existing or not."

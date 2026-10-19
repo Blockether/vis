@@ -105,6 +105,13 @@ def test_workspace_root_tracks_outside_process_directory(tmp_path, monkeypatch):
     assert isinstance(vis.workspace_root(), Path)
 
 
+def test_project_root_tracks_outside_process_directory(tmp_path, monkeypatch):
+    # Regression, #399: an extension reads its project root the same way inside and outside Vis.
+    monkeypatch.chdir(tmp_path)
+    assert vis.project_root() == tmp_path
+    assert isinstance(vis.project_root(), Path)
+
+
 def test_python_environment_defaults_to_project_outside_vis():
     # Regression, #379: py tools read this value to choose the shared interpreter.
     assert vis.python_environment() == "project"

@@ -24,6 +24,8 @@ changes.
   counts](#download-counts) explains what Vis reports and how to turn it off.
 - **Settings show a switch for a skill that your extension always needs.** [Leave the
   skill out of settings](#leave-a-skill-out-of-settings).
+- **Your workspace holds several repositories, each with its own extensions.** [Load extensions
+  from nested projects](#load-extensions-from-nested-projects).
 
 For your first tool, start with [Extending Vis](extending.md). If you already have a
 uv package, follow [Using an existing Python project](extension-development.md).
@@ -178,6 +180,41 @@ writes nothing and does not fetch sources, install dependencies or run extension
 When you copy or move a project, sync reuses the unchanged GitHub versions in its `.vis/extensions`
 directory. If sync refuses a package, the error names the package directory. Keep any local edits
 from that directory, remove it and run sync again.
+
+## Load extensions from nested projects
+
+Your workspace can hold several repositories, and each one can keep its own extensions in
+`<repository>/.vis/extensions/`. Vis does not search those directories by itself. Declare them in
+the workspace `vis.yml` with a glob `source`:
+
+```yaml
+extensions:
+  repositories:
+    source: ./repositories/*/.vis/extensions/*.py
+  local-packages:
+    source: ./packages/*
+```
+
+Vis expands each glob when it loads extensions and again at each `/reload`. The key, such as
+`repositories`, only names the declaration in error reports. The glob gives these results:
+
+- A matched `.py` file loads as a single-file extension. Test files are not entries.
+- A matched directory loads its `extension.py`, or its `current/extension.py`.
+
+A glob is relative to the YAML file that declares it. Each `*`, `?` or `[...]` matches inside one
+directory level. Vis refuses `**`. A pattern matches a hidden name only when its own level starts
+with `.`, as `.vis` does above. A glob declaration accepts only `source`. Vis loads matches in
+place and never installs them, so `extension sync` ignores them.
+
+Each match loads on its own. A file that fails to load, or a glob that Vis refuses, appears in
+the load report and in `vis-agent doctor`. The other matches still load. Each extension needs its
+own registered name. If a matched file uses the name of an extension that is already loaded, the
+matched file fails with an error that names both files.
+
+Each extension also gets its own project root: the nearest directory above its file that holds
+a `.vis` directory. In the example, that is `repositories/<name>`. Extension code reads it with
+[`vis.project_root()`](extension-api.md#project-root), so the same file works in the workspace and
+in a session that opens the repository directly.
 
 ## Install a package
 

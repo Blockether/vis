@@ -574,6 +574,29 @@
         (throw (ex-info (str "vis." verb " failed") {:error :session-read-failed})))
       (wire/json-str (:result envelope)))))
 
+(defn ^:no-doc entry-project-path
+  "The project of one extension entry inside `root` (#399): the nearest ancestor
+   directory that holds a `.vis` directory, relative to `root`. Returns \"\" for
+   `root` itself and nil for an entry outside `root`."
+  [entry root]
+  (when root
+    (let [^java.nio.file.Path root
+          (.toPath (.getCanonicalFile (io/file root)))
+
+          ^java.nio.file.Path entry
+          (.toPath (.getCanonicalFile (io/file entry)))]
+
+      (when (and (.startsWith entry root) (not= entry root))
+        (loop [^java.nio.file.Path dir (.getParent entry)]
+          (cond (or (nil? dir) (= dir root)) ""
+                (.isDirectory (io/file (.toFile dir) ".vis")) (str (.relativize root dir))
+                :else (recur (.getParent dir))))))))
+
+(defn- project-root-in
+  "Map an extension's project path onto a session root (#399)."
+  [root project-path]
+  (if (str/blank? project-path) root (str (io/file root project-path))))
+
 (defn ^:no-doc host-doors
   "The `__vis_host_*` callables an extension context receives as `{name fn}`.
    The bootstrap and inert checker derive their members from these bindings.
@@ -592,7 +615,35 @@
         home-root
         (or (some-> (:workspace/root bound-env)
                     workspace/normalize-root)
-            (workspace/cwd-root))]
+            (workspace/cwd-root))
+
+        ;; #399: this extension's project inside the session root, "" for the root.
+        project-path
+        (::project-path bound-env)
+
+        session-root
+        (fn [api]
+          (let [env extension/*current-environment*]
+            (when-not (:session-id env)
+              (throw (ex-info (str api " needs a bound Vis session") {:error :session-not-bound})))
+            (or (workspace/normalize-root (if-let [live (:workspace-atom env)]
+                                            (:root @live)
+                                            (or (get-in env [:workspace :root])
+                                                (:workspace/root env))))
+                (throw (ex-info (str api " needs a session workspace")
+                                {:error :workspace-root-unavailable})))))
+
+        ;; #399: a relative `cwd` of a session-bound shell starts at the project root.
+        project-shell-opts
+        (fn [opts]
+          (let [cwd (str (or (get opts "cwd") ""))]
+            (if (and (not (str/blank? project-path))
+                     (:session-id extension/*current-environment*)
+                     (not (str/starts-with? cwd "~"))
+                     (not (.isAbsolute (io/file cwd))))
+              (assoc opts
+                "cwd" (str (io/file (project-root-in (session-root "vis.shell") project-path) cwd)))
+              opts)))]
 
     (put! g
           "__vis_host_setting_declaration__"
@@ -630,16 +681,11 @@
     (put! g
           "__vis_host_workspace_root__"
           (fn []
-            (let [env extension/*current-environment*]
-              (when-not (:session-id env)
-                (throw (ex-info "vis.workspace_root needs a bound Vis session"
-                                {:error :session-not-bound})))
-              (or (workspace/normalize-root (if-let [live (:workspace-atom env)]
-                                              (:root @live)
-                                              (or (get-in env [:workspace :root])
-                                                  (:workspace/root env))))
-                  (throw (ex-info "vis.workspace_root needs a session workspace"
-                                  {:error :workspace-root-unavailable}))))))
+            (session-root "vis.workspace_root")))
+    (put! g
+          "__vis_host_project_root__"
+          (fn []
+            (project-root-in (session-root "vis.project_root") project-path)))
     (put! g
           "__vis_host_python_environment__"
           (fn []
@@ -707,14 +753,15 @@
           ;; native shell tool's one-options-map result grammar.
           (fn [opts]
             (host-tool-result (shell/trusted-extension-shell extension/*current-environment*
-                                                             opts))))
+                                                             (project-shell-opts opts)))))
     (put! g
           "__vis_host_jailed_shell__"
           ;; Latest-config jail: the shell implementation reloads, validates,
           ;; and freezes the merged disk policy at each process spawn. It is
           ;; deliberately independent of the invoking session snapshot.
           (fn [opts]
-            (host-tool-result (shell/jailed-shell extension/*current-environment* opts))))
+            (host-tool-result (shell/jailed-shell extension/*current-environment*
+                                                  (project-shell-opts opts)))))
     (put! g
           "__vis_host_request_input__"
           ;; Typed input View pause: one JSON request object in, one JSON
@@ -952,7 +999,9 @@
         frozen-home
         (.getCanonicalPath (.getParentFile snap))]
 
-    (swap! context-lifecycle assoc ctx {:snapshot (.getCanonicalPath snap) :calls 0})
+    (swap! context-lifecycle assoc
+      ctx
+      {:snapshot (.getCanonicalPath snap) :calls 0 :project-path (::project-path bound-env)})
     (try (bind-host! ctx label bound-env)
          (locking ctx
            (extension/with-context
@@ -1041,25 +1090,26 @@
                          (replacement-entry ext-name effective-env))]
         (let [source-ctx (:context entry)
               cache-key [worker ext-name]
-              local
-              (locking session-contexts
-                (let [cached (get @session-contexts cache-key)]
-                  (if (or (identical? source-ctx (:source-context cached))
-                          (pos? (long (or (get-in @context-lifecycle [(:context cached) :calls])
-                                          0))))
-                    cached
-                    (let [fresh (initialize-extension-context! (pyext/extension-worker-key worker)
-                                                               (str ext-name)
-                                                               (io/file (:snapshot entry))
-                                                               (:path entry)
-                                                               (:source entry)
-                                                               (:packages entry)
-                                                               effective-env)
-                          row (assoc fresh :source-context source-ctx)]
+              local (locking session-contexts
+                      (let [cached (get @session-contexts cache-key)]
+                        (if (or (identical? source-ctx (:source-context cached))
+                                (pos? (long (or (get-in @context-lifecycle
+                                                        [(:context cached) :calls])
+                                                0))))
+                          cached
+                          (let [fresh (initialize-extension-context!
+                                        (pyext/extension-worker-key worker)
+                                        (str ext-name)
+                                        (io/file (:snapshot entry))
+                                        (:path entry)
+                                        (:source entry)
+                                        (:packages entry)
+                                        (assoc effective-env ::project-path (:project-path entry)))
+                                row (assoc fresh :source-context source-ctx)]
 
-                      (swap! session-contexts assoc cache-key row)
-                      (discard-context! (:context cached))
-                      row))))
+                            (swap! session-contexts assoc cache-key row)
+                            (discard-context! (:context cached))
+                            row))))
               target-f (get-in (:registration local) path)]
 
           (when-not (fn? target-f)
@@ -1078,13 +1128,17 @@
   "The read-only env dict Python activation/prompt callables receive.
    Deliberately small and documented — never the raw host env map (which
    carries atoms, contexts and other host-only handles). STRING keys —
-   it crosses the strings-only boundary."
-  [env]
-  {"cwd" (or (workspace/workspace-root env) (workspace/cwd-root))
-   "session_id" (some-> (:session-id env)
-                        str)
-   "channel" (some-> (:channel env)
-                     str)})
+   it crosses the strings-only boundary. `cwd` and `workspace_root` name the
+   session root; `project_root` names the extension's project in it (#399)."
+  [env ctx]
+  (let [root (or (workspace/workspace-root env) (workspace/cwd-root))]
+    {"cwd" root
+     "workspace_root" root
+     "project_root" (project-root-in root (:project-path (get @context-lifecycle ctx)))
+     "session_id" (some-> (:session-id env)
+                          str)
+     "channel" (some-> (:channel env)
+                       str)}))
 
 (defn- call-py-ext
   "Lease a session-owned context through the complete call, including host cleanup."
@@ -1212,7 +1266,7 @@
 (defn- activation-adapter
   [ext-name ctx pyfn]
   (fn [env]
-    (try (boolean (call-py-ext ext-name env ctx pyfn [(slim-env env)]))
+    (try (boolean (call-py-ext ext-name env ctx pyfn [(slim-env env ctx)]))
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::activation-failed
@@ -1222,7 +1276,7 @@
 (defn- prompt-adapter
   [ext-name ctx pyfn]
   (fn [env]
-    (try (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
+    (try (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env ctx)])]
            (when (string? r) r))
          (catch Throwable t
            (tel/log!
@@ -1239,7 +1293,7 @@
    bad optional context never blocks a turn."
   [ext-name ctx pyfn]
   (fn [env]
-    (try (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env)])]
+    (try (let [r (call-py-ext ext-name env ctx pyfn [(slim-env env ctx)])]
            (if (map? r) (plainify r) {}))
          (catch Throwable t
            (tel/log!
@@ -1248,22 +1302,30 @@
 
 (defn- slash-adapter
   "`:slash/run-fn` for one `vis.SlashCommand(...)` entry. The Python callable
-   receives `{'channel', 'args', 'raw', 'session_id'}` and returns
-   `vis.ok(...)` / `vis.err(...)` (or a plain string / None)."
+   receives `{'channel', 'args', 'raw', 'session_id', 'workspace_root',
+   'project_root'}` and returns `vis.ok(...)` / `vis.err(...)` (or a plain string / None)."
   [ext-name ctx pyfn]
   (fn [sctx]
     ;; The payload crosses INTO Python (string keys); the response crossed
     ;; BACK via `->clj` (string keys as well).
-    (let [payload
+    (let [env
+          (sctx->env sctx)
+
+          {:strs [workspace_root project_root]}
+          (slim-env env ctx)
+
+          payload
           {"channel" (some-> (:channel/id sctx)
                              name)
            "args" (mapv str (:command/argv sctx))
            "raw" (str (:command/raw sctx))
            "session_id" (some-> (:session/id sctx)
-                                str)}
+                                str)
+           "workspace_root" workspace_root
+           "project_root" project_root}
 
           res
-          (call-py-ext ext-name (sctx->env sctx) ctx pyfn [payload])]
+          (call-py-ext ext-name env ctx pyfn [payload])]
 
       (cond (nil? res) {:slash/status :ok :slash/title (str ext-name ": done")}
             (string? res) {:slash/status :ok :slash/title res}
@@ -2125,6 +2187,90 @@
   (let [n (.getName f)]
     (and (str/ends-with? n ".py") (or (str/starts-with? n "test_") (str/ends-with? n "_test.py")))))
 
+(defn ^:no-doc expand-entry-glob
+  "Expand one glob `pattern` segment by segment (#399), in name order. A hidden name
+   matches only a segment that starts with `.`, and `**` is refused. Returns the
+   existing files and directories that match."
+  [pattern]
+  (let [file
+        (io/file (paths/expand-home pattern))
+
+        matcher-of
+        (fn [segment]
+          (when (str/includes? segment "**")
+            (throw (ex-info
+                     (str "Extension glob `" pattern "` uses `**`; name each directory level")
+                     {:pattern pattern})))
+          (.getPathMatcher (java.nio.file.FileSystems/getDefault) (str "glob:" segment)))]
+
+    (reduce (fn [found segment]
+              (if-not (re-find #"[*?\[]" segment)
+                (filterv #(.exists ^File %) (map #(io/file ^File % ^String segment) found))
+                (let [^java.nio.file.PathMatcher matcher
+                      (matcher-of segment)
+
+                      hidden?
+                      (str/starts-with? segment ".")]
+
+                  (vec (for [^File dir
+                             found
+
+                             :when (.isDirectory dir)
+                             ^File child
+                             (sort-by #(.getName ^File %) (.listFiles dir))
+
+                             :let [n
+                                   (.getName child)]
+                             :when (and (or hidden? (not (str/starts-with? n ".")))
+                                        (.matches matcher (.toPath (io/file n))))]
+
+                         child)))))
+            [(if (.isAbsolute file) (io/file "/") (io/file "."))]
+            (remove str/blank? (str/split (.getPath file) #"/")))))
+
+(defn- glob-entry-file
+  "The extension entry of one glob match: a non-test `.py` file, the `extension.py`
+   of a package directory, or the `current/extension.py` of an installed package."
+  ^File [^File f]
+  (cond (.isFile f) (when (and (str/ends-with? (.getName f) ".py") (not (test-file? f))) f)
+        (.isDirectory f) (some #(when (.isFile ^File %) %)
+                               [(io/file f "extension.py") (io/file f "current" "extension.py")])
+        :else nil))
+
+(defn- scope-glob-entries
+  "Expand the glob entries of one catalog (#399) into `{:files :failures}`. Explicit
+   `:entries` win; a default catalog reads them from YAML. A failed entry or a broken
+   declaration becomes a failure and never stops the other entries."
+  [{:keys [entries global project project-root] :as scope}]
+  (let [failure
+        (fn [name source error]
+          {:file (str source)
+           :extension name
+           :project-root project-root
+           :stale? false
+           :error error})
+
+        specs
+        (if (contains? scope :entries)
+          entries
+          (when (or global project)
+            (try (:entries (some #(when (= (if global "global" "project") (:scope %)) %)
+                                 (config/extension-package-scopes)))
+                 (catch Throwable t
+                   [{:name "extensions" :source "vis.yml" :error (or (ex-message t) (str t))}]))))]
+
+    (reduce (fn [acc {:keys [name source error]}]
+              (if error
+                (update acc :failures conj (failure name source error))
+                (try (update acc :files into (keep glob-entry-file) (expand-entry-glob source))
+                     (catch Throwable t
+                       (update acc
+                               :failures
+                               conj
+                               (failure name source (or (ex-message t) (str t))))))))
+            {:files [] :failures []}
+            specs)))
+
 (defn- scan
   "Entry `.py` files across the extension dirs, global dir first then project
    dir (name order within a dir) so a project file registering the same
@@ -2134,28 +2280,30 @@
        links `current` to a version directory; inactive versions are never scanned.
        The package's own modules import via `load-file!`, never as separate entries.
    Test modules (`test_*.py` / `*_test.py`) are skipped — they are run by
-   `test-python-extensions!`, not loaded. Deduped on canonical path."
-  [dirs]
-  (let [files (for [^File d (map io/file dirs)
-                    :when (.isDirectory d)
-                    ^File child (sort-by #(.getName ^File %) (.listFiles d))
-                    :when (not (str/starts-with? (.getName child) "."))
-                    ^File f (cond (and (.isFile child)
-                                       (str/ends-with? (.getName child) ".py")
-                                       (not (test-file? child)))
-                                  [child]
-                                  (.isDirectory child)
-                                  (let [ep (io/file child "current" "extension.py")]
-                                    (when (.isFile ep) [ep]))
-                                  :else nil)]
+   `test-python-extensions!`, not loaded. `entries` (glob matches, #399) come after
+   the dirs. Deduped on canonical path."
+  ([dirs] (scan dirs nil))
+  ([dirs entries]
+   (let [files (for [^File d (map io/file dirs)
+                     :when (.isDirectory d)
+                     ^File child (sort-by #(.getName ^File %) (.listFiles d))
+                     :when (not (str/starts-with? (.getName child) "."))
+                     ^File f (cond (and (.isFile child)
+                                        (str/ends-with? (.getName child) ".py")
+                                        (not (test-file? child)))
+                                   [child]
+                                   (.isDirectory child)
+                                   (let [ep (io/file child "current" "extension.py")]
+                                     (when (.isFile ep) [ep]))
+                                   :else nil)]
 
-                f)]
-    (->> files
-         (reduce (fn [[seen acc] ^File f]
-                   (let [p (.getCanonicalPath f)]
-                     (if (seen p) [seen acc] [(conj seen p) (conj acc f)])))
-                 [#{} []])
-         second)))
+                 f)]
+     (->> (concat files entries)
+          (reduce (fn [[seen acc] ^File f]
+                    (let [p (.getCanonicalPath f)]
+                      (if (seen p) [seen acc] [(conj seen p) (conj acc f)])))
+                  [#{} []])
+          second))))
 
 (defn- import-root
   "The directory an extension file is served from - what `load-file!` freezes and
@@ -2778,7 +2926,8 @@
    Returns `{:path :sha :code-sha :snapshot :ext-name :context}`; throws (with
    the context closed) on any failure."
   ([^File f] (load-file! f nil))
-  ([^File f frozen]
+  ([^File f frozen] (load-file! f frozen nil))
+  ([^File f frozen claimed]
    (let [path
          (.getCanonicalPath f)
 
@@ -2794,15 +2943,21 @@
          sha
          (util/sha256-hex source)
 
+         project-root
+         (:project-root frozen)
+
+         project-path
+         (entry-project-path path project-root)
+
          initialized
-         (initialize-extension-context! pyext/shared-key
-                                        (.getName f)
-                                        snap
-                                        path
-                                        source
-                                        (:packages frozen)
-                                        (when-let [root (:project-root frozen)]
-                                          {:workspace/root root}))
+         (initialize-extension-context!
+           pyext/shared-key
+           (.getName f)
+           snap
+           path
+           source
+           (:packages frozen)
+           (when project-root {:workspace/root project-root ::project-path project-path}))
 
          ctx
          (:context initialized)]
@@ -2815,6 +2970,14 @@
                            {:type ::no-registration :file path})))
          (let [metadata (:package-metadata frozen)
                spec (registration->spec ctx reg)
+               ;; #399: a glob entry never replaces another file's extension by name.
+               _ (when-let [owner (when claimed (claimed (:ext/name spec)))]
+                   (throw (ex-info (str "Extension `"
+                                        (:ext/name spec)
+                                        "` is already loaded from "
+                                        owner
+                                        "; give one of the two files another extension name")
+                                   {:type ::name-conflict :extension (:ext/name spec) :file path})))
                _ (when (and metadata (not= (get metadata "name") (:ext/name spec)))
                    (throw (ex-info "Extension name must match normalized project.name" {})))
                spec (if metadata
@@ -2839,6 +3002,7 @@
                       :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
            {:path path
             :project-root (:project-root frozen)
+            :project-path project-path
             :sha sha
             :code-sha (:code-sha frozen)
             :roots (:roots frozen)
@@ -2955,13 +3119,22 @@
    Returns `{:loaded n :failed n :reloaded n :changed? bool}`; `:reloaded` counts the
    files that this pass loaded again."
   ([] (load-scope! nil))
-  ([{:keys [dirs project-root sync-projects? site-packages preparation-failures all?]}]
+  ([{:keys [dirs project-root sync-projects? site-packages preparation-failures all?] :as scope}]
    (register-loader-extension!)
    (let [dirs
          (or dirs [])
 
+         globbed
+         (scope-glob-entries scope)
+
+         glob-paths
+         (set (map #(.getCanonicalPath ^File %) (:files globbed)))
+
+         preparation-failures
+         (into (vec preparation-failures) (:failures globbed))
+
          files
-         (scan dirs)
+         (scan dirs (:files globbed))
 
          blocked
          (into {} (map (juxt :file identity)) preparation-failures)
@@ -3057,7 +3230,18 @@
              scanned
              (set (map (fn [^File f]
                          (.getCanonicalPath f))
-                       files))]
+                       files))
+
+             ;; #399: a name clash that involves a glob entry fails the later file.
+             claimed
+             (fn [path ext-name]
+               (some (fn [[[_ opath] {oname :ext-name}]]
+                       (when (and (= oname ext-name)
+                                  (not= opath path)
+                                  (scanned opath)
+                                  (or (glob-paths path) (glob-paths opath)))
+                         opath))
+                     (scope-entries project-root)))]
 
          (try
            (swap! failures #(vec (remove (fn [failure]
@@ -3090,7 +3274,9 @@
                  (swap! loaded assoc-in [entry-key :order] (.indexOf ^java.util.List files f))
                  (try (swap! reloaded inc)
                       (let [{:keys [ext-name] :as entry}
-                            (as-> (load-file! f (per-root :frozen (get plans f) prepare-root!))
+                            (as-> (load-file! f
+                                              (per-root :frozen (get plans f) prepare-root!)
+                                              (partial claimed path))
                               entry
                               (assoc entry
                                 :order (.indexOf ^java.util.List files f)

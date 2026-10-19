@@ -57,6 +57,10 @@ class Host(Protocol):
         """Read the active session working copy, or the outside process directory."""
         ...
 
+    def project_root(self) -> str:
+        """Read this extension's project in the session working copy, or the outside process directory."""
+        ...
+
     def python_environment(self) -> str:
         """Read the project's `python.environment`: `project` or `shared`."""
         ...
@@ -3390,6 +3394,18 @@ def workspace_root() -> Path:
     session fails instead of silently using the gateway process directory.
     """
     return Path(_host.workspace_root())
+
+
+def project_root() -> Path:
+    """Return this extension's project root in the active session workspace.
+
+    The project root is the nearest directory above the extension entry that
+    holds a `.vis` directory, mapped into the session working copy. For an
+    extension in the workspace's own `.vis/extensions`, it is `workspace_root()`.
+    Outside Vis, it is the process directory. A hosted call without a bound
+    session fails, like `workspace_root()`.
+    """
+    return Path(_host.project_root())
 
 
 def python_environment() -> Literal["project", "shared"]:

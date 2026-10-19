@@ -1436,6 +1436,7 @@ def _live_handle(held, envelope, op, view_id):
 
 _IMPLEMENTATIONS = {
     "workspace_root": workspace_root,
+    "project_root": workspace_root,
     "python_environment": python_environment,
     "setting_declaration": setting_declaration,
     "setting": setting,

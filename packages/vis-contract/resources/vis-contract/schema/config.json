@@ -1276,7 +1276,7 @@
         ]
       },
       "additionalProperties": false,
-      "description": "Explicit extension sync declaration. Review source and run extension sync --trust; config loading never installs code. Omitted selector chooses the latest approved stable release once, retained until --refresh; version: latest rechecks it on every sync."
+      "description": "Explicit extension sync declaration. Review source and run extension sync --trust; config loading never installs code. Omitted selector chooses the latest approved stable release once, retained until --refresh; version: latest rechecks it on every sync. A local source with *, ? or [ is a glob of extension entries: it takes no other keys, loads in place at each load and /reload, and sync ignores it."
     },
     "extensions": {
       "type": "object",

@@ -116,7 +116,9 @@ of the corresponding SDK declarations and are stored as tuples, not mutable regi
 | `grants` | `()` | `vis.Grant` toolchain paths for this extension's jailed children (see [toolchain grants](#toolchain-grants)) |
 | `kind`, `version` | `None` | Display metadata. An installed package supplies its manifest metadata |
 
-The callback env dict contains `cwd`, `session_id` and `channel`. Keep `prompt`,
+The callback env dict contains `cwd`, `workspace_root`, `project_root`, `session_id` and `channel`.
+`cwd` and `workspace_root` are the session root. `project_root` is the
+[extension's project](#project-root). Keep `prompt`,
 `activation` and `ctx` short-running. Calls into one extension instance are serialized.
 Dependency and skill metadata belong to the [package manifest](extension-packages.md#package-manifest),
 not `Extension`.
@@ -894,7 +896,8 @@ This immediate local operation can use `show_start=False`.
 vis.SlashCommand(name, run, doc=None, usage=None, saveable=False)
 ```
 
-`run(ctx)` receives `{"channel", "args", "raw", "session_id"}` and returns
+`run(ctx)` receives `{"channel", "args", "raw", "session_id", "workspace_root", "project_root"}`
+and returns
 `vis.ok(title, body=None, data=None)`, `vis.err(title, body=None, data=None)`
 or a plain string, which counts as an ok title. `body` is Markdown.
 
@@ -1076,6 +1079,30 @@ directory. A hosted call without a bound session fails and does not use the gate
 
 It does not grant filesystem permissions. The model sandbox uses `project_root_path` for the
 corresponding root. Extension code uses this SDK function.
+
+## Project root
+
+Call `vis.project_root()` to get a `pathlib.Path` for the project that holds your extension. The
+project is the nearest directory above the extension file that holds a `.vis` directory. Vis maps
+it into the session's current working copy, so it follows the draft like `vis.workspace_root()`.
+
+```python
+import blockether.vis.extension as vis
+
+config = vis.project_root() / "tools.toml"
+```
+
+For an extension in the workspace's own `.vis/extensions`, both functions return the same path.
+For an extension that a [glob declaration](extension-packages.md#load-extensions-from-nested-projects)
+loads from `repositories/api/.vis/extensions`, `vis.project_root()` returns the `repositories/api`
+directory of the session. Use it instead of a path calculation from `__file__`. Outside a Vis
+process, it returns the process working directory.
+
+The project root also changes these values:
+
+- `vis.shell()` and `vis.jailed_shell()` start a relative or empty `cwd` at the project root.
+- The env dict of activation, prompt and context callbacks has `workspace_root` and `project_root`.
+- A slash command's `run(ctx)` also receives `workspace_root` and `project_root`.
 
 ## Python environment
 

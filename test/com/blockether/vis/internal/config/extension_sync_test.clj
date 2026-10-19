@@ -83,6 +83,34 @@
                       (constantly (str (.getParentFile global)))]
 
           (expect (= 1 (count (config/extension-package-scopes)))))
+        ;; Regression, #399: a glob source names extension entries, never a package to install.
+        (spit
+          (io/file project "config.yml")
+          "extensions:
+  repositories:
+    source: ../repositories/*/.vis/extensions/*.py
+  pinned:
+    source: ../packages/*
+    subdirectory: tools
+  shared:
+    source: ../local-tools
+")
+        (with-redefs [config/config-dir
+                      (constantly (str global))
+
+                      workspace/cwd
+                      (constantly (str (.getParentFile project)))]
+
+          (let [project-scope (second (config/extension-package-scopes))]
+            (expect (= #{"shared"} (set (keys (:packages project-scope)))))
+            (expect (= [{:name "pinned"
+                         :source (.getCanonicalPath (io/file project "../packages/*"))
+                         :error
+                         "Extension entry `pinned` has a glob source, so it takes no other keys"}
+                        {:name "repositories"
+                         :source (.getCanonicalPath
+                                   (io/file project "../repositories/*/.vis/extensions/*.py"))}]
+                       (:entries project-scope)))))
         (spit (io/file project "config.yml")
               "extensions:
   broken:

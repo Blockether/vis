@@ -996,6 +996,112 @@
                    (expect (= caller (.getCanonicalPath (workspace/cwd)))))))
 
 (defdescribe
+  project-root-host-test
+  ;; Regression, #399: a workspace could not load extensions from nested repositories, and an
+  ;; extension could not find its own project in the session workspace without `__file__`.
+  (it "names the nearest directory with .vis inside the scope root"
+      (let [root (.getCanonicalPath ^java.io.File (temp-dir))]
+        (doseq [path ["repos/a/.vis/extensions/a.py" ".vis/extensions/top.py"
+                      "packages/p/extension.py"]]
+          (write-ext! (io/file root) path ""))
+        (expect (= "repos/a"
+                   (pyx/entry-project-path (str root "/repos/a/.vis/extensions/a.py") root)))
+        (expect (= "" (pyx/entry-project-path (str root "/.vis/extensions/top.py") root)))
+        (expect (= "" (pyx/entry-project-path (str root "/packages/p/extension.py") root)))
+        (expect (nil? (pyx/entry-project-path (str root "/repos/a/.vis/extensions/a.py") nil)))))
+  (it "expands each glob segment in name order without hidden names or **"
+      (let [root (.getCanonicalPath ^java.io.File (temp-dir))]
+        (doseq [path ["repos/b/.vis/extensions/b.py" "repos/a/.vis/extensions/a.py"
+                      "repos/.hidden/.vis/extensions/h.py"]]
+          (write-ext! (io/file root) path ""))
+        (expect (= [(str root "/repos/a/.vis/extensions/a.py")
+                    (str root "/repos/b/.vis/extensions/b.py")]
+                   (mapv str (pyx/expand-entry-glob (str root "/repos/*/.vis/extensions/*.py")))))
+        (expect (= [(str root "/repos/.hidden")]
+                   (mapv str (pyx/expand-entry-glob (str root "/repos/.h*")))))
+        (expect (= :refused
+                   (try (pyx/expand-entry-glob (str root "/repos/**/x.py"))
+                        (catch clojure.lang.ExceptionInfo _ :refused))))))
+  (it
+    "loads each glob match with its own project root and fails only the broken entries"
+    (let
+      [root
+       (.getCanonicalPath ^java.io.File (temp-dir))
+
+       draft
+       (.getCanonicalPath ^java.io.File (doto (io/file root "draft") .mkdirs))
+
+       source
+       (fn [ext-name]
+         (str
+           "import blockether.vis.extension as vis\n"
+           "def where():\n"
+           "    \"Read the project root.\"\n"
+           "    return str(vis.project_root())\n"
+           "vis.register_extension(vis.Extension(name='"
+           ext-name
+           "', description='"
+           ext-name
+           "', "
+           "alias='" (str/replace ext-name "-" "_")
+           "', "
+           "symbols=[vis.Symbol(where, activity=vis.Activity(label='Read root', show_start=False))]))\n"))]
+
+      (write-ext! (io/file root) "repos/a/.vis/extensions/a.py" (source "glob-a"))
+      (write-ext! (io/file root) "repos/b/.vis/extensions/b.py" (source "glob-b"))
+      (write-ext! (io/file root) "repos/c/.vis/extensions/c.py" (source "glob-a"))
+      (write-ext! (io/file root)
+                  "repos/d/.vis/extensions/d.py"
+                  "raise RuntimeError('broken entry')\n")
+      (try (binding [workspace/*workspace-root* root]
+             (pyx/reload-python-extensions!
+               {:dirs []
+                :project-root root
+                :entries [{:name "repos" :source (str root "/repos/*/.vis/extensions/*.py")}
+                          {:name "deep" :source (str root "/repos/**/x.py")}]})
+             (let [failures (filter #(= root (:project-root %)) (pyx/load-failures))
+                   by-file (into {} (map (juxt :file :error)) failures)
+                   workspace (atom {:root root})
+                   env {:session-id "session-1" :workspace/root root :workspace-atom workspace}
+                   where (fn [ext-name]
+                           (binding [extension/*current-environment* env]
+                             (:result ((symbol-fn (registered ext-name) 'where)))))]
+
+               (expect (= 3 (count failures)) (pr-str failures))
+               (expect (str/includes? (str (by-file (str root "/repos/c/.vis/extensions/c.py")))
+                                      "`glob-a` is already loaded from"))
+               (expect (str/includes? (str (by-file (str root "/repos/d/.vis/extensions/d.py")))
+                                      "broken entry"))
+               (expect (str/includes? (str (by-file (str root "/repos/**/x.py"))) "`**`"))
+               (expect (= (str root "/repos/a") (where "glob-a")))
+               (expect (= (str root "/repos/b") (where "glob-b")))
+               (swap! workspace assoc :root draft)
+               (expect (= (str draft "/repos/a") (where "glob-a")))))
+           (finally (binding [workspace/*workspace-root* root]
+                      (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "maps the project root and a relative shell cwd into the session root"
+      (let [root
+            (.getCanonicalPath ^java.io.File (temp-dir))
+
+            doors
+            (pyx/host-doors nil "test" {::pyx/project-path "repos/a"})
+
+            seen
+            (atom nil)]
+
+        (with-redefs [shell/jailed-shell (fn [_ opts]
+                                           (reset! seen opts)
+                                           {})]
+          (binding [extension/*current-environment* {:session-id "session-1" :workspace/root root}]
+            (expect (= (str root "/repos/a") ((get doors "__vis_host_project_root__"))))
+            (try ((get doors "__vis_host_jailed_shell__") {"command" "ls" "cwd" "src"})
+                 (catch Throwable _ nil))
+            (expect (= (str root "/repos/a/src") (get @seen "cwd")))
+            (try ((get doors "__vis_host_jailed_shell__") {"command" "ls" "cwd" "/abs"})
+                 (catch Throwable _ nil))
+            (expect (= "/abs" (get @seen "cwd"))))))))
+
+(defdescribe
   workspace-root-host-test
   ;; Regression, #280: extension tools must follow the live session draft, not the process cwd.
   (it
