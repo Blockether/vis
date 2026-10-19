@@ -735,7 +735,8 @@ export function MachineTab({
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
-      className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none px-2.5 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none mouse:h-7 ${
+      // The focus ring is drawn INSIDE the segment: the scrolling track clips anything outside it.
+      className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none px-2.5 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-2 motion-reduce:transition-none mouse:h-7 ${
         isDown
           ? 'text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
           : isOn

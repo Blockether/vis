@@ -98,7 +98,12 @@ describe('machine selection', () => {
     expect(selectedUnread).toHaveAttribute('aria-pressed', 'true');
     expect(selectedUnread).toHaveClass('bg-ink', 'font-bold', 'text-white', 'ring-1', 'ring-inset');
     expect(screen.getByText('3')).toHaveClass('bg-accent');
-    expect(selectedUnread).toHaveClass('focus-visible:outline-2', 'focus-visible:outline-white');
+    // Inset, because the scrolling track clips an outline drawn outside the segment.
+    expect(selectedUnread).toHaveClass(
+      'focus-visible:outline-2',
+      'focus-visible:-outline-offset-2',
+      'focus-visible:outline-white',
+    );
 
     rerender(
       <MachineTab isOn onClick={() => {}}>
