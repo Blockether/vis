@@ -61,7 +61,7 @@ describe('vis-agent web launch', () => {
       });
     });
     await waitFor(() => {
-      expect(view!.getByText(/is not the one that `vis-agent web` started/)).toBeTruthy();
+      expect(view!.getByText(/is not the one that `vis-agent web` started/)).toBeVisible();
     });
     expect(saved()).toEqual([]);
   });
@@ -77,12 +77,12 @@ describe('vis-agent web launch', () => {
       });
     });
     await waitFor(() => {
-      expect(view!.getByText(/is not the one that `vis-agent web` started/)).toBeTruthy();
+      expect(view!.getByText(/is not the one that `vis-agent web` started/)).toBeVisible();
     });
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
-    expect(view!.getByText(/is not the one that `vis-agent web` started/)).toBeTruthy();
+    expect(view!.getByText(/is not the one that `vis-agent web` started/)).toBeVisible();
     expect(window.location.hash).toBe('#/connect');
   });
 });

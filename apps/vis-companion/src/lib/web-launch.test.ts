@@ -11,6 +11,7 @@ import {
   takeWebLaunch,
   type WebLaunch,
 } from './web-launch';
+import { pendingRevocations } from './storage';
 import type { GatewayConn } from './types';
 
 const GATEWAY = 'b3f1c2d4e5f60718';
@@ -139,14 +140,42 @@ describe('connecting a launched browser', () => {
     expect(saved()).toEqual([]);
   });
 
-  it('never overwrites another gateway saved at the same address', async () => {
-    const theirs: GatewayConn = { url: LOCAL, id: OTHER, token: 'theirs', label: 'other db' };
-    seed([theirs]);
+  it('replaces a stale gateway saved at the address that served the launch', async () => {
+    // The live check of #397: a second data store on the same port, then the first again.
+    const stale: GatewayConn = { url: LOCAL, id: OTHER, token: 'theirs', label: 'other db' };
+    const lan: GatewayConn = { url: 'http://10.0.0.5:7890', id: 'c0ffee0000000000', token: 'lan' };
+    seed([stale, lan]);
     const { fetchImpl } = gateway();
-    await expect(connectWebLaunch(LOCAL, launch(), fetchImpl)).rejects.toThrow(
-      /Another machine is saved at/,
-    );
-    expect(saved()).toEqual([theirs]);
+    const conn = await connectWebLaunch(LOCAL, launch(), fetchImpl);
+    expect(conn).toMatchObject({ url: LOCAL, id: GATEWAY, token: 'gateway-token' });
+    expect(saved()).toEqual([lan, expect.objectContaining({ url: LOCAL, id: GATEWAY, token: 'gateway-token' })]);
+    expect(saved()[1]!.label).not.toBe('other db');
+    expect(await pendingRevocations()).toEqual([]);
+  });
+
+  it('registers again and again, alternating gateways, with one saved machine', async () => {
+    for (const [round, id] of [GATEWAY, GATEWAY, OTHER, OTHER, GATEWAY].entries()) {
+      const { fetchImpl } = gateway({ id, token: `token-${round}` });
+      await connectWebLaunch(LOCAL, launch(id), fetchImpl);
+      expect(saved()).toEqual([expect.objectContaining({ url: LOCAL, id, token: `token-${round}` })]);
+    }
+  });
+
+  it('moves this gateway here when it replaces a stale one at this address', () => {
+    const stale: GatewayConn = { url: LOCAL, id: OTHER, token: 'theirs' };
+    const elsewhere: GatewayConn = { url: 'http://10.0.0.5:7890', id: GATEWAY, token: 'old' };
+    expect(
+      planWebLaunch([stale, elsewhere], LOCAL, { gatewayId: GATEWAY, token: 'tok', requireToken: true }),
+    ).toEqual({
+      kind: 'replace',
+      stale: LOCAL,
+      then: {
+        kind: 'move',
+        from: 'http://10.0.0.5:7890',
+        to: LOCAL,
+        patch: { id: GATEWAY, token: 'tok', alts: ['http://10.0.0.5:7890'] },
+      },
+    });
   });
 
   it('respects a hand-picked address of the same gateway', () => {

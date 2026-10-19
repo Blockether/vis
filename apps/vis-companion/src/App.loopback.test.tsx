@@ -86,4 +86,30 @@ describe('a phone', () => {
       view.restore();
     }
   });
+
+  it('never moves a machine to an address that another gateway answers', async () => {
+    // Regression, Blockether/vis#397: a browser kept gateway A at localhost after
+    // gateway B took the port. The failover took A's saved tailnet address, where
+    // B answered, and the next `vis-agent web` launch saved B beside a dead A.
+    const LOCAL = 'http://localhost:7999';
+    const TAILNET = 'http://100.64.0.9:7999';
+    const view = renderApp({
+      machines: [
+        { label: 'a', url: LOCAL, alts: [TAILNET] },
+        { label: 'b', url: TAILNET },
+      ],
+      unreachable: [LOCAL],
+    });
+    try {
+      await waitFor(() => expect(asked(view.requests, TAILNET)).not.toEqual([]));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(saved().map((conn) => [conn.label, conn.url])).toEqual([
+        ['a', LOCAL],
+        ['b', TAILNET],
+      ]);
+    } finally {
+      view.unmount();
+      view.restore();
+    }
+  });
 });

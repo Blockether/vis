@@ -10,7 +10,9 @@
 
 import { mergeAddresses, normalizeAddress } from './endpoints';
 import {
+  clearRevocation,
   loadConnections,
+  removeConnection,
   switchConnectionUrl,
   updateConnection,
   upsertConnection,
@@ -97,8 +99,11 @@ export type WebLaunchPlan =
   | { kind: 'update'; url: string; patch: Partial<GatewayConn> }
   /** This gateway, saved at an address this browser did not open: move it here. */
   | { kind: 'move'; from: string; to: string; patch: Partial<GatewayConn> }
-  /** Another gateway is saved at this address. Nothing changes. */
-  | { kind: 'conflict'; existing: GatewayConn };
+  /**
+   * Another gateway is saved at this address, but this gateway served the page.
+   * The saved one is stale: forget it, then apply `then`.
+   */
+  | { kind: 'replace'; stale: string; then: WebLaunchPlan };
 
 function credentials(grant: WebLaunchGrant): Partial<GatewayConn> {
   return { id: grant.gatewayId, ...(grant.token ? { token: grant.token } : {}) };
@@ -106,8 +111,8 @@ function credentials(grant: WebLaunchGrant): Partial<GatewayConn> {
 
 /**
  * Decide what a grant does to the saved machines `conns`. Only the machine with
- * this gateway's id, or the one saved at `origin`, changes. A machine saved at
- * `origin` with another gateway id is never overwritten.
+ * this gateway's id, or the one saved at `origin`, changes. The gateway at `origin`
+ * minted the code, so a machine saved there with another id no longer answers there.
  */
 export function planWebLaunch(
   conns: readonly GatewayConn[],
@@ -119,7 +124,15 @@ export function planWebLaunch(
   const occupant = conns.find((conn) => normalizeAddress(conn.url) === address);
   if (occupant) {
     if (occupant.id && occupant.id !== grant.gatewayId)
-      return { kind: 'conflict', existing: occupant };
+      return {
+        kind: 'replace',
+        stale: occupant.url,
+        then: planWebLaunch(
+          conns.filter((conn) => conn !== occupant),
+          origin,
+          grant,
+        ),
+      };
     return { kind: 'update', url: occupant.url, patch };
   }
   const same = conns.find((conn) => conn.id === grant.gatewayId);
@@ -160,10 +173,11 @@ export function planWebLaunch(
 /** Write `plan` to the saved machines and return the machine to open. */
 export async function applyWebLaunch(plan: WebLaunchPlan): Promise<GatewayConn> {
   switch (plan.kind) {
-    case 'conflict':
-      throw new WebLaunchError(
-        `Another machine is saved at ${plan.existing.url}. Remove it in Settings, then run \`vis-agent web\` again.`,
-      );
+    case 'replace':
+      await removeConnection(plan.stale);
+      // The gateway that held this device's push registration is gone from here.
+      await clearRevocation(plan.stale);
+      return applyWebLaunch(plan.then);
     case 'add': {
       for (const { url, alts } of plan.release) await updateConnection(url, { alts });
       await upsertConnection(plan.conn);

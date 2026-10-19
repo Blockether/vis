@@ -995,15 +995,15 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
         activeResponded ? known.filter((url) => isUpgrade(url, activeUrl, preference)) : known
       ).filter((url) => isProbeDue(url));
       if (!candidates.length) return;
-      // Loopback proves nothing by answering: on any other device 127.0.0.1 is
-      // THAT device, and `/healthz` needs no token. So it is taken only when the
-      // gateway answering there reports the same instance id as the one this app
-      // is already connected to — identity, not reachability (#277).
+      // An answer proves only that SOME gateway listens there, and `/healthz`
+      // needs no token. So an address is taken only when the gateway answering
+      // there reports the instance id this machine has: identity, not
+      // reachability. Loopback needs that proof even when the id is not saved yet
+      // (#277), and any other address needs it once the id is known (#397).
       const wantsLoopback =
         preference.sameMachine && candidates.some((url) => reachOf(url) === 'loopback');
-      const selfId = wantsLoopback
-        ? (activeId ?? (await new GatewayClient(creds).identify(signal)))
-        : null;
+      const selfId =
+        activeId ?? (wantsLoopback ? await new GatewayClient(creds).identify(signal) : null);
       if (cancelled) return;
       const reachable = (
         await Promise.all(
@@ -1012,7 +1012,8 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
             const answered =
               reachOf(url) === 'loopback'
                 ? Boolean(selfId) && (await client.identify(signal)) === selfId
-                : await client.ping(signal).catch(() => false);
+                : (await client.ping(signal).catch(() => false)) &&
+                  (!selfId || (await client.identify(signal)) === selfId);
             // An aborted probe says nothing about the address: this effect
             // re-runs whenever the pairing changes.
             if (signal.aborted) return null;
