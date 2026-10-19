@@ -3085,6 +3085,23 @@
         (and (= "extension" command)
              (contains? #{"install" "sync" "versions" "update" "rollback"} subcommand)))))
 
+(defn- built-in-provider-dispatch?
+  "True for `providers status|limits <id>` when the closed manifest registers `<id>`.
+   The gateway answers that state from its own full registry, so this process needs no
+   Python catalog (#395). Without an id or for another id, Python providers can answer.
+   Auth and logout run the local provider's own functions, so they load the catalog."
+  [args]
+  (let [[command subcommand & more]
+        args
+
+        provider-name
+        (first (remove #(str/starts-with? % "-") more))]
+
+    (boolean (and (= "providers" command)
+                  (contains? #{"status" "limits"} subcommand)
+                  provider-name
+                  (registry/provider-by-id (keyword provider-name))))))
+
 ;; Root command
 ;;
 ;; The dispatcher's root has NO hard-coded subcommands. Every entry
@@ -3479,12 +3496,13 @@
     (f)))
 
 (defn- initialize-for-dispatch!
-  "Initialize the closed manifest before dispatch. Host-only commands skip Python
-   extension catalogs; commands that use registered extension surfaces load them
-   eagerly. Execution backends admit extensions at their on-demand boundary."
+  "Initialize the closed manifest before dispatch. Host-only commands and built-in
+   provider state checks skip Python extension catalogs; commands that use registered
+   extension surfaces load them eagerly. Execution backends admit extensions at their
+   on-demand boundary."
   [measure? args]
   (timed-startup! measure? "initialize-manifest" #(initialize-clojure-extensions!))
-  (when-not (deferred-python-dispatch? args)
+  (when-not (or (deferred-python-dispatch? args) (built-in-provider-dispatch? args))
     (timed-startup! measure? "load-python-extensions" #(python-extensions/load-python-extensions!)))
   nil)
 

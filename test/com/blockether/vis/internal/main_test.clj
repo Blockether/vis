@@ -133,6 +133,23 @@
 
             (#'main/initialize-for-dispatch! false args)
             (expect (= [:clojure :python] @calls) (pr-str args))))))
+  ;; Issue #395: a built-in provider status check imported every Python extension first.
+  (it "skips extension catalogs for state checks of a built-in provider (#395)"
+      (doseq [[args expected] [[["providers" "status" "github-copilot" "--quiet"] [:clojure]]
+                               [["providers" "status" "--json" "github-copilot"] [:clojure]]
+                               [["providers" "limits" "github-copilot"] [:clojure]]
+                               [["providers" "status"] [:clojure :python]]
+                               [["providers" "status" "custom-python-provider"] [:clojure :python]]
+                               [["providers" "auth" "github-copilot"] [:clojure :python]]
+                               [["providers" "logout" "github-copilot"] [:clojure :python]]]]
+        (let [calls (atom [])]
+          (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
+                        python-extensions/load-python-extensions! #(swap! calls conj :python)
+                        registry/provider-by-id #(when (= :github-copilot %)
+                                                   {:provider/id :github-copilot})]
+
+            (#'main/initialize-for-dispatch! false args)
+            (expect (= expected @calls) (pr-str args))))))
   (describe "gateway shutdown with unavailable extensions"
             ;; #300: shutdown must reach its handler without importing or preparing extensions.
             (it
