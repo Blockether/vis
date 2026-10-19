@@ -60,7 +60,6 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [clojure.string :as str]
-            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
@@ -2993,7 +2992,7 @@
       (if (seq script) (str verb ": " (clip-chip script shell-chip-max)) (str verb " the shell")))))
 
 (def shell-symbol
-  (ext/symbol
+  (extension/symbol
     #'shell
     {:activity (presenter/for-tool :shell)
      :symbol 'shell
@@ -3048,7 +3047,7 @@
      :on-error-fn (shell-on-error :shell)}))
 
 (def shell-logs-symbol
-  (ext/symbol
+  (extension/symbol
     #'shell-logs
     {:activity (presenter/for-tool :_shell-logs)
      :symbol '_shell-logs
@@ -3081,7 +3080,7 @@
      :on-error-fn (shell-on-error :_shell-logs)}))
 
 (def shell-wait-symbol
-  (ext/symbol
+  (extension/symbol
     #'shell-wait
     {:activity (presenter/for-tool :_shell-wait)
      :symbol '_shell-wait
@@ -3104,7 +3103,7 @@
      :on-error-fn (shell-on-error :_shell-wait)}))
 
 (def shell-type-symbol
-  (ext/symbol
+  (extension/symbol
     #'shell-type
     {:activity (presenter/for-tool :_shell-type)
      :symbol '_shell-type
@@ -3125,7 +3124,7 @@
      :on-error-fn (shell-on-error :_shell-type)}))
 
 (def shell-stop-symbol
-  (ext/symbol
+  (extension/symbol
     #'shell-stop
     {:activity (presenter/for-tool :_shell-stop)
      :symbol '_shell-stop
@@ -3192,14 +3191,14 @@
                      "vis-agent extension shell attach dev-server"]
       :cmd/run-fn #'shell-attach-command}]}])
 
-(ext/register-toggle! {:id "shell"
-                       :label "Shell commands"
-                       ;; The full pty-handle, jail, and extension-boundary contract lives in this
-                       ;; namespace's docstring; the settings row stays one line.
-                       :description
-                       "Expose the Python `shell` verb. Model commands run inside the OS jail."
-                       :default true
-                       :scopes ["global" "project" "group" "session"]
-                       :owner :vis
-                       :persist? true
-                       :group :sandbox})
+(toggles/register-toggle! {:id "shell"
+                           :label "Shell commands"
+                           ;; The full pty-handle, jail, and extension-boundary contract lives in this
+                           ;; namespace's docstring; the settings row stays one line.
+                           :description
+                           "Expose the Python `shell` verb. Model commands run inside the OS jail."
+                           :default true
+                           :scopes ["global" "project" "group" "session"]
+                           :owner :vis
+                           :persist? true
+                           :group :sandbox})

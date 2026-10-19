@@ -1,8 +1,6 @@
 (ns com.blockether.vis.namespace-layering-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
-            [com.blockether.vis.extension :as ext]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File PushbackReader]))
 
@@ -55,7 +53,7 @@
 
 (defdescribe
   internal-namespaces-never-load-the-facade-test
-  (it "engine namespaces call owners or the authoring API, never the public facade"
+  (it "engine namespaces call owners, never the public facade"
       (let [offenders (->> (internal-sources)
                            (keep (fn [^File file]
                                    (when (or (some #{facade} (required-namespaces (ns-form file)))
@@ -209,24 +207,3 @@
 
                          (str own " -> " target)))]
         (expect (= [] fills) (str "Slot fills outside " wiring ":\n" (str/join "\n" fills))))))
-
-(def ^:private authored
-  (ext/extension {:ext/name "test.layering-authoring"
-                  :ext/description "Authoring API fixture."
-                  :ext/prompt-fn "Probe."}))
-
-(def ^:private facade-authored
-  (vis/extension
-    {:ext/name "test.layering-facade" :ext/description "Facade fixture." :ext/prompt-fn "Probe."}))
-
-(defdescribe facade-re-exports-the-authoring-api-test
-             (it "every authoring function is the same value through either namespace"
-                 (doseq [sym '[symbol value render-prompt register-extension! register-toggle!]]
-                   (expect (identical? @(ns-resolve 'com.blockether.vis.extension sym)
-                                       @(ns-resolve facade sym))
-                           (str sym))))
-             (it "both `extension` macros stamp the namespace that declared the extension"
-                 (expect (= '[com.blockether.vis.namespace-layering-test]
-                            (:ext/source-nses authored)))
-                 (expect (= '[com.blockether.vis.namespace-layering-test]
-                            (:ext/source-nses facade-authored)))))

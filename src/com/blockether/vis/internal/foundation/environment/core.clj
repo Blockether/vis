@@ -18,8 +18,7 @@
    working-directory. The cache is invalidated automatically when
    `cwd` changes between calls, and explicitly by the HOST-ONLY
    `refresh!` — which `/reload` runs and the sandbox cannot call."
-  (:require [com.blockether.vis.extension :as ext]
-            [com.blockether.vis.internal.python.extensions :as python-extensions]
+  (:require [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.context.agents :as agents]
             [com.blockether.vis.internal.foundation.environment.git :as git]
@@ -168,7 +167,7 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
   (success-envelope (main-agent-instructions)))
 
 (def main-agent-instructions-symbol
-  (ext/symbol
+  (extension/symbol
     #'main-agent-instructions-tool
     {:activity (presenter/for-tool :main_agent_instructions)
      :symbol 'main-agent-instructions

@@ -5,9 +5,8 @@
    import. It deliberately re-exports host, registry, runtime, persistence,
    prompt, diagnostic, and sandbox helpers from `com.blockether.vis.internal.*`.
    The internal tree is not stable; the names exposed here are the host
-   contract. The extension-authoring subset also lives on its own in
-   `com.blockether.vis.extension`, which engine namespaces require instead:
-   nothing under `com.blockether.vis.internal` requires this facade.
+   contract. Nothing under `com.blockether.vis.internal` requires this facade.
+   Extensions are written in Python against the `blockether.vis.extension` SDK.
 
    Canonical runtime language:
      Session -> Turn -> Iteration -> Block.
@@ -20,8 +19,8 @@
        by-channel, env-for, close!, delete!, set-title!.
      - Environment runtime: create-environment, dispose-environment!,
        get-router, rebuild-router!, resolve-effective-model.
-     - Extension contract: extension, symbol, value, render-prompt,
-       register-extension!, registered-extensions, discovery, reload.
+     - Extension registry: registered-extensions, deregister-extension!,
+       op hooks, discovery, reload.
      - Registries: command, channel, provider, and backend registration
        helpers for host-owned and embedded use.
      - Persistence facade: db-* functions and connection helpers. The
@@ -39,11 +38,9 @@
 
    Binary entry: -main (invoked by `clojure -M:vis`, AOT'd to a Java
    entry class via `:gen-class` for the GraalVM native-image build)."
-  (:refer-clojure :exclude [symbol])
   (:gen-class)
   (:require
     [charred.api :as json]
-    [com.blockether.vis.extension :as ext]
     [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
     [com.blockether.vis.internal.session.cancellation :as cancellation]
     [com.blockether.vis.internal.extension.capability :as capability]
@@ -259,8 +256,7 @@
              [capability-forget-verdicts! capability/forget-verdicts!])
 
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
-(import-vars [register-toggle! ext/register-toggle!]
-             [register-toggles! toggles/register-toggles!]
+(import-vars [register-toggles! toggles/register-toggles!]
              [registered-toggles toggles/registered-toggles]
              [toggle-spec toggles/toggle-spec]
              [toggle-enabled? toggles/enabled?]
@@ -616,19 +612,9 @@
 ;; Process-restart cleanup
 (import-vars [db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!])
 
-;; Extension contract. The authoring subset lives in `com.blockether.vis.extension`,
-;; which built-in extensions require instead of this facade.
-(defmacro extension
-  "Build extension spec and stamp caller namespace for reload/source tracking."
-  [spec]
-  `(ext/extension ~spec))
-
-(import-vars [symbol ext/symbol]
-             [value ext/value]
-             [render-prompt ext/render-prompt]
-             [op-tag extension/op-tag]
+;; Extension registry. Built-in extensions require `internal.extension.core`.
+(import-vars [op-tag extension/op-tag]
              [op-presentation extension/op-presentation]
-             [register-extension! ext/register-extension!]
              [register-op-hook! extension/register-op-hook!]
              [unregister-op-hooks-for-owner! extension/unregister-op-hooks-for-owner!]
              [registered-extensions extension/registered-extensions]

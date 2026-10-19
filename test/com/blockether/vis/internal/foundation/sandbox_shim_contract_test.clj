@@ -156,7 +156,7 @@
              (with-redefs [clojure.core/slurp
                            (fn [source & opts]
                              (apply slurp-source (if (= resource source) file source) opts))]
-               (let [ext (extension/extension spec)
+               (let [ext (extension/build-extension spec)
                      shims (extension/ext-sandbox-shims ext)]
 
                  (spit file changed)
@@ -168,10 +168,10 @@
                  (expect (= original (extension/shim-src (first shims))))
                  (expect (= original
                             (extension/shim-src (first (extension/ext-sandbox-shims
-                                                         (extension/extension ext))))))
+                                                         (extension/build-extension ext))))))
                  (expect (= changed
                             (extension/shim-src (first (extension/ext-sandbox-shims
-                                                         (extension/extension spec))))))))
+                                                         (extension/build-extension spec))))))))
              (finally (.delete file))))))
 
 (defdescribe shim-resource-test

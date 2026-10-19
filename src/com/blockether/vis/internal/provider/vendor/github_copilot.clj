@@ -23,6 +23,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [taoensso.telemere :as tel]))
 
@@ -786,9 +787,6 @@
 ;; provider; the runtime's token-resolution path looks providers up
 ;; by id. Drop this jar (or pick another `vis-provider-*` package)
 ;; to swap providers without touching vis-runtime.
-
-(require '[com.blockether.vis.extension :as ext])
-
 (require '[com.blockether.svar.core :as svar])
 
 (defn- interactive-auth!
@@ -946,12 +944,12 @@
 
 (defn register!
   []
-  (ext/register-extension!
-    (ext/extension {:ext/name "provider-github-copilot"
-                    :ext/description
-                    "GitHub Copilot OAuth/token-exchange provider (device flow, any seat tier)."
-                    :ext/version "0.4.1"
-                    :ext/author "Blockether"
-                    :ext/owner "vis"
-                    :ext/license "Apache-2.0"
-                    :ext/providers [(provider-entry)]})))
+  (extension/register-extension!
+    (extension/extension
+      {:ext/name "provider-github-copilot"
+       :ext/description "GitHub Copilot OAuth/token-exchange provider (device flow, any seat tier)."
+       :ext/version "0.4.1"
+       :ext/author "Blockether"
+       :ext/owner "vis"
+       :ext/license "Apache-2.0"
+       :ext/providers [(provider-entry)]})))

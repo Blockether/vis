@@ -453,10 +453,7 @@ with vis.live("Review", [
 ```
 
 With one argument, `vis.heading(text)` and `vis.paragraph(text)` remain form
-decorations. Two positional arguments declare addressed live nodes. The Clojure
-builders in `com.blockether.vis.view` expose the same primitives, using kebab-case
-option keys. `disclosure` takes a vector of children and optional options, and
-`log` is the Clojure name of Python's `output`.
+decorations. Two positional arguments declare addressed live nodes.
 
 Tables support `order="insertion"` (default), `"newest-first"` or
 `{"by": "duration", "dir": "desc"}`. Rows that share a `parent="tests"` appear under one collapsible

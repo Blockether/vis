@@ -41,7 +41,7 @@
      4. `vis-agent providers logout alibaba-coding-plan` clears the persisted
         key for that plan only; the other plan stays intact."
   (:require [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.provider.key-store :as key-store]))
 
 (def ^:private BOOK
@@ -121,12 +121,12 @@
 
 (defn register!
   []
-  (ext/register-extension!
-    (ext/extension {:ext/name "provider-alibaba"
-                    :ext/description
-                    "Alibaba Model Studio coding-plan + token-plan static-API-key providers."
-                    :ext/version "0.1.0"
-                    :ext/author "Blockether"
-                    :ext/owner "vis"
-                    :ext/license "Apache-2.0"
-                    :ext/providers (key-store/provider-entries BOOK make-limits-fn)})))
+  (extension/register-extension!
+    (extension/extension {:ext/name "provider-alibaba"
+                          :ext/description
+                          "Alibaba Model Studio coding-plan + token-plan static-API-key providers."
+                          :ext/version "0.1.0"
+                          :ext/author "Blockether"
+                          :ext/owner "vis"
+                          :ext/license "Apache-2.0"
+                          :ext/providers (key-store/provider-entries BOOK make-limits-fn)})))

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.provider.vendor.lmstudio
   "LM Studio local provider preset extension."
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.extension :as ext]))
+            [com.blockether.vis.internal.extension.core :as extension]))
 
 (defn- status
   []
@@ -50,8 +50,8 @@
 
 (defn register!
   []
-  (ext/register-extension!
-    (ext/extension
+  (extension/register-extension!
+    (extension/extension
       {:ext/name "provider-lmstudio"
        :ext/description "LM Studio local OpenAI-compatible provider preset."
        :ext/version "0.1.0"

@@ -34,7 +34,7 @@
             [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.provider.key-store :as key-store]))
 
 (def ^:private BOOK
@@ -344,11 +344,11 @@
 
 (defn register!
   []
-  (ext/register-extension! (ext/extension
-                             {:ext/name "provider-zai"
-                              :ext/description "Z.ai coding-plan + pass static-API-key providers."
-                              :ext/version "0.2.0"
-                              :ext/author "Blockether"
-                              :ext/owner "vis"
-                              :ext/license "Apache-2.0"
-                              :ext/providers (key-store/provider-entries BOOK make-limits-fn)})))
+  (extension/register-extension!
+    (extension/extension {:ext/name "provider-zai"
+                          :ext/description "Z.ai coding-plan + pass static-API-key providers."
+                          :ext/version "0.2.0"
+                          :ext/author "Blockether"
+                          :ext/owner "vis"
+                          :ext/license "Apache-2.0"
+                          :ext/providers (key-store/provider-entries BOOK make-limits-fn)})))

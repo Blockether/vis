@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.foundation.core
   (:require [clojure.string :as str]
-            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.automation.host :as automation-host]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.session.goals :as goals]
@@ -28,7 +27,7 @@
        (str/join "\n\n")))
 
 ;; Every foundation symbol carries its `:tag :observation | :mutation`
-;; INLINE on the (ext/symbol ...) opts map; register-extension! walks
+;; INLINE on the (extension/symbol ...) opts map; register-extension! walks
 ;; the symbol vec and auto-populates the op registry.
 
 (defn- lazy-doctor-fn
@@ -93,7 +92,7 @@
       (assoc "session_workspace" ws-block))))
 
 (def vis-extension
-  (ext/extension
+  (extension/extension
     {:ext/name "foundation-core"
      :ext/description
      "Foundation kernel: file editing, session workspace/VCS and project-shape helpers, toggle-gated shell and session introspection, and `main_agent_instructions`. The Vis documentation pages are corpus entries that the engine verbs `apropos` and `doc` search and retrieve. Bare Python functions return plain Markdown."
@@ -123,7 +122,7 @@
      :ext/prompt-fn combined-prompt
      :ext/doctor-fn lazy-doctor-fn}))
 
-(defn register! [] (ext/register-extension! vis-extension))
+(defn register! [] (extension/register-extension! vis-extension))
 
 ;; The documents this entry owns are read lazily and cached; `/reload` is what makes
 ;; an edited page visible again in a development JVM.

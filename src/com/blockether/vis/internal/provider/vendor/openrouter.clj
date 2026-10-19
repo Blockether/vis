@@ -18,7 +18,7 @@
             [babashka.http-client :as http]
             [charred.api :as json]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.provider.key-store :as key-store]))
 
 ;; Constants
@@ -217,15 +217,15 @@
 
 (defn register!
   []
-  (ext/register-extension!
-    (ext/extension {:ext/name "provider-openrouter"
-                    :ext/description "OpenRouter multi-provider gateway (static API key)."
-                    :ext/version "0.1.0"
-                    :ext/author "Blockether"
-                    :ext/owner "vis"
-                    :ext/license "Apache-2.0"
-                    ;; The key store owns auth, status, logout and the token envelope; the
-                    ;; live catalog enrichment is this gateway's own business and is stamped
-                    ;; onto the entry it produces.
-                    :ext/providers (mapv #(assoc % :provider/enrich-models-fn enrich-models)
-                                         (key-store/provider-entries BOOK make-limits-fn))})))
+  (extension/register-extension!
+    (extension/extension {:ext/name "provider-openrouter"
+                          :ext/description "OpenRouter multi-provider gateway (static API key)."
+                          :ext/version "0.1.0"
+                          :ext/author "Blockether"
+                          :ext/owner "vis"
+                          :ext/license "Apache-2.0"
+                          ;; The key store owns auth, status, logout and the token envelope; the
+                          ;; live catalog enrichment is this gateway's own business and is stamped
+                          ;; onto the entry it produces.
+                          :ext/providers (mapv #(assoc % :provider/enrich-models-fn enrich-models)
+                                               (key-store/provider-entries BOOK make-limits-fn))})))

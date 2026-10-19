@@ -263,18 +263,27 @@
                        "\n\n    First line\n\n\n\n      Nested line\n"
 
                        string-ext
-                       (extension/extension {:ext/name "test.prompt-string"
-                                             :ext/description "Test prompt string."
-                                             :ext/prompt-fn prompt-text})
+                       (extension/build-extension {:ext/name "test.prompt-string"
+                                                   :ext/description "Test prompt string."
+                                                   :ext/prompt-fn prompt-text})
 
                        fn-ext
-                       (extension/extension {:ext/name "test.prompt-fn"
-                                             :ext/description "Test prompt fn."
-                                             :ext/prompt-fn (fn [_]
-                                                              prompt-text)})]
+                       (extension/build-extension {:ext/name "test.prompt-fn"
+                                                   :ext/description "Test prompt fn."
+                                                   :ext/prompt-fn (fn [_]
+                                                                    prompt-text)})]
 
                    (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn string-ext) {})))
                    (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn fn-ext) {}))))))
+
+(def ^:private authored
+  (extension/extension
+    {:ext/name "test.source-nses" :ext/description "Source fixture." :ext/prompt-fn "Probe."}))
+
+(defdescribe extension-macro-test
+             (it "records the namespace that declared the extension"
+                 (expect (= '[com.blockether.vis.internal.extension.core-test]
+                            (:ext/source-nses authored)))))
 
 (defdescribe ctx-contributions-test
              (it "binds active workspace root while building extension ctx"
@@ -371,11 +380,11 @@
 (defdescribe
   channel-contributions-test
   (it "extension accepts channel contributions and derives channel kind"
-      (let [ext (extension/extension {:ext/name "test.channel-contribution"
-                                      :ext/description "Test channel contribution."
-                                      :ext/channel-contributions {:tui.slot/commands
-                                                                  [{:id :test/command
-                                                                    :fn #'sample-channel-fn}]}})]
+      (let [ext (extension/build-extension {:ext/name "test.channel-contribution"
+                                            :ext/description "Test channel contribution."
+                                            :ext/channel-contributions
+                                            {:tui.slot/commands [{:id :test/command
+                                                                  :fn #'sample-channel-fn}]}})]
         (expect (= "channels" (:ext/kind ext)))
         (expect (= {:tui.slot/commands [{:id :test/command :fn #'sample-channel-fn}]}
                    (:ext/channel-contributions ext)))))
@@ -1385,8 +1394,8 @@
                                                                   (swap! installed conj ext))))))
                    (expect (= exts @installed))))
              (it "does not manufacture the removed dependency key"
-                 (let [ext (extension/extension {:ext/name "test.no-dependency-graph"
-                                                 :ext/description "No dependency graph."})]
+                 (let [ext (extension/build-extension {:ext/name "test.no-dependency-graph"
+                                                       :ext/description "No dependency graph."})]
                    (expect (not (contains? ext :ext/requires))))))
 
 (defdescribe compact-arity-errors-test

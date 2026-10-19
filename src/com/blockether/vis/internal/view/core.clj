@@ -1169,10 +1169,8 @@
             (assoc base :links (items :links))))))))
 
 (defn normalize-live-node
-  "One declared node, refused where it was BUILT — the seam the node builders in
-   `com.blockether.vis.view` validate through, so an unknown key or a
-   `:tone` outside the table throws at the line that wrote it rather than in
-   front of the human."
+  "Validate one declared live node, so an unknown key or a `:tone` outside the
+   table throws where the node was built rather than in front of the human."
   [node]
   (live-node invalid-live-view! node))
 

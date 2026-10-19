@@ -20,7 +20,6 @@
   (:require [charred.api :as json]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [clojure.string :as str]
-            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.gateway.diagnostics :as gateway-diagnostics]
@@ -1499,7 +1498,7 @@
 ;; The underlying defs (`foundation-inspect`, `foundation-get-session`,
 ;; `foundation-sessions`) are private and named for clarity inside this ns.
 ;; Re-export them under their sandbox-visible names with `:doc` and `:arglists`
-;; baked into the var meta so `ext/symbol` can read both straight off the var.
+;; baked into the var meta so `extension/symbol` can read both straight off the var.
 ;;
 ;; The names are the attachment surface's rule applied here: `verb_noun`, plural
 ;; noun = the index and singular = ONE target, every read taking exactly one
@@ -1533,7 +1532,7 @@
   foundation-sessions)
 
 (def read-session-symbol
-  (ext/symbol
+  (extension/symbol
     #'read-session
     {:activity (presenter/for-tool :read_session)
      :inject-env? true
@@ -1563,7 +1562,7 @@
        "error and routing data. Its tool rows OVERLAP, so never sum them.")}))
 
 (def get-session-symbol
-  (ext/symbol
+  (extension/symbol
     #'get-session
     {:activity (presenter/for-tool :get_session)
      :inject-env? true
@@ -1583,7 +1582,7 @@
                "None when nothing matches.")}))
 
 (def list-sessions-symbol
-  (ext/symbol
+  (extension/symbol
     #'list-sessions
     {:activity (presenter/for-tool :list_sessions)
      :inject-env? true
@@ -1615,17 +1614,17 @@
   (mapv #(assoc % :ext.symbol/active-fn introspection-enabled?)
         [read-session-symbol get-session-symbol list-sessions-symbol]))
 
-(ext/register-toggle! {:id "introspection"
-                       :label "Session introspection"
-                       ;; One line for the row; the "debugging Vis itself, not ordinary project
-                       ;; work" rationale is the section comment above.
-                       :description
-                       "Let the agent read its own session history and gateway event journals."
-                       :default false
-                       :scopes ["global" "project" "group" "session"]
-                       :owner :vis
-                       :persist? true
-                       :group :sandbox})
+(toggles/register-toggle! {:id "introspection"
+                           :label "Session introspection"
+                           ;; One line for the row; the "debugging Vis itself, not ordinary project
+                           ;; work" rationale is the section comment above.
+                           :description
+                           "Let the agent read its own session history and gateway event journals."
+                           :default false
+                           :scopes ["global" "project" "group" "session"]
+                           :owner :vis
+                           :persist? true
+                           :group :sandbox})
 
 (def ^:private INTROSPECTION_PROMPT
   (str

@@ -28,9 +28,10 @@
 
 (defn- env-with
   [store]
-  {:extensions (atom [(extension/extension {:ext/name "test.workspace-slashes"
-                                            :ext/description "Workspace slash specs under test."
-                                            :ext/slash-commands ws-slashes/specs})])
+  {:extensions (atom [(extension/build-extension {:ext/name "test.workspace-slashes"
+                                                  :ext/description
+                                                  "Workspace slash specs under test."
+                                                  :ext/slash-commands ws-slashes/specs})])
    :db-info store})
 
 (defn- pin-session!

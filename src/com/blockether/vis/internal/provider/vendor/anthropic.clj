@@ -14,7 +14,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
@@ -603,8 +603,8 @@
 
 (defn register!
   []
-  (ext/register-extension!
-    (ext/extension
+  (extension/register-extension!
+    (extension/extension
       {:ext/name "provider-anthropic"
        :ext/description "Anthropic API-key and Claude subscription OAuth providers."
        :ext/version "0.3.0"

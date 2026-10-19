@@ -22,7 +22,6 @@
    Skill availability is a scoped setting, enforced on every discovery and invocation.
    A packaged skill without its own setting follows its extension's Auto/On/Off."
   (:require [clojure.string :as str]
-            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.context.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.workspace.core :as workspace]
@@ -178,7 +177,7 @@
   (or (skills-prompt env) ""))
 
 (def vis-extension
-  (ext/extension
+  (extension/extension
     {:ext/name "foundation-harness"
      :ext/description
      "Discovers on-disk Claude Code/opencode SKILLS: every SKILL.md is a `doc`/`apropos` document. Always available."
@@ -193,4 +192,4 @@
                           true)
      :ext/prompt-fn harness-prompt}))
 
-(defn register! [] (ext/register-extension! vis-extension))
+(defn register! [] (extension/register-extension! vis-extension))

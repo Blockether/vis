@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.provider.vendor.ollama
   "Ollama local provider preset extension."
-  (:require [com.blockether.vis.extension :as ext]))
+  (:require [com.blockether.vis.internal.extension.core :as extension]))
 
 (defn- status
   []
@@ -11,15 +11,15 @@
 
 (defn register!
   []
-  (ext/register-extension!
-    (ext/extension {:ext/name "provider-ollama"
-                    :ext/description "Ollama local OpenAI-compatible provider preset."
-                    :ext/version "0.1.0"
-                    :ext/author "Blockether"
-                    :ext/owner "vis"
-                    :ext/license "Apache-2.0"
-                    :ext/providers [{:provider/id :ollama
-                                     :provider/label "Ollama"
-                                     :provider/preset {:base-url "http://localhost:11434/v1"}
-                                     :provider/policy {:preset-rank 10}
-                                     :provider/status-fn #'status}]})))
+  (extension/register-extension!
+    (extension/extension {:ext/name "provider-ollama"
+                          :ext/description "Ollama local OpenAI-compatible provider preset."
+                          :ext/version "0.1.0"
+                          :ext/author "Blockether"
+                          :ext/owner "vis"
+                          :ext/license "Apache-2.0"
+                          :ext/providers [{:provider/id :ollama
+                                           :provider/label "Ollama"
+                                           :provider/preset {:base-url "http://localhost:11434/v1"}
+                                           :provider/policy {:preset-rank 10}
+                                           :provider/status-fn #'status}]})))

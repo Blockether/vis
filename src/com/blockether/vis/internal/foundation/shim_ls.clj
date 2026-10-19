@@ -19,7 +19,6 @@
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.activity.event :as activity-event]
-            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.editing.core :as editing]))
 
@@ -179,7 +178,7 @@
                                                        extension/*current-environment*)))})
 
 (def vis-extension
-  (ext/extension
+  (extension/extension
     {:ext/name "foundation-shim-ls"
      :ext/description
      (str "Sandbox `ls(paths, depth=1, is_hidden=False)` — the directory listing as a Python "
@@ -194,4 +193,4 @@
                           :shim/bindings ls-bridge-bindings
                           :shim/source "vis-shims/ls.py"}]}))
 
-(defn register! [] (ext/register-extension! vis-extension))
+(defn register! [] (extension/register-extension! vis-extension))

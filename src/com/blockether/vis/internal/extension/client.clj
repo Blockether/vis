@@ -141,18 +141,18 @@
                       (invoke! sid owner generation tool-name (vec args))))))
               (get spec "symbols"))]
 
-    (extension/extension (cond-> {:ext/name (get spec "name")
-                                  :ext/description (get spec "description")
-                                  :ext/kind (get spec "kind" "python")
-                                  :ext/activation-fn active?
-                                  :ext/engine {:ext.engine/alias (symbol (get spec "alias"))
-                                               :ext.engine/exact-symbol-names? true
-                                               :ext.engine/symbols symbols}}
-                           (get spec "prompt")
-                           (assoc :ext/prompt-fn (get spec "prompt"))
+    (extension/build-extension (cond-> {:ext/name (get spec "name")
+                                        :ext/description (get spec "description")
+                                        :ext/kind (get spec "kind" "python")
+                                        :ext/activation-fn active?
+                                        :ext/engine {:ext.engine/alias (symbol (get spec "alias"))
+                                                     :ext.engine/exact-symbol-names? true
+                                                     :ext.engine/symbols symbols}}
+                                 (get spec "prompt")
+                                 (assoc :ext/prompt-fn (get spec "prompt"))
 
-                           (get spec "version")
-                           (assoc :ext/version (get spec "version"))))))
+                                 (get spec "version")
+                                 (assoc :ext/version (get spec "version"))))))
 
 (defn- public-names
   [ext]

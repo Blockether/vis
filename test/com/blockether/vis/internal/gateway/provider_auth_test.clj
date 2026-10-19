@@ -5,7 +5,7 @@
             [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
@@ -74,8 +74,8 @@
                                           java.nio.charset.StandardCharsets/UTF_8))
                ".test")]
 
-      (with-redefs [ext/register-extension! (fn [ext]
-                                              (reset! extension ext))]
+      (with-redefs [extension/register-extension! (fn [ext]
+                                                    (reset! extension ext))]
         (codex/register!))
       (with-redefs-fn {#'registry/provider-by-id (constantly (first (:ext/providers @extension)))
                        #'providers/configured-providers-cached (constantly [])

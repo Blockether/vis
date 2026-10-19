@@ -36,7 +36,6 @@
    the session object already carries."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.activity.presenter :as presenter]
-            [com.blockether.vis.extension :as ext]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.validation :as validation]
@@ -1287,7 +1286,7 @@
 ;; tools; a CLIENT tool named `mcp_<x>` makes the whole request classify as a
 ;; third-party MCP integration and 400s. Do NOT revert to single underscore.
 (def ^:private mcp-symbols
-  [(ext/symbol
+  [(extension/symbol
      #'mcp-call
      {:activity (presenter/for-tool :mcp__call)
       :symbol 'call
@@ -1392,7 +1391,7 @@
        " one tool's description without a call."))
 
 (def vis-extension
-  (ext/extension
+  (extension/extension
     {:ext/name "foundation-mcp"
      :ext/description
      "MCP client. One gateway-wide pool connects every enabled (`:mcp :servers`) stdio or Streamable HTTP server, checks its health on the daemon clock and reconciles it on `/reload`. The inventory is in ctx under `env.mcp`, so the single verb `mcp__call` reaches every session, and there is no per-session connect or disconnect. A call with only a server lists its schemas. It supports remote OAuth 2.1 discovery with PKCE (2025-06-18). It is always on and active when servers exist."
@@ -1406,4 +1405,4 @@
      :ext/prompt-fn mcp-prompt
      :ext/kind "foundation"}))
 
-(defn register! [] (ext/register-extension! vis-extension))
+(defn register! [] (extension/register-extension! vis-extension))

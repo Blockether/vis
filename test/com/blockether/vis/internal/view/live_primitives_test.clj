@@ -7,7 +7,6 @@
             [com.blockether.vis.internal.view.core :as engine]
             [com.blockether.vis.internal.view.materializer :as materializer]
             [com.blockether.vis.internal.view.sink :as sink]
-            [com.blockether.vis.view :as v]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- nodes [view] (mapcat #(tree-seq :fields :fields %) (:nodes view)))
@@ -25,18 +24,22 @@
     (with-redefs-fn {views-dir (constantly dir)}
       #(let [view
              (engine/open-live!
-               (v/view {:title "Presentation" :session-id (str (random-uuid))}
-                       (v/heading "title" "Build results" {:level 1})
-                       (v/paragraph "intro" "A **live** paragraph")
-                       (v/code "source" "  <button>\n" {:language "html"})
-                       (v/spinner "wait" "Loading" {:variant :dots})
-                       (v/disclosure "details"
-                                     "Details"
-                                     [(v/button "refresh" "Refresh")
-                                      (v/button "disabled" "Unavailable" {:is-disabled true})
-                                      (v/log "a" {:lines ["retained"]})
-                                      (v/log "b"
-                                             {:lines ["independent"] :default-expanded true})])))]
+               {:title "Presentation"
+                :session-id (str (random-uuid))
+                :nodes [{:id "title" :type "heading" :text "Build results" :level 1}
+                        {:id "intro" :type "paragraph" :text "A **live** paragraph"}
+                        {:id "source" :type "code" :text "  <button>\n" :language "html"}
+                        {:id "wait" :type "spinner" :text "Loading" :variant :dots}
+                        {:id "details"
+                         :type "group"
+                         :label "Details"
+                         :direction "column"
+                         :is-collapsible true
+                         :fields
+                         [{:id "refresh" :type "button" :label "Refresh"}
+                          {:id "disabled" :type "button" :label "Unavailable" :is-disabled true}
+                          {:id "a" :type "log" :lines ["retained"]}
+                          {:id "b" :type "log" :lines ["independent"] :default-expanded true}]}]})]
          (try (f view)
               (finally (engine/close-live! (:id view))
                        (doseq [file (reverse (file-seq dir))]
@@ -83,20 +86,18 @@
 
         (expect (= markdown (materializer/->markdown (:view parsed))))))))
 
-(defdescribe builders-and-validation-test
-             (it "builders and validation"
-                 (expect (= "heading" (:type (v/heading "Form heading"))))
-                 (expect (= "paragraph" (:type (v/paragraph "Form prose"))))
-                 (doseq [bad [{:type :heading :id "x" :text "Heading" :level 0}
-                              {:type :heading :id "x" :text "Heading" :level 7}
-                              {:type :spinner :id "x" :text "Wait" :variant "unknown"}
-                              {:type :button :id "x" :label "Go" :clicks 10}
-                              {:type :log :id "x" :default-expanded "yes"}
-                              {:type :code :id "x" :text 4}]]
-                   (expect (try (engine/normalize-live-view {:title "Invalid" :nodes [bad]})
-                                false
-                                (catch clojure.lang.ExceptionInfo _ true))))
-                 (expect (empty? (:text (v/code "empty" ""))))))
+(defdescribe
+  validation-test
+  (it "refuses invalid live nodes"
+      (doseq [bad [{:type :heading :id "x" :text "Heading" :level 0}
+                   {:type :heading :id "x" :text "Heading" :level 7}
+                   {:type :spinner :id "x" :text "Wait" :variant "unknown"}
+                   {:type :button :id "x" :label "Go" :clicks 10}
+                   {:type :log :id "x" :default-expanded "yes"} {:type :code :id "x" :text 4}]]
+        (expect (try (engine/normalize-live-view {:title "Invalid" :nodes [bad]})
+                     false
+                     (catch clojure.lang.ExceptionInfo _ true))))
+      (expect (empty? (:text (engine/normalize-live-node {:id "empty" :type "code" :text ""}))))))
 
 (defdescribe
   live-primitives-lifecycle-test
@@ -156,13 +157,16 @@
             (expect (= ["retained"] (:lines (sink/log-range file "a" 0 100))))
             (engine/patch-live! id [{:op :append :node-id "a" :lines lines}])
             (expect (= (into ["retained"] lines) (:lines (sink/log-range file "a" 0 100))))
-            (engine/patch-live! id
-                                [{:op :add-node
-                                  :node-spec (v/disclosure
-                                               "late"
-                                               "Added section"
-                                               [(v/log "late-log" {:lines lines :window-lines 2})])}
-                                 {:op :append :node-id "late-log" :lines ["next"]}])
+            (engine/patch-live!
+              id
+              [{:op :add-node
+                :node-spec {:id "late"
+                            :type "group"
+                            :label "Added section"
+                            :direction "column"
+                            :is-collapsible true
+                            :fields [{:id "late-log" :type "log" :lines lines :window-lines 2}]}}
+               {:op :append :node-id "late-log" :lines ["next"]}])
             (expect (= ["line 39" "next"] (:lines (node (engine/live-view id) "late-log"))))
             (expect (= (conj lines "next") (:lines (sink/log-range file "late-log" 0 100)))))))))
 
@@ -204,10 +208,14 @@
                 (mapv #(str "line " %) (range 40))
 
                 declared
-                (v/view {:title "Initial history" :session-id (:session-id view)}
-                        (v/disclosure "section"
-                                      "Section"
-                                      [(v/log "nested" {:lines lines :window-lines 2})]))
+                {:title "Initial history"
+                 :session-id (:session-id view)
+                 :nodes [{:id "section"
+                          :type "group"
+                          :label "Section"
+                          :direction "column"
+                          :is-collapsible true
+                          :fields [{:id "nested" :type "log" :lines lines :window-lines 2}]}]}
 
                 opened
                 (engine/open-live! declared)]
@@ -369,7 +377,6 @@
 (defdescribe
   divider-contract-test
   (it "divider contract"
-      (expect (= {:id "section-break" :type "divider"} (v/divider "section-break")))
       (let [divider
             (engine/normalize-live-node {:id "section-break" :type "divider"})
 

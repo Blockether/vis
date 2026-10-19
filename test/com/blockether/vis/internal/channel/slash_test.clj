@@ -14,7 +14,7 @@
 (defn- ext
   "Build a registered-shape extension carrying `slashes`."
   [name slashes]
-  (extension/extension
+  (extension/build-extension
     {:ext/name name :ext/description (str name " test extension") :ext/slash-commands slashes}))
 
 (defn- env-of

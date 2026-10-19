@@ -20,6 +20,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.oauth :as oauth]
             [taoensso.telemere :as tel])
@@ -959,23 +961,21 @@
            (authenticated-limits-report!)))
        (catch Throwable t (usage-error-report t))))
 
-(require '[com.blockether.vis.extension :as ext])
-
 (require '[com.blockether.svar.core :as svar])
 
 (def ^:private fast-mode-toggle "codex_fast_mode")
 
-(ext/register-toggle! {:id fast-mode-toggle
-                       :label "Fast mode"
-                       :description
-                       "Route eligible OpenAI Codex turns through the priority service tier."
-                       :type :boolean
-                       :settings? false
-                       :default false
-                       :scopes ["global" "project" "group" "session"]
-                       :owner "openai-codex"
-                       :group :provider
-                       :persist? true})
+(toggles/register-toggle! {:id fast-mode-toggle
+                           :label "Fast mode"
+                           :description
+                           "Route eligible OpenAI Codex turns through the priority service tier."
+                           :type :boolean
+                           :settings? false
+                           :default false
+                           :scopes ["global" "project" "group" "session"]
+                           :owner "openai-codex"
+                           :group :provider
+                           :persist? true})
 
 ;; A new Codex model svar's pinned catalog doesn't know yet can still be offered
 ;; with its real window declared INLINE on `:default-models` as
@@ -993,8 +993,8 @@
 
 (defn register!
   []
-  (ext/register-extension!
-    (ext/extension
+  (extension/register-extension!
+    (extension/extension
       {:ext/name "provider-openai-codex"
        :ext/description "OpenAI Codex / ChatGPT OAuth provider."
        :ext/version "0.1.0"

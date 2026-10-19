@@ -2286,10 +2286,11 @@
           (throw (ex-info (str "sandbox shim source not found on classpath: " res)
                           {:shim/name (:shim/name shim) :shim/source res}))))))
 
-(defn extension
+(defn build-extension
   "Build and validate an extension, capturing shim source alongside host bindings.
 
-   See docs/src/extensions/extension-spec.md for the full key list."
+   See docs/src/extensions/extension-spec.md for the full key list. A built-in
+   extension uses the [[extension]] macro, which also records its namespace."
   [spec]
   (-> spec
       (cond->
@@ -2355,6 +2356,12 @@
         (update :ext/sandbox-shims
                 (fn [shims]
                   (mapv #(assoc % ::shim-source (shim-src %)) shims))))))
+
+(defmacro extension
+  "Build a built-in extension with [[build-extension]] and record the declaring
+   namespace in `:ext/source-nses` for reload and source tracking."
+  [spec]
+  `(build-extension (assoc ~spec :ext/source-nses ['~(ns-name *ns*)])))
 
 ;; Extension source markers
 ;; Hash + mtime primitives.
@@ -2654,7 +2661,7 @@
    Idempotent on `:ext/name`. Returns the validated extension."
   [ext]
   (let [ext
-        (extension ext)
+        (build-extension ext)
 
         ns-sym
         (:ext/name ext)]
@@ -2879,7 +2886,7 @@
   "Validate one project extension against the settings already declared where it runs:
    by Vis, by global extensions and by `others`, the other extensions of its project."
   [ext others]
-  (let [ext (extension ext)]
+  (let [ext (build-extension ext)]
     (validate-project-settings! ext others)
     ext))
 
@@ -2892,7 +2899,7 @@
         (workspace/normalize-root root)
 
         extensions
-        (mapv extension extensions)]
+        (mapv build-extension extensions)]
 
     (when-not root (throw (ex-info "Project extensions require a workspace root" {})))
     (let [catalog (merge @extension-registry (into {} (map (juxt :ext/name identity)) extensions))]

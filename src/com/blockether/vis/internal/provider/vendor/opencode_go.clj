@@ -29,7 +29,7 @@
             [babashka.http-client :as http]
             [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.vis.extension :as ext]
+            [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.provider.key-store :as key-store])
   (:import [java.time Instant]
            [java.time.format DateTimeParseException]))
@@ -317,8 +317,8 @@
 
 (defn register!
   []
-  (ext/register-extension!
-    (ext/extension
+  (extension/register-extension!
+    (extension/extension
       {:ext/name "provider-opencode-go"
        :ext/description
        "OpenCode Go subscription gateway — OpenAI chat + Anthropic Messages wires in one provider."

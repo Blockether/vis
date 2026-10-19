@@ -3774,8 +3774,7 @@ def ask(title, fields, **options):
 
 
 # -- Form builders ------------------------------------------------------------
-# One helper per node type, named exactly like Clojure's
-# `com.blockether.vis.view`: the type IS the function and the name is
+# One helper per node type: the type IS the function and the name is
 # POSITIONAL, so a misspelled type is a NameError on the spot instead of a
 # refused request, and every other key stays the snake_case spelling `ask`
 # documents.
@@ -5273,8 +5272,7 @@ testing = _Testing()
 
 
 # -- Live view builders -------------------------------------------------------
-# One helper per node type, named exactly like Clojure's
-# `com.blockether.vis.view`, and the ID IS POSITIONAL because every op an
+# One helper per node type, and the ID IS POSITIONAL because every op an
 # extension writes later addresses that id. A builder is a plain dict: nothing
 # here talks to the host, and `vis.live` is what carries it to the engine that
 # judges it.

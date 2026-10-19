@@ -28,9 +28,9 @@
    a workspace, a session, and a fresh ctx-atom + turn-state-atom."
   [store slashes]
   (let [ext
-        (extension/extension {:ext/name "test.slash-integration"
-                              :ext/description "Slash integration test fixture."
-                              :ext/slash-commands slashes})
+        (extension/build-extension {:ext/name "test.slash-integration"
+                                    :ext/description "Slash integration test fixture."
+                                    :ext/slash-commands slashes})
 
         ws
         (persistance/db-workspace-insert!
