@@ -267,6 +267,19 @@
   ^File [stamp]
   (doto (io/file (paths/ensure-log-date-dir!) (str "pyext-" stamp)) (.mkdirs)))
 
+(defn- prune-empty-run-dir!
+  "Delete a stopped worker's run directory when every file in it is empty.
+   Output, hang evidence or a crash file keeps the directory for diagnosis."
+  [^Process process ^File log]
+  (when-let [^File dir (and log (not (.isAlive process)) (.getParentFile log))]
+    (let [files (vec (.listFiles dir))]
+      (when (every? (fn [^File file]
+                      (and (.isFile file) (zero? (.length file))))
+                    files)
+        (doseq [^File file files]
+          (.delete file))
+        (.delete dir)))))
+
 (defn configure!
   "Register the live session policy used whenever worker `k` starts or restarts.
    Must happen before the first interpreter request; a missing policy fails closed.
@@ -715,7 +728,8 @@
         (let [^Process process (:process state)]
           (.destroy process)
           (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS) (.destroyForcibly process))
-               (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil))))))))
+               (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil))))
+          (try (prune-empty-run-dir! process (:log state)) (catch Throwable _ nil))))))
   nil)
 
 (def ^:private HANG_DIAGNOSTIC_MS

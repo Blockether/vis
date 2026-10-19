@@ -32,6 +32,34 @@
                                    (Files/deleteIfExists (.toPath file))))))))
 
 (defdescribe
+  worker-run-directory-cleanup-test
+  (doseq [output? [false true]]
+    (it (if output? "keeps a run directory with output" "removes an empty run directory")
+        (let [directory (.getCanonicalFile (.toFile (Files/createTempDirectory
+                                                      "vis-worker-prune-"
+                                                      (make-array FileAttribute 0))))
+              key (worker/extension-worker-key (str (java.util.UUID/randomUUID)))]
+
+          (try (with-redefs [paths/log-date-dir (fn [& _]
+                                                  (str (io/file directory "2026-10-19")))]
+                 (worker/exec! key
+                               runtime/default-session
+                               (if output? "import os; os.write(2, b'kept-output\\n')" "1"))
+                 (let [^File log (:log (get @@#'worker/workers key))
+                       run-directory (.getParentFile log)]
+
+                   (when output?
+                     (loop [attempt 0]
+                       (when (and (< attempt 200) (not (str/includes? (slurp log) "kept-output")))
+                         (Thread/sleep 10)
+                         (recur (inc attempt)))))
+                   (worker/stop-worker! key)
+                   (expect (= output? (.isDirectory run-directory)))))
+               (finally (worker/stop-worker! key)
+                        (doseq [^File file (reverse (file-seq directory))]
+                          (Files/deleteIfExists (.toPath file)))))))))
+
+(defdescribe
   worker-process-output-keeps-start-date-test
   (doseq [jvm?
           [false true]
