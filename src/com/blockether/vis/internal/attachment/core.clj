@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.attachment.core
-  "User-message image, video, audio, document and gzip attachments.
+  "User-message image, video, audio, document, gzip and ZIP attachments.
 
    Dropping a file onto the terminal pastes its PATH into the input (the
    terminal's drop behavior — same mechanism pi relies on). At turn start
@@ -11,7 +11,7 @@
 
    What a file IS is sniffed from magic bytes (pi-parity: jpeg / non-animated
    png / gif / webp / bmp, plus MP4/QuickTime clips, mp3/m4a/wav/ogg/flac
-   recordings, PDF/HTML/Word documents and gzip streams) or, for SVG, from the
+   recordings, PDF/HTML/Word documents, gzip streams and ZIP archives) or, for SVG, from the
    markup head. Markdown uploads use a filename or MIME hint plus UTF-8 validation;
    an extension alone never blesses a payload. A container the model cannot consume
    is kept for the HUMAN and NAMED to the model ([[model-blind-media-type?]]).
@@ -396,13 +396,25 @@
   [media-type]
   (contains? gzip-media-types (str/lower-case (str/trim (str media-type)))))
 
+(def zip-media-types
+  "MIME spellings file providers use for a ZIP archive. Intake sniffs and stores
+   the canonical `application/zip`. Windows browsers name a `.zip` file
+   `application/x-zip-compressed`, so the aliases remain accepted claims."
+  #{"application/zip" "application/x-zip-compressed" "application/x-zip"})
+
+(defn zip-media-type?
+  "True when `media-type` names a ZIP archive from [[zip-media-types]]."
+  [media-type]
+  (contains? zip-media-types (str/lower-case (str/trim (str media-type)))))
+
 (def human-only-media-types
   "Media types a model must NEVER be handed as an image block, no matter what
-   audience the caller asked for. Documents and gzip streams are not pixels; the
-   honest route is to keep their bytes in the session, name the file to the model,
-   and let it inspect those bytes on demand with `read_attachment`."
-  (into (set (vals document-media-types))
-        (concat gzip-media-types markdown-media-types csv-media-types tsv-media-types)))
+   audience the caller asked for. Documents, gzip streams and ZIP archives are not
+   pixels; the honest route is to keep their bytes in the session, name the file to
+   the model, and let it inspect those bytes on demand with `read_attachment`."
+  (into
+    (set (vals document-media-types))
+    (concat gzip-media-types zip-media-types markdown-media-types csv-media-types tsv-media-types)))
 
 (def viewer-document-media-types
   "The documents a SURFACE can show in a document viewer: a PDF handed to the
@@ -449,6 +461,13 @@
   "Sniff the RFC 1952 magic bytes and return the canonical gzip media type."
   [^bytes b]
   (when (bytes-at? b 0 [0x1f 0x8b]) "application/gzip"))
+
+(defn detect-zip-mime
+  "Sniff the ZIP local-file or empty-archive signature and return the canonical
+   ZIP media type. Ask it after [[detect-docx-mime]]: a Word document is a ZIP too."
+  [^bytes b]
+  (when (or (bytes-at? b 0 [0x50 0x4b 0x03 0x04]) (bytes-at? b 0 [0x50 0x4b 0x05 0x06]))
+    "application/zip"))
 
 (defn detect-jsonl-mime
   "Recognize a complete leading JSON object in a bounded file head. The remainder
@@ -504,9 +523,9 @@
 
 (defn detect-media-mime
   "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
-   then audio, video, document, Word document and gzip detection. Stills win the
-   ISO-BMFF tie deliberately; recordings are asked about before clips for the same
-   reason."
+   then audio, video, document, Word document, gzip and ZIP detection. Stills win
+   the ISO-BMFF tie deliberately; recordings are asked about before clips for the
+   same reason."
   [^bytes b]
   (or (detect-image-mime b)
       (detect-audio-mime b)
@@ -514,6 +533,7 @@
       (detect-document-mime b)
       (detect-docx-mime b)
       (detect-gzip-mime b)
+      (detect-zip-mime b)
       (detect-jsonl-mime b)))
 
 (def provider-image-media-types
@@ -545,7 +565,8 @@
                buf (byte-array n)]
 
            (.readFully raf buf)
-           (or (detect-media-mime buf) (detect-docx-file f buf))))
+           ;; The registry of a Word document can be past this head: ask the file first.
+           (or (detect-docx-file f buf) (detect-media-mime buf))))
        (catch Throwable _ nil)))
 
 ;; Path-candidate extraction
@@ -976,6 +997,10 @@
   "Why a gzip stream is named to the model instead of sent as multimodal content."
   "a gzip file — inspect it with read_attachment and a gzip/tar reader; it is never an image block")
 
+(def ^:private archive-reason
+  "Why a ZIP archive is named to the model instead of sent as multimodal content."
+  "a ZIP archive — inspect it with read_attachment and a zip reader (zipfile); it is never an image block")
+
 (def ^:private recording-reason
   "Why a voice memo or a music file is named to the model instead of sent to it."
   "a recording for the human — open the file to hear it, it is never an image block")
@@ -1335,6 +1360,7 @@
                                                                    recording-reason
                                                                    transcribed-recording-reason)
                                   (gzip-media-type? media-type) compressed-file-reason
+                                  (zip-media-type? media-type) archive-reason
                                   (= (:docx document-media-types) media-type) word-document-reason
                                   (human-only-media-type? media-type) human-only-doc-reason
                                   :else user-only-reason)

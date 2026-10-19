@@ -1126,6 +1126,22 @@
                      (get (extension-attach {"base64" csv "filename" "x"}) "media-type")))
           (expect (not (contains? (extension-attach {"base64" pdf "filename" "b.pdf"})
                                   "display"))))))
+  (it "keeps a ZIP archive a ZIP unless the filename hint names its format"
+      (binding [mpl-capture/*attachment-sink* (atom [])]
+        (let [zip (let [out (java.io.ByteArrayOutputStream.)]
+                    (with-open [z (java.util.zip.ZipOutputStream. out)]
+                      (.putNextEntry z (java.util.zip.ZipEntry. "a.txt"))
+                      (.write z (.getBytes "a" "UTF-8"))
+                      (.closeEntry z))
+                    (.encodeToString (java.util.Base64/getEncoder) (.toByteArray out)))
+              xlsx "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+
+          (expect (= "application/zip"
+                     (get (extension-attach {"base64" zip "filename" "bundle.zip"}) "media-type")))
+          (expect (= xlsx
+                     (get (extension-attach
+                            {"base64" zip "filename" "report.xlsx" "media_type_hint" xlsx})
+                          "media-type"))))))
   (it "refuses a wrong audience, a document for the model and a call outside a block"
       (let [pdf (.encodeToString (java.util.Base64/getEncoder) (.getBytes "%PDF-1.4\n" "UTF-8"))]
         (binding [mpl-capture/*attachment-sink* (atom [])]

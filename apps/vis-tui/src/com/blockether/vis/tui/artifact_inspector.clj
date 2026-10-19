@@ -5,6 +5,7 @@
             [com.blockether.vis.contract.diff :as diff]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg]
+            [com.blockether.vis.tui.paths :as paths]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.format :as fmt])
@@ -264,29 +265,46 @@
     (when-let [artifact (some #(when (= (str/lower-case attachment-id) (get % "attachment_id")) %)
                               (:artifacts (fetch-session-artifacts! session-id)))]
       {:filename (get artifact "filename")
+       :media-type (get artifact "media_type")
        :iteration-id (get artifact "iteration_id")
        :index (get artifact "index")})))
 
+(defn artifact-row!
+  "The inspector row that `target` names: the row itself, or the row of an
+   attachment://<uuid> link in this session's human-visible index. nil when the
+   link names no artifact."
+  [session-id target]
+  (if (string? target) (artifact-link-row! session-id target) target))
+
+(defn saved-artifacts-dir
+  "The folder that keeps artifacts a person saves from the TUI:
+   `<downloads>/Vis Artifacts`, the same folder the desktop app uses."
+  ^File []
+  (File. (paths/downloads-dir) "Vis Artifacts"))
+
 (defn materialize-artifact!
   "Fetch one produced artifact's durable bytes and write them under its original
-   basename in a unique temporary directory. Returns the local File or nil.
+   basename in a new unique directory. Returns the local File or nil.
    `target` is an inspector row or an attachment://<uuid> link. Links resolve the
-   exact version in this session's human-visible index, never a filesystem path."
-  [session-id target]
-  (let [{:keys [filename iteration-id index]}
-        (if (string? target) (artifact-link-row! session-id target) target)]
-    (when (and (not (str/blank? (str session-id)))
-               (not (str/blank? (str iteration-id)))
-               (number? index))
-      (when-let [^bytes bytes
-                 (vis/gateway-iteration-attachment-bytes session-id iteration-id index)]
-        (let [dir (doto (File. (System/getProperty "java.io.tmpdir")
-                               (str "vis-artifact-" (random-uuid)))
-                    (.mkdirs))
-              basename (let [name (.getName (File. (str filename)))]
-                         (if (str/blank? name) "artifact.bin" name))
-              target (File. dir basename)]
+   exact version in this session's human-visible index, never a filesystem path.
+   Without `parent`, the directory is temporary; with it, the file stays there."
+  ([session-id target] (materialize-artifact! session-id target nil))
+  ([session-id target ^File parent]
+   (let [{:keys [filename iteration-id index]} (artifact-row! session-id target)]
+     (when (and (not (str/blank? (str session-id)))
+                (not (str/blank? (str iteration-id)))
+                (number? index))
+       (when-let [^bytes bytes
+                  (vis/gateway-iteration-attachment-bytes session-id iteration-id index)]
+         (let [dir (doto (if parent
+                           (File. parent (str (random-uuid)))
+                           (File. (System/getProperty "java.io.tmpdir")
+                                  (str "vis-artifact-" (random-uuid))))
+                     (.mkdirs))
+               basename (let [name (.getName (File. (str filename)))]
+                          (if (str/blank? name) "artifact.bin" name))
+               target (File. dir basename)]
 
-          (with-open [out (FileOutputStream. target)]
-            (.write out bytes))
-          target)))))
+           (with-open [out (FileOutputStream. target)]
+             (.write out bytes))
+           target))))))

@@ -296,7 +296,8 @@
   "Body of `vis.attach` for a Python extension. Its one options map holds `base64`
    and the optional `filename`, `media_type`, `media_type_hint`, `kind`,
    `audience`, `label` and `commentable`. An explicit media type wins, then the
-   magic-byte sniff, then the hint from the filename, then
+   magic-byte sniff, then the hint from the filename. A hint also names the format
+   of a generic ZIP sniff. The fallback is
    `application/octet-stream`. The result is the descriptor JSON, without the
    sandbox-only display data."
   [opts]
@@ -312,10 +313,18 @@
                (throw (ex-info "vis.attach: the payload is not base64." {}))))
 
         media-type
-        (or (blank->nil (opt "media_type"))
-            (when (pos? (alength ^bytes data)) (attachments/detect-media-mime data))
-            (blank->nil (opt "media_type_hint"))
-            "application/octet-stream")
+        (let [sniffed
+              (when (pos? (alength ^bytes data)) (attachments/detect-media-mime data))
+
+              hint
+              (blank->nil (opt "media_type_hint"))]
+
+          (or (blank->nil (opt "media_type"))
+              ;; A workbook, an EPUB and a JAR are ZIP archives too: the hint names
+              ;; which format the generic ZIP sniff stands for.
+              (if (and hint (= "application/zip" sniffed)) hint sniffed)
+              hint
+              "application/octet-stream"))
 
         audience
         (str/lower-case (str (or (blank->nil (opt "audience")) "both")))]

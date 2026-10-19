@@ -203,6 +203,62 @@
               unix))
           :else nil)))
 
+(def ^:private wslpath-timeout-ms
+  "How long `windows-path` waits for `wslpath`. It answers at once when it exists."
+  2000)
+
+(defn windows-path
+  "The Windows spelling of the Linux path `target`, from `wslpath -w`, or nil.
+   `explorer.exe` reads only Windows paths, such as `\\\\wsl.localhost\\Ubuntu\\home`.
+   Indirected so tests can `with-redefs` it."
+  ^String [^String target]
+  (try (let [^java.util.List argv
+             ["wslpath" "-w" target]
+
+             child
+             (.start (doto (ProcessBuilder. argv)
+                       (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))]
+
+         (.close (.getOutputStream child))
+         (if (.waitFor child wslpath-timeout-ms TimeUnit/MILLISECONDS)
+           (let [out (str/trim (slurp (.getInputStream child)))]
+             (when (and (zero? (.exitValue child)) (not (str/blank? out))) out))
+           (do (.destroyForcibly child) nil)))
+       (catch Throwable _ nil)))
+
+(defn- show-items-argv
+  "Ask the freedesktop file manager (Nautilus, Dolphin, Nemo, Thunar and others)
+   to show `target` selected. `--print-reply` waits for the answer, so a missing
+   file manager exits non-zero and the next candidate runs. dbus-send splits an
+   array at commas, so the URI encodes them."
+  [^String target]
+  ["dbus-send" "--session" "--print-reply" "--dest=org.freedesktop.FileManager1"
+   "--type=method_call" "/org/freedesktop/FileManager1" "org.freedesktop.FileManager1.ShowItems"
+   (str "array:string:" (str/replace (str (.toUri (.toPath (File. target)))) "," "%2C")) "string:"])
+
+(defn reveal-commands
+  "Ordered candidate argv vectors that show the local file `target` in the host
+   file manager, selected where the platform can. Pure modulo `os-name`, `wsl?`
+   and `windows-path`. Returns nil for unsupported platforms.
+
+   macOS uses `open -R`, which selects the file in Finder. Unix hosts ask the
+   freedesktop file manager, then open the parent folder with the ordinary
+   openers. On WSL, `explorer.exe /select,` comes first with the Windows path."
+  [^String target]
+  (let [os
+        (os-name)
+
+        parent
+        (or (.getParent (File. target)) target)]
+
+    (cond (or (str/includes? os "mac") (str/includes? os "darwin")) [["open" "-R" target]]
+          (some #(str/includes? os %) ["linux" "bsd" "sunos" "aix"])
+          (let [unix (into [(show-items-argv target)] (open-commands parent))]
+            (if-let [windows (when (wsl?) (windows-path target))]
+              (into [["explorer.exe" (str "/select," windows)]] unix)
+              unix))
+          :else nil)))
+
 (defn- editor-target
   "Format a local file target for editor CLIs that accept optional
    line suffixes."
@@ -273,10 +329,10 @@
         {:command argv}))))
 
 (defn- launch!
-  "Open the resolved `target` with the first working OS opener. Returns the
-   result map of `open!`. Never throws."
-  [scheme target]
-  (if-let [commands (open-commands target)]
+  "Open the resolved `target` with the first working candidate of `commands`.
+   Returns the result map of `open!`. Never throws."
+  [scheme target commands]
+  (if (seq commands)
     (let [{:keys [command errors]} (spawn-first! commands)]
       (if command
         {:status :ok :command command :scheme scheme :target target :error nil}
@@ -309,7 +365,7 @@
        :target nil
        :error (str "Rejected scheme for: " (pr-str s))}
       (if-let [{:keys [target] :as resolved} (safe-target s)]
-        (launch! (:scheme resolved) target)
+        (launch! (:scheme resolved) target (open-commands target))
         {:status :path-escape
          :command nil
          :scheme scheme
@@ -327,7 +383,23 @@
   [path]
   (let [f (File. (str path))]
     (if (.isFile f)
-      (launch! :file (.getAbsolutePath f))
+      (launch! :file (.getAbsolutePath f) (open-commands (.getAbsolutePath f)))
+      {:status :rejected-scheme
+       :command nil
+       :scheme nil
+       :target nil
+       :error (str "Not a local file: " (pr-str path))})))
+
+(defn reveal-local!
+  "Show the LOCAL file at `path` in the host file manager: Finder on macOS, the
+   freedesktop file manager or the parent folder on Linux, Explorer on WSL.
+   Use it for files with no useful viewer, such as an archive: `open` on macOS
+   would unpack a ZIP silently in its own folder. Returns the result map of
+   `open!`. Never throws."
+  [path]
+  (let [f (File. (str path))]
+    (if (.isFile f)
+      (launch! :file (.getAbsolutePath f) (reveal-commands (.getAbsolutePath f)))
       {:status :rejected-scheme
        :command nil
        :scheme nil

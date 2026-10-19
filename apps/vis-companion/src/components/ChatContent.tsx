@@ -46,10 +46,12 @@ import { isForkNotice } from '../lib/transcript-outline';
 import { useStickyOverlay } from '../lib/sticky-overlay';
 import { remarkParseCache } from '../lib/markdown-trees';
 import { AlertIcon, ArrowOutIcon, ChevronIcon, ForkIcon, PauseIcon, PlayIcon } from './icons';
+import { archiveOpenVerb, keepArchive } from '../lib/artifact-open';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
 import {
   artifactMedia,
   isDocMedia,
+  isZipMedia,
   attachmentBytes,
   attachmentIsAudio,
   attachmentIsDoc,
@@ -2345,6 +2347,7 @@ export const AttachmentRail = memo(function AttachmentRail({
   attachments: IterationAttachment[];
 }) {
   const [open, setOpen] = useState(false);
+  const artifactLinks = useContext(ArtifactLinkContext);
   // Keep each page small. Fetch playable artifacts only near the viewport,
   // so hidden media cannot delay a session switch on a slow connection.
   const [pages, setPages] = useState(1);
@@ -2485,20 +2488,34 @@ export const AttachmentRail = memo(function AttachmentRail({
             <ul className="grid min-w-0 gap-0.5 pl-4">
               {files.map((file) => {
                 const iterationId = file.attachment.iteration_id;
+                const attachmentId = file.attachment.attachment_id;
+                const label = [
+                  file.count > 1 ? `${file.name} ×${file.count}` : file.name,
+                  file.media,
+                  attachmentBytes(file.size),
+                ]
+                  .filter(Boolean)
+                  .join(' · ');
+                // A ZIP archive opens in the artifact sheet, which lists its files.
+                const opensArchive =
+                  artifactLinks && attachmentId && isZipMedia(file.attachment.media_type, file.name);
                 return (
                   <li
                     key={file.key}
                     className="flex min-w-0 items-center gap-2 font-mono text-chip text-footer-muted"
                   >
-                    <span className="min-w-0 flex-1 truncate">
-                      {[
-                        file.count > 1 ? `${file.name} ×${file.count}` : file.name,
-                        file.media,
-                        attachmentBytes(file.size),
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </span>
+                    {opensArchive ? (
+                      <TextButton
+                        isToken
+                        aria-label={`Open ${file.name}`}
+                        className="flex-1"
+                        onClick={() => artifactLinks.open(attachmentId)}
+                      >
+                        {label}
+                      </TextButton>
+                    ) : (
+                      <span className="min-w-0 flex-1 truncate">{label}</span>
+                    )}
                     {iterationId ? (
                       <MediaShareButton
                         name={file.name}
@@ -4606,7 +4623,8 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
       />
     );
   }
-  const verb = artifactShareVerb(name, media);
+  const archive = isZipMedia(media, name);
+  const verb = archive ? archiveOpenVerb() : artifactShareVerb(name, media);
   return (
     <div>
       <ListRow
@@ -4618,9 +4636,9 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
           setNotice('');
           try {
             const blob = await (await fetch(url)).blob();
-            setNotice(await shareArtifact(blob, name, media));
+            setNotice(archive ? await keepArchive(blob, name, media) : await shareArtifact(blob, name, media));
           } catch {
-            setNotice('Could not share file. Try again.');
+            setNotice(archive ? 'Could not save archive. Try again.' : 'Could not share file. Try again.');
           } finally {
             setBusy(false);
           }

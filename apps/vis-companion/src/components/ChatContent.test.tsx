@@ -16,6 +16,7 @@ import {
 import { openStepsMarkup, renderOpenSteps } from './trace-harness';
 import { STORY_TURN_ITERATIONS, STORY_TURN_ITERATIONS_SETTLED } from '../dev/story-data';
 import type { ActivityProjection } from '../lib/activity';
+import { ArtifactLinkContext } from '../lib/artifact-links';
 import type { GatewayClient } from '../lib/gateway';
 import { mediaFrameClass, mediaGridClass, mediaTileFrameClass } from '../lib/media-frame';
 import { speechOutput } from '../lib/speech';
@@ -1950,11 +1951,13 @@ describe('the attachment rail', () => {
       Reflect.deleteProperty(navigator, 'share');
     }
   });
-  // Shares a recording and a recorded file from the session, not only from Artifacts.
-  it('shares a produced recording and a recorded file from the session', async () => {
+  // Shares a recording and saves a recorded archive from the session, not only from Artifacts.
+  it('shares a produced recording and downloads a recorded archive from the session', async () => {
     const attachmentBlob = vi.fn(async () => new Blob(['bytes']));
     const share = vi.fn(async (_data: ShareData) => undefined);
     Object.defineProperty(navigator, 'share', { value: share, configurable: true });
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:bundle');
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     const view = render(
       <AttachmentRail
         client={{ ...client, attachmentBlob } as unknown as GatewayClient}
@@ -1971,16 +1974,47 @@ describe('the attachment rail', () => {
       expect(await view.findByText('Recording shared.')).toBeVisible();
       expect(attachmentBlob).toHaveBeenCalledWith('s1', 'i1', 0);
       fireEvent.click(view.getByText('bundle.zip'));
-      fireEvent.click(view.getByRole('button', { name: 'Share bundle.zip' }));
-      expect(await view.findByText('File shared.')).toBeVisible();
+      fireEvent.click(view.getByRole('button', { name: 'Download bundle.zip' }));
+      expect(await view.findByText('Archive downloaded.')).toBeVisible();
       expect(attachmentBlob).toHaveBeenCalledWith('s1', 'i1', 1);
-      expect(share.mock.calls.map((call) => call[0].files?.[0]?.name)).toEqual([
-        'memo.m4a',
-        'bundle.zip',
-      ]);
+      expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe('bundle.zip');
+      expect(share.mock.calls.map((call) => call[0].files?.[0]?.name)).toEqual(['memo.m4a']);
     } finally {
       view.unmount();
+      createUrl.mockRestore();
+      click.mockRestore();
       Reflect.deleteProperty(navigator, 'share');
+    }
+  });
+  it('opens a recorded ZIP archive in the artifact sheet', () => {
+    const open = vi.fn();
+    const view = render(
+      <ArtifactLinkContext.Provider value={{ byName: new Map(), open }}>
+        <AttachmentRail
+          client={client as unknown as GatewayClient}
+          sid="s1"
+          attachments={[
+            {
+              filename: 'bundle.zip',
+              media_type: 'application/zip',
+              size: 9_000,
+              iteration_id: 'i1',
+              index: 0,
+              attachment_id: 'att-zip',
+            },
+            { filename: 'notes.bin', media_type: 'application/octet-stream', iteration_id: 'i1', index: 1, attachment_id: 'att-bin' },
+          ]}
+        />
+      </ArtifactLinkContext.Provider>,
+    );
+
+    try {
+      fireEvent.click(view.getByText('bundle.zip'));
+      fireEvent.click(view.getByRole('button', { name: 'Open bundle.zip' }));
+      expect(open).toHaveBeenCalledExactlyOnceWith('att-zip');
+      expect(view.queryByRole('button', { name: 'Open notes.bin' })).toBeNull();
+    } finally {
+      view.unmount();
     }
   });
   // Regression, user report: "the model attached a document, I commented on it and

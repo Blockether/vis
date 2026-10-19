@@ -48,3 +48,52 @@
                        :else (deliver task false))))
              (expect @task)
              (finally (Files/deleteIfExists path))))))
+
+;; Regression: Open on a ZIP artifact unpacked it in a hidden temp folder and
+;; never showed the file. Each host shows the file in its own file manager.
+(defdescribe
+  reveal-commands-test
+  (it "selects the file in Finder on macOS"
+      (with-redefs [opener/os-name (constantly "mac os x")]
+        (expect (= [["open" "-R" "/tmp/a b/bundle.zip"]]
+                   (opener/reveal-commands "/tmp/a b/bundle.zip")))))
+  (it "asks the freedesktop file manager on Linux, then opens the folder"
+      (with-redefs [opener/os-name
+                    (constantly "linux")
+
+                    opener/wsl?
+                    (constantly false)]
+
+        (let [[show & folder] (opener/reveal-commands "/home/u/Pobrane/a,b.zip")]
+          (expect (= "dbus-send" (first show)))
+          (expect (= "org.freedesktop.FileManager1.ShowItems" (nth show 6)))
+          (expect (= "array:string:file:///home/u/Pobrane/a%2Cb.zip" (nth show 7)))
+          (expect (= ["xdg-open" "/home/u/Pobrane"] (first folder))))))
+  (it "selects the file in Explorer on WSL, through its Windows path"
+      (with-redefs [opener/os-name
+                    (constantly "linux")
+
+                    opener/wsl?
+                    (constantly true)
+
+                    opener/windows-path
+                    (constantly "\\\\wsl.localhost\\Ubuntu\\tmp\\bundle.zip")]
+
+        (let [commands (opener/reveal-commands "/tmp/bundle.zip")]
+          (expect (= ["explorer.exe" "/select,\\\\wsl.localhost\\Ubuntu\\tmp\\bundle.zip"]
+                     (first commands)))
+          (expect (= "dbus-send" (first (second commands))))
+          (expect (some #{["wslview" "/tmp"]} commands)))))
+  (it "keeps the Linux chain on WSL when wslpath gives no Windows path"
+      (with-redefs [opener/os-name
+                    (constantly "linux")
+
+                    opener/wsl?
+                    (constantly true)
+
+                    opener/windows-path
+                    (constantly nil)]
+
+        (expect (= "dbus-send" (ffirst (opener/reveal-commands "/tmp/bundle.zip"))))))
+  (it "refuses a path that is not a file"
+      (expect (= :rejected-scheme (:status (opener/reveal-local! "/vis-missing/bundle.zip"))))))

@@ -11,9 +11,14 @@ import {
   type VideoHTMLAttributes,
 } from 'react';
 
-import { openSpreadsheet, spreadsheetOpenVerb } from '../lib/artifact-open';
+import {
+  archiveOpenVerb,
+  keepArchive,
+  openSpreadsheet,
+  spreadsheetOpenVerb,
+} from '../lib/artifact-open';
 import { artifactShareVerb, shareArtifact } from '../lib/artifact-share';
-import { artifactMedia, attachmentBytes, isXlsxMedia } from '../lib/artifacts';
+import { artifactMedia, attachmentBytes, isXlsxMedia, isZipMedia } from '../lib/artifacts';
 import {
   mediaCaptionClass,
   mediaFrameClass,
@@ -155,7 +160,8 @@ export function MediaShareButton({
   load: () => Promise<Blob>;
 }) {
   // Probed once: the share sheet cannot appear or disappear under a mounted file.
-  const [verb] = useState(() => artifactShareVerb(name, mediaType));
+  const [archive] = useState(() => isZipMedia(mediaType, name));
+  const [verb] = useState(() => (archive ? archiveOpenVerb() : artifactShareVerb(name, mediaType)));
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const share = async () => {
@@ -164,13 +170,15 @@ export function MediaShareButton({
     try {
       const blob = await load();
       setNotice(
-        await shareArtifact(blob, name, mediaType, {
-          dialogTitle: `Share ${noun.toLowerCase()}`,
-          noun,
-        }),
+        archive
+          ? await keepArchive(blob, name, mediaType)
+          : await shareArtifact(blob, name, mediaType, {
+              dialogTitle: `Share ${noun.toLowerCase()}`,
+              noun,
+            }),
       );
     } catch {
-      setNotice(`Could not share ${noun.toLowerCase()}. Try again.`);
+      setNotice(archive ? 'Could not save archive. Try again.' : `Could not share ${noun.toLowerCase()}. Try again.`);
     } finally {
       setBusy(false);
     }
@@ -190,7 +198,7 @@ export function MediaShareButton({
         className="-my-1 -mr-2 after:top-0"
         onClick={() => void share()}
       >
-        {verb === 'Share' ? <ShareIcon /> : <DownloadIcon />}
+        {verb === 'Share' ? <ShareIcon /> : verb.startsWith('Show in') ? <ArrowOutIcon /> : <DownloadIcon />}
       </IconButton>
     </>
   );
@@ -220,9 +228,12 @@ export function useArtifactShare(source: ArtifactShareSource | null): {
   const [error, setError] = useState('');
   if (!source) return { cell: null, notice: null };
   const workbook = isXlsxMedia(source.mediaType, source.name);
+  const archive = !workbook && isZipMedia(source.mediaType, source.name);
   const verb = workbook
     ? spreadsheetOpenVerb()
-    : artifactShareVerb(source.name, source.mediaType);
+    : archive
+      ? archiveOpenVerb()
+      : artifactShareVerb(source.name, source.mediaType);
   const cell = (
     <BandButton
       label={busy ? `${verb}…` : verb}
@@ -231,18 +242,30 @@ export function useArtifactShare(source: ArtifactShareSource | null): {
         setBusy(true);
         setStatus('');
         setError('');
-        const handoff = workbook ? openSpreadsheet : shareArtifact;
+        const handoff = workbook ? openSpreadsheet : archive ? keepArchive : shareArtifact;
         void source
           .load()
           .then((blob) => handoff(blob, source.name, source.mediaType))
           .then(setStatus)
           .catch(() =>
-            setError(workbook ? 'Could not open workbook. Try again.' : 'Could not share artifact.'),
+            setError(
+              workbook
+                ? 'Could not open workbook. Try again.'
+                : archive
+                  ? 'Could not save archive. Try again.'
+                  : 'Could not share artifact.',
+            ),
           )
           .finally(() => setBusy(false));
       }}
     >
-      {verb === 'Share' ? <ShareIcon /> : verb === 'Open in app' ? <ArrowOutIcon /> : <DownloadIcon />}
+      {verb === 'Share' ? (
+        <ShareIcon />
+      ) : verb === 'Open in app' || verb.startsWith('Show in') ? (
+        <ArrowOutIcon />
+      ) : (
+        <DownloadIcon />
+      )}
     </BandButton>
   );
   const notice = (

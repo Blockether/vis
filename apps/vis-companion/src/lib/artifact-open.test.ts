@@ -13,13 +13,15 @@ vi.mock('@capacitor/filesystem', () => ({
 }));
 vi.mock('@capacitor/share', () => ({ Share: { share } }));
 
-import { openSpreadsheet, spreadsheetOpenVerb } from './artifact-open';
+import { archiveOpenVerb, keepArchive, openSpreadsheet, spreadsheetOpenVerb } from './artifact-open';
 import {
   artifactKind,
   artifactMedia,
   attachmentIsDoc,
+  isArchiveMedia,
   isDocMedia,
   isXlsxMedia,
+  isZipMedia,
   XLSX_MEDIA,
 } from './artifacts';
 import type { IterationAttachment } from './types';
@@ -157,5 +159,71 @@ describe('spreadsheet file hand-off', () => {
     share.mockRejectedValueOnce(new Error('App hand-off failed'));
     await expect(openSpreadsheet(workbook(), 'report.xlsx')).rejects.toThrow('App hand-off failed');
     expect(deleteFile).toHaveBeenCalledOnce();
+  });
+});
+
+describe('archive file hand-off', () => {
+  const archive = () => new Blob([data], { type: 'application/zip' });
+
+  it.each([
+    ['application/zip', 'bundle'],
+    ['application/x-zip-compressed', 'bundle'],
+    ['application/octet-stream', 'BUNDLE.ZIP'],
+    [undefined, 'bundle.zip'],
+  ])('recognizes %s / %s as a ZIP archive', (media, filename) => {
+    expect(isZipMedia(media, filename)).toBe(true);
+    expect(isArchiveMedia(media, filename)).toBe(true);
+  });
+
+  it.each(['report.xlsx', 'letter.docx', 'tool.jar'])('keeps the %s container out of the ZIP view', (filename) => {
+    expect(isZipMedia('application/zip', filename)).toBe(false);
+    expect(isArchiveMedia('application/zip', filename)).toBe(false);
+  });
+
+  it.each([
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)', 'Show in Finder'],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Show in folder'],
+    ['Mozilla/5.0 (X11; Linux x86_64)', 'Show in folder'],
+  ])('names the desktop file manager for %s', (userAgent, verb) => {
+    vi.stubGlobal('__TAURI__', { core: { invoke: vi.fn() } });
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
+    expect(archiveOpenVerb()).toBe(verb);
+  });
+
+  it('saves the original bytes on the desktop and names the saved path', async () => {
+    const invoke = vi.fn(async () => ({ revealed: true, path: '/home/ada/Downloads/Vis Artifacts/1/bundle.zip' }));
+    vi.stubGlobal('__TAURI__', { core: { invoke } });
+    expect(await keepArchive(archive(), '../bundle.zip', 'application/zip')).toBe(
+      'Archive saved to /home/ada/Downloads/Vis Artifacts/1/bundle.zip.',
+    );
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('reveal_artifact', {
+      filename: 'bundle.zip',
+      data: Array.from(data),
+    });
+  });
+
+  it('names the saved path when no file manager answers', async () => {
+    const path = 'C:\\Users\\ada\\Downloads\\Vis Artifacts\\1\\bundle.zip';
+    vi.stubGlobal('__TAURI__', { core: { invoke: vi.fn(async () => ({ revealed: false, path })) } });
+    expect(await keepArchive(archive(), 'bundle.zip')).toBe(
+      `Archive saved to ${path}. Open that folder to find it.`,
+    );
+  });
+
+  it('offers the native save sheet on a phone', async () => {
+    native.value = true;
+    expect(archiveOpenVerb()).toBe('Save');
+    expect(await keepArchive(archive(), 'bundle.zip', 'application/zip')).toBe('Archive shared.');
+    expect(share).toHaveBeenCalledWith(expect.objectContaining({ dialogTitle: 'Save archive' }));
+    expect(deleteFile).not.toHaveBeenCalled();
+  });
+
+  it('downloads in a browser and refuses other files', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:archive');
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    expect(archiveOpenVerb()).toBe('Download');
+    expect(await keepArchive(archive(), 'bundle.zip')).toBe('Archive downloaded.');
+    expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe('bundle.zip');
+    await expect(keepArchive(new Blob(['x']), 'notes.txt', 'text/plain')).rejects.toThrow('Not an archive');
   });
 });

@@ -7,6 +7,7 @@ import type { GatewayClient } from '../lib/gateway';
 import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { dismissTopLayer } from '../lib/edge-back';
+import { buildZip } from '../lib/zip-harness';
 
 /** The classes of the button whose tag carries `mark` — attribute order is React's. */
 const classesOf = (html: string, mark: string) => {
@@ -580,6 +581,42 @@ describe('an opened artifact', () => {
     } finally {
       view.unmount();
       vi.unstubAllGlobals();
+    }
+  });
+  it('lists the files of a ZIP archive inside the artifact sheet', async () => {
+    const buffer = await buildZip([
+      { name: 'report/summary.txt', data: new TextEncoder().encode('All checks passed.') },
+    ]);
+    const zipClient = {
+      attachmentUrl: async () => 'blob:zip',
+      attachmentBlob: async () => new Blob([buffer], { type: 'application/zip' }),
+      retainAttachment: () => () => {},
+    } as unknown as GatewayClient;
+    const archive = artifact({
+      key: 'i9:0',
+      kind: 'file',
+      name: 'results.zip',
+      media: 'ZIP',
+      mediaType: 'application/zip',
+      iterationId: 'i9',
+    });
+    const view = render(
+      <ArtifactsSheet
+        client={zipClient}
+        sid="s1"
+        artifacts={[archive]}
+        initialArtifact={archive}
+        onClose={() => {}}
+      />,
+    );
+
+    try {
+      expect(await screen.findByRole('list', { name: 'Files in results.zip' })).toBeVisible();
+      await userEvent.click(screen.getByText('report/summary.txt'));
+      expect(await screen.findByText('All checks passed.')).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Download' })).toBeVisible();
+    } finally {
+      view.unmount();
     }
   });
   it('opens an artifact requested by answer prose without a tile click', () => {

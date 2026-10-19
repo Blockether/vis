@@ -113,14 +113,18 @@ describe('desktop package', () => {
     expect(cli).toBe(join('/tools', 'node_modules', 'pake-cli', 'dist', 'cli.js'));
     const [libPath, lib] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('lib.rs'));
     expect(libPath).toBe(join('/tools', 'node_modules', 'pake-cli', 'src-tauri', 'src', 'lib.rs'));
-    expect(lib).toContain('mod artifact;\nuse artifact::open_xlsx;');
-    expect(lib).toContain('.invoke_handler(tauri::generate_handler![\n            open_xlsx,');
+    expect(lib).toContain('mod artifact;\nuse artifact::{open_xlsx, reveal_artifact};');
+    expect(lib).toContain(
+      '.invoke_handler(tauri::generate_handler![\n            open_xlsx,\n            reveal_artifact,',
+    );
     const [, command] = writeFileSync.mock.calls.find(([path]) =>
       String(path).endsWith('artifact.rs'),
     );
     expect(command).toContain('pub async fn open_xlsx(');
     expect(command).toContain('stage_workbook(&downloads, &filename, &data)');
     expect(command).toContain('.open_path(');
+    expect(command).toContain('pub async fn reveal_artifact(');
+    expect(command).toContain('.reveal_item_in_dir(&path)');
     expect(
       writeFileSync.mock.calls.some(([path]) => String(path).endsWith('tauri.windows.conf.json')),
     ).toBe(false);

@@ -2496,32 +2496,60 @@
 
       (components/button! g col row label :jump-bottom))))
 
+(defn- reveal-saved-file!
+  "Show a saved `file` in the host file manager and say where it is. The notice
+   names the folder also when no file manager answers, so the file stays easy to find."
+  [^java.io.File file]
+  (let [{:keys [status]}
+        (opener/reveal-local! file)
+
+        where
+        (vis-paths/abbreviate-home (.getPath file))]
+
+    (if (= :ok status)
+      (vis/notify! (str "Saved to " where) :ttl-ms 4000)
+      (vis/notify! (str "Saved to " where ". No file manager could show it.")
+                   :level :warn
+                   :ttl-ms status-error-ttl-ms))))
+
 (defn- open-produced-artifact!
   [session-id target]
   (vis/worker-future
     "vis-tui-open-produced-artifact"
     #(try
-       (if (attachments/live-artifact? target)
-         (do (vis/notify! "Loading recorded live view…" :ttl-ms 1500)
-             (if-let [bytes (vis/gateway-iteration-attachment-bytes session-id
-                                                                    (:iteration-id target)
-                                                                    (:index target))]
-               (state/dispatch [:live-record-open session-id
-                                (lv/recorded-pane (String. ^bytes bytes
-                                                           java.nio.charset.StandardCharsets/UTF_8)
-                                                  session-id)])
-               (vis/notify! "Live view record unavailable. Click to retry."
-                            :level :warn
-                            :ttl-ms status-error-ttl-ms)))
-         (if-let [file (artifact-inspector/materialize-artifact! session-id target)]
-           (let [{:keys [status error]} (opener/open-local! file)]
-             (when-not (= :ok status)
-               (vis/notify! (or error "Artifact could not be opened")
-                            :level :warn
-                            :ttl-ms status-error-ttl-ms)))
-           (vis/notify! "Artifact bytes are unavailable."
-                        :level :warn
-                        :ttl-ms status-error-ttl-ms)))
+       (let [row (artifact-inspector/artifact-row! session-id target)]
+         (cond (attachments/live-artifact? row)
+               (do (vis/notify! "Loading recorded live view…" :ttl-ms 1500)
+                   (if-let [bytes (vis/gateway-iteration-attachment-bytes session-id
+                                                                          (:iteration-id row)
+                                                                          (:index row))]
+                     (state/dispatch [:live-record-open session-id
+                                      (lv/recorded-pane (String.
+                                                          ^bytes bytes
+                                                          java.nio.charset.StandardCharsets/UTF_8)
+                                                        session-id)])
+                     (vis/notify! "Live view record unavailable. Click to retry."
+                                  :level :warn
+                                  :ttl-ms status-error-ttl-ms)))
+               ;; An archive has no viewer: keep it in the downloads folder and show it there.
+               (attachments/file-manager-artifact? (:media-type row) (:filename row))
+               (if-let [file (artifact-inspector/materialize-artifact!
+                               session-id
+                               row
+                               (artifact-inspector/saved-artifacts-dir))]
+                 (reveal-saved-file! file)
+                 (vis/notify! "Artifact bytes are unavailable."
+                              :level :warn
+                              :ttl-ms status-error-ttl-ms))
+               :else (if-let [file (artifact-inspector/materialize-artifact! session-id row)]
+                       (let [{:keys [status error]} (opener/open-local! file)]
+                         (when-not (= :ok status)
+                           (vis/notify! (or error "Artifact could not be opened")
+                                        :level :warn
+                                        :ttl-ms status-error-ttl-ms)))
+                       (vis/notify! "Artifact bytes are unavailable."
+                                    :level :warn
+                                    :ttl-ms status-error-ttl-ms))))
        (catch Throwable _
          (vis/notify! "Artifact could not be opened." :level :warn :ttl-ms status-error-ttl-ms)))))
 
@@ -2637,11 +2665,16 @@
   ([^TerminalScreen _screen ref] (open-click-target! ref)))
 
 (defn- inspect-attachment!
-  "Open a staged item in the OS viewer without requiring it to be under cwd."
+  "Open a staged item in the OS viewer without requiring it to be under cwd. An
+   archive is shown in the file manager instead, where the person can unpack it."
   [attachment]
   (when-let [path (:path attachment)]
     (vis/worker-future "vis-tui-inspect-attachment"
-                       #(try (opener/open-local! path) (catch Throwable _ nil)))))
+                       #(try (if (attachments/file-manager-artifact? (:media-type attachment)
+                                                                     (:filename attachment))
+                               (report-open-result! (opener/reveal-local! path))
+                               (opener/open-local! path))
+                             (catch Throwable _ nil)))))
 
 (defn- open-attachment-inspector!
   "Open the unified staged-file and whole-session artifact surface. Removing a

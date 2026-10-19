@@ -1,4 +1,4 @@
-//! XLSX hand-off: retain an editable copy and use the OS file association.
+//! Artifact hand-off: retain a copy in Downloads, then open it or show it in its folder.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,25 +20,41 @@ fn unique_directory() -> String {
     )
 }
 
-fn stage_workbook(downloads: &Path, filename: &str, data: &[u8]) -> Result<PathBuf, String> {
-    // Validate at the native boundary, not just in the page's filename helper.
-    if filename.starts_with('.')
-        || !filename.to_ascii_lowercase().ends_with(".xlsx")
-        || filename
+/// A plain filename: no folder part, no hidden or control character, no Windows
+/// stream or reserved character. Validate at the native boundary, not only in the page.
+fn is_plain_filename(filename: &str) -> bool {
+    !filename.is_empty()
+        && !filename.starts_with('.')
+        && !filename
             .chars()
             .any(|c| c.is_control() || "\\/:*?\"<>|".contains(c))
-    {
-        return Err("Expected a plain XLSX filename".into());
-    }
-    if data.is_empty() {
-        return Err("The workbook is empty".into());
-    }
+}
+
+/// Write `data` as `filename` in a new folder below `Downloads/Vis Artifacts`.
+fn stage_file(downloads: &Path, filename: &str, data: &[u8]) -> Result<PathBuf, String> {
     let directory = downloads.join("Vis Artifacts").join(unique_directory());
     fs::create_dir_all(directory.parent().unwrap()).map_err(|e| e.to_string())?;
     fs::create_dir(&directory).map_err(|e| e.to_string())?;
     let path = directory.join(filename);
     fs::write(&path, data).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+fn stage_workbook(downloads: &Path, filename: &str, data: &[u8]) -> Result<PathBuf, String> {
+    if !is_plain_filename(filename) || !filename.to_ascii_lowercase().ends_with(".xlsx") {
+        return Err("Expected a plain XLSX filename".into());
+    }
+    if data.is_empty() {
+        return Err("The workbook is empty".into());
+    }
+    stage_file(downloads, filename, data)
+}
+
+fn stage_artifact(downloads: &Path, filename: &str, data: &[u8]) -> Result<PathBuf, String> {
+    if !is_plain_filename(filename) {
+        return Err("Expected a plain filename".into());
+    }
+    stage_file(downloads, filename, data)
 }
 
 #[derive(serde::Serialize)]
@@ -61,6 +77,30 @@ pub async fn open_xlsx(
         .open_path(path.to_string_lossy(), None::<&str>)
         .is_ok();
     Ok(OpenWorkbookResult { opened })
+}
+
+#[derive(serde::Serialize)]
+pub struct RevealArtifactResult {
+    revealed: bool,
+    path: String,
+}
+
+/// Keep an artifact that has no viewer, such as a ZIP archive, and show it in
+/// Finder, Explorer or the Linux file manager. The page names the saved path
+/// also when no file manager answers.
+#[tauri::command]
+pub async fn reveal_artifact(
+    app: tauri::AppHandle,
+    filename: String,
+    data: Vec<u8>,
+) -> Result<RevealArtifactResult, String> {
+    let downloads = app.path().download_dir().map_err(|e| e.to_string())?;
+    let path = stage_artifact(&downloads, &filename, &data)?;
+    let revealed = app.opener().reveal_item_in_dir(&path).is_ok();
+    Ok(RevealArtifactResult {
+        revealed,
+        path: path.to_string_lossy().into_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -129,6 +169,35 @@ mod tests {
     fn rejects_empty_workbooks_before_creating_a_file() {
         let downloads = Downloads::new();
         assert!(stage_workbook(&downloads.0, "report.xlsx", b"").is_err());
+        assert_eq!(fs::read_dir(&downloads.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn keeps_any_plain_artifact_with_its_original_bytes() {
+        let downloads = Downloads::new();
+        let data = [80, 75, 5, 6, 0, 0];
+        let path = stage_artifact(&downloads.0, "bundle 2.zip", &data).unwrap();
+        assert_eq!(path.file_name().unwrap(), "bundle 2.zip");
+        assert!(path.starts_with(downloads.0.join("Vis Artifacts")));
+        assert_eq!(fs::read(path).unwrap(), data);
+    }
+
+    #[test]
+    fn rejects_artifact_paths_before_creating_a_file() {
+        let downloads = Downloads::new();
+        for name in [
+            "../bundle.zip",
+            "/bundle.zip",
+            "dir\\bundle.zip",
+            ".zip",
+            "",
+            "a:b.zip",
+        ] {
+            assert!(
+                stage_artifact(&downloads.0, name, b"bytes").is_err(),
+                "{name:?}"
+            );
+        }
         assert_eq!(fs::read_dir(&downloads.0).unwrap().count(), 0);
     }
 }

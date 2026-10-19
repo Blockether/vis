@@ -36,6 +36,7 @@ import {
   isTableMedia,
   isTextMedia,
   isXlsxMedia,
+  isZipMedia,
   pageBySize,
   SHEET_PAGE,
   type SessionArtifact,
@@ -55,6 +56,7 @@ import { ClipVideo, MediaRecording, RecordingPlayer, useArtifactShare } from './
 import { PdfAnnotator } from './PdfArtifact';
 import { readArtifactText } from './TextArtifact';
 import { AlertIcon, DotsIcon, MicIcon, PlayIcon } from './icons';
+import { ZipArchive } from './ZipArchive';
 import { Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
 
 /**
@@ -889,6 +891,15 @@ function ArtifactDetail({
     );
   }
 
+  // A ZIP archive is read in the app: its file list, a preview of one entry, and each
+  // entry's own bytes. The band keeps the whole archive as one file.
+  if (isZipMedia(artifact.mediaType, artifact.name)) {
+    return (
+      <DetailOverlay name={artifact.name} share={share} onClose={onClose}>
+        <ZipArchive blob={blob} name={artifact.name} />
+      </DetailOverlay>
+    );
+  }
   // An arbitrary file may have no safe in-app reader, but its original bytes are
   // still useful. The detail states that honestly and gives the band one real verb.
   if (artifact.kind === 'file') {

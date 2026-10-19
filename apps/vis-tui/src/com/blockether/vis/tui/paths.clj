@@ -106,6 +106,37 @@
   ^String [session-id]
   (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".py"))
 
+(def ^:private xdg-download-re
+  "The download folder line of `user-dirs.dirs`, written by `xdg-user-dirs-update`."
+  #"(?m)^\s*XDG_DOWNLOAD_DIR\s*=\s*\"([^\"]+)\"")
+
+(defn downloads-dir
+  "The user's download folder. Linux desktops name it in `user-dirs.dirs`
+   (`XDG_DOWNLOAD_DIR`, for example `~/Pobrane` on a Polish desktop); other hosts
+   use `~/Downloads`. Returns the path string. The folder can be absent."
+  (^String []
+   (let [home
+         (System/getProperty "user.home")
+
+         config
+         (or (not-empty (System/getenv "XDG_CONFIG_HOME")) (str home "/.config"))
+
+         dirs
+         (java.io.File. ^String config "user-dirs.dirs")]
+
+     (downloads-dir home (when (.isFile dirs) (try (slurp dirs) (catch Throwable _ nil))))))
+  (^String [home user-dirs]
+   (let [^String named
+         (some->> user-dirs
+                  (re-find xdg-download-re)
+                  second)
+
+         ^String path
+         (some-> named
+                 (.replace "$HOME" (str home)))]
+
+     (if (and path (.startsWith path "/")) path (str home "/Downloads")))))
+
 (defn process-id
   "This JVM's OS process id. Read fresh so native-image never bakes the builder's
    pid into the installed binary."

@@ -73,6 +73,7 @@ const DEFAULT_DOCUMENT_MEDIA_TYPES = [
   'text/csv',
   'text/tab-separated-values',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/zip',
 ];
 
 const DEFAULT_MEDIA_TYPES = [
@@ -296,6 +297,7 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   tsv: 'text/tab-separated-values',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   gz: 'application/gzip',
+  zip: 'application/zip',
   jsonl: 'application/x-ndjson',
   ndjson: 'application/x-ndjson',
   mp4: 'video/mp4',
@@ -364,6 +366,8 @@ const CANONICAL_MEDIA_TYPES: Record<string, string> = {
   'audio/mp3': 'audio/mpeg',
   'audio/x-aiff': 'audio/aiff',
   'audio/x-flac': 'audio/flac',
+  'application/x-zip-compressed': 'application/zip',
+  'application/x-zip': 'application/zip',
   'audio/x-aac': 'audio/aac',
 };
 

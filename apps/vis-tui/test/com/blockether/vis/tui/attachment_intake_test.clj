@@ -17,6 +17,10 @@
                               "max_video_bytes" 1048576
                               "max_audio_bytes" 1048576}}})
 
+(def ^:private zip-capabilities
+  "A gateway that also takes ZIP archives."
+  (update-in capabilities ["features" "attachments" "media_types"] conj "application/zip"))
+
 (defn- temp-dir
   []
   (.toFile (java.nio.file.Files/createTempDirectory
@@ -85,7 +89,7 @@
         (expect (= [] (:rejected dropped)))
         (expect (= ["application/pdf" docx-media-type] (mapv :media-type (:attachments dropped))))
         (expect (= ["report.pdf" "Tryb pracy.docx"] (mapv :filename (:attachments dropped))))))
-  (it "refuses a ZIP archive that only has a Word name"
+  (it "stages a ZIP archive with a Word name as a ZIP, never as a Word document"
       (let [dir
             (temp-dir)
 
@@ -97,10 +101,39 @@
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"))
 
             dropped
-            (intake/file-drop capabilities [] (.getCanonicalPath fake) (.getPath dir))]
+            (intake/file-drop zip-capabilities [] (.getCanonicalPath fake) (.getPath dir))]
+
+        (expect (= [] (:rejected dropped)))
+        (expect (= ["application/zip"] (mapv :media-type (:attachments dropped)))))))
+
+;; Regression: a dropped ZIP archive was refused as an unsupported file format.
+(defdescribe
+  drop-admits-zip-archives
+  (it "stages a dropped ZIP archive"
+      (let [dir
+            (temp-dir)
+
+            archive
+            (write-bytes! dir "bundle.zip" (docx-bytes "text/plain"))
+
+            dropped
+            (intake/file-drop zip-capabilities [] (.getCanonicalPath archive) (.getPath dir))]
+
+        (expect (= [] (:rejected dropped)))
+        (expect (= ["application/zip"] (mapv :media-type (:attachments dropped))))
+        (expect (= ["bundle.zip"] (mapv :filename (:attachments dropped))))))
+  (it "refuses a ZIP archive when the gateway does not take ZIP files"
+      (let [dir
+            (temp-dir)
+
+            archive
+            (write-bytes! dir "bundle.zip" (docx-bytes "text/plain"))
+
+            dropped
+            (intake/file-drop capabilities [] (.getCanonicalPath archive) (.getPath dir))]
 
         (expect (= [] (:attachments dropped)))
-        (expect (= ["sheet.docx: unsupported file format"] (:rejected dropped))))))
+        (expect (= 1 (count (:rejected dropped)))))))
 
 (defdescribe all-intake-adapters-share-structured-staging
              (it "drop, clipboard and picker produce the identical record"

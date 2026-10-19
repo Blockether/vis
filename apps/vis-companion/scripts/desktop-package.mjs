@@ -125,8 +125,8 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
     throw new Error('Pake native command registration changed');
   }
   if (!lib.includes('mod artifact;')) {
-    lib = lib.replace(module, `${module}\nmod artifact;\nuse artifact::open_xlsx;`);
-    lib = lib.replace(handler, `${handler}\n            open_xlsx,`);
+    lib = lib.replace(module, `${module}\nmod artifact;\nuse artifact::{open_xlsx, reveal_artifact};`);
+    lib = lib.replace(handler, `${handler}\n            open_xlsx,\n            reveal_artifact,`);
   }
   writeFileSync(libPath, lib);
   writeFileSync(

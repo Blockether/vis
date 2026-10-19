@@ -766,7 +766,7 @@
         (expect (attachments/hidden-from-model? attachment))
         (expect (true? (:readable-blind? blind)))
         (expect (str/includes? (:reason blind) "read_attachment"))))
-  (it "refuses a ZIP archive that is not a Word document, whatever its name"
+  (it "stores a ZIP archive that is not a Word document as a ZIP, whatever its name"
       (doseq [bytes [(zip-bytes [["notes.txt" "plain"]])
                      (office-bytes "application/vnd.ms-word.document.macroEnabled.main+xml")
                      (office-bytes
@@ -774,8 +774,8 @@
                      (byte-array [0x50 0x4b 0x03 0x04 0 0 0 0])]]
         (let [out (attachments/prepare-inline-attachments
                     [{:filename "report.docx" :media-type docx-media-type :base64 (b64 bytes)}])]
-          (expect (empty? (:attached out)))
-          (expect (= "not a supported attachment format" (:reason (first (:skipped out))))))))
+          (expect (empty? (:skipped out)))
+          (expect (= "application/zip" (:media-type (first (:attached out))))))))
   (it "sniffs a Word document on disk whose registry is past the file head"
       (let [f
             (File. (temp-dir) "late-registry.docx")
@@ -793,6 +793,51 @@
                      (make-array java.nio.file.OpenOption 0))
         (expect (< 4100 (.length f)))
         (expect (= docx-media-type (attachments/sniff-file-mime f))))))
+
+;; Regression: a ZIP archive could not be attached, so no surface could open it.
+(defdescribe
+  zip-attachment-test
+  (it "sniffs and stores a ZIP archive as a readable human-only file"
+      (doseq [[bytes claim] [[(zip-bytes [["data/a.csv" "a,b\n1,2\n"]]) "application/zip"]
+                             [(zip-bytes [["notes.txt" "plain"]]) "application/x-zip-compressed"]
+                             [(byte-array [0x50 0x4b 0x05 0x06 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0])
+                              "application/octet-stream"]]]
+        (let [out (attachments/prepare-inline-attachments
+                    [{:base64 (b64 bytes) :filename "bundle.zip" :media-type claim}])
+              attachment (first (:attached out))
+              blind (first (:skipped (attachments/wire-images (:attached out))))]
+
+          (expect (empty? (:skipped out)))
+          (expect (= "application/zip" (:media-type attachment)))
+          (expect (= (b64 bytes) (:base64 attachment)))
+          (expect (attachments/hidden-from-model? attachment))
+          (expect (true? (:readable-blind? blind)))
+          (expect (str/includes? (:reason blind) "ZIP archive"))
+          (expect (str/includes? (:reason blind) "read_attachment")))))
+  (it "accepts every ZIP spelling as a human-only claim"
+      (doseq [media-type ["application/zip" "application/x-zip-compressed" "application/x-zip"]]
+        (expect (attachments/zip-media-type? media-type))
+        (expect (contains? attachments/human-only-media-types media-type))))
+  (it "sniffs a ZIP archive on disk and keeps a Word document a Word document"
+      (let [dir
+            (temp-dir)
+
+            zip
+            (File. dir "bundle.zip")
+
+            docx
+            (File. dir "Tryb.docx")]
+
+        (Files/write (.toPath zip)
+                     (zip-bytes [["a.txt" "a"]])
+                     (make-array java.nio.file.OpenOption 0))
+        (Files/write
+          (.toPath docx)
+          (office-bytes
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")
+          (make-array java.nio.file.OpenOption 0))
+        (expect (= "application/zip" (attachments/sniff-file-mime zip)))
+        (expect (= docx-media-type (attachments/sniff-file-mime docx))))))
 
 (defdescribe
   markdown-attachment-test

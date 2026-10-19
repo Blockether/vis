@@ -27,6 +27,9 @@
           (= media-type "application/pdf") "PDF"
           (= media-type "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
           "DOCX"
+          (contains? #{"application/zip" "application/x-zip-compressed" "application/x-zip"}
+                     media-type)
+          "ZIP"
           (str/starts-with? media-type "text/") "TEXT"
           :else "FILE")))
 

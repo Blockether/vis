@@ -157,3 +157,13 @@
                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                            :size 2048}])]
                    (expect (str/includes? (cap/frame-text capture) "DOCX  Tryb.docx  ·  2.0 KB")))))
+
+(defdescribe
+  zip-archive-rail-label
+  (it "labels a staged ZIP archive ZIP, also under the Windows spelling"
+      (doseq [media-type ["application/zip" "application/x-zip-compressed"]]
+        (let [{:keys [capture]}
+              (paint-rail 72
+                          false
+                          [{:id "zip-1" :filename "bundle.zip" :media-type media-type :size 2048}])]
+          (expect (str/includes? (cap/frame-text capture) "ZIP  bundle.zip  ·  2.0 KB"))))))

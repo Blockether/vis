@@ -169,6 +169,19 @@ describe('the FILES door', () => {
     expect(result.attachments[0].media_type).toBe('application/gzip');
   });
 
+  it.each([
+    ['bundle.zip', ''],
+    ['bundle.zip', 'application/octet-stream'],
+    ['windows.zip', 'application/x-zip-compressed'],
+    ['legacy.zip', 'application/x-zip'],
+  ])('admits the ZIP archive %s (%s) as application/zip', async (name, media) => {
+    filePicker.pickFiles.mockResolvedValue({ files: [picked(name, media)] });
+
+    const result = await pickDocumentAttachments({ mediaTypes: ['application/zip'] });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments[0].media_type).toBe('application/zip');
+  });
   it('refuses what this gateway never said it takes', async () => {
     filePicker.pickFiles.mockResolvedValue({
       files: [picked('archive.zip', 'application/zip')],

@@ -62,6 +62,36 @@ export function isXlsxMedia(mime: string | undefined, filename?: string): boolea
   return baseMedia(mime) === XLSX_MEDIA || extensionOf(filename) === 'xlsx';
 }
 
+const ZIP_MEDIA = new Set(['application/zip', 'application/x-zip-compressed', 'application/x-zip']);
+const ARCHIVE_MEDIA = new Set([
+  ...ZIP_MEDIA,
+  'application/gzip',
+  'application/x-gzip',
+  'application/x-tar',
+  'application/x-7z-compressed',
+  'application/vnd.rar',
+  'application/x-rar-compressed',
+]);
+const ARCHIVE_EXTENSIONS = new Set(['zip', 'gz', 'tgz', 'tar', '7z', 'rar']);
+// Office documents and Java packages are ZIP containers with their own readers.
+const ZIP_CONTAINER_EXTENSIONS = new Set(['xlsx', 'docx', 'pptx', 'odt', 'ods', 'odp', 'epub', 'jar', 'apk']);
+
+/** A ZIP archive: the app lists and opens its entries itself. */
+export function isZipMedia(mime: string | undefined, filename?: string): boolean {
+  const extension = extensionOf(filename);
+  if (extension === 'zip') return true;
+  if (ZIP_CONTAINER_EXTENSIONS.has(extension)) return false;
+  return ZIP_MEDIA.has(baseMedia(mime));
+}
+
+/** Any archive: it leaves the app as a file that the file manager shows. */
+export function isArchiveMedia(mime: string | undefined, filename?: string): boolean {
+  const extension = extensionOf(filename);
+  if (ARCHIVE_EXTENSIONS.has(extension)) return true;
+  if (ZIP_CONTAINER_EXTENSIONS.has(extension)) return false;
+  return ARCHIVE_MEDIA.has(baseMedia(mime));
+}
+
 /** Markdown: rendered as prose, not shown as source. */
 export function isMarkdownMedia(mime: string | undefined, filename?: string): boolean {
   const media = baseMedia(mime);
