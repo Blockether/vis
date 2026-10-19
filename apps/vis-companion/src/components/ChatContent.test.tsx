@@ -519,6 +519,34 @@ describe('Markdown attachment links', () => {
     expect(view.queryByRole('link', { name: 'Not an artifact' })).toBeNull();
     expect(opened).not.toHaveBeenCalled();
   });
+
+  // User report (screenshot): an answer showed `![…](/tmp/zip-results-2.png)` as a broken
+  // image. That path is on the gateway host, never a URL this app can load.
+  it('opens an image the session attached instead of loading its host path', () => {
+    const open = vi.fn();
+    const id = '8e3a587d-232c-497d-a290-7d16cfcf0e02';
+    const view = render(
+      <ArtifactLinkContext.Provider value={{ byName: new Map([['zip-results-2.png', id]]), open }}>
+        <Markdown>{'![ZIP archive in Companion](/tmp/zip-results-2.png)'}</Markdown>
+      </ArtifactLinkContext.Provider>,
+    );
+
+    expect(view.container.querySelector('img')).toBeNull();
+    fireEvent.click(view.getByRole('button', { name: 'ZIP archive in Companion' }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(id);
+  });
+
+  it('names an unknown local image instead of painting a broken frame', () => {
+    const view = render(
+      <Markdown>{'![Chart](/tmp/missing.png) ![](./plots/loss%20curve.png) ![Logo](https://example.com/logo.png)'}</Markdown>,
+    );
+
+    expect(Array.from(view.container.querySelectorAll('img')).map((image) => image.getAttribute('src'))).toEqual([
+      'https://example.com/logo.png',
+    ]);
+    expect(view.container.textContent).toContain('Chart');
+    expect(view.container.textContent).toContain('loss curve.png');
+  });
 });
 
 describe('Markdown tool card body', () => {

@@ -566,6 +566,16 @@ function isLocalHref(href: string): boolean {
   return !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\?)/i.test(href);
 }
 
+/** The filename at the end of a local image path, such as `/tmp/plot.png` or `plots/a%20b.png`. */
+function localFilename(path: string): string {
+  const base = path.split(/[?#]/)[0].split(/[\\/]/).pop() ?? '';
+  try {
+    return decodeURIComponent(base);
+  } catch {
+    return base;
+  }
+}
+
 export const Markdown = memo(function Markdown({
   children,
   compact = false,
@@ -598,6 +608,23 @@ export const Markdown = memo(function Markdown({
   // case and rule instead of by size.
   const heading = (nestedClass: string, compactClass: string, fullClass: string) =>
     nested ? nestedClass : compact ? compactClass : fullClass;
+  // An artifact named in prose opens in the reader instead of navigating to an app URL.
+  const artifactButton = (attachmentId: string, label: ReactNode, title?: string, local = false) => {
+    const open = onOpenAttachment ?? artifactLinks?.open;
+    if (!open) return <span className={MARKDOWN_LINK}>{label}</span>;
+    return (
+      <button
+        type="button"
+        title={title}
+        className={`${MARKDOWN_LINK} inline text-left`}
+        onPointerDown={local ? (event) => event.stopPropagation() : undefined}
+        onPointerUp={local ? (event) => event.stopPropagation() : undefined}
+        onClick={() => open(attachmentId)}
+      >
+        {label}
+      </button>
+    );
+  };
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
@@ -612,23 +639,7 @@ export const Markdown = memo(function Markdown({
             const attachmentId =
               attachmentIdFromHref(href ?? '') ||
               (local ? artifactLinks?.byName.get(href) : undefined);
-            if (attachmentId) {
-              const open = onOpenAttachment ?? artifactLinks?.open;
-              if (!open) return <span className={MARKDOWN_LINK}>{label}</span>;
-              // Keep relative artifact links in the reader instead of navigating to an app URL.
-              return (
-                <button
-                  type="button"
-                  title={title}
-                  className={`${MARKDOWN_LINK} inline text-left`}
-                  onPointerDown={local ? (event) => event.stopPropagation() : undefined}
-                  onPointerUp={local ? (event) => event.stopPropagation() : undefined}
-                  onClick={() => open(attachmentId)}
-                >
-                  {label}
-                </button>
-              );
-            }
+            if (attachmentId) return artifactButton(attachmentId, label, title, Boolean(local));
             // Unknown local targets cannot be loaded as routes in this application.
             if (!href || local) return <span>{label}</span>;
             return (
@@ -642,6 +653,20 @@ export const Markdown = memo(function Markdown({
                 {label}
               </a>
             );
+          },
+          // A model names the image it attached by the path it wrote, which is on the
+          // gateway host. Only a web image loads here; a session artifact opens in the reader.
+          img: ({ src, alt, title }) => {
+            const source = typeof src === 'string' ? src : '';
+            if (/^https?:/i.test(source)) return <img src={source} alt={alt ?? ''} title={title} />;
+            const name = localFilename(source);
+            const attachmentId =
+              attachmentIdFromHref(source) ||
+              artifactLinks?.byName.get(source) ||
+              (name ? artifactLinks?.byName.get(name) : undefined);
+            const label = alt || name || 'image';
+            if (attachmentId) return artifactButton(attachmentId, label, title, true);
+            return <span className="text-dialog-hint">{label}</span>;
           },
           blockquote: ({ children: quote }) => (
             <blockquote
