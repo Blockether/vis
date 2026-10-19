@@ -90,6 +90,13 @@ credential, which overrides the preset. A credential can therefore supply an
 endpoint discovered during authentication while still allowing a user override.
 Header maps replace the entire field at each level.
 
+A model can use another wire format than its provider. For example, a gateway can
+serve Claude models on `/messages` and other models on the Responses API. Put
+`api_style` in the `extra` of that `ProviderModel`, as in
+`extra={"api_style": "anthropic"}`. It accepts the same values as the preset. If
+a value names no wire format, Vis ignores the whole model list from
+`enrich_models_fn`, logs a warning and keeps the configured models.
+
 `ProviderModel.is_vision_supported` tells Vis if a model reads images. With
 `True`, Vis sends attached pictures to the model. With `False`, Vis sends a text
 description of each picture. With `None`, the model catalog decides. This field

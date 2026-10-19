@@ -3867,6 +3867,87 @@ vis.register_extension(vis.Extension(
             (expect (false? (get body "store")))
             (expect (= 128 (get body "max_output_tokens")))))))))
 
+(defdescribe
+  provider-model-api-style-test
+  ;; #404: a Python model's `api_style` stayed a string. svar `case`s on a
+  ;; keyword, so Claude on a Responses preset fell through to /chat/completions.
+  (it
+    "sends a model with api_style anthropic to /messages"
+    (with-loaded
+      {"mixedwire.py"
+       (str "import blockether.vis.extension as vis\n"
+            "def credential():\n" "    return vis.ProviderCredential('fixture')\n"
+            "def enrich(provider, router_opts):\n"
+            "    return [vis.ProviderModel('claude-opus-5-5', context=200000,\n"
+            "        extra={'output_limit': 128, 'api_style': 'anthropic'})]\n"
+            "vis.register_extension(vis.Extension(name='mixedwire', description='d',\n"
+            "    providers=[vis.Provider(id='mixedwire', label='Mixed wire',\n"
+            "        preset=vis.ProviderPreset(base_url='https://gateway.example.com/v1',\n"
+            "            api_style='openai-responses'),\n"
+            "        get_token_fn=credential, enrich_models_fn=enrich)]))\n")}
+      (fn [loaded _]
+        (expect (= 1 (:loaded loaded)))
+        (let [provider
+              (#'loop-router/enrich-provider-models
+               (config/->svar-provider
+                 (with-redefs [config/load-config-raw
+                               (constantly {"providers" [{"id" "mixedwire"
+                                                          "models" [{"name" "claude-opus-5-5"}]}]})]
+                   (first (:providers (config/load-config)))))
+               {})
+
+              router
+              (svar/make-router [provider])
+
+              urls
+              (atom [])
+
+              reply
+              {:id "msg-fixture"
+               :type "message"
+               :role "assistant"
+               :content [{:type "text" :text "ok"}]
+               :stop_reason "end_turn"
+               :usage {:input_tokens 1 :output_tokens 1}}]
+
+          (expect (= :anthropic
+                     (:api-style (first (filter #(= "claude-opus-5-5" (:name %))
+                                                (:models provider))))))
+          (with-redefs [http/post (fn [url _opts]
+                                    (swap! urls conj url)
+                                    {:status 200 :headers {} :body (json-text reply)})]
+            (expect (= "ok"
+                       (:content (svar/ask-code! router
+                                                 {:routing {:provider :mixedwire
+                                                            :model "claude-opus-5-5"}
+                                                  :messages [{:role "user" :content "hello"}]
+                                                  :tools []})))))
+          (expect (= ["https://gateway.example.com/v1/messages"] @urls))))))
+  (it "refuses a model api_style that names no wire dialect"
+      (with-loaded
+        {"badwire.py"
+         (str "import blockether.vis.extension as vis\n" "def credential():\n"
+              "    return vis.ProviderCredential('fixture')\n"
+              "def enrich(provider, router_opts):\n"
+              "    return [vis.ProviderModel('m', context=1000,\n"
+              "        extra={'api_style': 'carrier-pigeon'})]\n"
+              "vis.register_extension(vis.Extension(name='badwire', description='d',\n"
+              "    providers=[vis.Provider(id='badwire', label='Bad wire',\n"
+              "        preset=vis.ProviderPreset(base_url='https://gateway.example.com/v1'),\n"
+              "        get_token_fn=credential, enrich_models_fn=enrich)]))\n")}
+        (fn [loaded _]
+          (expect (= 1 (:loaded loaded)))
+          (let [provider (#'loop-router/enrich-provider-models
+                          (config/->svar-provider
+                            (with-redefs [config/load-config-raw
+                                          (constantly {"providers" [{"id" "badwire"
+                                                                     "models" [{"name" "m"}]}]})]
+                              (first (:providers (config/load-config)))))
+                          {})]
+            ;; The failure-safe hook keeps the configured rows; no string reaches svar.
+            (expect (not-any? (comp string? :api-style) (:models provider)))
+            (expect (= ["m"] (mapv :name (:models provider)))))))))
+
 (defn- usd-close?
   "Equal within float rounding."
   [a b]

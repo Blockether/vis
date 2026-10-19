@@ -1829,7 +1829,9 @@
                          (if (contains? m mechanical)
                            (assoc (dissoc m mechanical) runtime-k (get m mechanical))
                            m)))
-                     (config/canonical-wire-keys (decode {:pricing as-pricing} row) wire/engine-key)
+                     (config/canonical-wire-keys
+                       (decode {:pricing as-pricing :api-style as-api-style} row)
+                       wire/engine-key)
                      config/svar-wire->runtime)]
     (cond-> m
       ;; svar reads image input on a model as `:vision?`.
