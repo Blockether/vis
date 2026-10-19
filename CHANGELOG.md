@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.53] - 2026-10-19
+
+### Added
+- Extensions can declare toolchain grants with `vis.Grant`. Vis checks each grant and gives it only to the processes of that extension, not to the agent (#394).
+- The Companion project folder sheet has one location field for a path or a filter. A name that no folder has creates a new project folder.
+
+### Changed
+- A provider status check no longer loads every Python extension first (#395).
+- The gateway prepares the extension catalogs of known projects at startup, so the first session in a project starts sooner (#396).
+
+### Fixed
+- The jail follows a link to a granted path, such as the SDKMAN `current` link of a JDK (#394).
+
 ## [v0.2.52] - 2026-10-18
 
 ### Added
