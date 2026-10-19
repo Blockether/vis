@@ -2439,11 +2439,17 @@
   "A digest of one package directory: its `dist-info` names and the `.py` sources of its
    editable roots. `package_paths` takes these roots from `.pth` path lines and from an
    editable `direct_url.json`. A sync or an editable edit changes them, not the extension
-   file (#196, #393)."
+   file (#196, #393).
+
+   The digest reads only the import sources of an editable install. `.pth` path lines and the
+   `MAPPING` of a setuptools import-hook finder name them. A `direct_url.json` project counts
+   only when no source of its distribution is inside it. `RECORD` names those sources. The
+   walk skips virtual environments (#398)."
   [packages]
   (let [skip?
         #(let [n (.getName ^File %)] (or (str/starts-with? n ".")
-                                         (#{"__pycache__" "node_modules"} n)))
+                                         (#{"__pycache__" "node_modules"} n)
+                                         (.isFile (io/file ^File % "pyvenv.cfg"))))
 
         walk
         (fn walk [^File dir]
@@ -2455,23 +2461,46 @@
         entries
         (sort (.listFiles (io/file packages)))
 
-        path-lines
-        (for [^File pth
-              entries
+        finder?
+        #(let [n (.getName ^File %)] (and (str/starts-with? n "__editable__")
+                                          (str/ends-with? n "_finder.py")))
 
-              :when (str/ends-with? (.getName pth) ".pth")
-              line
-              (str/split-lines (try (slurp pth) (catch Throwable _ "")))
+        file-sources
+        (fn [^File file]
+          (let [text (delay (if (.isFile file) (try (slurp file) (catch Throwable _ "")) ""))]
+            (cond (str/ends-with? (.getName file) ".pth")
+                  (for [line (str/split-lines @text)
+                        :let [line (str/trim line)]
+                        :when (not (or (str/blank? line)
+                                       (str/starts-with? line "#")
+                                       (str/starts-with? line "import")))
+                        :let [raw (io/file line)]]
 
-              :let [line
-                    (str/trim line)]
-              :when (not (or (str/blank? line)
-                             (str/starts-with? line "#")
-                             (str/starts-with? line "import")))
-              :let [raw
-                    (io/file line)]]
+                    (if (.isAbsolute raw) raw (io/file packages line)))
+                  (finder? file)
+                  (when-let [[_ mapping] (re-find #"(?m)^MAPPING\b[^=\n]*=\s*(\{[^\n]*\})" @text)]
+                    (for [[_ single double]
+                          (re-seq #"(?:'[^'\\]*'|\"[^\"\\]*\")\s*:\s*(?:'([^'\\]*)'|\"([^\"\\]*)\")"
+                                  mapping)
+                          :let [path (or single double)]
+                          :when (and path (.isAbsolute (io/file path)))]
 
-          (if (.isAbsolute raw) raw (io/file packages line)))
+                      (io/file path))))))
+
+        sources
+        (mapcat file-sources entries)
+
+        canonical-sources
+        (fn [files]
+          (for [^File source
+                files
+
+                :when (.exists source)]
+
+            (.toPath (.getCanonicalFile source))))
+
+        all-sources
+        (canonical-sources sources)
 
         editable-urls
         (for [^File info
@@ -2491,19 +2520,46 @@
                          (get-in data ["dir_info" "editable"])
                          (string? url)
                          (str/starts-with? url "file:"))
-              :let [dir
-                    (try (io/file (java.net.URI. url)) (catch Throwable _ nil))]
-              :when dir]
+              :let [^File dir
+                    (try (io/file (java.net.URI. url)) (catch Throwable _ nil))
+
+                    record
+                    (io/file info "RECORD")
+
+                    owned
+                    (when (.isFile record)
+                      (canonical-sources
+                        (for [line
+                              (str/split-lines (try (slurp record) (catch Throwable _ "")))
+
+                              :let [path
+                                    (first (str/split line #","))
+
+                                    file
+                                    (io/file packages (str path))]
+                              :when (and (not (str/includes? (str path) "/"))
+                                         (or (str/ends-with? (str path) ".pth") (finder? file)))
+                              source
+                              (file-sources file)]
+
+                          source)))]
+              :when (and dir
+                         (.isDirectory dir)
+                         ;; An install origin is not its import scope when a source lies inside it.
+                         (let [^java.nio.file.Path root (.toPath (.getCanonicalFile dir))]
+                           (not-any? #(.startsWith ^java.nio.file.Path % root)
+                                     (if (.isFile record) owned all-sources))))]
 
           dir)
 
-        dirs
-        (distinct (for [^File dir
-                        (concat path-lines editable-urls)
+        roots
+        (distinct (for [^File root
+                        (concat sources editable-urls)
 
-                        :when (.isDirectory dir)]
+                        :when (or (.isDirectory root)
+                                  (and (.isFile root) (str/ends-with? (.getName root) ".py")))]
 
-                    (.getCanonicalFile dir)))]
+                    (.getCanonicalFile root)))]
 
     (util/sha256-hex (pr-str [(vec (for [^File f
                                          entries
@@ -2511,11 +2567,11 @@
                                          :when (str/ends-with? (.getName f) ".dist-info")]
 
                                      (.getName f)))
-                              (vec (for [^File dir
-                                         dirs
+                              (vec (for [^File root
+                                         roots
 
                                          ^File f
-                                         (walk dir)]
+                                         (if (.isDirectory root) (walk root) [root])]
 
                                      [(.getPath f)
                                       (try (util/sha256-hex (slurp f))

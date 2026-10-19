@@ -5474,7 +5474,125 @@ vis.register_extension(vis.Extension(
                  (expect (= listed-edit (digest)))
                  (.mkdirs (io/file packages "other-2.0.dist-info"))
                  (expect (not= listed-edit (digest))))))
-           (finally (#'pyx/delete-tree! dir))))))
+           (finally (#'pyx/delete-tree! dir)))))
+  (it "skips an editable project root when its path line names a source inside it — #398"
+      ;; #398: a src-layout editable install read every scratch tree and venv of its project.
+      (let [dir
+            (temp-dir)
+
+            packages
+            (doto (io/file dir "packages") .mkdirs)
+
+            project
+            (io/file dir "project")
+
+            sources
+            (io/file project "src")
+
+            digest
+            #(#'pyx/package-sources packages)]
+
+        (try (write-ext! sources "listed_pkg/__init__.py" "VALUE = 1\n")
+             (write-ext! packages "listed.pth" (str (.getCanonicalPath sources) "\n"))
+             (write-ext! packages
+                         "listed-1.0.dist-info/direct_url.json"
+                         (str "{\"dir_info\":{\"editable\":true},\"url\":"
+                              (pr-str (str (.toURI (.getCanonicalFile project))))
+                              "}"))
+             (let [initial (digest)]
+               (write-ext! project "sandbox/environment/unused.py" "VALUE = 1\n")
+               (expect (= initial (digest)))
+               (write-ext! sources "listed_pkg/__init__.py" "VALUE = 2\n")
+               (expect (not= initial (digest))))
+             (finally (#'pyx/delete-tree! dir)))))
+  (it
+    "reads the finder MAPPING of an import-hook install and skips virtual environments — #398"
+    (let [dir
+          (temp-dir)
+
+          packages
+          (doto (io/file dir "packages") .mkdirs)
+
+          mapped
+          (io/file dir "mapped")
+
+          hooked
+          (io/file dir "hooked")
+
+          digest
+          #(#'pyx/package-sources packages)]
+
+      (try (write-ext! mapped "mapped_pkg/__init__.py" "VALUE = 1\n")
+           (write-ext! mapped "single.py" "VALUE = 1\n")
+           (write-ext! packages
+                       "__editable__.mapped-1.0.pth"
+                       "import __editable___mapped_1_0_finder\n")
+           (write-ext! packages
+                       "__editable___mapped_1_0_finder.py"
+                       (str "import sys\n"
+                            "MAPPING: dict[str, str] = {'mapped_pkg': "
+                            (pr-str (.getCanonicalPath (io/file mapped "mapped_pkg")))
+                            ", 'single': '"
+                            (.getCanonicalPath (io/file mapped "single.py"))
+                            "'}\nNAMESPACES: dict[str, list[str]] = {}\n"))
+           (write-ext! packages
+                       "mapped-1.0.dist-info/direct_url.json"
+                       (str "{\"dir_info\":{\"editable\":true},\"url\":"
+                            (pr-str (str (.toURI (.getCanonicalFile mapped))))
+                            "}"))
+           (write-ext! hooked "hooked_pkg/__init__.py" "VALUE = 1\n")
+           (write-ext! hooked "venv/pyvenv.cfg" "home = /usr/bin\n")
+           (write-ext! packages "hooked.pth" "import _hooked\n")
+           (write-ext! packages
+                       "hooked-1.0.dist-info/direct_url.json"
+                       (str "{\"dir_info\":{\"editable\":true},\"url\":"
+                            (pr-str (str (.toURI (.getCanonicalFile hooked))))
+                            "}"))
+           (let [initial (digest)]
+             (write-ext! mapped "scratch/unused.py" "VALUE = 1\n")
+             (write-ext! hooked "venv/lib/site-packages/unused.py" "VALUE = 1\n")
+             (expect (= initial (digest)))
+             (write-ext! mapped "single.py" "VALUE = 2\n")
+             (let [single-edit (digest)]
+               (expect (not= initial single-edit))
+               (write-ext! mapped "mapped_pkg/__init__.py" "VALUE = 2\n")
+               (let [package-edit (digest)]
+                 (expect (not= single-edit package-edit))
+                 ;; Without a finder MAPPING, the project root stays the fallback scope.
+                 (write-ext! hooked "hooked_pkg/__init__.py" "VALUE = 2\n")
+                 (expect (not= package-edit (digest))))))
+           (finally (#'pyx/delete-tree! dir)))))
+  (it "keeps a project root when only another distribution's source is inside it — #398"
+      (let [dir
+            (temp-dir)
+
+            packages
+            (doto (io/file dir "packages") .mkdirs)
+
+            hooked
+            (io/file dir "hooked")
+
+            nested
+            (io/file hooked "vendor/nested")
+
+            digest
+            #(#'pyx/package-sources packages)]
+
+        (try (write-ext! hooked "hooked_pkg/__init__.py" "VALUE = 1\n")
+             (write-ext! nested "nested_pkg/__init__.py" "VALUE = 1\n")
+             (write-ext! packages "hooked.pth" "import _hooked\n")
+             (write-ext! packages "hooked-1.0.dist-info/RECORD" "hooked.pth,,\n_hooked.py,,\n")
+             (write-ext! packages
+                         "hooked-1.0.dist-info/direct_url.json"
+                         (str "{\"dir_info\":{\"editable\":true},\"url\":"
+                              (pr-str (str (.toURI (.getCanonicalFile hooked))))
+                              "}"))
+             (write-ext! packages "nested.pth" (str (.getCanonicalPath nested) "\n"))
+             (write-ext! packages "nested-1.0.dist-info/RECORD" "nested.pth,,\n")
+             (let [initial (digest)]
+               (write-ext! hooked "hooked_pkg/__init__.py" "VALUE = 2\n")
+               (expect (not= initial (digest))))
+             (finally (#'pyx/delete-tree! dir))))))
 
 (defdescribe reload-slash-announce-test
              (it
