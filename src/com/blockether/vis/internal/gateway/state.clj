@@ -1355,10 +1355,10 @@
   (persistance/db-latest-session-state-id db (str sid)))
 
 (defn- live-env
-  "The session's LIVE env, or nil. Guarded by `lp/by-id` so a bogus sid never
-   spawns a session (this is consulted from hot render paths)."
+  "The session's LIVE env, or nil. A cache lookup only: hot render paths must not
+   build or resume an environment for an idle session."
   [sid]
-  (try (when (lp/by-id sid) (lp/env-for sid)) (catch Throwable _ nil)))
+  (try (lp/live-env-for sid) (catch Throwable _ nil)))
 
 (defn- resolve-state-id
   "Latest session_state id for soul `sid`, falling back to the id stamped on the

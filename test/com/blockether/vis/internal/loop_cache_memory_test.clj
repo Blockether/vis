@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop-cache-memory-test
-  (:require [com.blockether.vis.internal.loop.environment :as loop-env]
+  (:require [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.util :as util]
@@ -222,3 +223,26 @@
                (finally (loop-env/dispose-environment! environment))))
         (finally (doseq [file (reverse (file-seq dir))]
                    (.delete ^java.io.File file)))))))
+
+(defdescribe live-env-lookup-never-builds-an-environment-test
+             (it "answers only a cached environment"
+                 (let [id
+                       (java.util.UUID/randomUUID)
+
+                       built
+                       (atom 0)]
+
+                   (with-redefs [loop-env/cache
+                                 (atom {})
+
+                                 loop-env/open-env!
+                                 (fn [& _]
+                                   (swap! built inc)
+                                   {:session-id id})]
+
+                     (expect (nil? (lp/live-env-for id)))
+                     (expect (nil? (lp/live-env-for (str id))))
+                     (expect (zero? @built))
+                     (expect (empty? @loop-env/cache))
+                     (swap! loop-env/cache assoc id {:environment {:marker :live}})
+                     (expect (= {:marker :live} (lp/live-env-for (str id))))))))

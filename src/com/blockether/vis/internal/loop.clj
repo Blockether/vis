@@ -293,6 +293,12 @@
 
 (defn env-for [id] (:environment (loop-env/ensure-env! id)))
 
+(defn live-env-for
+  "The session's cached environment, or nil. Never builds or resumes one, so a
+   read path does not start a sandbox for an idle session."
+  [id]
+  (:environment (get @loop-env/cache (loop-env/cache-key id))))
+
 (defn register-client-extensions!
   "Install application-owned declarations under the session's one-turn lock."
   [id owner payload live?]
