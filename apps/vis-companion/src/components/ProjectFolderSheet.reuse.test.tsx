@@ -4,8 +4,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AnchoredPanel, MenuItem } from './Menu';
-import { BandButton, Button, Chip } from './ui';
-import { ProjectFolderSheet, isPathQuery, projectPlaces, startingDir } from './ProjectFolderSheet';
+import { Button, Chip } from './ui';
+import {
+  ProjectFolderSheet,
+  isFolderName,
+  isPathQuery,
+  projectPlaces,
+  startingDir,
+} from './ProjectFolderSheet';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry, BrowseListing } from '../lib/types';
 
@@ -170,25 +176,16 @@ describe('ProjectFolderSheet paints no box of its own', () => {
     expect(row.lastElementChild).toBe(marks[1]);
   });
 
-  it('keeps one band cell before the way out: the new folder', async () => {
+  it('keeps only its title and the way out in the band', async () => {
     sheet();
     await screen.findByRole('button', { name: /^vis/ });
-    const make = screen.getByRole('button', { name: 'New folder' });
+    const close = screen.getByRole('button', { name: /^Close new project/ });
 
-    expect(paint(make)).toEqual(
-      skinOf(
-        <BandButton label="reference" onClick={() => {}}>
-          <span aria-hidden="true" />
-        </BandButton>,
-        'button',
-      ),
-    );
-    expect(make.textContent).toBe('');
-    const band = make.closest('header')!;
+    // The new folder is the field's own text, so the band holds no cell for it.
+    const band = close.closest('header')!;
     expect(band.textContent).toBe('New project');
-    expect([...band.children].at(-1)).toBe(
-      screen.getByRole('button', { name: /^Close new project/ }),
-    );
+    expect(band.querySelectorAll('button')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'New folder' })).toBeNull();
   });
 
   it('keeps a crumb a real target rather than 14px of bare text', async () => {
@@ -208,17 +205,6 @@ describe('ProjectFolderSheet paints no box of its own', () => {
     expect(await screen.findByRole('button', { name: /^code\// })).toBeInTheDocument();
   });
 
-  it('takes the rows out of play with inert, never with aria-hidden alone', async () => {
-    sheet();
-    const rows = (await screen.findByRole('button', { name: /tools/ })).parentElement;
-
-    expect(rows).not.toHaveAttribute('inert');
-    await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
-
-    // A container merely hidden from the a11y tree still hands its buttons to Tab.
-    expect(rows).toHaveAttribute('inert');
-    expect(rows).not.toHaveAttribute('aria-hidden');
-  });
 });
 
 // Regression, user report ("let it start ../ from the current project"). Browsing
@@ -264,7 +250,9 @@ describe('a folder that is already a project offers no verb', () => {
 
     expect(screen.getByRole('button', { name: 'It’s already a project' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /^Use project/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'New folder' })).toBeDisabled();
+    // A folder inside a project is not a new project either.
+    await userEvent.type(screen.getByLabelText('Filter folders or type a path'), 'fresh');
+    expect(screen.queryByRole('button', { name: /^Create project/ })).toBeNull();
   });
 
   it('leaves the verbs live for a folder the machine does not run yet', async () => {
@@ -443,55 +431,93 @@ describe('the commit', () => {
     expect(panel().lastElementChild).toBe(footer);
   });
 
-  it('names the new folder while it is being named', async () => {
+});
+
+// User report (paraphrased: the folder creation still annoys). A band cell opened a
+// second field, faded the rows, turned into an undo and changed the commit. The name
+// is now the field's own text, and one row creates it.
+describe('creating a folder', () => {
+  const field = () => screen.getByLabelText('Filter folders or type a path');
+
+  it('accepts one plain folder name only', () => {
+    expect(isFolderName('fresh')).toBe(true);
+    expect(isFolderName('')).toBe(false);
+    expect(isFolderName('a/b')).toBe(false);
+    expect(isFolderName('.')).toBe(false);
+    expect(isFolderName('..')).toBe(false);
+    expect(isFolderName('x'.repeat(65))).toBe(false);
+  });
+
+  it('offers a quiet row that puts the cursor in the field', async () => {
+    sheet();
+    const hint = await screen.findByRole('button', { name: /^New folder…/ });
+
+    expect(hint.textContent).toContain('type its name above');
+    await userEvent.click(hint);
+    expect(field()).toHaveFocus();
+  });
+
+  it('creates the typed name and adds it as the project in one tap', async () => {
     const { client, onChoose } = sheet();
     await screen.findByRole('button', { name: /tools/ });
-    await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
 
-    expect(screen.getByRole('button', { name: /^Create project/ })).toBeDisabled();
-    await userEvent.type(screen.getByLabelText('New folder name'), 'fresh');
-    const create = screen.getByRole('button', { name: /^Create project/ });
-    expect(create.textContent).toBe('Create project ~/code/fresh');
+    await userEvent.type(field(), 'fresh');
+    const create = screen.getByRole('button', { name: 'Create project ~/code/fresh' });
+    // The commit in the footer does not change while a name is typed.
+    expect(screen.getByRole('button', { name: /^Use project/ }).textContent).toBe('Use project ~/code');
 
     await userEvent.click(create);
     expect(client.createDirectory).toHaveBeenCalledWith(CODE, 'fresh');
     expect(onChoose).toHaveBeenCalledWith(`${CODE}/fresh`);
   });
-});
 
-describe('the new-folder line', () => {
-  const heights = (band: Element) =>
-    [...band.classList].filter((token) => /h-\d|min-h/.test(token)).sort();
-
-  it('is one fixed-height band with one drawn mark', async () => {
+  it('lists the folders that match before the row that creates', async () => {
     sheet();
     await screen.findByRole('button', { name: /tools/ });
-    await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
-    const naming = screen.getByLabelText('New folder name').closest('div.h-11');
 
-    expect(naming).toBeVisible();
-    expect(heights(naming!)).toEqual(['h-11', 'mouse:h-9']);
-
-    // Regression, user report ("we have an icon library, use it"): the line led with a
-    // `+` typed into the band. It leads with the MARK of the cell that opened it.
-    expect(naming!.querySelectorAll('svg')).toHaveLength(1);
-    expect(naming!.textContent).toBe('');
+    await userEvent.type(field(), 'to');
+    const tools = screen.getByRole('button', { name: /^tools/ });
+    const create = screen.getByRole('button', { name: 'Create project ~/code/to' });
+    expect(tools.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
-  // Regression, user report: the cell that leaves the LINE wore this app's close
-  // stroke, one cell away from the band's ✕ that leaves the PANEL. Taking the line back
-  // is an UNDO.
-  it('cancels the new-folder line with its own mark, never a second close', async () => {
+  it('never offers a name that a folder here already has, hidden ones included', async () => {
     sheet();
     await screen.findByRole('button', { name: /tools/ });
-    await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
 
-    const cancel = screen.getByRole('button', { name: 'Cancel' });
-    const close = screen.getByRole('button', { name: /^Close new project/ });
+    await userEvent.type(field(), 'Tools');
+    expect(screen.queryByRole('button', { name: /^Create project/ })).toBeNull();
+    // `scratch` is empty, so the default chip hides it, and it still exists.
+    await userEvent.clear(field());
+    await userEvent.type(field(), 'scratch');
+    expect(screen.queryByRole('button', { name: /^Create project/ })).toBeNull();
+  });
 
-    expect(cancel.textContent).toBe('');
-    expect(cancel.querySelectorAll('svg')).toHaveLength(1);
-    expect(cancel.querySelector('svg')!.innerHTML).not.toBe(close.querySelector('svg')!.innerHTML);
-    expect(cancel.querySelector('svg')!.getAttribute('class')).not.toContain('rotate-45');
+  it('creates on Enter when no folder matches', async () => {
+    const { client } = sheet();
+    await screen.findByRole('button', { name: /tools/ });
+
+    await userEvent.type(field(), 'fresh{Enter}');
+    expect(client.createDirectory).toHaveBeenCalledWith(CODE, 'fresh');
+  });
+
+  it('creates the leaf of a typed path in the folder that path lists', async () => {
+    const { client } = sheet();
+    await screen.findByRole('button', { name: /tools/ });
+
+    await userEvent.type(field(), '~/code/fresh');
+    const create = await screen.findByRole('button', { name: 'Create project ~/code/fresh' });
+    await userEvent.click(create);
+    expect(client.createDirectory).toHaveBeenCalledWith(CODE, 'fresh');
+  });
+
+  it('uses its own words when it moves a project', async () => {
+    sheet({ mode: 'move', knownRoots: new Set([DEMO]) });
+    await screen.findByRole('button', { name: /tools/ });
+
+    await userEvent.type(field(), 'fresh');
+    expect(screen.getByRole('button', { name: 'Create and move ~/code/fresh' })).toBeInTheDocument();
   });
 });

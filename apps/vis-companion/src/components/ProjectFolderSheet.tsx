@@ -15,15 +15,18 @@
  * replaced a crumb bar over a separate search box, where the reader could not tell
  * which folder the search looked in.
  *
+ * A new folder is the same text: a name that no folder here has offers one
+ * `Create project` row. There is no separate mode, second field or undo for it.
+ *
  * NOTHING in here paints its own box. It is `AnchoredPanel` + `MenuHeading` +
  * `MenuItem`, so it stays the app's anchored dialog on every width, never a sheet
  * that slides up from the bottom.
  */
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { BandButton, Button, Chip, Input, Spinner } from './ui';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Button, Chip, Spinner } from './ui';
 import { AnchoredPanel, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
-import { FolderPlusIcon, ProjectsIcon, SearchIcon, UndoIcon } from './icons';
+import { FolderPlusIcon, ProjectsIcon, SearchIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
 
@@ -39,9 +42,6 @@ const PLACES_LIMIT = 4;
  */
 const SHEET_EDGE = 'px-3';
 
-/** The new-folder line: one fixed height, so opening it never moves the rows by 1px. */
-const PATH_BAND = 'flex h-11 shrink-0 items-center border-b border-dialog-edge mouse:h-9';
-
 /**
  * The location field wears `Input`'s own frame and focus, because it IS the sheet's
  * input. The crumbs inside it cannot live in `Input`, so the frame moves to the row.
@@ -56,6 +56,20 @@ const CRUMB =
 /** Text that starts like a path is a path; anything else filters the folder on screen. */
 export function isPathQuery(query: string): boolean {
   return query.startsWith('~') || query.startsWith('/');
+}
+
+/** The longest folder name the sheet offers to create. */
+const FOLDER_NAME_MAX = 64;
+
+/** A name the sheet can create as ONE folder: no separator, no `.` or `..`, not too long. */
+export function isFolderName(name: string): boolean {
+  return (
+    name.length > 0 &&
+    name.length <= FOLDER_NAME_MAX &&
+    !name.includes('/') &&
+    name !== '.' &&
+    name !== '..'
+  );
 }
 
 interface Crumb {
@@ -177,8 +191,6 @@ export function ProjectFolderSheet({
   const [query, setQuery] = useState('');
   const [isGitOnly, setGitOnly] = useState(false);
   const [isEmptyHidden, setEmptyHidden] = useState(true);
-  // `null` is not creating; a string is the folder that does not exist yet.
-  const [folder, setFolder] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const typedSplit = isPathQuery(query) ? splitTyped(query) : null;
@@ -246,31 +258,45 @@ export function ProjectFolderSheet({
     : null;
   const target = exact?.path ?? here;
 
-  // Naming a new folder always aims somewhere that does not exist yet, so the check is
-  // only about the folder currently AIMED at while browsing.
-  const alreadyProject = folder === null && !!target && knownRoots.has(target);
+  const alreadyProject = !!target && knownRoots.has(target);
 
-  const commit = useCallback(async () => {
-    if (!target || alreadyProject) return;
-    const name = folder?.trim() ?? '';
-    if (folder !== null && (!name || !here)) return;
-    setSaving(true);
-    try {
-      if (folder === null) {
-        await onChoose(target);
-        return;
+  // A name that no folder here has can become one. The check reads every folder in the
+  // listing, not only the rows the chips leave, so a hidden empty folder is never offered
+  // again. A folder inside a known project is not offered, like the commit.
+  const createName = typedSplit ? typedSplit.leaf : query.trim();
+  const isCreatable =
+    settled &&
+    !!here &&
+    !knownRoots.has(here) &&
+    isFolderName(createName) &&
+    !(listing?.entries ?? []).some((entry) => entry.name.toLowerCase() === createName.toLowerCase());
+  const createdPath = `${homeify(here, home).replace(/\/$/, '')}/${createName}`;
+
+  const choose = useCallback(
+    async (pick: () => Promise<string>) => {
+      setSaving(true);
+      try {
+        await onChoose(await pick());
+      } catch (cause) {
+        setError((cause as Error).message);
+        setSaving(false);
       }
-      const made = await client.createDirectory(here, name);
-      await onChoose(made.path);
-    } catch (cause) {
-      setError((cause as Error).message);
-      setSaving(false);
-    }
-  }, [alreadyProject, client, folder, here, onChoose, target]);
+    },
+    [onChoose],
+  );
+
+  const commit = () => {
+    if (!target || alreadyProject || saving) return;
+    void choose(async () => target);
+  };
+
+  const create = () => {
+    if (!isCreatable || saving) return;
+    void choose(async () => (await client.createDirectory(here, createName)).path);
+  };
 
   const enter = useCallback((path: string) => {
     setQuery('');
-    setFolder(null);
     setDir(path);
   }, []);
 
@@ -282,9 +308,11 @@ export function ProjectFolderSheet({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  // The field's keys: Backspace on an empty field goes up one folder, and Enter opens
-  // the first folder that matches. A typed path keeps its own Enter: open the folder it
-  // names, or commit the folder it lists.
+  const fieldRef = useRef<HTMLInputElement>(null);
+
+  // The field's keys: Backspace on an empty field goes up one folder. Enter opens the
+  // folder that the text names or matches first; with no such folder it creates the
+  // name, and a typed path with no name commits the folder it lists.
   const onFieldKey = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Backspace' && query === '' && listing?.parent) {
       event.preventDefault();
@@ -292,35 +320,11 @@ export function ProjectFolderSheet({
       return;
     }
     if (event.key !== 'Enter') return;
-    if (typedSplit) {
-      if (exact) enter(exact.path);
-      else void commit();
-      return;
-    }
-    const first = repos[0] ?? others[0];
-    if (query.trim() && first) enter(first.path);
+    const first = typedSplit ? exact : (repos[0] ?? others[0]);
+    if (first && (typedSplit || query.trim())) enter(first.path);
+    else if (isCreatable) create();
+    else if (typedSplit) commit();
   };
-
-  // The band keeps one cell before the way out: the folder that takes the add stroke.
-  // Naming a folder turns it into an UNDO, never a second close.
-  const projectCells = (
-    <BandButton
-      label={folder === null ? 'New folder' : 'Cancel'}
-      disabled={saving || !here || alreadyProject}
-      onClick={() => setFolder(folder === null ? '' : null)}
-    >
-      {folder === null ? <FolderPlusIcon /> : <UndoIcon />}
-    </BandButton>
-  );
-
-  // The commit names the folder it commits, so the reader never guesses what the
-  // button takes. It is a word, not a tick: a mark alone did not say "this folder".
-  const named = folder?.trim();
-  const aimed =
-    folder === null
-      ? homeify(target, home)
-      : `${homeify(here, home).replace(/\/$/, '')}/${named || '…'}`;
-  const commitVerb = folder === null ? words.use : words.create;
 
   const row = (entry: BrowseEntry) => (
     <MenuItem
@@ -345,7 +349,6 @@ export function ProjectFolderSheet({
       {/* The band does NOT name the machine: the panel opens FROM that machine's rail.
           The name stays in the panel's `aria-label` and the way out. */}
       <MenuHeading
-        cells={projectCells}
         onClose={onCancel}
         closeLabel={`Close ${words.close} on ${label}`}
       >
@@ -390,9 +393,10 @@ export function ProjectFolderSheet({
             </span>
           )}
           <input
+            ref={fieldRef}
             value={query}
             aria-label="Filter folders or type a path"
-            placeholder={typedSplit ? undefined : 'filter or ~/path'}
+            placeholder={typedSplit ? undefined : 'filter, ~/path or new name'}
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
@@ -414,27 +418,7 @@ export function ProjectFolderSheet({
         </div>
       </div>
 
-      {folder !== null && (
-        <div className={`${PATH_BAND} gap-2 bg-panel ${SHEET_EDGE}`}>
-          <FolderPlusIcon className="text-accent-ink" />
-          <Input
-            autoFocus
-            value={folder}
-            maxLength={64}
-            aria-label="New folder name"
-            placeholder="band-repaint"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            onChange={(event) => setFolder(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void commit();
-            }}
-          />
-        </div>
-      )}
-
-      {/* The last folder drops its rule so it cannot double the footer's top edge. */}
+      {/* The last row drops its rule so it cannot double the footer's top edge. */}
       <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
         {error ? (
           <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
@@ -444,10 +428,7 @@ export function ProjectFolderSheet({
             Reading folders...
           </MenuNote>
         ) : (
-          // `inert`, not `aria-hidden`: while a new folder is being named these rows are
-          // out of play, and a container merely hidden from the a11y tree still hands its
-          // buttons to the Tab key.
-          <div className={folder === null ? '' : 'opacity-40'} inert={folder !== null}>
+          <div>
             {isPlacesShown && (
               <>
                 <MenuHeading tone="quiet">Places</MenuHeading>
@@ -484,6 +465,27 @@ export function ProjectFolderSheet({
                     : 'No folders match these filters.'}
               </MenuNote>
             )}
+            {/* The new folder is the field's own text, offered last: the folders that
+                exist come first, and an exact name never offers a copy. */}
+            {isCreatable ? (
+              <MenuItem
+                icon={<FolderPlusIcon className="size-4 text-accent-ink" />}
+                title={`${words.create} ${createdPath}`}
+                disabled={saving}
+                onSelect={create}
+              />
+            ) : (
+              query === '' &&
+              !!listing &&
+              !knownRoots.has(here) && (
+                <MenuItem
+                  icon={<FolderPlusIcon className="size-4" />}
+                  title="New folder…"
+                  meta="type its name above"
+                  onSelect={() => fieldRef.current?.focus()}
+                />
+              )
+            )}
           </div>
         )}
         {listing?.is_truncated && (
@@ -496,17 +498,15 @@ export function ProjectFolderSheet({
       <footer className={`shrink-0 border-t border-dialog-edge bg-panel py-2 ${SHEET_EDGE}`}>
         <Button
           className="flex w-full min-w-0 items-center justify-center gap-1.5"
-          disabled={
-            saving || !target || alreadyProject || (folder !== null && !named)
-          }
-          onClick={() => void commit()}
+          disabled={saving || !target || alreadyProject}
+          onClick={commit}
         >
           {alreadyProject ? (
             'It’s already a project'
           ) : (
             <>
-              <span className="shrink-0">{commitVerb}</span>{' '}
-              <span className="min-w-0 truncate font-normal">{aimed}</span>
+              <span className="shrink-0">{words.use}</span>{' '}
+              <span className="min-w-0 truncate font-normal">{homeify(target, home)}</span>
             </>
           )}
         </Button>
