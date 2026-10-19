@@ -660,24 +660,64 @@
                 (throw (ex-info (toggle-contract/contribution-message "Invalid setting" value)
                                 {:type :settings/invalid-declaration})))
               spec)))
-    (put! g
-          "__vis_host_setting__"
-          (fn [id default]
-            ;; #326: a project extension's setting is known only where its project runs.
-            (let [root
-                  (if workspace/*workspace-root* (workspace/cwd-root) home-root)
+    (put!
+      g
+      "__vis_host_setting__"
+      (fn [id default]
+        ;; #326: a project extension's setting is known only where its project runs.
+        (let [root
+              (if workspace/*workspace-root* (workspace/cwd-root) home-root)
 
-                  spec
-                  (toggles/target-toggle-spec root id)]
+              spec
+              (toggles/target-toggle-spec root id)
 
-              (cond (nil? spec) default
-                    ;; #380: without a session snapshot, a project extension's setting
-                    ;; resolves at project scope, as Settings shows it there, vis.yml included.
-                    (and (not (contains? toggles/*overrides* id))
-                         (not (identical? spec (toggles/toggle-spec id))))
-                    (:value (first (filter #(= id (:id %))
-                                           (scoped/settings nil {:scope "project" :root root}))))
-                    :else (toggles/value-of root id)))))
+              ;; #399: a session or group value that the user set for this session.
+              user-choice?
+              (fn []
+                (let [env
+                      extension/*current-environment*
+
+                      db
+                      (or (:db-info env) (:db-info bound-session))
+
+                      session-id
+                      (or (:session-id env) (:session-id bound-session))
+
+                      target
+                      (when (and db session-id)
+                        (try (scoped/target db "session" (str session-id))
+                             (catch clojure.lang.ExceptionInfo _ nil)))]
+
+                  (when target
+                    (some #(and (= id (:id %)) (contains? #{"group" "session"} (:source %)))
+                          (scoped/settings db target)))))
+
+              ;; #399: an extension of a nested project reads that project's own
+              ;; configuration, as a session at that project does. An invocation
+              ;; override or a value that the user set for the session still wins.
+              nested
+              (when (and spec
+                         (not (str/blank? project-path))
+                         (not (contains? toggles/*invocation-overrides* id))
+                         (not (user-choice?)))
+                (let [raw
+                      (binding [workspace/*workspace-root* (project-root-in root project-path)]
+                        (config/load-project-tiers-raw))
+
+                      values
+                      (get raw "toggles")]
+
+                  (when (contains? values id) (toggles/wire-value root id (get values id)))))]
+
+          (cond (nil? spec) default
+                nested (:value nested)
+                ;; #380: without a session snapshot, a project extension's setting
+                ;; resolves at project scope, as Settings shows it there, vis.yml included.
+                (and (not (contains? toggles/*overrides* id))
+                     (not (identical? spec (toggles/toggle-spec id))))
+                (:value (first (filter #(= id (:id %))
+                                       (scoped/settings nil {:scope "project" :root root}))))
+                :else (toggles/value-of root id)))))
     (put! g
           "__vis_host_workspace_root__"
           (fn []

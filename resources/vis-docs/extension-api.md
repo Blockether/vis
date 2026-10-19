@@ -1104,6 +1104,11 @@ The project root also changes these values:
 - The env dict of activation, prompt and context callbacks has `workspace_root` and `project_root`.
 - A slash command's `run(ctx)` also receives `workspace_root` and `project_root`.
 
+A setting of a nested extension uses the configuration of its own project, as a session at that
+project does. A `toggles:` value in `repositories/api/vis.yml` wins over the workspace configuration.
+A value that you set for the session or its group wins over the project files. A `vis run --toggles`
+value wins over all of them.
+
 ## Python environment
 
 Call `vis.python_environment()` before your extension starts project Python, such as a test

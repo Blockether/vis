@@ -1081,6 +1081,72 @@
                (expect (= (str draft "/repos/a") (where "glob-a")))))
            (finally (binding [workspace/*workspace-root* root]
                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it
+    "reads a nested project's settings for an extension that a glob loads"
+    ;; #399: a nested extension read its settings only from the workspace configuration,
+    ;; so it behaved differently than in a session at its own project.
+    (let [root
+          (.getCanonicalPath ^java.io.File (temp-dir))
+
+          store
+          (ps/db-create-connection! :memory)
+
+          mode
+          "nested_mode"]
+
+      (spit (io/file root "vis.yml") "toggles:\n  nested_mode: workspace\n")
+      (write-ext! (io/file root) "repos/a/vis.yml" "toggles:\n  nested_mode: nested\n")
+      (write-ext!
+        (io/file root)
+        "repos/a/.vis/extensions/a.py"
+        (str "import blockether.vis.extension as vis\n"
+             "mode = vis.Setting(id='nested_mode', label='Mode', type='enum', "
+             "choices=['default', 'workspace', 'nested', 'session', 'cli'], default='default', "
+             "scopes=['global', 'project', 'group', 'session'])\n"
+             "def read_mode() -> str:\n    \"Read the mode.\"\n    return mode.value()\n"
+             "vis.register_extension(vis.Extension(name='nested-mode', "
+             "description='Nested mode fixture', alias='nested_mode', settings=[mode], "
+             "symbols=[vis.Symbol(read_mode, activity=vis.Activity(label='Read mode', "
+             "show_start=False))]))\n"))
+      (try
+        (binding [workspace/*workspace-root* root]
+          (pyx/reload-python-extensions!
+            {:dirs []
+             :project-root root
+             :entries [{:name "repos" :source (str root "/repos/*/.vis/extensions/*.py")}]})
+          (expect (= [] (filter #(= root (:project-root %)) (pyx/load-failures))))
+          (let [read-mode (symbol-fn (registered "nested-mode") 'read_mode)
+                read-in (fn [env]
+                          (binding [extension/*current-environment* env]
+                            (:result (read-mode))))
+                ws-id (str (random-uuid))
+                _
+                (ps/db-workspace-insert!
+                  store
+                  {:id ws-id :repo-id "test" :repo-root root :root root :state :active :fork-ms 0})
+                sid (db-test/store-session! store
+                                            {:channel :tui :title "Nested" :workspace-id ws-id})
+                in-session (fn [snapshot]
+                             {:session-id sid
+                              :db-info store
+                              :workspace/root root
+                              :workspace-atom (atom {:root root})
+                              :config/toggles (atom snapshot)})]
+
+            (expect (= "nested" (read-in {:workspace/root root})))
+            ;; A session snapshot holds the workspace value; the nested project still decides.
+            (expect (= "nested" (read-in (in-session {mode "workspace"}))))
+            (binding [toggles/*invocation-overrides* {mode "cli"}]
+              (expect (= "cli" (read-in (in-session {mode "cli"})))))
+            ;; A value that the user sets for the session stays visible.
+            (scoped/set-setting! store
+                                 (scoped/target store "session" (str sid))
+                                 mode
+                                 "value"
+                                 "session")
+            (expect (= "session" (read-in (in-session {mode "session"}))))))
+        (finally (binding [workspace/*workspace-root* root]
+                   (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "maps the project root and a relative shell cwd into the session root"
       (let [root
             (.getCanonicalPath ^java.io.File (temp-dir))
