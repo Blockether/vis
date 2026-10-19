@@ -244,7 +244,7 @@
 (defn- bulk-activity-rows
   "`n` calls of one extension tool, as a bulk block records them."
   [n]
-  (mapv (fn [index]
+  (mapv (fn [^long index]
           {:id (str "call-" index)
            :sequence (inc index)
            :operation "gerrit.comments"

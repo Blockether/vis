@@ -697,7 +697,7 @@
 
     {:plain (apply str (repeat SSE_PROXY_PAD_BYTES " "))
      :gzip (apply str
-             (repeatedly (* 2 SSE_PROXY_PAD_BYTES)
+             (repeatedly (* 2 (long SSE_PROXY_PAD_BYTES))
                          #(.charAt alphabet (.nextInt random (count alphabet)))))}))
 
 (defn- sse-proxy-pad!

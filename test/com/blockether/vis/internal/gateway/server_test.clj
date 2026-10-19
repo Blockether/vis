@@ -7388,7 +7388,7 @@
   (let [socket
         (java.io.ByteArrayOutputStream.)
 
-        out
+        ^java.io.OutputStream out
         ((rv 'sse-stream) socket gzip?)]
 
     (into []
