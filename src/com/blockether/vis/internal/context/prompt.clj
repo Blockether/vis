@@ -560,8 +560,9 @@
 (defn- project-instructions-block
   "Inline primary-workspace guidance and a metadata-only index of added-root
    guidance. Added-root file contents enter the conversation only when the model
-   reads the indexed file before working in that root."
-  [environment]
+   reads the indexed file before working in that root. Nested projects that supply
+   active extensions get the same index (issue 399)."
+  [environment active-extensions]
   (try
     (binding [workspace/*workspace-root*
               (or (workspace/workspace-root environment)
@@ -600,9 +601,12 @@
                     files)
 
             added
-            (agents/added-root-guidance-index)]
+            (agents/added-root-guidance-index)
 
-        (when (or (seq files) (seq added))
+            nested
+            (agents/extension-project-guidance-index (keep :ext/project-path active-extensions))]
+
+        (when (or (seq files) (seq added) (seq nested))
           (let
             [header
              (str
@@ -629,11 +633,25 @@
                     "\nBefore any action in an added root, read its exact guidance path in "
                     "`python_execution`. The read activates its rules for that root; obey them. "
                     "Until that read, do not change files, run commands or use browser automation "
-                    "there."))]
+                    "there."))
+
+             nested-body
+             (when (seq nested)
+               (str
+                 "Extension projects (guidance is not loaded yet):\n"
+                 (str/join "\n"
+                           (map (fn [{:keys [root path]}]
+                                  (str "- " (paths/abbreviate-home root)
+                                       " — guidance: " (paths/abbreviate-home path)))
+                                nested))
+                 "\nThese projects supply extensions of this session. Before you use their tools "
+                 "or act in one of these projects, read its exact guidance path in "
+                 "`python_execution`. The read activates its rules for that project; obey them."))]
 
             {:content (prompt-block "project-instructions"
                                     (str/join "\n\n"
-                                              (keep identity [header primary-body added-body])))
+                                              (keep identity
+                                                    [header primary-body added-body nested-body])))
              :parts (cond-> (mapv (fn [f]
                                     {:label
                                      (str (if (= :project (:scope f)) "Main " "Workspace ")
@@ -642,7 +660,10 @@
                                      :content (:content f)})
                                   files)
                       (util/non-blank-string? added-body)
-                      (conj {:label "Linked filesystem guidance index" :content added-body}))}))))
+                      (conj {:label "Linked filesystem guidance index" :content added-body})
+
+                      (util/non-blank-string? nested-body)
+                      (conj {:label "Extension project guidance index" :content nested-body}))}))))
     (catch Throwable t
       (tel/log! {:level :warn :id ::project-instructions-error :data {:error (ex-message t)}}
                 "project-instructions-block read failed")
@@ -972,7 +993,7 @@
         (when (= :cli (:channel environment)) (prompt-block "cli-autonomous" cli-autonomous-rules))
 
         project-block
-        (project-instructions-block environment)
+        (project-instructions-block environment active-extensions)
 
         turn-system-block
         (turn-system-context-block environment active-extensions)

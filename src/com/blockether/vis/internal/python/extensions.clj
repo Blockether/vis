@@ -2994,7 +2994,11 @@
                ;; The tier tag lets a session that does not read this tier turn the
                ;; extension off (see `scoped/engine-mode`).
                validated (if-let [root (:project-root frozen)]
-                           (extension/project-extension (assoc spec :ext/source-scope "project")
+                           (extension/project-extension (cond-> (assoc spec
+                                                                  :ext/source-scope "project")
+                                                          ;; #399: the nested project whose rules apply.
+                                                          (seq project-path)
+                                                          (assoc :ext/project-path project-path))
                                                         (keep :ext (vals (scope-entries root))))
                            (extension/register-extension! (assoc spec :ext/source-scope "global")))]
 

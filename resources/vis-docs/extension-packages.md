@@ -216,6 +216,11 @@ a `.vis` directory. In the example, that is `repositories/<name>`. Extension cod
 [`vis.project_root()`](extension-api.md#project-root), so the same file works in the workspace and
 in a session that opens the repository directly.
 
+The rules of a nested project also apply to its extensions. When such an extension is active, the
+session's project rules list the `AGENTS.md` or `CLAUDE.md` file of its project. The model reads that
+file before it uses the project's tools or works in the project. Vis does not copy the file into each
+request, so many nested projects do not make the prompt larger.
+
 ## Install a package
 
 **Prerequisites:** an installed Vis, and source and dependencies that you reviewed. Vis supplies

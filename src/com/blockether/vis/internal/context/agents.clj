@@ -361,6 +361,21 @@
                    :source source})))
         (extra-root-dirs)))
 
+(defn extension-project-guidance-index
+  "Return metadata for the guidance of nested extension projects without reading
+   file contents (#399). `project-paths` are relative to the workspace root. Each row
+   is `{:root path :path guidance-path :source}`. Empty when the session does not read
+   the project tier."
+  [project-paths]
+  (if-let [^java.io.File root (project-guidance-root)]
+    (into []
+          (keep (fn [project-path]
+                  (let [dir (java.io.File. root ^String project-path)]
+                    (when-let [{:keys [source ^java.io.File file]} (guidance-candidate dir)]
+                      {:root (.getPath dir) :path (.getPath file) :source source}))))
+          (distinct (remove str/blank? project-paths)))
+    []))
+
 (defn scan
   "Scan the user-global `~/.vis` dir, the active workspace root's ancestor
    chain, and each added filesystem root's own directory for project-guidance

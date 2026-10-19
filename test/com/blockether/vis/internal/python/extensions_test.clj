@@ -1075,6 +1075,8 @@
                (expect (str/includes? (str (by-file (str root "/repos/**/x.py"))) "`**`"))
                (expect (= (str root "/repos/a") (where "glob-a")))
                (expect (= (str root "/repos/b") (where "glob-b")))
+               ;; #399: the extension names its nested project for its rules.
+               (expect (= "repos/a" (:ext/project-path (registered "glob-a"))))
                (swap! workspace assoc :root draft)
                (expect (= (str draft "/repos/a") (where "glob-a")))))
            (finally (binding [workspace/*workspace-root* root]

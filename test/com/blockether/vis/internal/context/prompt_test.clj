@@ -1195,6 +1195,37 @@
           (expect (str/includes? text "guidance is not loaded yet"))
           (expect (str/includes? text "read its exact guidance path in `python_execution`"))
           (expect (not (str/includes? text "DEMO-RULE"))))))
+  ;; Regression, #399: a glob-loaded extension of a nested project must bring that
+  ;; project's rules, as a session opened at the project would read them.
+  (it "indexes the guidance of a nested extension project without its contents"
+      (let [root
+            (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                          "vis-nested-rules"
+                                          (make-array java.nio.file.attribute.FileAttribute 0))))
+
+            project
+            (java.io.File. root "repos/a")]
+
+        (.mkdirs (java.io.File. project ".vis"))
+        (spit (java.io.File. project "AGENTS.md") "REPO-A-RULE")
+        (with-redefs [agents/primary-instructions
+                      (constantly {:found? false})
+
+                      agents/added-root-guidance-index
+                      (constantly [])]
+
+          (binding [workspace/*workspace-root* root]
+            (let [ext
+                  {:ext/name "glob-a" :ext/description "Nested tools." :ext/project-path "repos/a"}
+                  text (prompt/stable-prompt-text (prompt/assemble-stable-prompt-messages
+                                                    {:extensions (atom [])}
+                                                    {:active-extensions [ext]}))]
+
+              (expect (str/includes?
+                        text
+                        (str (.getPath project) " — guidance: " (.getPath project) "/AGENTS.md")))
+              (expect (str/includes? text "guidance is not loaded yet"))
+              (expect (not (str/includes? text "REPO-A-RULE"))))))))
   (it "falls back to CLAUDE.md when primary AGENTS.md is absent"
       (with-redefs [agents/primary-instructions
                     (constantly {:found? true
