@@ -28,6 +28,7 @@
             [com.blockether.vis.internal.channel.header :as header]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
+            [com.blockether.vis.internal.provider.error :as perr]
             [com.blockether.vis.internal.util :as util]))
 
 ;; ---------------------------------------------------------------------------
@@ -241,6 +242,28 @@
                "com.blockether.vis.internal.python.env/context-retired"}
              (str (or (:type error) (get-in error [:data :type])))))
 
+(defn- persisted-provider-error
+  "A provider error read back from `iteration.llm_error` JSON, with the few
+   keyword values `provider.error` dispatches on restored from their strings."
+  [error-map]
+  (let [->kw #(if (string? %) (keyword (str/replace % #"^:" "")) %)]
+    (cond-> error-map
+      (get-in error-map [:data :type])
+      (update-in [:data :type] ->kw)
+
+      (get-in error-map [:data :stream-recovery :declined])
+      (update-in [:data :stream-recovery :declined] ->kw)
+
+      (seq (get-in error-map [:data :routed/trace]))
+      (update-in [:data :routed/trace] (partial mapv #(update % :event/type ->kw))))))
+
+(defn- llm-label
+  [provider model]
+  (when (or provider model)
+    (str (some-> provider
+                 name)
+         (when model (str "/" model)))))
+
 (defn- iteration-failure
   [iteration]
   (when-let [error (:error iteration)]
@@ -252,7 +275,11 @@
           ;; boundary - keep them as strings, never mint keywords.
           type (:type data)
           reason (:reason data)
-          raw-data (:raw-data data)]
+          raw-data (:raw-data data)
+          provider-message (perr/provider-body-message (some-> (:body data)
+                                                               str))
+          actual (llm-label (:llm-actual-provider iteration) (:llm-actual-model iteration))
+          selected (llm-label (:llm-selected-provider iteration) (:llm-selected-model iteration))]
 
       (cond-> {:source (if runtime? :runtime :provider)
                :iteration-id (:id iteration)
@@ -267,6 +294,31 @@
 
         reason
         (assoc :reason reason)
+
+        ;; #401-#403: the cause that was only in the SQLite `log` table.
+        (some? (:status data))
+        (assoc :http-status (:status data))
+
+        (:request-id data)
+        (assoc :request-id (:request-id data))
+
+        (:log-id data)
+        (assoc :log-id (str (:log-id data)))
+
+        (seq provider-message)
+        (assoc :provider-message provider-message)
+
+        actual
+        (assoc :model actual)
+
+        (and selected (not= selected actual))
+        (assoc :selected-model selected)
+
+        (some? (:llm-fallback? iteration))
+        (assoc :fallback? (:llm-fallback? iteration))
+
+        (not runtime?)
+        (assoc :explanation (perr/provider-error-explanation (persisted-provider-error error-map)))
 
         (:received-type data)
         (assoc :received-type (:received-type data))

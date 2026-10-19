@@ -54,8 +54,11 @@
 (defn- stream-recovery-outcome
   "What Svar did about stream failure `e` before it reached Vis, for the failure
    card: how many same-provider re-sends its routing trace announced, or that
-   answer output had already streamed, which Svar never re-sends. Nil otherwise."
-  [^Throwable e answer-streamed?]
+   answer output had already streamed, which Svar never re-sends. Nil otherwise.
+
+   `replay-evidence` is the `next-replay-evidence` value of the failed attempt:
+   the first output phase and the chunk count that made a replay unsafe."
+  [^Throwable e replay-evidence]
   (let [chain (loop-errors/bounded-cause-chain e)]
     (when (some #(or (perr/stream-truncated-error? %)
                      (perr/stream-connection-error? %)
@@ -63,8 +66,34 @@
                 chain)
       (let [attempts (count (filter #(= :llm.routing/provider-retry (:event/type %))
                                     (some #(:routed/trace (ex-data %)) chain)))]
-        (cond answer-streamed? {:attempts attempts :declined :output-started}
+        (cond replay-evidence (merge {:attempts attempts :declined :output-started} replay-evidence)
               (pos? attempts) {:attempts attempts :declined :retry-budget-exhausted})))))
+
+(defn- failed-iteration-routing
+  "The routing summary of a failed iteration. After a fallback, svar names the
+   route that failed on the error (#402). Without that route, the selected model
+   is also the actual one."
+  [resolved-model err-data]
+  (let [selected
+        (transcript/llm-id (:provider resolved-model)
+                           (some-> (:name resolved-model)
+                                   str))
+
+        actual
+        (if (:routed/provider-id err-data)
+          (transcript/llm-id (:routed/provider-id err-data) (:routed/model err-data))
+          selected)
+
+        trace
+        (:routed/trace err-data)]
+
+    (cond-> {:selected selected
+             :actual actual
+             :fallback? (boolean (or (not= selected actual)
+                                     (some #(not= :llm.routing/provider-retry (:event/type %))
+                                           trace)))}
+      (seq trace)
+      (assoc :trace (vec trace)))))
 
 (defn- request-with-retries
   "Sends request attempts until one answers a real result, and returns that result.
@@ -1326,6 +1355,17 @@
 (def ^:private empty-replies-give-up-text
   "Fallback shown only when the provider repeatedly returns an empty reply."
   "The model returned empty replies repeatedly, so the turn was stopped.")
+
+(defn- next-replay-evidence
+  "Count the provider output of one attempt that makes a replay unsafe. Reasoning
+   is safe to replay; answer text and tool execution are not. Answers nil until
+   the first unsafe chunk, then `{:output-phase first-phase :output-chunks n}`.
+   #401: the failure card shows this, so a declined replay can be checked."
+  [evidence chunk]
+  (cond (not= :reasoning (:phase chunk)) (if evidence
+                                           (update evidence :output-chunks inc)
+                                           {:output-phase (:phase chunk) :output-chunks 1})
+        :else evidence))
 
 (defn- provider-output-chunk?
   "True after visible assistant output or a tool execution entered the stream.
@@ -2721,8 +2761,8 @@
         provider-output-started?
         (atom false)
 
-        provider-replay-unsafe?
-        (atom false)
+        provider-replay-evidence
+        (atom nil)
 
         effective-messages
         @effective-messages-atom]
@@ -2738,7 +2778,7 @@
       :message-token-counter message-token-counter
       :messages messages
       :provider-output-started? provider-output-started?
-      :provider-replay-unsafe? provider-replay-unsafe?
+      :provider-replay-evidence provider-replay-evidence
       :recall-options recall-options
       :summaries summaries
       :user-input user-input)))
@@ -2750,7 +2790,7 @@
            council-active effective-messages-atom emergency-summaries-atom emit-hook! environment
            install-projection! iteration iteration-extra-body max-context-tokens message-base-atom
            message-token-counter on-chunk pre-resolved-model preferred-reasoning-effort
-           provider-output-started? provider-replay-unsafe? reasoning-effort reasoning-level
+           provider-output-started? provider-replay-evidence reasoning-effort reasoning-level
            recall-options replay-target request-budget-atom route-change route-command-at-turn-start
            routing session-turn-id summaries trailer-iters turn-pricing user-request]
     :as state}]
@@ -2855,7 +2895,7 @@
                           (throw (ex-info "Provider request cancelled"
                                           {:type :svar.core/stream-cancelled})))
                         (reset! provider-output-started? false)
-                        (reset! provider-replay-unsafe? false)
+                        (reset! provider-replay-evidence nil)
                         (run-iteration
                           attempt-env
                           @effective-messages-atom
@@ -2907,11 +2947,11 @@
                                          ;; A Svar re-send starts its attempt over.
                                          (= :provider-retry-reset (:phase chunk))
                                          (do (reset! provider-output-started? false)
-                                             (reset! provider-replay-unsafe? false))
+                                             (reset! provider-replay-evidence nil))
                                          (provider-output-chunk? chunk)
                                          (do (reset! provider-output-started? true)
-                                             (when (not= :reasoning (:phase chunk))
-                                               (reset! provider-replay-unsafe? true))))
+                                             (swap! provider-replay-evidence next-replay-evidence
+                                               chunk)))
                                        (emit-hook! on-chunk chunk "Provider chunk hook failed"))
                            :active-extensions active-exts
                            :answer-validation-context
@@ -2971,8 +3011,9 @@
                                      :messages @effective-messages-atom
                                      :routing @iteration-routing
                                      :reasoning-level reasoning-level
+                                     :log-id (:request-id request-context)
                                      :stream-recovery
-                                     (stream-recovery-outcome e @provider-replay-unsafe?)}))))))]
+                                     (stream-recovery-outcome e @provider-replay-evidence)}))))))]
 
                   {:result result :env env}))
               {:extra-body iteration-extra-body :env environment})))]
@@ -3056,20 +3097,9 @@
                        :llm-full-duration-ms 0
                        :error iteration-error-data
                        :llm-messages effective-messages
-                       :llm-provider (:provider resolved-model)
-                       :llm-model (str (:name resolved-model))
-                       :llm-routing
-                       (cond-> {:selected (transcript/llm-id (:provider resolved-model)
-                                                             (some-> (:name resolved-model)
-                                                                     str))
-                                :actual (transcript/llm-id (:provider resolved-model)
-                                                           (some-> (:name resolved-model)
-                                                                   str))
-                                :fallback? false}
-                         (seq (get-in iteration-error-data [:data :routed/trace]))
-                         (assoc :fallback?
-                           true :trace
-                           (vec (get-in iteration-error-data [:data :routed/trace]))))
+                       :llm-provider (transcript/actual-llm-provider resolved-model err-data)
+                       :llm-model (transcript/actual-llm-model resolved-model err-data)
+                       :llm-routing (failed-iteration-routing resolved-model err-data)
                        :cache-created-tokens (accounting/cache-created-tokens tc)}
                 tc
                 (assoc :tokens

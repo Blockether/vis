@@ -524,6 +524,7 @@
                                     "status" 429
                                     "provider" "anthropic"
                                     "request_id" "req_167"
+                                    "log_id" "q-403"
                                     "attempts" [{"provider" "anthropic"
                                                  "model" "claude-opus-4"
                                                  "status" 429
@@ -536,6 +537,7 @@
                    (expect (str/includes? rendered "HTTP 429"))
                    (expect (str/includes? rendered "anthropic/claude-opus-4"))
                    (expect (str/includes? rendered "req_167"))
+                   (expect (str/includes? rendered "Log q-403"))
                    (expect (< (str/index-of rendered "Provider rate limit reached")
                               (str/index-of rendered "provider_rate_limit")))
                    (expect (not (str/includes? rendered "Flattened fallback")))))

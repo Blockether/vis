@@ -480,7 +480,9 @@
            (when-let [provider (vis/non-blank (get block "provider"))]
              (str provider-label " " provider))
            (when-let [request-id (vis/non-blank (get block "request_id"))]
-             (str "Request " request-id))])
+             (str "Request " request-id))
+           (when-let [log-id (vis/non-blank (get block "log_id"))]
+             (str "Log " log-id))])
 
         attempts
         (keep provider-attempt->text (get block "attempts"))

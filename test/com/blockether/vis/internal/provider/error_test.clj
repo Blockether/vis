@@ -58,6 +58,22 @@
                    (expect (= "req_167" (get block "request_id")))
                    (expect (= "anthropic" (get block "provider"))))))
 
+;; Issue #403: the Vis query id keys the log rows and the log file of the request.
+(defdescribe provider-error-log-id-test
+             (let [err {:message "Exceptional status code: 503"
+                        :data {:status 503 :request-id "req_up" :log-id "q-403"}}]
+               (it "shows the Vis query id as a Log id fact after the Request id"
+                   (let [facts (perr/provider-error-facts err)]
+                     (expect (= [["Request id" "req_up"] ["Log id" "q-403"]] (take-last 2 facts)))))
+               (it "ships the Vis query id on the typed block"
+                   (expect (= "q-403" (:log-id (perr/provider-error-info err))))
+                   (expect (= "q-403" (get (first (perr/provider-error-content err)) "log_id"))))
+               (it "omits the row when no query id is known"
+                   (let [err (update err :data dissoc :log-id)]
+                     (expect (not-any? #(= "Log id" (first %)) (perr/provider-error-facts err)))
+                     (expect (not (contains? (first (perr/provider-error-content err))
+                                             "log_id")))))))
+
 (defdescribe
   provider-error-attempts-test
   (it "reads the per-provider attempts from the ex-data"
@@ -256,24 +272,60 @@
                                  :data {:status 400
                                         :body "{\"error\":{\"message\":\"bad\"}}"}}))))))
 
-(defdescribe stream-connection-error-test
-             ;; A provider can drop a long reasoning stream mid-response. Svar reports that
-             ;; as a typed `:svar.core/http-error` with `:stream? true`.
-             (let [dropped {:type :svar.core/http-error :stream? true}]
-               (it "recognises a dropped stream in ex-data, an exception and iteration error data"
-                   (expect (true? (perr/stream-connection-error? dropped)))
-                   (expect (true? (perr/stream-connection-error?
-                                    (ex-info "Stream connection error: closed" dropped))))
-                   (expect (true? (perr/stream-connection-error?
-                                    {:message "Stream connection error: closed" :data dropped}))))
-               (it "ignores failed requests that never streamed and other stream outcomes"
-                   (expect (false? (perr/stream-connection-error? {:type :svar.core/http-error
-                                                                   :status 502})))
-                   (expect (false? (perr/stream-connection-error? (assoc dropped :stream? false))))
-                   (expect (false? (perr/stream-connection-error? {:type :svar.core/stream-truncated
-                                                                   :stream? true})))
-                   (expect (false? (perr/stream-connection-error? (ex-info "closed" {}))))
-                   (expect (false? (perr/stream-connection-error? nil))))))
+(defdescribe
+  stream-connection-error-test
+  ;; A provider can drop a long reasoning stream mid-response. Svar reports that
+  ;; as a typed `:svar.core/http-error` with `:stream? true`.
+  (let [dropped {:type :svar.core/http-error :stream? true}]
+    (it "recognises a dropped stream in ex-data, an exception and iteration error data"
+        (expect (true? (perr/stream-connection-error? dropped)))
+        (expect (true? (perr/stream-connection-error? (ex-info "Stream connection error: closed"
+                                                               dropped))))
+        (expect (true? (perr/stream-connection-error? {:message "Stream connection error: closed"
+                                                       :data dropped}))))
+    (it "ignores failed requests that never streamed and other stream outcomes"
+        (expect (false? (perr/stream-connection-error? {:type :svar.core/http-error :status 502})))
+        (expect (false? (perr/stream-connection-error? (assoc dropped :stream? false))))
+        (expect (false? (perr/stream-connection-error? {:type :svar.core/stream-truncated
+                                                        :stream? true})))
+        (expect (false? (perr/stream-connection-error? (ex-info "closed" {}))))
+        (expect (false? (perr/stream-connection-error? nil))))
+    ;; #401: the card said only "the provider call failed" and lost the cause.
+    (let [closed {:message "Stream connection error: closed"
+                  :data (assoc dropped :stream-recovery {:attempts 0 :declined :output-started})}]
+      (it "names a dropped stream on the card and keeps the provider's cause"
+          (expect (= :stream-interrupted (perr/provider-error-kind closed)))
+          (expect (= "Provider stream interrupted" (perr/provider-error-title closed)))
+          (expect (str/includes? (perr/provider-error-explanation closed)
+                                 "Stream connection error: closed"))
+          (expect (not (re-find #"[a-z] Automatic recovery"
+                                (perr/provider-error-explanation closed)))))
+      (it "shows the streamed output that made a replay unsafe"
+          (let [evidence
+                (assoc-in closed
+                  [:data :stream-recovery]
+                  {:attempts 0 :declined :output-started :output-phase :content :output-chunks 3})]
+            (expect (re-find #"3 output chunks" (perr/provider-error-explanation evidence)))
+            (expect (re-find #"`content`" (perr/provider-error-explanation evidence))))))))
+
+;; #402: the card showed only the fallback provider's 400 and hid the auth fallback.
+(defdescribe
+  routing-fallback-explanation-test
+  (it
+    "names the provider that failed first and the fallback that got the request"
+    (let [err {:message "Bad request"
+               :data {:status 400
+                      :routed/trace [{:event/type :llm.routing/provider-fallback
+                                      :from-provider "token"
+                                      :from-model "gpt-6.1-sol"
+                                      :to-provider "prod"
+                                      :to-model "claude-opus-5-5"
+                                      :status 401
+                                      :reason :authentication}]}}]
+      (expect
+        (str/includes?
+          (perr/provider-error-explanation err)
+          "token/gpt-6.1-sol failed (401 authentication), then prod/claude-opus-5-5 got the request")))))
 
 (defdescribe
   tool-schema-rejection-test

@@ -93,6 +93,7 @@ describe('provider failure card', () => {
           status: 429,
           provider: 'anthropic',
           request_id: 'req_167',
+          log_id: 'q-403',
           retryable: true,
           attempts: [
             {
@@ -116,6 +117,7 @@ describe('provider failure card', () => {
       expect(card.textContent).toContain('HTTP 429');
       expect(card.textContent).toContain('anthropic');
       expect(card.textContent).toContain('req_167');
+      expect(card.textContent).toContain('Log id q-403');
       expect(card.textContent).not.toContain('Flattened fallback');
       expect(card.textContent).not.toContain('provider_rate_limit');
 

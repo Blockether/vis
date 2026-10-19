@@ -89,6 +89,12 @@ To list the problems of one session, run this command:
 grep -h '"session_id":"<session-id>"' ~/.vis/logs/*/*.problems.jsonl
 ```
 
+The error card in the TUI and in the Companion app shows a `Log id`. It is the
+`query_id` of the failed call. To find its lines, run this command:
+
+```bash
+grep -h '"query_id":"<log-id>"' ~/.vis/logs/*/*.problems.jsonl
+```
 Vis redacts labelled credentials, such as `api_key` or `Authorization` values, and limits
 each text value to 2,000 characters. Review the lines before you share them.
 

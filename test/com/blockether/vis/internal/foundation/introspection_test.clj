@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.introspection-test
-  (:require [clojure.string :as str]
+  (:require [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.internal.activity.core :as activity]
@@ -764,6 +765,63 @@
                       [{:id "iteration" :position 1 :error error}])]
         (expect (= [:runtime] (mapv :source failures)))
         (expect (= [:python-environment-retired] (mapv :classification failures)))))))
+
+;; Regression, issues #401-#403: a provider failure in read_session kept only the
+;; wrapper message. Status, request id, provider text and the fallback route were
+;; only in the SQLite `log` table.
+(defdescribe
+  provider-failure-cause-test
+  (let [error
+        (json/write-json-str
+          {:message "Exceptional status code: 400"
+           :data {:type "svar.core/http-error"
+                  :status 400
+                  :request-id "req-1"
+                  :body "{\"error\":{\"message\":\"text: Extra inputs are not permitted\"}}"
+                  :routed/trace [{:event/type "llm.routing/provider-fallback"
+                                  :from-provider "token"
+                                  :from-model "gpt-6.1-sol"
+                                  :to-provider "prod"
+                                  :to-model "claude-opus-5-5"
+                                  :status 401
+                                  :reason "authentication"}]}})
+
+        failure
+        (first (#'introspection/failures-from-iterations
+                [{:id "iteration"
+                  :position 13
+                  :llm-selected-provider :token
+                  :llm-selected-model "gpt-6.1-sol"
+                  :llm-actual-provider :prod
+                  :llm-actual-model "claude-opus-5-5"
+                  :llm-fallback? true
+                  :error error}]))]
+
+    (it "keeps the status, request id and provider message"
+        (expect (= 400 (:http-status failure)))
+        (expect (= "req-1" (:request-id failure)))
+        (expect (= "text: Extra inputs are not permitted" (:provider-message failure))))
+    (it "names the model that failed and the fallback route"
+        (expect (= "prod/claude-opus-5-5" (:model failure)))
+        (expect (= "token/gpt-6.1-sol" (:selected-model failure)))
+        (expect (true? (:fallback? failure)))
+        (expect (str/includes?
+                  (:explanation failure)
+                  "token/gpt-6.1-sol failed (401 authentication), then prod/claude-opus-5-5")))
+    (it "explains a persisted declined stream replay"
+        (let [dropped (first (#'introspection/failures-from-iterations
+                              [{:id "i"
+                                :position 18
+                                :error (json/write-json-str
+                                         {:message "Stream connection error: closed"
+                                          :data {:type "svar.core/http-error"
+                                                 :stream? true
+                                                 :stream-recovery {:attempts 0
+                                                                   :declined "output-started"
+                                                                   :output-phase "content"
+                                                                   :output-chunks 2}}})}]))]
+          (expect (str/includes? (:explanation dropped) "Stream connection error: closed"))
+          (expect (str/includes? (:explanation dropped) "2 output chunks"))))))
 
 ;; Regression, issue #130: a cancel interrupt was attributed to the form that
 ;; happened to be on the stack, making a user stop look like broken agent code.

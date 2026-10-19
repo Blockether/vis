@@ -3027,6 +3027,65 @@
                           (expect (= 1 @calls)))
                         (finally (loop-env/dispose-environment! env))))))
 
+(def ^:private next-replay-evidence (deref #'iteration/next-replay-evidence))
+
+(def ^:private stream-recovery-outcome (deref #'iteration/stream-recovery-outcome))
+
+;; Regression, issue #401: a declined stream replay kept only a boolean, so a card
+;; with 0 recorded output tokens could not show why the replay was unsafe.
+(defdescribe
+  stream-replay-evidence-test
+  (let [dropped (ex-info "Stream connection error: closed"
+                         {:type :svar.core/http-error :stream? true})]
+    (it "counts answer chunks from the first one and ignores reasoning"
+        (let [evidence (reduce next-replay-evidence
+                               nil
+                               [{:phase :reasoning :thinking "plan"} {:phase :content :delta "a"}
+                                {:phase :content :delta "b"} {:phase :form-start}])]
+          (expect (= {:output-phase :content :output-chunks 3} evidence))))
+    (it "stays nil while only reasoning streamed"
+        (expect (nil? (next-replay-evidence nil {:phase :reasoning :thinking "plan"}))))
+    (it "puts the evidence in the declined recovery outcome"
+        (expect (= {:attempts 0 :declined :output-started :output-phase :content :output-chunks 2}
+                   (stream-recovery-outcome dropped {:output-phase :content :output-chunks 2}))))
+    (it "does not decline a replay without evidence"
+        (expect (nil? (stream-recovery-outcome dropped nil))))))
+
+(def ^:private failed-iteration-routing (deref #'iteration/failed-iteration-routing))
+
+;; Regression, issue #402: a request that failed on the auth-fallback provider was
+;; recorded under the selected provider, with `llm_fallback` false.
+(defdescribe failed-iteration-routing-test
+             (let [selected {:provider :token :name "gpt-6.1-sol"}]
+               (it "records the fallback provider that really failed"
+                   (expect
+                     (= {:selected {:provider "token" :model "gpt-6.1-sol"}
+                         :actual {:provider "prod" :model "claude-opus-5-5"}
+                         :fallback? true
+                         :trace [{:event/type :llm.routing/provider-fallback
+                                  :from-provider "token"
+                                  :from-model "gpt-6.1-sol"
+                                  :to-provider "prod"
+                                  :to-model "claude-opus-5-5"
+                                  :status 401
+                                  :reason :authentication}]}
+                        (failed-iteration-routing selected
+                                                  {:routed/provider-id :prod
+                                                   :routed/model "claude-opus-5-5"
+                                                   :routed/trace [{:event/type
+                                                                   :llm.routing/provider-fallback
+                                                                   :from-provider "token"
+                                                                   :from-model "gpt-6.1-sol"
+                                                                   :to-provider "prod"
+                                                                   :to-model "claude-opus-5-5"
+                                                                   :status 401
+                                                                   :reason :authentication}]}))))
+               (it "keeps the selected model when svar names no route"
+                   (expect (= {:selected {:provider "token" :model "gpt-6.1-sol"}
+                               :actual {:provider "token" :model "gpt-6.1-sol"}
+                               :fallback? false}
+                              (failed-iteration-routing selected {:status 400}))))))
+
 ;; Regression, issue #116: svar's empty-reply resend ladder was only collected in
 ;; an atom and prepended to the routing trace AFTER `ask-code!` returned, so a turn
 ;; healing empty replies painted NOTHING for minutes and a user Esc threw the whole
@@ -7811,6 +7870,15 @@
                                                                        {:type :vis/eval-error})
                                                               ctx)]
           (expect (not (:com.blockether.vis.internal.loop.errors/fatal-iteration-error result)))))))
+
+;; Issue #403: the error card names the Vis query id, the key of the request's log rows.
+(defdescribe iteration-error-log-id-test
+             (it "keeps the Vis query id on the iteration failure"
+                 (let [result (loop-errors/handle-iteration-exception!
+                                (ex-info "Exceptional status code: 503" {:status 503})
+                                {:iteration 0 :messages [] :log-id "q-403"})]
+                   (expect (= "q-403"
+                              (get-in result [::loop-errors/iteration-error :data :log-id]))))))
 
 (defdescribe
   request-attempt-test

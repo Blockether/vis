@@ -278,7 +278,11 @@
                                        :last-user-preview (last-user-message-preview (:messages
                                                                                        ctx))}})
     (:stream-recovery ctx)
-    (assoc-in [:data :stream-recovery] (:stream-recovery ctx))))
+    (assoc-in [:data :stream-recovery] (:stream-recovery ctx))
+
+    ;; The Vis query id keys the log rows of this request (#403).
+    (:log-id ctx)
+    (assoc-in [:data :log-id] (:log-id ctx))))
 
 (defn handle-iteration-exception!
   "Error path for the main-loop try/catch around `run-iteration`.

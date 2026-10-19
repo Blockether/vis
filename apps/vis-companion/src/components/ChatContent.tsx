@@ -3767,13 +3767,14 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
   const nextStep = errorText(block.next_step);
   const provider = errorText(block.provider);
   const requestId = errorText(block.request_id);
+  const logId = errorText(block.log_id);
   const status = typeof block.status === 'number' ? String(block.status) : undefined;
   const attempts = Array.isArray(block.attempts)
     ? block.attempts.map(providerAttemptText).filter((one): one is string => Boolean(one))
     : [];
   const code = errorText(block.code);
   const body = errorText(block.body);
-  const hasFacts = Boolean(status || provider || requestId);
+  const hasFacts = Boolean(status || provider || requestId || logId);
   const hasDiagnostics = Boolean(code || attempts.length > 0 || body);
   const providerLabel = block.kind === 'unroutable' ? 'Route' : 'Provider';
   const headingId = `failure-${block.id}`;
@@ -3822,6 +3823,12 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
             <div className="min-w-0">
               <dt className="inline text-dialog-hint">Request</dt>{' '}
               <dd className="inline break-all">{requestId}</dd>
+            </div>
+          )}
+          {logId && (
+            <div className="min-w-0">
+              <dt className="inline text-dialog-hint">Log id</dt>{' '}
+              <dd className="inline break-all">{logId}</dd>
             </div>
           )}
         </dl>

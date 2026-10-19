@@ -560,14 +560,23 @@
 
 (defn- stream-recovery-explanation
   [err]
-  (let [{:keys [attempts declined]} (:stream-recovery (or (:data err) (ex-data err) err))]
+  (let [{:keys [attempts declined output-phase output-chunks]}
+        (:stream-recovery (or (:data err) (ex-data err) err))]
     (case declined
       :retry-budget-exhausted
       (str " Automatic recovery stopped after " attempts (if (= 1 attempts) " retry." " retries."))
 
       :output-started
-      (str " Automatic recovery was skipped because answer text or tool input had already "
-           "streamed, or tool execution had started. Replay could duplicate output or actions.")
+      (if output-phase
+        ;; #401: name the evidence, so a declined replay can be checked.
+        (str " Automatic recovery was skipped because the stream had already delivered "
+             output-chunks
+             (if (= 1 output-chunks) " output chunk" " output chunks")
+             " (first: `"
+             (name output-phase)
+             "`). Replay could duplicate output or actions.")
+        (str " Automatic recovery was skipped because answer text or tool input had already "
+             "streamed, or tool execution had started. Replay could duplicate output or actions."))
 
       "")))
 
@@ -640,6 +649,10 @@
            "checked. Either the pinned provider/model is not in this session's routing "
            "config, or every candidate was already out of rotation: dropped earlier in "
            "this turn, or still cooling down after repeated failures.")
+      (stream-connection-error? err)
+      (str "WHAT HAPPENED: the provider closed the response stream before the reply was complete ("
+           message
+           ").")
       (stream-truncated-error? err)
       (str "WHAT HAPPENED: the upstream connection ended before the provider's completion marker. "
            "Vis did not stop this request for a timeout. Your completed tool results are intact.")
@@ -763,11 +776,46 @@
       :else (str "WHAT HAPPENED: "
                  (or (:summary (svar-classification err)) "the provider call failed.")))))
 
+(def ^:private ROUTING_FALLBACK_EVENTS
+  #{:llm.routing/provider-fallback :llm.routing/model-fallback :llm.routing/format-fallback})
+
+(defn- routing-fallback-explanation
+  "Each fallback svar made before the failure, so the card names the provider that
+   failed first, not only the one that failed last (#402)."
+  [err]
+  (let [events (filter #(contains? ROUTING_FALLBACK_EVENTS (:event/type %))
+                       (:routed/trace (or (:data err) (ex-data err) err)))]
+    (when (seq events)
+      (str " Routing: "
+           (str/join "; "
+                     (map (fn [{:keys [from-provider from-model to-provider to-model status
+                                       reason]}]
+                            (str from-provider
+                                 "/"
+                                 from-model
+                                 " failed ("
+                                 (str/join " "
+                                           (remove nil?
+                                             [status
+                                              (some-> reason
+                                                      name)]))
+                                 "), then "
+                                 to-provider
+                                 "/"
+                                 to-model
+                                 " got the request"))
+                          events))
+           "."))))
+
 (defn provider-error-explanation
   "The canonical WHAT HAPPENED line, including the automatic-recovery outcome.
    Shared by the chat card and trace; actionable advice lives in next-step."
   [err]
-  (str (provider-error-diagnosis err) (stream-recovery-explanation err)))
+  (let [diagnosis (provider-error-diagnosis err)]
+    (str diagnosis
+         (when-not (re-find #"[.!?)]$" diagnosis) ".")
+         (routing-fallback-explanation err)
+         (stream-recovery-explanation err))))
 
 (defn provider-error-title
   "A SHORT headline for the failure, by kind — the card title on every surface."
@@ -1037,6 +1085,8 @@
           (model-metadata-error? err) :model-metadata
           (context-overflow-error? err) :context-overflow
           (stream-timeout-error? err) :stream-timeout
+          ;; Svar types a dropped stream but gives it no category.
+          (stream-connection-error? err) :stream-interrupted
           (refusal-error? err) :refusal
           (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
@@ -1139,7 +1189,10 @@
         (:tool-schema-field data)
 
         schema-path
-        (:tool-schema-path data)]
+        (:tool-schema-path data)
+
+        log-id
+        (:log-id data)]
 
     (cond-> []
       (and (seq message)
@@ -1163,7 +1216,11 @@
       (conj ["Provider path" (str schema-path)])
 
       request-id
-      (conj ["Request id" (str request-id)]))))
+      (conj ["Request id" (str request-id)])
+
+      ;; The Vis query id finds this request in the log files and log rows (#403).
+      log-id
+      (conj ["Log id" (str log-id)]))))
 
 (defn provider-error-raw-body
   "Truncated raw upstream body — surfaced ONLY when no structured provider
@@ -1215,6 +1272,8 @@
      :status status
      :request-id (some-> request-id
                          str)
+     :log-id (some-> (:log-id data)
+                     str)
      :provider-message (not-empty provider-message)
      :wrapper-message (not-empty message)
      :provider-id (provider-id-of data)
@@ -1244,7 +1303,8 @@
   "Canonical typed content for a provider failure. The error remains data;
    channels decide how to present it and Markdown is not used as an envelope."
   [err]
-  (let [{:keys [kind title explanation next-step status request-id provider-id attempts body]}
+  (let [{:keys [kind title explanation next-step status request-id log-id provider-id attempts
+                body]}
         (provider-error-info err)
 
         [_ explanation-body]
@@ -1278,6 +1338,9 @@
 
        request-id
        (assoc "request_id" request-id)
+
+       log-id
+       (assoc "log_id" log-id)
 
        provider-id
        (assoc "provider" (name provider-id))
