@@ -664,4 +664,71 @@ describe('a session list carried by the fleet stream', () => {
     await settle(5_000);
     expect(listReads(view.requests)).toBe(read + 2);
   });
+
+  // Regression, user report in this Vis session (paraphrased: "on one machine I cannot
+  // tell that the other machine has news, and when I switch to it the news is missing"):
+  // the fleet stream carries ONE gateway, but its live state slowed the poll of every
+  // paired machine to thirty seconds.
+  const twoMachines = (fleet: ReturnType<typeof fleetHub>) => {
+    const view = renderSessionsScreen({
+      machines: [
+        { label: 'laptop', sessions: [listSession({ id: 's1', title: 'Here' })] },
+        { label: 'studio', sessions: [listSession({ id: 's2', title: 'There' })] },
+      ],
+      subscriptions: fleet.hub as never,
+    });
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
+    return view;
+  };
+  const machineReads = (view: ReturnType<typeof twoMachines>, index: number) =>
+    listReads(
+      view.requests.filter((request) => request.machine === new URL(view.conns[index]!.url).origin),
+    );
+
+  it('keeps the five-second poll for a machine that the stream does not carry', async () => {
+    const fleet = fleetHub();
+    const view = twoMachines(fleet);
+    restore = view.restore;
+    await settle(200);
+    const streamed = machineReads(view, 0);
+    view.setRows(1, [
+      listSession({ id: 's2', title: 'There', answer_count: 1, is_unread: true, unread_answers: 1 }),
+    ]);
+
+    await settle(5_000);
+    expect(screen.getByRole('button', { name: /^studio/ })).toHaveTextContent('unread');
+    // The streamed machine keeps its slack net.
+    expect(machineReads(view, 0)).toBe(streamed);
+  });
+
+  it('reads a machine at once when its tab is pressed', async () => {
+    const fleet = fleetHub();
+    const view = twoMachines(fleet);
+    restore = view.restore;
+    await settle(200);
+    view.setRows(1, [listSession({ id: 's2', title: 'There, answered' })]);
+
+    await act(async () => {
+      screen.getByRole('button', { name: /^studio/ }).click();
+    });
+    await settle(100);
+    expect(screen.getByText('There, answered')).toBeVisible();
+  });
+
+  it('reads the streamed machine when its frame lands during a partial poll', async () => {
+    const fleet = fleetHub();
+    const view = twoMachines(fleet);
+    restore = view.restore;
+    await settle(200);
+    const streamed = machineReads(view, 0);
+    // The five-second tick starts a partial poll, and the list read stays open.
+    view.holdList();
+    await settle(5_000);
+    // A frame on the stream asks for the window while that poll is still open.
+    await fleet.emit({ type: 'subscription.ready', scope: 'fleet' } as SseEvent);
+    await settle(200);
+    view.releaseList();
+    await settle(0);
+    expect(machineReads(view, 0)).toBe(streamed + 1);
+  });
 });

@@ -483,6 +483,8 @@ export function SessionsScreen({
   // reader has taken the scroller over.
   const restoredRef = useRef(false);
   const connsRef = useRef(conns);
+  // The hub whose fleet stream is live. It carries ONE gateway, so the poll asks it which.
+  const subscriptionsRef = useRef(subscriptions);
   const machinesRef = useRef(machines);
   // MACHINES THAT WENT SILENT ON A SEARCH. A ref, not state: nothing on screen reads it
   // (the answers already say who could not be reached) and a re-render for it would
@@ -492,6 +494,7 @@ export function SessionsScreen({
   // connection object identity change. Written in an effect so render stays pure.
   useEffect(() => {
     connsRef.current = conns;
+    subscriptionsRef.current = subscriptions;
     machinesRef.current = machines;
   });
   // Transport identity of the WHOLE fleet: pairing, unpairing or re-tokening a
@@ -833,7 +836,12 @@ export function SessionsScreen({
   );
 
   const load = useCallback(
-    async (signal?: AbortSignal, background = false) => {
+    async (
+      signal?: AbortSignal,
+      background = false,
+      // Which paired machines this load reads. A partial poll skips the streamed one.
+      only: (conn: GatewayConn) => boolean = () => true,
+    ) => {
       if (background) {
         const started = pollStartedAt.current;
         if (started !== null && Date.now() - started < STALE_POLL_MS) return;
@@ -844,7 +852,7 @@ export function SessionsScreen({
       // is not in.
       const paired = connsRef.current;
       const dark = (conn: GatewayConn) => machineOutage(machineKey(conn)) !== null;
-      for (const conn of paired.filter(dark)) reconnectMachine(conn);
+      for (const conn of paired.filter(only).filter(dark)) reconnectMachine(conn);
       // A machine that has not answered in THIS run is read under `COLD_PROBE_TIMEOUT_MS`:
       // its cached rows are on screen behind an outline, and the outline must resolve.
       const unconfirmed = (conn: GatewayConn) =>
@@ -852,10 +860,12 @@ export function SessionsScreen({
           ?.answered !== true;
       try {
         do {
+          // A queued refresh asks for the whole fleet, also when it lands in a partial poll.
+          const reading = background && fleetRefreshQueued.current ? () => true : only;
           if (background) fleetRefreshQueued.current = false;
           await Promise.all(
             paired
-              .filter((conn) => !dark(conn))
+              .filter((conn) => reading(conn) && !dark(conn))
               .map((conn) =>
                 loadMachine(conn, signal, unconfirmed(conn) ? COLD_PROBE_TIMEOUT_MS : undefined),
               ),
@@ -921,8 +931,14 @@ export function SessionsScreen({
       // This tick is a REACHABILITY probe, and the fleet stream is a better one:
       // while it delivers, every transition arrives as a frame and this read is only
       // the net under a stream that stopped. So keep the tick, slow the READ.
+      // The stream carries ONE gateway only. Every other paired machine has no frames,
+      // so the tick keeps reading those machines at the full cadence.
       const now = Date.now();
-      if (fleetStreamingRef.current && now - lastWindowReadAt.current < STREAMED_POLL_MS) return;
+      if (fleetStreamingRef.current && now - lastWindowReadAt.current < STREAMED_POLL_MS) {
+        const streamed = subscriptionsRef.current?.gatewayUrl;
+        void load(controller.signal, true, (conn) => clientFor(conn).base !== streamed);
+        return;
+      }
       lastWindowReadAt.current = now;
       void load(controller.signal, true);
     };
@@ -1558,7 +1574,16 @@ export function SessionsScreen({
     return ordered;
   }, [machines, primaryKey]);
 
-  const selectScope = useCallback((next: string | null) => setScopePick(next), []);
+  // A machine the reader turns to is read at once. Its rows on screen can be one poll old,
+  // and that poll is the news the reader came for.
+  const selectScope = useCallback(
+    (next: string | null) => {
+      setScopePick(next);
+      const conn = connsRef.current.find((paired) => machineKey(paired) === next);
+      if (conn && machineOutage(machineKey(conn)) === null) void loadMachine(conn);
+    },
+    [loadMachine],
+  );
 
   // ONE folder browser, opened from wherever the machine is named: the row above the card
   // when the list is scoped, and that machine's own band in the fleet view. It is anchored

@@ -181,14 +181,16 @@ describe('a machine that misses one read is not an outage', () => {
 
   it('keeps the reader on their machine when one read drops', async () => {
     const view = renderSessionsScreen({
-      machines: [fleet()[0], { ...fleet()[1], drops: [2] }],
+      machines: [fleet()[0], { ...fleet()[1], drops: [3] }],
     });
     restore = view.restore;
     await screen.findByText('First');
     await scopeToBeta();
+    // Pressing the tile reads the machine at once: that is read 2.
+    await waitFor(() => expect(betaReads(view)).toBe(2));
 
     leaveSession(view);
-    await waitFor(() => expect(betaReads(view)).toBe(2));
+    await waitFor(() => expect(betaReads(view)).toBe(3));
     await act(async () => {});
 
     // The screen the reader left is the screen they came back to.
@@ -201,16 +203,17 @@ describe('a machine that misses one read is not an outage', () => {
   // reader is never parked on a dead machine's list.
   it('drains the machine once a second read confirms it', async () => {
     const view = renderSessionsScreen({
-      machines: [fleet()[0], { ...fleet()[1], drops: [2, 3] }],
+      machines: [fleet()[0], { ...fleet()[1], drops: [3, 4] }],
     });
     restore = view.restore;
     await screen.findByText('First');
     await scopeToBeta();
+    await waitFor(() => expect(betaReads(view)).toBe(2));
 
     leaveSession(view);
-    await waitFor(() => expect(betaReads(view)).toBe(2));
-    leaveSession(view);
     await waitFor(() => expect(betaReads(view)).toBe(3));
+    leaveSession(view);
+    await waitFor(() => expect(betaReads(view)).toBe(4));
 
     expect(await screen.findByText('First')).toBeVisible();
     await waitFor(() => expect(named(/^Reconnect to beta/)).toHaveLength(1));
