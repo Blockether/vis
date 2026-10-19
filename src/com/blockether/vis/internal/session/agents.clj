@@ -9,7 +9,6 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
-            [com.blockether.vis.internal.context.renderer :as ctx-renderer]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
@@ -216,29 +215,21 @@
       (some #(not= "system" (name (:role %))) kept)
       (conj {:role "user" :content handoff-end}))))
 
-(defn inherited-base
-  [env turn-position current-messages summaries]
+(defn stable-prefix
+  "The stable prompt prefix of a child: the parent handoff, then the child's own session block.
+   Each request of the child starts with it, also after a fold or in a later turn. Nil for a leader."
+  [env session-context]
   (let [db
         (:db-info env)
 
         sid
-        (:session-id env)
+        (:session-id env)]
 
-        child
-        (info db sid)]
-
-    (when (and child
-               (zero? (long (:version (ps/db-get-session db sid))))
-               (= (long turn-position) (inc (long (:inherited_turns child)))))
-      {:messages (into (cond-> (vec (ps/db-agent-checkpoint db sid))
-                         (:ctx-atom env)
-                         (conj {:role "user"
-                                :content
-                                (str ";; -- CURRENT-SUBAGENT-CONTEXT --\n"
-                                     (ctx-loop/render-block! env ctx-renderer/render-ctx-static))}))
-                       current-messages)
-       :summaries summaries
-       :resumed? true})))
+    (when-let [checkpoint (and (info db sid) (not-empty (ps/db-agent-checkpoint db sid)))]
+      (cond-> (vec checkpoint)
+        (not (str/blank? session-context))
+        (conj {:role "user"
+               :content (str ";; -- CURRENT-SUBAGENT-CONTEXT --\n" session-context)})))))
 
 (defn claim-iteration!
   "Reserve one model iteration. A child budget is durable across replies, turns and restarts.

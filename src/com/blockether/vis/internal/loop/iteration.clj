@@ -2023,12 +2023,15 @@
                                      deref))
                   (ctx-loop/render-block! environment ctx-renderer/ctx-static-map)))
 
+        ;; A child starts every request from the parent handoff: a fold or a later turn
+        ;; rebuilds the same prefix, never from a copy of the parent's turns.
         stable-prompt-messages-for
         (fn [session-context]
-          (prompt/assemble-stable-prompt-messages environment
-                                                  {:system-prompt system-prompt
-                                                   :active-extensions active-exts
-                                                   :session-context session-context}))
+          (or (agents/stable-prefix environment session-context)
+              (prompt/assemble-stable-prompt-messages environment
+                                                      {:system-prompt system-prompt
+                                                       :active-extensions active-exts
+                                                       :session-context session-context})))
 
         stable-prompt-messages
         (stable-prompt-messages-for static-context-str)
@@ -2214,11 +2217,7 @@
 
         message-base-atom
         (atom
-          (or (agents/inherited-base environment
-                                     (or turn-position 1)
-                                     current-turn-messages
-                                     summaries-at-turn-start)
-              resumed-message-base
+          (or resumed-message-base
               {:messages (canonical-messages) :summaries summaries-at-turn-start :resumed? false}))
 
         ;; Transport folds survive subsequent iterations without changing the semantic ledger.

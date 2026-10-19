@@ -130,11 +130,11 @@
       ;; #202: only a managed subagent wakes itself; an independent leader stays idle.
       (expect (not (agents/wake-allowed? db leader leader)))
       (expect (not (agents/wake-allowed? db other other)))
-      (expect
-        (= [{:role :user :content "Full current context"} {:role :user :content "Delegated task"}]
-           (:messages (agents/inherited-base env 2 [{:role :user :content "Delegated task"}] []))))
-      (expect (nil? (agents/inherited-base env 3 [] [])))
-      (expect (not= :running (:status (last (ps/db-list-session-turns db child)))))
+      (expect (= [{:role :user :content "Full current context"}
+                  {:role "user" :content ";; -- CURRENT-SUBAGENT-CONTEXT --\nChild block"}]
+                 (agents/stable-prefix env "Child block")))
+      (expect (nil? (agents/stable-prefix {:db-info db :session-id other} "Leader block")))
+      (expect (empty? (ps/db-list-session-turns db child)) "A child copies no parent turn")
       (expect (not (some #(= child (str (:id %))) (ps/db-list-sessions db :all))))
       (expect (agents/controls? db leader child))
       (expect (agents/controls? db child child))

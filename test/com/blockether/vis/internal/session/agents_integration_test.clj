@@ -153,11 +153,54 @@
               (expect (= "budget_limited"
                          (:status (agents/info (:db-info child) (:session-id child)))))
               (h/fork-session! (:db-info child) (:session-id child) {})
-              (expect
-                (nil? (agents/inherited-base child 2 [{:role "user" :content "Post-fold task"}] []))
-                "A later state must not reinherit the parent's checkpoint at a repeated turn position"))
+              (expect (= (vec checkpoint) (agents/stable-prefix child ""))
+                      "A later state of the child still starts from the parent's checkpoint"))
             (finally (loop-env/dispose-environment! child))))
         (finally (loop-env/dispose-environment! parent))))))
+
+;; Regression: a child copied the parent's turns. A fold rebuilt the child's request from those
+;; copies, so the parent's raw requests replaced the handoff and its end marker.
+(defdescribe
+  child-keeps-the-handoff-after-a-fold-test
+  (it
+    "keeps the parent handoff as the child's base after a fold, without copied turns"
+    (let [parent (loop-env/create-environment (router) {:db :memory})]
+      (try (with-redefs [svar/ask-code! (fn [_ _]
+                                          {:stop-reason :end :content "Parent result"})]
+             (turn/run-turn! parent "Parent request that the child must not own" {}))
+           (let [handoff (agents/handoff (:agent-checkpoint (ctx-loop/read-turn-state parent)))
+                 child (child-environment parent handoff 4 nil)
+                 calls (atom [])]
+
+             (try (with-redefs
+                    [svar/ask-code!
+                     (fn [_ opts]
+                       (swap! calls conj (:messages opts))
+                       (case (count @calls)
+                         1
+                         (code-response "print('Raw child evidence')")
+
+                         2
+                         (code-response
+                           "print(fold_session(f\"-t{session['turn']}/i1\", 'Child gist'))")
+
+                         {:stop-reason :end :content "Delegated result"}))]
+                    (turn/run-turn! child "Child task after the handoff" {}))
+                  (expect (= 3 (count @calls)))
+                  (doseq [messages @calls]
+                    (expect (boolean (= (mapv message-text handoff)
+                                        (mapv message-text (take (count handoff) messages))))
+                            "Every request starts with the handoff"))
+                  (let [after-fold (str/join "\n" (map message-text (last @calls)))]
+                    (expect (str/includes? after-fold "END-OF-PARENT-CONVERSATION"))
+                    (expect (str/includes? after-fold "Child gist"))
+                    (expect (not (str/includes? after-fold "Raw child evidence"))))
+                  (expect (= ["Child task after the handoff"]
+                             (mapv :user-request
+                                   (ps/db-list-session-turns (:db-info child) (:session-id child))))
+                          "A child owns only its own turns")
+                  (finally (loop-env/dispose-environment! child))))
+           (finally (loop-env/dispose-environment! parent))))))
 
 (defdescribe
   subagent-file-grant-test

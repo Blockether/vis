@@ -178,11 +178,12 @@
                              [:history :total]))))))))
 
 (defdescribe
-  managed-child-copies-no-iterations-test
+  managed-child-copies-nothing-test
   ;; A subagent copied every leader iteration, its Activity and its tool files: 97% of the
-  ;; child iterations in a measured store. Its checkpoint is its first model input.
+  ;; child iterations in a measured store. Later it still copied the leader's turns, and a fold
+  ;; rebuilt its request from them. Its handoff checkpoint is now its only parent context.
   (it
-    "copies the turns and user files of a subagent, but no iteration or Activity"
+    "copies no turn, user file, iteration or Activity into a subagent"
     (let [store
           (h/store)
 
@@ -217,18 +218,14 @@
                                                 :spawn_fingerprint "fixture"
                                                 :checkpoint [{:role :user :content "Context"}]}})
 
-              [ct1 :as child-turns]
+              child-turns
               (fork-turn-ids store child)]
 
-          (expect (= ["Q1"] (mapv :user-request (db/db-list-session-turns store child))))
-          (expect (= 1 (count child-turns)))
-          (expect (empty? (db/db-list-session-turn-iterations store ct1)))
+          (expect (empty? child-turns))
           (expect (= 1 (h/raw-count store :activity_history)))
           (expect (= 0 (h/raw-count store :activity_history [:= :session_soul_id (str child)])))
           (expect (= 5 (h/raw-count store :activity_invocation)))
-          (expect (= 2 (h/raw-count store :session_attachment [:= :filename "note.png"])))
-          (expect (= 1
-                     (h/raw-count store :session_attachment [:= :session_turn_soul_id (str ct1)])))
+          (expect (= 1 (h/raw-count store :session_attachment [:= :filename "note.png"])))
           ;; The leader keeps its own steps and Activity.
           (expect (= aid1 (form-history-id store t1)))
           (expect (= [{:role :user :content "Context"}] (db/db-agent-checkpoint store child))))))))

@@ -5498,9 +5498,8 @@
    Optional `:agent` metadata creates a managed child instead: it persists lineage,
    budget and a complete model-input checkpoint, hides the child from the leader
    list and copies model preferences. The caller validates delegation ownership and
-   supplies a fresh shared-root workspace. The checkpoint is the child's first model
-   input, so a child copies each turn and its user files, but no iteration, Activity
-   or tool file.
+   supplies a fresh shared-root workspace. The checkpoint is the child's handoff and
+   the base of each of its requests, so a child copies no turn, file or Activity.
 
    Copies rows generically (`SELECT *` → re-insert with remapped id/FK columns),
    so it stays correct as columns evolve. Required opt: `:workspace-id`. Returns
@@ -5606,8 +5605,8 @@
                                     (:llm_root_provider current)
                                     (assoc :llm_root_provider
                                       (name (->kw (:llm_root_provider current)))))]})
-              ;; Deep-copy each source turn into the fork's root state.
-              (doseq [[idx turn] (map-indexed vector cut)]
+              ;; Deep-copy each source turn into the fork's root state. A child gets the handoff.
+              (doseq [[idx turn] (map-indexed vector (when-not agent cut))]
                 (let [old-soul-s (->ref (:id turn))
                       new-turn-soul-id (str (new-uuid))
                       soul-row (query-one!
@@ -5623,7 +5622,7 @@
                                                     :where [:= :session_turn_soul_id
                                                             old-soul-s]}]]})
                       new-ts-id (str (new-uuid))
-                      iters (when (and ts-row (not agent))
+                      iters (when ts-row
                               (query! tx-info
                                       {:select [:*]
                                        :from :session_turn_iteration
@@ -5636,9 +5635,7 @@
                       atts (query! tx-info
                                    {:select [:*]
                                     :from :session_attachment
-                                    :where (cond-> [:and [:= :session_turn_soul_id old-soul-s]]
-                                             agent
-                                             (conj [:= :session_turn_iteration_id nil]))})
+                                    :where [:= :session_turn_soul_id old-soul-s]})
                       ;; Each copy gets its new id first: a copied step record
                       ;; (`user_input`) names its stored files by id.
                       att-id-map (into {}
@@ -5710,7 +5707,7 @@
                           {:insert-into :session_agent
                            :values [(assoc agent
                                       :session_id new-soul-id
-                                      :inherited_turns (count cut)
+                                      :inherited_turns 0
                                       ;; Stores keep this NOT NULL column; every child is a leader's child.
                                       :depth 1
                                       :checkpoint (->blob (:checkpoint agent))
