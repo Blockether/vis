@@ -15,6 +15,8 @@ A hang report uses its capture date.
 - **A task stopped making progress, or the whole gateway stopped answering.** Read
   the [hang reports](#hang-reports) and the [evidence collected from outside the
   gateway](#when-the-whole-jvm-stops-answering).
+- **A turn failed with a provider error, and you need the cause.** [Find a provider
+  error](#find-a-provider-error) by its session, turn or request ID.
 - **You are about to attach logs to a bug report.** [Review them
   first](#review-before-sharing). Logs can contain anything a command printed.
 - **You want to know how long logs are kept.** See [Rotation and
@@ -35,6 +37,7 @@ that change between runs.
 | Gateway diagnostics and extension `vis.log` messages | `gateway-<UTC-start>-pid<PID>.log` | Text |
 | Terminal UI diagnostics | `tui-<UTC-start>-pid<PID>.log` | Text |
 | Short-lived CLI diagnostics | `vis-<UTC-start>-pid<PID>.log` | Text |
+| Warnings and errors of the gateway, TUI or CLI process | `<role>-<UTC-start>-pid<PID>.problems.jsonl` | JSON lines |
 | Gateway launcher output, including startup failures | `gateway-boot-<database-hash>-<time>-<random>.log` | Text |
 | A command's stdout and stderr | `shell/<session>/<id>.log` | Text |
 | Python worker startup output and errors | `pyext-<worker-id>/worker.log` | Text |
@@ -48,6 +51,67 @@ that change between runs.
 Shell results expose their exact `log_path`. It stays the same after midnight or
 a gateway restart. Hang warnings also include the report path. Ordinary process
 logs use a start timestamp such as `20260914T153000Z` to distinguish runs.
+
+## Find a provider error
+
+A provider error is a failure of the model call: a rate limit, a rejected credential, an
+HTTP error or a closed stream. Vis records each warning and error of one turn in three
+places. Look in this order:
+
+1. The error card in the chat names the provider, the HTTP status and the request ID.
+2. The problem log keeps every warning and error of the process as JSON lines.
+3. The session database keeps the same signals in its `log` table.
+
+### Problem log
+
+Each process writes `<role>-<UTC-start>-pid<PID>.problems.jsonl` next to its text log.
+`<role>` is `gateway`, `tui` or `vis`. Each line is one JSON object, for example:
+
+```json
+{"ts":"2026-10-12T03:28:07.499Z","level":"warn","id":"com.blockether.svar.internal.llm/retry-declined","msg":"not retrying provider failure","session_id":"36c4556d-f07e-4a40-851a-62dc18cc8caf","turn_id":"7e28b0fb-3349-405c-9d98-4cace35baed7","turn":3,"iteration":1,"query_id":"fcbaf266-5119-45a4-b7e7-8505e38886fe","request_id":"req_42","status":429,"category":"quota-exhausted","error":"Exceptional status code: 429"}
+```
+
+The main fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `level` | `warn`, `error` or `fatal`. |
+| `id` | The signal name, for example `retry-declined`, `auth-provider-fallback` or `credential-refresh-failed`. |
+| `session_id`, `turn_id`, `turn` | The session and the turn that made the call. |
+| `iteration`, `query_id` | The model call inside the turn. Vis gives each call one query ID. |
+| `request_id` | The ID that the provider gave the HTTP request. Give it to the provider's support. |
+| `status`, `category`, `error` | The HTTP status, the failure class and the error message. |
+| `data` | Other details of the signal. |
+
+To list the problems of one session, run this command:
+
+```bash
+grep -h '"session_id":"<session-id>"' ~/.vis/logs/*/*.problems.jsonl
+```
+
+Vis redacts labelled credentials, such as `api_key` or `Authorization` values, and limits
+each text value to 2,000 characters. Review the lines before you share them.
+
+### Session database
+
+The `log` table in `~/.vis/vis.mdb/vis.db` keeps the `info`, `warn` and `error` signals
+of each session. Its `data` column holds the same message and details as JSON. Open the
+database read-only, so that a running gateway is not changed:
+
+```bash
+sqlite3 -readonly ~/.vis/vis.mdb/vis.db \
+  "select datetime(created_at/1000,'unixepoch'), level, event, data from log
+   where session_soul_id = '<session-id>' and level in ('warn','error')
+   order by created_at"
+```
+
+`session_turn_soul_id` and `session_turn_iteration_id` filter one turn or one step.
+
+### From inside a session
+
+An agent reads the same evidence with `read_session()`. The `failures` and `diagnosis`
+fields summarize the failed steps of a session. For a past turn, search the problem log
+by `turn_id` or `query_id`.
 
 ## Python runtime
 

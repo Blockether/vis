@@ -23,6 +23,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.credential-command :as cred]
@@ -202,6 +203,112 @@
   []
   (trove/set-log-fn! (trove-telemere/get-log-fn)))
 
+(def ^:private problem-levels
+  "Signal levels that the problem log keeps: the ones a person reads to find a failure."
+  #{:warn :error :fatal})
+
+(def ^:private problem-string-chars
+  "Cap for one string value in a problem log line, so a large payload stays readable."
+  2000)
+
+(def ^:private problem-collection-items
+  "Cap for the items of one collection in a problem log line."
+  50)
+
+(def ^:private problem-data-keys
+  "Data keys that a problem log line promotes to top-level correlation fields."
+  [:iteration :query-id :request-id :status :category :provider :provider-id :model :error])
+
+(defn- problem-value
+  "Redact credentials and bound the size of one value for the problem log."
+  [value]
+  (cond (map? value) (into {}
+                           (comp (take problem-collection-items)
+                                 (map (fn [[k v]]
+                                        [k
+                                         (if (and (util/secret-key? k)
+                                                  (not (or (nil? v) (number? v) (boolean? v))))
+                                           "[REDACTED]"
+                                           (problem-value v))])))
+                           value)
+        (or (sequential? value) (set? value))
+        (into [] (comp (take problem-collection-items) (map problem-value)) value)
+        (string? value) (util/redact-secret-text (util/truncate value problem-string-chars))
+        (or (nil? value) (number? value) (boolean? value) (keyword? value) (uuid? value)) value
+        :else (util/redact-secret-text (util/truncate (str value) problem-string-chars))))
+
+(defn- signal-id-text [id] (when (some? id) (if (keyword? id) (subs (str id) 1) (str id))))
+
+(defn problem-log-line
+  "One JSON line for a warning or error signal, or nil for a lower level (issue #403).
+
+   The line carries the correlation ids that find the failure again: `session_id`,
+   `turn_id`, `turn`, `iteration_id`, `iteration`, `query_id` and `request_id`, plus
+   `status`, `category`, `provider` and `error`. Credentials are redacted and large
+   values are bounded. Never throws."
+  [signal]
+  (when (contains? problem-levels (:level signal))
+    (try
+      (let [ctx
+            (or (:ctx signal) {})
+
+            data
+            (:data signal)
+
+            data-map
+            (when (map? data) data)
+
+            error
+            (:error signal)
+
+            row
+            (cond-> {:ts (some-> (:inst signal)
+                                 str)
+                     :level (name (:level signal))
+                     :id (signal-id-text (:id signal))
+                     :ns (some-> (:ns signal)
+                                 str)
+                     :msg (some-> (:msg_ signal)
+                                  force
+                                  str
+                                  not-empty)
+                     :session-id (:session-soul-id ctx)
+                     :turn-id (:session-turn-id ctx)
+                     :turn (:turn ctx)
+                     :iteration-id (:iteration-id ctx)}
+              data-map
+              (merge (select-keys data-map problem-data-keys))
+
+              (some? error)
+              (assoc :error {:class (.getName (class error)) :message (ex-message error)})
+
+              (and (some? data)
+                   (or (nil? data-map) (seq (apply dissoc data-map problem-data-keys))))
+              (assoc :data (if data-map (apply dissoc data-map problem-data-keys) data)))]
+
+        (str (wire/json-str (problem-value (into {} (remove (comp nil? val)) row))) "\n"))
+      (catch Throwable _ nil))))
+
+(defn problem-log-path
+  "This process's problem log: the process log path with `.problems.jsonl` in place of
+   `.log`, so it shares the log directory, its date and its retention sweep."
+  ^String []
+  (str/replace (log-path) #"\.log$" ".problems.jsonl"))
+
+(defn problem-log-handler
+  "Telemere file handler that appends `problem-log-line` rows to `path`."
+  [path]
+  (tel/handler:file (assoc diagnostic-log-options
+                      :path path
+                      :output-fn problem-log-line)))
+
+(defn install-problem-log!
+  "Install the `:file/problems` handler for warnings and errors. Idempotent: the same
+   handler id replaces the previous registration."
+  []
+  (try (tel/add-handler! :file/problems (problem-log-handler (problem-log-path)) {:min-level :warn})
+       (catch Throwable _ nil)))
+
 (defn init!
   "Redirect System/out and System/err to the log file. Lanterna uses
    tty-in / tty-out for terminal I/O. Call from the TUI entry point."
@@ -238,6 +345,7 @@
   (tel/add-handler! :file/vis
                     (tel/handler:file (assoc diagnostic-log-options :path (log-path)))
                     {:min-level :debug})
+  (install-problem-log!)
   (tel/call-on-shutdown! (fn []
                            (tel/stop-handlers!))))
 
@@ -275,7 +383,8 @@
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
                     (tel/handler:file (assoc diagnostic-log-options :path (log-path)))
-                    {:min-level :debug}))
+                    {:min-level :debug})
+  (install-problem-log!))
 
 (defn shutdown!
   "Flush and stop all telemere handlers. Call after the TUI screen

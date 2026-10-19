@@ -6478,6 +6478,30 @@
              (finally (loop-env/dispose-environment! env))))))
 
 (defdescribe
+  provider-signal-turn-context-test
+  ;; Issue #403: a provider warning inside a turn must carry its turn ids, so the DB
+  ;; `log` row and the problem log file can be found by turn.
+  (it "gives provider signals the session and turn ids"
+      (let [env (loop-env/create-environment (svar/make-router [{:id :fixture
+                                                                 :api-key "test"
+                                                                 :base-url "http://127.0.0.1:1/v1"
+                                                                 :models [{:name "model"}]}])
+                                             {:db :memory})
+            seen (atom nil)]
+        (try (with-redefs [svar/ask-code! (fn [_ _]
+                                            (reset! seen (:ctx (tel/with-signal
+                                                                 (tel/log! {:level :warn :id ::provider-retry-declined}
+                                                                           "not retrying provider failure"))))
+                                            {:stop-reason :end :content "The answer."})]
+               (turn/turn! env [(svar/user "Answer the question")] {})
+               (expect (= (:session-id env) (:session-soul-id @seen)))
+               (expect (some? (:session-turn-id @seen)))
+               (expect (= (str (:session-turn-id (ctx-loop/read-turn-state env)))
+                          (str (:session-turn-id @seen))))
+               (expect (= 1 (:turn @seen))))
+             (finally (loop-env/dispose-environment! env))))))
+
+(defdescribe
   finalize-answer-test
   "The ANSWER is the model's own prose and NOTHING else: `finalize-answer!` stores
    it verbatim as the turn's best answer — no artifact is ever spliced under it."

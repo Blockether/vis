@@ -328,9 +328,13 @@
 
         result
         (try (let [raw
-                   (iteration/iteration-loop env
-                                             user-request
-                                             (assoc loop-opts :session-turn-id session-turn-id))
+                   ;; Turn ids in the Telemere context reach the DB `log` row and the
+                   ;; problem log, so a provider failure is found by its turn (issue #403).
+                   (tel/with-ctx+ {:session-turn-id session-turn-id :turn (or turn-position 1)}
+                                  (iteration/iteration-loop env
+                                                            user-request
+                                                            (assoc loop-opts
+                                                              :session-turn-id session-turn-id)))
 
                    result
                    (if-let [prepare-result (get-in loop-opts [:hooks :prepare-result])]
