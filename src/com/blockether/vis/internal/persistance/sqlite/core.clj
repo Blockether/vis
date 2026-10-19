@@ -757,7 +757,10 @@
         (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet ^AtomicLong pool-counter)))]
 
     (try (with-migration-lock! path #(install-schema! pool))
-         (maintenance/vacuum-async! pool file {:before #(rewrite-older-store! pool)})
+         (maintenance/vacuum-async! pool
+                                    file
+                                    {:before #(do (maintenance/prune-log! pool)
+                                                  (rewrite-older-store! pool))})
          pool
          (catch Throwable t (try (.close pool) (catch Throwable _ nil)) (throw t)))))
 
@@ -1088,36 +1091,50 @@
 
 ;; Logging - log table
 
+(def ^:private ^:const log-steady-prune-rows
+  "Aged `log` rows that one `db-log!` also deletes. More than one insert, so a store that
+   never restarts stays inside `maintenance/log-retention-days`."
+  4)
+
 (defn db-log!
+  "Insert one diagnostic row and delete a few rows older than the log retention."
   [db-info entry]
   (when (ds db-info)
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
-        (execute! tx-info
-                  {:insert-into :log
-                   :values [(cond-> {:id (new-id)
-                                     :level (->kw (:level entry))
-                                     :event (str (:event entry))
-                                     :created_at (now-ms)}
-                              (:data entry)
-                              (assoc :data (:data entry))
+        (let [now (now-ms)]
+          (execute! tx-info
+                    {:insert-into :log
+                     :values
+                     [(cond-> {:id (new-id)
+                               :level (->kw (:level entry))
+                               :event (str (:event entry))
+                               :created_at now}
+                        (:data entry)
+                        (assoc :data (:data entry))
 
-                              (:session-soul-id entry)
-                              (assoc :session_soul_id (->id (:session-soul-id entry)))
+                        (:session-soul-id entry)
+                        (assoc :session_soul_id (->id (:session-soul-id entry)))
 
-                              (:session-state-id entry)
-                              (assoc :session_state_id (->id (:session-state-id entry)))
+                        (:session-state-id entry)
+                        (assoc :session_state_id (->id (:session-state-id entry)))
 
-                              (:session-turn-soul-id entry)
-                              (assoc :session_turn_soul_id (->id (:session-turn-soul-id entry)))
+                        (:session-turn-soul-id entry)
+                        (assoc :session_turn_soul_id (->id (:session-turn-soul-id entry)))
 
-                              (:session-turn-state-id entry)
-                              (assoc :session_turn_state_id (->id (:session-turn-state-id entry)))
+                        (:session-turn-state-id entry)
+                        (assoc :session_turn_state_id (->id (:session-turn-state-id entry)))
 
-                              (:iteration-id entry)
-                              (assoc :session_turn_iteration_id
-                                (->id (:iteration-id entry))))]})))))
+                        (:iteration-id entry)
+                        (assoc :session_turn_iteration_id (->id (:iteration-id entry))))]})
+          (execute! tx-info
+                    {:delete-from :log
+                     :where [:in :rowid
+                             {:select [:rowid]
+                              :from :log
+                              :where [:< :created_at (maintenance/log-cutoff-ms now)]
+                              :limit log-steady-prune-rows}]}))))))
 
 ;; Workspace - trunk-native work units
 

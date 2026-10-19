@@ -4045,22 +4045,47 @@
           (expect (= "(+ 1 1)" (:code iteration)))
           (expect (= "2\n" (:stdout form)))))))
 
-(defdescribe log-test
-             (it "inserts into log table with FK scope"
-                 (let [s
-                       (h/store)
+(defdescribe
+  log-test
+  (it "inserts into log table with FK scope"
+      (let [s
+            (h/store)
 
-                       cid
-                       (h/store-session! s {:channel :tui})]
+            cid
+            (h/store-session! s {:channel :tui})]
 
-                   (persistance/db-log!
-                     s
-                     {:level :info :event "test.event" :data "{\"k\":1}" :session-soul-id cid})
-                   (expect (= 1 (raw-count s :log)))
-                   (let [row (first (raw-query s {:select [:*] :from :log}))]
-                     (expect (= "info" (:level row)))
-                     (expect (= "test.event" (:event row)))
-                     (expect (= (str cid) (:session_soul_id row)))))))
+        (persistance/db-log!
+          s
+          {:level :info :event "test.event" :data "{\"k\":1}" :session-soul-id cid})
+        (expect (= 1 (raw-count s :log)))
+        (let [row (first (raw-query s {:select [:*] :from :log}))]
+          (expect (= "info" (:level row)))
+          (expect (= "test.event" (:event row)))
+          (expect (= (str cid) (:session_soul_id row))))))
+  (it "deletes a few rows older than the log retention with each insert"
+      (let [s
+            (h/store)
+
+            aged
+            (- (System/currentTimeMillis) (* 15 86400000))
+
+            aged-count
+            #(count (raw-query s
+                               {:select [:id]
+                                :from :log
+                                :where [:< :created_at
+                                        (- (System/currentTimeMillis) (* 14 86400000))]}))]
+
+        (doseq [i (range 6)]
+          (jdbc/execute!
+            (:datasource s)
+            ["INSERT INTO log (id, level, event, created_at) VALUES (?, 'info', 'old', ?)"
+             (str "old-" i) aged]))
+        (persistance/db-log! s {:level :info :event "new.1"})
+        (expect (= 2 (aged-count)))
+        (persistance/db-log! s {:level :info :event "new.2"})
+        (expect (zero? (aged-count)))
+        (expect (= 2 (raw-count s :log))))))
 
 ;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 
