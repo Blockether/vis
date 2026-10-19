@@ -2331,23 +2331,54 @@
                         (await-daemon-down! db (:host entry) (:port entry))
                         (ensure-gateway-serving! "/" {:host host :port port}))))))))
 
+(defn- web-launch-url
+  "The address that opens the web app of gateway `entry` and connects the browser
+   to it: the app address with a one-time launch code and the gateway id in the
+   fragment. A browser never sends the fragment to a server. Nil when the gateway
+   mints no code, such as an older gateway without the route."
+  [entry]
+  (try (let [response
+             (gw-send! entry "POST" "/v1/web/launches" {:timeout-ms 10000})
+
+             body
+             (when (= 200 (:status response)) (parse-json-body (:body response)))
+
+             code
+             (some-> (get body "code")
+                     str
+                     not-empty)
+
+             id
+             (some-> (get body "gateway_id")
+                     str
+                     not-empty)]
+
+         (when (and code id) (str (web-url entry) "#launch=" (enc code) "&gw=" (enc id))))
+       (catch Throwable _ nil)))
+
 (defn run-web!
   "Serve the Companion web app from a gateway while holding a client lease, as
    [[run-tui!]] does for the terminal client. `opts` may name the gateway address
    (`:host`, `:port`; see [[web-gateway!]]) and the milliseconds between health
-   checks (`:interval-ms`). `on-ready` receives `{:url :host :port :remote?}` once
-   the gateway serves the app: the browser address, then the daemon's bind host
-   and port. Blocks while the gateway answers and returns exit code 1 after three
-   failed checks in a row; Ctrl-C ends the process, and the shutdown hook releases
-   the lease."
+   checks (`:interval-ms`). `on-ready` receives `{:url :app-url :launch? :host :port
+   :remote?}` once the gateway serves the app. `:url` is the address to open: the
+   one-time launch address of [[web-launch-url]], or `:app-url` when the gateway
+   mints no code. `:host` and `:port` are the daemon's bind. Blocks while the
+   gateway answers and returns exit code 1 after three failed checks in a row;
+   Ctrl-C ends the process, and the shutdown hook releases the lease."
   ([on-ready] (run-web! on-ready nil))
   ([on-ready {:keys [interval-ms] :or {interval-ms web-watch-interval-ms} :as opts}]
    (try (let [entry (web-gateway! opts)]
           (ensure-client! entry)
-          (on-ready {:url (web-url entry)
-                     :host (:host entry)
-                     :port (:port entry)
-                     :remote? (boolean (:remote? entry))})
+          (let [app-url (web-url entry)
+                launch-url (web-launch-url entry)]
+
+            (on-ready {:url (or launch-url app-url)
+                       :app-url app-url
+                       :launch? (boolean launch-url)
+                       :host (:host entry)
+                       :port (:port entry)
+                       :remote? (boolean (:remote? entry))}))
           (loop [misses 0]
             (if (>= misses 3)
               1

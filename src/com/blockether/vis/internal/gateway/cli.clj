@@ -353,12 +353,21 @@
    bound beyond loopback also serves other devices, and requires its token there.
    `--pair` adds the companion pairing block of `vis-agent gateway start --pair`.
 
+   A launch address connects the browser that opens it to this gateway, also with
+   `--no-open`: a wrapper opens the printed address, and its browser needs no
+   pasted token. The address works once, so a later visit uses the saved machine.
+
    A browser records voice only on a secure page: HTTPS or this computer's loopback.
    Another `http://` address, such as the WSL address that a Windows browser opens,
    needs the Chrome flag that lists it as secure."
-  [parsed {:keys [url host port remote?]}]
+  [parsed {:keys [url launch? host port remote?]}]
   (let [pair? (boolean (get parsed "pair"))]
     (commandline/stdout! (str "Vis web app: " url))
+    (when launch?
+      (commandline/stdout!
+        (str "This address connects one browser to this gateway. It works once, within "
+             (quot (long web/LAUNCH_TTL_MS) 60000)
+             " minutes.")))
     (when-not (or remote? (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
       (when-let [others (->> (pairing/candidate-hosts host)
                              (remove #{"127.0.0.1" "::1" "localhost"})

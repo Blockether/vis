@@ -79,7 +79,6 @@
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption OpenOption Path]
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
-           [java.security MessageDigest]
            [java.util.concurrent ArrayBlockingQueue TimeUnit]
            [java.util.zip GZIPOutputStream]
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
@@ -1371,14 +1370,6 @@
   []
   (boolean (:require-token? @instance/server-state)))
 
-(defn- constant-time=?
-  "Timing-safe comparison for secret strings. Plain `=` early-outs on the
-   first differing byte, leaking token length/prefix through response timing
-   once auth is enabled (non-loopback); `MessageDigest/isEqual` compares in
-   constant time. nil-safe — a missing header never matches."
-  [^String a ^String b]
-  (boolean (and a b (MessageDigest/isEqual (util/utf8 a) (util/utf8 b)))))
-
 (defn- wrap-auth
   "Token gate (§3). Skipped entirely when [[auth-required?]] is false
    (loopback default). When on: the API sends `Authorization: Bearer`;
@@ -1405,19 +1396,22 @@
                         ;; client is GENERATED against a gateway before it holds
                         ;; a token.
                         (= "/openapi.json" uri)
+                        ;; A browser that `vis-agent web` opened holds only a one-time
+                        ;; launch code, which this route exchanges for the token.
+                        (= "/v1/web/launches/redeem" uri)
                         (some #(contains? (or (:open-uris %) #{}) uri) contribs))
-              authed? (or (constant-time=? expected
-                                           (some-> (get-in request [:headers "authorization"])
-                                                   str/trim))
+              authed? (or (util/constant-time=? expected
+                                                (some-> (get-in request [:headers "authorization"])
+                                                        str/trim))
                           ;; The internal same-machine client (TUI/CLI) carries the
                           ;; SAME secret in X-Vis-Gateway-Secret (read from the on-disk
                           ;; registry) — the header it already sends on the /healthz
                           ;; probe. Accept it so a token-gated gateway (any non-loopback
                           ;; bind like --host 0.0.0.0) doesn't 401 its own local clients.
-                          (constant-time=? (str token)
-                                           (some-> (get-in request
-                                                           [:headers "x-vis-gateway-secret"])
-                                                   str/trim))
+                          (util/constant-time=? (str token)
+                                                (some-> (get-in request
+                                                                [:headers "x-vis-gateway-secret"])
+                                                        str/trim))
                           (some (fn [{:keys [request-authed-fn]}]
                                   (when request-authed-fn (request-authed-fn request token)))
                                 contribs))]
@@ -1434,7 +1428,7 @@
   "Paths that answer EVEN an unsupported client. They are HOW a peer learns the
    gateway's protocol and reads the mismatch verdict, so refusing them would
    leave an old client with nothing but an opaque failure."
-  #{"/healthz" "/readyz" "/v1/capabilities" "/openapi.json"})
+  #{"/healthz" "/readyz" "/v1/capabilities" "/openapi.json" "/v1/web/launches/redeem"})
 
 (defn- wrap-protocol
   "Wire-protocol gate (§3). API clients must advertise a compatible version.
@@ -1561,7 +1555,7 @@
   [server-handlers council-api/handlers rooms-api/handlers automations-api/handlers
    evals-api/handlers decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
    projects-api/handlers providers-api/handlers sessions-api/handlers settings-api/handlers
-   speech-api/handlers transcripts-api/handlers turns-api/handlers views-api/handlers])
+   speech-api/handlers transcripts-api/handlers turns-api/handlers views-api/handlers web/handlers])
 
 (defn- route-precedence
   "Sort key for a route path. At the first segment where two paths differ, a fixed

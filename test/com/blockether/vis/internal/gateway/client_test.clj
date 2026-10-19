@@ -171,21 +171,50 @@
                                                 (expect (= fake-entry entry))
                                                 (swap! calls conj :acquire))
                          (rv 'gw-send!) (fn [entry method path _]
-                                          (expect (= [fake-entry "GET" "/healthz"]
-                                                     [entry method path]))
-                                          (let [[answer] @answers]
-                                            (swap! answers rest)
-                                            (swap! calls conj :check)
-                                            (if (= :down answer)
-                                              (throw (java.net.ConnectException. "refused"))
-                                              {:status answer})))
+                                          (expect (= fake-entry entry))
+                                          (if (= ["POST" "/v1/web/launches"] [method path])
+                                            (do (swap! calls conj :launch)
+                                                {:status 200
+                                                 :body "{\"code\":\"c0de\",\"gateway_id\":\"g1\"}"})
+                                            (let [[answer] @answers]
+                                              (expect (= ["GET" "/healthz"] [method path]))
+                                              (swap! answers rest)
+                                              (swap! calls conj :check)
+                                              (if (= :down answer)
+                                                (throw (java.net.ConnectException. "refused"))
+                                                {:status answer}))))
                          (rv 'release-client!) #(swap! calls conj :release)}
           (fn []
-            (expect (= 1 (client/run-web! #(swap! calls conj [:ready (:url %)]) {:interval-ms 0})))
-            (expect (= [[:serve "/"] :acquire [:ready "http://127.0.0.1:7890/"] :check :check :check
-                        :check :check :check :release]
+            (expect (= 1
+                       (client/run-web! #(swap! calls conj
+                                           [:ready (select-keys % [:url :app-url :launch?])])
+                                        {:interval-ms 0})))
+            ;; #397: the browser opens the one-time launch address of this gateway.
+            (expect (= [[:serve "/"] :acquire :launch
+                        [:ready
+                         {:url "http://127.0.0.1:7890/#launch=c0de&gw=g1"
+                          :app-url "http://127.0.0.1:7890/"
+                          :launch? true}] :check :check :check :check :check :check :release]
                        @calls))
             (expect (empty? @answers)))))))
+
+(defdescribe
+  web-app-opens-the-plain-address-when-no-launch-code-comes
+  (it "web app opens the plain address when the gateway mints no launch code"
+      ;; An older gateway has no launch route; `vis-agent web` still opens the app.
+      (let [ready (atom nil)]
+        (with-redefs-fn {(rv 'ensure-gateway-serving!) (constantly fake-entry)
+                         (rv 'ensure-client!) (constantly nil)
+                         (rv 'gw-send!) (fn [_ method _ _]
+                                          (if (= "POST" method)
+                                            {:status 404 :body "{}"}
+                                            (throw (java.net.ConnectException. "refused"))))
+                         (rv 'release-client!) (constantly nil)}
+          (fn []
+            (expect (= 1 (client/run-web! #(reset! ready %) {:interval-ms 0})))
+            (expect
+              (= {:url "http://127.0.0.1:7890/" :app-url "http://127.0.0.1:7890/" :launch? false}
+                 (select-keys @ready [:url :app-url :launch?]))))))))
 
 (defdescribe
   web-app-uses-or-starts-the-gateway-at-its-address

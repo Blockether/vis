@@ -213,6 +213,23 @@
             (fn []
               (#'gateway-cli/web-ready! {"no-open" true} ready)))
           (expect (= [(str "Vis web app: " (:url ready)) "Press Ctrl-C to stop."] @lines)))))
+  (it "prints the one-time launch address that connects the browser (#397)"
+      (let [lines (atom [])]
+        (with-redefs-fn {#'commandline/stdout! #(swap! lines conj %)}
+          (fn []
+            (#'gateway-cli/web-ready!
+             {"no-open" true}
+             {:url "http://127.0.0.1:7890/#launch=c0de&gw=g1"
+              :app-url "http://127.0.0.1:7890/"
+              :launch? true
+              :host "127.0.0.1"
+              :port 7890
+              :remote? false})))
+        (expect
+          (= ["Vis web app: http://127.0.0.1:7890/#launch=c0de&gw=g1"
+              "This address connects one browser to this gateway. It works once, within 5 minutes."
+              "Press Ctrl-C to stop."]
+             @lines))))
   (it "binds a phone-reachable host for --pair unless --host or --gateway decides"
       (with-redefs-fn {#'pairing/pair-bind-host (constantly "0.0.0.0")}
         (fn []

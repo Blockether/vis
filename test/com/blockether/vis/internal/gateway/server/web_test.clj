@@ -154,3 +154,25 @@
              (it "without a bundle the gateway is unchanged"
                  (let [handler (constantly api-response)]
                    (expect (identical? handler (web/wrap-web handler nil))))))
+
+(defdescribe launch-codes-work-once-and-expire
+             (it "launch codes work once and expire (#397)"
+                 (let [{:keys [code expires-at-ms]} (web/mint-launch! 1000)]
+                   (expect (= (+ 1000 (long web/LAUNCH_TTL_MS)) expires-at-ms))
+                   ;; 32 random bytes, URL-safe: the code rides in a URL fragment
+                   (expect (re-matches #"[A-Za-z0-9_-]{43}" code))
+                   (expect (web/redeem-launch! code 1001))
+                   (expect (not (web/redeem-launch! code 1002))))
+                 (let [{:keys [code]} (web/mint-launch! 1000)]
+                   (expect (not (web/redeem-launch! code (+ 1000 (long web/LAUNCH_TTL_MS))))))
+                 (let [a
+                       (:code (web/mint-launch! 1000))
+
+                       b
+                       (:code (web/mint-launch! 1000))]
+
+                   (expect (not= a b))
+                   (expect (web/redeem-launch! b 1001))
+                   (expect (web/redeem-launch! a 1001)))
+                 (expect (not (web/redeem-launch! "guessed-code")))
+                 (expect (not (web/redeem-launch! nil)))))

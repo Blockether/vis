@@ -8,6 +8,7 @@ import { installDiagnostics } from './lib/diagnostics';
 import { loadHost, stampShellHost } from './lib/host';
 import { perfActive } from './lib/perf';
 import { paintStoredTheme } from './lib/theme';
+import { takeWebLaunch } from './lib/web-launch';
 import './index.css';
 
 installDiagnostics();
@@ -30,13 +31,16 @@ paintStoredTheme();
 // One native question, asked before any field can be focused: is this iOS build
 // a Mac window? The keyboard driver reads the answer synchronously (`pointer.ts`).
 void loadHost();
+// A `vis-agent web` launch rides in the fragment. Take it out before the hash router
+// reads the address, so the used code never stays in the address bar or the history.
+const launch = typeof window === 'undefined' ? null : takeWebLaunch();
 
 const root = createRoot(document.getElementById('root')!);
 
 root.render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <App launch={launch} />
     </ErrorBoundary>
   </StrictMode>,
 );

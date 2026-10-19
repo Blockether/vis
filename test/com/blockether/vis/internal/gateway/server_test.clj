@@ -3495,6 +3495,54 @@
              (finally (run! io/delete-file (reverse (file-seq dir))))))))
 
 (defdescribe
+  web-launch-connects-a-browser-without-the-token
+  (it "web launch connects a browser without the token (#397)"
+      ;; `vis-agent web` mints a one-time code with the gateway secret and puts it in
+      ;; the page fragment. The page redeems it with no token and no protocol header,
+      ;; through the real Jetty adapter, on a loopback and on a token-required gateway.
+      (doseq [require-token? [false true]]
+        (with-server-state!
+          {:require-token? require-token? :token "sekret" :host "0.0.0.0" :port 7890}
+          (fn []
+            (let [server (jetty/run-jetty ((rv 'app) "sekret" [])
+                                          {:port 0 :host "127.0.0.1" :join? false})
+                  base (str "http://127.0.0.1:" (bound-port server))
+                  mint (fn [headers]
+                         (http/post (str base "/v1/web/launches")
+                                    {:headers (merge {"X-Vis-Protocol"
+                                                      (str gateway-contract/protocol-version)}
+                                                     headers)
+                                     :throw false}))
+                  redeem (fn [code]
+                           (http/post (str base "/v1/web/launches/redeem")
+                                      {:headers {"Content-Type" "application/json"}
+                                       :body (wire/json-str {:code code})
+                                       :throw false}))]
+
+              (try
+                ;; Only a holder of the secret mints, also where the API is open.
+                (expect (= 401 (:status (mint {}))))
+                (expect (= 401 (:status (mint {"X-Vis-Gateway-Secret" "nope"}))))
+                (let [minted (wire/parse-json (:body (mint {"X-Vis-Gateway-Secret" "sekret"})))
+                      code (get minted "code")
+                      grant (redeem code)]
+
+                  (expect (= (instance/gateway-instance-id nil "0.0.0.0" 7890)
+                             (get minted "gateway_id")))
+                  (expect (= 200 (:status grant)))
+                  (expect (= "no-store" (get-in grant [:headers "cache-control"])))
+                  (expect (= {"gateway_id" (get minted "gateway_id")
+                              "token" "sekret"
+                              "require_token" require-token?}
+                             (wire/parse-json (:body grant))))
+                  ;; A code works once.
+                  (expect (= 404 (:status (redeem code)))))
+                (expect (= 200 (:status (mint {"Authorization" "Bearer sekret"}))))
+                (expect (= 404 (:status (redeem "guessed-code"))))
+                (expect (= 404 (:status (redeem nil))))
+                (finally (.stop server)))))))))
+
+(defdescribe
   attachment-bytes-never-run-as-the-gateway-origin
   (it "attachment bytes never run as the gateway origin"
       ;; The web app shares the gateway origin and keeps saved gateway tokens there,

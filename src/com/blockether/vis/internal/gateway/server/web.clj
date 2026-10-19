@@ -12,9 +12,17 @@
    The bundle is public content, like `/docs`: it holds no secret, and the app
    authenticates its own API calls. Only GET and HEAD requests for a file that
    exists inside the folder are answered here; the API, the docs and every
-   missing file fall through to the router unchanged."
+   missing file fall through to the router unchanged.
+
+   A web launch connects a fresh browser without a pasted token. `vis-agent web`
+   asks its gateway for a one-time launch code that expires in [[LAUNCH_TTL_MS]].
+   The code goes into the URL fragment, and the app exchanges it once for the
+   gateway id and token. The long-lived token never enters a URL."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [com.blockether.vis.internal.gateway.server.http :as http]
+            [com.blockether.vis.internal.gateway.server.instance :as instance]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.io File]))
 
 (def ^:private content-types
@@ -126,3 +134,104 @@
                                        (bundle-file uri))]
                  (file-response request file)))
              (handler request)))))))
+
+(def LAUNCH_TTL_MS
+  "How long a launch code stays redeemable. A browser that `vis-agent web` opens
+   redeems it in seconds; a wrapper that opens the address itself gets minutes."
+  (* 5 60 1000))
+
+(defonce ^:private launches (atom {}))
+
+(defn mint-launch!
+  "Record a new one-time launch code and return `{:code :expires-at-ms}`. Expired
+   codes are dropped on each call, so the store never grows past live launches."
+  ([] (mint-launch! (util/now-ms)))
+  ([^long now]
+   (let [code
+         (util/base64url (util/random-bytes 32))
+
+         expires-at-ms
+         (+ now (long LAUNCH_TTL_MS))]
+
+     (swap! launches (fn [codes]
+                       (assoc (into {}
+                                    (filter (fn [[_ expiry]]
+                                              (> (long expiry) now)))
+                                    codes)
+                         code expires-at-ms)))
+     {:code code :expires-at-ms expires-at-ms})))
+
+(defn redeem-launch!
+  "True once for a code that [[mint-launch!]] returned and that has not expired.
+   Any attempt consumes the code, so a second or a late attempt is false."
+  ([code] (redeem-launch! code (util/now-ms)))
+  ([code ^long now]
+   (let [code
+         (str code)
+
+         [codes _]
+         (swap-vals! launches dissoc code)]
+
+     (boolean (some-> (get codes code)
+                      long
+                      (> now))))))
+
+(defn- holds-gateway-secret?
+  "True when `request` carries the gateway token as a bearer token or in the
+   internal client's `X-Vis-Gateway-Secret` header."
+  [request token]
+  (let [header (fn [k]
+                 (some-> (get-in request [:headers k])
+                         str/trim))]
+    (or (util/constant-time=? (str "Bearer " token) (header "authorization"))
+        (util/constant-time=? token (header "x-vis-gateway-secret")))))
+
+(defn- gateway-id
+  "The id `/healthz` reports for this gateway."
+  []
+  (let [{:keys [db host port]} @instance/server-state]
+    (instance/gateway-instance-id db host port)))
+
+(defn- launch-handler
+  "Mint a launch code. Only a holder of the gateway token may ask, also on a
+   loopback gateway that does not require the token for its API: any page in a
+   local browser can reach loopback, and the code grants the token."
+  [request]
+  (let [token (str (:token @instance/server-state))]
+    (if (and (seq token) (holds-gateway-secret? request token))
+      (let [{:keys [code expires-at-ms]} (mint-launch!)]
+        (http/json-response {:code code :expires-at-ms expires-at-ms :gateway-id (gateway-id)}))
+      (http/error-response 401 :unauthorized "a web launch needs the gateway token"))))
+
+(defn- launch-code
+  "The trimmed `code` of a redeem request body, or nil."
+  [request]
+  (let [body (try (http/body-json request) (catch Exception _ nil))]
+    (when (map? body)
+      (some-> (get body "code")
+              str
+              str/trim
+              not-empty))))
+
+(defn- redeem-handler
+  "Exchange a launch code for the gateway id and token. The route is open: the
+   code is the credential, and it works once."
+  [request]
+  (let [{:keys [token require-token?]}
+        @instance/server-state
+
+        code
+        (launch-code request)]
+
+    (if (and code (redeem-launch! code))
+      (assoc-in (http/json-response
+                  {:gateway-id (gateway-id) :token token :require-token (boolean require-token?)})
+        [:headers "Cache-Control"]
+        "no-store")
+      (http/error-response
+        404
+        :launch-not-found
+        "This launch link was already used or has expired. Run `vis-agent web` again."))))
+
+(def handlers
+  {[:post "/v1/web/launches"] launch-handler [:post "/v1/web/launches/redeem"] redeem-handler})

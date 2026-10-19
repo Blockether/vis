@@ -266,6 +266,13 @@
   ^String [^bytes b]
   (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
 
+(defn constant-time=?
+  "Timing-safe comparison for secret strings. Plain `=` stops at the first byte that
+   differs, so response timing would leak a token's length and prefix.
+   `MessageDigest/isEqual` compares in constant time. A nil never matches."
+  [^String a ^String b]
+  (boolean (and a b (MessageDigest/isEqual (utf8 a) (utf8 b)))))
+
 (defn concat-bytes
   "One array with the bytes of each array in `arrays`, in order."
   ^bytes [& arrays]

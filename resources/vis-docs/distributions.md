@@ -307,6 +307,14 @@ press Ctrl-C when you are done. If the gateway stops answering, the command ends
 tells you. `vis-agent gateway start` serves the web app too, and prints its address when
 the web app is installed.
 
+The address that `vis-agent web` prints connects the browser to this gateway. You do not
+type a token. The address works once, within 5 minutes, and does not contain the gateway
+token. If the address is too old or was already used, the web app shows an error and the
+connection screen. Run `vis-agent web` again to get a new address.
+
+With `--no-open`, open the printed address yourself, or give it to a script that opens it. A
+script can replace the host with `localhost` and keep the rest of the address.
+
 `--pair` prints the same pairing block as `vis-agent gateway start --pair`: the link, the
 token and a QR code. Without `--host`, it starts the gateway on an address that your phone can
 reach. `--advertise` sets the address in the pairing link, as it does for `vis-agent gateway start`.
@@ -335,7 +343,8 @@ and `7890`.
   gateway requires a token.
 
 A gateway bound to `0.0.0.0` or to a network address always requires its token, also in
-your own browser. The web app asks for it, and `vis-agent gateway pair` shows it. The
+your own browser. The address that `vis-agent web` prints gives the token to that browser. On
+other devices, the web app asks for the token, and `vis-agent gateway pair` shows it. The
 command also prints the addresses that other devices can open.
 
 ### Get the web app

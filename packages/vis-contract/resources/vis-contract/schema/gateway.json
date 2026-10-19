@@ -1556,6 +1556,29 @@
       "path": "/v1/voice/model"
     },
     {
+      "audience": "administration",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json",
+          "response_schema": "web_launch"
+        }
+      },
+      "path": "/v1/web/launches"
+    },
+    {
+      "audience": "public",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "request_schema": "web_launch_redeem",
+          "response_schema": "web_launch_grant"
+        }
+      },
+      "path": "/v1/web/launches/redeem"
+    },
+    {
       "audience": "sdk",
       "path": "/v1/council/rooms",
       "operations": {
@@ -1840,6 +1863,61 @@
     "keepalive_route": "/v1/capabilities"
   },
   "$defs": {
+    "web_launch": {
+      "description": "A one-time code that connects a browser to this gateway. `vis-agent web` puts it in the URL fragment.",
+      "type": "object",
+      "required": [
+        "code",
+        "expires_at_ms",
+        "gateway_id"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expires_at_ms": {
+          "type": "integer"
+        },
+        "gateway_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "web_launch_redeem": {
+      "type": "object",
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "web_launch_grant": {
+      "description": "What a redeemed launch code gives the browser: the gateway it reached and the token for its API.",
+      "type": "object",
+      "required": [
+        "gateway_id",
+        "token",
+        "require_token"
+      ],
+      "properties": {
+        "gateway_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "token": {
+          "type": "string"
+        },
+        "require_token": {
+          "type": "boolean"
+        }
+      }
+    },
     "decision_archive_bytes": {
       "type": "integer",
       "minimum": 1,

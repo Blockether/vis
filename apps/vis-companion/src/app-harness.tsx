@@ -15,6 +15,7 @@ import { render } from '@testing-library/react';
 // cached so App still exercises its own failed-prefetch handling.
 await import('./screens/SessionScreen').catch(() => {});
 import { App } from './App';
+import type { WebLaunch } from './lib/web-launch';
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from './lib/compat';
 import { searchAnswer, sessionsWindow } from './screens/sessions-screen-harness';
 import type { GatewayConn, Session } from './lib/types';
@@ -44,6 +45,8 @@ export function renderApp({
   primary = 0,
   /** Durable order returned by the primary, by fixture index. */
   machineOrder = null as number[] | null,
+  /** A `vis-agent web` launch the app read from its address before the first render. */
+  launch = null as WebLaunch | null,
 } = {}) {
   const conns: GatewayConn[] = machines.map((machine, index) => {
     const id = `app-gateway-${++origins}`;
@@ -149,7 +152,7 @@ export function renderApp({
     return answer({});
   }) as typeof fetch;
 
-  const view = render(<App />);
+  const view = render(<App launch={launch} />);
 
   return {
     ...view,

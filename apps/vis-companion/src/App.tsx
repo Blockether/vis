@@ -67,6 +67,7 @@ import {
   type SharedPayload,
 } from './lib/share-intake';
 import { discardSharedFiles } from './lib/share-files';
+import { connectWebLaunch, type WebLaunch } from './lib/web-launch';
 import { applyTheme, resolveTheme } from './lib/theme';
 import { getThemePref } from './lib/storage';
 import { IconButton } from './components/ui';
@@ -349,7 +350,7 @@ function SessionPane({
   );
 }
 
-export function App() {
+export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // Warm the split screens once the shell is up — off the critical path, so the
   // launch frame stays the list and the first tap still opens instantly.
   useEffect(() => {
@@ -369,6 +370,8 @@ export function App() {
   const [active, setActive] = useState<GatewayConn | null>(null);
   const [primary, setPrimary] = useState<GatewayConn | null>(null);
   const [tab, setTab] = useState<Tab>('sessions');
+  // Why a `vis-agent web` launch did not connect this browser, shown on Machines.
+  const [launchNotice, setLaunchNotice] = useState<string | null>(null);
   // Sharing must reveal the chooser even when the desktop sidebar was hidden.
   const [isSidebarShown, toggleSidebar] = useSidebar();
   // The share still owed a session. The SHELL holds it because the list is the
@@ -783,9 +786,25 @@ export function App() {
       setReady(true);
     };
     const timer = window.setTimeout(reveal, BOOT_REVEAL_MS);
-    void refresh().finally(reveal);
+    // A `vis-agent web` launch saves its gateway first, and the app opens on it.
+    const boot = async () => {
+      if (!launch) return refresh();
+      try {
+        const conn = await connectWebLaunch(window.location.origin, launch);
+        await refresh();
+        setActive(conn);
+        setTab('sessions');
+      } catch (error) {
+        await refresh();
+        setLaunchNotice(error instanceof Error ? error.message : String(error));
+        // The first route reads the address, so name Machines there too.
+        window.history.replaceState(window.history.state, '', tabHash('connect'));
+        setTab('connect');
+      }
+    };
+    void boot().finally(reveal);
     return () => window.clearTimeout(timer);
-  }, [refresh]);
+  }, [refresh, launch]);
 
   // The palette is STATIC CSS shipped with the app, so the first frame paints from
   // one stored id — no gateway is asked, and none can repaint this device. That
@@ -1431,6 +1450,8 @@ export function App() {
                 onAdd={addConnection}
                 onSettings={openSettings}
                 offlineError={blocked ? offline : null}
+                notice={launchNotice}
+                onDismissNotice={() => setLaunchNotice(null)}
                 onRetry={() => setOffline(null)}
                 onClose={hasConn ? () => setTab('sessions') : undefined}
               />

@@ -152,8 +152,9 @@ Open Vis in a browser:
 vis-agent web
 ```
 
-This starts the gateway if needed and opens the web app in your default browser. The
-gateway serves the web app itself, so you do not need Node.js. Keep the command running
+This starts the gateway if needed and opens the web app in your default browser, already
+connected to that gateway. The gateway serves the web app itself, so you do not need
+Node.js. Keep the command running
 while you use the app, and press Ctrl-C when you are done. Choose the gateway address
 with `--host` and `--port`: for example, `vis-agent web --host 0.0.0.0` also serves
 other devices on your network. Release and beta installations download a missing web app
