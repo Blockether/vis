@@ -80,7 +80,7 @@ describe('an answer that arrives more than once', () => {
       block_id: 'gw-1:content:6',
       field: 'markdown',
       text: ANSWER,
-      cumulative: ANSWER,
+      offset: 0,
     });
     expect(await screen.findByText(ANSWER)).toBeInTheDocument();
     expect(painted(ANSWER)).toBe(1);
@@ -108,7 +108,7 @@ describe('an answer that arrives more than once', () => {
       block_id: 'gw-1:content:6',
       field: 'markdown',
       text: ANSWER,
-      cumulative: ANSWER,
+      offset: 0,
     });
     land();
     emit({

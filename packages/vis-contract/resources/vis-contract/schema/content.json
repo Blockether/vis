@@ -309,7 +309,13 @@
               ]
             },
             "text": {
-              "type": "string"
+              "type": "string",
+              "description": "Text that is new since the previous frame of this block."
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "UTF-16 position in the block text where `text` starts. Keep the text before it and append `text`."
             }
           },
           "required": [
@@ -317,7 +323,8 @@
             "turn_id",
             "block_id",
             "field",
-            "text"
+            "text",
+            "offset"
           ]
         },
         {

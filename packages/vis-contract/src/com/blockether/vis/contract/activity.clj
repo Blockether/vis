@@ -230,3 +230,83 @@
    disclosure and viewport. Include bounded evidence, never identity keys."
   [{:keys [rows]}]
   (str/join "\n\n" (concat ["ACTIVITY"] (map #(row-copy-text % 0) (sort-by :sequence rows)))))
+
+;; A stream of `block.activity` events sends a form's receipt whole once. Each later
+;; event of that form carries `row_ids`, every row id in order, and only the rows that
+;; changed since the previous event of that form on the same stream. Both sides keep
+;; the state per connection, so a reconnect starts again with whole receipts.
+
+(def ^:private stream-form-limit
+  "Forms one stream remembers. Past it the state resets and the next receipts go whole.
+   Both sides apply the same rule to the same events, so their states reset together."
+  256)
+
+(defn- stream-form-key
+  [event]
+  [(get event "session_id") (get event "turn_id") (get event "iteration") (get event "form_index")])
+
+(defn- forget-ended-turn
+  "Drop the remembered forms of a turn that a terminal `event` ends."
+  [forms event terminal-types]
+  (if (contains? terminal-types (get event "type"))
+    (let [turn [(get event "session_id") (get event "turn_id")]]
+      (into {} (remove #(= turn (subvec (key %) 0 2))) forms))
+    forms))
+
+(defn- stream-rows
+  "Row id -> row of a receipt with distinct string ids, or nil."
+  [activity]
+  (let [rows
+        (get activity "rows")
+
+        ids
+        (map #(get % "id") rows)]
+
+    (when (and (sequential? rows) (every? string? ids) (apply distinct? "" ids))
+      (zipmap ids rows))))
+
+(defn encode-stream-event
+  "`[forms event]` for one outbound event. `forms` is this stream's state, initially
+   `{}`. A receipt of a form the stream already sent keeps only the rows that changed
+   and gains `row_ids`. `terminal-types` are the event types that end a turn."
+  [forms event terminal-types]
+  (let [activity (get event "activity")]
+    (if (and (= "block.activity" (get event "type")) (map? activity))
+      (let [form (stream-form-key event)
+            rows (stream-rows activity)
+            sent (get forms form)
+            forms (if rows
+                    (assoc (if (>= (count forms) (long stream-form-limit)) {} forms) form rows)
+                    (dissoc forms form))]
+
+        [forms
+         (if (and rows sent)
+           (assoc event
+             "activity" (assoc activity
+                          "rows" (filterv #(not= % (get sent (get % "id"))) (get activity "rows")))
+             "row_ids" (mapv #(get % "id") (get activity "rows")))
+           event)])
+      [(forget-ended-turn forms event terminal-types) event])))
+
+(defn decode-stream-event
+  "`[forms event]` for one inbound event, the inverse of [[encode-stream-event]]: a
+   receipt with `row_ids` becomes the whole receipt again, without `row_ids`. A row id
+   that this stream never received is left out."
+  [forms event terminal-types]
+  (let [activity (get event "activity")]
+    (if (and (= "block.activity" (get event "type")) (map? activity))
+      (let [form (stream-form-key event)
+            row-ids (get event "row_ids")
+            changed (stream-rows activity)
+            event (if (and (sequential? row-ids) changed)
+                    (let [known (merge (get forms form) changed)]
+                      (-> event
+                          (dissoc "row_ids")
+                          (assoc-in ["activity" "rows"] (into [] (keep known) row-ids))))
+                    event)
+            rows (stream-rows (get event "activity"))]
+
+        [(if rows
+           (assoc (if (>= (count forms) (long stream-form-limit)) {} forms) form rows)
+           (dissoc forms form)) event])
+      [(forget-ended-turn forms event terminal-types) event])))

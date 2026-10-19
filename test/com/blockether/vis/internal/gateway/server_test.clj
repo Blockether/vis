@@ -6738,6 +6738,81 @@
                    (finally (doseq [pump pumps]
                               (future-cancel pump)))))))))))
 
+(defdescribe
+  compact-activity-stream-test
+  (it
+    "a socket gets each form's receipt whole once, then only changed rows"
+    (with-redefs-fn {#'server/stop! (fn []
+                                      nil)
+                     #'state/soul (constantly {"id" "exists"})}
+      (fn []
+        (with-server-state!
+          {}
+          (fn []
+            (let [write-body
+                  (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+
+                  read-frames
+                  (ns-resolve 'com.blockether.vis.internal.gateway.client 'read-sse-frames!)
+
+                  sid
+                  (str (java.util.UUID/randomUUID))
+
+                  out
+                  (java.io.ByteArrayOutputStream.)
+
+                  text
+                  #(.toString out "UTF-8")
+
+                  whole
+                  (wire/parse-json (slurp (io/resource "vis-contract/fixtures/activity.json")))
+
+                  settled
+                  (-> whole
+                      (assoc "state" "succeeded")
+                      (assoc-in ["rows" 1 "state"] "succeeded")
+                      (assoc "counts" {"running" 0 "succeeded" 2 "failed" 0 "cancelled" 0}))
+
+                  activity!
+                  (fn [activity]
+                    (state/append-event!
+                      sid
+                      "block.activity"
+                      {:turn-id "t1" :iteration 1 :form-index 0 :activity activity}))
+
+                  activities
+                  #(filterv (fn [event]
+                              (= "block.activity" (get event "type")))
+                     %)
+
+                  pump
+                  (future (try (write-body ((rv 'multi-sse-body) [[sid 0]] false nil) {} out)
+                               (catch Throwable _ nil)))]
+
+              (try (expect (wait-until #(re-find #"subscription.ready" (text))))
+                   (activity! whole)
+                   (activity! settled)
+                   (expect (wait-until #(= 2 (count (activities (sse-jobs (text)))))))
+                   (let [[first-frame second-frame]
+                         (activities (sse-jobs (text)))
+
+                         read-back
+                         (atom [])]
+
+                     (expect (= whole (get first-frame "activity")))
+                     (expect (not (contains? first-frame "row_ids")))
+                     (expect (= ["call-1" "call-2"] (get second-frame "row_ids")))
+                     (expect (= [(get-in settled ["rows" 1])]
+                                (get-in second-frame ["activity" "rows"])))
+                     (read-frames (java.io.ByteArrayInputStream. (.toByteArray out))
+                                  (fn [event]
+                                    (swap! read-back conj event)
+                                    nil)
+                                  nil)
+                     (expect (= [whole settled] (mapv #(get % "activity") (activities @read-back))))
+                     (expect (not-any? #(contains? % "row_ids") @read-back)))
+                   (finally (future-cancel pump))))))))))
+
 (defdescribe council-routes-and-auth-test
              (it "council routes and auth"
                  ;; C18/C31: canonical routes stay authenticated, even while the feature is off.

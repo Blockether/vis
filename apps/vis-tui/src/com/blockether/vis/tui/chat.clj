@@ -1182,6 +1182,36 @@
      :error error
      :event route-event}))
 
+(defonce ^:private stream-blocks
+  ;; block-id -> {:base offset :text text}: the live text of each open model stream
+  ;; block. Every subscription of this process feeds the same span, so frames that two
+  ;; subscriptions both deliver are harmless.
+  (atom {}))
+
+(defn- apply-block-delta
+  "The block `span` after one delta. A delta inside the known span keeps the text
+   before its offset and appends its own text, so a repeated frame changes nothing.
+   Any other delta starts a new span: a gap shows the newest text, and a replay from
+   offset 0 rebuilds the whole block."
+  [{:keys [base text] :as span} offset delta]
+  (let [base
+        (long (or base 0))
+
+        text
+        (str text)
+
+        offset
+        (long (or offset 0))]
+
+    (if (and span (<= base offset (+ base (count text))))
+      {:base base :text (str (subs text 0 (- offset base)) delta)}
+      {:base offset :text (str delta)})))
+
+(defn- block-delta-text!
+  "The full live text of `block-id` after its delta at `offset`."
+  [block-id offset delta]
+  (:text (get (swap! stream-blocks update block-id apply-block-delta offset delta) block-id)))
+
 (defn- gateway-event->chunk
   "Project canonical gateway wire events back into the progress chunk shape the
   existing TUI renderer consumes. This is intentionally a client projection: the
@@ -1221,10 +1251,10 @@
 
     (case type
       ;; Canonical typed-block delta projected into the TUI's transient progress shape.
-      ;; The bounded `cumulative` field is the full replace-style value; a skipped frame
-      ;; is therefore subsumed by the next one.
+      ;; The frame carries only new text and its offset; the progress reducer repaints
+      ;; from the block's full live text.
       "content.block.delta"
-      (let [full (str (event-get event :cumulative))]
+      (let [full (block-delta-text! block-id (event-get event :offset) (event-get event :text))]
         (cond (= "text" (event-get event :field))
               {:phase :reasoning :iteration iteration :thinking full}
               (str/includes? (str block-id) ":assistant-prose:")
@@ -1234,8 +1264,9 @@
       "content.block.started"
       nil
 
+      ;; The settled text arrives on `iteration.completed`; the live span is done.
       "content.block.completed"
-      nil
+      (do (swap! stream-blocks dissoc block-id) nil)
 
       "block.preview"
       (merge {:phase :tool-preview :iteration iteration :position form-index :code code}

@@ -1,0 +1,610 @@
+{
+  "description": "One SSE connection. `events` are the whole events in order. `frames` are the same events as the gateway writes them: a form's later receipts carry `row_ids` and only the changed rows.",
+  "events": [
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 1,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "running",
+            "label": "Step a"
+          },
+          {
+            "id": "b",
+            "state": "running",
+            "label": "Step b"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 2,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 3
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "succeeded",
+            "label": "Step a"
+          },
+          {
+            "id": "b",
+            "state": "running",
+            "label": "Step b"
+          },
+          {
+            "id": "c",
+            "state": "running",
+            "label": "Step c"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 3,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 3
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "succeeded",
+            "label": "Step a"
+          },
+          {
+            "id": "b",
+            "state": "running",
+            "label": "Step b"
+          },
+          {
+            "id": "c",
+            "state": "running",
+            "label": "Step c"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.output",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 4,
+      "iteration": 1,
+      "form_index": 0,
+      "text": "done"
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 5,
+      "iteration": 1,
+      "form_index": 1,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 1
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "running",
+            "label": "Step a"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 1,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 1
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "running",
+            "label": "Step a"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 6,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "c",
+            "state": "succeeded",
+            "label": "Step c"
+          },
+          {
+            "id": "a",
+            "state": "succeeded",
+            "label": "Step a"
+          }
+        ]
+      }
+    },
+    {
+      "type": "turn.completed",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 7
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 8,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "succeeded",
+        "counts": {
+          "total": 3
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "succeeded",
+            "label": "Step a"
+          },
+          {
+            "id": "b",
+            "state": "succeeded",
+            "label": "Step b"
+          },
+          {
+            "id": "c",
+            "state": "succeeded",
+            "label": "Step c"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 2,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "succeeded",
+            "label": "Step a"
+          },
+          {
+            "id": "b",
+            "state": "running",
+            "label": "Step b"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 3,
+      "iteration": 1,
+      "form_index": 1,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "x",
+            "state": "running",
+            "label": "Step x"
+          },
+          {
+            "id": "x",
+            "state": "running",
+            "label": "Step x"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 4,
+      "iteration": 1,
+      "form_index": 1,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "x",
+            "state": "running",
+            "label": "Step x"
+          },
+          {
+            "id": "y",
+            "state": "running",
+            "label": "Step y"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 5,
+      "iteration": 1,
+      "form_index": 1,
+      "activity": {
+        "state": "failed",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "x",
+            "state": "running",
+            "label": "Step x"
+          },
+          {
+            "id": "y",
+            "state": "failed",
+            "label": "Step y"
+          }
+        ]
+      }
+    }
+  ],
+  "frames": [
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 1,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "running",
+            "label": "Step a"
+          },
+          {
+            "id": "b",
+            "state": "running",
+            "label": "Step b"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 2,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 3
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "succeeded",
+            "label": "Step a"
+          },
+          {
+            "id": "c",
+            "state": "running",
+            "label": "Step c"
+          }
+        ]
+      },
+      "row_ids": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 3,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 3
+        },
+        "rows": []
+      },
+      "row_ids": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "type": "block.output",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 4,
+      "iteration": 1,
+      "form_index": 0,
+      "text": "done"
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 5,
+      "iteration": 1,
+      "form_index": 1,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 1
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "running",
+            "label": "Step a"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 1,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 1
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "running",
+            "label": "Step a"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 6,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "c",
+            "state": "succeeded",
+            "label": "Step c"
+          }
+        ]
+      },
+      "row_ids": [
+        "c",
+        "a"
+      ]
+    },
+    {
+      "type": "turn.completed",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 7
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s1",
+      "turn_id": "t1",
+      "seq": 8,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "succeeded",
+        "counts": {
+          "total": 3
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "succeeded",
+            "label": "Step a"
+          },
+          {
+            "id": "b",
+            "state": "succeeded",
+            "label": "Step b"
+          },
+          {
+            "id": "c",
+            "state": "succeeded",
+            "label": "Step c"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 2,
+      "iteration": 1,
+      "form_index": 0,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "a",
+            "state": "succeeded",
+            "label": "Step a"
+          },
+          {
+            "id": "b",
+            "state": "running",
+            "label": "Step b"
+          }
+        ]
+      },
+      "row_ids": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 3,
+      "iteration": 1,
+      "form_index": 1,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "x",
+            "state": "running",
+            "label": "Step x"
+          },
+          {
+            "id": "x",
+            "state": "running",
+            "label": "Step x"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 4,
+      "iteration": 1,
+      "form_index": 1,
+      "activity": {
+        "state": "running",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "x",
+            "state": "running",
+            "label": "Step x"
+          },
+          {
+            "id": "y",
+            "state": "running",
+            "label": "Step y"
+          }
+        ]
+      }
+    },
+    {
+      "type": "block.activity",
+      "session_id": "s2",
+      "turn_id": "t1",
+      "seq": 5,
+      "iteration": 1,
+      "form_index": 1,
+      "activity": {
+        "state": "failed",
+        "counts": {
+          "total": 2
+        },
+        "rows": [
+          {
+            "id": "y",
+            "state": "failed",
+            "label": "Step y"
+          }
+        ]
+      },
+      "row_ids": [
+        "x",
+        "y"
+      ]
+    }
+  ]
+}

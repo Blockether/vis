@@ -6,7 +6,11 @@
 // we send it on every request. A 401 surfaces as GatewayError so the UI can
 // prompt a re-pair.
 
-import { activityProjectionFromWire, type ActivityProjection } from './activity';
+import {
+  activityProjectionFromWire,
+  activityStreamDecoder,
+  type ActivityProjection,
+} from './activity';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import { unreadTurnCount } from './unread';
 import type { CouncilRoom, RoomInvitation, RoomMember, RoomsStatus } from './rooms';
@@ -458,6 +462,13 @@ const SPEECH_JOB_TIMEOUT_MS = 120_000;
  * notice.
  */
 export const VOICE_JOB_EVENT = 'voice.job';
+
+/** Session event types that end a turn, from the gateway contract. */
+const TURN_TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set(
+  gatewaySchema.$defs.session_event_type.oneOf.flatMap((variant) =>
+    'x-vis-turn-terminal' in variant && variant['x-vis-turn-terminal'] ? [variant.const] : [],
+  ),
+);
 
 /**
  * Read an SSE body and hand every `data:` payload to `onData`, together with
@@ -5677,7 +5688,8 @@ export class GatewayClient {
           // backgrounding, dead NAT, half-open TCP) — abort this attempt so
           // the outer loop reconnects with the up-to-date cursor.
           armStall(SSE_STALL_TIMEOUT_MS);
-
+          // Each connection decodes compact Activity receipts with its own state.
+          const decodeActivity = activityStreamDecoder(TURN_TERMINAL_EVENT_TYPES);
           await raceAbort(
             readSseFrames(
               response.body,
@@ -5687,7 +5699,7 @@ export class GatewayClient {
                 // not an engine event, and never enters this reducer.
                 if (frameName === VOICE_JOB_EVENT) return;
                 try {
-                  const event = JSON.parse(json) as SseEvent;
+                  const event = decodeActivity(JSON.parse(json)) as SseEvent;
                   const sid =
                     typeof event.session_id === 'string'
                       ? event.session_id

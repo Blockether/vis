@@ -5,7 +5,8 @@
             [clojure.java.io :as io]
             [com.blockether.vis.contract.activity :as activity]
             [com.blockether.vis.contract.wire :as wire]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [com.blockether.vis.contract.gateway :as gateway]
+            [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defdescribe shared-activity-copy-test
              (it "shared activity copy"
@@ -205,3 +206,54 @@
                                                                     (assoc row
                                                                       "id" "second"
                                                                       "sequence" 2))))))))
+
+(defn- run-stream
+  "Fold `step` over `events` with fresh stream state, keeping each output event."
+  [step events]
+  (second (reduce (fn [[forms out] event]
+                    (let [[forms event] (step forms event gateway/turn-terminal-event-types)]
+                      [forms (conj out event)]))
+                  [{} []]
+                  events)))
+
+(defdescribe
+  activity-stream-test
+  (let [{:strs [events frames]}
+        (json/read-str (slurp (io/resource "vis-contract/fixtures/activity-stream.json")))]
+    (describe "the shared stream fixture"
+              (it "encodes whole events into the fixture frames"
+                  (expect (= frames (run-stream activity/encode-stream-event events))))
+              (it "decodes the fixture frames back into whole events"
+                  (expect (= events (run-stream activity/decode-stream-event frames))))
+              (it "sends fewer bytes than the whole events"
+                  (expect (< (count (json/write-str frames)) (count (json/write-str events))))))
+    (describe "decoding"
+              (it "leaves out a row id that the stream never received"
+                  (let [first-frame (first frames)
+                        frame (assoc first-frame
+                                "seq" 9
+                                "row_ids" ["a" "lost" "b"]
+                                "activity" (assoc (get first-frame "activity") "rows" []))]
+
+                    (expect (= ["a" "b"]
+                               (map #(get % "id")
+                                    (get-in (last (run-stream activity/decode-stream-event
+                                                              [first-frame frame]))
+                                            ["activity" "rows"]))))))
+              (it "starts again with whole receipts on a new connection"
+                  (expect (contains? (second frames) "row_ids"))
+                  (expect (= (second events)
+                             (first (run-stream activity/encode-stream-event [(second events)]))))
+                  (expect (= (second events)
+                             (first (run-stream activity/decode-stream-event [(second events)])))))
+              (it "remembers at most 256 forms and resets on both sides together"
+                  (let [forms (map #(assoc (first events)
+                                      "form_index" %
+                                      "seq" (inc %))
+                                   (range 300))
+                        again (assoc (first events) "seq" 301)
+                        encoded (run-stream activity/encode-stream-event (concat forms [again]))]
+
+                    (expect (not (contains? (last encoded) "row_ids")))
+                    (expect (= (concat forms [again])
+                               (run-stream activity/decode-stream-event encoded))))))))

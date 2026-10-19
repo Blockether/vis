@@ -14,6 +14,7 @@
   (:require [babashka.http-client :as http]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.config.core :as config]
@@ -2728,11 +2729,21 @@
    without waiting for a frame. An idle watchdog (see [[sse-idle-timeout-ms]])
    closes the stream when NOTHING — not even a heartbeat — arrives for too long,
    so a wedged daemon surfaces as a normal drop instead of an infinite park.
+   Each parsed event first passes `activity-contract/decode-stream-event` with
+   state for this stream only, so a compact Activity receipt reaches `handle` whole.
    Returns `[:closed]` on EOF (or an idle/close-driven read failure)."
   [^InputStream in handle stop?]
   (with-open [rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
     (let [last-line-ns* (atom (System/nanoTime))
           alive?* (atom true)
+          forms (volatile! {})
+          decode (fn [event]
+                   (let [[next-forms event] (activity-contract/decode-stream-event
+                                              @forms
+                                              event
+                                              gateway-contract/turn-terminal-event-types)]
+                     (vreset! forms next-forms)
+                     event))
           watchdog (start-sse-idle-watchdog! in last-line-ns* alive?*)]
 
       (try (loop [data-lines []]
@@ -2741,7 +2752,9 @@
                    (do (reset! last-line-ns* (System/nanoTime))
                        (if (str/blank? line)
                          (let [data (str/join "\n" data-lines)
-                               event (when (seq data) (wire/parse-json data))]
+                               event (when (seq data)
+                                       (some-> (wire/parse-json data)
+                                               decode))]
 
                            (if-not event (recur []) (or (handle event) (recur []))))
                          (if-let [d (sse-data-line line)]

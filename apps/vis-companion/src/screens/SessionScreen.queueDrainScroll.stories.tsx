@@ -132,7 +132,8 @@ export const QueuedTurnStartsBeforeTheRow: Story = {
       seq: 2,
       field: 'markdown',
       block_id: `${FINISHED_ID}:answer`,
-      cumulative: finalAnswer,
+      text: finalAnswer,
+      offset: 0,
     });
     await new Promise((resolve) => setTimeout(resolve, 500));
     viewport.scrollTop = viewport.scrollHeight;

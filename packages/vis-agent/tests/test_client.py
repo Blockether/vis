@@ -307,6 +307,67 @@ def test_stream_resume_deduplicates_and_honors_a_restarted_generation():
         assert streams == [("session-one:7", "full"), ("session-one:8", "full")]
 
 
+def test_activity_stream_decoder_matches_the_shared_fixture():
+    from blockether.vis import _contracts
+    from blockether.vis.engine._client import _ActivityStreamDecoder
+
+    fixture = json.loads(
+        (_contracts._DATA / "fixtures/activity-stream.json").read_text()
+    )
+    decode = _ActivityStreamDecoder()
+    assert [decode(frame) for frame in fixture["frames"]] == fixture["events"]
+    # A row id that the stream never received is left out.
+    decode = _ActivityStreamDecoder()
+    first = fixture["frames"][0]
+    decode(first)
+    lost = {
+        **first,
+        "row_ids": ["a", "lost", "b"],
+        "activity": {**first["activity"], "rows": []},
+    }
+    assert [row["id"] for row in decode(lost)["activity"]["rows"]] == ["a", "b"]
+
+
+def test_compact_activity_frames_arrive_as_whole_receipts():
+    from blockether.vis import _contracts
+    from blockether.vis.activity import ActivityProjection
+
+    sid = "session-one"
+    whole = json.loads((_contracts._DATA / "fixtures/activity.json").read_text())
+    done = {**whole["rows"][1], "state": "succeeded"}
+    settled = {
+        **whole,
+        "state": "succeeded",
+        "counts": {"running": 0, "succeeded": 2, "failed": 0, "cancelled": 0},
+        "rows": [whole["rows"][0], done],
+    }
+    form = {"session_id": sid, "turn_id": "t1", "iteration": 1, "form_index": 0}
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        data = [
+            {"type": "subscription.ready", "session_id": sid, "cursor": 0},
+            {"type": "block.activity", "seq": 1, **form, "activity": whole},
+            {
+                "type": "block.activity",
+                "seq": 2,
+                **form,
+                "activity": {**settled, "rows": [done]},
+                "row_ids": ["call-1", "call-2"],
+            },
+        ]
+        return 200, b"".join(map(frame, data)), "text/event-stream"
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        with client.session(sid).events(reconnects=0) as events:
+            assert next(events).type == "subscription.ready"
+            assert next(events).activity == ActivityProjection.from_wire(whole)
+            second = next(events)
+            assert second.activity == ActivityProjection.from_wire(settled)
+            assert "row_ids" not in second.data
+
+
 def test_stream_budget_and_malformed_frames_fail_visibly():
     def respond(method, path, body):
         return compatible(method, path, body) or (

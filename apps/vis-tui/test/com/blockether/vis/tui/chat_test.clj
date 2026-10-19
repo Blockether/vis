@@ -614,16 +614,27 @@
           (expect (= {:phase :live-view-close :view-id "live-one" :result result}
                      (g->c
                        {"type" "view.close" "kind" "live" "view_id" "live-one" "result" result})))))
-    (it "typed reasoning block delta projects onto :thinking"
-        (let [chunk (g->c {"type" "content.block.delta"
-                           "iteration" 2
-                           "block_id" "t1:reasoning:2"
-                           "field" "text"
-                           "text" "ponder"
-                           "cumulative" "pondering"})]
+    (it "typed reasoning block delta projects the block's full live text onto :thinking"
+        (let [frame (fn [offset text]
+                      {"type" "content.block.delta"
+                       "iteration" 2
+                       "block_id" "t-delta:reasoning:2"
+                       "field" "text"
+                       "text" text
+                       "offset" offset})
+              chunk (do (g->c (frame 0 "pon")) (g->c (frame 3 "dering")))]
+
           (expect (= :reasoning (:phase chunk)))
           (expect (= 2 (:iteration chunk)))
-          (expect (= "pondering" (:thinking chunk)))))
+          (expect (= "pondering" (:thinking chunk)))
+          ;; A frame that a second subscription repeats changes nothing.
+          (expect (= "pondering" (:thinking (g->c (frame 3 "dering")))))
+          (expect (nil? (g->c {"type" "content.block.completed" "block_id" "t-delta:reasoning:2"})))
+          ;; After a gap only the newest text shows, and a replay from 0 rebuilds the block.
+          (expect (= "dering" (:thinking (g->c (frame 3 "dering")))))
+          (expect (= "pon" (:thinking (g->c (frame 0 "pon")))))
+          (expect (= "pondering" (:thinking (g->c (frame 3 "dering")))))
+          (g->c {"type" "content.block.completed" "block_id" "t-delta:reasoning:2"})))
     (it "block.preview remains a block preview rather than reasoning/content"
         (let [chunk (g->c {"type" "block.preview"
                            "iteration" 1

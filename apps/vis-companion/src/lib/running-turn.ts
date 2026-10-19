@@ -86,10 +86,27 @@ export interface RunningTurn {
   attachments?: GatewayAttachment[];
   /** Terminal-frame content retained until the persisted transcript takes over. */
   content?: ContentBlock[];
+  /** Start offset of each live block's known text; absent means offset 0. */
+  streamBases?: Record<string, number>;
 }
 
-function applyText(_current: string, event: SseEvent): string {
-  return eventString(event, 'cumulative');
+/**
+ * Block text after one `content.block.delta`. A frame inside the known span keeps the
+ * text before its offset and appends, so a repeated frame changes nothing. Any other
+ * frame starts a new span: a gap shows the newest text, and a replay rebuilds it all.
+ */
+export function applyBlockDelta(
+  current: string,
+  base: number,
+  event: SseEvent,
+): { text: string; base: number } {
+  const value = event.offset;
+  const offset = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+  const text = eventString(event, 'text');
+  if (offset >= base && offset <= base + current.length) {
+    return { text: current.slice(0, offset - base) + text, base };
+  }
+  return { text, base: offset };
 }
 
 function providerWaitFromEvent(event: SseEvent): ProviderWait | undefined {
@@ -316,26 +333,35 @@ export function reduceRunningTurnEvent(
     const field = eventString(event, 'field');
     const blockId = eventBlockKey(event);
     const position = eventIterationPosition(event);
+    const previousBase = turn.streamBases?.[blockId] ?? 0;
+    let base = previousBase;
+    const applyText = (current: string): string => {
+      const next = applyBlockDelta(current, previousBase, event);
+      base = next.base;
+      return next.text;
+    };
+    const withBase = (next: RunningTurn): RunningTurn =>
+      base === previousBase ? next : { ...next, streamBases: { ...turn.streamBases, [blockId]: base } };
     if (field === 'text') {
       const next = updateRunningIteration(turn, position, (iteration) => ({
         ...iteration,
-        thinking: applyText(iteration.thinking ?? '', event),
+        thinking: applyText(iteration.thinking ?? ''),
       }));
-      return { ...next, progress: undefined };
+      return withBase({ ...next, progress: undefined });
     }
     if (field === 'markdown' && blockId.includes(':assistant-prose:')) {
       const next = updateRunningIteration(turn, position, (iteration) => ({
         ...iteration,
-        assistant_prose: applyText(iteration.assistant_prose ?? '', event),
+        assistant_prose: applyText(iteration.assistant_prose ?? ''),
       }));
-      return { ...next, answer: '', progress: undefined };
+      return withBase({ ...next, answer: '', progress: undefined });
     }
     if (field === 'markdown') {
-      return {
+      return withBase({
         ...turn,
-        answer: applyText(turn.answer, event),
+        answer: applyText(turn.answer),
         progress: undefined,
-      };
+      });
     }
     return turn;
   }

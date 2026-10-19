@@ -36,6 +36,11 @@ _MIN_GATEWAY = definition("gateway", "handshake")["properties"]["min_gateway"]["
 _ROUTES = schema("gateway")["x-vis-routes"]
 _LEASE_POLICY = schema("gateway")["x-vis-client-lease"]
 _MAX_DECISION_ARCHIVE = definition("gateway", "decision_archive_bytes")["maximum"]
+_TURN_TERMINAL_EVENTS = frozenset(
+    branch["const"]
+    for branch in definition("gateway", "session_event_type")["oneOf"]
+    if branch.get("x-vis-turn-terminal")
+)
 _JOB_EVENTS = {
     branch["x-vis-direction"]: branch["const"]
     for branch in definition("gateway", "job_event_type")["oneOf"]
@@ -3555,6 +3560,65 @@ class Turn:
             time.sleep(min(0.1, max(0, end - time.monotonic())))
 
 
+class _ActivityStreamDecoder:
+    """Rebuild compact Activity receipts of ONE SSE connection.
+
+    The gateway sends a form's receipt whole once on a connection. Each later
+    `block.activity` event of that form carries `row_ids`, every row id in order,
+    and only the rows that changed. This decoder returns the whole receipt without
+    `row_ids` and passes every other event unchanged. It mirrors
+    `com.blockether.vis.contract.activity/decode-stream-event`.
+    """
+
+    _FORM_LIMIT = 256
+
+    def __init__(self):
+        self._forms = {}
+
+    @staticmethod
+    def _rows(activity):
+        rows = activity.get("rows")
+        if not isinstance(rows, list):
+            return None
+        by_id = {}
+        for row in rows:
+            row_id = row.get("id") if isinstance(row, dict) else None
+            if not isinstance(row_id, str) or not row_id or row_id in by_id:
+                return None
+            by_id[row_id] = row
+        return by_id
+
+    def __call__(self, event):
+        if not isinstance(event, dict):
+            return event
+        turn = (event.get("session_id"), event.get("turn_id"))
+        activity = event.get("activity")
+        if event.get("type") != "block.activity" or not isinstance(activity, dict):
+            if event.get("type") in _TURN_TERMINAL_EVENTS:
+                self._forms = {k: v for k, v in self._forms.items() if k[:2] != turn}
+            return event
+        key = (*turn, event.get("iteration"), event.get("form_index"))
+        changed = self._rows(activity)
+        row_ids = event.get("row_ids")
+        if isinstance(row_ids, list) and changed is not None:
+            known = {**self._forms.get(key, {}), **changed}
+            event = {k: v for k, v in event.items() if k != "row_ids"}
+            event["activity"] = {
+                **activity,
+                "rows": [
+                    known[i] for i in row_ids if isinstance(i, str) and i in known
+                ],
+            }
+        rows = self._rows(event["activity"])
+        if rows is None:
+            self._forms.pop(key, None)
+        else:
+            if len(self._forms) >= self._FORM_LIMIT:
+                self._forms = {}
+            self._forms[key] = rows
+        return event
+
+
 class _EventStream:
     """One bounded SSE reader. Subclasses own event identity and replay policy."""
 
@@ -3611,6 +3675,7 @@ class _EventStream:
                     route, query = self._endpoint()
                     with self.client._open("GET", route, query=query) as raw:
                         self._raw = raw
+                        decode = _ActivityStreamDecoder()
                         if raw.headers.get_content_type() != "text/event-stream":
                             raise ProtocolError("expected event stream")
                         data, size, event_name = [], 0, None
@@ -3621,7 +3686,7 @@ class _EventStream:
                             if line in {b"\n", b"\r\n", b"\r"}:
                                 if data:
                                     try:
-                                        value = json.loads(b"\n".join(data))
+                                        value = decode(json.loads(b"\n".join(data)))
                                     except (ValueError, UnicodeError):
                                         raise ProtocolError(
                                             "malformed event JSON"

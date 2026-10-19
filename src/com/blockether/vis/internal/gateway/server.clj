@@ -17,6 +17,7 @@
    is doing via `start!`."
   (:require
     [clojure.string :as str]
+    [com.blockether.vis.contract.activity :as activity-contract]
     [com.blockether.vis.contract.gateway :as gateway-contract]
     [com.blockether.vis.contract.openapi :as openapi-contract]
     [com.blockether.vis.internal.config.core :as config]
@@ -573,6 +574,20 @@
     (update event "result" dissoc "view")
     event))
 
+(defn- stream-outbound
+  "Outbound transform for ONE event stream. A form's later Activity receipts carry
+   only the rows that changed since this stream's previous receipt of that form
+   (`activity-contract/encode-stream-event`). Call it once per written frame."
+  []
+  (let [forms (volatile! {})]
+    (fn [event]
+      (let [[next-forms event] (activity-contract/encode-stream-event
+                                 @forms
+                                 (without-settled-picture event)
+                                 gateway-contract/turn-terminal-event-types)]
+        (vreset! forms next-forms)
+        event))))
+
 (def ^:private sse-wake
   "Sentinel queued to unpark a pump parked in `.poll`; never written to a socket."
   ::sse-wake)
@@ -885,7 +900,7 @@
               (sse-stream output-stream gzip?)
 
               outbound
-              without-settled-picture
+              (stream-outbound)
 
               sub-id
               (str (java.util.UUID/randomUUID))

@@ -944,3 +944,81 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     rows,
   };
 }
+
+// A stream of `block.activity` events sends a form's receipt whole once. Each later
+// event of that form carries `row_ids`, every row id in order, and only the rows that
+// changed since the previous event of that form on the same stream. The gateway and
+// this decoder keep that state per connection, so a reconnect starts with whole receipts.
+// The rules mirror `com.blockether.vis.contract.activity/decode-stream-event`.
+
+const ACTIVITY_STREAM_FORM_LIMIT = 256;
+
+type ActivityStreamForm = { turn: string; rows: Map<string, unknown> };
+
+function streamRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function activityStreamRows(activity: Record<string, unknown>): Map<string, unknown> | null {
+  const rows = activity.rows;
+  if (!Array.isArray(rows)) return null;
+  const byId = new Map<string, unknown>();
+  for (const row of rows) {
+    const id = streamRecord(row)?.id;
+    if (typeof id !== 'string' || byId.has(id) || id === '') return null;
+    byId.set(id, row);
+  }
+  return byId;
+}
+
+/**
+ * A decoder for ONE SSE connection. It turns a compact `block.activity` event back
+ * into the whole receipt, without `row_ids`, and passes every other event unchanged.
+ * `terminalTypes` are the event types that end a turn.
+ */
+export function activityStreamDecoder(
+  terminalTypes: ReadonlySet<string>,
+): (event: Record<string, unknown>) => Record<string, unknown> {
+  let forms = new Map<string, ActivityStreamForm>();
+  return (event) => {
+    const turn = JSON.stringify([event.session_id ?? null, event.turn_id ?? null]);
+    const activity = streamRecord(event.activity);
+    if (event.type !== 'block.activity' || !activity) {
+      if (typeof event.type === 'string' && terminalTypes.has(event.type)) {
+        forms = new Map([...forms].filter(([, form]) => form.turn !== turn));
+      }
+      return event;
+    }
+    const key = JSON.stringify([
+      event.session_id ?? null,
+      event.turn_id ?? null,
+      event.iteration ?? null,
+      event.form_index ?? null,
+    ]);
+    const changed = activityStreamRows(activity);
+    let decoded = event;
+    if (Array.isArray(event.row_ids) && changed) {
+      const known = new Map([...(forms.get(key)?.rows ?? []), ...changed]);
+      const { row_ids: rowIds, ...rest } = event;
+      decoded = {
+        ...rest,
+        activity: {
+          ...activity,
+          rows: (rowIds as unknown[]).flatMap((id) =>
+            typeof id === 'string' && known.has(id) ? [known.get(id)] : [],
+          ),
+        },
+      };
+    }
+    const rows = activityStreamRows(streamRecord(decoded.activity) ?? {});
+    if (rows) {
+      if (forms.size >= ACTIVITY_STREAM_FORM_LIMIT) forms = new Map();
+      forms.set(key, { turn, rows });
+    } else {
+      forms.delete(key);
+    }
+    return decoded;
+  };
+}

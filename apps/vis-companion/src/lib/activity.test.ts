@@ -11,6 +11,7 @@ import {
   argumentGroups,
   operationGroups,
   activityProjectionFromWire,
+  activityStreamDecoder,
   ACTIVITY_PRESENTERS,
   ACTIVITY_SIGNALS,
   ACTIVITY_STATES,
@@ -22,6 +23,7 @@ import cases from '../../../../packages/vis-contract/resources/vis-contract/fixt
 import groupingCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-groups.json';
 import argumentCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-arguments.json';
 import copyCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-copy.json';
+import streamCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-stream.json';
 import {
   activityHistoryPage,
   groupedActivityHistoryPage,
@@ -639,5 +641,45 @@ describe('activityContentWithoutError', () => {
     expect(activityContentWithoutError(content, error)).toEqual([content[0]]);
     expect(activityContentWithoutError(content, undefined)).toBe(content);
     expect(activityContentWithoutError(content, 'something else')).toBe(content);
+  });
+});
+
+describe('activityStreamDecoder', () => {
+  const terminal = new Set(['turn.completed', 'turn.failed', 'turn.cancelled']);
+  const frames = streamCases.frames as Record<string, unknown>[];
+  const events = streamCases.events as Record<string, unknown>[];
+  const rowIds = (event: Record<string, unknown>) =>
+    ((event.activity as { rows: { id: string }[] }).rows ?? []).map((row) => row.id);
+
+  it('decodes the shared stream fixture into whole events', () => {
+    const decode = activityStreamDecoder(terminal);
+    expect(frames.map((frame) => decode(frame))).toEqual(events);
+  });
+
+  it('does not change the frame it decodes', () => {
+    const decode = activityStreamDecoder(terminal);
+    const copy = structuredClone(frames);
+    frames.forEach((frame) => decode(frame));
+    expect(frames).toEqual(copy);
+  });
+
+  it('leaves out a row id that the stream never received', () => {
+    const decode = activityStreamDecoder(terminal);
+    const first = frames[0]!;
+    decode(first);
+    const decoded = decode({
+      ...first,
+      seq: 9,
+      row_ids: ['a', 'lost', 'b'],
+      activity: { ...(first.activity as object), rows: [] },
+    });
+    expect(rowIds(decoded)).toEqual(['a', 'b']);
+    expect(decoded).not.toHaveProperty('row_ids');
+  });
+
+  it('keeps state for one connection only', () => {
+    activityStreamDecoder(terminal)(frames[0]!);
+    const fresh = activityStreamDecoder(terminal);
+    expect(fresh(events[1]!)).toEqual(events[1]);
   });
 });

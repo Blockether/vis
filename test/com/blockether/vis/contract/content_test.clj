@@ -33,9 +33,23 @@
                                        "turn_id" "t1"
                                        "block_id" "b1"
                                        "field" field
-                                       "text" "More."})))
+                                       "text" "More."
+                                       "offset" 6})))
       (expect (not (content/event-valid? {"type" "content.block.delta"
                                           "turn_id" "t1"
                                           "block_id" "b1"
                                           "field" "unknown"
-                                          "text" "More."})))))
+                                          "text" "More."
+                                          "offset" 6})))
+      ;; A delta without its block position cannot be appended.
+      (expect (not (content/event-valid? {"type" "content.block.delta"
+                                          "turn_id" "t1"
+                                          "block_id" "b1"
+                                          "field" "text"
+                                          "text" "More."})))
+      (expect (not (content/event-valid? {"type" "content.block.delta"
+                                          "turn_id" "t1"
+                                          "block_id" "b1"
+                                          "field" "text"
+                                          "text" "More."
+                                          "offset" -1})))))

@@ -30,15 +30,15 @@ function frame(value: Record<string, unknown>): SseEvent {
   return { session_id: 's', turn_id: 't', ...value } as unknown as SseEvent;
 }
 
-function delta(seq: number, block: string, field: string, cumulative: string): SseEvent {
+function delta(seq: number, block: string, field: string, offset: number, text: string): SseEvent {
   return frame({
     type: 'content.block.delta',
     seq,
     iteration: 1,
     block_id: `t:${block}:1`,
     field,
-    text: cumulative.slice(-1),
-    cumulative,
+    text,
+    offset,
   });
 }
 
@@ -49,14 +49,14 @@ function activity(seq: number, state: string): SseEvent {
 const turn = [
   frame({ type: 'turn.started', seq: 1 }),
   frame({ type: 'block.started', seq: 2, iteration: 1, form_index: 0, scope: 'python', code: 'work()' }),
-  delta(3, 'reasoning', 'text', 'p'),
-  delta(4, 'assistant-prose', 'markdown', 'A'),
-  delta(5, 'reasoning', 'text', 'pl'),
+  delta(3, 'reasoning', 'text', 0, 'p'),
+  delta(4, 'assistant-prose', 'markdown', 0, 'A'),
+  delta(5, 'reasoning', 'text', 1, 'l'),
   activity(6, 'running'),
   frame({ type: 'turn.progress', seq: 7, iteration: 1, phase: 'tool' }),
-  delta(8, 'reasoning', 'text', 'plan'),
+  delta(8, 'reasoning', 'text', 2, 'an'),
   activity(9, 'succeeded'),
-  delta(10, 'assistant-prose', 'markdown', 'All done'),
+  delta(10, 'assistant-prose', 'markdown', 1, 'll done'),
 ];
 
 function streamTurn(): SseEvent[] {

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.client-test
   (:require [babashka.http-client :as http]
             [clojure.java.io :as io]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.paths :as paths]
             [taoensso.telemere :as tel]
@@ -800,3 +801,23 @@
           (fn []
             (expect (= [:closed] ((rv 'read-sse-stream!) "s" 0 "q1" nil (atom 0))))
             (expect (= 1 @looked-up)))))))
+
+(defdescribe compact-activity-frames-arrive-whole
+             (it "rebuilds the shared stream fixture frames into whole events"
+                 (let [{:strs [events frames]}
+                       (wire/parse-json (slurp (io/resource
+                                                 "vis-contract/fixtures/activity-stream.json")))
+
+                       body
+                       (apply str (map #(str "data: " (wire/json-str %) "\n\n") frames))
+
+                       seen
+                       (atom [])]
+
+                   ((rv 'read-sse-frames!)
+                     (java.io.ByteArrayInputStream. (.getBytes ^String body "UTF-8"))
+                     (fn [event]
+                       (swap! seen conj event)
+                       nil)
+                     nil)
+                   (expect (= events @seen)))))

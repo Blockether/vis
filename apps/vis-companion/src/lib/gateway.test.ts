@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mergeQueueBacklog } from './gateway';
 import { STORY_GOAL } from '../dev/story-data';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
+import streamCases from '../../../../packages/vis-contract/resources/vis-contract/fixtures/activity-stream.json';
 import type { Session } from './types';
 
 class MemoryStorage implements Storage {
@@ -184,6 +185,35 @@ describe('GatewayClient event-stream hard deadline', () => {
       expect(new URL(fetches.mock.calls[0]![0]).searchParams.get('scope')).toBe('both');
       expect(seen).toEqual(frames.map((frame) => frame.type));
       expect(cursors.get('s1')).toBe(5);
+    } finally {
+      stop();
+    }
+  });
+  it('delivers compact Activity frames as whole receipts', async () => {
+    vi.useFakeTimers();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            streamCases.frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(''),
+          ),
+        );
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)));
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+    const seen: unknown[] = [];
+    const stop = client.streamSessionEvents(
+      new Map([
+        ['s1', 0],
+        ['s2', 0],
+      ]),
+      (event) => seen.push(event),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toEqual(streamCases.events);
     } finally {
       stop();
     }

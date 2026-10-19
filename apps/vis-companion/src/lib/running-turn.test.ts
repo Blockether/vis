@@ -5,6 +5,7 @@ import {
   providerWaitDetail,
   pythonBusyDetail,
   reduceRunningTurnEvent,
+  type RunningTurn,
   type ProviderWait,
   type PythonBusy,
 } from './running-turn';
@@ -32,7 +33,7 @@ function reasoning(text: string): SseEvent {
     block_id: 'gw-thinking:reasoning:0',
     field: 'text',
     text,
-    cumulative: text,
+    offset: 0,
   });
 }
 
@@ -456,5 +457,28 @@ describe('the busy Python notice', () => {
     const bare = reduceRunningTurnEvent(runningTurn, notice({ cpu_percent: undefined }))?.progress?.busy;
 
     expect(bare && pythonBusyDetail(bare, bare.receivedAt)).toBe('No tool call for 1m 12s · stops in 3m 48s');
+  });
+});
+
+describe('live block text', () => {
+  const thinking = (offset: number, text: string) => event({ ...reasoning(text), offset });
+  const fold = (frames: SseEvent[]) =>
+    frames.reduce<RunningTurn | null>((turn, frame) => reduceRunningTurnEvent(turn, frame), runningTurn);
+
+  it('appends each delta at its offset, and a repeated frame changes nothing', () => {
+    const turn = fold([thinking(0, 'Read '), thinking(5, 'the file.'), thinking(5, 'the file.')]);
+    expect(thought(turn)).toBe('Read the file.');
+  });
+
+  it('shows the newest text after a gap and rebuilds the block on replay', () => {
+    const gap = fold([thinking(5, 'the file.')]);
+    expect(thought(gap)).toBe('the file.');
+    expect(gap?.streamBases?.['gw-thinking:reasoning:0']).toBe(5);
+
+    const replayed = [thinking(0, 'Read '), thinking(5, 'the file.'), thinking(14, ' Then edit.')].reduce(
+      (turn, frame) => reduceRunningTurnEvent(turn, frame),
+      gap,
+    );
+    expect(thought(replayed)).toBe('Read the file. Then edit.');
   });
 });

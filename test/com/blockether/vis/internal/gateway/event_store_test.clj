@@ -190,14 +190,14 @@
           (fn []
             (doseq [[type payload]
                     [["turn.started" {:turn_id "settled"}]
-                     ["content.block.delta" {:turn_id "settled" :cumulative "Seen"}]
-                     ["content.block.delta" {:turn_id "settled" :cumulative "Seen, then more"}]
+                     ["content.block.delta" {:turn_id "settled" :text "Seen" :offset 0}]
+                     ["content.block.delta" {:turn_id "settled" :text ", then more" :offset 4}]
                      ["block.output" {:turn_id "settled" :output "form"}]
                      ["chunk.response-parse" {:turn_id "settled"}]
                      ["context.updated" {:turn_id "settled"}]
                      ["turn.completed" {:turn_id "settled"}] ["block.output" {:output "unscoped"}]
                      ["turn.started" {:turn_id "running"}]
-                     ["content.block.delta" {:turn_id "running" :cumulative "Live"}]]]
+                     ["content.block.delta" {:turn_id "running" :text "Live" :offset 0}]]]
               (state/append-event! sid type payload))
             (let [frames
                   #(mapv (juxt (fn [event]
@@ -251,7 +251,8 @@
                            :iteration iteration
                            :block_id block-id
                            :field "markdown"
-                           :cumulative prose}]
+                           :text prose
+                           :offset 0}]
                          ["block.started"
                           {:turn_id "t" :iteration iteration :form_index 0 :code "watch()"}]]))
 
@@ -262,7 +263,7 @@
 
                     frames
                     #(mapv (fn [event]
-                             [(get event "type") (get event "iteration") (get event "cumulative")])
+                             [(get event "type") (get event "iteration") (get event "text")])
                            (state/events-since sid 0))]
 
                 (state/append-event! sid "turn.started" {:turn_id "t"})

@@ -428,6 +428,10 @@ The stream follows the whole session and does not end with a turn. Stop when a `
 `turn.failed` or `turn.cancelled` event has your `turn_id`. Closing the stream does not cancel work.
 To reconnect, send the last sequence number as the cursor.
 
+A `content.block.delta` event carries only new text for one `block_id` and `field`. Keep your text
+before `offset` and add `text` after it. The `offset` counts UTF-16 code units from the start of the
+block text. A repeated event then changes nothing, and an `offset` of 0 starts the text again.
+
 A client that cannot keep a stream open can read pages instead:
 
 ```bash
@@ -456,6 +460,9 @@ operation](extension-api.md#link-receipts-for-one-operation).
 
 A receipt can be one page of history. Check `history` before you treat the receipt
 as complete.
+
+`event.activity` always holds the whole receipt. The SDK rebuilds the compact receipts of the stream
+for you.
 
 `event.view` decodes view lifecycle events. The records describe input forms, live
 interfaces, patches and closure results. They are not Python UI widgets. To create
@@ -497,6 +504,12 @@ Over HTTP, Activity receipts and view lifecycle records arrive as JSON events in
 [Follow progress](#follow-progress). The Python records in this section validate the same JSON. The
 gateway schema in [Get the OpenAPI document](http-api.md#get-the-openapi-document) describes each
 field.
+
+On one stream connection, the first `block.activity` event of a form carries the whole receipt.
+Later events of that form add `row_ids`, every row id in order. Their `rows` hold only the rows that
+changed since the previous event of that form. Keep the rows of each form, and build the receipt in
+the order of `row_ids`. An event without `row_ids` replaces the whole receipt, and a new connection
+starts with whole receipts. The page reads always return whole receipts.
 
 </div>
 

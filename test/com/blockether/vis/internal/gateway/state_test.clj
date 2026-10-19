@@ -747,20 +747,23 @@
 
 (defdescribe
   thinking-newline-normalization-test
-  "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
-   consumers in sync. A client may still render defensively, but it must
-   not be the first place where blank-line runs disappear."
-  (it "streams reasoning deltas with normalized thinking over the gateway"
+  "Live SSE frames carry raw reasoning text with its block offset. Poll/replay of a
+   finished iteration and session history carry the normalized text, so a client
+   normalizes only what it paints live."
+  (it "streams raw reasoning deltas with their block offset"
+      ;; Each client normalizes the text it shows; the wire keeps the raw increment.
       (let [[type store? payload] (#'state/chunk->event
                                    {:phase :reasoning
                                     :iteration 1
-                                    :thinking " first  \n\n\t\nsecond\r\n\r\nthird  "
+                                    :thinking "First thought.  Second thought.  "
                                     :stream-block-id "t1:reasoning:1"
-                                    :stream-delta "first\nsecond\nthird"})]
+                                    :stream-delta "Second thought.  "
+                                    :stream-offset 16})]
         (expect (= "content.block.delta" type))
         (expect store?)
-        (expect (= "first\nsecond\nthird" (:text payload)))
-        (expect (= "first\nsecond\nthird" (:cumulative payload)))))
+        (expect (= "Second thought.  " (:text payload)))
+        (expect (= 16 (:offset payload)))
+        (expect (not (contains? payload :cumulative)))))
   (it "normalizes iteration-boundary thinking for pinned session history"
       (let [[type store? payload]
             (#'state/chunk->event
@@ -1073,7 +1076,7 @@
         (expect (= "t1:reasoning:2" (:block-id payload)))
         (expect (= "text" (:field payload)))
         (expect (= "hmm" (:text payload)))
-        (expect (= "hmm" (:cumulative payload)))))
+        (expect (= 0 (:offset payload)))))
   (it "iteration-final carries :iteration and complete assistant prose on the wire"
       (let [[type _ payload] (#'state/chunk->event
                               {:phase :iteration-final
@@ -7615,6 +7618,48 @@
                            (filterv #(= "content.block.delta" (get % "type")) events))))
           (expect (not-any? #(re-find #"tool-input|provider-thinking" (pr-str %)) events))
           (expect (every? #(string? (get % "type")) events))))))
+
+(defn- apply-block-delta
+  "The client rule: keep the block text before `offset`, then append `text`."
+  [block-text event]
+  (str (subs block-text 0 (min (count block-text) (long (get event "offset")))) (get event "text")))
+
+(defdescribe
+  stream-delta-offset-test
+  (it
+    "sends each delta once with its block offset and restarts a rewritten block at 0"
+    (let [sid
+          (str (random-uuid))
+
+          tid
+          (str (random-uuid))]
+
+      (swap! @#'state/registry assoc
+        sid
+        {:next-seq 0
+         :events []
+         :subscribers {}
+         :turns {tid {:turn_id tid :status "running"}}
+         :turn-order [tid]
+         :current-turn tid})
+      (with-redefs [lp/send!
+                    (fn [_ _ opts]
+                      (let [on-chunk (get-in opts [:hooks :on-chunk])]
+                        (on-chunk {:phase :assistant-prose :iteration 1 :text "Hello."})
+                        (on-chunk {:phase :assistant-prose :iteration 1 :text "Hello. World."})
+                        ;; The provider rewrites its text to a shorter one.
+                        (on-chunk {:phase :assistant-prose :iteration 1 :text "Bye." :done? true}))
+                      {:status :ok :answer nil})]
+        (#'state/run-turn! sid tid "hi" {}))
+      (let [deltas (filterv #(= "content.block.delta" (get % "type")) (state/events-since sid 0))]
+        (expect (= [[0 "Hello."] [6 " World."] [0 "Bye."]]
+                   (mapv (juxt #(get % "offset") #(get % "text")) deltas)))
+        (expect (not-any? #(contains? % "cumulative") deltas))
+        ;; Replay from the ring rebuilds the block text, and a repeated frame is a no-op.
+        (expect (= "Hello. World." (reduce apply-block-delta "" (take 2 deltas))))
+        (expect (= "Hello. World."
+                   (reduce apply-block-delta "" [(first deltas) (second deltas) (second deltas)])))
+        (expect (= "Bye." (reduce apply-block-delta "" deltas)))))))
 
 ;; Regression: `iteration.completed` shipped the provider's CUT summary as the
 ;; iteration's thinking, so every surface painted a two-word stub — `So the

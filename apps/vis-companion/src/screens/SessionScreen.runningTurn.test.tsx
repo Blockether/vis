@@ -703,7 +703,7 @@ describe('the wait between a submit and the first token', () => {
         block_id: 't-live:reasoning:1',
         field: 'text',
         text: 'Plan',
-        cumulative: 'Plan',
+        offset: 0,
         seq: 3,
       });
     });

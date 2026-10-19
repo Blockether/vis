@@ -74,12 +74,6 @@
 
 (def ^:private ERROR_PR_LIMIT 2000)
 
-(def ^:private STREAM_CUMULATIVE_LIMIT
-  "Bound for the cumulative text a live reasoning/content/prose frame carries
-   alongside its increment (`:cumulative`) — plenty for any live band; the
-   boundary `iteration.completed` still ships the complete text."
-  16000)
-
 (defn- clamp
   "Cut text without splitting a UTF-16 surrogate pair."
   [^String s ^long limit]
@@ -97,14 +91,14 @@
   (clamp (str s) limit))
 
 ;; Live reasoning/content/prose deltas arrive per provider token. Each emitted
-;; wire frame carries the INCREMENT since the last emit under `:text` (append
-;; consumers, e.g. the web prose stream) PLUS the bounded FULL cumulative text
-;; under `:cumulative` (replace consumers — the web thinking ticker, the TUI
-;; live bands — repaint from it, so a skipped frame is subsumed by the next
-;; one). Streaming one frame per token is O(n²) over a long stream AND reads as
-;; jittery token-vomit; instead COALESCE to SENTENCE granularity: emit when a
-;; sentence just closed, with a time cap so even a long sentence still ticks.
-;; `:done?` frames always pass so the final state lands.
+;; wire frame carries only the text that is new since the last emit (`:text`) and
+;; the UTF-16 position where that text starts in the block (`:offset`). A client
+;; keeps `text[0, offset)` and appends `:text`, so a repeated frame changes
+;; nothing. The replay ring stores every frame of the running iteration, so a
+;; reconnect rebuilds the full text from offset 0. Streaming one frame per token
+;; reads as jittery token-vomit; instead COALESCE to SENTENCE granularity: emit
+;; when a sentence just closed, with a time cap so even a long sentence still
+;; ticks. `:done?` frames always pass so the final state lands.
 (def ^:private DELTA_TIME_CAP_MS
   "Backstop for the sentence-coalesced live stream: even mid-sentence, a long
    reasoning/prose run still ticks at least this often so the user sees motion."
@@ -2044,25 +2038,24 @@
              (assoc :duration-ms duration-ms)))))
 
 (defn- block-delta-payload
-  "Live model text appended to its canonical block. `:text` is the INCREMENT since
-   the last emit; `:cumulative` is the bounded full text for replace-style
-   consumers (web ticker, TUI live bands)."
-  [{:keys [stream-delta stream-block-id]} field cumulative]
+  "Live model text appended to its canonical block. `:text` is the new text since
+   the last emit and `:offset` is its UTF-16 start position in the block text."
+  [{:keys [stream-delta stream-block-id stream-offset]} field]
   {:block-id stream-block-id
    :field field
    :text (or stream-delta "")
-   :cumulative (bounded-str cumulative STREAM_CUMULATIVE_LIMIT)})
+   :offset (long (or stream-offset 0))})
 
 (defn- reasoning-delta-payload
   "Live thinking, on its OWN block so a client paints it as the thinking trace -
-   distinct from prose."
+   distinct from prose. The text is raw: each client normalizes what it shows."
   [chunk]
-  (block-delta-payload chunk "text" (util/normalize-thinking-text (delta-text chunk))))
+  (block-delta-payload chunk "text"))
 
 (defn- prose-delta-payload
   "Live provider Markdown appended to the canonical prose block."
   [chunk]
-  (block-delta-payload chunk "markdown" (str (delta-text chunk))))
+  (block-delta-payload chunk "markdown"))
 
 (defn- iteration-final-payload
   "The iteration's complete reasoning and assistant prose - the canonical,
@@ -4115,15 +4108,21 @@
                         (when streaming?
                           (str tid ":" (name phase) ":" (long (or (:iteration chunk) 0))))
 
+                        ;; A provider that rewrites its text (shorter than what was sent)
+                        ;; restarts the block at offset 0, which replaces it.
+                        offset
+                        (when streaming? (if (<= previous-len (count cumulative)) previous-len 0))
+
                         delta
-                        (when streaming? (subs cumulative (min previous-len (count cumulative))))
+                        (when streaming? (subs cumulative offset))
 
                         chunk
                         (cond-> chunk
                           streaming?
                           (assoc :stream-block-id
                             block-id :stream-delta
-                            delta))
+                            delta :stream-offset
+                            offset))
 
                         ;; A streaming phase that has said NOTHING yet is not content.
                         ;; Opening its block on the first empty tick is what filled the
