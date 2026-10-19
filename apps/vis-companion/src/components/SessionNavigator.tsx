@@ -658,19 +658,26 @@ export function ProjectStatusCounts({
   });
 }
 
-/** A flat scrollable row of machine identities; overflow belongs to the row. */
+/**
+ * A segmented control of machine identities: one track, one segment for each machine.
+ * The gaps show the track, so two quiet machines never read as one. Overflow scrolls.
+ */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
-  return <div className="flex min-w-0 shrink items-center gap-1 overflow-x-auto">{children}</div>;
+  return (
+    <div className="flex min-w-0 shrink items-center gap-0.75 overflow-x-auto bg-machine-track p-0.75">
+      {children}
+    </div>
+  );
 }
 
 /** How often a machine tab moves its age on, so "now" turns into "1 min" by itself. */
 const MACHINE_AGE_TICK_MS = 30_000;
 
 /**
- * Machine state tile. Unread activity fills the tile and counts the conversations with
- * news in a chip beside the name. The time of the newest activity follows on every tile
- * that answers. A machine known down becomes a retry action with no pressed state, count
- * or unread tint.
+ * One segment of the machine switch. The chosen machine is raised: page paper, bold ink
+ * and a thin edge, never a colour. Yellow means news only: a chip counts the
+ * conversations with unread answers. The age of the newest activity follows, muted.
+ * A machine known down becomes a retry action with no pressed state, count or age.
  */
 export function MachineTab({
   isOn,
@@ -730,27 +737,26 @@ export function MachineTab({
       onClick={onClick}
       className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-none px-2.5 font-mono text-meta transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 motion-reduce:transition-none mouse:h-7 ${
         isDown
-          ? 'bg-level-project text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
-          : hasUnread
-            ? `bg-machine-unread font-bold text-white focus-visible:outline-white ${isOn ? 'ring-1 ring-inset ring-white' : ''}`
-            : isOn
-              ? 'bg-accent-surface font-bold text-accent-ink focus-visible:outline-accent-ink'
-              : 'bg-level-project text-dialog-hint hover:text-white focus-visible:outline-white'
+          ? 'text-err-ink hover:text-err-ink focus-visible:outline-err-ink'
+          : isOn
+            ? 'bg-ink font-bold text-white ring-1 ring-inset ring-white/20 focus-visible:outline-white'
+            : 'bg-level-project text-dialog-hint hover:text-white focus-visible:outline-white'
       }`}
     >
       {children}
       {hasUnread && (
         <span
           aria-hidden="true"
-          className="inline-flex h-4 min-w-4 items-center justify-center bg-white px-1 text-meta font-bold text-ink"
+          className="inline-flex h-4 min-w-4 items-center justify-center bg-accent px-1 text-meta font-bold text-accent-foreground"
         >
           {unread}
         </span>
       )}
       {hasUnread && <span className="sr-only">{unread} unread</span>}
+      {/* Muted by the hint ink, not by opacity: a faded hint fell under 3:1 on a segment. */}
       {age && (
-        <span aria-hidden="true" className="font-normal opacity-75">
-          · {age}
+        <span aria-hidden="true" className="font-normal text-dialog-hint">
+          {age}
         </span>
       )}
       {note && <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>}

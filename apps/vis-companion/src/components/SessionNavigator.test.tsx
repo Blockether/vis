@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   HeaderActions,
   MachineProjectsButton,
+  MachineSwitcher,
   MachineTab,
   Pager,
   RowDisclosure,
@@ -74,9 +75,9 @@ describe('project heading height', () => {
 });
 
 describe('machine selection', () => {
-  // Regression, user report (the leading square was crossed out and the right dot
-  // should become a full-tile notification tint): one chip, two independent states.
-  it('tints the entire unread tile without a trailing mark and keeps selection visible', () => {
+  // Regression, user review: the machine look mixed a warm selection fill, a cool unread
+  // tint and a white ring. Now selection is a raised segment and only news is yellow.
+  it('raises the chosen segment without colour and keeps yellow for news', () => {
     const { rerender } = render(
       <MachineTab isOn={false} unread={3} onClick={() => {}}>
         tower
@@ -84,10 +85,9 @@ describe('machine selection', () => {
     );
     const unread = screen.getByRole('button', { name: /tower\s*3 unread/ });
     expect(unread).toHaveAttribute('aria-pressed', 'false');
-    expect(unread).toHaveClass('bg-machine-unread', 'text-white', 'font-bold');
-    expect(unread).not.toHaveClass('bg-accent-surface', 'ring-accent-ink');
+    expect(unread).toHaveClass('bg-level-project', 'text-dialog-hint');
+    expect(screen.getByText('3')).toHaveClass('bg-accent', 'text-accent-foreground');
     expect(screen.getByText('3 unread')).toHaveClass('sr-only');
-    expect(unread.querySelector('.bg-accent-ink')).toBeNull();
 
     rerender(
       <MachineTab isOn unread={3} onClick={() => {}}>
@@ -96,8 +96,8 @@ describe('machine selection', () => {
     );
     const selectedUnread = screen.getByRole('button', { name: /tower\s*3 unread/ });
     expect(selectedUnread).toHaveAttribute('aria-pressed', 'true');
-    expect(selectedUnread).toHaveClass('bg-machine-unread', 'ring-1', 'ring-inset', 'ring-white');
-    expect(selectedUnread).not.toHaveClass('bg-accent-surface');
+    expect(selectedUnread).toHaveClass('bg-ink', 'font-bold', 'text-white', 'ring-1', 'ring-inset');
+    expect(screen.getByText('3')).toHaveClass('bg-accent');
     expect(selectedUnread).toHaveClass('focus-visible:outline-2', 'focus-visible:outline-white');
 
     rerender(
@@ -106,8 +106,8 @@ describe('machine selection', () => {
       </MachineTab>,
     );
     const selectedRead = screen.getByRole('button', { name: 'tower' });
-    expect(selectedRead).toHaveClass('bg-accent-surface', 'text-accent-ink');
-    expect(selectedRead).not.toHaveClass('ring-1');
+    expect(selectedRead).toHaveClass('bg-ink', 'text-white');
+    expect(selectedRead.querySelector('.bg-accent')).toBeNull();
     expect(screen.queryByText(/unread/)).toBeNull();
 
     rerender(
@@ -118,7 +118,7 @@ describe('machine selection', () => {
     const retry = screen.getByRole('button', { name: 'Reconnect to tower' });
     expect(retry).not.toHaveAttribute('aria-pressed');
     expect(retry).toHaveClass('text-err-ink');
-    expect(retry).not.toHaveClass('bg-machine-unread', 'bg-accent-surface', 'ring-accent-ink');
+    expect(retry).not.toHaveClass('bg-ink', 'bg-level-project', 'ring-1');
     expect(screen.queryByText(/unread/)).toBeNull();
   });
 
@@ -134,16 +134,18 @@ describe('machine selection', () => {
         </MachineTab>,
       );
       const tab = screen.getByRole('button', { name: /^tower\s*4 unread$/ });
-      expect(screen.getByText('4')).toHaveClass('bg-white', 'text-ink');
+      expect(screen.getByText('4')).toHaveClass('bg-accent', 'text-accent-foreground');
       expect(screen.getByText('4')).toHaveAttribute('aria-hidden', 'true');
-      expect(screen.getByText('· 2 min')).toHaveAttribute('aria-hidden', 'true');
+      expect(screen.getByText('2 min')).toHaveAttribute('aria-hidden', 'true');
+      expect(screen.getByText('2 min')).toHaveClass('text-dialog-hint');
+      expect(screen.getByText('2 min')).not.toHaveClass('opacity-60');
       expect(tab).toHaveAttribute('aria-description', 'Last activity 2 min ago');
       expect(tab).not.toHaveAttribute('title');
 
       act(() => {
         vi.advanceTimersByTime(60 * 60_000);
       });
-      expect(screen.getByText('· 1 h')).toBeInTheDocument();
+      expect(screen.getByText('1 h')).toBeInTheDocument();
 
       rerender(
         <MachineTab isOn={false} lastActivityAt={Date.now()} onClick={() => {}}>
@@ -152,7 +154,7 @@ describe('machine selection', () => {
       );
       const idle = screen.getByRole('button', { name: 'tower' });
       expect(idle).toHaveClass('bg-level-project');
-      expect(screen.getByText('· now')).toBeInTheDocument();
+      expect(screen.getByText('now')).toBeInTheDocument();
       expect(idle).toHaveAttribute('aria-description', 'Active now');
 
       rerender(
@@ -160,7 +162,7 @@ describe('machine selection', () => {
           tower
         </MachineTab>,
       );
-      expect(screen.queryByText(/·/)).toBeNull();
+      expect(screen.queryByText(/now|min/)).toBeNull();
       expect(screen.queryByText('4')).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -168,27 +170,32 @@ describe('machine selection', () => {
   });
 });
 
-// Regression, visual review: Projects is an icon-only action with no frame.
+// Regression, visual review: Projects is an icon-only action with no frame, and the
+// machines must not run together (user review).
 describe('machine bar', () => {
-  it('uses a muted neutral fill for the other machines without hiding unread or offline state', () => {
-    const { rerender } = render(
-      <MachineTab isOn={false} onClick={() => {}}>
-        mini
-      </MachineTab>,
+  it('gives every machine its own segment on the track and drops it when the machine is down', () => {
+    const { container, rerender } = render(
+      <MachineSwitcher>
+        <MachineTab isOn={false} onClick={() => {}}>
+          mini
+        </MachineTab>
+      </MachineSwitcher>,
     );
+    expect(container.firstElementChild).toHaveClass('bg-machine-track', 'p-0.75', 'gap-0.75');
     const idle = screen.getByRole('button', { name: 'mini' });
     expect(idle).toHaveClass('bg-level-project');
-    expect(idle).not.toHaveClass('bg-accent-surface', 'bg-machine-unread');
+    expect(idle).not.toHaveClass('bg-ink');
 
     rerender(
-      <MachineTab isOn={false} isDown label="Reconnect to mini" onClick={() => {}}>
-        mini
-      </MachineTab>,
+      <MachineSwitcher>
+        <MachineTab isOn={false} isDown label="Reconnect to mini" onClick={() => {}}>
+          mini
+        </MachineTab>
+      </MachineSwitcher>,
     );
-    expect(screen.getByRole('button', { name: 'Reconnect to mini' })).toHaveClass(
-      'bg-level-project',
-      'text-err-ink',
-    );
+    const retry = screen.getByRole('button', { name: 'Reconnect to mini' });
+    expect(retry).toHaveClass('text-err-ink');
+    expect(retry).not.toHaveClass('bg-level-project');
   });
 
   it('keeps New project icon-only and borderless while it opens the folder sheet', async () => {

@@ -91,7 +91,7 @@ describe('a machine that has not spoken yet says so', () => {
     // The gateway speaks: the same rows, now confirmed, and nothing claiming a wait.
     await waitFor(() => expect(screen.queryByText('Reading sessions...')).toBeNull());
     expect(screen.getByText('Second')).toBeVisible();
-    expect(strip().getByRole('button', { name: /beta/ }).textContent).toMatch(/^beta· \d+ d$/);
+    expect(strip().getByRole('button', { name: /beta/ }).textContent).toMatch(/^beta\d+ d$/);
   });
 
   // Same report, the case the tile and the footer used to disagree about: a saved outage

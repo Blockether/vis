@@ -83,18 +83,17 @@ describe('the machine scope always has one active machine', () => {
     const strip = within(screen.getByLabelText('Machines'));
     const alpha = strip.getByRole('button', { name: /^alpha/ });
     const beta = strip.getByRole('button', { name: /^beta.*unread/ });
-    expect(alpha).toHaveClass('bg-accent-surface');
-    expect(beta).toHaveClass('bg-machine-unread');
-    expect(alpha.querySelector('.bg-white')).toBeNull();
-    expect(beta.querySelector('.bg-white')).toHaveTextContent(/^1$/);
-    expect(beta.querySelector('.bg-accent-ink')).toBeNull();
+    expect(alpha).toHaveClass('bg-ink');
+    expect(beta).toHaveClass('bg-level-project');
+    expect(alpha.querySelector('.bg-accent')).toBeNull();
+    expect(beta.querySelector('.bg-accent')).toHaveTextContent(/^1$/);
     expect(section('alpha').querySelector("[class*='border-machine-']")).toBeNull();
 
     await userEvent.click(beta);
     await screen.findByText('Second');
     expect(beta).toHaveAttribute('aria-pressed', 'true');
-    expect(beta).toHaveClass('bg-machine-unread', 'ring-white');
-    expect(alpha).not.toHaveClass('bg-accent-surface');
+    expect(beta).toHaveClass('bg-ink', 'ring-1');
+    expect(alpha).not.toHaveClass('bg-ink');
     expect(section('beta').querySelector("[class*='border-machine-']")).toBeNull();
   });
 

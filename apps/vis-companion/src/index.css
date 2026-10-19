@@ -322,11 +322,10 @@
   --color-machine-olive: #8e8b10;
 }
 
-/* Unread activity colours the whole machine tile. The link hue is distinct from
-   the warm selection accent and green live status; foreground ink stays legible on
-   its theme-derived, opaque tint. Monochrome themes retain the contrast in value. */
+/* The machine switch is a segmented control: this track shows between its segments,
+   so each machine reads as its own tile. Unread news is the accent chip, not a tint. */
 @theme {
-  --color-machine-unread: color-mix(in oklab, var(--link-fg) 27%, var(--surface));
+  --color-machine-track: color-mix(in oklab, var(--fg) 10%, var(--surface));
 }
 
 /* Transcript entry motion — keyframes, NOT `@starting-style` + transition.

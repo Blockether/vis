@@ -1029,7 +1029,7 @@ function MachineSwitcherDemo() {
 }
 
 /**
- * The switcher is name-first: cool unread fill, warm selection, error ink for retry.
+ * The switcher is a segmented control: a raised chosen segment, a yellow news chip, error ink for retry.
  * A cached machine keeps its pending-check tooltip alongside any unread activity.
  */
 export const Machines: Story = {
@@ -1068,7 +1068,8 @@ export const Machines: Story = {
     await expect(chosen).toHaveAttribute('aria-pressed', 'true');
     await expect(unread).toHaveAttribute('aria-pressed', 'false');
     await expect(unread.querySelector('.sr-only')).toHaveTextContent('4 unread');
-    await expect(unread).toHaveTextContent('· 2 min');
+    await expect(unread).toHaveTextContent('2 min');
+    await expect(unread.querySelector('.bg-accent')).toHaveTextContent(/^4$/);
     await expect(down).not.toHaveAttribute('aria-pressed');
     await expect(down.querySelector('span')).toBeNull();
 

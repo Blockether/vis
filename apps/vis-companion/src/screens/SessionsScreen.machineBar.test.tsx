@@ -71,7 +71,7 @@ it('counts unread conversations on a machine tab beside the time of its newest a
 
   const strip = screen.getByRole('group', { name: 'Machines' });
   const beta = await within(strip).findByRole('button', { name: /^beta\s*2 unread$/ });
-  expect(beta).toHaveClass('bg-machine-unread');
-  expect(beta).toHaveTextContent('· 5 min');
-  expect(within(strip).getByRole('button', { name: 'alpha' })).toHaveTextContent(/· \d+ d/);
+  expect(beta.querySelector('.bg-accent')).toHaveTextContent(/^2$/);
+  expect(beta).toHaveTextContent('5 min');
+  expect(within(strip).getByRole('button', { name: 'alpha' })).toHaveTextContent(/\d+ d$/);
 });

@@ -407,7 +407,7 @@ describe('MachineTab', () => {
     );
 
     const tab = screen.getByRole('button', { name: /tower\s*2 unread/ });
-    expect(tab).toHaveClass('bg-machine-unread');
+    expect(tab.querySelector('.bg-accent')).toHaveTextContent(/^2$/);
     expect(tab.querySelector('.sr-only')).toHaveTextContent('2 unread');
     expect(tab.querySelectorAll('span')).toHaveLength(2);
   });
