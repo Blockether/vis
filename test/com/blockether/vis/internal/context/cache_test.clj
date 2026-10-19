@@ -148,6 +148,39 @@
   (it "no state change ⇒ no delta (frozen prefix stays warm)"
       (let [m0 (cr/ctx-static-map {:ctx base-ctx})]
         (expect (nil? (cr/render-ctx-delta m0 m0)))))
+  (it "renders one line for each top-level key, with nested values inline"
+      ;; The provider bills each newline and indent: the 100-column layout cost
+      ;; about 15% more input tokens for the same session.
+      (let [roots
+            (vec (for [n (range 12)]
+                   (array-map "cwd" (str "/Users/example/repository-" n) "draft" "shared")))
+
+            block
+            (cr/render-ctx-map (array-map "workspace" (array-map "root" "/Users/example"
+                                                                 "filesystem_roots" roots)
+                                          "routing" (array-map "model" "example-model")))
+
+            lines
+            (str/split-lines
+              (subs block (str/index-of block "session = ") (str/last-index-of block "\n```")))]
+
+        (expect (= 4 (count lines)))
+        (expect (= "session = {" (first lines)))
+        (expect
+          (str/starts-with?
+            (second lines)
+            " \"workspace\": {\"root\": \"/Users/example\", \"filesystem_roots\": [{\"cwd\": "))
+        (expect (str/ends-with? (second lines) "\"draft\": \"shared\"}]},"))
+        (expect (= " \"routing\": {\"model\": \"example-model\"}" (nth lines 2)))
+        (expect (= "}" (last lines)))))
+  (it "renders a nested delta value on one line"
+      (let [delta (cr/render-ctx-delta (array-map "env" (array-map "os" "linux"))
+                                       (array-map "env"
+                                                  (array-map "os" "linux"
+                                                             "tools" (mapv #(str "tool-" %)
+                                                                           (range 40)))))]
+        (expect (= 1 (count (str/split-lines delta))))
+        (expect (str/starts-with? delta "session[\"env\"][\"tools\"] = [\"tool-0\", \"tool-1\""))))
   (it "projects the immutable security snapshot as standing session access"
       (let [access
             {"generation" "sha256:abc"

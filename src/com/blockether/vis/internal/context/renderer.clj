@@ -122,6 +122,18 @@
   [s]
   (and (string? s) (str/starts-with? s SESSION_CONTEXT_HEADER)))
 
+(defn- session-literal
+  "The standing `session` literal with one line for each top-level key.
+   Each value stays on its key's line: the provider bills every newline and
+   indent, and the 100-column layout cost about 15% more tokens for the block."
+  [m]
+  (str "{\n"
+       (str/join ",\n"
+                 (map (fn [[k v]]
+                        (str " " (env/ctx->python-line k) ": " (env/ctx->python-line v)))
+                      m))
+       "\n}"))
+
 (defn render-ctx-map
   "Render an already-materialized model-facing session map as the fenced Python
    baseline block. Used when a large fold deliberately rebases cached context."
@@ -130,7 +142,7 @@
     (str SESSION_CONTEXT_HEADER
          "# The host keeps it current; mid-session changes arrive as later\n"
          "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
-         "session = " (env/ctx->python-str m)
+         "session = " (session-literal m)
          "\n" "```")))
 
 (defn render-ctx-static
@@ -141,13 +153,7 @@
    lines (`render-ctx-delta`), so the embed and the deltas are one coherent
    Python story. Returns nil when there is nothing to show."
   [{:keys [ctx warnings]}]
-  (let [m (project-ctx-static (eng/session-view ctx warnings))]
-    (when (seq m)
-      (str SESSION_CONTEXT_HEADER
-           "# The host keeps it current; mid-session changes arrive as later\n"
-           "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
-           "session = " (env/ctx->python-str m)
-           "\n" "```"))))
+  (render-ctx-map (project-ctx-static (eng/session-view ctx warnings))))
 
 (defn ctx-static-map
   "The standing ctx as a MAP (`project-ctx-static`) — the data behind
@@ -196,9 +202,9 @@
         (get view "session_goal")]
 
     (str "session[\"turn\"] = "
-         (env/ctx->python-str turn)
-         (when utilization (str "\nsession[\"utilization\"] = " (env/ctx->python-str utilization)))
-         (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-str goal))))))
+         (env/ctx->python-line turn)
+         (when utilization (str "\nsession[\"utilization\"] = " (env/ctx->python-line utilization)))
+         (when goal (str "\nsession[\"goal\"] = " (env/ctx->python-line goal))))))
 
 (defn- ctx-path-str
   "A key path `[\"env\" \"host\" \"os\"]` → the Python subscript chain
@@ -226,9 +232,9 @@
                       (= pv cv) nil
                       (and (map? pv) (map? cv)) (ctx-delta-ops (conj path k) pv cv)
                       :else [(str "session" (ctx-path-str (conj path k))
-                                  " = " (env/ctx->python-str cv))])))
+                                  " = " (env/ctx->python-line cv))])))
             (distinct (concat (keys prev) (keys cur))))
-    (when (not= prev cur) [(str "session" (ctx-path-str path) " = " (env/ctx->python-str cur))])))
+    (when (not= prev cur) [(str "session" (ctx-path-str path) " = " (env/ctx->python-line cur))])))
 
 (defn render-ctx-delta
   "Structural Python delta of the standing ctx between the previously-sent map

@@ -406,6 +406,14 @@
   ^String [data]
   (python-literal* data 0 100 []))
 
+(defn ctx->python-line
+  "`ctx->python-str` without layout whitespace: the same literal on one line.
+
+   Model-facing context uses it. A provider bills each newline and indent as
+   tokens, and the model reads both layouts the same way."
+  ^String [data]
+  (python-literal* data 0 Long/MAX_VALUE []))
+
 ;; =============================================================================
 ;; The wire: one JSON literal in, one JSON string out
 ;; =============================================================================
