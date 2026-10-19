@@ -2779,7 +2779,8 @@
    produced `../…` entries, which put the frozen copy OUTSIDE the snapshot (and
    `io/copy` truncates whatever it lands on) while leaving the module missing
    from the tree the extension actually imports. A directory already walked ends
-   that branch, so a symlink cycle terminates."
+   that branch, so a symlink cycle terminates. An installed extension below the root
+   (`<name>/current/extension.py`) has its own import root and is not copied."
   [^File root]
   (let [root-path (.toPath (.getAbsoluteFile root))]
     (loop [[^File dir & more] [root]
@@ -2790,7 +2791,8 @@
         (vec (sort-by first out))
         (let [k (.getCanonicalPath dir)]
           (if (or (seen k)
-                  (contains? #{"__pycache__" ".git" ".venv" "venv" "node_modules"} (.getName dir)))
+                  (contains? #{"__pycache__" ".git" ".venv" "venv" "node_modules"} (.getName dir))
+                  (and (not= dir root) (.isFile (io/file dir "current" "extension.py"))))
             (recur more seen out)
             (let [children (vec (.listFiles dir))]
               (recur (into (vec more)

@@ -8880,3 +8880,26 @@ vis.register_extension(vis.Extension(
         (expect (not-any? #(= ::pyx/editor-sdk (:check-id %))
                           (#'pyx/doctor-fn
                            {:workspace/root (str (project-with-wheel "0.2.29"))}))))))
+
+(defdescribe
+  import-root-skips-installed-extensions-test
+  (it "copies sibling modules but not installed extensions below the root"
+      (let [root
+            (.toFile (java.nio.file.Files/createTempDirectory
+                       "vis-import-root-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+
+            write!
+            (fn [rel]
+              (let [f (io/file root rel)]
+                (io/make-parents f)
+                (spit f "x = 1\n")))]
+
+        (try (doseq [rel ["gh.py" "mypkg/__init__.py" "vis-x/current/extension.py"
+                          "vis-x/0.1.0/extension.py" "vis-x/0.1.0/src/vis_x/core.py"]]
+               (write! rel))
+             (expect (= ["gh.py" "mypkg/__init__.py"] (mapv first (#'pyx/import-root-files root))))
+             (expect (= ["extension.py"]
+                        (mapv first (#'pyx/import-root-files (io/file root "vis-x" "current")))))
+             (finally (doseq [^java.io.File f (reverse (file-seq root))]
+                        (.delete f)))))))
