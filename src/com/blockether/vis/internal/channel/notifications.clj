@@ -6,7 +6,7 @@
    clipboard\", \"tests passed\", \"provider switched\" - without
    embedding it in the answer body or polluting Telemere logs.
 
-   Surface (re-exported on `com.blockether.vis.core`):
+   Surface:
 
      (notify! text)
      (notify! text :level :info|:success|:warn|:error

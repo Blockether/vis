@@ -1,558 +1,48 @@
 (ns com.blockether.vis.core
-  "vis - broad host facade.
+  "vis - binary entry and a small host facade for tests and REPL work.
 
-   This is the namespace channel adapters, embedded callers, and tests
-   import. It deliberately re-exports host, registry, runtime, persistence,
-   prompt, diagnostic, and sandbox helpers from `com.blockether.vis.internal.*`.
-   The internal tree is not stable; the names exposed here are the host
-   contract. Nothing under `com.blockether.vis.internal` requires this facade.
-   Extensions are written in Python against the `blockether.vis.extension` SDK.
+   `-main` is the binary entry. `clojure -M:vis` and the native-image build
+   use it through `:gen-class`. The commands live in
+   `com.blockether.vis.internal.main`.
 
-   Canonical runtime language:
-     Session -> Turn -> Iteration -> Block.
-
-   A Turn is one user request plus assistant answer inside a Session.
-   New code and documentation should use turn/user-request language.
-
-   Primary surfaces:
-     - Session / turn runtime: create!, send!, turn!, by-id,
-       by-channel, env-for, close!, delete!, set-title!.
-     - Environment runtime: create-environment, dispose-environment!,
-       get-router, rebuild-router!, resolve-effective-model.
-     - Extension registry: registered-extensions, deregister-extension!,
-       op hooks, discovery, reload.
-     - Registries: command, channel, provider, and backend registration
-       helpers for host-owned and embedded use.
-     - Persistence facade: db-* functions and connection helpers. The
-       implementation namespace / extension slot are spelled
-       `persistance`; human-facing language is Persistence.
-     - Prompt / Python-sandbox / formatting / cancellation /
-       notifications / doctor helpers shared by channels and extensions.
-
-   Not every export is equally high-level. `send!`, extension maps,
-   registry builders, read-side persistence helpers, and Markdown export
-   are the preferred integration surface. Low-level sandbox,
-   dispatcher, and write-side db helpers are exported because this is a
-   host facade, but ordinary extensions should avoid depending on them
-   unless they are implementing host-level behavior.
-
-   Binary entry: -main (invoked by `clojure -M:vis`, AOT'd to a Java
-   entry class via `:gen-class` for the GraalVM native-image build)."
+   The other names re-export persistence, registry, toggle and config helpers
+   that tests and `dev/` use. Nothing under `com.blockether.vis.internal`
+   requires this namespace. Extensions use the Python SDK
+   `blockether.vis.extension`, not this namespace."
   (:gen-class)
-  (:require
-    [charred.api :as json]
-    [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
-    [com.blockether.vis.internal.session.cancellation :as cancellation]
-    [com.blockether.vis.internal.extension.capability :as capability]
-    [com.blockether.vis.internal.commandline :as commandline]
-    [com.blockether.vis.internal.config.core :as config]
-    [com.blockether.vis.internal.context.renderer :as ctx-renderer]
-    [com.blockether.vis.internal.doctor :as doctor]
-    [com.blockether.vis.internal.python.env :as env]
-    [com.blockether.vis.internal.error :as error]
-    [com.blockether.vis.internal.extension.core :as extension]
-    [com.blockether.vis.internal.extension.aggregate :as extension-aggregate]
-    [com.blockether.vis.internal.channel.events :as channel-events]
-    [com.blockether.vis.internal.channel.form :as form]
-    [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
-    [com.blockether.vis.internal.foundation.environment.core :as environment]
-    [com.blockether.vis.internal.foundation.shell :as shell]
-    [com.blockether.vis.internal.import :refer [import-vars]]
-    [com.blockether.vis.internal.format :as fmt]
-    [com.blockether.vis.internal.gateway.client :as gateway-client]
-    [com.blockether.vis.internal.gateway.server :as gateway]
-    [com.blockether.vis.contract.wire :as wire]
-    [com.blockether.vis.internal.provider.limits-format :as limits-format]
-    [com.blockether.vis.internal.loop :as lp]
-    [com.blockether.vis.internal.loop.environment :as loop-env]
-    [com.blockether.vis.internal.loop.python-exec :as python-exec]
-    [com.blockether.vis.internal.loop.router :as loop-router]
-    [com.blockether.vis.internal.loop.transcript :as transcript]
-    [com.blockether.vis.internal.loop.turn :as turn]
-    [com.blockether.vis.internal.extension.manifest :as manifest]
-    [com.blockether.vis.internal.session.titling :as titling]
-    [com.blockether.vis.internal.main :as binary]
-    [com.blockether.vis.internal.channel.render :as ir]
-    [com.blockether.vis.internal.foundation.transcript :as foundation-transcript]
-    [com.blockether.vis.internal.channel.notifications :as notifications]
-    [com.blockether.vis.internal.persistance.codec :as codec]
-    [com.blockether.vis.internal.persistance.core :as persistance]
-    [com.blockether.vis.internal.session.progress :as progress]
-    [com.blockether.vis.internal.context.prompt :as prompt]
-    [com.blockether.vis.internal.python.format :as pyfmt]
-    [com.blockether.vis.internal.python.extensions :as python-extensions]
-    [com.blockether.vis.internal.python.test-runner :as python-test-runner]
-    [com.blockether.vis.internal.python.worker :as pyext]
-    [com.blockether.vis.internal.provider.catalog :as catalog]
-    [com.blockether.vis.internal.provider.key-store :as provider-key-store]
-    [com.blockether.vis.internal.provider.limits :as provider-limits]
-    [com.blockether.vis.internal.provider.service :as providers]
-    [com.blockether.vis.internal.session.model :as session-model]
-    [com.blockether.vis.internal.extension.registry :as registry]
-    [com.blockether.vis.internal.channel.slash :as slash]
-    [com.blockether.vis.internal.channel.theme :as theme]
-    [com.blockether.vis.internal.config.toggles :as toggles]
-    [com.blockether.vis.internal.paths :as paths]
-    [com.blockether.vis.internal.util :as util]
-    [com.blockether.vis.internal.view.core :as view]
-    [com.blockether.vis.internal.workspace.core :as workspace]))
+  (:require [com.blockether.vis.internal.extension.capability :as capability]
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
+            [com.blockether.vis.internal.import :refer [import-vars]]
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.main :as binary]
+            [com.blockether.vis.internal.persistance.core :as persistance]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.config.toggles :as toggles]))
 
-;; The one closed distribution manifest, read-only: an extension can ask whether
-;; its own initializer is listed, and in which order the engine runs it.
-(import-vars [manifest-initializers manifest/initializers])
-
-;; Gateway (HTTP/SSE server over the session/turn runtime)
-;;
- ;; `gateway-register-routes!` is the route-contribution seam. Initializers in
- ;; the one closed distribution manifest register routes in their listed order;
- ;; adding a jar alone never executes its code.
-;; The gateway-session/turn helpers below are the host contract a route
-;; contribution builds its handlers from.
-(import-vars [gateway-start! gateway/start!]
-             [gateway-stop! gateway/stop!]
-             [gateway-running? gateway/running?]
-             [gateway-auth-required? gateway/auth-required?]
-             [gateway-register-routes! gateway/register-routes!]
-             [gateway-deregister-routes! gateway/deregister-routes!]
-             [gateway-register-contributed-sse! gateway/register-contributed-sse!]
-             [gateway-unregister-contributed-sse! gateway/unregister-contributed-sse!]
-             [gateway-ensure! gateway-client/ensure-gateway!]
-             [gateway-ensure-serving! gateway-client/ensure-gateway-serving!]
-             [gateway-daemon-status gateway-client/status]
-             [gateway-daemon-stop! gateway-client/stop-daemon!]
-             [gateway-create-session! gateway-client/create-session!]
-             [gateway-session-slashes gateway-client/session-slashes]
-             [gateway-soul gateway-client/soul]
-             [gateway-list-sessions gateway-client/list-sessions]
-             [gateway-list-sessions-page gateway-client/list-sessions-page]
-             [gateway-search-sessions gateway-client/search-sessions]
-             [gateway-close-session! gateway-client/close-session!]
-             [gateway-list-projects gateway-client/list-projects]
-             [gateway-get-project gateway-client/get-project]
-             [gateway-create-project! gateway-client/create-project!]
-             [gateway-ensure-project-for-root! gateway-client/ensure-project-for-root!]
-             [gateway-update-project! gateway-client/update-project!]
-             [gateway-delete-project! gateway-client/delete-project!]
-             [gateway-assign-project! gateway-client/assign-project!]
-             [gateway-reorder-project-sessions! gateway-client/reorder-project-sessions!])
-
-(import-vars [gateway-release-session! gateway-client/release-session!]
-             [gateway-release-session-runtime! gateway-client/release-session-runtime!]
-             [gateway-submit-turn! gateway-client/submit-turn!])
-
-(import-vars [gateway-submit-turn-sync! gateway-client/submit-turn-sync!]
-             [gateway-attach-turn-sync! gateway-client/attach-turn-sync!]
-             [gateway-update-queued-turn! gateway-client/update-queued-turn!]
-             [gateway-delete-queued-turn! gateway-client/delete-queued-turn!]
-             [gateway-cancel-turn! gateway-client/cancel-turn!]
-             [gateway-cancel-current-turn! gateway-client/cancel-current-turn!]
-             [gateway-drain-idle! gateway-client/drain-idle!]
-             [gateway-input-views gateway-client/input-views]
-             [gateway-live-views gateway-client/live-views]
-             [gateway-view-action! gateway-client/view-action!]
-             [gateway-get-turn gateway-client/get-turn]
-             [gateway-list-turns gateway-client/list-turns]
-             [gateway-transcript gateway-client/transcript]
-             [gateway-transcript-page gateway-client/transcript-page]
-             [gateway-transcript-md gateway-client/transcript-md]
-             [gateway-transcript-html gateway-client/transcript-html]
-             [gateway-turn-trace gateway-client/turn-trace]
-             [gateway-reconcile-running-turns! gateway-client/reconcile-running-turns!]
-             [gateway-context-snapshot gateway-client/context-snapshot]
-             [gateway-current-seq gateway-client/current-seq]
-             [gateway-mux-subscribe! gateway-client/mux-subscribe!]
-             [gateway-mux-unsubscribe! gateway-client/mux-unsubscribe!]
-             [gateway-fleet-subscribe! gateway-client/fleet-subscribe!])
-
-(import-vars [gateway-list-resources gateway-client/list-resources]
-             [gateway-list-resources-cached gateway-client/list-resources-cached]
-             [gateway-stop-resource! gateway-client/stop-resource!]
-             [gateway-resource-logs gateway-client/resource-logs]
-             [gateway-iteration-attachment-bytes gateway-client/iteration-attachment-bytes]
-             [gateway-capabilities gateway-client/capabilities]
-             [gateway-session-artifacts gateway-client/session-artifacts]
-             [gateway-prepare-speech-model! gateway-client/prepare-speech-model!]
-             [gateway-transcribe-audio! gateway-client/transcribe-audio!]
-             [gateway-synthesize-speech! gateway-client/synthesize-speech!])
-
-;; A staged recording's WORDS. A channel calls the first the moment a file is
-;; attached and paints the second on every frame, so the transcript is made while
-;; the human types instead of inside the turn they send.
-(import-vars [audio-transcribe-request! audio-transcribe/request-attachments!]
-             [audio-transcribe-outcome audio-transcribe/outcome]
-             [audio-transcribe-statuses audio-transcribe/statuses])
-
-(import-vars [gateway-events-since gateway-client/events-since]
-             [gateway-toggle-setting! gateway-client/toggle-setting!]
-             [gateway-cycle-setting! gateway-client/cycle-setting!]
-             [gateway-session-model gateway-client/session-model]
-             [gateway-session-model-cached gateway-client/session-model-cached]
-             [gateway-set-session-model! gateway-client/set-session-model!]
-             [gateway-provider-status gateway-client/provider-status]
-             [gateway-router-fleet gateway-client/router]
-             [gateway-router-diagnostics gateway-client/router-diagnostics]
-             [gateway-provider-limits gateway-client/provider-limits]
-             [gateway-consume-provider-reset-credit! gateway-client/consume-provider-reset-credit!]
-             [gateway-provider-model-options gateway-client/provider-models]
-             [gateway-set-router-default! gateway-client/set-router-default!]
-             [gateway-set-router-fallback! gateway-client/set-router-fallback!])
-
-;; Provider OAuth, driven ENTIRELY through the daemon. Every channel — TUI, web,
-;; phone — starts a flow, hands back a redirect URL or polls a device code, and
-;; never touches a token, verifier, or auth file itself. That keeps the gateway
-;; the ONE place credentials live, and lets a client sign a provider in without
-;; that provider's extension on its own classpath.
-(import-vars [gateway-provider-auth-start! gateway-client/provider-auth-start!]
-             [gateway-provider-auth-complete! gateway-client/provider-auth-complete!]
-             [gateway-provider-auth-submit-key! gateway-client/provider-auth-submit-key!]
-             [gateway-provider-auth-poll! gateway-client/provider-auth-poll!]
-             [gateway-provider-auth-cancel! gateway-client/provider-auth-cancel!]
-             [gateway-provider-logout! gateway-client/provider-logout!]
-             [gateway-provider-remove! gateway-client/provider-remove!])
-
-;; MCP lives on the GATEWAY: it owns the pool, the child processes, and the OAuth
-;; tokens. Channels inspect, kill/start, and drive headless auth through these.
-(import-vars [gateway-mcp-servers gateway-client/mcp-servers]
-             [gateway-mcp-save-server! gateway-client/mcp-save-server!]
-             [gateway-mcp-test-server! gateway-client/mcp-test-server!]
-             [gateway-mcp-kill-server! gateway-client/mcp-kill-server!]
-             [gateway-mcp-start-server! gateway-client/mcp-start-server!]
-             [gateway-mcp-set-server-enabled! gateway-client/mcp-set-server-enabled!]
-             [gateway-mcp-delete-server! gateway-client/mcp-delete-server!]
-             [gateway-mcp-auth-start! gateway-client/mcp-auth-start!]
-             [gateway-mcp-auth-complete! gateway-client/mcp-auth-complete!]
-             [gateway-mcp-auth-poll! gateway-client/mcp-auth-poll!]
-             [gateway-mcp-auth-cancel! gateway-client/mcp-auth-cancel!]
-             [gateway-mcp-auth-logout! gateway-client/mcp-auth-logout!])
-
-;; Channel-neutral per-session model preference (shared store). The TUI uses
-;; these directly; the gateway aliases above delegate to the same store, so
-;; web + TUI route a session through the same persisted model.
-(import-vars [session-model-of session-model/model-of]
-             [session-model-of-cached session-model/model-of-cached]
-             [set-session-model! session-model/set-model!]
-             [gateway-session-workspace gateway-client/session-workspace-info]
-             [gateway-change-root! gateway-client/change-root!])
-
-(import-vars [cancellation-token cancellation/cancellation-token]
-             [cancellation-atom cancellation/cancellation-atom]
-             [cancellation-set-future! cancellation/cancellation-set-future!]
-             [on-cancel! cancellation/on-cancel!]
-             [cancel! cancellation/cancel!]
-             [cancelled? cancellation/cancelled?]
-             [cancellation? cancellation/cancellation?]
-             [virtual-threads-available? cancellation/virtual-threads-available?]
-             [worker-runtime cancellation/worker-runtime]
-             [worker-future cancellation/worker-future])
-
-;; What THIS machine can run, as opposed to what this distribution registered.
-(import-vars [capability-ensure! capability/ensure!]
-             [capability-verdict capability/verdict]
-             [capability-fail! capability/fail!]
-             [capability-terminal-error? capability/terminal-error?]
-             ;; A pack that RECORDS a terminal verdict must be able to drop it again in its own
-             ;; tests: the registry is process-wide by design, so one such test would otherwise
-             ;; answer every later test in that JVM from memory.
-             [capability-forget-verdicts! capability/forget-verdicts!])
+;; A pack that RECORDS a terminal verdict must be able to drop it again in its own
+;; tests: the registry is process-wide by design, so one such test would otherwise
+;; answer every later test in that JVM from memory.
+(import-vars [capability-forget-verdicts! capability/forget-verdicts!])
 
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
-(import-vars [register-toggles! toggles/register-toggles!]
-             [registered-toggles toggles/registered-toggles]
+(import-vars [registered-toggles toggles/registered-toggles]
              [toggle-spec toggles/toggle-spec]
-             [toggle-enabled? toggles/enabled?]
-             [toggle-value toggles/value-of]
-             [toggle-choices toggles/choices-of]
-             [toggle-type toggles/type-of]
-             [toggle-set-enabled! toggles/set-enabled!]
-             [toggle-set-value! toggles/set-value!]
-             [toggle-cycle-value! toggles/cycle-value!]
-             [toggle-reset-to-default! toggles/reset-to-default!]
-             [toggles-snapshot toggles/snapshot]
-             [toggles-hydrate-from-config! toggles/hydrate-from-config!]
-             [visible-toggles toggles/visible-toggles]
-             [toggles-for-channel toggles/toggles-for-channel]
-             [toggle-add-listener! toggles/add-listener!])
-
-(import-vars [workspace-cwd workspace/cwd]
-             [workspace-root workspace/workspace-root]
-             [workspace-normalize-root workspace/normalize-root]
-             [workspace-subdirs workspace/subdirs]
-             [workspace-create-dir! workspace/create-dir!]
-             [workspace-change-root! workspace/change-root!]
-             [workspace-capability-matrix workspace/workspace-capability-matrix]
-             [workspace-isolation-supported? workspace/isolated-workspaces-supported?]
-             [workspace-get workspace/get]
-             [workspace-list-active workspace/list-active]
-             [workspace-list-finished workspace/list-finished]
-             [workspace-for-session workspace/for-session]
-             [workspace-status workspace/status]
-             [workspace-trunk-info workspace/trunk-info]
-             [workspace-ensure-workspace! workspace/ensure-workspace!]
-             [workspace-create! workspace/create!]
-             [workspace-create-trunk-at! workspace/create-trunk-at!]
-             [workspace-apply! workspace/apply!]
-             [workspace-abandon! workspace/abandon!]
-             [workspace-set-label! workspace/set-label!]
-             [workspace-focus! workspace/focus!]
-             [workspace-last-focused workspace/last-focused]
-             [workspace-display-label workspace/display-label]
-             [workspace-with-session workspace/workspace-with-session]
-             [workspace-list-active-with-sessions workspace/list-active-with-sessions]
-             [workspace-register-hook! workspace/register-hook!])
+             [toggle-enabled? toggles/enabled?])
 
 (import-vars [repository-inventory repositories/inventory])
 
-;; Slash commands (declarative `:ext/slash-commands`)
-(import-vars [active-slashes slash/active-slashes]
-             [registered-slashes slash/registered-slashes]
-             [slash-by-path slash/slash-by-path]
-             [slash-children slash/slash-children]
-             [slash-palette slash/slash-palette]
-             [slash-parse slash/parse]
-             [slash-dispatch slash/dispatch])
-
-;; Theme facade
-(import-vars [default-theme-id theme/default-theme-id]
-             [default-theme theme/default-theme]
-             [vis-light theme/vis-light]
-             [vis-dark theme/vis-dark]
-             [themes theme/themes]
-             [palette theme/palette]
-             [theme theme/theme]
-             [color theme/color]
-             [theme-registry theme/theme-registry]
-             [register-theme! theme/register-theme!]
-             [register-themes! theme/register-themes!]
-             [unregister-theme! theme/unregister-theme!]
-             [unregister-themes! theme/unregister-themes!]
-             [reset-themes! theme/reset-themes!]
-             [extension-theme-settings theme/extension-theme-settings]
-             [available-theme-ids theme/available-theme-ids]
-             [theme->web-css-vars theme/theme->web-css-vars]
-             [web-css-root theme/web-css-root])
-
-;; Error formatting
-(import-vars [error-message error/error-message]
-             [format-error error/format-error]
-             [final-answer-code-error-message error/final-answer-code-error-message]
-             [db-error->user-message persistance/db-error->user-message])
-
-;; Format helpers
-(import-vars [format-date fmt/format-date]
-             [format-clojure fmt/format-clojure]
-             [format-duration fmt/format-duration]
-             [format-tokens fmt/format-tokens]
-             [format-cost fmt/format-cost]
-             [format-iterations fmt/format-iterations]
-             [format-meta-line fmt/format-meta-line]
-             [display-model-name fmt/display-model-name]
-             [humanize-fact-key fmt/humanize-fact-key]
-             [meta-summary-line fmt/meta-summary-line]
-             [meta-tokens fmt/meta-tokens]
-             [meta-cost fmt/meta-cost]
-             [meta-fallback-note fmt/meta-fallback-note])
-
-;; Per-model price table (USD / MILLION tokens) — the SAME table the loop bills
-;; against, exposed read-only so channel model pickers show the real charge.
-(import-vars [model-pricing catalog/model-pricing])
-
-;; Notifications
-;;
-;; Cross-channel ephemeral signals - \"copied\", \"tests passed\",
-;; \"provider switched\". Any extension or channel can push via
-;; `notify!`; the TUI banner / CLI agent each
-;; subscribe with `watch!` and surface entries in their own visual
-;; idiom. Levels (`:info` / `:success` / `:warn` / `:error`) are
-;; advisory metadata for the consumer.
-(import-vars [notify! notifications/notify!]
-             [notifications notifications/notifications]
-             [dismiss! notifications/dismiss!]
-             [dismiss-all! notifications/dismiss-all!]
-             [watch-notifications! notifications/watch!]
-             [unwatch-notifications! notifications/unwatch!])
-
-;; Markdown export
-;;
-;; Single host-runtime helper for projecting a persisted session
-;; (every turn: user prompt + final answer + optional metadata) into a
-;; Markdown parsing/rendering helpers. Parsed Markdown trees are renderer-local;
-;; canonical answers are string-keyed content blocks.
-(import-vars [session->markdown foundation-transcript/session->markdown])
-
-(import-vars [render ir/render] [->ast ir/->ast])
-
-;; Canonical per-form DISPLAY contract — channels project the whole form-display
-;; field set through ONE list (see internal/channel/form.clj): `->display` outbound,
-;; `<-wire` inbound (tolerant of the gateway wire's snake_case + keyword values).
-(import-vars [form->display form/->display]
-             [form-with-display form/with-display]
-             [form<-wire form/<-wire]
-             [result-card form/result-card])
-
-(import-vars [markdown->ast ir/markdown->ast])
-
-;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS
-;; class, so a diff fence colours identically in both from ONE source.
-(import-vars [diff-line-kind ir/diff-line-kind])
-
-;; Shared reasoning/thinking formatting — every channel (TUI bubble + web
-;; thinking card) MUST render traces through these so they stay identical.
-(import-vars [normalize-reasoning ir/normalize-reasoning]
-             [reasoning->ast ir/reasoning->ast]
-             [reasoning-preview-line-limit ir/reasoning-preview-line-limit]
-             [reasoning-collapse-min-hidden ir/reasoning-collapse-min-hidden])
-
-;; Format model Python the way `ruff format` does before display (gateway code blocks).
-;; Cached; falls back to the verbatim source when the code can't be formatted.
-(import-vars [beautify-python pyfmt/beautify-python])
-
-;; Canonical `contract.wire/->wire` JSON shape: snake keys,
-;; keywords as strings). The pretty variant is for human-facing views.
-(import-vars [wire-json-str wire/json-str])
-
-(defn wire-json-pretty
-  "Pretty-print canonical wire JSON for human-facing views."
-  ^String [x]
-  (json/write-json-str (wire/->wire x) :indent-str "  "))
-
-;; Canonical gateway values use snake_case STRING keys at every depth.
-(import-vars [wire-canonical wire/canonical])
-
-;; ONE key policy: keyword/symbol key -> canonical snake_case STRING
-;; (namespace dropped, `foo?` -> `is_foo`) — the exact spelling `->wire`
-;; emits, for readers that project canonical maps back by engine keyword.
-(import-vars [wire-key wire/wire-key] [wire->wire wire/->wire] [wire->engine wire/->engine])
-
-;; The gateway serves ONE canonical wire shape on BOTH transports
-;; (snake_case STRING keys, `wire/canonical`), so there is NO inbound
-;; re-normalization step anymore: channels read `(get event "field")`
-;; directly, same-process or remote.
-;; THE compressed model-facing string for one form/tool VALUE (internal/
-;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
-;; result the way the MODEL reads it (grep gutter, shell model-render, Python
-;; printer) instead of pr-str'd Clojure.
-(import-vars [render-form-value ctx-renderer/render-form-value]
-             [search-text ir/search-text]
-             [extract-code ir/extract-code]
-             [extract-text ir/extract-text]
-             [parse-block-display ir/parse-block-display])
-
-(import-vars [make-progress-tracker progress/make-progress-tracker])
-
-;; CLI dispatcher
-(import-vars [command registry/command]
-             [resolve-subcommands registry/resolve-subcommands]
-             [find-leaf commandline/find-leaf]
-             [find-named commandline/find-named]
-             [parse-args commandline/parse-args]
-             [validate-args commandline/validate-args]
-             [unknown-flags commandline/unknown-flags]
-             [pad-right commandline/pad-right]
-             [pad-left commandline/pad-left]
-             [render-command commandline/render-command]
-             [render-tree commandline/render-tree]
-             [dispatch! commandline/dispatch!]
-             [register-cmd! registry/register-cmd!]
-             [deregister-cmd! registry/deregister-cmd!]
-             [registered-commands registry/registered-commands]
-             [registered-under registry/registered-under])
-
-(import-vars [channel registry/channel]
-             [register-channel! registry/register-channel!]
-             [deregister-channel! registry/deregister-channel!]
-             [registered-channels registry/registered-channels]
-             [channel-by-id registry/channel-by-id]
-             [by-cmd registry/by-cmd])
-
-(import-vars [provider registry/provider]
-             [register-provider! registry/register-provider!]
-             [deregister-provider! registry/deregister-provider!]
-             [registered-providers registry/registered-providers]
-             [provider-by-id registry/provider-by-id]
-             [provider-limits provider-limits/provider-limits]
-             [all-provider-limits provider-limits/all-provider-limits])
-
-;; Provider management service (channel-neutral; internal/provider/service.clj)
-;;
-;; The SAME primitives behind the TUI Router dialog and the web
-;; Providers modal: fleet, presets, status probing, account limits,
-;; live model catalogs, persistence. Channels add only interaction.
-(import-vars [provider-auth-kind providers/auth-kind]
-             [provider-command-minted? providers/command-minted?]
-             [provider-managed? providers/managed?]
-             [provider-oauth-ids providers/oauth-provider-ids]
-             [provider-local-no-auth-ids providers/local-no-auth-provider-ids]
-             [provider-url-host providers/url-host]
-             [provider-fetch-models providers/fetch-models]
-             [provider-model-options providers/model-options]
-             [provider-default-model-names providers/default-model-names]
-             [provider-status providers/provider-status]
-             [provider-status-of-registered providers/safe-provider-status]
-             [provider-limits-safe providers/provider-limits-safe]
-             [provider-initial-status providers/initial-provider-status]
-             [provider-initial-limits providers/initial-provider-limits]
-             [provider-status-text providers/status-text]
-             [provider-status-md providers/status-md]
-             ;; Static-API-key providers (Alibaba, Z.ai): one owner for the auth
-             ;; file, the lookup order and the per-plan extension entries, so a
-             ;; plug-in declares its plan table and nothing else.
-             [provider-key-entries provider-key-store/provider-entries]
-             [provider-key-detect provider-key-store/detect-key]
-             [configured-providers providers/configured-providers]
-             [configured-providers-cached providers/configured-providers-cached]
-             [picker-fleet providers/picker-fleet]
-             [resolve-default-selection providers/resolve-default-selection]
-             [authenticated-preset-providers providers/authenticated-preset-providers]
-             [provider-presets-available providers/available-presets]
-             [provider-ensure-base-url providers/ensure-base-url]
-             [provider-persisted-config providers/persisted-provider-config]
-             [provider-default-model-configs providers/default-model-configs]
-             [provider-config-with-models providers/provider-config-with-models]
-             [save-config-providers! providers/save-providers!]
-             [add-config-provider! providers/add-config-provider!]
-             [update-config-provider! providers/update-config-provider!]
-             [remove-provider! providers/remove-provider!])
-
-;; Channel-neutral limits row formatting (internal/provider/limits_format.clj):
-;; the compact quota summaries every surface (TUI footer + cards, web
-;; cards) renders identically.
-(import-vars [limits-dynamic-summary limits-format/dynamic-summary]
-             [limits-label+usage limits-format/label+usage]
-             [limits-compact-cells limits-format/compact-limit-cells]
-             [limits-format-usage limits-format/format-limit-usage]
-             [limits-format-number limits-format/format-limit-number]
-             [limits-generic-label limits-format/generic-limit-label]
-             [limits-percentage-row? limits-format/percentage-limit-row?]
-             [limits-row-has-signal? limits-format/generic-limit-has-signal?]
-             [limits-row-exhausted? limits-format/limit-row-exhausted?]
-             [limits-row-pressure limits-format/limit-row-pressure]
-             [limits-prioritize-rows limits-format/prioritize-limit-rows])
+(import-vars [provider-by-id registry/provider-by-id]
+             [provider-limits provider-limits/provider-limits])
 
 ;; Persistence facade
 ;;
 ;; The namespace and extension slot are spelled `persistance`; public
 ;; prose uses the correct domain word: Persistence.
-(import-vars [ds codec/ds]
-             [now-ms util/now-ms]
-             [abbreviate-home paths/abbreviate-home]
-             [non-blank util/non-blank]
-             [utf8 util/utf8]
-             [->id codec/->id]
-             [->uuid codec/->uuid]
-             [->ref codec/->ref]
-             [->kw codec/->kw]
-             [->kw-back codec/->kw-back]
-             [->epoch-ms codec/->epoch-ms]
-             [->date codec/->date]
-             [new-uuid codec/new-uuid]
-             [new-id codec/new-id]
-             [->json codec/->json]
-             [<-json codec/<-json]
-             [normalize-status codec/normalize-status]
-             [db-create-connection! persistance/db-create-connection!]
-             [db-dispose-connection! persistance/db-dispose-connection!]
-             [db-shared-connection! persistance/db-shared-connection!]
-             [db-dispose-shared-connection! persistance/db-dispose-shared-connection!])
+(import-vars [db-create-connection! persistance/db-create-connection!]
+             [db-dispose-connection! persistance/db-dispose-connection!])
 
 ;; Logging
 (import-vars [db-log! persistance/db-log!])
@@ -571,12 +61,10 @@
              [db-delete-session-tree! persistance/db-delete-session-tree!]
              [db-fork-session! persistance/db-fork-session!]
              [db-fork-session-at-turn! persistance/db-fork-session-at-turn!]
-             [db-list-session-states persistance/db-list-session-states]
-             [db-latest-session-state-id persistance/db-latest-session-state-id])
+             [db-list-session-states persistance/db-list-session-states])
 
 (import-vars [db-store-session-turn! persistance/db-store-session-turn!]
              [db-update-session-turn! persistance/db-update-session-turn!]
-             [db-list-session-turns-by-status persistance/db-list-session-turns-by-status]
              [db-list-session-turns persistance/db-list-session-turns]
              [db-retry-session-turn! persistance/db-retry-session-turn!]
              [db-list-session-turn-states persistance/db-list-session-turn-states]
@@ -600,211 +88,27 @@
 ;; Full-text search
 (import-vars [db-search persistance/db-search])
 
-(import-vars [db-turn-history persistance/db-turn-history]
-             [db-load-latest-ctx persistance/db-load-latest-ctx]
-             [db-load-ctx-history persistance/db-load-ctx-history])
+(import-vars [db-turn-history persistance/db-turn-history])
 
-;; Extension aggregate admin/read facade.
-;; Writes go through ext-* helpers so extension_id is runtime-owned.
-(import-vars [db-get-extension-aggregate persistance/db-get-extension-aggregate]
-             [db-list-extension-aggregates persistance/db-list-extension-aggregates])
+;; Extension aggregate reads
+(import-vars [db-list-extension-aggregates persistance/db-list-extension-aggregates])
 
 ;; Process-restart cleanup
 (import-vars [db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!])
 
 ;; Extension registry. Built-in extensions require `internal.extension.core`.
-(import-vars [op-tag extension/op-tag]
-             [op-presentation extension/op-presentation]
-             [register-op-hook! extension/register-op-hook!]
-             [unregister-op-hooks-for-owner! extension/unregister-op-hooks-for-owner!]
-             [registered-extensions extension/registered-extensions]
-             [deregister-extension! extension/deregister-extension!]
-             [extension-source-markers-of extension/extension-source-markers-of]
-             [channel-contributions-for extension/channel-contributions-for])
-
-;; Project-local Python extensions (`~/.vis/extensions` + `.vis/extensions`,
-;; trusted Python sessions — see `internal.python.extensions`).
-(import-vars [load-python-extensions! python-extensions/load-python-extensions!]
-             [reload-python-extensions! python-extensions/reload-python-extensions!]
-             [python-extension-load-failures python-extensions/load-failures]
-             [loaded-python-extensions python-extensions/loaded-python-extensions]
-             [add-python-extension-change-listener! python-extensions/add-change-listener!]
-             [remove-python-extension-change-listener! python-extensions/remove-change-listener!]
-             [test-python-extensions! python-test-runner/test-python-extensions!])
-
-;; Extension-owned durable sidecar helpers. These are for extension callbacks;
-;; they fill extension id from the current extension context and reject caller-
-;; supplied :extension-id.
-(import-vars [extension-aggregate-create! extension-aggregate/extension-aggregate-create!]
-             [extension-aggregate-put! extension-aggregate/extension-aggregate-put!]
-             [extension-aggregate-get extension-aggregate/extension-aggregate-get]
-             [extension-list-aggregates extension-aggregate/extension-list-aggregates]
-             [extension-delete-aggregate! extension-aggregate/extension-delete-aggregate!]
-             [extension-update-aggregate! extension-aggregate/extension-update-aggregate!])
-
-;; Doctor protocol
-;;
-;; Cross-cutting diagnostic surface. Every extension can declare
-;; `:ext/doctor-fn` - a single `(fn [env]) -> seq<msg>` returning
-;; diagnostic messages. The host auto-injects `:ext` on each emitted message;
-;; the extension self-stamps `:check-id` when it wants the formatter's
-;; per-section grouping. `vis-agent doctor` aggregates across every registered
-;; extension into a level-aware (info / warn / error) report with 0 / 1 / 2
-;; exit code by max level. See plan §1 Q19 + §10.
-(import-vars [run-doctor-checks doctor/run-checks]
-             [doctor-exit-code doctor/exit-code]
-             [doctor-format-output doctor/format-output]
-             [doctor-startup-hint doctor/startup-hint-line])
+(import-vars [registered-extensions extension/registered-extensions])
 
 ;; Configuration / paths / logging
-(import-vars [init! config/init!]
-             [init-cli! config/init-cli!]
-             [shutdown! config/shutdown!]
-             [state-path config/state-path]
-             [tty-in config/tty-in]
-             [tty-out config/tty-out]
-             [original-stdout config/original-stdout]
-             [load-config-raw config/load-config-raw]
-             [runtime-config config/runtime-config]
-             [load-config config/load-config]
-             [save-config! config/save-config!]
-             [save-toggles! config/save-toggles!]
-             [update-machine-config! config/update-machine-config!]
-             [remove-config-provider! config/remove-config-provider!]
-             [extension-env-status config/extension-env-status]
-             [extension-env-value config/extension-env-value]
-             [reload-config! config/reload-config!]
-             [resolve-config config/resolve-config]
-             [provider-configured? config/provider-configured?]
-             [first-run? config/first-run?]
-             [resolve-db-spec config/resolve-db-spec]
-             [current-config config/current-config]
-             [router-opts config/router-opts]
-             [active-provider config/active-provider]
-             [active-model config/active-model]
-             [provider-ids config/provider-ids]
-             [has-provider? config/has-provider?]
-             [display-label config/display-label]
-             [model-name config/model-name]
-             [provider-base-url config/provider-base-url]
-             [provider-model-visible? catalog/model-visible?]
-             [provider-presets catalog/presets]
-             [provider-template catalog/template]
-             [->svar-model config/->svar-model]
-             [->svar-provider config/->svar-provider])
-
-;; Python sandbox
-(import-vars [SYSTEM_VAR_NAMES env/SYSTEM_VAR_NAMES]
-             [system-var-sym? env/system-var-sym?]
-             [create-python-context env/create-python-context]
-             [set-python-binding! env/set-python-binding!]
-             [bind-and-bump! env/bind-and-bump!])
-
-;; Turn runtime / iteration loop / environment / sessions
-(import-vars [turn! turn/turn!]
-             [ask-code! loop-router/ask-code!]
-             [llm-text! loop-router/llm-text!]
-             [get-router loop-router/get-router]
-             [router-initialized? loop-router/router-initialized?]
-             [rebuild-router! loop-router/rebuild-router!]
-             [resolve-effective-model loop-router/resolve-effective-model]
-             ;; Model CAPABILITY, as svar stamped it from the wire — what a
-             ;; channel asks before offering a reasoning-depth, verbosity or
-             ;; thinking-display control, instead of testing a provider id.
-             [resolve-model-info loop-router/resolve-model-info]
-             [reasoning-effort-configurable? transcript/reasoning-effort-configurable?]
-             [verbosity-configurable? transcript/verbosity-configurable?]
-             [thinking-display-configurable? transcript/thinking-display-configurable?]
-             [model-routing-status loop-router/model-routing-status]
-             [set-provider! loop-env/set-provider!])
-
-;; Historical public helpers removed:
-;;   `parinfer-rebalance` + `split-top-level-forms`. Delimiter repair now
-;;   happens internally at eval time and is disclosed per block as
-;;   `:repaired-source` / `:repaired?`.
-
-;; Environment lifecycle
-(import-vars [create-environment loop-env/create-environment]
-             [dispose-environment! loop-env/dispose-environment!]
-             [install-extension! loop-env/install-extension!]
-             [sync-active-extension-symbols! loop-env/sync-active-extension-symbols!])
+(import-vars [current-config config/current-config])
 
 ;; Sessions
-(import-vars [db-info lp/db-info]
-             [custom-bindings turn/custom-bindings]
-             [get-locals python-exec/get-locals]
-             [cache-env! loop-env/cache-env!]
-             [refresh-cached-routers! loop-env/refresh-cached-routers!]
-             [create! lp/create!]
-             [by-id lp/by-id]
-             [by-channel lp/by-channel]
-             [set-title! lp/set-title!]
-             [add-title-listener! titling/add-title-listener!]
-             [remove-title-listener! titling/remove-title-listener!]
-             [add-title-pending-listener! titling/add-title-pending-listener!]
-             [remove-title-pending-listener! titling/remove-title-pending-listener!]
-             [env-for lp/env-for]
-             [send! lp/send!]
-             [close! lp/close!]
-             [delete! lp/delete!]
-             [close-all! lp/close-all!])
-
-;; Prompt builders
-(import-vars [active-extensions prompt/active-extensions]
-             [assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages]
-             [build-system-prompt prompt/build-system-prompt]
-             [stable-prompt-text prompt/stable-prompt-text])
-
-;; `vis.core/build-iteration-context` is intentionally NOT re-exported:
-;; callers must use `prompt/build-iteration-context` directly.
-
-(import-vars [assemble-initial-messages prompt/assemble-initial-messages])
-
-(import-vars [environment-snapshot environment/snapshot]
-             [kill-process-tree! shell/kill-tree!]
-             [python-exec! pyext/exec!])
-
-(defn python-shared-key
-  "The pooled Python worker key every shared sandbox call uses."
-  []
-  pyext/shared-key)
-
-;; Channel event bus
-(import-vars [add-channel-event-listener! channel-events/add-channel-event-listener!]
-             [remove-channel-event-listener! channel-events/remove-channel-event-listener!]
-             [publish-channel-event! channel-events/publish-channel-event!]
-             [channel-event-listeners channel-events/channel-event-listeners])
-
-;; Human input — the typed pause an extension uses to ask the operator
-;;
-;; `request-human-input!` BLOCKS the calling extension until an operator action,
-;; timeout, or interruption settles it. Rendering is a channel concern: every
-;; surface receives `:view/open` and answers through the same `view-action!` seam.
-(import-vars [request-human-input! view/request!]
-             [view-action! view/action!]
-             [pending-human-input-request view/pending-request]
-             [reveal-human-input-secret view/reveal-secret])
-
-;; Live views — the picture the human WATCHES while an extension works
-;;
-;; The producer opens, patches and closes its picture. Operator selection and
-;; interruption enter through `view-action!`, exactly like input submit/cancel.
-;; Reach for `with-live-view!`: a run that dies mid-flight would otherwise leave
-;; a picture nobody updates on the human's screen and no verdict for the model.
-(import-vars [with-live-view! view/with-live!]
-             [open-live-view! view/open-live!]
-             [patch-live-view! view/patch-live!]
-             [live-view view/live-view]
-             [live-views view/live-views])
+(import-vars [db-info lp/db-info])
 
 ;; Binary entry point
 ;;
-;; `clojure -M:vis` invokes this `-main`. The dispatcher / built-in
-;; commands / agent helper / :db Telemere handler all live in
-;; `com.blockether.vis.internal.main`; this fn is a thin trampoline
-;; so the binary entry has the same on-disk address as the public
-;; library API.
-
+;; `clojure -M:vis` and the native image call this `-main`. The commands live in
+;; `com.blockether.vis.internal.main`; this fn only delegates to them.
 (defn -main
   "The binary entry; Python workers have their own entrypoint in the runtime."
   [& args]

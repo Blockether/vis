@@ -134,7 +134,7 @@
 
 (defn handler:db
   "Telemere handler that persists every signal through the
-   `com.blockether.vis.core/log!` facade.
+   `persistance/db-log!`.
 
    The handler reads `:db-info` from the signal's telemere context
    (`*ctx*`). When `:db-info` is absent (no DB connection active in
