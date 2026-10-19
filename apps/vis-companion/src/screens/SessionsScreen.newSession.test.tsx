@@ -269,7 +269,7 @@ describe('where "New session" lives', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New project on alpha' }));
     await screen.findByText('No folders in here.');
     view.requests.length = 0;
-    await userEvent.click(screen.getByRole('button', { name: 'Use project' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Use project/ }));
 
     await waitFor(() =>
       expect(
@@ -313,7 +313,7 @@ describe('where "New session" lives', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'New project on alpha' }));
     await screen.findByText('No folders in here.');
-    await userEvent.click(screen.getByRole('button', { name: 'Use project' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Use project/ }));
 
     const project = await screen.findByLabelText('dev sessions');
     expect(

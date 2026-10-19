@@ -9,50 +9,54 @@
  * commits a FOLDER and lets the gateway decide what that folder is (a repo or not),
  * which is why there is no "is this a git project?" question anywhere in it.
  *
- * Two modes, one header: the crumbs are for recognition, the pencil is for people
- * who know where they are going. The pencil is INK, never a box — a bordered button
- * beside the path reads as a second action competing with it — which is `IconButton`
- * in its `quiet` variant, not a hand-built one.
+ * One field says where you are AND what you look for. The crumbs lead the field and
+ * the text after them filters that folder, so the place and the search read as one
+ * path (`~/code/vis…`). Text that starts with `~` or `/` is a path instead. This
+ * replaced a crumb bar over a separate search box, where the reader could not tell
+ * which folder the search looked in.
  *
- * NOTHING in here paints its own box. It used to paint all of them — its own panel,
- * its own band, its own row, its own badge, its own icon button — each a near-copy of
- * something `Menu` already shipped, and each drifted: the panel had no way out at all
- * on a phone, the rows were the one list in the app that stayed 44px under a mouse,
- * and on a desktop the whole sheet hung off the bottom of the window with `Use
- * project` — the only control it exists to reach — below the fold and unscrollable.
- * It is `AnchoredPanel` + `MenuHeading` + `MenuItem` now, so it cannot drift again.
+ * NOTHING in here paints its own box. It is `AnchoredPanel` + `MenuHeading` +
+ * `MenuItem`, so it stays the app's anchored dialog on every width, never a sheet
+ * that slides up from the bottom.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BandButton, IconButton, Input, Spinner } from './ui';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { BandButton, Button, Chip, Input, Spinner } from './ui';
 import { AnchoredPanel, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
-import {
-  CheckIcon,
-  ChevronIcon,
-  FolderPlusIcon,
-  PencilIcon,
-  UndoIcon,
-} from './icons';
+import { FolderPlusIcon, ProjectsIcon, SearchIcon, UndoIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
 
 /** How many crumbs stay on screen. A path too long for 390px elides from the LEFT. */
 const CRUMB_TAIL = 3;
 
+/** How many folders that hold projects the sheet offers as places to jump to. */
+const PLACES_LIMIT = 4;
+
 /**
- * The sheet's own leading edge, shared by its path bar and its rows, so a path and
- * the folder it lists start at the same x. They used to start at four different ones.
+ * The sheet's own leading edge, shared by its bands, its rows and its footer, so a
+ * path and the folder it lists start at the same x.
  */
 const SHEET_EDGE = 'px-3';
 
-/**
- * Both spellings of the path bar — the crumbs and the typed input — are the SAME band,
- * so the pencil toggles what is inside it and never how tall it is. `min-h` let the
- * crumb row (a 44px button on a fractional line box) settle at 45 while the input row
- * settled at 44, and every row below jumped 1px on the toggle. A fixed height is the
- * only spelling that cannot drift, and there is one of it.
- */
+/** The new-folder line: one fixed height, so opening it never moves the rows by 1px. */
 const PATH_BAND = 'flex h-11 shrink-0 items-center border-b border-dialog-edge mouse:h-9';
+
+/**
+ * The location field wears `Input`'s own frame and focus, because it IS the sheet's
+ * input. The crumbs inside it cannot live in `Input`, so the frame moves to the row.
+ */
+const LOCATION_FIELD =
+  'flex h-8 min-w-0 items-center gap-0.5 border border-edge bg-input pl-2.5 pr-1 font-mono text-ui transition-[border-color,box-shadow] duration-150 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none sm:pl-3 mouse:h-7';
+
+/** A crumb inside the field keeps a 44px touch target through invisible reach. */
+const CRUMB =
+  'relative max-w-40 shrink-0 truncate px-0.5 transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:after:content-none';
+
+/** Text that starts like a path is a path; anything else filters the folder on screen. */
+export function isPathQuery(query: string): boolean {
+  return query.startsWith('~') || query.startsWith('/');
+}
 
 interface Crumb {
   label: string;
@@ -84,10 +88,6 @@ export function homeify(path: string, home: string): string {
 }
 
 /** A path that names the folder ITSELF rather than its parent. `/` is already one. */
-function withSlash(path: string): string {
-  return path.endsWith('/') ? path : `${path}/`;
-}
-
 /** What a typed path is asking for: the folder to LIST, and the leaf to match in it. */
 export function splitTyped(typed: string): { dir: string; leaf: string } {
   const cut = typed.lastIndexOf('/');
@@ -109,9 +109,27 @@ export function startingDir(startAt: string | null): string | null {
   return startAt.slice(0, cut) || '/';
 }
 
-function entryHint(entry: BrowseEntry): string {
-  const count = `${entry.entry_count} ${entry.entry_count === 1 ? 'entry' : 'entries'}`;
-  return entry.branch ? `${count} · ${entry.branch}` : count;
+
+/** The fact beside a folder's name: empty, or the branch it has checked out. */
+function entryMeta(entry: BrowseEntry): string | undefined {
+  if (entry.entry_count === 0) return 'empty';
+  return entry.branch ?? undefined;
+}
+
+/**
+ * Folders that already hold this machine's projects, as places to jump to. The next
+ * checkout usually lives beside the last one, so its parent is the useful place.
+ */
+export function projectPlaces(knownRoots: Set<string>, here: string): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const root of knownRoots) {
+    const place = startingDir(root);
+    if (place && place !== root) counts.set(place, (counts.get(place) ?? 0) + 1);
+  }
+  return [...counts]
+    .filter(([place]) => place !== here)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(0, PLACES_LIMIT);
 }
 
 /** What the sheet is for, as its band, its way out and its commit verbs say it. */
@@ -155,21 +173,21 @@ export function ProjectFolderSheet({
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // `null` is browsing; a string is the pencil taken, and the string IS the path.
-  const [typed, setTyped] = useState<string | null>(null);
+  // The one field's text: a filter for the folder on screen, or a path (see `isPathQuery`).
+  const [query, setQuery] = useState('');
+  const [isGitOnly, setGitOnly] = useState(false);
+  const [isEmptyHidden, setEmptyHidden] = useState(true);
   // `null` is not creating; a string is the folder that does not exist yet.
   const [folder, setFolder] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const typedSplit = typed === null ? null : splitTyped(typed);
+  const typedSplit = isPathQuery(query) ? splitTyped(query) : null;
 
-  // One read path for both modes: the directory being listed is a value, and typing
-  // just moves it. A keystroke inside one folder must not re-ask the gateway for it.
+  // One read path for both kinds of text: the directory being listed is a value, and a
+  // typed path just moves it. A filter keystroke must not re-ask the gateway.
   const wanted = typedSplit ? typedSplit.dir : dir;
-  // Taking the pencil changes the INPUT, not the PLACE: `~/vis/` names the very folder
-  // already on screen, so the fetch is skipped and the rows never move. Without this the
-  // toggle re-listed the same directory under its other spelling — the list blanked to
-  // the folder it had, then landed again, one frame later and one row taller.
+  // `~/vis/` names the very folder already on screen, so the fetch is skipped and the
+  // rows never move.
   const settled =
     listing !== null && (wanted === listing.path || wanted === homeify(listing.path, listing.home));
   const isTyping = typedSplit !== null;
@@ -206,12 +224,21 @@ export function ProjectFolderSheet({
   const crumbs = useMemo(() => (here ? crumbsOf(here, home) : []), [here, home]);
   const shown = crumbs.slice(-CRUMB_TAIL);
 
-  // Typed: the list narrows to what still matches. Browsing: it is the folder itself.
-  const rows = useMemo(() => {
-    const entries = listing?.entries ?? [];
-    const leaf = typedSplit?.leaf.toLowerCase() ?? '';
-    return leaf ? entries.filter((entry) => entry.name.toLowerCase().startsWith(leaf)) : entries;
-  }, [listing, typedSplit?.leaf]);
+  // A typed path narrows by the start of the leaf; a filter matches anywhere in the name.
+  // The chips apply to both. The React Compiler memoizes this, so it takes no `useMemo`.
+  const pathLeaf = typedSplit ? typedSplit.leaf.toLowerCase() : null;
+  const needle = pathLeaf === null ? query.trim().toLowerCase() : '';
+  const rows = (listing?.entries ?? []).filter(
+    (entry) =>
+      (!pathLeaf || entry.name.toLowerCase().startsWith(pathLeaf)) &&
+      (!needle || entry.name.toLowerCase().includes(needle)) &&
+      (!isGitOnly || entry.is_repo) &&
+      (!isEmptyHidden || entry.entry_count > 0),
+  );
+  const repos = rows.filter((entry) => entry.is_repo);
+  const others = rows.filter((entry) => !entry.is_repo);
+  const places = projectPlaces(knownRoots, here);
+  const isPlacesShown = query === '' && !isGitOnly && places.length > 0 && !!listing;
 
   // A typed path that NAMES a folder commits that folder, not the parent being listed.
   const exact = typedSplit?.leaf
@@ -242,78 +269,69 @@ export function ProjectFolderSheet({
   }, [alreadyProject, client, folder, here, onChoose, target]);
 
   const enter = useCallback((path: string) => {
-    setTyped(null);
+    setQuery('');
     setFolder(null);
     setDir(path);
   }, []);
 
-  const pencilRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') onCancel();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  // The pencil is a control like any other, so it is the app's icon button: the same
-  // box, the same focus ring and the same desktop rhythm as the `⋯` that opened this
-  // sheet. Hand-built, it was a borderless 44px slab that never shrank under a mouse
-  // and answered neither hover nor focus.
-  //
-  // `quiet` keeps the promise this file opened with — the pencil is INK, never a box,
-  // because a bordered button beside the path reads as a second action competing with
-  // it. The frame arrives on hover and focus, where it answers "can I press this".
-  const pencil = (
-    <IconButton
-      ref={pencilRef}
-      variant="quiet"
-      label={typed === null ? 'Type a path' : 'Back to browsing'}
-      aria-pressed={typed !== null}
-      className={typed === null ? '' : 'text-accent-ink'}
-      // The path is handed over with its trailing slash: `~/vis/` LISTS `~/vis`, so the
-      // pencil keeps the folder you are in. `~/vis` would have listed the PARENT and
-      // filtered it to names starting with `vis` — the list jumped a level on a toggle.
-      onClick={() => setTyped(typed === null ? withSlash(homeify(here, home)) : null)}
+  // The field's keys: Backspace on an empty field goes up one folder, and Enter opens
+  // the first folder that matches. A typed path keeps its own Enter: open the folder it
+  // names, or commit the folder it lists.
+  const onFieldKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Backspace' && query === '' && listing?.parent) {
+      event.preventDefault();
+      enter(listing.parent);
+      return;
+    }
+    if (event.key !== 'Enter') return;
+    if (typedSplit) {
+      if (exact) enter(exact.path);
+      else void commit();
+      return;
+    }
+    const first = repos[0] ?? others[0];
+    if (query.trim() && first) enter(first.path);
+  };
+
+  // The band keeps one cell before the way out: the folder that takes the add stroke.
+  // Naming a folder turns it into an UNDO, never a second close.
+  const projectCells = (
+    <BandButton
+      label={folder === null ? 'New folder' : 'Cancel'}
+      disabled={saving || !here || alreadyProject}
+      onClick={() => setFolder(folder === null ? '' : null)}
     >
-      <PencilIcon className="size-4" />
-    </IconButton>
+      {folder === null ? <FolderPlusIcon /> : <UndoIcon />}
+    </BandButton>
   );
 
-  // THE STEP'S TWO VERBS ARE THE BAND'S OWN CELLS, AND EACH ONE IS A MARK.
-  //
-  // They were a `secondary` and a `primary` `Button` — two sheets of paper standing
-  // on the dark title band. `secondary` carries `text-white`, which in this app is
-  // the PAGE's ink (#262626), so `New folder` was dark ink on the dark band while
-  // the amber slab beside it shouted 40px under the panel's own amber rule: one
-  // control unreadable, one charging the accent twice. As cells they take the band's
-  // ink and the band's height.
-  //
-  // Marks rather than words, because the band already carries the step's name and two
-  // more phrases beside it read as a second one. Each cell draws what it does — a
-  // folder taking the add stroke, the tick that commits — and keeps its verb as the
-  // name a screen reader speaks and a pointer sees. Naming a folder turns that add
-  // stroke into an UNDO: the cell that opened the line takes it back. It wore this
-  // app's close stroke — a plus turned 45° — and in the `add` step that stood two
-  // identical crosses one cell apart, one leaving the LINE and one leaving the PANEL.
-  const projectCells = (
-    <>
-      <BandButton
-        label={folder === null ? 'New folder' : 'Cancel'}
-        disabled={saving || !here || alreadyProject}
-        onClick={() => setFolder(folder === null ? '' : null)}
-      >
-        {folder === null ? <FolderPlusIcon /> : <UndoIcon />}
-      </BandButton>
-      <BandButton
-        isPrimary
-        label={folder === null ? words.use : words.create}
-        disabled={saving || !target || alreadyProject || (folder !== null && !folder.trim())}
-        onClick={() => void commit()}
-      >
-        <CheckIcon />
-      </BandButton>
-    </>
+  // The commit names the folder it commits, so the reader never guesses what the
+  // button takes. It is a word, not a tick: a mark alone did not say "this folder".
+  const named = folder?.trim();
+  const aimed =
+    folder === null
+      ? homeify(target, home)
+      : `${homeify(here, home).replace(/\/$/, '')}/${named || '…'}`;
+  const commitVerb = folder === null ? words.use : words.create;
+
+  const row = (entry: BrowseEntry) => (
+    <MenuItem
+      key={entry.path}
+      icon={<ProjectsIcon className="size-4" />}
+      title={`${entry.name}/`}
+      meta={entryMeta(entry)}
+      badge={knownRoots.has(entry.path) ? 'project' : entry.is_repo ? 'git' : undefined}
+      isNavigation
+      onSelect={() => enter(entry.path)}
+    />
   );
 
   return (
@@ -324,17 +342,8 @@ export function ProjectFolderSheet({
       at={at}
       onDismiss={onCancel}
     >
-      {/* This uses the app's one anchored browsing panel: one loud band naming
-          what the rows act on, the app's one way out inside it, and rows that are
-          `MenuItem`s. It used to be a full-height `DialogFrame` — a different box,
-          a different header and a different entrance for a list one tap away from
-          the menu that opened it.
-
-          The band does NOT name the machine. It read `Projects · 100.123.200.103:7890`
-          for any machine whose pairing had no label — an address in the loudest strip of
-          the sheet, in a panel that was opened FROM that machine's own rail. The name
-          survives where a reader who cannot see that rail still needs it: the panel's
-          `aria-label` and the way out. */}
+      {/* The band does NOT name the machine: the panel opens FROM that machine's rail.
+          The name stays in the panel's `aria-label` and the way out. */}
       <MenuHeading
         cells={projectCells}
         onClose={onCancel}
@@ -343,75 +352,70 @@ export function ProjectFolderSheet({
         {words.title}
       </MenuHeading>
 
-      {alreadyProject && <MenuNote>It’s already a project</MenuNote>}
-
-      {typed === null ? (
-        <div className={`${PATH_BAND} gap-1 bg-panel-2 ${SHEET_EDGE}`}>
-          {crumbs.length > shown.length && (
-            <span className="shrink-0 font-mono text-meta text-dialog-hint" aria-hidden>
-              …
+      <div className={`flex shrink-0 flex-col gap-2 border-b border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
+        <div className={LOCATION_FIELD}>
+          <SearchIcon className="mr-1 size-4 text-dialog-hint" />
+          {!typedSplit && (
+            <span className="flex min-w-0 shrink items-center overflow-hidden">
+              {crumbs.length > shown.length && (
+                <span className="shrink-0 text-dialog-hint" aria-hidden>
+                  …/
+                </span>
+              )}
+              {shown.map((crumb, index) => {
+                const isHere = index === shown.length - 1;
+                return (
+                  <span key={crumb.path} className="flex min-w-0 shrink-0 items-center">
+                    <button
+                      type="button"
+                      disabled={isHere}
+                      aria-current={isHere ? 'location' : undefined}
+                      className={`${CRUMB} ${
+                        isHere
+                          ? 'font-bold text-white'
+                          : 'text-accent-ink mouse:hover:text-white'
+                      }`}
+                      onClick={() => enter(crumb.path)}
+                    >
+                      {crumb.label}
+                    </button>
+                    {crumb.label !== '/' && (
+                      <span className="text-dialog-hint" aria-hidden>
+                        /
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
             </span>
           )}
-          <span className="flex min-w-0 flex-1 items-center overflow-hidden">
-            {shown.map((crumb, index) => {
-              const isHere = index === shown.length - 1;
-              return (
-                <span key={crumb.path} className="flex min-w-0 items-center">
-                  {/* A separator BETWEEN crumbs, never in front of the first one: the
-                  bar used to open `› ~ › vis`, a chevron pointing at nothing. */}
-                  {(index > 0 || crumbs.length > shown.length) && (
-                    <ChevronIcon
-                      className="mx-0.5 size-3 shrink-0 text-dialog-hint"
-                      aria-hidden
-                    />
-                  )}
-                  {/* A crumb is a real target: the text-only ones were 14px tall in a
-                  sheet whose every other row was 44. */}
-                  <button
-                    type="button"
-                    disabled={isHere}
-                    aria-current={isHere ? 'location' : undefined}
-                    className={`min-h-11 truncate px-1 font-mono text-meta transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-7 ${
-                      isHere
-                        ? 'font-bold text-white'
-                        : 'text-accent-ink mouse:hover:text-white focus-visible:bg-hover'
-                    }`}
-                    onClick={() => enter(crumb.path)}
-                  >
-                    {crumb.label}
-                  </button>
-                </span>
-              );
-            })}
-          </span>
-          {pencil}
-        </div>
-      ) : (
-        <div className={`${PATH_BAND} gap-2 bg-panel-2 ${SHEET_EDGE}`}>
-          <Input
-            autoFocus
-            value={typed}
-            aria-label="Path on this machine"
-            placeholder="~/code/thing"
+          <input
+            value={query}
+            aria-label="Filter folders or type a path"
+            placeholder={typedSplit ? undefined : 'filter or ~/path'}
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            onChange={(event) => setTyped(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') return;
-              if (exact) enter(exact.path);
-              else void commit();
-            }}
+            className="h-full min-w-16 flex-1 bg-transparent px-0.5 text-white placeholder:text-dialog-hint focus:outline-none"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={onFieldKey}
           />
-          {pencil}
         </div>
-      )}
+        <div className="flex items-center gap-2">
+          <Chip isOn={isGitOnly} onClick={() => setGitOnly(!isGitOnly)}>
+            Git only
+          </Chip>
+          <Chip isOn={isEmptyHidden} onClick={() => setEmptyHidden(!isEmptyHidden)}>
+            Hide empty
+          </Chip>
+          <span className="ml-auto hidden truncate font-mono text-meta text-dialog-hint mouse:inline">
+            Enter opens · ⌫ goes up
+          </span>
+        </div>
+      </div>
 
       {folder !== null && (
         <div className={`${PATH_BAND} gap-2 bg-panel ${SHEET_EDGE}`}>
-          {/* The line that names the new folder leads with the MARK of the cell that
-          opened it. It led with a `+` typed into the band — a glyph standing in for
-          an icon, one row under the very cell that draws that icon properly. */}
           <FolderPlusIcon className="text-accent-ink" />
           <Input
             autoFocus
@@ -430,7 +434,7 @@ export function ProjectFolderSheet({
         </div>
       )}
 
-      {/* The last folder drops its rule so it cannot double the panel's bottom edge. */}
+      {/* The last folder drops its rule so it cannot double the footer's top edge. */}
       <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
         {error ? (
           <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
@@ -439,35 +443,74 @@ export function ProjectFolderSheet({
             <Spinner tone="accent" />
             Reading folders...
           </MenuNote>
-        ) : rows.length === 0 ? (
-          <MenuNote>
-            {typedSplit?.leaf ? 'No folder here starts with that.' : 'No folders in here.'}
-          </MenuNote>
         ) : (
-          // A folder row IS a menu row — a glyph, a name, the consequence of choosing
-          // it, and an optional badge — so it is the app's menu row, not a fourth
-          // near-copy of one. The badge's WORD says whether Vis already knows this
-          // folder or merely that it is a repo.
-          // `inert`, not `aria-hidden`: while a new folder is being named these rows
-          // are out of play, and a container that is merely hidden from the a11y tree
-          // still hands its buttons to the Tab key.
+          // `inert`, not `aria-hidden`: while a new folder is being named these rows are
+          // out of play, and a container merely hidden from the a11y tree still hands its
+          // buttons to the Tab key.
           <div className={folder === null ? '' : 'opacity-40'} inert={folder !== null}>
-            {rows.map((entry) => (
-              <MenuItem
-                key={entry.path}
-                icon={<ChevronIcon className="size-3.5" />}
-                title={`${entry.name}/`}
-                hint={entryHint(entry)}
-                badge={knownRoots.has(entry.path) ? 'project' : entry.is_repo ? 'git' : undefined}
-                onSelect={() => enter(entry.path)}
-              />
-            ))}
+            {isPlacesShown && (
+              <>
+                <MenuHeading tone="quiet">Places</MenuHeading>
+                {places.map(([place, count]) => (
+                  <MenuItem
+                    key={place}
+                    icon={<ProjectsIcon className="size-4" />}
+                    title={`${homeify(place, home).replace(/\/$/, '')}/`}
+                    meta={`${count} ${count === 1 ? 'project' : 'projects'}`}
+                    isNavigation
+                    onSelect={() => enter(place)}
+                  />
+                ))}
+              </>
+            )}
+            {repos.length > 0 && (
+              <>
+                <MenuHeading tone="quiet">Git repos</MenuHeading>
+                {repos.map(row)}
+              </>
+            )}
+            {others.length > 0 && (
+              <>
+                <MenuHeading tone="quiet">Other folders</MenuHeading>
+                {others.map(row)}
+              </>
+            )}
+            {rows.length === 0 && (
+              <MenuNote>
+                {(listing?.entries ?? []).length === 0
+                  ? 'No folders in here.'
+                  : query.trim()
+                    ? 'No folder here matches that.'
+                    : 'No folders match these filters.'}
+              </MenuNote>
+            )}
           </div>
         )}
         {listing?.is_truncated && (
           <MenuNote>Only the first folders are listed — type the path instead.</MenuNote>
         )}
       </div>
+
+      {/* The commit stands in the panel's own footer, outside the scrolling list, so it
+          stays on screen while the rows scroll and above a raised keyboard. */}
+      <footer className={`shrink-0 border-t border-dialog-edge bg-panel py-2 ${SHEET_EDGE}`}>
+        <Button
+          className="flex w-full min-w-0 items-center justify-center gap-1.5"
+          disabled={
+            saving || !target || alreadyProject || (folder !== null && !named)
+          }
+          onClick={() => void commit()}
+        >
+          {alreadyProject ? (
+            'It’s already a project'
+          ) : (
+            <>
+              <span className="shrink-0">{commitVerb}</span>{' '}
+              <span className="min-w-0 truncate font-normal">{aimed}</span>
+            </>
+          )}
+        </Button>
+      </footer>
     </AnchoredPanel>
   );
 }

@@ -288,6 +288,7 @@ export function MenuItem({
   icon,
   tone = 'default',
   action,
+  isNavigation = false,
   disabled = false,
   onSelect,
 }: {
@@ -300,6 +301,8 @@ export function MenuItem({
   tone?: 'default' | 'danger';
   /** A second verb beside the row; buttons cannot nest. */
   action?: ReactNode;
+  /** The row OPENS a level, like a folder: a chevron on the trailing edge says so. */
+  isNavigation?: boolean;
   /** Keep in-flight creation unavailable without hiding its action. */
   disabled?: boolean;
   /** Receives the row itself, so a sheet can be anchored on what opened it. */
@@ -343,6 +346,9 @@ export function MenuItem({
         >
           {badge}
         </span>
+      )}
+      {isNavigation && (
+        <ChevronIcon className="size-3 shrink-0 text-dialog-hint mouse:group-hover/menu-item:text-accent-ink" />
       )}
     </button>
   );

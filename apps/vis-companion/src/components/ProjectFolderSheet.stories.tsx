@@ -13,6 +13,34 @@ const browsing = (path: string, parent: string) =>
     },
   });
 
+/** A client whose folder browser answers with a few repos and plain folders. */
+const withFolders = (path: string, parent: string) =>
+  new Proxy(STORY_INERT_CLIENT, {
+    get(target, key) {
+      if (key !== 'browse') return Reflect.get(target, key);
+      const folder = (name: string, extra: { is_repo?: boolean; branch?: string; entry_count?: number } = {}) => ({
+        name,
+        path: `${path}/${name}`,
+        entry_count: 12,
+        is_repo: false,
+        ...extra,
+      });
+      return async () => ({
+        path,
+        parent,
+        home: '/home/developer',
+        is_truncated: false,
+        entries: [
+          folder('anomaly', { is_repo: true, branch: 'main' }),
+          folder('band-repaint', { is_repo: true, branch: 'feat/band' }),
+          folder('Documents'),
+          folder('notes'),
+          folder('scratch', { entry_count: 0 }),
+        ],
+      });
+    },
+  });
+
 /** The folder browser that adds a project, or gives an existing project another folder. */
 const meta = {
   title: 'Components/Project folder sheet',
@@ -58,7 +86,7 @@ export const Moving: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await expect(page.getByRole('dialog', { name: 'Change folder on tower' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Move here' })).toBeInTheDocument();
+    await expect(page.getByRole('button', { name: /^Move here/ })).toBeInTheDocument();
   },
 };
 
@@ -78,4 +106,26 @@ export const BrowsingPointer: Story = {
   ...Browsing,
   tags: ['!test'],
   globals: { viewport: { value: 'desktop', isRotated: false } },
+};
+
+/** One field holds the place and the filter; repos come before other folders. */
+export const Filtering: Story = {
+  args: {
+    startAt: '/home/developer/code/vis',
+    client: withFolders('/home/developer/code', '/home/developer'),
+  },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await page.findByRole('button', { name: /^anomaly/ });
+    await userEvent.type(page.getByLabelText('Filter folders or type a path'), 'an');
+    await expect(page.getByRole('button', { name: /^band-repaint/ })).toBeInTheDocument();
+    await expect(page.queryByRole('button', { name: /^notes/ })).toBeNull();
+  },
+};
+
+export const FilteringPointer: Story = {
+  ...Filtering,
+  tags: ['!test'],
+  globals: { viewport: { value: 'desktop', isRotated: false } },
+  args: { ...Filtering.args, at: { top: 46, left: 34 } },
 };
