@@ -1,13 +1,13 @@
 (ns com.blockether.vis.internal.provider.vendor.openai-test
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.vendor.openai :as sut]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe openai-sol-luna-catalog-test
              (it "exposes Sol and Luna with published Svar metadata through the Vis preset"
                  (let [provider
-                       (do (sut/register!) (vis/provider-by-id :openai))
+                       (do (sut/register!) (registry/provider-by-id :openai))
 
                        defaults
                        (get-in provider [:provider/preset :default-models])
@@ -39,7 +39,7 @@
 
 (defdescribe provider-openai-test
              (it "registers one OpenAI provider extension"
-                 (let [provider (vis/provider-by-id :openai)]
+                 (let [provider (registry/provider-by-id :openai)]
                    (expect (= :openai (:provider/id provider)))
                    (expect (= "OpenAI" (:provider/label provider)))
                    (expect (= "gpt-6.1-sol"

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.speech.engine-test
   "Parakeet transcript cleanup and native-runtime failures."
   (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.capability :as capability]
             [com.blockether.vis.internal.speech.asr :as asr]
             [com.blockether.vis.internal.speech.engine :as engine]
             [com.blockether.vis.internal.speech.sherpa :as sherpa]
@@ -11,7 +11,7 @@
 ;; verdict is process-wide BY DESIGN: a class whose static initializer failed can never load again
 ;; in this JVM. The last test here drives exactly that path, so without this every later voice test
 ;; sharing the JVM met the verdict it left behind instead of provisioning its own runtime.
-(set-ns-context! [(around-each [f] (try (f) (finally (vis/capability-forget-verdicts!))))])
+(set-ns-context! [(around-each [f] (try (f) (finally (capability/forget-verdicts!))))])
 
 (defn- wav-path
   "A REAL (empty) 16-bit PCM WAV on disk, deleted when the JVM exits.

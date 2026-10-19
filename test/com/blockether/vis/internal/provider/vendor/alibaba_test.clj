@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.provider.vendor.alibaba-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -9,13 +11,13 @@
   (it "registers both Alibaba plans as separate provider extension entries"
       (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (let [coding
-            (vis/provider-by-id :alibaba-coding-plan)
+            (registry/provider-by-id :alibaba-coding-plan)
 
             token
-            (vis/provider-by-id :alibaba-token-plan)
+            (registry/provider-by-id :alibaba-token-plan)
 
             ext-names
-            (set (map :ext/name (vis/registered-extensions)))]
+            (set (map :ext/name (extension/registered-extensions)))]
 
         (expect (= :alibaba-coding-plan (:provider/id coding)))
         (expect (= :alibaba-token-plan (:provider/id token)))
@@ -31,31 +33,32 @@
         (expect (ifn? (:provider/limits-fn token)))
         (expect (ifn? (:provider/auth-prompt-fn coding)))
         (expect (ifn? (:provider/auth-prompt-fn token)))))
-  (it "presets the models each endpoint actually serves, with a window for the uncatalogued one"
-      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-      (let [coding-models
-            (get-in (vis/provider-by-id :alibaba-coding-plan) [:provider/preset :default-models])
+  (it
+    "presets the models each endpoint actually serves, with a window for the uncatalogued one"
+    (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
+    (let [coding-models
+          (get-in (registry/provider-by-id :alibaba-coding-plan) [:provider/preset :default-models])
 
-            token-models
-            (get-in (vis/provider-by-id :alibaba-token-plan) [:provider/preset :default-models])]
+          token-models
+          (get-in (registry/provider-by-id :alibaba-token-plan) [:provider/preset :default-models])]
 
-        (expect (= "qwen3.7-max" (first coding-models)))
-        (expect (contains? (set coding-models) "glm-5"))
-        ;; `qwen3.8-max` is served live but ships as `qwen3.8-max-preview` in
-        ;; the models.dev catalog, so its window is declared inline.
-        (expect (= {:name "qwen3.8-max" :context 1000000 :output-limit 131072 :tool-call? true}
-                   (first token-models)))
-        (expect (contains? (set (rest token-models)) "deepseek-v4-pro")))))
+      (expect (= "qwen3.7-max" (first coding-models)))
+      (expect (contains? (set coding-models) "glm-5"))
+      ;; `qwen3.8-max` is served live but ships as `qwen3.8-max-preview` in
+      ;; the models.dev catalog, so its window is declared inline.
+      (expect (= {:name "qwen3.8-max" :context 1000000 :output-limit 131072 :tool-call? true}
+                 (first token-models)))
+      (expect (contains? (set (rest token-models)) "deepseek-v4-pro")))))
 
 (defdescribe
   auth-prompt-test
   (it "exposes static API-key guidance per plan"
       (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (let [coding-lines
-            ((:provider/auth-prompt-fn (vis/provider-by-id :alibaba-coding-plan)))
+            ((:provider/auth-prompt-fn (registry/provider-by-id :alibaba-coding-plan)))
 
             token-lines
-            ((:provider/auth-prompt-fn (vis/provider-by-id :alibaba-token-plan)))]
+            ((:provider/auth-prompt-fn (registry/provider-by-id :alibaba-token-plan)))]
 
         (expect (some #(= "  Alibaba (Coding Plan) requires a static API key." %) coding-lines))
         (expect (some #(= "         export ALIBABA_CODING_PLAN_API_KEY=<your-alibaba-api-key>" %)
@@ -65,23 +68,23 @@
         (expect (some #(= "         export ALIBABA_TOKEN_PLAN_API_KEY=<your-alibaba-api-key>" %)
                       token-lines)))))
 
-(defdescribe auth-detection-test
-             ;; The lookup ORDER, the plan isolation and the token envelope belong to the
-             ;; shared key store (`provider-key-store-test`); what this pack owns is that
-             ;; its two plans are wired to their OWN provider ids.
-             (it "detects the TUI/config API key used by runtime model calls"
-                 (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
-                 (with-redefs-fn {#'config/current-config (constantly {:providers
-                                                                       [{:id :alibaba-token-plan
+(defdescribe
+  auth-detection-test
+  ;; The lookup ORDER, the plan isolation and the token envelope belong to the
+  ;; shared key store (`provider-key-store-test`); what this pack owns is that
+  ;; its two plans are wired to their OWN provider ids.
+  (it "detects the TUI/config API key used by runtime model calls"
+      (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
+      (with-redefs-fn {#'config/current-config (constantly {:providers [{:id :alibaba-token-plan
                                                                          :api-key "config-key"}]})}
-                   (fn []
-                     (expect (= {:api-key "config-key" :source :config}
-                                ((:provider/detect-fn (vis/provider-by-id :alibaba-token-plan)))))
-                     ;; Plan-scoped: the Token Plan key must never authenticate the Coding
-                     ;; Plan, which the live endpoints reject with 401.
-                     (expect (not= "config-key"
-                                   (:api-key ((:provider/detect-fn (vis/provider-by-id
-                                                                     :alibaba-coding-plan))))))))))
+        (fn []
+          (expect (= {:api-key "config-key" :source :config}
+                     ((:provider/detect-fn (registry/provider-by-id :alibaba-token-plan)))))
+          ;; Plan-scoped: the Token Plan key must never authenticate the Coding
+          ;; Plan, which the live endpoints reject with 401.
+          (expect (not= "config-key"
+                        (:api-key ((:provider/detect-fn (registry/provider-by-id
+                                                          :alibaba-coding-plan))))))))))
 
 (defdescribe
   limits-test
@@ -89,7 +92,7 @@
       (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (with-redefs-fn {#'key-store/detect-key (constantly {:api-key "k" :source :auth-file})}
         (fn []
-          (let [report (vis/provider-limits :alibaba-token-plan)]
+          (let [report (provider-limits/provider-limits :alibaba-token-plan)]
             (expect (= :alibaba-token-plan (:provider-id report)))
             (expect (= :unsupported (:status report)))
             (expect (= [] (get-in report [:dynamic :limits])))
@@ -98,7 +101,7 @@
       (require 'com.blockether.vis.internal.provider.vendor.alibaba :reload)
       (with-redefs-fn {#'key-store/detect-key (constantly nil)}
         (fn []
-          (let [report ((:provider/limits-fn (vis/provider-by-id :alibaba-coding-plan)))]
+          (let [report ((:provider/limits-fn (registry/provider-by-id :alibaba-coding-plan)))]
             (expect (= :alibaba-coding-plan (:provider-id report)))
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits]))))))))

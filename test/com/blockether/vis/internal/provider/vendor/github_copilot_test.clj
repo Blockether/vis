@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.provider.vendor.github-copilot-test
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.vendor.github-copilot :as sut]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -135,10 +136,10 @@
   (it "registers ONE GitHub Copilot provider, not one per seat tier"
       (sut/register!)
       (let [copilot
-            (vis/provider-by-id :github-copilot)
+            (registry/provider-by-id :github-copilot)
 
             ext-nses
-            (set (map :ext/name (vis/registered-extensions)))
+            (set (map :ext/name (extension/registered-extensions)))
 
             models
             (set (get-in copilot [:provider/preset :default-models]))]
@@ -147,14 +148,14 @@
         (expect (= "GitHub Copilot" (:provider/label copilot)))
         ;; The seat tier was a question asked before any credential existed, and the
         ;; only thing the answer changed was a base-url the token exchange overrode.
-        (expect (nil? (vis/provider-by-id :github-copilot-individual)))
-        (expect (nil? (vis/provider-by-id :github-copilot-business)))
-        (expect (nil? (vis/provider-by-id :github-copilot-enterprise)))
+        (expect (nil? (registry/provider-by-id :github-copilot-individual)))
+        (expect (nil? (registry/provider-by-id :github-copilot-business)))
+        (expect (nil? (registry/provider-by-id :github-copilot-enterprise)))
         (expect (contains? ext-nses "provider-github-copilot"))
         ;; One entry for the account - the old `...-responses` / `...-chat` per-wire
         ;; sub-providers are gone; one base-url `/v1` carries both wires.
-        (expect (nil? (vis/provider-by-id :github-copilot-responses)))
-        (expect (nil? (vis/provider-by-id :github-copilot-chat)))
+        (expect (nil? (registry/provider-by-id :github-copilot-responses)))
+        (expect (nil? (registry/provider-by-id :github-copilot-chat)))
         ;; Bootstrap host only: the token's own `endpoints.api` decides at call time.
         (expect (= "https://api.individual.githubcopilot.com/v1"
                    (get-in copilot [:provider/preset :base-url])))
@@ -185,7 +186,7 @@
             (it "detects the one Copilot credential whatever tier minted it"
                 (sut/register!)
                 (let [detect? (fn []
-                                (boolean ((:provider/detect-fn (vis/provider-by-id
+                                (boolean ((:provider/detect-fn (registry/provider-by-id
                                                                  :github-copilot)))))]
                   ;; Issue #48 lit up all three tier rows from ONE token file, and the
                   ;; fix was per-tier gating. With one provider there is one row, so a
@@ -397,7 +398,7 @@
                                  #'sut/env-account-type (constantly nil)
                                  #'sut/auth-account-type (constantly :enterprise)}
                   (fn []
-                    (let [status ((:provider/status-fn (vis/provider-by-id :github-copilot)))]
+                    (let [status ((:provider/status-fn (registry/provider-by-id :github-copilot)))]
                       (expect (true? (:is-authenticated status)))
                       (expect (= :enterprise (:account-type status)))
                       (expect (= :auth-file (:source status))))))))
@@ -413,7 +414,7 @@
                                                                               {:remaining 240
                                                                                :entitlement 300}}})}
                   (fn []
-                    (let [limits ((:provider/limits-fn (vis/provider-by-id :github-copilot)))]
+                    (let [limits ((:provider/limits-fn (registry/provider-by-id :github-copilot)))]
                       (expect (= :ok (:status limits)))
                       (expect (= :github-copilot (:provider-id limits)))
                       (expect (= "Copilot plan: enterprise" (get-in limits [:dynamic :note]))))))))
@@ -457,7 +458,7 @@
                            #'sut/enable-known-copilot-models! (fn [_ _]
                                                                 {:attempted 6 :enabled 6})}
             (fn []
-              (let [auth! (:provider/auth-fn (vis/provider-by-id :github-copilot))]
+              (let [auth! (:provider/auth-fn (registry/provider-by-id :github-copilot))]
                 (expect (= :ok (auth! (constantly nil))))
                 ;; one device flow, and nothing about a tier was passed into it
                 (expect (= [nil] @flows))
@@ -473,6 +474,6 @@
                                                       (swap! flows conj opts)
                                                       {})}
             (fn []
-              (let [auth! (:provider/auth-fn (vis/provider-by-id :github-copilot))]
+              (let [auth! (:provider/auth-fn (registry/provider-by-id :github-copilot))]
                 (expect (= :already-authenticated (auth! (constantly nil))))
                 (expect (= [] @flows)))))))))

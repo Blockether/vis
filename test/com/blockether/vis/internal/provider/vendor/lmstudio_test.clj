@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.provider.vendor.lmstudio-test
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.vendor.lmstudio]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -11,7 +11,7 @@
   provider-lmstudio-test
   (it "registers one LM Studio provider extension"
       (let [provider
-            (vis/provider-by-id :lmstudio)
+            (registry/provider-by-id :lmstudio)
 
             status
             ((:provider/status-fn provider))]
@@ -22,12 +22,12 @@
         (expect (nil? (:authenticated? status)))
         (expect (= "http://localhost:1234/v1" (:base-url status)))))
   (it "exposes a context-detection hook"
-      (expect (ifn? (:provider/enrich-models-fn (vis/provider-by-id :lmstudio)))))
+      (expect (ifn? (:provider/enrich-models-fn (registry/provider-by-id :lmstudio)))))
   (it "ships anti-loop sampler defaults in :extra-body (Qwen/DeepSeek thinking loops)"
       ;; Local thinking models spiral into endless reasoning under the default
       ;; greedy sampler; the preset carries vendor-recommended anti-loop params
       ;; that svar merges as the provider base layer (per-turn :extra-body wins).
-      (let [eb (get-in (vis/provider-by-id :lmstudio) [:provider/preset :extra-body])]
+      (let [eb (get-in (registry/provider-by-id :lmstudio) [:provider/preset :extra-body])]
         (expect (= 0.6 (get eb "temperature")))
         (expect (= 0.95 (get eb "top_p")))
         (expect (= 20 (get eb "top_k")))
@@ -38,7 +38,7 @@
                   :first-byte-timeout-ms 600000
                   :idle-timeout-ms 600000
                   :semantic-timeout-ms 600000}
-                 (get-in (vis/provider-by-id :lmstudio) [:provider/preset :network]))))
+                 (get-in (registry/provider-by-id :lmstudio) [:provider/preset :network]))))
   (describe "enrich-models"
             (it "short-circuits (no network) when every model already has :context"
                 ;; svar/models! redef'd to throw — proves it is never called.

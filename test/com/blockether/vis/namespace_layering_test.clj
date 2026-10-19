@@ -8,7 +8,7 @@
 
 (def ^:private runtime-facade-lookup
   "A quoted facade reference handed to a runtime loader, e.g.
-   `(requiring-resolve 'com.blockether.vis.core/current-config)`."
+   `(requiring-resolve 'com.blockether.vis.core/-main)`."
   #"\((?:requiring-resolve|resolve|ns-resolve|find-ns|the-ns|require)\s+'\[?com\.blockether\.vis\.core[\s/\]\)]")
 
 (defn- internal-sources

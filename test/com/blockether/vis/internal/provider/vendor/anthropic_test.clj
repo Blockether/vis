@@ -2,7 +2,7 @@
   (:require [babashka.http-client :as http]
             [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.vendor.anthropic :as anthropic]
             [lazytest.core :refer [defdescribe expect it throws?]]))
@@ -13,10 +13,10 @@
   provider-anthropic-test
   (it "registers separate Anthropic API-key and Claude subscription providers"
       (let [api-provider
-            (vis/provider-by-id :anthropic)
+            (registry/provider-by-id :anthropic)
 
             oauth-provider
-            (vis/provider-by-id :anthropic-coding-plan)]
+            (registry/provider-by-id :anthropic-coding-plan)]
 
         (expect (= :anthropic (:provider/id api-provider)))
         (expect (= "Anthropic (API Key)" (:provider/label api-provider)))
@@ -109,7 +109,7 @@
                                                                  "code123#wrong")}))))))
   (it "reports live Claude subscription usage limits from Anthropic OAuth endpoint"
       (let [provider
-            (vis/provider-by-id :anthropic-coding-plan)
+            (registry/provider-by-id :anthropic-coding-plan)
 
             called
             (atom nil)]
@@ -143,7 +143,7 @@
   (it
     "force-refreshes the rotated OAuth token when the usage endpoint answers 401, then retries once"
     (let [provider
-          (vis/provider-by-id :anthropic-coding-plan)
+          (registry/provider-by-id :anthropic-coding-plan)
 
           refreshes
           (atom [])
@@ -173,7 +173,7 @@
             (expect (= ["Bearer stale-token" "Bearer rotated-token"] @tokens)))))))
   (it "stops at unauthenticated when the forced refresh itself fails (no retry storm)"
       (let [provider
-            (vis/provider-by-id :anthropic-coding-plan)
+            (registry/provider-by-id :anthropic-coding-plan)
 
             calls
             (atom 0)]
@@ -194,7 +194,7 @@
   ;; underneath the host cache, where the sign-in flush could not reach it.
   (it "keeps no usage cache of its own — the host owns the budget"
       (let [provider
-            (vis/provider-by-id :anthropic-coding-plan)
+            (registry/provider-by-id :anthropic-coding-plan)
 
             calls
             (atom 0)]
@@ -211,7 +211,7 @@
             (expect (= 2 @calls))
             (expect (= 300000 (:provider/limits-cache-ms provider)))))))
   (it "returns unauthenticated limits report when Claude subscription OAuth is missing"
-      (let [provider (vis/provider-by-id :anthropic-coding-plan)]
+      (let [provider (registry/provider-by-id :anthropic-coding-plan)]
         (with-redefs-fn {#'anthropic/get-anthropic-token!
                          (fn []
                            (throw (ex-info "missing" {:type :vis/anthropic-not-authenticated})))

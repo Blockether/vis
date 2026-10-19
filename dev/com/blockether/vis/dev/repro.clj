@@ -33,7 +33,8 @@
    private vars of `internal.loop` except through their canonical fns
    to stay sensitive to behavior changes (the assembly path is what
    we're verifying)."
-  (:require [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.loop.transcript :as transcript]))
 
 ;; Trailer reconstruction (mirrors the live-loop's `:trailer-iters` shape)
@@ -144,15 +145,15 @@
                     :replay-msgs :thinking-chars ... }}"
   [session-id turn-id]
   (let [db
-        (vis/db-info)
+        (lp/db-info)
 
         turn
-        (->> (vis/db-list-session-turns db session-id)
+        (->> (persistance/db-list-session-turns db session-id)
              (filter #(= turn-id (:id %)))
              first)
 
         iters
-        (vis/db-list-session-turn-iterations db turn-id)
+        (persistance/db-list-session-turn-iterations db turn-id)
 
         rows
         (mapv #(iter-summary iters %) (range (count iters)))
@@ -191,13 +192,13 @@
       :turns [<replay-turn-result>+]}"
   [session-id]
   (let [db
-        (vis/db-info)
+        (lp/db-info)
 
         sess
-        (vis/db-get-session db session-id)
+        (persistance/db-get-session db session-id)
 
         turns
-        (vis/db-list-session-turns db session-id)]
+        (persistance/db-list-session-turns db session-id)]
 
     {:session-id session-id
      :title (:title sess)
@@ -211,10 +212,10 @@
    third or later turn, so cherry-picking is the common case."
   [session-id turn-position]
   (let [db
-        (vis/db-info)
+        (lp/db-info)
 
         turn
-        (->> (vis/db-list-session-turns db session-id)
+        (->> (persistance/db-list-session-turns db session-id)
              (filter #(= turn-position (:position %)))
              first)]
 

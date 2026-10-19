@@ -3,7 +3,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.fff :as fff]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace.fff-index :as index]
             [lazytest.core :refer [defdescribe expect it]]
@@ -594,7 +594,7 @@
                 (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-live-store-"})))
 
                 store
-                (vis/db-create-connection! (.getPath dir))
+                (persistance/db-create-connection! (.getPath dir))
 
                 shm
                 (.getPath (io/file dir "vis.db-shm"))]
@@ -607,7 +607,7 @@
                    (expect (not (str/includes? (pr-str (fff/search idx {:query "vis.db"}))
                                                "vis.db-shm"))))
                  (expect (= "held" (wal-index-lock python shm)))
-                 (finally (vis/db-dispose-connection! store) (fs/delete-tree dir))))))))
+                 (finally (persistance/db-dispose-connection! store) (fs/delete-tree dir))))))))
 
 ;; Regression, session 42f1f324-3b0e-4f4d-abb5-4e93343c44ac: `grep` on a missing scope
 ;; answered "rg requires fff for directory search, but fff failed for /root". The

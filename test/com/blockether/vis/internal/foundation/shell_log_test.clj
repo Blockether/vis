@@ -6,7 +6,7 @@
    gap, and no head lost to a buffer that ran out of room."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.foundation.shell-log :as shell-log]
             [com.blockether.vis.internal.paths :as paths]
@@ -468,7 +468,7 @@
 (defdescribe
   index-test
   (it "makes a log findable by session, newest first, with its exit"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try (let [cid (h/store-session! s {:channel :tui :title "Shell log fixture"})
                    base
                    {:command "npm run build" :script "npm run build" :dir "." :log-path "/x.log"}]
@@ -494,7 +494,7 @@
                    (expect (= 900 (get build "ended_at")))
                    (expect (= "npm run build" (get build "script")))
                    (expect (= (str cid) (get build "session_id"))))))
-             (finally (vis/db-dispose-connection! s)))))
+             (finally (persistance/db-dispose-connection! s)))))
   (it "is best effort: no database is no index and no throw"
       (expect (nil? (shell-log/index! nil "sid" "id" {:started-at 1})))
       (expect (= [] (shell-log/session-logs nil "sid")))))

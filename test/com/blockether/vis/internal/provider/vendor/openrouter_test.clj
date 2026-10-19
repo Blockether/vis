@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.provider.vendor.openrouter-test
   (:require [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
             [com.blockether.vis.internal.provider.vendor.openrouter :as openrouter]
@@ -10,10 +12,10 @@
              (it "registers the OpenRouter provider extension entry"
                  (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
                  (let [provider
-                       (vis/provider-by-id :openrouter)
+                       (registry/provider-by-id :openrouter)
 
                        ext-nses
-                       (set (map :ext/name (vis/registered-extensions)))]
+                       (set (map :ext/name (extension/registered-extensions)))]
 
                    (expect (= :openrouter (:provider/id provider)))
                    (expect (= "OpenRouter" (:provider/label provider)))
@@ -31,7 +33,7 @@
   auth-prompt-test
   (it "exposes static API-key guidance"
       (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
-      (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :openrouter)))]
+      (let [lines ((:provider/auth-prompt-fn (registry/provider-by-id :openrouter)))]
         (expect (some #(= "  OpenRouter requires a static API key." %) lines))
         (expect (some #(= "         export OPENROUTER_API_KEY=<your-openrouter-api-key>" %) lines))
         (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :openrouter)) %) lines)))))
@@ -53,7 +55,7 @@
                                                                          :api-key "config-key"}]})}
         (fn []
           (expect (= {:api-key "config-key" :source :config}
-                     ((:provider/detect-fn (vis/provider-by-id :openrouter)))))))))
+                     ((:provider/detect-fn (registry/provider-by-id :openrouter)))))))))
 
 (defdescribe get-token-test
              (it "answers the router token envelope from the resolved key"
@@ -62,7 +64,8 @@
                                   (constantly {:providers [{:id :openrouter :api-key "k"}]})}
                    (fn []
                      (expect (= {:token "k" :api-url (svar/provider-base-url :openrouter)}
-                                ((:provider/get-token-fn (vis/provider-by-id :openrouter)))))))))
+                                ((:provider/get-token-fn (registry/provider-by-id
+                                                           :openrouter)))))))))
 
 (defdescribe
   limits-test
@@ -74,7 +77,7 @@
                          (expect (= "k" api-key))
                          {:data {:label "vis" :usage 2.5 :limit 10.0 :is_free_tier false}})}
         (fn []
-          (let [report (vis/provider-limits :openrouter)]
+          (let [report (provider-limits/provider-limits :openrouter)]
             (expect (= :openrouter (:provider-id report)))
             (expect (= :ok (:status report)))
             (expect (= [:openrouter-credits] (mapv :id (get-in report [:dynamic :limits]))))
@@ -102,7 +105,7 @@
       (require 'com.blockether.vis.internal.provider.vendor.openrouter :reload)
       (with-redefs-fn {#'key-store/detect-key (constantly nil)}
         (fn []
-          (let [report ((:provider/limits-fn (vis/provider-by-id :openrouter)))]
+          (let [report ((:provider/limits-fn (registry/provider-by-id :openrouter)))]
             (expect (= :openrouter (:provider-id report)))
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits]))))))))

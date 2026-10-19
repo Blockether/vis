@@ -1,7 +1,9 @@
 (ns com.blockether.vis.internal.provider.vendor.zai-test
   (:require [babashka.http-client :as http]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
+            [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
             [com.blockether.vis.internal.provider.vendor.zai :as zai]
@@ -13,13 +15,13 @@
       (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
       (zai/register!)
       (let [coding
-            (vis/provider-by-id :zai-coding-plan)
+            (registry/provider-by-id :zai-coding-plan)
 
             pass
-            (vis/provider-by-id :zai)
+            (registry/provider-by-id :zai)
 
             ext-nses
-            (set (map :ext/name (vis/registered-extensions)))]
+            (set (map :ext/name (extension/registered-extensions)))]
 
         (expect (= :zai-coding-plan (:provider/id coding)))
         (expect (= :zai (:provider/id pass)))
@@ -38,22 +40,22 @@
   auth-prompt-test
   (it "exposes static API-key guidance for the coding plan"
       (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
-      (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :zai-coding-plan)))]
+      (let [lines ((:provider/auth-prompt-fn (registry/provider-by-id :zai-coding-plan)))]
         (expect (some #(= "  Z.ai (Coding Plan) requires a static API key." %) lines))
         (expect (some #(= "  Create one at https://z.ai/manage-apikey/apikey-list." %) lines))
         (expect (some #(= "         export ZAI_CODING_API_KEY=<your-zai-api-key>" %) lines))
         (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :zai-coding-plan)) %)
                       lines)))))
 
-(defdescribe auth-detection-test
-             (it "detects the TUI/config API key used by runtime model calls"
-                 (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
-                 (with-redefs-fn {#'config/current-config (constantly {:providers
-                                                                       [{:id :zai-coding-plan
+(defdescribe
+  auth-detection-test
+  (it "detects the TUI/config API key used by runtime model calls"
+      (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
+      (with-redefs-fn {#'config/current-config (constantly {:providers [{:id :zai-coding-plan
                                                                          :api-key "config-key"}]})}
-                   (fn []
-                     (expect (= {:api-key "config-key" :source :config}
-                                ((:provider/detect-fn (vis/provider-by-id :zai-coding-plan)))))))))
+        (fn []
+          (expect (= {:api-key "config-key" :source :config}
+                     ((:provider/detect-fn (registry/provider-by-id :zai-coding-plan)))))))))
 
 (defdescribe
   limits-test
@@ -82,7 +84,7 @@
                                                               :percentage 50
                                                               :nextResetTime 1770848402389}]}})}
         (fn []
-          (let [report (vis/provider-limits :zai-coding-plan)]
+          (let [report (provider-limits/provider-limits :zai-coding-plan)]
             (expect (= :zai-coding-plan (:provider-id report)))
             (expect (= :ok (:status report)))
             (expect (= [:zai-coding-plan-5h :zai-coding-plan-7d]
@@ -98,7 +100,7 @@
       (require 'com.blockether.vis.internal.provider.vendor.zai :reload)
       (with-redefs-fn {#'key-store/detect-key (constantly nil)}
         (fn []
-          (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding-plan)))]
+          (let [report ((:provider/limits-fn (registry/provider-by-id :zai-coding-plan)))]
             (expect (= :zai-coding-plan (:provider-id report)))
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits])))))))
@@ -113,7 +115,7 @@
                        :body
                        "{\"success\":false,\"code\":401,\"msg\":\"token expired or incorrect\"}"})}
         (fn []
-          (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding-plan)))]
+          (let [report ((:provider/limits-fn (registry/provider-by-id :zai-coding-plan)))]
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits])))
             (expect (=
@@ -128,6 +130,6 @@
                                                              {:api-key "saved-key"
                                                               :source :config}))}
                    (fn []
-                     (let [report ((:provider/limits-fn (vis/provider-by-id :zai)))]
+                     (let [report ((:provider/limits-fn (registry/provider-by-id :zai)))]
                        (expect (= :unsupported (:status report)))
                        (expect (= [] (get-in report [:dynamic :limits]))))))))

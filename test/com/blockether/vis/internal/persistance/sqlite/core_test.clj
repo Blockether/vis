@@ -11,7 +11,7 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.loop :as lp]
             ;; Force-load the SQLite backend ns so the `private-core-fn` helper
             ;; below can resolve its private vars at top-level def time. The backend
             ;; is otherwise loaded lazily by persistence dispatch.
@@ -40,7 +40,7 @@
           (h/store-session! s {:channel :api})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "artifacts"})
+          (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "artifacts"})
 
           store-iteration
           (fn [filename]
@@ -70,8 +70,8 @@
           (store-iteration "foreign.txt")
 
           expected
-          {(str first-id) (vis/db-list-iteration-attachments-meta s first-id)
-           (str second-id) (vis/db-list-iteration-attachments-meta s second-id)}
+          {(str first-id) (persistance/db-list-iteration-attachments-meta s first-id)
+           (str second-id) (persistance/db-list-iteration-attachments-meta s second-id)}
 
           format-sql
           sql/format
@@ -83,16 +83,16 @@
       (with-redefs [sql/format (fn [& args]
                                  (swap! formats inc)
                                  (apply format-sql args))]
-        (let [rows (vis/db-list-iterations-attachments-meta s
-                                                            [second-id nil (str first-id) first-id
-                                                             "missing' OR 1=1 --"])]
+        (let [rows (persistance/db-list-iterations-attachments-meta
+                     s
+                     [second-id nil (str first-id) first-id "missing' OR 1=1 --"])]
           (expect (= expected rows))
           (expect (not (contains? rows (str foreign-id))))
           (expect (every? #(and (:has-bytes %) (not (contains? % :base64))) (mapcat val rows))))
-        (expect (= {} (vis/db-list-iterations-attachments-meta s [])))
-        (expect (= {} (vis/db-list-iterations-attachments-meta s [nil])))
-        (expect (= {} (vis/db-list-iterations-attachments-meta nil [first-id])))
-        (expect (= {} (vis/db-list-iterations-attachments-meta s ["missing"]))))
+        (expect (= {} (persistance/db-list-iterations-attachments-meta s [])))
+        (expect (= {} (persistance/db-list-iterations-attachments-meta s [nil])))
+        (expect (= {} (persistance/db-list-iterations-attachments-meta nil [first-id])))
+        (expect (= {} (persistance/db-list-iterations-attachments-meta s ["missing"]))))
       (expect (zero? @formats)))))
 
 (defdescribe routing-lock-query-test
@@ -140,7 +140,7 @@
 
             store-turn
             (fn [filename]
-              (vis/db-store-session-turn!
+              (persistance/db-store-session-turn!
                 s
                 {:parent-session-id sid
                  :user-request filename
@@ -158,8 +158,8 @@
             (store-turn "foreign.txt")
 
             expected
-            {(str first-id) (vis/db-list-turn-attachments s first-id)
-             (str second-id) (vis/db-list-turn-attachments s second-id)}
+            {(str first-id) (persistance/db-list-turn-attachments s first-id)
+             (str second-id) (persistance/db-list-turn-attachments s second-id)}
 
             format-sql
             sql/format
@@ -196,10 +196,10 @@
           (h/store-session! s {:channel :api})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "prior"})
+          (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "prior"})
 
           current
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "current"})
+          (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "current"})
 
           _
           (doseq [tokens [10000 42000 0]]
@@ -232,29 +232,29 @@
                               (str/includes? % "SELECT *"))
                         @queries)))))
 
-(defdescribe latest-turn-request-usage-test
-             (it "ignores older retry states, empty turns and zero-token calls"
-                 (let [s
-                       (h/store)
+(defdescribe
+  latest-turn-request-usage-test
+  (it "ignores older retry states, empty turns and zero-token calls"
+      (let [s
+            (h/store)
 
-                       sid
-                       (h/store-session! s {:channel :api})
+            sid
+            (h/store-session! s {:channel :api})
 
-                       tid
-                       (vis/db-store-session-turn! s
-                                                   {:parent-session-id sid :user-request "retry"})]
+            tid
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "retry"})]
 
-                   (expect (nil? (persistance/db-latest-turn-request-usage s tid)))
-                   (expect (nil? (persistance/db-latest-turn-request-usage s nil)))
-                   (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 90000}})
-                   (expect (= {:position 1 :input-tokens 90000}
-                              (persistance/db-latest-turn-request-usage s tid)))
-                   (persistance/db-retry-session-turn! s tid {:status :running})
-                   (expect (nil? (persistance/db-latest-turn-request-usage s tid)))
-                   (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 4000}})
-                   (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 0}})
-                   (expect (= {:position 1 :input-tokens 4000}
-                              (persistance/db-latest-turn-request-usage s (str tid)))))))
+        (expect (nil? (persistance/db-latest-turn-request-usage s tid)))
+        (expect (nil? (persistance/db-latest-turn-request-usage s nil)))
+        (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 90000}})
+        (expect (= {:position 1 :input-tokens 90000}
+                   (persistance/db-latest-turn-request-usage s tid)))
+        (persistance/db-retry-session-turn! s tid {:status :running})
+        (expect (nil? (persistance/db-latest-turn-request-usage s tid)))
+        (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 4000}})
+        (h/store-iteration! s {:session-turn-id tid :code "" :tokens {"input" 0}})
+        (expect (= {:position 1 :input-tokens 4000}
+                   (persistance/db-latest-turn-request-usage s (str tid)))))))
 
 (defdescribe
   latest-turn-state-sql-test
@@ -266,7 +266,7 @@
             (h/store-session! s {:channel :api})
 
             tid
-            (vis/db-store-session-turn! s {:parent-session-id sid :user-request "latest"})
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "latest"})
 
             format-sql
             sql/format
@@ -278,7 +278,7 @@
                                    (when (= :session_turn_state (:from query)) (swap! formats inc))
                                    (apply format-sql query options))]
           (dotimes [_ 10]
-            (expect (= [] (vis/db-list-session-turn-iterations s tid)))))
+            (expect (= [] (persistance/db-list-session-turn-iterations s tid)))))
         (expect (= 0 @formats)))))
 
 (defdescribe
@@ -292,10 +292,10 @@
           (h/store-session! s {:channel :api})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "batch"})
+          (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "batch"})
 
           other
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "other"})
+          (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "other"})
 
           trace
           (fn [provider]
@@ -327,7 +327,7 @@
                                         (when (str/includes? (first statement) "llm_routing_event")
                                           (swap! reads inc))
                                         (apply execute! db statement options))]
-            (vis/db-list-session-turn-iterations s tid))]
+            (persistance/db-list-session-turn-iterations s tid))]
 
       (expect (= (mapv str ids) (mapv (comp str :id) rows)))
       (expect (= [["p1" "p1"] [] ["p2" "p2"]] (mapv #(mapv :provider (:llm-routing-trace %)) rows)))
@@ -346,7 +346,9 @@
 
           turns
           (mapv (fn [request]
-                  (vis/db-store-session-turn! s {:parent-session-id sid :user-request request}))
+                  (persistance/db-store-session-turn! s
+                                                      {:parent-session-id sid
+                                                       :user-request request}))
                 ["first" "second" "empty"])
 
           store
@@ -363,7 +365,7 @@
           (store (first turns) :obsolete)
 
           _
-          (vis/db-retry-session-turn! s (first turns) {:status :running})
+          (persistance/db-retry-session-turn! s (first turns) {:status :running})
 
           _
           (store (first turns) :current)
@@ -377,7 +379,7 @@
           expected
           (into {}
                 (map (fn [tid]
-                       [(str tid) (vis/db-list-session-turn-iterations s tid)])
+                       [(str tid) (persistance/db-list-session-turn-iterations s tid)])
                      turns))
 
           execute!
@@ -409,7 +411,7 @@
             (h/store-session! s {:channel :api})
 
             tid
-            (vis/db-store-session-turn! s {:parent-session-id sid :user-request "empty"})
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "empty"})
 
             execute!
             jdbc/execute!
@@ -432,29 +434,30 @@
           (expect (= [(str tid) unknown] (vec (rest (first @statements)))))
           (expect (not (str/includes? (ffirst @statements) unknown)))))))
 
-(defdescribe routing-event-empty-turn-test
-             (it "does not read routing rows when the turn has no iterations"
-                 (let [s
-                       (h/store)
+(defdescribe
+  routing-event-empty-turn-test
+  (it "does not read routing rows when the turn has no iterations"
+      (let [s
+            (h/store)
 
-                       sid
-                       (h/store-session! s {:channel :api})
+            sid
+            (h/store-session! s {:channel :api})
 
-                       tid
-                       (vis/db-store-session-turn! s {:parent-session-id sid :user-request "empty"})
+            tid
+            (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "empty"})
 
-                       query!
-                       sqlite-core/query!
+            query!
+            sqlite-core/query!
 
-                       reads
-                       (atom 0)]
+            reads
+            (atom 0)]
 
-                   (with-redefs [sqlite-core/query! (fn [db query]
-                                                      (when (= :llm_routing_event (:from query))
-                                                        (swap! reads inc))
-                                                      (query! db query))]
-                     (expect (= [] (vis/db-list-session-turn-iterations s tid))))
-                   (expect (= 0 @reads)))))
+        (with-redefs [sqlite-core/query! (fn [db query]
+                                           (when (= :llm_routing_event (:from query))
+                                             (swap! reads inc))
+                                           (query! db query))]
+          (expect (= [] (persistance/db-list-session-turn-iterations s tid))))
+        (expect (= 0 @reads)))))
 
 (defdescribe
   session-health-test
@@ -646,12 +649,12 @@
                                                   :content {:owner :beta}})
         (expect (= [{:owner :alpha}]
                    (mapv :content
-                         (vis/db-list-extension-aggregates s
-                                                           {:extension-id 'test.ext.alpha
-                                                            :kind :cache/value}))))
+                         (persistance/db-list-extension-aggregates s
+                                                                   {:extension-id 'test.ext.alpha
+                                                                    :kind :cache/value}))))
         (expect (= #{"test.ext.alpha" "test.ext.beta"}
                    (set (map :extension-id
-                             (vis/db-list-extension-aggregates s {:kind :cache/value})))))))
+                             (persistance/db-list-extension-aggregates s {:kind :cache/value})))))))
   (it "uses the caller's turn id as the durable identity"
       (let [s
             (h/store)
@@ -663,11 +666,11 @@
             (random-uuid)]
 
         (expect (= tid
-                   (vis/db-store-session-turn! s
-                                               {:parent-session-id cid
-                                                :session-turn-id tid
-                                                :user-request "canonical identity"})))
-        (expect (= [(str tid)] (mapv (comp str :id) (vis/db-list-session-turns s cid))))))
+                   (persistance/db-store-session-turn! s
+                                                       {:parent-session-id cid
+                                                        :session-turn-id tid
+                                                        :user-request "canonical identity"})))
+        (expect (= [(str tid)] (mapv (comp str :id) (persistance/db-list-session-turns s cid))))))
   (it "stores iteration block scope and indexes it"
       (let [s
             (h/store)
@@ -676,7 +679,9 @@
             (h/store-session! s {:channel :cli})
 
             tid
-            (vis/db-store-session-turn! s {:parent-session-id cid :user-request "block scoped"})
+            (persistance/db-store-session-turn! s
+                                                {:parent-session-id cid
+                                                 :user-request "block scoped"})
 
             iid
             (h/store-iteration! s {:session-turn-id tid :status :done :idx 0 :code "(+ 1 2)"})]
@@ -688,7 +693,7 @@
                                                      :iteration-id iid
                                                      :iteration-form-index 0
                                                      :content {:ok true}})
-        (let [rows (vis/db-list-extension-aggregates
+        (let [rows (persistance/db-list-extension-aggregates
                      s
                      {:extension-id 'test.ext.alpha :iteration-id iid :iteration-form-index 0})]
           (expect (= 1 (count rows)))
@@ -704,7 +709,7 @@
           (h/store-session! s {:channel :cli})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "plot it"})
+          (persistance/db-store-session-turn! s {:parent-session-id cid :user-request "plot it"})
 
           png
           (byte-array (map unchecked-byte [0x89 0x50 0x4e 0x47 1 2 3 4]))
@@ -740,7 +745,7 @@
                :owner owner}]})
 
           got
-          (vis/db-list-iteration-attachments s iid)]
+          (persistance/db-list-iteration-attachments s iid)]
 
       (expect (= 3 (count got)))
       ;; Grain (call, position): call_A gets 0 and 1, the nil-call artifact 0.
@@ -755,10 +760,10 @@
       ;; lookup) used to read - and base64-encode - every blob of the iteration
       ;; just to count them, so serving a gallery of N images cost N*N reads.
       (let [meta-rows
-            (vis/db-list-iteration-attachments-meta s iid)
+            (persistance/db-list-iteration-attachments-meta s iid)
 
             meta-batch
-            (get (vis/db-list-iterations-attachments-meta s [iid]) (str iid))
+            (get (persistance/db-list-iterations-attachments-meta s [iid]) (str iid))
 
             facts
             (juxt :id :source
@@ -773,7 +778,7 @@
         ;; reader can tell `:inline` from `:external` without fetching either.
         (expect (every? :has-bytes meta-rows))
         ;; The ONE artifact a caller actually serves is read by its own id.
-        (expect (= b64 (:base64 (vis/db-read-attachment s (:id (first meta-rows))))))
+        (expect (= b64 (:base64 (persistance/db-read-attachment s (:id (first meta-rows))))))
         ;; Regression, issue td-65cdf6: SQLite discarded the stable live-view
         ;; identity, so Companion painted the filed receipt and settled live view.
         (let [live-row
@@ -787,9 +792,9 @@
           (expect (= owner
                      (:owner live-row)
                      (:owner live-meta)
-                     (:owner (vis/db-read-attachment s (:id live-meta)))))))
+                     (:owner (persistance/db-read-attachment s (:id live-meta)))))))
       ;; Batch variant groups by iteration id.
-      (let [batch (vis/db-list-iterations-attachments s [iid])]
+      (let [batch (persistance/db-list-iterations-attachments s [iid])]
         (expect (= 1 (count batch)))
         (expect (= 3 (count (get batch (str iid)))))))))
 
@@ -804,7 +809,7 @@
           (h/store-session! s {:channel :cli})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "offload it"})
+          (persistance/db-store-session-turn! s {:parent-session-id cid :user-request "offload it"})
 
           iid
           (h/store-iteration!
@@ -824,7 +829,7 @@
                             :storage-uri "file:///var/vis/att/abc"}]})
 
           got
-          (vis/db-list-iteration-attachments s iid)
+          (persistance/db-list-iteration-attachments s iid)
 
           row
           (first got)]
@@ -836,7 +841,7 @@
       (expect (= "text/csv" (:media-type row)))
       (expect (= :tool (:source row)))
       ;; Bare-id read-back returns the same external envelope.
-      (let [back (vis/db-read-attachment s (:id row))]
+      (let [back (persistance/db-read-attachment s (:id row))]
         (expect (= "file:///var/vis/att/abc" (:storage-uri back)))
         (expect (nil? (:base64 back)))))))
 
@@ -858,7 +863,7 @@
 
           ;; INBOUND user image attached to the turn message.
           soul
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id cid
              :user-request "here is a chart"
@@ -866,7 +871,7 @@
              [{:media-type "image/png" :base64 b64 :filename "user.png" :size (alength png)}]})
 
           user-atts
-          (vis/db-list-turn-attachments s soul)
+          (persistance/db-list-turn-attachments s soul)
 
           uid
           (:id (first user-atts))
@@ -882,17 +887,17 @@
              [{:tool-call-id "call_Z" :media-type "image/png" :base64 b64 :filename "tool.png"}]})
 
           tid
-          (:id (first (vis/db-list-iteration-attachments s iid)))
+          (:id (first (persistance/db-list-iteration-attachments s iid)))
 
           user-read
-          (vis/db-read-attachment s uid)
+          (persistance/db-read-attachment s uid)
 
           tool-read
-          (vis/db-read-attachment s tid)
+          (persistance/db-read-attachment s tid)
 
           ;; Turn roll-up: user + tool in ONE indexed filter (soul only).
           all-atts
-          (vis/db-list-turn-all-attachments s soul)]
+          (persistance/db-list-turn-all-attachments s soul)]
 
       ;; Listers now project BARE row uuids (no source prefix) + a derived :source.
       (expect (= 1 (count user-atts)))
@@ -900,7 +905,7 @@
       (expect (not (str/includes? uid ":")))
       (expect (not (str/includes? tid ":")))
       (expect (= :user (:source (first user-atts))))
-      (expect (= :tool (:source (first (vis/db-list-iteration-attachments s iid)))))
+      (expect (= :tool (:source (first (persistance/db-list-iteration-attachments s iid)))))
       ;; Bare-id read-back hits the single table and derives provenance from the row.
       (expect (= :user (:source user-read)))
       (expect (nil? (:tool-call-id user-read)))
@@ -916,7 +921,7 @@
       (expect (= [:user :tool] (mapv :source all-atts)))
       (expect (= #{uid tid} (set (map :id all-atts))))
       ;; Unknown id -> nil.
-      (expect (nil? (vis/db-read-attachment s (str (java.util.UUID/randomUUID))))))))
+      (expect (nil? (persistance/db-read-attachment s (str (java.util.UUID/randomUUID))))))))
 
 ;; Regression, session 55ed67f6: the sandbox now hands the producer an
 ;; artifact's id INSIDE the block that made it, so a row minted with a fresh
@@ -933,7 +938,8 @@
           (h/store-session! s {:channel :cli})
 
           soul
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "make a chart"})
+          (persistance/db-store-session-turn! s
+                                              {:parent-session-id cid :user-request "make a chart"})
 
           given-id
           (str (java.util.UUID/randomUUID))
@@ -957,7 +963,7 @@
                                               :size 3}]})
 
           rows
-          (vis/db-list-iteration-attachments s iid)
+          (persistance/db-list-iteration-attachments s iid)
 
           by-name
           (into {} (map (juxt :filename identity)) rows)]
@@ -966,7 +972,7 @@
       (expect (= given-id (:id (get by-name "chart.png"))))
       (expect (= 3 (:version (get by-name "chart.png"))))
       ;; It reads back by that id, which is the whole point of handing it out.
-      (expect (= "chart.png" (:filename (vis/db-read-attachment s given-id))))
+      (expect (= "chart.png" (:filename (persistance/db-read-attachment s given-id))))
       ;; An unstamped entry beside it still gets a fresh uuid and the
       ;; allocator's next cut.
       (expect (string? (:id (get by-name "unstamped.png"))))
@@ -991,7 +997,7 @@
 
           ;; Turn 1: user image on the message + tool artifact on an iteration.
           soul1
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id cid
              :user-request "turn one"
@@ -1009,7 +1015,7 @@
 
           ;; Turn 2: tool artifact only.
           soul2
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "turn two"})
+          (persistance/db-store-session-turn! s {:parent-session-id cid :user-request "turn two"})
 
           _
           (h/store-iteration!
@@ -1021,7 +1027,7 @@
              [{:tool-call-id "call_B" :media-type "image/png" :base64 b64 :filename "t2.png"}]})
 
           all
-          (vis/db-list-session-attachments s cid)]
+          (persistance/db-list-session-attachments s cid)]
 
       (expect (= 3 (count all)))
       ;; Ordered: turn1 user, turn1 tool, turn2 tool.
@@ -1038,17 +1044,19 @@
       (expect (= "call_A" (:tool-call-id (nth all 1))))
       (expect (= "call_B" (:tool-call-id (nth all 2))))
       ;; Unknown session -> [].
-      (expect (= [] (vis/db-list-session-attachments s (str (java.util.UUID/randomUUID)))))
+      (expect (= [] (persistance/db-list-session-attachments s (str (java.util.UUID/randomUUID)))))
       ;; The bytes-free twin answers the SAME rows in the SAME order - a
       ;; whole-session artifact INDEX must never read a session's payload.
-      (let [meta (vis/db-list-session-attachments-meta s cid)]
+      (let [meta (persistance/db-list-session-attachments-meta s cid)]
         (expect (= (mapv :filename all) (mapv :filename meta)))
         (expect (= (mapv #(str (:turn-soul-id %)) all) (mapv #(str (:turn-soul-id %)) meta)))
         (expect (= (mapv #(str (:iteration-id %)) all) (mapv #(str (:iteration-id %)) meta)))
         (expect (every? #(nil? (:base64 %)) meta))
         (expect (every? :has-bytes meta))
         (expect (= []
-                   (vis/db-list-session-attachments-meta s (str (java.util.UUID/randomUUID)))))))))
+                   (persistance/db-list-session-attachments-meta
+                     s
+                     (str (java.util.UUID/randomUUID)))))))))
 
 (defdescribe
   sqlite-extension-aggregate-index-data-filter-test
@@ -1079,33 +1087,33 @@
          {:edge-kind "calls" :source "core/run" :target "lc/iterate" :path "src/core.clj"}
          :content {:source "core/run" :target "lc/iterate" :kind "calls"}})
       ;; Filter by kind + index-data file-path → both nodes in core.clj
-      (let [by-file (vis/db-list-extension-aggregates s
-                                                      {:extension-id 'test.ext.graph
-                                                       :kind :graph/node
-                                                       :index-data {:path "src/core.clj"}})]
+      (let [by-file (persistance/db-list-extension-aggregates s
+                                                              {:extension-id 'test.ext.graph
+                                                               :kind :graph/node
+                                                               :index-data {:path "src/core.clj"}})]
         (expect (= 2 (count by-file)))
         (expect (= #{"node:core/run" "node:core/start"} (set (map :key by-file)))))
       ;; Filter by index-data edge-kind → one edge
-      (let [by-edge-kind (vis/db-list-extension-aggregates s
-                                                           {:extension-id 'test.ext.graph
-                                                            :index-data {:edge-kind "calls"}})]
+      (let [by-edge-kind (persistance/db-list-extension-aggregates
+                           s
+                           {:extension-id 'test.ext.graph :index-data {:edge-kind "calls"}})]
         (expect (= 1 (count by-edge-kind)))
         (expect (= "edge:core/run::calls::lc/iterate" (:key (first by-edge-kind)))))
       ;; Filter by index-data source → edge from core/run
-      (let [by-source (vis/db-list-extension-aggregates s
-                                                        {:extension-id 'test.ext.graph
-                                                         :index-data {:source "core/run"}})]
+      (let [by-source (persistance/db-list-extension-aggregates s
+                                                                {:extension-id 'test.ext.graph
+                                                                 :index-data {:source "core/run"}})]
         (expect (= 1 (count by-source))))
       ;; Filter edges by file-path → re-indexing use case
-      (let [by-edge-file (vis/db-list-extension-aggregates s
-                                                           {:extension-id 'test.ext.graph
-                                                            :kind :graph/edge
-                                                            :index-data {:path "src/core.clj"}})]
+      (let [by-edge-file
+            (persistance/db-list-extension-aggregates
+              s
+              {:extension-id 'test.ext.graph :kind :graph/edge :index-data {:path "src/core.clj"}})]
         (expect (= 1 (count by-edge-file))))
       ;; No match → empty
-      (let [none (vis/db-list-extension-aggregates s
-                                                   {:extension-id 'test.ext.graph
-                                                    :index-data {:path "nonexistent.clj"}})]
+      (let [none (persistance/db-list-extension-aggregates s
+                                                           {:extension-id 'test.ext.graph
+                                                            :index-data {:path "nonexistent.clj"}})]
         (expect (= 0 (count none)))))))
 
 (defdescribe
@@ -1162,7 +1170,7 @@
             (str (fs/path root "store"))
 
             s1
-            (vis/db-create-connection! dir)]
+            (persistance/db-create-connection! dir)]
 
         (try
           (jdbc/execute! (:datasource s1) ["CREATE TABLE repair_probe (id INTEGER)"])
@@ -1171,11 +1179,11 @@
           ;; startup. Repair must touch only Flyway metadata, never this row.
           (jdbc/execute! (:datasource s1)
                          ["UPDATE flyway_schema_history SET checksum = -999 WHERE version = '1'"])
-          (vis/db-dispose-connection! s1)
-          (let [s2 (vis/db-create-connection! dir)]
+          (persistance/db-dispose-connection! s1)
+          (let [s2 (persistance/db-create-connection! dir)]
             (try (expect (= 1 (raw-count s2 :repair_probe)))
                  (expect (= 42 (:id (first (raw-query s2 {:select [:id] :from [:repair_probe]})))))
-                 (finally (vis/db-dispose-connection! s2))))
+                 (finally (persistance/db-dispose-connection! s2))))
           (finally (fs/delete-tree root))))))
 
 (defdescribe
@@ -1196,7 +1204,7 @@
             (str (fs/path root "store"))
 
             s
-            (vis/db-create-connection! dir)]
+            (persistance/db-create-connection! dir)]
 
         (try (expect (false? (boolean (sqlite-core/db-store-stale? s dir))))
              (jdbc/execute! (:datasource s) ["CREATE TABLE churn (id INTEGER PRIMARY KEY, v TEXT)"])
@@ -1207,7 +1215,7 @@
              ;; The file grew and its mtime moved; the inode did not.
              (expect (< 4096 (fs/size (fs/path dir "vis.db"))))
              (expect (false? (boolean (sqlite-core/db-store-stale? s dir))))
-             (finally (vis/db-dispose-connection! s) (fs/delete-tree root)))))
+             (finally (persistance/db-dispose-connection! s) (fs/delete-tree root)))))
   (it "reports stale when the file at the same path is a different inode"
       (let [root
             (fs/create-temp-dir)
@@ -1216,7 +1224,7 @@
             (str (fs/path root "store"))
 
             s
-            (vis/db-create-connection! dir)]
+            (persistance/db-create-connection! dir)]
 
         (try (expect (false? (boolean (sqlite-core/db-store-stale? s dir))))
              ;; `rm -rf ~/.vis/vis.mdb` + a fresh file at the same pathname:
@@ -1225,7 +1233,7 @@
              (expect (true? (boolean (sqlite-core/db-store-stale? s dir))))
              (fs/create-file (fs/path dir "vis.db"))
              (expect (true? (boolean (sqlite-core/db-store-stale? s dir))))
-             (finally (vis/db-dispose-connection! s) (fs/delete-tree root))))))
+             (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
 
 (defdescribe db-pool-sharing-and-drain-test
              ;; Regression (hs_err_pid61432, gateway SIGBUS in `_platform_memmove` with
@@ -1244,16 +1252,16 @@
                        (str (fs/path root "store"))
 
                        s1
-                       (vis/db-create-connection! dir)
+                       (persistance/db-create-connection! dir)
 
                        s2
-                       (vis/db-create-connection! dir)]
+                       (persistance/db-create-connection! dir)]
 
                    (try (expect (identical? (:datasource s1) (:datasource s2)))
-                        (vis/db-dispose-connection! s1)
+                        (persistance/db-dispose-connection! s1)
                         ;; `s2` still holds a reference, so the pool must still serve it.
                         (expect (= 1 (count (jdbc/execute! (:datasource s2) ["SELECT 1"]))))
-                        (finally (vis/db-dispose-connection! s2) (fs/delete-tree root)))))
+                        (finally (persistance/db-dispose-connection! s2) (fs/delete-tree root)))))
              (it "drains an in-flight query instead of aborting it mid-step"
                  (let [root
                        (fs/create-temp-dir)
@@ -1262,7 +1270,7 @@
                        (str (fs/path root "store"))
 
                        s
-                       (vis/db-create-connection! dir)
+                       (persistance/db-create-connection! dir)
 
                        leased
                        (java.util.concurrent.CountDownLatch. 1)
@@ -1279,7 +1287,7 @@
                                     (catch Throwable t (deliver outcome t))))]
 
                    (try (.await leased)
-                        (vis/db-dispose-connection! s)
+                        (persistance/db-dispose-connection! s)
                         @worker
                         (expect (= 1 @outcome))
                         (finally (fs/delete-tree root)))))
@@ -1294,15 +1302,15 @@
                        (str (fs/path root "store"))
 
                        s1
-                       (vis/db-create-connection! dir)
+                       (persistance/db-create-connection! dir)
 
                        s2
-                       (vis/db-create-connection! dir)]
+                       (persistance/db-create-connection! dir)]
 
-                   (try (vis/db-dispose-connection! s1)
-                        (vis/db-dispose-connection! s1)
+                   (try (persistance/db-dispose-connection! s1)
+                        (persistance/db-dispose-connection! s1)
                         (expect (= 1 (count (jdbc/execute! (:datasource s2) ["SELECT 1"]))))
-                        (finally (vis/db-dispose-connection! s2) (fs/delete-tree root)))))
+                        (finally (persistance/db-dispose-connection! s2) (fs/delete-tree root)))))
              (it "retires the shared pool when the db file was REPLACED under a live holder"
                  ;; Sharing must not outlive the inode: reusing a pool whose file was
                  ;; recreated would send every write into the unlinked file.
@@ -1313,18 +1321,18 @@
                        (str (fs/path root "store"))
 
                        s1
-                       (vis/db-create-connection! dir)]
+                       (persistance/db-create-connection! dir)]
 
                    (try (fs/delete-if-exists (fs/path dir "vis.db-shm"))
                         (fs/delete-if-exists (fs/path dir "vis.db-wal"))
                         (fs/delete (fs/path dir "vis.db"))
                         (expect (true? (boolean (sqlite-core/db-store-stale? s1 dir))))
-                        (let [s2 (vis/db-create-connection! dir)]
+                        (let [s2 (persistance/db-create-connection! dir)]
                           (try (expect (not (identical? (:datasource s1) (:datasource s2))))
                                (expect (= 1 (count (jdbc/execute! (:datasource s2) ["SELECT 1"]))))
                                (expect (fs/exists? (fs/path dir "vis.db")))
-                               (finally (vis/db-dispose-connection! s2))))
-                        (finally (vis/db-dispose-connection! s1) (fs/delete-tree root))))))
+                               (finally (persistance/db-dispose-connection! s2))))
+                        (finally (persistance/db-dispose-connection! s1) (fs/delete-tree root))))))
 
 ;; hs_err_pid61432: POSIX locks belong to the process, so a file tool that opened
 ;; `vis.db-shm` released sqlite's wal-index locks. The pool registers its files as
@@ -1339,22 +1347,22 @@
             (str (fs/path root "store"))
 
             s1
-            (vis/db-create-connection! dir)
+            (persistance/db-create-connection! dir)
 
             s2
-            (vis/db-create-connection! dir)
+            (persistance/db-create-connection! dir)
 
             files
             (mapv #(str (fs/path dir %)) ["vis.db" "vis.db-wal" "vis.db-shm" "vis.db-journal"])]
 
         (try (expect (every? paths/held-file? files))
-             (vis/db-dispose-connection! s1)
+             (persistance/db-dispose-connection! s1)
              ;; `s2` still uses the pool, so its locks are still live.
              (expect (every? paths/held-file? files))
-             (vis/db-dispose-connection! s2)
+             (persistance/db-dispose-connection! s2)
              (expect (not-any? paths/held-file? files))
-             (finally (vis/db-dispose-connection! s1)
-                      (vis/db-dispose-connection! s2)
+             (finally (persistance/db-dispose-connection! s1)
+                      (persistance/db-dispose-connection! s2)
                       (fs/delete-tree root)))))
   (it "lets go of the files when the pool fails to open"
       (let [root
@@ -1366,7 +1374,7 @@
             failure
             (with-redefs-fn {#'sqlite-core/open-disk-pool! (fn [& _]
                                                              (throw (ex-info "open failed" {})))}
-              #(try (vis/db-create-connection! dir) nil (catch Throwable t t)))]
+              #(try (persistance/db-create-connection! dir) nil (catch Throwable t t)))]
 
         (try (expect (some? failure))
              (expect (not (paths/held-file? (str (fs/path dir "vis.db")))))
@@ -1383,7 +1391,7 @@
           (str (fs/path root "store"))
 
           s1
-          (vis/db-create-connection! dir)]
+          (persistance/db-create-connection! dir)]
 
       (try
         (expect (contains? (table-columns s1 "session_attachment") "audience"))
@@ -1404,8 +1412,8 @@
                          [(str "ALTER TABLE session_turn_iteration DROP COLUMN " column)]))
         (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
         (jdbc/execute! (:datasource s1) ["INSERT INTO topup_probe (id) VALUES (7)"])
-        (vis/db-dispose-connection! s1)
-        (let [s2 (vis/db-create-connection! dir)]
+        (persistance/db-dispose-connection! s1)
+        (let [s2 (persistance/db-create-connection! dir)]
           (try
             (let [cols (table-columns s2 "session_attachment")]
               ;; Defaulted / nullable columns are added back from V1's own DDL.
@@ -1435,7 +1443,7 @@
                     ["SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_council_%'"]))))
             ;; Purely additive: unrelated tables and rows are untouched.
             (expect (= 1 (raw-count s2 :topup_probe)))
-            (finally (vis/db-dispose-connection! s2))))
+            (finally (persistance/db-dispose-connection! s2))))
         (finally (fs/delete-tree root))))))
 
 (defn- activity-schema-names
@@ -1462,7 +1470,7 @@
           (str (fs/path root "store"))
 
           s1
-          (vis/db-create-connection! dir)
+          (persistance/db-create-connection! dir)
 
           expected
           #{"activity_history" "activity_invocation" "idx_activity_history_session"
@@ -1474,8 +1482,8 @@
            (doseq [table ["activity_invocation" "activity_history"]]
              (jdbc/execute! (:datasource s1) [(str "DROP TABLE " table)]))
            (expect (empty? (activity-schema-names s1)))
-           (vis/db-dispose-connection! s1)
-           (let [s2 (vis/db-create-connection! dir)]
+           (persistance/db-dispose-connection! s1)
+           (let [s2 (persistance/db-create-connection! dir)]
              (try (expect (= expected (activity-schema-names s2)))
                   ;; The upgraded store serves normal Activity writes and reads.
                   (let [sid (h/store-session! s2 {})
@@ -1512,7 +1520,7 @@
                       (expect (= ["succeeded"] (mapv :state (:rows page))))
                       (expect (= 1 (raw-count s2 :activity_history)))
                       (expect (= 1 (raw-count s2 :activity_invocation)))))
-                  (finally (vis/db-dispose-connection! s2))))
+                  (finally (persistance/db-dispose-connection! s2))))
            (finally (fs/delete-tree root))))))
 
 (defn- write-long-activity!
@@ -1628,7 +1636,7 @@
   "Store one iteration whose two forms carry Activity: one with a saved history, one without."
   [store sid aid]
   (let [tid
-        (vis/db-store-session-turn! store {:parent-session-id sid :user-request "activity"})
+        (persistance/db-store-session-turn! store {:parent-session-id sid :user-request "activity"})
 
         snapshot
         (persistance/db-activity-page store sid aid {})
@@ -1681,7 +1689,8 @@
       (expect (not (contains? saved :rows)))
       (expect (= (dissoc snapshot :rows) saved))
       (expect (= snapshot
-                 (:activity (first (:forms (first (vis/db-list-session-turn-iterations s tid)))))))
+                 (:activity
+                   (first (:forms (first (persistance/db-list-session-turn-iterations s tid)))))))
       ;; Every iteration reader gives back the same rows.
       (let [[iteration] (get (persistance/db-list-session-turns-iterations s [tid]) (str tid))]
         (expect (= snapshot (:activity (first (:forms iteration)))))
@@ -1725,17 +1734,18 @@
       (expect (= 2 (user-version s)))
       (expect (= [(dissoc snapshot :rows) orphan grouped] (stored-activities s)))
       (expect (= [snapshot orphan grouped]
-                 (mapv :activity (:forms (first (vis/db-list-session-turn-iterations s tid)))))))))
+                 (mapv :activity
+                       (:forms (first (persistance/db-list-session-turn-iterations s tid)))))))))
 
 (def ^:private multiprocess-child-code
-  "(require '[com.blockether.vis.core :as vis])
+  "(require '[com.blockether.vis.internal.persistance.core :as persistance])
    (require '[com.blockether.vis.internal.persistance.sqlite.test-helpers :as h])
    (try
      (let [dir     (System/getProperty \"vis.test.db-dir\")
            marker  (System/getProperty \"vis.test.marker\")
            release (System/getProperty \"vis.test.release\")
            title   (System/getProperty \"vis.test.title\")
-           s       (vis/db-create-connection! dir)]
+           s       (persistance/db-create-connection! dir)]
        (try
          ;; Both children must finish opening before either writes. This makes one
          ;; concise test cover concurrent first-open migrations and cross-JVM writes.
@@ -1752,7 +1762,7 @@
          (h/store-session! s {:channel :child :title title})
          (println \"CHILD-DONE\" title)
          (finally
-           (vis/db-dispose-connection! s))))
+           (persistance/db-dispose-connection! s))))
      (shutdown-agents)
      (System/exit 0)
      (catch Throwable t
@@ -1871,12 +1881,12 @@
                (spit release "go")
                (doseq [^Process child children]
                  (expect-child-success! child))
-               (let [s (vis/db-create-connection! (str dir))]
+               (let [s (persistance/db-create-connection! (str dir))]
                  (try (expect (= #{"child-a" "child-b"}
                                  (set (map :title
                                            (raw-query s
                                                       {:select [:title] :from [:session_state]})))))
-                      (finally (vis/db-dispose-connection! s))))
+                      (finally (persistance/db-dispose-connection! s))))
                (finally (doseq [^Process child children]
                           (when (.isAlive child) (.destroyForcibly child))))))
         (finally (fs/delete-tree dir))))))
@@ -1970,7 +1980,7 @@
   (it
     "uses immediate transactions so read-then-write transactions survive concurrent telemetry writes"
     (let [dir (fs/create-temp-dir {:prefix "vis-snapshot-lock-"})]
-      (try (let [s (vis/db-create-connection! (str dir))
+      (try (let [s (persistance/db-create-connection! (str dir))
                  cid (h/store-session! s {:channel :cli :title "old"})
                  started (CountDownLatch. 1)
                  worker (future (try (jdbc/with-transaction
@@ -1990,10 +2000,10 @@
                                      (catch Throwable t t)))]
 
              (try (expect (true? (.await started 1 TimeUnit/SECONDS)))
-                  (vis/db-log! s {:level :info :event :snapshot-test})
+                  (persistance/db-log! s {:level :info :event :snapshot-test})
                   (expect (nil? @worker))
-                  (expect (= "new" (:title (vis/db-get-session s cid))))
-                  (finally (vis/db-dispose-connection! s))))
+                  (expect (= "new" (:title (persistance/db-get-session s cid))))
+                  (finally (persistance/db-dispose-connection! s))))
            (finally (fs/delete-tree dir)))))
   (it
     "serializes Vis write APIs while concurrent db-log! calls contend"
@@ -2004,7 +2014,7 @@
           (h/store-session! s {:channel :cli})
 
           tid
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id cid :user-request "stress" :status :running})
 
@@ -2024,8 +2034,9 @@
           logs
           (do (expect (true? (.await started 1 TimeUnit/SECONDS)))
               (vec (doall (map (fn [i]
-                                 (future (try (vis/db-log! s
-                                                           {:level :info :event (str "stress." i)})
+                                 (future (try (persistance/db-log! s
+                                                                   {:level :info
+                                                                    :event (str "stress." i)})
                                               nil
                                               (catch Throwable t t))))
                                (range 20)))))]
@@ -2035,7 +2046,7 @@
       (doseq [f logs]
         (expect (nil? @f)))
       (expect (= 20 (raw-count s :log)))
-      (expect (= 1 (count (vis/db-list-session-turn-iterations s tid))))))
+      (expect (= 1 (count (persistance/db-list-session-turn-iterations s tid))))))
   (it "retries a whole SQLite write operation after a busy snapshot failure"
       (let [attempts
             (atom 0)
@@ -2105,7 +2116,7 @@
             (h/store-session! s {:channel :tui :system-prompt "Hi" :model "gpt-4o" :title "T"})
 
             session
-            (vis/db-get-session s id)]
+            (persistance/db-get-session s id)]
 
         (expect (= 1 (raw-count s :session_soul)))
         (expect (= 1 (raw-count s :session_state)))
@@ -2237,7 +2248,7 @@
         (h/store-session! s {:channel :tui})
         (Thread/sleep 2)
         (let [id2 (h/store-session! s {:channel :tui})
-              latest (vis/db-resolve-session-id s :latest)]
+              latest (persistance/db-resolve-session-id s :latest)]
 
           (expect (= id2 latest)))))
   (it "lists by channel via column"
@@ -2245,16 +2256,16 @@
         (h/store-session! s {:channel :tui :title "A"})
         (h/store-session! s {:channel :cli :title "B"})
         (h/store-session! s {:channel :tui :title "C"})
-        (expect (= 2 (count (vis/db-list-sessions s :tui))))
-        (expect (= 1 (count (vis/db-list-sessions s :cli))))))
+        (expect (= 2 (count (persistance/db-list-sessions s :tui))))
+        (expect (= 1 (count (persistance/db-list-sessions s :cli))))))
   (it "lists across every channel with :all (and nil) — the cross-channel view"
       (let [s (h/store)]
         (h/store-session! s {:channel :tui :title "A"})
         (h/store-session! s {:channel :cli :title "B"})
         (h/store-session! s {:channel :api :title "C"})
-        (expect (= 3 (count (vis/db-list-sessions s :all))))
-        (expect (= 3 (count (vis/db-list-sessions s nil))))
-        (expect (= #{:tui :cli :api} (set (map :channel (vis/db-list-sessions s :all)))))))
+        (expect (= 3 (count (persistance/db-list-sessions s :all))))
+        (expect (= 3 (count (persistance/db-list-sessions s nil))))
+        (expect (= #{:tui :cli :api} (set (map :channel (persistance/db-list-sessions s :all)))))))
   (it "reports fork count after the latest state becomes the fork"
       (let [s
             (h/store)
@@ -2263,9 +2274,9 @@
             (h/store-session! s {:channel :tui :title "A"})]
 
         (h/fork-session! s cid {})
-        (expect (= [1] (mapv :fork-count (vis/db-list-sessions s :tui))))
+        (expect (= [1] (mapv :fork-count (persistance/db-list-sessions s :tui))))
         (h/fork-session! s cid {})
-        (expect (= [2] (mapv :fork-count (vis/db-list-sessions s :tui))))))
+        (expect (= [2] (mapv :fork-count (persistance/db-list-sessions s :tui))))))
   (it "finds by external-id via column"
       (let [s
             (h/store)
@@ -2273,8 +2284,8 @@
             id
             (h/store-session! s {:channel :cli :external-id "chat-42"})]
 
-        (expect (= id (vis/db-find-session-by-external s :cli "chat-42")))
-        (expect (nil? (vis/db-find-session-by-external s :cli "nope")))))
+        (expect (= id (persistance/db-find-session-by-external s :cli "chat-42")))
+        (expect (nil? (persistance/db-find-session-by-external s :cli "nope")))))
   (it "updates title on session_state"
       (let [s
             (h/store)
@@ -2282,8 +2293,8 @@
             id
             (h/store-session! s {:channel :tui :title "Old"})]
 
-        (vis/db-update-session-title! s id "New")
-        (expect (= "New" (:title (vis/db-get-session s id)))))))
+        (persistance/db-update-session-title! s id "New")
+        (expect (= "New" (:title (persistance/db-get-session s id)))))))
 
 ;; Transcript search (db-search-session-ids) - matches USER request + assistant
 ;; iteration text, case-insensitive, so the session picker can find a session by
@@ -2299,30 +2310,31 @@
             cid
             (h/store-session! s {:channel :tui :title "Alpha"})]
 
-        (vis/db-store-session-turn!
+        (persistance/db-store-session-turn!
           s
           {:parent-session-id cid :user-request "make the FILTERING work" :status :done})
-        (expect (= [cid] (vis/db-search-session-ids s :all "filtering")))
-        (expect (= [cid] (vis/db-search-session-ids s :all "FILTER")))
-        (expect (= [] (vis/db-search-session-ids s :all "nomatch")))))
-  (it
-    "matches a session by assistant iteration prose"
-    (let [s
-          (h/store)
+        (expect (= [cid] (persistance/db-search-session-ids s :all "filtering")))
+        (expect (= [cid] (persistance/db-search-session-ids s :all "FILTER")))
+        (expect (= [] (persistance/db-search-session-ids s :all "nomatch")))))
+  (it "matches a session by assistant iteration prose"
+      (let [s
+            (h/store)
 
-          cid
-          (h/store-session! s {:channel :tui :title "Beta"})
+            cid
+            (h/store-session! s {:channel :tui :title "Beta"})
 
-          tid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "q" :status :done})]
+            tid
+            (persistance/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "q" :status :done})]
 
-      (h/store-iteration! s
-                          {:session-turn-id tid
-                           :assistant-prose "here is the SERVER-side answer"
-                           :code "(+ 1 1)"
-                           :stdout "2\n"})
-      (expect (= [cid] (vis/db-search-session-ids s :all "server-side")))
-      (expect (= [] (vis/db-search-session-ids s :all "clientside")))))
+        (h/store-iteration! s
+                            {:session-turn-id tid
+                             :assistant-prose "here is the SERVER-side answer"
+                             :code "(+ 1 1)"
+                             :stdout "2\n"})
+        (expect (= [cid] (persistance/db-search-session-ids s :all "server-side")))
+        (expect (= [] (persistance/db-search-session-ids s :all "clientside")))))
   (it
     "tags each match with WHERE it hit: request, reply, or both"
     (let [s
@@ -2338,25 +2350,26 @@
           (h/store-session! s {:channel :tui :title "Both"})]
 
       ;; request-only: needle in user request, not the reply
-      (vis/db-store-session-turn!
+      (persistance/db-store-session-turn!
         s
         {:parent-session-id req :user-request "has NEEDLE here" :status :done})
       ;; reply-only: needle in assistant prose, not the request
-      (let [tid (vis/db-store-session-turn!
+      (let [tid (persistance/db-store-session-turn!
                   s
                   {:parent-session-id rep :user-request "plain q" :status :done})]
         (h/store-iteration!
           s
           {:session-turn-id tid :assistant-prose "reply with NEEDLE" :code "x" :stdout "1\n"}))
       ;; both: needle in request AND reply
-      (let [tid (vis/db-store-session-turn!
+      (let [tid (persistance/db-store-session-turn!
                   s
                   {:parent-session-id both :user-request "NEEDLE in ask" :status :done})]
         (h/store-iteration!
           s
           {:session-turn-id tid :assistant-prose "NEEDLE in answer" :code "x" :stdout "1\n"}))
-      (let [by-id
-            (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+      (let [by-id (into {}
+                        (map (juxt :id identity))
+                        (persistance/db-search-session-matches s :all "needle"))]
         (expect (= 3 (count by-id)))
         (expect (= {:in-request? true :in-reply? false}
                    (select-keys (get by-id req) [:in-request? :in-reply?])))
@@ -2384,16 +2397,16 @@
         ;; could physically carry only ONE request + ONE reply snippet per
         ;; session, so the picker showed a single arbitrary line.
         (dotimes [i 5]
-          (let [tid (vis/db-store-session-turn! s
-                                                {:parent-session-id cid
-                                                 :user-request (str "needle ask number " i)
-                                                 :status :done})]
+          (let [tid (persistance/db-store-session-turn! s
+                                                        {:parent-session-id cid
+                                                         :user-request (str "needle ask number " i)
+                                                         :status :done})]
             (h/store-iteration! s
                                 {:session-turn-id tid
                                  :assistant-prose (str "needle answer number " i)
                                  :code "x"
                                  :stdout "1\n"})))
-        (let [m (first (vis/db-search-session-matches s :all "needle"))]
+        (let [m (first (persistance/db-search-session-matches s :all "needle"))]
           (expect (<= 4 (count (:hits m))))
           (expect (every? #(str/includes? (:snippet %) "needle") (:hits m)))
           ;; What the USER asked outranks what the assistant answered, and each
@@ -2419,7 +2432,7 @@
 
       ;; The request match is written FIRST and the reply-only match LAST, so
       ;; the reply-only session is the FRESHER of the two.
-      (let [tid (vis/db-store-session-turn!
+      (let [tid (persistance/db-store-session-turn!
                   s
                   {:parent-session-id asked :user-request "needle in the ask" :status :done})]
         (h/store-iteration!
@@ -2427,17 +2440,18 @@
           {:session-turn-id tid :assistant-prose "plain" :code "x" :stdout "1\n"}))
       ;; Distinct instants: the order under test is a TIME order.
       (Thread/sleep 2)
-      (let [tid (vis/db-store-session-turn!
+      (let [tid (persistance/db-store-session-turn!
                   s
                   {:parent-session-id replied :user-request "plain ask" :status :done})]
         (h/store-iteration!
           s
           {:session-turn-id tid :assistant-prose "needle in the reply" :code "x" :stdout "1\n"}))
-      (expect (= [replied asked] (vis/db-search-session-ids s :all "needle")))
+      (expect (= [replied asked] (persistance/db-search-session-ids s :all "needle")))
       ;; The band still travels — it says WHERE the query hit and breaks a tie
       ;; between two sessions that last moved at the same instant.
-      (let [by-id
-            (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+      (let [by-id (into {}
+                        (map (juxt :id identity))
+                        (persistance/db-search-session-matches s :all "needle"))]
         (expect (= 1 (:rank (get by-id asked))))
         (expect (= 2 (:rank (get by-id replied)))))))
   (it
@@ -2458,7 +2472,7 @@
           (fn [sid request iteration]
             ;; Distinct instants: the result order is a TIME order.
             (Thread/sleep 2)
-            (let [tid (vis/db-store-session-turn!
+            (let [tid (persistance/db-store-session-turn!
                         s
                         {:parent-session-id sid :user-request request :status :done})]
               (h/store-iteration! s
@@ -2469,9 +2483,10 @@
       (turn! mused "plain ask" {:assistant-prose "plain" :thinking "needle while reasoning"})
       (turn! answered "plain ask" {:assistant-prose "needle in the answer"})
       (turn! asked "needle in the ask" {:assistant-prose "plain"})
-      (expect (= [asked answered mused] (vis/db-search-session-ids s :all "needle")))
-      (let [by-id
-            (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+      (expect (= [asked answered mused] (persistance/db-search-session-ids s :all "needle")))
+      (let [by-id (into {}
+                        (map (juxt :id identity))
+                        (persistance/db-search-session-matches s :all "needle"))]
         ;; The bands still travel: request 1, reply 2, the reasoning aside 3 —
         ;; what neither of them said ranks last, and a surface says WHERE it hit.
         (expect (= [1 2 3] (mapv #(:rank (get by-id %)) [asked answered mused])))
@@ -2501,7 +2516,7 @@
           (fn [sid request iteration]
             ;; Distinct instants: the order under test is a TIME order.
             (Thread/sleep 2)
-            (let [tid (vis/db-store-session-turn!
+            (let [tid (persistance/db-store-session-turn!
                         s
                         {:parent-session-id sid :user-request request :status :done})]
               (h/store-iteration! s
@@ -2514,9 +2529,10 @@
       (turn! named "plain ask" {:assistant-prose "plain"})
       (turn! answered "plain ask" {:assistant-prose "needle in the answer"})
       (turn! asked "needle in the ask" {:assistant-prose "plain"})
-      (expect (= [asked answered named] (vis/db-search-session-ids s :all "needle")))
-      (let [by-id
-            (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+      (expect (= [asked answered named] (persistance/db-search-session-ids s :all "needle")))
+      (let [by-id (into {}
+                        (map (juxt :id identity))
+                        (persistance/db-search-session-matches s :all "needle"))]
         (expect (= {:rank 0 :in-title? true :in-request? false :in-reply? false}
                    (select-keys (get by-id named) [:rank :in-title? :in-request? :in-reply?])))
         (expect (= 1 (:rank (get by-id asked))))
@@ -2532,8 +2548,8 @@
             cid
             (h/store-session! s {:channel :tui :title "Refactor the Navigator"})]
 
-        (expect (= [cid] (vis/db-search-session-ids s :all "avigat")))
-        (expect (= [] (vis/db-search-session-ids s :all "zzz")))))
+        (expect (= [cid] (persistance/db-search-session-ids s :all "avigat")))
+        (expect (= [] (persistance/db-search-session-ids s :all "zzz")))))
   (it
     "caps hits PER SESSION, so an older session is not starved by a newer one"
     (let [s
@@ -2553,10 +2569,10 @@
               i
               (range 5)]
 
-        (let [tid (vis/db-store-session-turn! s
-                                              {:parent-session-id cid
-                                               :user-request (str "needle ask number " i)
-                                               :status :done})]
+        (let [tid (persistance/db-store-session-turn! s
+                                                      {:parent-session-id cid
+                                                       :user-request (str "needle ask number " i)
+                                                       :status :done})]
           (h/store-iteration! s
                               {:session-turn-id tid
                                :assistant-prose (str "needle answer number " i)
@@ -2564,7 +2580,7 @@
                                :stdout "1\n"})))
       (let [by-id (into {}
                         (map (juxt :id (comp count :hits)))
-                        (vis/db-search-session-matches s :all "needle"))]
+                        (persistance/db-search-session-matches s :all "needle"))]
         (expect (= 2 (count by-id)))
         (expect (<= 4 (long (get by-id older))))
         (expect (= (get by-id older) (get by-id newer))))))
@@ -2579,7 +2595,7 @@
             (h/store-session! s {:channel :tui :title "needle outside"})]
 
         (doseq [sid [older newer]]
-          (let [tid (vis/db-store-session-turn!
+          (let [tid (persistance/db-store-session-turn!
                       s
                       {:parent-session-id sid :user-request "needle request" :status :done})]
             (h/store-iteration!
@@ -2588,15 +2604,15 @@
         (with-redefs-fn {#'sqlite-core/transcript-hit-scan-limit 1
                          #'sqlite-core/transcript-hit-sessions-limit 1}
           (fn []
-            (let [matches (vis/db-search-session-matches s :all "needle" [older])]
+            (let [matches (persistance/db-search-session-matches s :all "needle" [older])]
               (expect (= [older] (mapv :id matches)))
               (expect (= {:in-title? true :in-request? true :in-reply? true}
                          (select-keys (first matches) [:in-title? :in-request? :in-reply?])))
-              (expect (= [] (vis/db-search-session-matches s :all "needle" [])))
-              (expect (= [] (vis/db-search-session-matches s :all "" [older])))
-              (expect (= [] (vis/db-search-session-matches s :api "needle" [older])))
-              (expect (= (vis/db-search-session-matches s :all "needle")
-                         (vis/db-search-session-matches s :all "needle" nil))))))))
+              (expect (= [] (persistance/db-search-session-matches s :all "needle" [])))
+              (expect (= [] (persistance/db-search-session-matches s :all "" [older])))
+              (expect (= [] (persistance/db-search-session-matches s :api "needle" [older])))
+              (expect (= (persistance/db-search-session-matches s :all "needle")
+                         (persistance/db-search-session-matches s :all "needle" nil))))))))
   ;; Regression, issue: searching the app for a 4+ character word (`star`) sat
   ;; silent for about a second before it painted anything. The snippets came
   ;; from a SECOND statement that repeated the MATCH and intersected it with the
@@ -2611,8 +2627,9 @@
           cid
           (h/store-session! s {:channel :tui :title "Plan"})]
 
-      (vis/db-store-session-turn! s
-                                  {:parent-session-id cid :user-request "needle ask" :status :done})
+      (persistance/db-store-session-turn!
+        s
+        {:parent-session-id cid :user-request "needle ask" :status :done})
       (doseq [side
               [:request :reply]
 
@@ -2647,76 +2664,83 @@
             cid
             (h/store-session! s {:channel :tui :title "Prefix"})]
 
-        (vis/db-store-session-turn!
+        (persistance/db-store-session-turn!
           s
           {:parent-session-id cid :user-request "flatten the dialogs" :status :done})
-        (expect (= [cid] (vis/db-search-session-ids s :all "dia")))
-        (expect (= [cid] (vis/db-search-session-ids s :all "dialog")))
-        (expect (= [cid] (vis/db-search-session-ids s :all "flatten dia")))
-        (expect (= [] (vis/db-search-session-ids s :all "zzz")))))
-  (it
-    "returns [] for a blank query and honours channel scope"
-    (let [s
-          (h/store)
+        (expect (= [cid] (persistance/db-search-session-ids s :all "dia")))
+        (expect (= [cid] (persistance/db-search-session-ids s :all "dialog")))
+        (expect (= [cid] (persistance/db-search-session-ids s :all "flatten dia")))
+        (expect (= [] (persistance/db-search-session-ids s :all "zzz")))))
+  (it "returns [] for a blank query and honours channel scope"
+      (let [s
+            (h/store)
 
-          a
-          (h/store-session! s {:channel :tui :title "A"})
+            a
+            (h/store-session! s {:channel :tui :title "A"})
 
-          b
-          (h/store-session! s {:channel :cli :title "B"})]
+            b
+            (h/store-session! s {:channel :cli :title "B"})]
 
-      (vis/db-store-session-turn! s
-                                  {:parent-session-id a :user-request "needle here" :status :done})
-      (vis/db-store-session-turn! s
-                                  {:parent-session-id b :user-request "needle here" :status :done})
-      (expect (= [] (vis/db-search-session-ids s :all "   ")))
-      (expect (= [] (vis/db-search-session-ids s :all "")))
-      (expect (= [a] (vis/db-search-session-ids s :tui "needle")))
-      (expect (= #{a b} (set (vis/db-search-session-ids s :all "needle")))))))
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id a :user-request "needle here" :status :done})
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id b :user-request "needle here" :status :done})
+        (expect (= [] (persistance/db-search-session-ids s :all "   ")))
+        (expect (= [] (persistance/db-search-session-ids s :all "")))
+        (expect (= [a] (persistance/db-search-session-ids s :tui "needle")))
+        (expect (= #{a b} (set (persistance/db-search-session-ids s :all "needle")))))))
 
 ;; Adoption marker (V5 claimed_at) - warm-pool scaffolding stays out of the
 ;; cross-channel list until a tab claims it (explicitly at creation, or via its
 ;; first turn).
 
-(defdescribe
-  session-adoption-claimed-test
-  (it "defaults to CLAIMED: a normal session is list-visible immediately"
-      (let [s (h/store)]
-        (h/store-session! s {:channel :tui :title "real"})
-        (expect (= ["real"] (mapv :title (vis/db-list-sessions s :all))))))
-  (it "an UNCLAIMED (:claimed? false) session is HIDDEN from the list but resolvable by id"
-      (let [s
-            (h/store)
+(defdescribe session-adoption-claimed-test
+             (it "defaults to CLAIMED: a normal session is list-visible immediately"
+                 (let [s (h/store)]
+                   (h/store-session! s {:channel :tui :title "real"})
+                   (expect (= ["real"] (mapv :title (persistance/db-list-sessions s :all))))))
+             (it
+               "an UNCLAIMED (:claimed? false) session is HIDDEN from the list but resolvable by id"
+               (let [s
+                     (h/store)
 
-            id
-            (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
+                     id
+                     (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
 
-        ;; hidden from the cross-channel list...
-        (expect (= [] (vec (vis/db-list-sessions s :all))))
-        ;; ...yet the soul row exists and direct resume-by-id still works.
-        (expect (= 1 (raw-count s :session_soul)))
-        (expect (= "pool" (:title (vis/db-get-session s id))))))
-  (it "the FIRST turn claims an unclaimed session, surfacing it in the list"
-      (let [s
-            (h/store)
+                 ;; hidden from the cross-channel list...
+                 (expect (= [] (vec (persistance/db-list-sessions s :all))))
+                 ;; ...yet the soul row exists and direct resume-by-id still works.
+                 (expect (= 1 (raw-count s :session_soul)))
+                 (expect (= "pool" (:title (persistance/db-get-session s id))))))
+             (it "the FIRST turn claims an unclaimed session, surfacing it in the list"
+                 (let [s
+                       (h/store)
 
-            id
-            (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
+                       id
+                       (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
 
-        (expect (= [] (vec (vis/db-list-sessions s :all))))
-        (vis/db-store-session-turn! s {:parent-session-id id :user-request "hi" :status :running})
-        (expect (= ["pool"] (mapv :title (vis/db-list-sessions s :all))))))
-  (it "claiming is idempotent: a second turn does not disturb the claimed session"
-      (let [s
-            (h/store)
+                   (expect (= [] (vec (persistance/db-list-sessions s :all))))
+                   (persistance/db-store-session-turn!
+                     s
+                     {:parent-session-id id :user-request "hi" :status :running})
+                   (expect (= ["pool"] (mapv :title (persistance/db-list-sessions s :all))))))
+             (it "claiming is idempotent: a second turn does not disturb the claimed session"
+                 (let [s
+                       (h/store)
 
-            id
-            (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
+                       id
+                       (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
 
-        (vis/db-store-session-turn! s {:parent-session-id id :user-request "one" :status :running})
-        (vis/db-store-session-turn! s {:parent-session-id id :user-request "two" :status :running})
-        (expect (= ["pool"] (mapv :title (vis/db-list-sessions s :all))))
-        (expect (= 1 (raw-count s :session_soul))))))
+                   (persistance/db-store-session-turn!
+                     s
+                     {:parent-session-id id :user-request "one" :status :running})
+                   (persistance/db-store-session-turn!
+                     s
+                     {:parent-session-id id :user-request "two" :status :running})
+                   (expect (= ["pool"] (mapv :title (persistance/db-list-sessions s :all))))
+                   (expect (= 1 (raw-count s :session_soul))))))
 
 ;; List session states (fork tree introspection)
 
@@ -2737,82 +2761,85 @@
           (h/store-session! s {:channel :tui :parent-state-id p-state})]
 
       ;; both souls really exist
-      (expect (some? (vis/db-get-session s parent)))
-      (expect (some? (vis/db-get-session s child)))
+      (expect (some? (persistance/db-get-session s parent)))
+      (expect (some? (persistance/db-get-session s child)))
       ;; top-level list shows the PARENT, never the child
-      (let [ids (set (map :id (vis/db-list-sessions s :tui)))]
+      (let [ids (set (map :id (persistance/db-list-sessions s :tui)))]
         (expect (contains? ids parent))
         (expect (not (contains? ids child))))
       ;; deleting the parent soul cascades the child away (FK ON DELETE CASCADE
       ;; through session_state → child soul.parent_state_id)
-      (vis/db-delete-session-tree! s parent)
-      (expect (nil? (vis/db-get-session s child)))
-      (expect (= #{} (set (map :id (vis/db-list-sessions s :tui))))))))
+      (persistance/db-delete-session-tree! s parent)
+      (expect (nil? (persistance/db-get-session s child)))
+      (expect (= #{} (set (map :id (persistance/db-list-sessions s :tui))))))))
 
-(defdescribe
-  db-list-session-states-test
-  (it "returns one row for the trunk before any fork happens"
-      (let [s
-            (h/store)
+(defdescribe db-list-session-states-test
+             (it "returns one row for the trunk before any fork happens"
+                 (let [s
+                       (h/store)
 
-            cid
-            (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
+                       cid
+                       (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})
 
-            rows
-            (vis/db-list-session-states s cid)]
+                       rows
+                       (persistance/db-list-session-states s cid)]
 
-        (expect (vector? rows))
-        (expect (= 1 (count rows)))
-        (expect (= 0 (:version (first rows))))
-        (expect (nil? (:parent-state-id (first rows))))
-        (expect (= "v0" (:system-prompt (first rows))))
-        (expect (= "gpt-4o" (:model (first rows))))
-        (expect (= 0 (:turn-count (first rows))))))
-  (it "surfaces every fork in version order with parent links"
-      (let [s
-            (h/store)
+                   (expect (vector? rows))
+                   (expect (= 1 (count rows)))
+                   (expect (= 0 (:version (first rows))))
+                   (expect (nil? (:parent-state-id (first rows))))
+                   (expect (= "v0" (:system-prompt (first rows))))
+                   (expect (= "gpt-4o" (:model (first rows))))
+                   (expect (= 0 (:turn-count (first rows))))))
+             (it "surfaces every fork in version order with parent links"
+                 (let [s
+                       (h/store)
 
-            cid
-            (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})]
+                       cid
+                       (h/store-session! s {:channel :tui :system-prompt "v0" :model "gpt-4o"})]
 
-        (h/fork-session! s cid {:title "Branch A" :system-prompt "vA"})
-        (h/fork-session! s cid {:title "Branch B" :system-prompt "vB"})
-        (let [rows (vis/db-list-session-states s cid)]
-          (expect (= 3 (count rows)))
-          (expect (= [0 1 2] (mapv :version rows)))
-          (expect (nil? (:parent-state-id (nth rows 0))))
-          ;; Each later fork's parent points at the immediately previous
-          ;; state (latest-state-for picks the highest-version row).
-          (expect (= (:state-id (nth rows 0)) (:parent-state-id (nth rows 1))))
-          (expect (= (:state-id (nth rows 1)) (:parent-state-id (nth rows 2))))
-          (expect (= ["vA" "vB"] (mapv :system-prompt (drop 1 rows)))))))
-  (it
-    "reports :turn-count per state - turns belong to one specific branch"
-    (let [s
-          (h/store)
+                   (h/fork-session! s cid {:title "Branch A" :system-prompt "vA"})
+                   (h/fork-session! s cid {:title "Branch B" :system-prompt "vB"})
+                   (let [rows (persistance/db-list-session-states s cid)]
+                     (expect (= 3 (count rows)))
+                     (expect (= [0 1 2] (mapv :version rows)))
+                     (expect (nil? (:parent-state-id (nth rows 0))))
+                     ;; Each later fork's parent points at the immediately previous
+                     ;; state (latest-state-for picks the highest-version row).
+                     (expect (= (:state-id (nth rows 0)) (:parent-state-id (nth rows 1))))
+                     (expect (= (:state-id (nth rows 1)) (:parent-state-id (nth rows 2))))
+                     (expect (= ["vA" "vB"] (mapv :system-prompt (drop 1 rows)))))))
+             (it "reports :turn-count per state - turns belong to one specific branch"
+                 (let [s
+                       (h/store)
 
-          cid
-          (h/store-session! s {:channel :tui})]
+                       cid
+                       (h/store-session! s {:channel :tui})]
 
-      (vis/db-store-session-turn! s {:parent-session-id cid :user-request "trunk Q1" :status :done})
-      (vis/db-store-session-turn! s {:parent-session-id cid :user-request "trunk Q2" :status :done})
-      (h/fork-session! s cid {:title "Branch"})
-      (vis/db-store-session-turn! s
-                                  {:parent-session-id cid :user-request "branch Q1" :status :done})
-      (let [rows (vis/db-list-session-states s cid)]
-        (expect (= [2 1] (mapv :turn-count rows))))))
-  (it "returns [] (vector, never nil) for an unknown session-id"
-      (let [s
-            (h/store)
+                   (persistance/db-store-session-turn!
+                     s
+                     {:parent-session-id cid :user-request "trunk Q1" :status :done})
+                   (persistance/db-store-session-turn!
+                     s
+                     {:parent-session-id cid :user-request "trunk Q2" :status :done})
+                   (h/fork-session! s cid {:title "Branch"})
+                   (persistance/db-store-session-turn!
+                     s
+                     {:parent-session-id cid :user-request "branch Q1" :status :done})
+                   (let [rows (persistance/db-list-session-states s cid)]
+                     (expect (= [2 1] (mapv :turn-count rows))))))
+             (it "returns [] (vector, never nil) for an unknown session-id"
+                 (let [s
+                       (h/store)
 
-            rows
-            (vis/db-list-session-states s (random-uuid))]
+                       rows
+                       (persistance/db-list-session-states s (random-uuid))]
 
-        (expect (vector? rows))
-        (expect (= [] rows))))
-  (it "returns [] (vector, never nil) when session-id is nil"
-      (let [s (h/store)]
-        (expect (= [] (vis/db-list-session-states s nil))))))
+                   (expect (vector? rows))
+                   (expect (= [] rows))))
+             (it "returns [] (vector, never nil) when session-id is nil"
+                 (let [s (h/store)]
+                   (expect (= [] (persistance/db-list-session-states s nil))))))
 
 ;; List turn states (retry history introspection)
 
@@ -2826,12 +2853,12 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "do the thing" :status :running})
 
             rows
-            (vis/db-list-session-turn-states s qid)]
+            (persistance/db-list-session-turn-states s qid)]
 
         (expect (vector? rows))
         (expect (= 1 (count rows)))
@@ -2847,13 +2874,16 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "flaky" :status :error})]
 
-        (vis/db-retry-session-turn! s qid {:status :running :model "claude-4" :provider :anthropic})
-        (vis/db-retry-session-turn! s qid {:status :done :model "gpt-4o" :provider :openai})
-        (let [rows (vis/db-list-session-turn-states s qid)]
+        (persistance/db-retry-session-turn!
+          s
+          qid
+          {:status :running :model "claude-4" :provider :anthropic})
+        (persistance/db-retry-session-turn! s qid {:status :done :model "gpt-4o" :provider :openai})
+        (let [rows (persistance/db-list-session-turn-states s qid)]
           (expect (= 3 (count rows)))
           (expect (= [0 1 2] (mapv :version rows)))
           (expect (nil? (:forked-from-session-turn-state-id (nth rows 0))))
@@ -2866,13 +2896,13 @@
             (h/store)
 
             rows
-            (vis/db-list-session-turn-states s (random-uuid))]
+            (persistance/db-list-session-turn-states s (random-uuid))]
 
         (expect (vector? rows))
         (expect (= [] rows))))
   (it "returns [] (vector, never nil) when session-turn-id is nil"
       (let [s (h/store)]
-        (expect (= [] (vis/db-list-session-turn-states s nil))))))
+        (expect (= [] (persistance/db-list-session-turn-states s nil))))))
 
 ;; Fork
 
@@ -2889,7 +2919,7 @@
             (h/fork-session! s cid {:title "Branch A"})
 
             session
-            (vis/db-get-session s cid)]
+            (persistance/db-get-session s cid)]
 
         (expect (= 2 (raw-count s :session_state)))
         (expect (= 1 (:version session)))
@@ -2909,7 +2939,7 @@
             (h/fork-session! s cid {:system-prompt "new" :model "claude-4"})
 
             session
-            (vis/db-get-session s cid)]
+            (persistance/db-get-session s cid)]
 
         (expect (= "new" (:system-prompt session)))
         (expect (= "claude-4" (:model session)))))
@@ -2920,12 +2950,18 @@
             cid
             (h/store-session! s {:channel :tui})]
 
-        (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Turn 1" :status :done})
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "Turn 1" :status :done})
         (h/fork-session! s cid {:title "Fork"})
-        (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Turn 2" :status :done})
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "Turn 2" :status :done})
         (h/fork-session! s cid {:title "Fork 2"})
-        (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Turn 3" :status :done})
-        (let [turns (vis/db-list-session-turns s cid)]
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "Turn 3" :status :done})
+        (let [turns (persistance/db-list-session-turns s cid)]
           (expect (= ["Turn 1" "Turn 2" "Turn 3"] (mapv :user-request turns))))))
   (it "double fork increments version"
       (let [s
@@ -2936,7 +2972,7 @@
 
         (h/fork-session! s cid {})
         (h/fork-session! s cid {})
-        (expect (= 2 (:version (vis/db-get-session s cid))))
+        (expect (= 2 (:version (persistance/db-get-session s cid))))
         (expect (= 3 (raw-count s :session_state)))))
   (it
     "fork-at-turn copies turns THROUGH the pick into a NEW independent session, source intact"
@@ -2947,13 +2983,19 @@
           (h/store-session! s {:channel :tui :title "Src"})
 
           _t1
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q1" :status :done})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q1" :status :done})
 
           t2
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q2" :status :done})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q2" :status :done})
 
           _t3
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q3" :status :done})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q3" :status :done})
 
           fork-state
           (h/fork-session-at-turn! s cid {:through-turn-id t2 :title "Forked"})
@@ -2969,7 +3011,7 @@
                       :order-by [[:position :asc]]})]
 
       ;; SOURCE keeps all three turns — untouched.
-      (expect (= ["Q1" "Q2" "Q3"] (mapv :user-request (vis/db-list-session-turns s cid))))
+      (expect (= ["Q1" "Q2" "Q3"] (mapv :user-request (persistance/db-list-session-turns s cid))))
       ;; FORK got exactly the first two, in order.
       (expect (= ["Q1" "Q2"] (mapv :user_request fork-turns)))
       ;; It is a brand-new session soul (a fresh soul id, not the source soul).
@@ -2988,11 +3030,14 @@
           (h/store-session! s {:channel :tui :title "Src"})
 
           _t1
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q1" :status :done})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q1" :status :done})
 
           t2
-          (vis/db-store-session-turn! s
-                                      {:parent-session-id cid :user-request "Q2" :status :running})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q2" :status :running})
 
           fork-id
           (h/fork-session-at-turn! s cid {:through-turn-id t2})
@@ -3017,10 +3062,11 @@
       (expect (= [["done" nil] ["interrupted" "cancelled"]] (outcomes fork-id)))
       (expect (= [["done" nil] ["running" nil]] (outcomes cid)))
       ;; The fork keeps its origin for reads: the source and its last copied turn.
-      (expect
-        (= [(str cid) (str t2)]
-           (mapv str ((juxt :session-id :turn-id) (:forked-from (vis/db-get-session s fork-id))))))
-      (expect (nil? (:forked-from (vis/db-get-session s cid))))))
+      (expect (= [(str cid) (str t2)]
+                 (mapv str
+                       ((juxt :session-id :turn-id)
+                         (:forked-from (persistance/db-get-session s fork-id))))))
+      (expect (nil? (:forked-from (persistance/db-get-session s cid))))))
   (it "returns nil instead of throwing when there is no state to fork"
       (let [s (h/store)]
         (expect (nil? (h/fork-session! s (random-uuid) {}))))))
@@ -3036,11 +3082,12 @@
             cid
             (h/store-session! s {:channel :tui})]
 
-        (vis/db-store-session-turn! s
-                                    {:parent-session-id cid :user-request "2+2?" :status :running})
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "2+2?" :status :running})
         (expect (= 1 (raw-count s :session_turn_soul)))
         (expect (= 1 (raw-count s :session_turn_state)))
-        (let [q (first (vis/db-list-session-turns s cid))]
+        (let [q (first (persistance/db-list-session-turns s cid))]
           (expect (= "2+2?" (:user-request q)))
           (expect (= :running (:status q))))))
   (it "assigns turn positions from 1 within the active session state"
@@ -3050,9 +3097,13 @@
             cid
             (h/store-session! s {:channel :tui})]
 
-        (vis/db-store-session-turn! s {:parent-session-id cid :user-request "one" :status :done})
-        (vis/db-store-session-turn! s {:parent-session-id cid :user-request "two" :status :done})
-        (expect (= [1 2] (mapv :position (vis/db-list-session-turns s cid))))))
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "one" :status :done})
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "two" :status :done})
+        (expect (= [1 2] (mapv :position (persistance/db-list-session-turns s cid))))))
   (it "normalizes :success to done"
       (let [s
             (h/store)
@@ -3061,17 +3112,17 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
-        (vis/db-update-session-turn! s
-                                     qid
-                                     {:status :success
-                                      :answer "42"
-                                      :tokens {"input" 100 "output" 50}
-                                      :cost {"total_cost" 0.005 "model" "gpt-4o"}})
-        (let [q (first (vis/db-list-session-turns s cid))]
+        (persistance/db-update-session-turn! s
+                                             qid
+                                             {:status :success
+                                              :answer "42"
+                                              :tokens {"input" 100 "output" 50}
+                                              :cost {"total_cost" 0.005 "model" "gpt-4o"}})
+        (let [q (first (persistance/db-list-session-turns s cid))]
           (expect (= :done (:status q)))
           (expect (= "gpt-4o" (:model q))))))
   (it "persists :error without renormalization"
@@ -3082,12 +3133,12 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
-        (vis/db-update-session-turn! s qid {:status :error})
-        (expect (= :error (:status (first (vis/db-list-session-turns s cid)))))))
+        (persistance/db-update-session-turn! s qid {:status :error})
+        (expect (= :error (:status (first (persistance/db-list-session-turns s cid)))))))
   (it
     "keeps the first terminal outcome"
     (let [s
@@ -3097,24 +3148,24 @@
           (h/store-session! s {:channel :tui})
 
           qid
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id cid :user-request "race" :status :running})]
 
-      (vis/db-update-session-turn! s
-                                   qid
-                                   {:status :error
-                                    :iteration-count 3
-                                    :duration-ms 40
-                                    :tokens {"input" 7 "output" 5}
-                                    :cost {"total_cost" 1.25}})
-      (vis/db-update-session-turn! s
-                                   qid
-                                   {:status :success
-                                    :iteration-count 9
-                                    :duration-ms 90
-                                    :tokens {"input" 70 "output" 50}
-                                    :cost {"total_cost" 9.25}})
+      (persistance/db-update-session-turn! s
+                                           qid
+                                           {:status :error
+                                            :iteration-count 3
+                                            :duration-ms 40
+                                            :tokens {"input" 7 "output" 5}
+                                            :cost {"total_cost" 1.25}})
+      (persistance/db-update-session-turn! s
+                                           qid
+                                           {:status :success
+                                            :iteration-count 9
+                                            :duration-ms 90
+                                            :tokens {"input" 70 "output" 50}
+                                            :cost {"total_cost" 9.25}})
       (let [row (first (raw-query s
                                   {:select [:status :iteration_count :duration_ms :input_tokens
                                             :output_tokens :total_cost_usd]
@@ -3240,7 +3291,7 @@
           (h/store-session! s {:channel :api})
 
           tid
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id sid :user-request "runtime state" :status :running})
 
@@ -3263,7 +3314,7 @@
           {:type "text" :text "kept answer"}]
 
       (reset! self self)
-      (expect (true? (vis/db-update-session-turn!
+      (expect (true? (persistance/db-update-session-turn!
                        s
                        tid
                        {:status :success
@@ -3295,7 +3346,7 @@
             (h/store-session! s {:channel :api})
 
             tid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id sid :user-request "runtime evidence" :status :running})]
 
@@ -3308,7 +3359,7 @@
                                       :channel [{:result {:state (atom {})}}]}]
                              :duration-ms 1})
         (expect (= {:state {:vis/ref :expr}}
-                   (get-in (first (vis/db-list-session-turn-iterations s tid))
+                   (get-in (first (persistance/db-list-session-turn-iterations s tid))
                            [:forms 0 :channel 0 :result]))))))
 
 ;; Dedicated ctx stores (task/fact/archive) — write-through + per-session id
@@ -3323,15 +3374,15 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "hard" :status :running})]
 
-        (vis/db-update-session-turn! s qid {:status :error})
-        (vis/db-retry-session-turn! s qid {:status :running :model "claude-4"})
+        (persistance/db-update-session-turn! s qid {:status :error})
+        (persistance/db-retry-session-turn! s qid {:status :running :model "claude-4"})
         (expect (= 1 (raw-count s :session_turn_soul)))
         (expect (= 2 (raw-count s :session_turn_state)))
-        (expect (= :running (:status (first (vis/db-list-session-turns s cid)))))))
+        (expect (= :running (:status (first (persistance/db-list-session-turns s cid)))))))
   (it "iterations on retry go to new session_turn_state"
       (let [s
             (h/store)
@@ -3340,16 +3391,16 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
         (h/store-iteration! s {:session-turn-id qid :code "1" :stdout "1\n" :duration-ms 10})
-        (vis/db-update-session-turn! s qid {:status :error})
-        (vis/db-retry-session-turn! s qid {:status :running :model "better"})
+        (persistance/db-update-session-turn! s qid {:status :error})
+        (persistance/db-retry-session-turn! s qid {:status :running :model "better"})
         (h/store-iteration! s {:session-turn-id qid :code "2" :stdout "2\n" :duration-ms 5})
         (expect (= 2 (raw-count s :session_turn_iteration)))
-        (expect (= 1 (count (vis/db-list-session-turn-iterations s qid)))))))
+        (expect (= 1 (count (persistance/db-list-session-turn-iterations s qid)))))))
 
 ;; Iteration + stateless blocks
 
@@ -3363,7 +3414,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3375,7 +3426,7 @@
         ;; iteration flat columns. definition_* sidecar tables were
         ;; dropped together with cross-turn def survival.
         (let [iteration
-              (first (vis/db-list-session-turn-iterations s qid))
+              (first (persistance/db-list-session-turn-iterations s qid))
 
               blocks
               (:forms iteration)]
@@ -3393,7 +3444,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3411,12 +3462,13 @@
           (h/store-session! s {:channel :tui})
 
           qid
-          (vis/db-store-session-turn! s
-                                      {:parent-session-id cid :user-request "x" :status :running})]
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "x" :status :running})]
 
       (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 1})
       (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 1})
-      (expect (= [1 2] (mapv :position (vis/db-list-session-turn-iterations s qid))))
+      (expect (= [1 2] (mapv :position (persistance/db-list-session-turn-iterations s qid))))
       (let [turn-state-id
             (:id (first (raw-query s
                                    {:select [:id]
@@ -3451,7 +3503,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3465,7 +3517,7 @@
                                                            x)}]}]
                              :duration-ms 5})
         (let [iteration
-              (first (vis/db-list-session-turn-iterations s qid))
+              (first (persistance/db-list-session-turn-iterations s qid))
 
               value
               (get-in (first (:forms iteration)) [:channel 0 :result])]
@@ -3479,7 +3531,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3490,7 +3542,7 @@
           s
           {:session-turn-id qid :code "(/ 1 0)" :error {:message "Divide by zero"} :duration-ms 5})
         (let [iteration
-              (first (vis/db-list-session-turn-iterations s qid))
+              (first (persistance/db-list-session-turn-iterations s qid))
 
               exec
               (first (:forms iteration))]
@@ -3505,7 +3557,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3518,7 +3570,7 @@
                              :error {:message "protected" :data {:names (sort ["ls" "cat"])}}
                              :duration-ms 5})
         (let [iteration
-              (first (vis/db-list-session-turn-iterations s qid))
+              (first (persistance/db-list-session-turn-iterations s qid))
 
               err
               (:error (first (:forms iteration)))]
@@ -3532,7 +3584,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3543,7 +3595,7 @@
                              :stdout "2\n"
                              :duration-ms 5})
         (let [iteration
-              (first (vis/db-list-session-turn-iterations s qid))
+              (first (persistance/db-list-session-turn-iterations s qid))
 
               exec
               iteration]
@@ -3565,7 +3617,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3573,7 +3625,7 @@
         (h/store-iteration! s {:session-turn-id qid :code "2" :stdout "2\n" :duration-ms 1})
         (h/store-iteration! s {:session-turn-id qid :code "3" :stdout "3\n" :duration-ms 1})
         (let [iterations
-              (vis/db-list-session-turn-iterations s qid)
+              (persistance/db-list-session-turn-iterations s qid)
 
               positions
               (sort (mapv :position iterations))]
@@ -3598,8 +3650,9 @@
           (h/store-session! s {:channel :tui})
 
           qid
-          (vis/db-store-session-turn! s
-                                      {:parent-session-id cid :user-request "x" :status :running})]
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "x" :status :running})]
 
       (h/store-iteration! s
                           {:session-turn-id qid
@@ -3614,7 +3667,7 @@
                            :tokens {"input" 1200 "output" 150 "reasoning" 80 "cached" 600}
                            :cache-created-tokens 7000
                            :cost-usd 0.0123})
-      (let [iter (first (vis/db-list-session-turn-iterations s qid))]
+      (let [iter (first (persistance/db-list-session-turn-iterations s qid))]
         (expect (= 1200 (:input-tokens iter)))
         (expect (= 0 (:input-regular-tokens iter))) ;; max(0, 1200 - 7000 - 600)
         (expect (= 7000 (:input-cache-write-tokens iter)))
@@ -3630,7 +3683,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3640,7 +3693,7 @@
                              :stdout "2\n"
                              :duration-ms 5
                              :assistant-prose "I'll bump the **timeout** to 30s, then re-run."})
-        (let [iter (first (vis/db-list-session-turn-iterations s qid))]
+        (let [iter (first (persistance/db-list-session-turn-iterations s qid))]
           (expect (= "I'll bump the **timeout** to 30s, then re-run." (:assistant-prose iter))))))
   (it
     "persists LLM routing trace as first-class rows and rehydrates routing view"
@@ -3651,7 +3704,9 @@
           (h/store-session! s {:channel :tui})
 
           qid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "x" :status :running})
 
           trace
           [{:event/type :llm.routing/provider-retry
@@ -3691,7 +3746,7 @@
                                :where [:= :id (str iid)]}))
 
             iter
-            (first (vis/db-list-session-turn-iterations s qid))]
+            (first (persistance/db-list-session-turn-iterations s qid))]
 
         (expect (= "p1" (:llm_selected_provider raw-row)))
         (expect (= "p2" (:llm_actual_provider raw-row)))
@@ -3709,7 +3764,7 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3720,7 +3775,7 @@
         ;; check raw LLM usage columns via a custom query; the
         ;; default API path is always numeric.
         (h/store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :stdout "2\n" :duration-ms 5})
-        (let [iter (first (vis/db-list-session-turn-iterations s qid))]
+        (let [iter (first (persistance/db-list-session-turn-iterations s qid))]
           (expect (= 0 (:input-tokens iter)))
           (expect (= 0 (:input-regular-tokens iter)))
           (expect (= 0 (:input-cache-write-tokens iter)))
@@ -3728,30 +3783,31 @@
           (expect (= 0 (:output-tokens iter)))
           (expect (= 0 (:output-reasoning-tokens iter)))
           (expect (= 0.0 (:cost-usd iter))))))
-  (it
-    "rejects negative token counts via the schema CHECK"
-    (let [s
-          (h/store)
+  (it "rejects negative token counts via the schema CHECK"
+      (let [s
+            (h/store)
 
-          cid
-          (h/store-session! s {:channel :tui})
+            cid
+            (h/store-session! s {:channel :tui})
 
-          qid
-          (vis/db-store-session-turn! s
-                                      {:parent-session-id cid :user-request "x" :status :running})]
+            qid
+            (persistance/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "x" :status :running})]
 
-      ;; Negative usage is structurally impossible - the schema CHECK
-      ;; is the last line of defence. Any caller that fabricates a
-      ;; negative value gets a SQLite constraint exception (wrapped
-      ;; through next.jdbc). lazytest has no `thrown?` macro; use a
-      ;; plain try/catch and assert the throw landed.
-      (let [thrown?
-            (try (h/store-iteration!
-                   s
-                   {:session-turn-id qid :code "x" :stdout "1\n" :tokens {"input" -5 "output" 10}})
-                 false
-                 (catch Throwable _ true))]
-        (expect (true? thrown?))))))
+        ;; Negative usage is structurally impossible - the schema CHECK
+        ;; is the last line of defence. Any caller that fabricates a
+        ;; negative value gets a SQLite constraint exception (wrapped
+        ;; through next.jdbc). lazytest has no `thrown?` macro; use a
+        ;; plain try/catch and assert the throw landed.
+        (let [thrown? (try (h/store-iteration! s
+                                               {:session-turn-id qid
+                                                :code "x"
+                                                :stdout "1\n"
+                                                :tokens {"input" -5 "output" 10}})
+                           false
+                           (catch Throwable _ true))]
+          (expect (true? thrown?))))))
 
 ;; Stateful vars
 
@@ -3765,13 +3821,14 @@
             (h/store-session! s {:channel :tui})
 
             qid
-            (vis/db-store-session-turn! s
-                                        {:parent-session-id cid :user-request "x" :status :running})
+            (persistance/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "x" :status :running})
 
             _
             (h/store-iteration! s {:session-turn-id qid :code "1" :stdout "1\n" :duration-ms 0})]
 
-        (vis/db-delete-session-tree! s cid)
+        (persistance/db-delete-session-tree! s cid)
         (expect (= 0 (raw-count s :session_soul)))
         (expect (= 0 (raw-count s :session_state)))
         (expect (= 0 (raw-count s :session_turn_soul)))
@@ -3782,30 +3839,31 @@
 
 (defdescribe
   turn-history-test
-  (it
-    "builds ordered history with iteration counts"
-    (let [s
-          (h/store)
+  (it "builds ordered history with iteration counts"
+      (let [s
+            (h/store)
 
-          cid
-          (h/store-session! s {:channel :tui})
+            cid
+            (h/store-session! s {:channel :tui})
 
-          qid
-          (vis/db-store-session-turn! s
-                                      {:parent-session-id cid :user-request "What?" :status :done})
+            qid
+            (persistance/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "What?" :status :done})
 
-          _
-          (h/store-iteration! s {:session-turn-id qid :code "" :answer "A Lisp" :duration-ms 100})
+            _
+            (h/store-iteration! s {:session-turn-id qid :code "" :answer "A Lisp" :duration-ms 100})
 
-          _
-          (h/store-iteration! s {:session-turn-id qid :code "" :answer "JVM Lisp" :duration-ms 50})
+            _
+            (h/store-iteration! s
+                                {:session-turn-id qid :code "" :answer "JVM Lisp" :duration-ms 50})
 
-          h
-          (vis/db-turn-history s cid)]
+            h
+            (persistance/db-turn-history s cid)]
 
-      (expect (= 1 (count h)))
-      (expect (= "What?" (:user-request (first h))))
-      (expect (= 2 (:iteration-count (first h)))))))
+        (expect (= 1 (count h)))
+        (expect (= "What?" (:user-request (first h))))
+        (expect (= 2 (:iteration-count (first h)))))))
 
 ;; Soul/state FK integrity
 
@@ -3833,7 +3891,7 @@
             (h/store-session! s {:channel :tui})
 
             _
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3852,7 +3910,7 @@
             (h/store-session! s {:channel :tui})
 
             _
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
@@ -3863,27 +3921,29 @@
               (first (raw-query s {:select [:session_turn_soul_id] :from :session_turn_state}))]
 
           (expect (= (:id qsoul) (:session_turn_soul_id qstate))))))
-  (it
-    "iteration.session_turn_state_id points to session_turn_state.id"
-    (let [s
-          (h/store)
+  (it "iteration.session_turn_state_id points to session_turn_state.id"
+      (let [s
+            (h/store)
 
-          cid
-          (h/store-session! s {:channel :tui})
+            cid
+            (h/store-session! s {:channel :tui})
 
-          qid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
+            qid
+            (persistance/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "x" :status :running})
 
-          _
-          (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0})]
+            _
+            (h/store-iteration! s {:session-turn-id qid :code "" :duration-ms 0})]
 
-      (let [qstate
-            (first (raw-query s {:select [:id] :from :session_turn_state}))
+        (let [qstate
+              (first (raw-query s {:select [:id] :from :session_turn_state}))
 
-            iteration
-            (first (raw-query s {:select [:session_turn_state_id] :from :session_turn_iteration}))]
+              iteration
+              (first (raw-query s
+                                {:select [:session_turn_state_id] :from :session_turn_iteration}))]
 
-        (expect (= (:id qstate) (:session_turn_state_id iteration))))))
+          (expect (= (:id qstate) (:session_turn_state_id iteration))))))
   (it
     "retry session_turn_state.forked_from_session_turn_state_id points to previous session_turn_state.id"
     (let [s
@@ -3893,11 +3953,12 @@
           (h/store-session! s {:channel :tui})
 
           qid
-          (vis/db-store-session-turn! s
-                                      {:parent-session-id cid :user-request "x" :status :running})]
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "x" :status :running})]
 
-      (vis/db-update-session-turn! s qid {:status :error})
-      (vis/db-retry-session-turn! s qid {:status :running :model "claude-4"})
+      (persistance/db-update-session-turn! s qid {:status :error})
+      (persistance/db-retry-session-turn! s qid {:status :running :model "claude-4"})
       (let [states (raw-query s
                               {:select [:id :version :forked_from_session_turn_state_id]
                                :from :session_turn_state
@@ -3924,40 +3985,8 @@
   ;; client is the value the store hands back. Freezing is where a lazy or deeply
   ;; nested Activity would be swapped for a `:vis/ref` placeholder instead, and only
   ;; a real round trip through the BLOB can catch that.
-  (it "a form's settled Activity survives the tool_calls BLOB unchanged"
-      (let [s
-            (h/store)
-
-            cid
-            (h/store-session! s {:channel :tui})
-
-            qid
-            (vis/db-store-session-turn! s
-                                        {:parent-session-id cid :user-request "x" :status :running})
-
-            activity
-            {:state :succeeded
-             :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
-             :rows [{:id "call-1"
-                     :sequence 1
-                     :operation "grep"
-                     :presenter :observation
-                     :signal :observation
-                     :state :succeeded
-                     :summary "18 matches"
-                     :resources []
-                     :evidence [{:kind :result :text "18 matches"}]}]}
-
-            _
-            (h/store-iteration! s
-                                {:session-turn-id qid
-                                 :code "grep(...)"
-                                 :forms [{:scope "t1/i1" :src "grep(...)" :activity activity}]})]
-
-        (let [form (first (:forms (first (vis/db-list-session-turn-iterations s qid))))]
-          (expect (= activity (:activity form))))))
   (it
-    "per-form payload lives on session_turn_iteration.forms (no definition_* sidecar)"
+    "a form's settled Activity survives the tool_calls BLOB unchanged"
     (let [s
           (h/store)
 
@@ -3965,36 +3994,73 @@
           (h/store-session! s {:channel :tui})
 
           qid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "x" :status :running})
+
+          activity
+          {:state :succeeded
+           :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+           :rows [{:id "call-1"
+                   :sequence 1
+                   :operation "grep"
+                   :presenter :observation
+                   :signal :observation
+                   :state :succeeded
+                   :summary "18 matches"
+                   :resources []
+                   :evidence [{:kind :result :text "18 matches"}]}]}
 
           _
           (h/store-iteration! s
-                              {:session-turn-id qid :code "(+ 1 1)" :stdout "2\n" :duration-ms 0})]
+                              {:session-turn-id qid
+                               :code "grep(...)"
+                               :forms [{:scope "t1/i1" :src "grep(...)" :activity activity}]})]
 
-      (let [iteration
-            (first (vis/db-list-session-turn-iterations s qid))
-
-            form
-            (first (:forms iteration))]
-
-        (expect (= "(+ 1 1)" (:code iteration)))
-        (expect (= "2\n" (:stdout form)))))))
-
-(defdescribe
-  log-test
-  (it "inserts into log table with FK scope"
+      (let [form (first (:forms (first (persistance/db-list-session-turn-iterations s qid))))]
+        (expect (= activity (:activity form))))))
+  (it "per-form payload lives on session_turn_iteration.forms (no definition_* sidecar)"
       (let [s
             (h/store)
 
             cid
-            (h/store-session! s {:channel :tui})]
+            (h/store-session! s {:channel :tui})
 
-        (vis/db-log! s {:level :info :event "test.event" :data "{\"k\":1}" :session-soul-id cid})
-        (expect (= 1 (raw-count s :log)))
-        (let [row (first (raw-query s {:select [:*] :from :log}))]
-          (expect (= "info" (:level row)))
-          (expect (= "test.event" (:event row)))
-          (expect (= (str cid) (:session_soul_id row)))))))
+            qid
+            (persistance/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "x" :status :running})
+
+            _
+            (h/store-iteration!
+              s
+              {:session-turn-id qid :code "(+ 1 1)" :stdout "2\n" :duration-ms 0})]
+
+        (let [iteration
+              (first (persistance/db-list-session-turn-iterations s qid))
+
+              form
+              (first (:forms iteration))]
+
+          (expect (= "(+ 1 1)" (:code iteration)))
+          (expect (= "2\n" (:stdout form)))))))
+
+(defdescribe log-test
+             (it "inserts into log table with FK scope"
+                 (let [s
+                       (h/store)
+
+                       cid
+                       (h/store-session! s {:channel :tui})]
+
+                   (persistance/db-log!
+                     s
+                     {:level :info :event "test.event" :data "{\"k\":1}" :session-soul-id cid})
+                   (expect (= 1 (raw-count s :log)))
+                   (let [row (first (raw-query s {:select [:*] :from :log}))]
+                     (expect (= "info" (:level row)))
+                     (expect (= "test.event" (:event row)))
+                     (expect (= (str cid) (:session_soul_id row)))))))
 
 ;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 
@@ -4098,18 +4164,20 @@
           (persistance/db-create-project! s {:name "vis" :workspace-root "/old/vis"})
 
           trunk
-          (vis/db-workspace-insert! s {:repo-id "vis-old" :repo-root "/old/vis" :root "/old/vis"})
+          (persistance/db-workspace-insert!
+            s
+            {:repo-id "vis-old" :repo-root "/old/vis" :root "/old/vis"})
 
           draft
-          (vis/db-workspace-insert! s
-                                    {:repo-id "vis-old"
-                                     :repo-root "/old/vis"
-                                     :root "/drafts/vis-1"
-                                     :workspace-kind :draft
-                                     :fork-ms 1})
+          (persistance/db-workspace-insert! s
+                                            {:repo-id "vis-old"
+                                             :repo-root "/old/vis"
+                                             :root "/drafts/vis-1"
+                                             :workspace-kind :draft
+                                             :fork-ms 1})
 
           other
-          (vis/db-workspace-insert! s {:repo-id "x" :repo-root "/old/x" :root "/old/x"})
+          (persistance/db-workspace-insert! s {:repo-id "x" :repo-root "/old/x" :root "/old/x"})
 
           moved
           (persistance/db-update-project! s (:id p) {:workspace-root "/new/vis" :repo-id "vis-new"})
@@ -4636,10 +4704,10 @@
                        id
                        (h/store-session! s {:channel :api :title "pool" :claimed? false})]
 
-                   (expect (= [] (vec (vis/db-list-sessions s :all))))
-                   (vis/db-claim-session! s id)
-                   (vis/db-claim-session! s id)
-                   (expect (= ["pool"] (mapv :title (vis/db-list-sessions s :all))))
+                   (expect (= [] (vec (persistance/db-list-sessions s :all))))
+                   (persistance/db-claim-session! s id)
+                   (persistance/db-claim-session! s id)
+                   (expect (= ["pool"] (mapv :title (persistance/db-list-sessions s :all))))
                    (expect (= 1 (raw-count s :session_soul))))))
 
 (defdescribe
@@ -4704,10 +4772,11 @@
             (h/store-session! s {:channel :tui :title "Search"})
 
             tid
-            (vis/db-store-session-turn! s
-                                        {:parent-session-id cid
-                                         :user-request "the provider rejected your credentials"
-                                         :status :done})]
+            (persistance/db-store-session-turn! s
+                                                {:parent-session-id cid
+                                                 :user-request
+                                                 "the provider rejected your credentials"
+                                                 :status :done})]
 
         (h/store-iteration! s
                             {:session-turn-id tid
@@ -4716,13 +4785,13 @@
                              :code "x"
                              :stdout "1\n"})
         (let [prompt-hits
-              (vis/db-search s "provider rejected" {:limit 25})
+              (persistance/db-search s "provider rejected" {:limit 25})
 
               answer-hits
-              (vis/db-search s {:phrase "expired credential"} {:limit 25})
+              (persistance/db-search s {:phrase "expired credential"} {:limit 25})
 
               thinking-hits
-              (vis/db-search s "authentication failure" {:limit 25})]
+              (persistance/db-search s "authentication failure" {:limit 25})]
 
           (expect (= ["user_request"] (mapv :field prompt-hits)))
           (expect (= ["answer_text"] (mapv :field answer-hits)))
@@ -4735,14 +4804,15 @@
             cid
             (h/store-session! s {:channel :tui :title "Filter"})]
 
-        (vis/db-store-session-turn!
+        (persistance/db-store-session-turn!
           s
           {:parent-session-id cid :user-request "literal OR operator" :status :done})
-        (expect (= [] (vis/db-search s "???" {:field "answer_text"})))
+        (expect (= [] (persistance/db-search s "???" {:field "answer_text"})))
         (expect (= ["user_request"]
-                   (mapv
-                     :field
-                     (vis/db-search s {:any ["literal" "missing"]} {:field "user_request"})))))))
+                   (mapv :field
+                         (persistance/db-search s
+                                                {:any ["literal" "missing"]}
+                                                {:field "user_request"})))))))
 
 (defdescribe
   attachment-audience-round-trip-test
@@ -4762,7 +4832,7 @@
 
           ;; INBOUND user image the caller never wants re-uploaded.
           tid
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id cid
              :user-request "keep this local"
@@ -4775,7 +4845,7 @@
               {:media-type "image/png" :base64 b64 :filename "public.png" :size (alength png)}]})
 
           user-atts
-          (vis/db-list-turn-attachments s tid)
+          (persistance/db-list-turn-attachments s tid)
 
           iid
           (h/store-iteration!
@@ -4799,7 +4869,7 @@
               {:tool-call-id "call_A" :media-type "image/png" :base64 b64 :filename "sent.png"}]})
 
           tool-atts
-          (vis/db-list-iteration-attachments s iid)]
+          (persistance/db-list-iteration-attachments s iid)]
 
       ;; Audience round-trips as its own string, per row, in both tables' rows.
       (expect (= {"secret.png" "user" "public.png" "both"}
@@ -4808,7 +4878,7 @@
                  (into {} (map (juxt :filename :audience)) tool-atts)))
       ;; Bare-id read-back (the show_attachment path) sees it too.
       (expect (= "user"
-                 (:audience (vis/db-read-attachment
+                 (:audience (persistance/db-read-attachment
                               s
                               (:id (first (filter #(= "secret.png" (:filename %)) user-atts)))))))
       ;; Bytes are still stored: an audience withholds a rail, not the data.
@@ -4828,7 +4898,7 @@
           (.encodeToString (java.util.Base64/getEncoder) (byte-array [1 2 3]))
 
           tid
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id cid
              :user-request "compare [IMAGE #7] with [IMAGE #3]"
@@ -4838,7 +4908,7 @@
               {:media-type "audio/mp4" :base64 b64 :filename "memo.m4a"}]})
 
           rows
-          (vis/db-list-turn-attachments s tid)
+          (persistance/db-list-turn-attachments s tid)
 
           expected
           ["[IMAGE #3]" "[IMAGE #7]" nil]]
@@ -4846,12 +4916,14 @@
       (expect (= expected (mapv :reference rows)))
       (expect (= ["shot.png" "shot.png" "memo.m4a"] (mapv :filename rows)))
       (expect (= expected
-                 (mapv :reference (get (vis/db-list-turns-attachments s [tid]) (str tid)))))
+                 (mapv :reference (get (persistance/db-list-turns-attachments s [tid]) (str tid)))))
       (expect (= expected
-                 (mapv #(-> (vis/db-read-attachment s (:id %))
+                 (mapv #(-> (persistance/db-read-attachment s (:id %))
                             :reference)
                        rows)))
-      (let [by-id (into {} (map (juxt :id identity)) (vis/db-list-session-attachments-meta s cid))]
+      (let [by-id (into {}
+                        (map (juxt :id identity))
+                        (persistance/db-list-session-attachments-meta s cid))]
         (expect (= expected (mapv #(get-in by-id [(:id %) :reference]) rows))))
       (expect (= expected
                  (mapv :reference
@@ -4875,11 +4947,11 @@
           (.encodeToString (java.util.Base64/getEncoder) (byte-array [1 2 3]))
 
           tid
-          (vis/db-store-session-turn! s
-                                      {:parent-session-id cid
-                                       :user-request "describe this"
-                                       :attachments
-                                       [{:media-type "image/png" :base64 b64 :filename "own.png"}]})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid
+             :user-request "describe this"
+             :attachments [{:media-type "image/png" :base64 b64 :filename "own.png"}]})
 
           qtid
           (str (random-uuid))
@@ -4908,9 +4980,9 @@
       (expect (= [qtid] (keys (persistance/db-list-queued-turn-attachments s [qtid "missing"]))))
       ;; The turn's own request images stay its own: the model gets them as the
       ;; request, and the delivered message names its images by id instead.
-      (expect (= ["own.png"] (mapv :filename (vis/db-list-turn-attachments s tid))))
+      (expect (= ["own.png"] (mapv :filename (persistance/db-list-turn-attachments s tid))))
       (expect (= ["own.png"]
-                 (mapv :filename (get (vis/db-list-turns-attachments s [tid]) (str tid)))))
+                 (mapv :filename (get (persistance/db-list-turns-attachments s [tid]) (str tid)))))
       (expect (= [] (persistance/db-store-queued-turn-attachments! s tid qtid [])))
       (expect (= []
                  (persistance/db-store-queued-turn-attachments!
@@ -4932,7 +5004,9 @@
           (.encodeToString (java.util.Base64/getEncoder) (byte-array [4 5 6]))
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q1" :status :done})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q1" :status :done})
 
           qtid
           (str (random-uuid))
@@ -4970,7 +5044,9 @@
           (.encodeToString (java.util.Base64/getEncoder) (byte-array [7 8 9]))
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "Q1" :status :done})
+          (persistance/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "Q1" :status :done})
 
           qtid
           (str (random-uuid))
@@ -5013,7 +5089,7 @@
 
           readable
           (fn [sid]
-            (set (map (comp str :id) (vis/db-list-session-attachments-meta s sid))))]
+            (set (map (comp str :id) (persistance/db-list-session-attachments-meta s sid))))]
 
       (expect (= ids (named tid)))
       (expect (= 1 (count (named fork-tid))))
@@ -5047,7 +5123,7 @@
                              (byte-array (map unchecked-byte [1 2 3])))
 
             tid
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid
                :user-request "listen to this"
@@ -5061,7 +5137,7 @@
                 {:media-type "image/png" :base64 b64 :filename "shot.png" :size 3 :source :user}]})
 
             rows
-            (vis/db-list-turn-attachments s tid)
+            (persistance/db-list-turn-attachments s tid)
 
             by-name
             (into {} (map (juxt :filename identity)) rows)]
@@ -5072,10 +5148,12 @@
         ;; The BYTE-FREE readers carry it too — a client offering "Transcription"
         ;; under the player must not have to download the audio to find the words.
         (expect (= "buy milk"
-                   (:transcription (first (filter #(= "memo.m4a" (:filename %))
-                                                  (vis/db-list-session-attachments-meta s cid))))))
+                   (:transcription
+                     (first (filter #(= "memo.m4a" (:filename %))
+                                    (persistance/db-list-session-attachments-meta s cid))))))
         (expect (= "buy milk"
-                   (:transcription (vis/db-read-attachment s (:id (get by-name "memo.m4a")))))))))
+                   (:transcription
+                     (persistance/db-read-attachment s (:id (get by-name "memo.m4a")))))))))
 
 (defdescribe
   late-transcript-reaches-its-row-test
@@ -5093,7 +5171,7 @@
           (.encodeToString (java.util.Base64/getEncoder) (byte-array (map unchecked-byte [1 2 3])))
 
           tid
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id cid
              :user-request "listen to this"
@@ -5103,7 +5181,8 @@
 
           row-at
           (fn [filename]
-            (first (filter #(= filename (:filename %)) (vis/db-list-turn-attachments s tid))))
+            (first (filter #(= filename (:filename %))
+                           (persistance/db-list-turn-attachments s tid))))
 
           words-at
           (fn [filename]
@@ -5114,14 +5193,15 @@
 
       ;; The turn stored the recording without waiting for an hour of speech.
       (expect (nil? (words-at "memo.m4a")))
-      (expect (true? (vis/db-set-turn-attachment-transcription! s tid 1 "buy milk" segments)))
+      (expect (true?
+                (persistance/db-set-turn-attachment-transcription! s tid 1 "buy milk" segments)))
       (expect (= "buy milk" (words-at "memo.m4a")))
       ;; The timings ride WITH the words, so the player can follow its own transcript.
       (expect (= segments (:transcription-segments (row-at "memo.m4a"))))
       ;; Position addresses ONE row: the picture beside it is untouched.
       (expect (nil? (words-at "shot.png")))
       ;; Nothing to say is not something to store.
-      (expect (false? (vis/db-set-turn-attachment-transcription! s tid 1 "  " nil)))
+      (expect (false? (persistance/db-set-turn-attachment-transcription! s tid 1 "  " nil)))
       (expect (= "buy milk" (words-at "memo.m4a"))))))
 
 (defdescribe
@@ -5473,7 +5553,7 @@
           (h/store-session! s {:channel :api :title "usage"})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id (str sid) :user-request "one"})
+          (persistance/db-store-session-turn! s {:parent-session-id (str sid) :user-request "one"})
 
           decodes
           (atom 0)
@@ -5604,11 +5684,11 @@
 
           ;; Turn 1: two distinct names, plus the SAME name twice inside one batch.
           tid
-          (vis/db-store-session-turn! s
-                                      {:parent-session-id cid
-                                       :user-request "first cut"
-                                       :attachments [(att "chart.png") (att "notes.txt")
-                                                     (att "chart.png")]})
+          (persistance/db-store-session-turn! s
+                                              {:parent-session-id cid
+                                               :user-request "first cut"
+                                               :attachments [(att "chart.png") (att "notes.txt")
+                                                             (att "chart.png")]})
 
           iid
           (h/store-iteration! s
@@ -5620,7 +5700,7 @@
 
           ;; A later turn keeps chaining the same artifact.
           tid2
-          (vis/db-store-session-turn!
+          (persistance/db-store-session-turn!
             s
             {:parent-session-id cid :user-request "second cut" :attachments [(att "chart.png")]})
 
@@ -5632,7 +5712,7 @@
                     rows))
 
           session-rows
-          (vis/db-list-session-attachments s cid)]
+          (persistance/db-list-session-attachments s cid)]
 
       ;; Version 1 is the first cut; every later cut of the SAME name is 1 + max,
       ;; including two same-named artifacts inside a single insert batch.
@@ -5640,28 +5720,29 @@
                  (update-vals (by-name session-rows) sort)))
       ;; Each surface reports the same number for the same row.
       (expect (= {"chart.png" [1 2] "notes.txt" [1]}
-                 (update-vals (by-name (vis/db-list-turn-attachments s tid)) sort)))
+                 (update-vals (by-name (persistance/db-list-turn-attachments s tid)) sort)))
       (expect (= {"chart.png" [3] "fresh.png" [1]}
-                 (by-name (vis/db-list-iteration-attachments s iid))))
+                 (by-name (persistance/db-list-iteration-attachments s iid))))
       (expect (= {"chart.png" [3] "fresh.png" [1]}
-                 (by-name (vis/db-list-iteration-attachments-meta s iid))))
-      (expect (= {"chart.png" [4]} (by-name (vis/db-list-turn-attachments s tid2))))
+                 (by-name (persistance/db-list-iteration-attachments-meta s iid))))
+      (expect (= {"chart.png" [4]} (by-name (persistance/db-list-turn-attachments s tid2))))
       ;; The bare-id read-back (show_attachment) carries it too.
       (expect (= 3
-                 (:version (vis/db-read-attachment
+                 (:version (persistance/db-read-attachment
                              s
-                             (:id (first (filter #(= "chart.png" (:filename %))
-                                                 (vis/db-list-iteration-attachments s iid))))))))
+                             (:id (first (filter
+                                           #(= "chart.png" (:filename %))
+                                           (persistance/db-list-iteration-attachments s iid))))))))
       ;; Versioning is scoped to ONE session: another session's chart.png starts over.
       (let [cid2
             (h/store-session! s {:channel :cli})
 
             other
-            (vis/db-store-session-turn!
+            (persistance/db-store-session-turn!
               s
               {:parent-session-id cid2 :user-request "elsewhere" :attachments [(att "chart.png")]})]
 
-        (expect (= {"chart.png" [1]} (by-name (vis/db-list-turn-attachments s other))))))))
+        (expect (= {"chart.png" [1]} (by-name (persistance/db-list-turn-attachments s other))))))))
 
 ;; A human's own revision of an artifact: the companion saves an annotated
 ;; markdown note back into the iteration that produced it, under the SAME
@@ -5677,7 +5758,9 @@
           (h/store-session! s {:channel :cli})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "write the note"})
+          (persistance/db-store-session-turn! s
+                                              {:parent-session-id cid
+                                               :user-request "write the note"})
 
           encode
           #(.encodeToString (java.util.Base64/getEncoder) (.getBytes ^String % "UTF-8"))
@@ -5702,7 +5785,7 @@
                                                         :audience "user"})
 
           rows
-          (vis/db-list-iteration-attachments s iid)]
+          (persistance/db-list-iteration-attachments s iid)]
 
       (expect (= 2 (:version stored)))
       (expect (= 2 (count rows)))
@@ -5731,7 +5814,7 @@
           (h/store-session! s {:channel :cli})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "watch CI"})
+          (persistance/db-store-session-turn! s {:parent-session-id cid :user-request "watch CI"})
 
           iid
           (h/store-iteration! s {:session-turn-id tid :status :done :code "gh_watch_run(...)"})
@@ -5749,7 +5832,7 @@
                                                         :audience "user"})
 
           rows
-          (vis/db-list-iteration-attachments s iid)]
+          (persistance/db-list-iteration-attachments s iid)]
 
       (expect (some? stored))
       (expect (= 1 (:version stored)))
@@ -5811,7 +5894,7 @@
           (str (fs/path root "store"))
 
           s
-          (vis/db-create-connection! dir)
+          (persistance/db-create-connection! dir)
 
           limit
           (long (private-core-fn "wal-size-limit-bytes"))
@@ -5838,7 +5921,7 @@
            ;; The commit that WRAPS the WAL is where SQLite applies the limit.
            (jdbc/execute! (:datasource s) ["INSERT INTO churn (b) VALUES (?)" (byte-array 16)])
            (expect (>= limit (fs/size wal)))
-           (finally (vis/db-dispose-connection! s) (fs/delete-tree root))))))
+           (finally (persistance/db-dispose-connection! s) (fs/delete-tree root))))))
 
 (defdescribe pool-leak-detection-test
              ;; Regression, gateway CPU audit: Hikari implements `leakDetectionThreshold` by
@@ -5871,14 +5954,14 @@
             sid
             (h/store-session! s {:channel :api})]
 
-        (vis/db-store-session-turn!
+        (persistance/db-store-session-turn!
           s
           {:parent-session-id sid :user-request "answered" :status :success})
-        (vis/db-store-session-turn! s {:parent-session-id sid :user-request "killed"})
+        (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "killed"})
         (let [before (persistance/db-session-turn-stats s sid)]
           (expect (= 1 (:answer-count before)))
           (expect (false? (:latest-turn-interrupted? before))))
-        (expect (= 1 (vis/db-sweep-orphaned-running-turns! s)))
+        (expect (= 1 (lp/db-sweep-orphaned-running-turns! s)))
         (let [after (persistance/db-session-turn-stats s sid)]
           ;; The swept turn is TERMINAL and it left something in front of the
           ;; reader, so it advances the unread watermark like any other answer.
@@ -5893,32 +5976,33 @@
             sid
             (h/store-session! s {:channel :api})]
 
-        (vis/db-store-session-turn! s {:parent-session-id sid :user-request "killed"})
-        (vis/db-sweep-orphaned-running-turns! s)
+        (persistance/db-store-session-turn! s {:parent-session-id sid :user-request "killed"})
+        (lp/db-sweep-orphaned-running-turns! s)
         (expect (true? (:latest-turn-interrupted? (persistance/db-session-turn-stats s sid))))
-        (vis/db-store-session-turn!
+        (persistance/db-store-session-turn!
           s
           {:parent-session-id sid :user-request "retried" :status :success})
         (expect (false? (:latest-turn-interrupted? (persistance/db-session-turn-stats s sid))))))
   ;; Vis session 32bcc713: a Python timeout retired the environment and failed the
   ;; turn, but the session list only recognized cancellation as a stopped run.
-  (it
-    "marks a failed newest turn as stopped until the next turn settles"
-    (let [s
-          (h/store)
+  (it "marks a failed newest turn as stopped until the next turn settles"
+      (let [s
+            (h/store)
 
-          sid
-          (h/store-session! s {:channel :api})]
+            sid
+            (h/store-session! s {:channel :api})]
 
-      (vis/db-store-session-turn! s
-                                  {:parent-session-id sid :user-request "timed out" :status :error})
-      (let [stats (persistance/db-session-turn-stats s sid)]
-        (expect (= 1 (:answer-count stats)))
-        (expect (true? (:latest-turn-failed? stats)))
-        (expect (false? (:latest-turn-interrupted? stats))))
-      (vis/db-store-session-turn! s
-                                  {:parent-session-id sid :user-request "resumed" :status :success})
-      (expect (false? (:latest-turn-failed? (persistance/db-session-turn-stats s sid)))))))
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id sid :user-request "timed out" :status :error})
+        (let [stats (persistance/db-session-turn-stats s sid)]
+          (expect (= 1 (:answer-count stats)))
+          (expect (true? (:latest-turn-failed? stats)))
+          (expect (false? (:latest-turn-interrupted? stats))))
+        (persistance/db-store-session-turn!
+          s
+          {:parent-session-id sid :user-request "resumed" :status :success})
+        (expect (false? (:latest-turn-failed? (persistance/db-session-turn-stats s sid)))))))
 
 ;; Regression, this Vis session (paraphrased: "the same conversation is NEW on
 ;; one surface and read on another"): every client kept a private watermark, so

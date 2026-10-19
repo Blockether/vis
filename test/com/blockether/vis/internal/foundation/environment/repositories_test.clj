@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.foundation.environment.repositories-test
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.environment.git :as git]
             [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
             [lazytest.core :refer [defdescribe expect it]])
@@ -63,7 +62,7 @@
         (try (mark-repo! (io/file root "services/zeta"))
              (mark-repo! (io/file root "services/alpha"))
              (repositories/refresh-inventory!)
-             (let [inventory (vis/repository-inventory root)]
+             (let [inventory (repositories/inventory root)]
                (expect (= 2 (:count inventory)))
                (expect (= ["services/alpha" "services/zeta"]
                           (mapv :path (:repositories inventory))))

@@ -4,7 +4,9 @@
             [clojure.string]
             [com.blockether.vis.internal.util]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.config.toggles :as toggles]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.vendor.openai-codex :as codex]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.external-opener :as opener]
@@ -248,7 +250,7 @@
 (defdescribe provider-registration-test
              (it "registers the OpenAI Codex auth provider"
                  (codex/register!)
-                 (let [provider (vis/provider-by-id :openai-codex)]
+                 (let [provider (registry/provider-by-id :openai-codex)]
                    (expect (= :openai-codex (:provider/id provider)))
                    (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
                    (expect (ifn? (:provider/get-token-fn provider)))
@@ -276,7 +278,7 @@
 (defdescribe codex-sol-luna-catalog-test
              (it "exposes Sol and Luna with published Svar metadata through the Vis preset"
                  (let [provider
-                       (do (codex/register!) (vis/provider-by-id :openai-codex))
+                       (do (codex/register!) (registry/provider-by-id :openai-codex))
 
                        defaults
                        (get-in provider [:provider/preset :default-models])
@@ -322,7 +324,7 @@
 
 (defdescribe codex-extension-settings-test
              (it "registers the persisted Fast mode provider knob"
-                 (let [spec (vis/toggle-spec "codex_fast_mode")]
+                 (let [spec (toggles/toggle-spec "codex_fast_mode")]
                    (expect (= :boolean (:type spec)))
                    (expect (false? (:default spec)))
                    (expect (true? (:persist? spec)))
@@ -330,7 +332,7 @@
              (it "does not declare legacy TUI settings metadata"
                  (codex/register!)
                  (let [ext (first (filter #(= "provider-openai-codex" (:ext/name %))
-                                          (vis/registered-extensions)))]
+                                          (extension/registered-extensions)))]
                    (expect (= [] (:ext/settings ext))))))
 
 (defdescribe

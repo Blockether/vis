@@ -9,7 +9,7 @@
      (let [s (h/store)] ...)
 
    Each test gets an isolated in-memory DB. No manual setup/teardown."
-  (:require [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [honey.sql :as sql]
             [lazytest.core :as lt]
@@ -33,10 +33,11 @@
                                                            (keys overrides))]
                                           (try (doseq [[id value] overrides]
                                                  (toggles/set-value! id value))
-                                               (let [s (vis/db-create-connection! :memory)]
+                                               (let [s (persistance/db-create-connection! :memory)]
                                                  (try (binding [*store* s]
                                                         (f))
-                                                      (finally (vis/db-dispose-connection! s))))
+                                                      (finally (persistance/db-dispose-connection!
+                                                                 s))))
                                                (finally (doseq [[id value] before]
                                                           (toggles/set-value! id value))))))])))
 
@@ -75,39 +76,39 @@
         id
         (str (java.util.UUID/randomUUID))]
 
-    (:id (vis/db-workspace-insert!
+    (:id (persistance/db-workspace-insert!
            store
            {:id id :repo-id "test" :repo-root root :root root :state :active :fork-ms 0}))))
 
 (defn store-session!
-  "Test wrapper for `vis/db-store-session!` that injects a fresh
+  "Test wrapper for `persistance/db-store-session!` that injects a fresh
    workspace per call (session_state.workspace_id is NOT NULL, 1:1 with
    workspace) via `fresh-workspace!` when no `:workspace-id` supplied.
 
-   Use everywhere the test would have called `vis/db-store-session!`
+   Use everywhere the test would have called `persistance/db-store-session!`
    directly with a plain opts map."
   [store opts]
   (let [ws-id (or (:workspace-id opts) (fresh-workspace! store))]
-    (vis/db-store-session! store (assoc opts :workspace-id ws-id))))
+    (persistance/db-store-session! store (assoc opts :workspace-id ws-id))))
 
 (defn fork-session!
-  "Test wrapper for `vis/db-fork-session!` that injects a fresh
+  "Test wrapper for `persistance/db-fork-session!` that injects a fresh
    workspace when no `:workspace-id` was supplied. Each fork gets its
    own workspace row to satisfy `UNIQUE(session_state.workspace_id)`."
   [store session-id opts]
   (let [ws-id (or (:workspace-id opts) (fresh-workspace! store))]
-    (vis/db-fork-session! store session-id (assoc opts :workspace-id ws-id))))
+    (persistance/db-fork-session! store session-id (assoc opts :workspace-id ws-id))))
 
 (defn fork-session-at-turn!
-  "Test wrapper for `vis/db-fork-session-at-turn!` that injects a fresh
+  "Test wrapper for `persistance/db-fork-session-at-turn!` that injects a fresh
    workspace when no `:workspace-id` was supplied (session_state.workspace_id
    is NOT NULL, 1:1 with workspace)."
   [store session-id opts]
   (let [ws-id (or (:workspace-id opts) (fresh-workspace! store))]
-    (vis/db-fork-session-at-turn! store session-id (assoc opts :workspace-id ws-id))))
+    (persistance/db-fork-session-at-turn! store session-id (assoc opts :workspace-id ws-id))))
 
 (defn store-iteration!
-  "Test wrapper for `vis/db-store-iteration!` that wraps flat
+  "Test wrapper for `persistance/db-store-iteration!` that wraps flat
    `:code`/`:stdout`/`:error` test ergonomics into a canonical single-form
    `:forms` envelope vec — exactly what an iteration with one Python execution
    would produce in production. Fixtures that already pass `:forms` directly
@@ -135,4 +136,4 @@
           forms-vec
           (assoc :forms forms-vec))]
 
-    (vis/db-store-iteration! store opts)))
+    (persistance/db-store-iteration! store opts)))

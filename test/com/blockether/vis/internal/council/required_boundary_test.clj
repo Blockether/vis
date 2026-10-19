@@ -2,7 +2,6 @@
   "Required replies cross the real loop, Python host, session projection and SQLite boundary."
   (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.council.core :as council]
@@ -64,36 +63,22 @@
              (constantly {:current-turn "fixture"
                           :turns {"fixture" {:status "running"
                                              :cancel-token (cancellation/cancellation-token)}}})))
-          (with-redefs [toggles/enabled?
-                        (fn [id]
-                          (= "council" id))
-
-                        vis/toggle-enabled?
-                        (fn [id]
-                          (= "council" id))]
-
+          (with-redefs [toggles/enabled? (fn [id]
+                                           (= "council" id))]
             (let
-              [active
-               (get (council/runtime db) aid)
-
-               request
-               (council/publish!
-                 db
-                 #(council/runtime db)
-                 {:session-id aid :activation-id (:activation-id active) :source "sdk"}
-                 {:kind "coordination"
-                  :content "Do you have evidence for the reported issue?"
-                  :ping [bid]
-                  :reply_required true})
-
-               tid
-               (ps/db-store-session-turn! db
-                                          {:parent-session-id (:session-id b)
-                                           :user-request "Continue your task"})
-
-               reply-at
-               (if (#{:research :read-final} first-action) 3 2)
-
+              [active (get (council/runtime db) aid)
+               request (council/publish!
+                         db
+                         #(council/runtime db)
+                         {:session-id aid :activation-id (:activation-id active) :source "sdk"}
+                         {:kind "coordination"
+                          :content "Do you have evidence for the reported issue?"
+                          :ping [bid]
+                          :reply_required true})
+               tid (ps/db-store-session-turn! db
+                                              {:parent-session-id (:session-id b)
+                                               :user-request "Continue your task"})
+               reply-at (if (#{:research :read-final} first-action) 3 2)
                reply-code
                (str "pending = session['council']['pending_replies']\n"
                     "assert len(pending) == 1\n"
@@ -106,7 +91,6 @@
                     "="
                     (:entry_id request)
                     ")\n")
-
                result
                (with-redefs
                  [svar/ask-code!
@@ -133,15 +117,9 @@
                          [{:id (str "reply-" n) :name "python_execution" :input {:code code}}]}
                         {:stop-reason :end :tokens {} :content "done" :tool-calls []})))]
                  (iteration/iteration-loop b "Continue your task" {:session-turn-id tid}))
-
-               iterations
-               (ps/db-list-session-turn-iterations db tid)
-
-               request-now
-               (council/get-entry db aid {:entry_id (:entry_id request)})
-
-               reply-id
-               (get-in request-now [:replies 0 :reply_entry_id])]
+               iterations (ps/db-list-session-turn-iterations db tid)
+               request-now (council/get-entry db aid {:entry_id (:entry_id request)})
+               reply-id (get-in request-now [:replies 0 :reply_entry_id])]
 
               (expect (= {:answer "done"} (:answer result)))
               (expect (true? (:final? (last (:trace result)))))
@@ -161,17 +139,14 @@
               (expect (empty? (council/session-pending-replies b)))
               (expect (document/valid-json? "council" "session_context" (host/context b)))
               ;; No reply ping was supplied by Python; the requester's next input receives it.
-              (let [sender
-                    (get (council/runtime db) aid)
-
-                    notification
-                    (council/prepare-input! db
-                                            aid
-                                            (:activation-id sender)
-                                            (:group-id sender)
-                                            (:input-state sender)
-                                            ["sender" 0]
-                                            8192)]
+              (let [sender (get (council/runtime db) aid)
+                    notification (council/prepare-input! db
+                                                         aid
+                                                         (:activation-id sender)
+                                                         (:group-id sender)
+                                                         (:input-state sender)
+                                                         ["sender" 0]
+                                                         8192)]
 
                 (expect (= [reply-id] (mapv :entry_id (:entries notification)))))))
           (finally (#'state/drop-session! aid)

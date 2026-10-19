@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.activity.history-integration-test
   (:require [babashka.fs :as fs]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.contract.activity :as contract]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.activity.event :as event]
@@ -289,7 +288,7 @@
           original
           (atom nil)]
 
-      (try (let [store (vis/db-create-connection! (str dir))]
+      (try (let [store (db/db-create-connection! (str dir))]
              (try (reset! sid (h/store-session! store {}))
                   (tpc/with-own [pc {}]
                                 (with-redefs [env/run-python-block
@@ -308,8 +307,8 @@
                                     (expect (nil? (:error result)))
                                     (reset! aid (get-in result [:activity :history :id]))
                                     (reset! original (all-rows store @sid @aid)))))
-                  (finally (vis/db-dispose-connection! store))))
-           (let [reopened (vis/db-create-connection! (str dir))]
+                  (finally (db/db-dispose-connection! store))))
+           (let [reopened (db/db-create-connection! (str dir))]
              (try (expect (= 146 (count @original)))
                   (expect (= "comparison-1" (:handle-id (last @original))))
                   (expect (= ["Record 145" "Record 146"]
@@ -319,7 +318,7 @@
                     (expect (= @original saved))
                     (expect (contract/valid-projection?
                               (db/db-activity-page reopened @sid @aid {:after 140}))))
-                  (finally (vis/db-dispose-connection! reopened))))
+                  (finally (db/db-dispose-connection! reopened))))
            (finally (fs/delete-tree dir))))))
 
 (defdescribe

@@ -9,7 +9,6 @@
     [clojure.java.io]
     [clojure.string :as str]
     [com.blockether.svar.core :as svar]
-    [com.blockether.vis.core :as vis]
     [com.blockether.svar.internal.router :as svar-router]
     [com.blockether.svar.internal.llm :as svar-llm]
     [com.blockether.vis.internal.activity.core :as activity]
@@ -6541,17 +6540,23 @@
   ;; Issue #403: a provider warning inside a turn must carry its turn ids, so the DB
   ;; `log` row and the problem log file can be found by turn.
   (it "gives provider signals the session and turn ids"
-      (let [env (loop-env/create-environment (svar/make-router [{:id :fixture
-                                                                 :api-key "test"
-                                                                 :base-url "http://127.0.0.1:1/v1"
-                                                                 :models [{:name "model"}]}])
-                                             {:db :memory})
-            seen (atom nil)]
-        (try (with-redefs [svar/ask-code! (fn [_ _]
-                                            (reset! seen (:ctx (tel/with-signal
-                                                                 (tel/log! {:level :warn :id ::provider-retry-declined}
-                                                                           "not retrying provider failure"))))
-                                            {:stop-reason :end :content "The answer."})]
+      (let [env
+            (loop-env/create-environment (svar/make-router [{:id :fixture
+                                                             :api-key "test"
+                                                             :base-url "http://127.0.0.1:1/v1"
+                                                             :models [{:name "model"}]}])
+                                         {:db :memory})
+
+            seen
+            (atom nil)]
+
+        (try (with-redefs [svar/ask-code!
+                           (fn [_ _]
+                             (reset! seen (:ctx (tel/with-signal
+                                                  (tel/log! {:level :warn
+                                                             :id ::provider-retry-declined}
+                                                            "not retrying provider failure"))))
+                             {:stop-reason :end :content "The answer."})]
                (turn/turn! env [(svar/user "Answer the question")] {})
                (expect (= (:session-id env) (:session-soul-id @seen)))
                (expect (some? (:session-turn-id @seen)))
@@ -13051,14 +13056,8 @@
                                   :turns {"fixture" {:status "running"
                                                      :cancel-token
                                                      (cancellation/cancellation-token)}}})))
-          (with-redefs [toggles/enabled?
-                        (fn [id]
-                          (contains? #{"council" "introspection"} id))
-
-                        vis/toggle-enabled?
-                        (fn [id]
-                          (contains? #{"council" "introspection"} id))]
-
+          (with-redefs [toggles/enabled? (fn [id]
+                                           (contains? #{"council" "introspection"} id))]
             (doseq
               [[environment request codes]
                [[a "publish" [source]]
@@ -13372,9 +13371,6 @@
 
       (try
         (with-redefs [toggles/enabled?
-                      #(= "improve" %)
-
-                      vis/toggle-enabled?
                       #(= "improve" %)
 
                       svar/ask-code!

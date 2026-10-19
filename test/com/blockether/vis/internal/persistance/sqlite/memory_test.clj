@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.persistance.sqlite.memory-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.persistance.core :as persistence]
             [com.blockether.vis.internal.persistance.sqlite.core :as sqlite]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -20,10 +19,10 @@
           (h/store-session! s {:channel :api})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "history"})
+          (persistence/db-store-session-turn! s {:parent-session-id sid :user-request "history"})
 
           empty-tid
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "empty"})
+          (persistence/db-store-session-turn! s {:parent-session-id sid :user-request "empty"})
 
           payload
           (apply str (repeat 10000 "history"))
@@ -40,7 +39,7 @@
           (store! "obsolete")
 
           _
-          (vis/db-retry-session-turn! s tid {:status :running})
+          (persistence/db-retry-session-turn! s tid {:status :running})
 
           current
           [(store! "first") (store! "second")]
@@ -91,18 +90,18 @@
           (h/store-session! s {:channel :api})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "history"})
+          (persistence/db-store-session-turn! s {:parent-session-id sid :user-request "history"})
 
           forms
           [{:scope "t1/i1/f1" :src "print(1)" :stdout "full original output"}]
 
           first-id
-          (vis/db-store-iteration!
+          (persistence/db-store-iteration!
             s
             {:session-turn-id tid :code "print(1)" :forms forms :thinking "reasoning"})
 
           _
-          (vis/db-retry-session-turn! s tid {:status :running})
+          (persistence/db-retry-session-turn! s tid {:status :running})
 
           second-id
           (h/store-iteration! s {:session-turn-id tid :code "print(2)" :stdout "next"})
@@ -148,7 +147,7 @@
           (h/store-session! s {:channel :api})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "fork point"})
+          (persistence/db-store-session-turn! s {:parent-session-id sid :user-request "fork point"})
 
           source-id
           (h/store-iteration! s {:session-turn-id tid :code "print(1)" :stdout "copied"})
@@ -157,7 +156,7 @@
           (h/fork-session-at-turn! s sid {:through-turn-id tid})
 
           fork-turn-id
-          (:id (first (vis/db-list-session-turns s fork-id)))
+          (:id (first (persistence/db-list-session-turns s fork-id)))
 
           f
           persistence/db-list-session-turns-iterations-meta
@@ -189,13 +188,15 @@
           (h/store-session! s {:channel :api})
 
           tid
-          (vis/db-store-session-turn! s {:parent-session-id sid :user-request "private payload"})
+          (persistence/db-store-session-turn! s
+                                              {:parent-session-id sid
+                                               :user-request "private payload"})
 
           _
           (h/store-iteration! s {:session-turn-id tid :code "print(1)" :stdout "payload"})
 
           _
-          (vis/db-retry-session-turn! s tid {:status :running})
+          (persistence/db-retry-session-turn! s tid {:status :running})
 
           fork-id
           (h/fork-session-at-turn! s sid {:through-turn-id tid})
@@ -231,26 +232,28 @@
                                     (first %))
                           @statements))))))
 
-(defdescribe
-  local-command-candidate-test
-  (it "marks only unrouted slash-prefixed stored iteration code as a candidate"
-      (let [s
-            (h/store)
+(defdescribe local-command-candidate-test
+             (it "marks only unrouted slash-prefixed stored iteration code as a candidate"
+                 (let [s
+                       (h/store)
 
-            sid
-            (h/store-session! s {:channel :api})
+                       sid
+                       (h/store-session! s {:channel :api})
 
-            tid
-            (vis/db-store-session-turn! s {:parent-session-id sid :user-request "ordinary text"})]
+                       tid
+                       (persistence/db-store-session-turn! s
+                                                           {:parent-session-id sid
+                                                            :user-request "ordinary text"})]
 
-        (doseq [opts [{:code "/help"} {:code "  /help"}
-                      {:code "/help" :llm-routing {:actual {:provider :fixture :model "model"}}}
-                      {:code "print(1)"}]]
-          (h/store-iteration! s
-                              (assoc opts
-                                :session-turn-id tid
-                                :stdout "payload")))
-        (expect (= [true true false false]
-                   (mapv :local-command-candidate?
-                         (get (persistence/db-list-session-turns-iterations-meta s [tid])
-                              (str tid))))))))
+                   (doseq [opts [{:code "/help"} {:code "  /help"}
+                                 {:code "/help"
+                                  :llm-routing {:actual {:provider :fixture :model "model"}}}
+                                 {:code "print(1)"}]]
+                     (h/store-iteration! s
+                                         (assoc opts
+                                           :session-turn-id tid
+                                           :stdout "payload")))
+                   (expect (= [true true false false]
+                              (mapv :local-command-candidate?
+                                    (get (persistence/db-list-session-turns-iterations-meta s [tid])
+                                         (str tid))))))))

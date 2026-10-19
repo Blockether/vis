@@ -3,7 +3,6 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [charred.api :as json]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.persistance.core :as db]
             [com.blockether.vis.native-binary-test :as binary]
@@ -149,7 +148,7 @@
                       (expect (< (count (str content)) 8192))
                       (expect (not (str/includes? (str content) "activity-detail-")))))
                   ;; Opening here is a disk reopen: the producing native process has exited.
-                  (let [store (vis/db-create-connection! (.getAbsolutePath database))]
+                  (let [store (db/db-create-connection! (.getAbsolutePath database))]
                     (try
                       (let [sessions (db/db-list-sessions store :all)
                             sid (:id (first sessions))
@@ -192,7 +191,7 @@
                               (doseq [n (range 160)]
                                 (expect (str/includes? exported
                                                        (format "activity-detail-%03d-7-" n))))))))
-                      (finally (vis/db-dispose-connection! store)))))
+                      (finally (db/db-dispose-connection! store)))))
                 (finally (.stop ^HttpServer server 0))))))
         (finally (#'binary/delete-tree! dir))))))
 

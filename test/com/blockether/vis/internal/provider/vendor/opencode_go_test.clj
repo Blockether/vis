@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.provider.vendor.opencode-go-test
   (:require [babashka.http-client :as http]
             [com.blockether.svar.core :as svar]
-            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.provider.key-store :as key-store]
             [com.blockether.vis.internal.provider.vendor.opencode-go :as opencode-go]
@@ -16,10 +17,10 @@
 (defdescribe provider-registration-test
              (it "registers ONE OpenCode Go provider that serves both wire dialects"
                  (reload!)
-                 (let [ext-nses (set (map :ext/name (vis/registered-extensions)))]
+                 (let [ext-nses (set (map :ext/name (extension/registered-extensions)))]
                    (expect (contains? ext-nses "provider-opencode-go")))
                  ;; ONE provider — no more :opencode-go-anthropic split.
-                 (let [provider (vis/provider-by-id :opencode-go)]
+                 (let [provider (registry/provider-by-id :opencode-go)]
                    (expect (some? provider))
                    (expect (= :opencode-go (:provider/id provider)))
                    (expect (string? (:provider/label provider)))
@@ -44,7 +45,7 @@
                  (reload!)
                  (let [ext
                        (some #(when (= "provider-opencode-go" (:ext/name %)) %)
-                             (vis/registered-extensions))
+                             (extension/registered-extensions))
 
                        hook
                        (some #(when (= :session_provider_kickoff (:phase %)) %) (:ext/hooks ext))]
@@ -65,7 +66,7 @@
   (it "declares OpenAI-wire models as bare strings (svar default chat wire)"
       (reload!)
       (let [models
-            (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
+            (get-in (registry/provider-by-id :opencode-go) [:provider/preset :default-models])
 
             bare
             (filter string? models)]
@@ -82,7 +83,8 @@
         (expect (some #(= "kimi-k3" %) bare))))
   (it "ships its catalog in svar's canonical model order, flagship first"
       (reload!)
-      (let [models (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])]
+      (let [models (get-in (registry/provider-by-id :opencode-go)
+                           [:provider/preset :default-models])]
         (expect (= "kimi-k3" (first models)))
         (expect (= models (svar/sort-models :opencode-go models)))
         ;; Stealth models, previews and outdated versions stay out of the catalog.
@@ -91,7 +93,7 @@
   (it "declares Anthropic-wire models as maps with :api-style :anthropic"
       (reload!)
       (let [models
-            (get-in (vis/provider-by-id :opencode-go) [:provider/preset :default-models])
+            (get-in (registry/provider-by-id :opencode-go) [:provider/preset :default-models])
 
             styled
             (filter map? models)]
@@ -111,35 +113,35 @@
 (defdescribe static-catalog-test
              (it "builds its default catalog without touching the network"
                  (reload!)
-                 (let [models (get-in (vis/provider-by-id :opencode-go)
+                 (let [models (get-in (registry/provider-by-id :opencode-go)
                                       [:provider/preset :default-models])]
                    (expect (seq models))
                    ;; No delay, no promise, no future: the value is already there.
                    (expect (vector? models)))))
 
-(defdescribe enrich-models-test
-             (it "stamps the Anthropic wire on MiniMax/Qwen at router-build time"
-                 (let [enriched
-                       (#'opencode-go/enrich-models
-                        {:models [{:name "glm-5.2"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
-                        nil)
+(defdescribe
+  enrich-models-test
+  (it "stamps the Anthropic wire on MiniMax/Qwen at router-build time"
+      (let [enriched
+            (#'opencode-go/enrich-models
+             {:models [{:name "glm-5.2"} {:name "minimax-m3"} {:name "qwen3.8-max"}]}
+             nil)
 
-                       by-name
-                       (into {} (map (juxt :name identity)) enriched)]
+            by-name
+            (into {} (map (juxt :name identity)) enriched)]
 
-                   ;; A model the shipped list never had still reaches /messages,
-                   ;; because the wire is a function of the id, not of this file.
-                   (expect (= :anthropic (:api-style (by-name "minimax-m3"))))
-                   (expect (= :anthropic (:api-style (by-name "qwen3.8-max"))))
-                   (expect (nil? (:api-style (by-name "glm-5.2"))))))
-             (it "never overrides an :api-style that config already decided"
-                 (let [enriched (#'opencode-go/enrich-models
-                                 {:models [{:name "minimax-m3" :api-style :openai}]}
-                                 nil)]
-                   (expect (= :openai (:api-style (first enriched))))))
-             (it "is registered on the provider, so the live catalog is enriched too"
-                 (reload!)
-                 (expect (ifn? (:provider/enrich-models-fn (vis/provider-by-id :opencode-go))))))
+        ;; A model the shipped list never had still reaches /messages,
+        ;; because the wire is a function of the id, not of this file.
+        (expect (= :anthropic (:api-style (by-name "minimax-m3"))))
+        (expect (= :anthropic (:api-style (by-name "qwen3.8-max"))))
+        (expect (nil? (:api-style (by-name "glm-5.2"))))))
+  (it "never overrides an :api-style that config already decided"
+      (let [enriched
+            (#'opencode-go/enrich-models {:models [{:name "minimax-m3" :api-style :openai}]} nil)]
+        (expect (= :openai (:api-style (first enriched))))))
+  (it "is registered on the provider, so the live catalog is enriched too"
+      (reload!)
+      (expect (ifn? (:provider/enrich-models-fn (registry/provider-by-id :opencode-go))))))
 
 (defdescribe shared-key-auth-test
              ;; The lookup ORDER, the file layout and the token envelope belong to the
@@ -156,14 +158,14 @@
                  (with-redefs-fn {#'config/current-config
                                   (constantly {:providers [{:id :opencode-go :api-key "k"}]})}
                    (fn []
-                     (let [token ((:provider/get-token-fn (vis/provider-by-id :opencode-go)))]
+                     (let [token ((:provider/get-token-fn (registry/provider-by-id :opencode-go)))]
                        (expect (= {:token "k" :api-url "https://opencode.ai/zen/go/v1"} token)))))))
 
 (defdescribe
   auth-prompt-test
   (it "exposes static API-key guidance"
       (reload!)
-      (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :opencode-go)))]
+      (let [lines ((:provider/auth-prompt-fn (registry/provider-by-id :opencode-go)))]
         (expect (some #(= "  OpenCode Go requires a static API key." %) lines))
         (expect (some #(= "         export OPENCODE_API_KEY=<your-opencode-go-api-key>" %) lines))
         (expect (some #(= "  Endpoint: https://opencode.ai/zen/go/v1" %) lines)))))
@@ -181,7 +183,7 @@
                            :monthly
                            {:status "ok" :percent 0 :resetsAt "2026-09-01T00:00:00.000Z"}}})}
         (fn []
-          (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
+          (let [report ((:provider/limits-fn (registry/provider-by-id :opencode-go)))]
             (expect (= :opencode-go (:provider-id report)))
             (expect (= :ok (:status report)))
             (expect (= [:opencode-go-5h :opencode-go-7d :opencode-go-30d]
@@ -195,7 +197,7 @@
                          (throw (ex-info "OpenCode Go usage request failed: HTTP 401"
                                          {:type :provider/opencode-go-usage-error :status 401})))}
         (fn []
-          (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
+          (let [report ((:provider/limits-fn (registry/provider-by-id :opencode-go)))]
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits])))
             (expect (= :provider/opencode-go-usage-error (get-in report [:error :type])))))))
@@ -207,7 +209,7 @@
                          (throw (ex-info "OpenCode Go usage request failed: HTTP 403"
                                          {:type :provider/opencode-go-usage-error :status 403})))}
         (fn []
-          (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
+          (let [report ((:provider/limits-fn (registry/provider-by-id :opencode-go)))]
             (expect (= :error (:status report)))
             (expect (re-find #"subscription" (get-in report [:dynamic :note])))))))
   (it "reports :unauthenticated without calling the endpoint when no key is available"
@@ -217,12 +219,12 @@
                        (fn [_api-key]
                          (throw (ex-info "usage endpoint must not be called" {})))}
         (fn []
-          (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
+          (let [report ((:provider/limits-fn (registry/provider-by-id :opencode-go)))]
             (expect (= :opencode-go (:provider-id report)))
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits]))))))))
 
-;; The host does not trust a provider's report: `vis/provider-limits` runs it
+;; The host does not trust a provider's report: `provider-limits/provider-limits` runs it
 ;; through `com.blockether.vis.contract.provider`'s report shape and swaps in an
 ;; error envelope when a row is malformed. Proving the REAL rows survive that gate
 ;; is what makes the window shapes (`:calendar` week/month, `:rolling` 5h) a
@@ -242,7 +244,7 @@
                                   :percent 100
                                   :resetsAt "2026-09-01T00:00:00.000Z"}}})}
                    (fn []
-                     (let [report (vis/provider-limits :opencode-go)]
+                     (let [report (provider-limits/provider-limits :opencode-go)]
                        (expect (= :ok (:status report)))
                        ;; An invalid row would arrive as :error + :provider/invalid-limits-report.
                        (expect (nil? (:error report)))

@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.foundation.introspection-test
   (:require [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.internal.activity.core :as activity]
             [com.blockether.vis.internal.config.toggles :as toggles]
@@ -127,10 +126,10 @@
   session-usage-ledger-test
   (it
     "returns compact per-turn, per-iteration, per-tool usage, and bounded tool errors in one read"
-    (let [s (vis/db-create-connection! :memory)]
+    (let [s (persistance/db-create-connection! :memory)]
       (try
         (let [sid (h/store-session! s {:channel :tui :title "Usage fixture" :model "gpt-4o"})
-              turn (vis/db-store-session-turn!
+              turn (persistance/db-store-session-turn!
                      s
                      {:parent-session-id sid :user-request "measure" :status :running})
               _
@@ -162,7 +161,7 @@
                                      :cost-usd 0.0021
                                      :llm-routing {:selected {:provider :openai :model "gpt-5"}
                                                    :actual {:provider :openai :model "gpt-5"}}})
-              _ (vis/db-update-session-turn! s turn {:status :done})
+              _ (persistance/db-update-session-turn! s turn {:status :done})
               _ (persistance/db-create-extension-aggregate!
                   s
                   {:extension-id "vis"
@@ -268,7 +267,7 @@
           (expect (= [] (get missing-ledger "tools")))
           (expect (= [] (get missing-ledger "tool_errors")))
           (expect (false? (get missing-ledger "tool_errors_truncated"))))
-        (finally (vis/db-dispose-connection! s))))))
+        (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe session-usage-tool-error-cap-test
              (it "bounds error samples while reporting their truncation"
@@ -312,7 +311,7 @@
   ;; Regression, td-ba1627: awaiting `read_session()` inside `python_execution`
   ;; never resolved, so the following shell call was never reached.
   (it "settles read_session before running the next host call"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try (let [sid (h/store-session! s {:channel :tui :title "Await fixture"})
                    env {:session-id sid :db-info s}
                    bindings (extension/builtin-sandbox-bindings (constantly env))
@@ -336,7 +335,7 @@
                                (mapv :phase @events)))
                     (finally (resources/stop-all! (str sid))
                              (env-python/dispose-python-context! python-context))))
-             (finally (vis/db-dispose-connection! s))))))
+             (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   read-session-activity-boundary-test
@@ -344,7 +343,7 @@
   ;; complete evidence without expanding or duplicating it in the overview.
   (it
     "projects a stored multi-turn Python read into compact Activity sections"
-    (let [s (vis/db-create-connection! :memory)]
+    (let [s (persistance/db-create-connection! :memory)]
       (try
         (let [sid (h/store-session! s {:channel :tui :title "Read session integration"})
               request (str "Review requirements.\n"
@@ -355,7 +354,7 @@
                            "Complete failure marker.")
               code "raise ValueError('fixture')"
               turns (mapv (fn [prompt]
-                            (vis/db-store-session-turn!
+                            (persistance/db-store-session-turn!
                               s
                               {:parent-session-id sid :user-request prompt :status :running}))
                           ["Inspect the session." request "Verify the result."])
@@ -374,7 +373,7 @@
                      :tokens {"input" 1200 "cached" 700 "output" 90 "reasoning" 12}
                      :cache-created-tokens 100
                      :cost-usd 0.025})
-                  (vis/db-update-session-turn!
+                  (persistance/db-update-session-turn!
                     s
                     turn
                     {:status (if (= n 1) :error :done)
@@ -431,7 +430,7 @@
               (expect (= 1 (count (re-seq #"Complete failure marker\." (pr-str view))))))
             (finally (resources/stop-all! (str sid))
                      (env-python/dispose-python-context! python-context))))
-        (finally (vis/db-dispose-connection! s))))))
+        (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   read-session-strings-only-test
@@ -459,38 +458,38 @@
         (expect (map? (env-python/boundary-view data)))))
   (it
     "a POPULATED read_session (turns/calls/timeline/diagnosis + string-keyed llm maps) crosses the boundary with no keyword leak"
-    (let [s (vis/db-create-connection! :memory)]
-      (try (let [cid (h/store-session!
-                       s
-                       {:channel :tui :title "Boundary fixture" :provider :openai :model "gpt-4o"})
-                 turn (vis/db-store-session-turn!
-                        s
-                        {:parent-session-id cid :user-request "run a tool" :status :running})
-                 _ (h/store-iteration!
+    (let [s (persistance/db-create-connection! :memory)]
+      (try
+        (let [cid (h/store-session!
+                    s
+                    {:channel :tui :title "Boundary fixture" :provider :openai :model "gpt-4o"})
+              turn (persistance/db-store-session-turn!
                      s
-                     {:session-turn-id turn
-                      :code "(v/tool \"echo hi\")"
-                      ;; Nippy `:forms` (keyword-keyed) alongside `<-json` LLM maps
-                      ;; (string-keyed) — the mixed shape the verb must fully stringify.
-                      :forms [{:scope "t1/i1/f1"
-                               :tag :observation
-                               :src "print('echo hi')"
-                               :op :print
-                               :stdout "echo hi\n"}]
-                      :answer "done"
-                      :llm-messages [{:role "system" :content "SYS"} {:role "user" :content "hi"}]
-                      :llm-executable-blocks [{:lang "clojure" :source "(v/tool \"echo hi\")"}]
-                      :duration-ms 10})
-                 _ (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
-                 data (:result
-                        (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))]
+                     {:parent-session-id cid :user-request "run a tool" :status :running})
+              _ (h/store-iteration!
+                  s
+                  {:session-turn-id turn
+                   :code "(v/tool \"echo hi\")"
+                   ;; Nippy `:forms` (keyword-keyed) alongside `<-json` LLM maps
+                   ;; (string-keyed) — the mixed shape the verb must fully stringify.
+                   :forms [{:scope "t1/i1/f1"
+                            :tag :observation
+                            :src "print('echo hi')"
+                            :op :print
+                            :stdout "echo hi\n"}]
+                   :answer "done"
+                   :llm-messages [{:role "system" :content "SYS"} {:role "user" :content "hi"}]
+                   :llm-executable-blocks [{:lang "clojure" :source "(v/tool \"echo hi\")"}]
+                   :duration-ms 10})
+              _ (persistance/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
+              data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))]
 
-             ;; The whole model-facing surface survives the strings-only boundary
-             ;; mirror — keyword enum values like `:op :v/tool`, `:kind :code`,
-             ;; `:role :user`, `:status :done` all had to stringify at egress.
-             (expect (map? (env-python/boundary-view data)))
-             (expect (every? string? (keys data))))
-           (finally (vis/db-dispose-connection! s))))))
+          ;; The whole model-facing surface survives the strings-only boundary
+          ;; mirror — keyword enum values like `:op :v/tool`, `:kind :code`,
+          ;; `:role :user`, `:status :done` all had to stringify at egress.
+          (expect (map? (env-python/boundary-view data)))
+          (expect (every? string? (keys data))))
+        (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe list-sessions-envelope-test
              ;; Regression (session 9c829d10): the index verb was the ONE introspection
@@ -523,10 +522,10 @@
   "Session introspection is NOT core policy: symbols AND prompt hang off the
    `introspection` toggle, which is OFF by default."
   (it "registers an `introspection` toggle that defaults OFF"
-      (let [spec (first (filter #(= "introspection" (:id %)) (vis/registered-toggles)))]
+      (let [spec (first (filter #(= "introspection" (:id %)) (toggles/registered-toggles)))]
         (expect (some? spec))
         (expect (false? (boolean (:default spec))))
-        (expect (false? (vis/toggle-enabled? "introspection")))))
+        (expect (false? (toggles/enabled? "introspection")))))
   (it "keeps the session symbols in foundation-core behind per-symbol activation"
       (let [core-symbols (set (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols]))]
         (expect (every? core-symbols introspection/all-symbols))
@@ -606,39 +605,39 @@
   ;; answered with the CALLER's own live turn — its user request, its
   ;; attempts and its cost, filed under the other session's id.
   (it "reports the INSPECTED session's latest turn, not the caller's own"
-      (let [s (vis/db-create-connection! :memory)]
-        (try (let [mine (h/store-session! s {:channel :tui :title "Caller"})
-                   other (h/store-session! s {:channel :tui :title "Inspected"})
-                   _ (vis/db-store-session-turn! s
-                                                 {:parent-session-id mine
-                                                  :user-request "my own live request"
-                                                  :status :running})
-                   other-turn (vis/db-store-session-turn! s
-                                                          {:parent-session-id other
-                                                           :user-request "their finished request"
-                                                           :status :done})
-                   _ (h/store-iteration! s
-                                         {:session-turn-id other-turn
-                                          :code "(+ 1 1)"
-                                          :forms [{:src "print(2)" :stdout "2\n"}]
-                                          :duration-ms 1})
-                   data (:result
-                          (@#'introspection/foundation-inspect {:session-id mine :db-info s} other))
-                   current (get data "current_turn")]
+      (let [s (persistance/db-create-connection! :memory)]
+        (try
+          (let [mine (h/store-session! s {:channel :tui :title "Caller"})
+                other (h/store-session! s {:channel :tui :title "Inspected"})
+                _ (persistance/db-store-session-turn!
+                    s
+                    {:parent-session-id mine :user-request "my own live request" :status :running})
+                other-turn
+                (persistance/db-store-session-turn!
+                  s
+                  {:parent-session-id other :user-request "their finished request" :status :done})
+                _ (h/store-iteration! s
+                                      {:session-turn-id other-turn
+                                       :code "(+ 1 1)"
+                                       :forms [{:src "print(2)" :stdout "2\n"}]
+                                       :duration-ms 1})
+                data (:result
+                       (@#'introspection/foundation-inspect {:session-id mine :db-info s} other))
+                current (get data "current_turn")]
 
-               (expect (map? current))
-               (expect (= "their finished request" (get current "user_request")))
-               (expect (= (str other-turn) (str (get current "id"))))
-               ;; the live iteration pointer is env-local runtime state:
-               ;; it describes the caller, so it must not ride along.
-               (expect (not (contains? current "iteration"))))
-             (finally (vis/db-dispose-connection! s)))))
+            (expect (map? current))
+            (expect (= "their finished request" (get current "user_request")))
+            (expect (= (str other-turn) (str (get current "id"))))
+            ;; the live iteration pointer is env-local runtime state:
+            ;; it describes the caller, so it must not ride along.
+            (expect (not (contains? current "iteration"))))
+          (finally (persistance/db-dispose-connection! s)))))
   (it
     "still carries the live iteration pointer when inspecting the CURRENT session"
-    (let [s (vis/db-create-connection! :memory)]
+    (let [s (persistance/db-create-connection! :memory)]
       (try
         (let [cid (h/store-session! s {:channel :tui :title "Caller"})
-              turn (vis/db-store-session-turn!
+              turn (persistance/db-store-session-turn!
                      s
                      {:parent-session-id cid :user-request "my own live request" :status :running})
               _ (h/store-iteration! s
@@ -651,7 +650,7 @@
 
           (expect (= "my own live request" (get current "user_request")))
           (expect (= 3 (get-in current ["iteration" "current"]))))
-        (finally (vis/db-dispose-connection! s))))))
+        (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   read-session-live-turn-ledger-test
@@ -659,9 +658,9 @@
   ;; `session.turns`, and a foreign live turn reported the turn row's stale zero
   ;; instead of the iteration rows already persisted for it.
   (it "returns the live turn and its persisted iterations consistently"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try (let [cid (h/store-session! s {:channel :tui :title "Live fixture"})
-                   turn (vis/db-store-session-turn!
+                   turn (persistance/db-store-session-turn!
                           s
                           {:parent-session-id cid :user-request "still working" :status :running})
                    _ (doseq [position (range 1 3)]
@@ -683,7 +682,7 @@
                (expect (= (str turn) (str (get summary-turn "id"))))
                (expect (= 2 (get summary-turn "iteration_count")))
                (expect (= 2 (get transcript-turn "iteration_count"))))
-             (finally (vis/db-dispose-connection! s))))))
+             (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   iteration-form-error-ledger-test
@@ -693,12 +692,12 @@
   ;; iteration's `:forms`. So a session full of blown-up python blocks still
   ;; reported `failure_count 0` and `"error": null` on every attempt.
   (it "surfaces an error carried on an iteration form"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try (let [cid (h/store-session! s {:channel :tui :title "Failure fixture"})
-                   turn (vis/db-store-session-turn! s
-                                                    {:parent-session-id cid
-                                                     :user-request "read the palette"
-                                                     :status :running})
+                   turn (persistance/db-store-session-turn! s
+                                                            {:parent-session-id cid
+                                                             :user-request "read the palette"
+                                                             :status :running})
                    code "mm = r[\"matches\"][\"palettes.ts\"]"
                    _ (h/store-iteration! s
                                          {:session-turn-id turn
@@ -721,16 +720,16 @@
                ;; [a for a in attempts if a["error"]] derivation works.
                (expect (some? (get attempt "error")))
                (expect (= code (get attempt "code"))))
-             (finally (vis/db-dispose-connection! s))))))
+             (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   retired-python-diagnostics-test
   ;; Issue #180: a local runtime failure must retain the attempted Council code,
   ;; appear in the failure ledger and never advise switching model providers.
   (it "keeps rejected Council code and its runtime error through persistence and read_session"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try (let [cid (h/store-session! s {:channel :tui :title "Retired Python fixture"})
-                   turn (vis/db-store-session-turn!
+                   turn (persistance/db-store-session-turn!
                           s
                           {:parent-session-id cid :user-request "continue" :status :running})
                    code "print(await council.publish('after timeout', title='Timeout regression'))"
@@ -753,7 +752,7 @@
                (expect (some? (get attempt "error")))
                (expect (str/includes? (get failure "advice") "new turn"))
                (expect (not (str/includes? (get failure "advice") "switch model"))))
-             (finally (vis/db-dispose-connection! s)))))
+             (finally (persistance/db-dispose-connection! s)))))
   (it
     "classifies a pre-block iteration error as runtime, not provider"
     (doseq
@@ -873,7 +872,7 @@
             (expect (str/includes? text required))))))
   (it
     "answers `search` in the SERVER's own order, tagged with where it hit"
-    (let [s (vis/db-create-connection! :memory)]
+    (let [s (persistance/db-create-connection! :memory)]
       (try (let [titled (h/store-session! s {:channel :tui :title "the needle title"})
                  ;; `created_at` is epoch MILLISECONDS and the fixtures land in
                  ;; one tick otherwise: two rows of the same millisecond tie, and
@@ -881,7 +880,7 @@
                  ;; is the server's, not the clock's.
                  _ (Thread/sleep 20)
                  spoken (h/store-session! s {:channel :tui :title "something else"})
-                 _ (vis/db-store-session-turn!
+                 _ (persistance/db-store-session-turn!
                      s
                      {:parent-session-id spoken :user-request "find the needle" :status :done})
                  _ (h/store-session! s {:channel :tui :title "unrelated"})
@@ -904,9 +903,9 @@
              (expect (= "the needle title" (:title titled-row)))
              (expect (= 1 (:turn-count spoken-row)))
              (expect (not (contains? titled-row :transcript))))
-           (finally (vis/db-dispose-connection! s)))))
+           (finally (persistance/db-dispose-connection! s)))))
   (it "a blank or absent search is the plain newest-first index"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try (let [_ (h/store-session! s {:channel :tui :title "one"})
                    _ (h/store-session! s {:channel :tui :title "two"})
                    index (@#'introspection/foundation-sessions-data {:db-info s})]
@@ -916,14 +915,14 @@
                (expect (= index (@#'introspection/foundation-sessions-data {:db-info s} "   ")))
                ;; No search means no ranking keys to paint.
                (expect (every? #(not (contains? % :rank)) index)))
-             (finally (vis/db-dispose-connection! s))))))
+             (finally (persistance/db-dispose-connection! s))))))
 
 ;; The star lives in the gateway's own soul row, and every client of a machine reads
 ;; that one copy. This index dropped it, so an agent reading the fleet could not tell
 ;; a session the human pinned from any other row, while the app painted it on top.
 (defdescribe list-sessions-favorite-test
              (it "carries the human's star into the index row"
-                 (let [s (vis/db-create-connection! :memory)]
+                 (let [s (persistance/db-create-connection! :memory)]
                    (try (let [starred (h/store-session! s {:channel :tui :title "starred"})
                               _ (h/store-session! s {:channel :tui :title "plain"})
                               rank (persistance/db-set-session-favorite! s starred true)
@@ -936,20 +935,20 @@
                           (expect (= rank (:favorite-rank (get by-title "starred"))))
                           ;; An unstarred row says nothing, instead of claiming a rank it lacks.
                           (expect (not (contains? (get by-title "plain") :favorite-rank))))
-                        (finally (vis/db-dispose-connection! s))))))
+                        (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   get-session-descriptor-test
   (it "answers ONE row - identity, counts and the last turn - with no transcript"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try
           (let [cid (h/store-session!
                       s
                       {:channel :tui :title "Descriptor fixture" :provider :openai :model "gpt-4o"})
-                _ (vis/db-store-session-turn!
+                _ (persistance/db-store-session-turn!
                     s
                     {:parent-session-id cid :user-request "first ask" :status :done})
-                _ (vis/db-store-session-turn!
+                _ (persistance/db-store-session-turn!
                     s
                     {:parent-session-id cid :user-request "second ask" :status :running})
                 row
@@ -964,9 +963,9 @@
             ;; The whole point of the middle read: no transcript, no per-turn roll-up.
             (expect (not (contains? row :transcript)))
             (expect (not (contains? row :turns))))
-          (finally (vis/db-dispose-connection! s)))))
+          (finally (persistance/db-dispose-connection! s)))))
   (it "defaults to the current session and answers nil for an unknown target"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try (let [cid (h/store-session! s {:channel :tui :title "Default fixture"})
                    env {:db-info s :session-id cid}]
 
@@ -978,7 +977,7 @@
                (expect (nil? (@#'introspection/foundation-session-descriptor
                               env
                               "00000000-0000-0000-0000-000000000000"))))
-             (finally (vis/db-dispose-connection! s))))))
+             (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe session-verb-keyword-argument-test
              ;; A Python KEYWORD call crosses as ONE trailing dict whose keys are verbatim
@@ -1007,14 +1006,14 @@
                    (expect (= "abc" (target-arg {"target" "vis_session_id#abc"})))
                    (expect (= "abc" (target-arg {"session_id" "vis_session_id#abc"}))))
                (it "binds a keyword search end-to-end through the enveloped verb"
-                   (let [s (vis/db-create-connection! :memory)]
+                   (let [s (persistance/db-create-connection! :memory)]
                      (try (let [cid (h/store-session! s {:channel :tui :title "kwarg needle"})
                                 rows (:result (@#'introspection/foundation-sessions
                                                {:db-info s}
                                                {"search" "needle"}))]
 
                             (expect (= [(str cid)] (mapv #(str (get % "id")) rows))))
-                          (finally (vis/db-dispose-connection! s)))))))
+                          (finally (persistance/db-dispose-connection! s)))))))
 
 ;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: `read_session` handed the
 ;; model presentation metadata beside every block's canonical output, and each host
@@ -1025,13 +1024,15 @@
    crosses it, while the human transcript retains the metadata needed to paint."
   (it
     "drops block card IR and the Activity receipt, keeping the semantic live record"
-    (let [s (vis/db-create-connection! :memory)]
+    (let [s (persistance/db-create-connection! :memory)]
       (try
         (let [blob (byte-array (mapv unchecked-byte [1 2 3 4]))
               b64 (.encodeToString (java.util.Base64/getEncoder) blob)
               live-media "application/vnd.vis.live+ndjson"
               cid (h/store-session! s {:channel :tui :title "presentation boundary"})
-              tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "grep it"})
+              tid (persistance/db-store-session-turn! s
+                                                      {:parent-session-id cid
+                                                       :user-request "grep it"})
               _ (h/store-iteration! s
                                     {:session-turn-id tid
                                      :status :done
@@ -1069,7 +1070,7 @@
           (expect (= "grep" (:op (first (:blocks human-iteration)))))
           (expect (= "python-only\n" (:stdout (first (:blocks human-iteration)))))
           (expect (= #{"ci-run.live.ndjson"} (set (map :filename (:attachments human-iteration))))))
-        (finally (vis/db-dispose-connection! s))))))
+        (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   read-session-single-projection-test
@@ -1155,7 +1156,7 @@
   (it
     "locates exact saved stdout by scope and call id when blocks share one iteration"
     (let [s
-          (vis/db-create-connection! :memory)
+          (persistance/db-create-connection! :memory)
 
           stdout
           (str (apply str (repeat 9000 "line 🧪\n")) "critical tail")]
@@ -1167,7 +1168,7 @@
                 {:channel :tui :title "Output recovery" :provider :openai :model "gpt-4o"})
 
               turn
-              (vis/db-store-session-turn!
+              (persistance/db-store-session-turn!
                 s
                 {:parent-session-id sid :user-request "inspect output" :status :running})
 
@@ -1211,7 +1212,7 @@
           (expect (= stdout full))
           (expect (= (subs stdout 1000 1100) (subs full 1000 1100)))
           (expect (= "ValueError: failed" (get-in (first matches) ["error" "message"]))))
-        (finally (vis/db-dispose-connection! s))))))
+        (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe
   hung-turn-diagnosis-test
@@ -1220,7 +1221,7 @@
   (it
     "reports watchdog hang reports and running turns without progress"
     (let [s
-          (vis/db-create-connection! :memory)
+          (persistance/db-create-connection! :memory)
 
           dir
           (.toFile (Files/createTempDirectory "vis-hung-turn-test-" (make-array FileAttribute 0)))]
@@ -1236,12 +1237,12 @@
                 (h/store-session! s {:channel :tui :title "Hung fixture"})
 
                 wedged
-                (vis/db-store-session-turn!
+                (persistance/db-store-session-turn!
                   s
                   {:parent-session-id cid :user-request "wedged turn" :status :running})
 
                 _silent
-                (vis/db-store-session-turn!
+                (persistance/db-store-session-turn!
                   s
                   {:parent-session-id cid :user-request "silent turn" :status :running})
 
@@ -1273,7 +1274,7 @@
             ;; The caller's own live turn is running, not hung.
             (expect (= ["wedged turn"]
                        (mapv #(get % "user_request") (get (diagnose cid) "hung_turns"))))))
-        (finally (vis/db-dispose-connection! s)
+        (finally (persistance/db-dispose-connection! s)
                  (doseq [^java.io.File file (reverse (file-seq dir))]
                    (.delete file)))))))
 
@@ -1282,13 +1283,13 @@
   ;; Regression, user report in this Vis session: `read_session` of a fork called the settled
   ;; copy of a running turn cancelled, and it did not say where the fork came from.
   (it "names the source of a fork and reads the current outcome of the source turn"
-      (let [s (vis/db-create-connection! :memory)]
+      (let [s (persistance/db-create-connection! :memory)]
         (try
           (let [cid (h/store-session! s {:channel :tui :title "Source"})
-                _ (vis/db-store-session-turn!
+                _ (persistance/db-store-session-turn!
                     s
                     {:parent-session-id cid :user-request "Q1" :status :done})
-                t2 (vis/db-store-session-turn!
+                t2 (persistance/db-store-session-turn!
                      s
                      {:parent-session-id cid :user-request "Q2" :status :running})
                 fork-id (h/fork-session-at-turn! s cid {:through-turn-id t2})
@@ -1308,6 +1309,6 @@
                                ["last_turn" "outcome"])))
             (expect (not (contains? (get (read-of cid) "session") "forked_from")))
             ;; The source turn ends after the fork, and the fork reads its new outcome.
-            (vis/db-update-session-turn! s t2 {:status :done :prior-outcome :complete})
+            (persistance/db-update-session-turn! s t2 {:status :done :prior-outcome :complete})
             (expect (= "complete" (get-in (read-of fork-id) ["session" "forked_from" "outcome"]))))
-          (finally (vis/db-dispose-connection! s))))))
+          (finally (persistance/db-dispose-connection! s))))))
