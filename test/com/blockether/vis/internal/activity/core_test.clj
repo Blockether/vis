@@ -405,7 +405,10 @@
         (expect (= "patch" (:presenter row)))
         (expect (= "mutation" (:signal row)))
         (expect (= "succeeded" (:state row)))
-        (expect (= [:arguments :result] (mapv (comp keyword :kind) (:evidence row))))))
+        ;; The success text lives once, in `result_summary`; a copy in `evidence`
+        ;; doubled every settled row on the wire.
+        (expect (string? (:result-summary row)))
+        (expect (= [:arguments] (mapv (comp keyword :kind) (:evidence row))))))
   (it "preserves structured patch evidence through the presentation boundary"
       (let [ctx
             (event/context)
@@ -739,7 +742,7 @@
   ;; A live shell group and its running step vanished behind an inert "more steps"
   ;; count when duplicate result evidence filled the receipt byte budget.
   (it
-    "keeps every result and custom view when only duplicate evidence exceeds the budget"
+    "keeps every result and custom view when results exceed the budget"
     (let [ctx
           (event/context)
 
@@ -750,7 +753,7 @@
                               :succeeded
                               {:text (apply str (repeat 2000 "x"))}
                               {:phrase (str "search " n)}))
-                (range 20))
+                (range 40))
 
           content
           {"headline" "Search results" "summary" "20 matches" "content" []}
@@ -766,7 +769,7 @@
           (activity/presentation state)]
 
       (expect (> (activity/byte-size state) 65536))
-      (expect (= 20 (count (:rows projection))))
+      (expect (= 40 (count (:rows projection))))
       (expect (= (mapv :result-summary (:rows state)) (mapv :result-summary (:rows projection))))
       (expect (every? #(= content (:presentation %)) (:rows projection)))
       (expect (not-any? :is-truncated (:rows projection)))

@@ -45,10 +45,6 @@
           "text": "[\"src/com/blockether/vis/internal/activity/presenter.clj\"]"
         },
         {
-          "kind": "result",
-          "text": "\"patched presenter.clj\""
-        },
-        {
           "kind": "diff",
           "text": "src/com/blockether/vis/internal/activity/presenter.clj",
           "lines": [
@@ -119,10 +115,6 @@
         {
           "kind": "arguments",
           "text": "[\"activity\"]"
-        },
-        {
-          "kind": "result",
-          "text": "\"# Activity\\n\\nOpen an operation to read its **retained result**.\\n\\n- Read opens the file.\\n- Patch shows the applied changes.\""
         }
       ],
       "resources": []
@@ -151,10 +143,6 @@
         {
           "kind": "arguments",
           "text": "[\"Activity review\"]"
-        },
-        {
-          "kind": "result",
-          "text": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}"
         }
       ],
       "resources": []
@@ -183,10 +171,6 @@
         {
           "kind": "arguments",
           "text": "[\"Activity review\"]"
-        },
-        {
-          "kind": "result",
-          "text": "{:title \"Activity review\", :entry_id 42, :kind \"informational\", :thread_id 42, :ping [\"reviewer\"], :content \"Read links to the file; Patch shows its **changes** after one disclosure.\"}"
         }
       ],
       "resources": []

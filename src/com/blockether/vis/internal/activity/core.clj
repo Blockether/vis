@@ -78,17 +78,19 @@
         refs
         (vec (take event/max-resources (distinct (concat (:resources row) (:resources event)))))
 
-        summary-evidence
-        (when-let [text (not-empty (or (:error-summary event) (:result-summary event)))]
-          {:kind (if (:error-summary event) :error :result) :text text})]
+        ;; `:result-summary` already carries a success text; only a failure gets
+        ;; evidence, which both clients render as the error frame.
+        error-evidence
+        (when-let [text (not-empty (:error-summary event))]
+          {:kind :error :text text})]
 
     (cond-> (assoc row
               :state state
               :duration-ms (:duration-ms event)
               :resources refs
               :evidence (cond-> (vec (:evidence row))
-                          summary-evidence
-                          (conj summary-evidence)))
+                          error-evidence
+                          (conj error-evidence)))
       (seq (:diff-evidence event))
       (update :evidence into (:diff-evidence event))
 
