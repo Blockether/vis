@@ -992,6 +992,9 @@ export const Bands: Story = {
 /** The machine whose first read of this run has not landed: the title explains the pending check. */
 const STORY_CHECKING = STORY_MACHINES[1].name;
 
+/** The story clock: each machine's last activity is `ageMinutes` before it. */
+const STORY_NOW = Date.now();
+
 function MachineSwitcherDemo() {
   const [on, setOn] = useState<string>(STORY_MACHINES[0].name);
   return (
@@ -1002,7 +1005,8 @@ function MachineSwitcherDemo() {
           <MachineTab
             key={machine.name}
             isOn={on === machine.name}
-            hasUnread={machine.unread > 0}
+            unread={machine.unread}
+            lastActivityAt={machine.isDown ? null : STORY_NOW - machine.ageMinutes * 60_000}
             isDown={machine.isDown}
             label={machine.isDown ? `Reconnect to ${machine.name}` : undefined}
             title={
@@ -1059,12 +1063,12 @@ export const Machines: Story = {
     await expect(buttons[2]).toBeDisabled();
 
     const chosen = canvas.getByRole('button', { name: 'tower' });
-    const unread = canvas.getByRole('button', { name: /^macbook-pro-16-work\s*unread$/ });
+    const unread = canvas.getByRole('button', { name: /^macbook-pro-16-work\s*4 unread$/ });
     const down = canvas.getByRole('button', { name: 'Reconnect to mini' });
     await expect(chosen).toHaveAttribute('aria-pressed', 'true');
     await expect(unread).toHaveAttribute('aria-pressed', 'false');
-    await expect(unread.querySelectorAll('span')).toHaveLength(1);
-    await expect(unread.querySelector('.sr-only')).toHaveTextContent('unread');
+    await expect(unread.querySelector('.sr-only')).toHaveTextContent('4 unread');
+    await expect(unread).toHaveTextContent('· 2 min');
     await expect(down).not.toHaveAttribute('aria-pressed');
     await expect(down.querySelector('span')).toBeNull();
 

@@ -50,3 +50,28 @@ it('keeps retry actions without showing routes', async () => {
   expect(screen.queryByRole('group', { name: /Addresses on/ })).toBeNull();
   expect(screen.getByRole('button', { name: 'New project on tower' })).toBeVisible();
 });
+
+// Option C: each machine tab counts its unread conversations and says when it last moved.
+it('counts unread conversations on a machine tab beside the time of its newest activity', async () => {
+  const fresh = new Date(Date.now() - 5 * 60_000).toISOString();
+  const view = renderSessionsScreen({
+    machines: [
+      { label: 'alpha', sessions: [listSession()] },
+      {
+        label: 'beta',
+        sessions: [
+          listSession({ id: 'b1', title: 'First', is_unread: true, modified_at: fresh }),
+          listSession({ id: 'b2', title: 'Second', is_unread: true, modified_at: fresh }),
+        ],
+      },
+    ],
+  });
+  restore = view.restore;
+  await screen.findByText('A session');
+
+  const strip = screen.getByRole('group', { name: 'Machines' });
+  const beta = await within(strip).findByRole('button', { name: /^beta\s*2 unread$/ });
+  expect(beta).toHaveClass('bg-machine-unread');
+  expect(beta).toHaveTextContent('· 5 min');
+  expect(within(strip).getByRole('button', { name: 'alpha' })).toHaveTextContent(/· \d+ d/);
+});

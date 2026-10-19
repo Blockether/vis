@@ -62,12 +62,12 @@ import type { ProviderAuth } from '../components/ProviderAuth';
 /**
  * The fleet every story shares. Three machines, because two never show that the
  * switcher scrolls; one is down, one has unread activity, and one name is long
- * enough to truncate.
+ * enough to truncate. `ageMinutes` is how long ago each one last moved.
  */
 export const STORY_MACHINES = [
-  { name: 'tower', live: 2, unread: 0, isDown: false },
-  { name: 'macbook-pro-16-work', live: 0, unread: 4, isDown: false },
-  { name: 'mini', live: 0, unread: 0, isDown: true },
+  { name: 'tower', live: 2, unread: 0, ageMinutes: 0, isDown: false },
+  { name: 'macbook-pro-16-work', live: 0, unread: 4, ageMinutes: 2, isDown: false },
+  { name: 'mini', live: 0, unread: 0, ageMinutes: 60, isDown: true },
 ] as const;
 
 /** Interleaved calls from the shared grouping contract, including a failed and a running shell call. */

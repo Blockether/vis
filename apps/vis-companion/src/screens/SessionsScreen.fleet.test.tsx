@@ -59,7 +59,7 @@ describe('the machine scope always has one active machine', () => {
   });
 
   // Regression, user report (the leading machine square was crossed out): the
-  // switcher names machines, and the whole tile carries news rather than a dot.
+  // switcher names machines, the whole tile carries news, and its chip counts it.
   it('renders name-only tiles and carries unread through scope changes', async () => {
     const machines = fleet();
     machines[1] = {
@@ -85,8 +85,8 @@ describe('the machine scope always has one active machine', () => {
     const beta = strip.getByRole('button', { name: /^beta.*unread/ });
     expect(alpha).toHaveClass('bg-accent-surface');
     expect(beta).toHaveClass('bg-machine-unread');
-    expect(alpha.querySelector('[aria-hidden="true"]')).toBeNull();
-    expect(beta.querySelector('[aria-hidden="true"]')).toBeNull();
+    expect(alpha.querySelector('.bg-white')).toBeNull();
+    expect(beta.querySelector('.bg-white')).toHaveTextContent(/^1$/);
     expect(beta.querySelector('.bg-accent-ink')).toBeNull();
     expect(section('alpha').querySelector("[class*='border-machine-']")).toBeNull();
 
@@ -112,7 +112,7 @@ describe('the machine scope always has one active machine', () => {
 
     const labels = within(screen.getByLabelText('Machines'))
       .getAllByRole('button')
-      .map((button) => button.getAttribute('aria-label') ?? button.textContent);
+      .map((button) => button.getAttribute('aria-label') ?? button.firstChild?.textContent);
     expect(labels).toEqual([
       'Reconnect to sleeping-one',
       'alpha',

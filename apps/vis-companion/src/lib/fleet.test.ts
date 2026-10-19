@@ -28,6 +28,8 @@ import {
   servedUnread,
   stoppedReadSinceCounted,
   timeLabel,
+  machineLastActivity,
+  shortAge,
   type FleetMachine,
 } from './fleet';
 import type { GatewayConn, GatewayOverview, Session } from './types';
@@ -482,6 +484,27 @@ describe('timeLabel', () => {
       Object.assign(Intl, { RelativeTimeFormat, DateTimeFormat });
     }
     expect(built).toBe(0);
+  });
+});
+
+describe('machine tab age', () => {
+  const now = Date.parse('2024-05-02T12:00:00Z');
+
+  it('reads the newest of the gateway projects and the held rows', () => {
+    const machine = {
+      sessions: [{ id: 'a', modified_at: '2024-05-02T11:50:00Z' }],
+      overview: { projects: [{ last_activity_ms: now - 2 * 60_000 }, { last_activity_ms: 0 }] },
+    } as unknown as FleetMachine;
+    expect(machineLastActivity(machine)).toBe(now - 2 * 60_000);
+    expect(machineLastActivity({ sessions: null, overview: null } as unknown as FleetMachine)).toBeNull();
+  });
+
+  it('says it in the fewest characters a tab can hold', () => {
+    expect(shortAge(now - 20_000, now)).toBe('now');
+    expect(shortAge(now + 5_000, now)).toBe('now');
+    expect(shortAge(now - 2 * 60_000, now)).toBe('2 min');
+    expect(shortAge(now - 61 * 60_000, now)).toBe('1 h');
+    expect(shortAge(now - 3 * 86_400_000, now)).toBe('3 d');
   });
 });
 

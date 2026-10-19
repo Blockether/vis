@@ -26,7 +26,7 @@ describe('the primary machine owns the first sessions scope', () => {
       expect(
         strip
           .getAllByRole('button')
-          .map((button) => button.getAttribute('aria-label') ?? button.textContent),
+          .map((button) => button.getAttribute('aria-label') ?? button.firstChild?.textContent),
       ).toEqual(['beta', 'alpha']),
     );
 
@@ -42,7 +42,7 @@ describe('the primary machine owns the first sessions scope', () => {
     restore = view.restore;
     const strip = within(await screen.findByLabelText('Machines'));
     await waitFor(() =>
-      expect(strip.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      expect(strip.getAllByRole('button').map((button) => button.firstChild?.textContent)).toEqual([
         'alpha',
         'gamma',
         'beta',

@@ -448,7 +448,7 @@ describe('the machine strip', () => {
     const strip = within(screen.getByLabelText('Machines'));
     const tabs = strip.getAllByRole('button');
     // "Every machine" and "this machine" would be the same list under two names.
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['alpha']);
+    expect(tabs.map((tab) => tab.firstChild?.textContent)).toEqual(['alpha']);
     expect(tabs[0]!.getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -461,7 +461,7 @@ describe('the machine strip', () => {
 
     const strip = within(screen.getByLabelText('Machines'));
     const tabs = strip.getAllByRole('button');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['alpha', 'beta']);
+    expect(tabs.map((tab) => tab.firstChild?.textContent)).toEqual(['alpha', 'beta']);
     expect(tabs[0]!.getAttribute('aria-pressed')).toBe('true');
     expect(screen.queryByText('Second')).toBeNull();
 

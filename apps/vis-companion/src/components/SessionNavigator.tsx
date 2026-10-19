@@ -4,6 +4,7 @@
  */
 import {
   forwardRef,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -14,6 +15,7 @@ import {
   type Ref,
 } from 'react';
 
+import { shortAge } from '../lib/fleet';
 import type { PullPhase } from '../lib/pull-to-search';
 import { ChevronIcon, LoadingIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
 import { IconButton, overlayLayer } from './ui';
@@ -661,13 +663,19 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
   return <div className="flex min-w-0 shrink items-center gap-1 overflow-x-auto">{children}</div>;
 }
 
+/** How often a machine tab moves its age on, so "now" turns into "1 min" by itself. */
+const MACHINE_AGE_TICK_MS = 30_000;
+
 /**
- * Machine state tile. Unread activity fills the tile rather than adding a glyph. A
- * machine known down becomes a retry action with no pressed state or unread tint.
+ * Machine state tile. Unread activity fills the tile and counts the conversations with
+ * news in a chip beside the name. The time of the newest activity follows on every tile
+ * that answers. A machine known down becomes a retry action with no pressed state, count
+ * or unread tint.
  */
 export function MachineTab({
   isOn,
-  hasUnread,
+  unread = 0,
+  lastActivityAt,
   isDown,
   note,
   isNoteError,
@@ -677,7 +685,10 @@ export function MachineTab({
   children,
 }: {
   isOn: boolean;
-  hasUnread?: boolean;
+  /** Conversations on this machine with an answer nobody has read. */
+  unread?: number;
+  /** When this machine last moved (epoch ms), shown as "· 2 min"; absent shows no time. */
+  lastActivityAt?: number | null;
   /** Not answering: retry instead of selecting; an error-toned name replaces the removed mark. */
   isDown?: boolean;
   /**
@@ -694,12 +705,25 @@ export function MachineTab({
   onClick: () => void;
   children: ReactNode;
 }) {
+  const hasUnread = !isDown && unread > 0;
+  const isAgeShown = !isDown && !note && lastActivityAt != null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isAgeShown) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), MACHINE_AGE_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [isAgeShown, lastActivityAt]);
+  const age = isAgeShown && lastActivityAt != null ? shortAge(lastActivityAt, now) : null;
   return (
     <button
       type="button"
       aria-pressed={isDown ? undefined : isOn}
       aria-label={label}
       title={title}
+      // The age is drawn for the eye only; its sentence is the description, so the
+      // tab keeps its name while the clock moves.
+      aria-description={age ? (age === 'now' ? 'Active now' : `Last activity ${age} ago`) : undefined}
       // The tile answers its own press, so it is the live region: `Reconnecting…`
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
@@ -715,8 +739,21 @@ export function MachineTab({
       }`}
     >
       {children}
+      {hasUnread && (
+        <span
+          aria-hidden="true"
+          className="inline-flex h-4 min-w-4 items-center justify-center bg-white px-1 text-meta font-bold text-ink"
+        >
+          {unread}
+        </span>
+      )}
+      {hasUnread && <span className="sr-only">{unread} unread</span>}
+      {age && (
+        <span aria-hidden="true" className="font-normal opacity-75">
+          · {age}
+        </span>
+      )}
       {note && <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>}
-      {hasUnread && !isDown && <span className="sr-only">unread</span>}
     </button>
   );
 }

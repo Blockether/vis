@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -78,23 +78,23 @@ describe('machine selection', () => {
   // should become a full-tile notification tint): one chip, two independent states.
   it('tints the entire unread tile without a trailing mark and keeps selection visible', () => {
     const { rerender } = render(
-      <MachineTab isOn={false} hasUnread onClick={() => {}}>
+      <MachineTab isOn={false} unread={3} onClick={() => {}}>
         tower
       </MachineTab>,
     );
-    const unread = screen.getByRole('button', { name: /tower\s*unread/ });
+    const unread = screen.getByRole('button', { name: /tower\s*3 unread/ });
     expect(unread).toHaveAttribute('aria-pressed', 'false');
     expect(unread).toHaveClass('bg-machine-unread', 'text-white', 'font-bold');
     expect(unread).not.toHaveClass('bg-accent-surface', 'ring-accent-ink');
-    expect(screen.getByText('unread')).toHaveClass('sr-only');
+    expect(screen.getByText('3 unread')).toHaveClass('sr-only');
     expect(unread.querySelector('.bg-accent-ink')).toBeNull();
 
     rerender(
-      <MachineTab isOn hasUnread onClick={() => {}}>
+      <MachineTab isOn unread={3} onClick={() => {}}>
         tower
       </MachineTab>,
     );
-    const selectedUnread = screen.getByRole('button', { name: /tower\s*unread/ });
+    const selectedUnread = screen.getByRole('button', { name: /tower\s*3 unread/ });
     expect(selectedUnread).toHaveAttribute('aria-pressed', 'true');
     expect(selectedUnread).toHaveClass('bg-machine-unread', 'ring-1', 'ring-inset', 'ring-white');
     expect(selectedUnread).not.toHaveClass('bg-accent-surface');
@@ -108,10 +108,10 @@ describe('machine selection', () => {
     const selectedRead = screen.getByRole('button', { name: 'tower' });
     expect(selectedRead).toHaveClass('bg-accent-surface', 'text-accent-ink');
     expect(selectedRead).not.toHaveClass('ring-1');
-    expect(screen.queryByText('unread')).toBeNull();
+    expect(screen.queryByText(/unread/)).toBeNull();
 
     rerender(
-      <MachineTab isOn hasUnread isDown label="Reconnect to tower" onClick={() => {}}>
+      <MachineTab isOn unread={3} isDown label="Reconnect to tower" onClick={() => {}}>
         tower
       </MachineTab>,
     );
@@ -119,7 +119,52 @@ describe('machine selection', () => {
     expect(retry).not.toHaveAttribute('aria-pressed');
     expect(retry).toHaveClass('text-err-ink');
     expect(retry).not.toHaveClass('bg-machine-unread', 'bg-accent-surface', 'ring-accent-ink');
-    expect(screen.queryByText('unread')).toBeNull();
+    expect(screen.queryByText(/unread/)).toBeNull();
+  });
+
+  // The tab counts the news and says how long ago the machine last moved (option C).
+  it('counts unread conversations in a chip and shows the age of the newest activity', () => {
+    vi.useFakeTimers();
+    try {
+      const now = Date.parse('2024-05-02T12:00:00Z');
+      vi.setSystemTime(now);
+      const { rerender } = render(
+        <MachineTab isOn={false} unread={4} lastActivityAt={now - 2 * 60_000} onClick={() => {}}>
+          tower
+        </MachineTab>,
+      );
+      const tab = screen.getByRole('button', { name: /^tower\s*4 unread$/ });
+      expect(screen.getByText('4')).toHaveClass('bg-white', 'text-ink');
+      expect(screen.getByText('4')).toHaveAttribute('aria-hidden', 'true');
+      expect(screen.getByText('· 2 min')).toHaveAttribute('aria-hidden', 'true');
+      expect(tab).toHaveAttribute('aria-description', 'Last activity 2 min ago');
+      expect(tab).not.toHaveAttribute('title');
+
+      act(() => {
+        vi.advanceTimersByTime(60 * 60_000);
+      });
+      expect(screen.getByText('· 1 h')).toBeInTheDocument();
+
+      rerender(
+        <MachineTab isOn={false} lastActivityAt={Date.now()} onClick={() => {}}>
+          tower
+        </MachineTab>,
+      );
+      const idle = screen.getByRole('button', { name: 'tower' });
+      expect(idle).toHaveClass('bg-level-project');
+      expect(screen.getByText('· now')).toBeInTheDocument();
+      expect(idle).toHaveAttribute('aria-description', 'Active now');
+
+      rerender(
+        <MachineTab isOn={false} unread={4} lastActivityAt={Date.now()} isDown onClick={() => {}}>
+          tower
+        </MachineTab>,
+      );
+      expect(screen.queryByText(/·/)).toBeNull();
+      expect(screen.queryByText('4')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

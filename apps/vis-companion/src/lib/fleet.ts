@@ -507,6 +507,33 @@ export function timeLabel(value?: string | number, now: number = Date.now()): st
   return stampFormat(date.getFullYear() === new Date(now).getFullYear()).format(date);
 }
 
+/**
+ * When something last happened on a machine, for its tab: the newest of what its gateway
+ * counted (`last_activity_ms` of each project) and of the rows this device holds. The
+ * overview covers sessions the list window has not paged in. `null` means no stamp.
+ */
+export function machineLastActivity(machine: FleetMachine): number | null {
+  let newest = 0;
+  for (const project of machine.overview?.projects ?? []) {
+    newest = Math.max(newest, project.last_activity_ms ?? 0);
+  }
+  for (const row of machine.sessions ?? []) newest = Math.max(newest, sessionMillis(row));
+  return newest > 0 ? newest : null;
+}
+
+/**
+ * How long ago a machine last moved, short enough for its tab: "now", "2 min", "1 h",
+ * "3 d". A stamp a little ahead of this device's clock still reads "now".
+ */
+export function shortAge(millis: number, now: number = Date.now()): string {
+  const minutes = Math.floor(Math.max(0, now - millis) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h`;
+  return `${Math.floor(hours / 24)} d`;
+}
+
 // A DRAFT is a per-session clone parked at ~/.vis/drafts/<repo>/<label>; it is a
 // workspace of the session, never a project of its own. `is_draft` is the gateway
 // fact (list rows carry it); the path shape is the fallback for a gateway older

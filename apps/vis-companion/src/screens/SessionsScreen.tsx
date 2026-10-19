@@ -66,6 +66,7 @@ import {
   fleetError,
   fleetRead,
   machineCounts,
+  machineLastActivity,
   machineKey,
   machineLabel,
   machineRead,
@@ -2009,7 +2010,8 @@ export function SessionsScreen({
             <MachineTab
               key={key}
               isOn={scope === key}
-              hasUnread={!isDown && (tally?.unread ?? 0) > 0}
+              unread={tally?.unread ?? 0}
+              lastActivityAt={machineLastActivity(machine)}
               isDown={isDown}
               // WHILE CONNECTING, SAY SO — in the tile, where a finger is. The pending
               // state used to live in `title=` alone, an attribute that does not exist on

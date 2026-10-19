@@ -398,18 +398,18 @@ describe('MachineTab', () => {
     expect(screen.getByRole('button')).toHaveAttribute('aria-pressed', 'false');
   });
 
-  // Regression: news belongs to the whole tile, not a count or a dot at its edge.
-  it('names unread activity without displaying a number or an extra mark', () => {
+  // Option C: news fills the tile AND counts its conversations in one chip beside the name.
+  it('names unread activity with its count', () => {
     render(
-      <MachineTab isOn={false} hasUnread onClick={() => {}}>
+      <MachineTab isOn={false} unread={2} onClick={() => {}}>
         tower
       </MachineTab>,
     );
 
-    const tab = screen.getByRole('button', { name: /tower\s*unread/ });
-    expect(tab.textContent).not.toMatch(/\d/);
-    expect(tab.querySelector('.sr-only')).toHaveTextContent('unread');
-    expect(tab.querySelectorAll('span')).toHaveLength(1);
+    const tab = screen.getByRole('button', { name: /tower\s*2 unread/ });
+    expect(tab).toHaveClass('bg-machine-unread');
+    expect(tab.querySelector('.sr-only')).toHaveTextContent('2 unread');
+    expect(tab.querySelectorAll('span')).toHaveLength(2);
   });
 
   // Regression (reported: offline tabs stayed live and scoped the screen to a
