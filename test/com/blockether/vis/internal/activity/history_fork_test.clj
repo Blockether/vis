@@ -176,3 +176,59 @@
           (expect (= 145
                      (get-in (db/db-activity-page store fork-sid fork-aid {})
                              [:history :total]))))))))
+
+(defdescribe
+  managed-child-copies-no-iterations-test
+  ;; A subagent copied every leader iteration, its Activity and its tool files: 97% of the
+  ;; child iterations in a measured store. Its checkpoint is its first model input.
+  (it
+    "copies the turns and user files of a subagent, but no iteration or Activity"
+    (let [store
+          (h/store)
+
+          sid
+          (h/store-session! store {:channel :tui :title "Leader"})
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) (byte-array [1 2 3]))]
+
+      (tpc/with-own
+        [pc {}]
+        (let [[t1 aid1]
+              (run-stored-turn! store pc sid "Q1" 5)
+
+              _
+              (db/db-store-queued-turn-attachments!
+                store
+                t1
+                (str (random-uuid))
+                [{:media-type "image/png" :base64 b64 :filename "note.png"}])
+
+              child
+              (h/fork-session-at-turn! store
+                                       sid
+                                       {:through-turn-id t1
+                                        :agent {:parent_id (str sid)
+                                                :leader_id (str sid)
+                                                :team_id (str t1)
+                                                :task "Check"
+                                                :iteration_budget 4
+                                                :spawn_key (str t1)
+                                                :spawn_fingerprint "fixture"
+                                                :checkpoint [{:role :user :content "Context"}]}})
+
+              [ct1 :as child-turns]
+              (fork-turn-ids store child)]
+
+          (expect (= ["Q1"] (mapv :user-request (db/db-list-session-turns store child))))
+          (expect (= 1 (count child-turns)))
+          (expect (empty? (db/db-list-session-turn-iterations store ct1)))
+          (expect (= 1 (h/raw-count store :activity_history)))
+          (expect (= 0 (h/raw-count store :activity_history [:= :session_soul_id (str child)])))
+          (expect (= 5 (h/raw-count store :activity_invocation)))
+          (expect (= 2 (h/raw-count store :session_attachment [:= :filename "note.png"])))
+          (expect (= 1
+                     (h/raw-count store :session_attachment [:= :session_turn_soul_id (str ct1)])))
+          ;; The leader keeps its own steps and Activity.
+          (expect (= aid1 (form-history-id store t1)))
+          (expect (= [{:role :user :content "Context"}] (db/db-agent-checkpoint store child))))))))

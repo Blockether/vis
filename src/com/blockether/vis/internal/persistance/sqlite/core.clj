@@ -5498,7 +5498,9 @@
    Optional `:agent` metadata creates a managed child instead: it persists lineage,
    budget and a complete model-input checkpoint, hides the child from the leader
    list and copies model preferences. The caller validates delegation ownership and
-   supplies a fresh shared-root workspace.
+   supplies a fresh shared-root workspace. The checkpoint is the child's first model
+   input, so a child copies each turn and its user files, but no iteration, Activity
+   or tool file.
 
    Copies rows generically (`SELECT *` → re-insert with remapped id/FK columns),
    so it stays correct as columns evolve. Required opt: `:workspace-id`. Returns
@@ -5621,7 +5623,7 @@
                                                     :where [:= :session_turn_soul_id
                                                             old-soul-s]}]]})
                       new-ts-id (str (new-uuid))
-                      iters (when ts-row
+                      iters (when (and ts-row (not agent))
                               (query! tx-info
                                       {:select [:*]
                                        :from :session_turn_iteration
@@ -5634,7 +5636,9 @@
                       atts (query! tx-info
                                    {:select [:*]
                                     :from :session_attachment
-                                    :where [:= :session_turn_soul_id old-soul-s]})
+                                    :where (cond-> [:and [:= :session_turn_soul_id old-soul-s]]
+                                             agent
+                                             (conj [:= :session_turn_iteration_id nil]))})
                       ;; Each copy gets its new id first: a copied step record
                       ;; (`user_input`) names its stored files by id.
                       att-id-map (into {}
