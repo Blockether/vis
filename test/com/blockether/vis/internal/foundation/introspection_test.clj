@@ -30,36 +30,45 @@
                                                  (extension/deregister-extension!
                                                    "foundation-core"))))))])
 
-(defdescribe patch-diagnosis-contract-test
-             (let [classify
-                   @#'introspection/classify-expression-failure
+(defdescribe
+  patch-diagnosis-contract-test
+  (let
+    [classify
+     @#'introspection/classify-expression-failure
 
-                   advice
-                   @#'introspection/advice-for-classification
+     advice
+     @#'introspection/advice-for-classification
 
-                   stale-refusal
-                   (str "patch refused at edit 2 of 5 — nothing was written.\n"
-                        "  src/app.py: stale to 120:7f2; current 120:a11.\n"
-                        "  cat(\"src/app.py\", 117, 123)")
+     changed-refusal
+     (str
+       "patch refused at edit 2 of 5 — nothing was written.\n"
+       "  src/app.py: lines 120..122 of @3f9a1c2b changed since that read. The file is now @7a0b11c4.\n"
+       "  cat(\"src/app.py\", 117, 125)")
 
-                   overlap-refusal
-                   (str "patch refused — edits 1 and 2 overlap; nothing was written.\n"
-                        "  src/app.py: lines 10..14 and 12..18.")
+     unknown-refusal
+     (str "patch refused — nothing was written.\n"
+          "  src/app.py: version @3f9a1c2b is not known here. The file is now @7a0b11c4.\n"
+          "  cat(\"src/app.py\", 1, 8)")
 
-                   shape-refusal
-                   (str "patch refused — nothing was written.\n"
-                        "  src/app.py: edit 1/2 missing `replace`.")]
+     overlap-refusal
+     (str "patch refused — edits 1 and 2 overlap; nothing was written.\n"
+          "  src/app.py: lines 10..14 and 12..18.")
 
-               (it "classifies an anchor mismatch as a stale anchor"
-                   (expect (= :patch-stale-anchor (classify stale-refusal)))
-                   (expect (str/includes? (advice :patch-stale-anchor) "anchor")))
-               ;; https://github.com/Blockether/vis/issues/265 - every refusal shares the
-               ;; `patch refused` head, so the cause line under it picks the advice.
-               (it "separates overlapping edits and unusable edit shapes from anchor drift"
-                   (expect (= :patch-overlapping-edits (classify overlap-refusal)))
-                   (expect (= :patch-invalid-edit (classify shape-refusal)))
-                   (expect (str/includes? (advice :patch-overlapping-edits) "Merge"))
-                   (expect (str/includes? (advice :patch-invalid-edit) "line:hash")))))
+     shape-refusal
+     (str "patch refused — nothing was written.\n" "  src/app.py: edit 1/2 missing `replace`.")]
+
+    (it "classifies changed lines and an unusable version apart"
+        (expect (= :patch-lines-changed (classify changed-refusal)))
+        (expect (str/includes? (advice :patch-lines-changed) "current version"))
+        (expect (= :patch-version-invalid (classify unknown-refusal)))
+        (expect (str/includes? (advice :patch-version-invalid) "`@` value")))
+    ;; https://github.com/Blockether/vis/issues/265 - every refusal shares the
+    ;; `patch refused` head, so the cause line under it picks the advice.
+    (it "separates overlapping edits and unusable edit shapes from changed lines"
+        (expect (= :patch-overlapping-edits (classify overlap-refusal)))
+        (expect (= :patch-invalid-edit (classify shape-refusal)))
+        (expect (str/includes? (advice :patch-overlapping-edits) "Merge"))
+        (expect (str/includes? (advice :patch-invalid-edit) "line numbers")))))
 
 (defdescribe
   introspection-public-surface-test

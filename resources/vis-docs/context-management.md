@@ -83,9 +83,11 @@ callers. Python references do not update automatically.
 
 ## Addresses, not copies
 
-`grep` and `cat` label file lines with `line:hash` addresses. `patch` uses those
-addresses, with all edits for a file in one call. Stale addresses or syntax
-errors reject the batch. Use `Path.read_text()` for data you will not edit.
+`grep` and `cat` show a `path @version` header and number each line. `patch` takes
+that version and those line numbers, with all edits for a file in one call. If the
+file changed elsewhere after your read, `patch` moves your edits to the new lines.
+Changed lines or syntax errors reject the batch. Use `Path.read_text()` for data
+you will not edit.
 
 ## Reference: folds and context budget
 

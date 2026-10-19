@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.foundation.editing.core
-  "Host-side file reading, search, listing and anchored editing.
+  "Host-side file reading, search, listing and versioned line editing.
 
-   `cat` and `grep` return line/hash addresses consumed by `patch`. One patch
-   validates every edit before replacing one file.
+   `cat` and `grep` print a file version once and plain line numbers, which
+   `patch` consumes. One patch validates every edit before replacing one file.
    `list-directories` supplies the Python `ls` shim. Standard Python owns file
    creation, copying, moving and deletion.
 
@@ -17,7 +17,7 @@
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
-            [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
+            [com.blockether.vis.internal.foundation.editing.version :as version]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.config.core :as config]
@@ -46,7 +46,7 @@
 (def ^:private default-grep-limit 50)
 
 (def ^:private default-grep-context-lines
-  "Anchored lines on each side of a grep hit when `context` is omitted."
+  "Numbered lines on each side of a grep hit when `context` is omitted."
   3)
 
 (def ^:private default-cat-limit
@@ -379,7 +379,7 @@
         (throw
           (ex-info
             (if (= type :workspace/blank-path)
-              "Path is nil or blank - ls/grep/cat take a concrete path string; grep answers anchored TEXT, not a map, so take a path from its per-path header or an anchor from a `line:hash` row, never the result itself"
+              "Path is nil or blank - ls/grep/cat take a concrete path string; grep answers numbered TEXT, not a map, so take a path from its per-path header, never the result itself"
               (ex-message e))
             (assoc (ex-data e)
               :type (case type
@@ -441,6 +441,12 @@
                                 (paths/unixify (.resolve tp (.relativize cp p))))))
                           (workspace/filesystem-root-mappings))
                     (str p)))))
+
+(defn- shown-version!
+  "Remember `content` as the version of `f` that a read showed, and answer the version.
+   The canonical path keys it, so each draft clone keeps its own versions."
+  [^File f ^String content]
+  (version/remember! (str (canonical-path f)) content))
 
 (defn- workspace-dir?
   "True when `f` lies inside the primary cwd or a real draft-clone mapping.
@@ -1718,7 +1724,7 @@
             (:source it)
             (assoc "source" (name (:source it)))))]
 
-    ;; grep's canonical DATA result — `grep-tool` RENDERS this as anchored text;
+    ;; grep's canonical DATA result — `grep-tool` RENDERS this as numbered text;
     ;; every key ships on every call (empty vector / false, never absent) so
     ;; caller code can index a field without a `contains?` dance first.
     {"items" (mapv ->item items)
@@ -1890,11 +1896,11 @@
 ;; grep's TEXT projection
 ;;
 ;; `content-result` above stays the tested pure core and keeps returning the
-;; ordered data. This is its RENDERER: one anchored text block, because the
+;; ordered data. This is its RENDERER: one numbered text block, because the
 ;; model pays for what it PRINTS and `print(grep(...))` used to print a
-;; four-level dict repr whose keys were bare line numbers. Every rendered line —
-;; context lines included — carries its `<line>:<hash>` anchor, so a grep hit is
-;; not "a place to go read" but a `patch` argument.
+;; four-level dict repr whose keys were bare line numbers. Each path header
+;; carries the file version and every rendered line — context lines included —
+;; its line number, so a grep hit is not "a place to go read" but a `patch` address.
 
 (defn- count-phrase
   "`3 files` / `1 file` — the unit singularized on 1, so a count never reads as a
@@ -2014,7 +2020,8 @@
 
 (defn- render-grep-text
   "grep's whole model-facing answer as ONE string: the summary line, then per
-   path a header and its anchored rows, then fuzzy NAME matches, then the hint.
+   path a `path @version` header and its numbered rows, then fuzzy NAME matches,
+   then the hint.
 
    The counts stay PROSE on line 1 and no structured field survives — control
    flow reads the summary or counts the lines it just split. One structured
@@ -2026,12 +2033,15 @@
         counts
         (get result "file_counts")
 
+        versions
+        (get result "versions")
+
         content-paths
         (set (map str (keys matches)))
 
         blocks
         (if (get result "is_files_only")
-          ;; FILES-ONLY: one `path  N` row per matching file. No anchored lines
+          ;; FILES-ONLY: one `path  N` row per matching file. No numbered lines
           ;; exist in this mode, and the row set is the COMPLETE list for the
           ;; scope, not a page of a bigger answer.
           (mapv (fn [e]
@@ -2045,9 +2055,11 @@
                         (contiguous-runs (grep-hit-tuples (val e)))]
 
                     (str path
+                         (when-let [v (get versions path)]
+                           (str " @" v))
                          "  (" (get counts path (count runs))
                          ")\n" (str/join "\n  ⋮\n"
-                                         (map #(hashline/render-hashline-block % "  ") runs)))))
+                                         (map #(version/render-numbered-block % "  ") runs)))))
                 matches))
 
         name-rows
@@ -2449,9 +2461,21 @@
                     (get out "hint")
                     (conj (get out "hint"))))))))
 
+(defn- grep-versions
+  "`{path version}` for each file whose lines a grep page shows. The text is read
+   again here and remembered, so a later `patch` can name that version."
+  [out]
+  (when-not (get out "is_files_only")
+    (into {}
+          (keep (fn [path]
+                  (try (let [f (safe-path path)]
+                         [path (shown-version! f (slurp f))])
+                       (catch Exception _ nil))))
+          (map str (keys (get out "matches"))))))
+
 (defn- grep-tool
   "grep — literal smart-case CONTENT search plus fuzzy file-NAME matching, in ONE
-   options map, answered as ONE anchored TEXT block.
+   options map, answered as ONE numbered TEXT block.
 
      await grep({\"query\": \"grep-tool\", \"context\": 3})
      await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"context\": 3, \"limit\": 20})
@@ -2461,9 +2485,9 @@
 
    The whole call surface is `grep-data`'s; this is its projection. Line 1 always
    summarizes — hits, files, truncation and the literal next call — then each
-   path heads a block of `  <line>:<hash>│ <text>` rows, context lines anchored
-   too. A hit is therefore already a `patch` argument: split it on the gutter and
-   spend the anchor, with no `cat` in between."
+   `path @version` header heads a block of `  <line>│ <text>` rows, context lines
+   numbered too. A hit is therefore already a `patch` address: its line number and
+   the header's version, with no `cat` in between."
   [& args]
   (let [out
         (apply grep-data args)
@@ -2474,7 +2498,7 @@
     (tool-success {:op :grep
                    :path (first searched_paths)
                    :kind :dir
-                   :result (render-grep-text out)
+                   :result (render-grep-text (assoc out "versions" (grep-versions out)))
                    :metadata {:query (get out "query")
                               :paths searched_paths
                               :limit (get out "limit")
@@ -3414,21 +3438,23 @@
 ;; error hook, result spec) lives in opts because it has nothing to do with
 ;; the function's signature.
 
-;; cat / patch — the ANCHORED read/write pair
+;; cat / patch — the VERSIONED read/write pair
 ;;
 ;; An edit needs a COORDINATE. Prose, config, a comment, a docstring line and
 ;; every language have none by themselves, so the only address left is the old
 ;; text quoted back — O(region) tokens, verified by nothing, thrown away after
 ;; one use. These two verbs are that coordinate:
 ;;
-;;   `cat`   READS a region and its output IS the address — every line arrives
-;;           as `<line>:<hash>│ <text>`.
-;;   `patch` SPENDS that address: it names a span and the new text, and NEVER
-;;           restates the text being replaced.
+;;   `cat`   READS a region and its output IS the address — a `path @version`
+;;           header, then every line as `<line>│ <text>`.
+;;   `patch` SPENDS that address: it names the version, a span and the new
+;;           text, and NEVER restates the text being replaced.
 ;;
-;; The read is forgiving; the WRITE is exact. Every endpoint's line and hash must
-;; still agree, or the entire batch is refused with the current anchor. A parse
-;; break is refused too, and neither failure writes anything.
+;; A version costs one header per read, not a hash per line. The WRITE is exact:
+;; the lines are those of the named version. When the file changed elsewhere
+;; since that read, the span moves through a diff; when its own lines changed,
+;; the entire batch is refused with the current version. A parse break is
+;; refused too, and neither failure writes anything.
 
 (defn- positional-only!
   "Refuse an options MAP in a slot that takes a positional argument. `cat` and
@@ -3440,112 +3466,92 @@
   (when (map? v)
     (throw (ex-info (if (= op :cat)
                       "cat: use cat(path, start?, end?); not an options map."
-                      "patch: use patch(path, edits); see doc(\"patch\") for edit keys.")
+                      "patch: use patch(path, edits, version); see doc(\"patch\") for edit keys.")
                     {:type :ext.foundation.editing/positional-only :op op})))
   v)
 
-(defn- anchored-file-content
+(defn- readable-file-content
   "The text of an existing, readable file at `path`, resolved through
    `safe-path` so cat/patch stay inside the workspace like every other verb."
   ^String [path]
   (slurp (ensure-existing-file! (safe-path (positional-only! :cat path)))))
 
 (defn- cat-endpoint-line
-  "Resolve ONE `cat` endpoint to a 1-based line in `content`. An endpoint is
-   EITHER a line number or a `<line>:<hash>` anchor, and the two mix freely
-   across `start`/`end` — the read is the forgiving side, so a stale anchor
-   resolves through `resolve-anchor-range-read` (which falls back to the
-   anchor's line number) and only a genuinely unlocatable one refuses. A NEGATIVE
-   line counts from the END — -1 is the last line — so `cat(path, -50)` is the
-   tail 50 lines. A numeric `end` past the last line CLAMPS to it — asking for
-   the tail is not an error — while a `start` past the end still refuses."
-  ^long [^String content endpoint which ^long line-count]
-  (if (hashline/anchor-string? endpoint)
-    (let [r (hashline/resolve-anchor-range-read content endpoint endpoint)]
-      (if-let [err (:error r)]
-        (throw (ex-info
-                 (str
-                   "cat: the " which
-                   " anchor " (pr-str endpoint)
-                   " cannot be located — "
-                   (case (:reason err)
-                     :anchor-malformed
-                     "an anchor is `<line>:<hash>` exactly as cat/grep print it, e.g. \"120:7f2\"."
+  "Resolve ONE `cat` endpoint, a line number, to a 1-based line in a file of
+   `line-count` lines. A NEGATIVE line counts from the END — -1 is the last line —
+   so `cat(path, -50)` is the tail 50 lines. A numeric `end` past the last line
+   CLAMPS to it — asking for the tail is not an error — while a `start` past the
+   end still refuses."
+  ^long [endpoint which ^long line-count]
+  (let [n
+        (long (cond (integer? endpoint) (long endpoint)
+                    (number? endpoint) (long endpoint)
+                    (and (string? endpoint) (parse-long (str/trim (str endpoint))))
+                    (long (parse-long (str/trim (str endpoint))))
+                    :else (throw (ex-info (str "cat: the "
+                                               which
+                                               " endpoint must be a line number, got "
+                                               (pr-str endpoint)
+                                               ".")
+                                          {:type :ext.foundation.editing/invalid-range
+                                           :which which
+                                           :endpoint endpoint}))))
 
-                     :anchor-line-out-of-range
-                     (str "line " (:line err) " is past this file's " (:lines err) " lines.")
+        ;; A NEGATIVE endpoint counts from the END, Python-style: -1 IS the last
+        ;; line, so `cat(path, -50)` reads the tail 50 lines and
+        ;; `cat(path, -50, -30)` the window between them. It is resolved BEFORE
+        ;; the range check, so every message names a real 1-based line; a
+        ;; magnitude past the top clamps to line 1, because asking for more tail
+        ;; than the file has is a reader asking for the whole file.
+        n
+        (long (if (neg? n) (max 1 (+ line-count n 1)) n))]
 
-                     (str "reason " (name (:reason err)) ".")))
-                 {:type :ext.foundation.editing/anchor-unresolved
-                  :reason (:reason err)
-                  :which which
-                  :anchor (str endpoint)}))
-        (long (:from-line r))))
-    (let [n
-          (long (cond (integer? endpoint) (long endpoint)
-                      (number? endpoint) (long endpoint)
-                      (and (string? endpoint) (parse-long (str/trim (str endpoint))))
-                      (long (parse-long (str/trim (str endpoint))))
-                      :else (throw (ex-info (str "cat: the "
-                                                 which
-                                                 " endpoint must be a line number or a "
-                                                 "`<line>:<hash>` anchor, got "
-                                                 (pr-str endpoint)
-                                                 ".")
-                                            {:type :ext.foundation.editing/invalid-range
-                                             :which which
-                                             :endpoint endpoint}))))
-
-          ;; A NEGATIVE endpoint counts from the END, Python-style: -1 IS the last
-          ;; line, so `cat(path, -50)` reads the tail 50 lines and
-          ;; `cat(path, -50, -30)` the window between them. It is resolved BEFORE
-          ;; the range check, so every message names a real 1-based line; a
-          ;; magnitude past the top clamps to line 1, because asking for more tail
-          ;; than the file has is a reader asking for the whole file.
-          n
-          (long (if (neg? n) (max 1 (+ line-count n 1)) n))]
-
-      (when (or (< n 1) (and (> n line-count) (not= which "end")))
-        (throw
-          (ex-info
-            (str "cat: " which " line " n " is outside this file's 1.." line-count " lines.")
-            {:type :ext.foundation.editing/invalid-range :which which :line n :lines line-count})))
-      ;; An END past EOF CLAMPS instead of refusing: `cat(path, 2172, 2212)` on a
-      ;; 2210-line file is a reader asking for the tail, and a refusal throws away
-      ;; everything the block printed before the call. A START past EOF still
-      ;; refuses — nothing is there to show and the address is genuinely wrong.
-      (if (> n line-count) line-count n))))
+    (when (or (< n 1) (and (> n line-count) (not= which "end")))
+      (throw
+        (ex-info
+          (str "cat: " which " line " n " is outside this file's 1.." line-count " lines.")
+          {:type :ext.foundation.editing/invalid-range :which which :line n :lines line-count})))
+    ;; An END past EOF CLAMPS instead of refusing: `cat(path, 2172, 2212)` on a
+    ;; 2210-line file is a reader asking for the tail, and a refusal throws away
+    ;; everything the block printed before the call. A START past EOF still
+    ;; refuses — nothing is there to show and the address is genuinely wrong.
+    (if (> n line-count) line-count n)))
 
 (defn- cat-one
   "`cat`'s whole implementation: ONE file, a closed line window, ONE string.
-   Complete source lines, blanks included, carry `<line>:<hash>` anchors. The
-   entire UTF-8 result is capped at `max-cat-window-bytes` and source rows at
-   `default-cat-limit`. Continuations retain the requested end. If the first
-   requested line cannot fit, return a diagnostic without a partial anchor or
-   a non-advancing continuation; Python file IO can read bounded character slices."
+   Line 1 is the `path @version` header. Complete source lines, blanks included,
+   follow as `<line>│ <text>` rows. The entire UTF-8 result is capped at
+   `max-cat-window-bytes` and source rows at `default-cat-limit`. Continuations
+   retain the requested end. If the first requested line cannot fit, return a
+   diagnostic without a partial row or a non-advancing continuation; Python file IO
+   can read bounded character slices. The shown text is remembered under its version."
   ^String [path from to]
   (let [content
-        (anchored-file-content path)
+        (readable-file-content path)
+
+        f
+        (safe-path path)
 
         rel
-        (rel-path (safe-path path))
+        (rel-path f)
+
+        head
+        (version/header rel (shown-version! f content))
 
         lines
-        (hashline/split-content-lines content)
+        (version/split-content-lines content)
 
         line-count
         (long (count lines))]
 
     (if (zero? line-count)
-      ""
+      head
       (let [from-line
-            (if (some? from)
-              (cat-endpoint-line content (positional-only! :cat from) "start" line-count)
-              1)
+            (if (some? from) (cat-endpoint-line (positional-only! :cat from) "start" line-count) 1)
 
             to-line
             (if (some? to)
-              (cat-endpoint-line content (positional-only! :cat to) "end" line-count)
+              (cat-endpoint-line (positional-only! :cat to) "end" line-count)
               line-count)
 
             _
@@ -3565,7 +3571,7 @@
             quoted-path
             (str/replace (json/write-json-str rel) "\\/" "/")
 
-            ;; Count the actual UTF-8 rendering, including anchors and continuation.
+            ;; Count the actual UTF-8 rendering, including the header and continuation.
             continuation
             (fn [shown]
               (str "\n… clipped at "
@@ -3585,7 +3591,7 @@
                    0
 
                    total
-                   0
+                   (alength (.getBytes ^String head "UTF-8"))
 
                    acc
                    []]
@@ -3593,10 +3599,10 @@
               (if (or (>= i (count wanted)) (>= i (long default-cat-limit)))
                 acc
                 (let [row
-                      (hashline/render-hashline-block [[(+ from-line i) (nth wanted i)]])
+                      (version/render-numbered-block [[(+ from-line i) (nth wanted i)]])
 
                       next-total
-                      (+ total (if (pos? i) 1 0) (alength (.getBytes ^String row "UTF-8")))
+                      (+ total 1 (alength (.getBytes ^String row "UTF-8")))
 
                       footer
                       (if (< (inc i) (count wanted)) (continuation (inc i)) "")]
@@ -3610,12 +3616,13 @@
             (count rendered)]
 
         (if (zero? shown)
-          (str "cat: line "
-               from-line
-               " exceeds the 50 KiB rendered window budget; no partial anchor emitted. "
-               "Read a bounded character slice with Python file IO instead; "
-               "a slice is not a patch anchor.")
-          (str (str/join "\n" rendered) (when (< shown (count wanted)) (continuation shown))))))))
+          (str "cat: line " from-line
+               " exceeds the 50 KiB rendered window budget; no partial row emitted. "
+               "Read a bounded character slice with Python file IO instead.")
+          (str head
+               "\n"
+               (str/join "\n" rendered)
+               (when (< shown (count wanted)) (continuation shown))))))))
 
 (defn- cat-envelope
   "`cat-one`'s string in the canonical envelope every symbol must answer. The
@@ -3628,10 +3635,10 @@
                    :path path
                    :kind :file
                    :result text
-                   :metadata {:mode :cat :line-count (count (str/split-lines text))}})))
+                   :metadata {:mode :cat :line-count (dec (count (str/split-lines text)))}})))
 
 (defn- cat-tool
-  "cat — read one file's region as patch-ready `<line>:<hash>` text.
+  "cat — read one file's region as patch-ready `path @version` + `<line>│ <text>` text.
 
      cat(path)                whole file, capped
      cat(path, start)         start -> EOF, capped
@@ -3639,24 +3646,24 @@
      cat(path, -50)           the tail 50 lines
      cat(path, -50, -30)      the window between them
 
-   `start`/`end` are line numbers or anchors and mix freely; a NEGATIVE line
+   `start`/`end` are line numbers; a NEGATIVE line
    counts from the END, where -1 is the last line. They are NOT named
    `from`/`to`: `from` is a Python KEYWORD, so a declared parameter carrying
    that name cannot be compiled into the signature stub the sandbox reports and
    `inspect.signature(cat)` would fall back to `(*a, **k)`.
 
    What the model receives is a plain STRING, never a map: `print(cat(...))`
-   shows it and `cat(...).splitlines()` slices it. Its every line is a `patch`
-   argument, so the read that finds the region is also the read that addresses
-   it."
+   shows it and `cat(...).splitlines()` slices it. Its header version and line
+   numbers are `patch` arguments, so the read that finds the region is also the
+   read that addresses it."
   ([path] (cat-envelope path nil nil))
   ([path start] (cat-envelope path start nil))
   ([path start end] (cat-envelope path start end)))
 
 ;; patch
 
-(defn- anchor-window-hint
-  "A bounded read window around a refused anchor."
+(defn- window-hint
+  "A bounded read window around a refused line."
   [rel ^long line]
   (str "cat("
        (str/replace (json/write-json-str rel) "\\/" "/")
@@ -3677,76 +3684,16 @@
                      :type :ext.foundation.editing/patch-refused
                      :path rel)))))
 
-(defn- anchor-refusal!
-  "Report the failed edit, cause, current anchors and optional read window."
-  [rel
-   {:keys [reason which hash stated-line current-anchor current-from-anchor current-to-anchor line
-           lines from-line to-line edit-index edit-count]}]
-  (let [slot
-        (if (= :to which) "to" "from")
-
-        refusal
-        (cond-> {:reason reason}
-          stated-line
-          (assoc :stated-line stated-line)
-
-          current-anchor
-          (assoc :current-anchor current-anchor)
-
-          current-from-anchor
-          (assoc :current-from-anchor current-from-anchor)
-
-          current-to-anchor
-          (assoc :current-to-anchor current-to-anchor)
-
-          edit-index
-          (assoc :edit-index edit-index))]
-
-    (patch-refusal!
-      rel
-      refusal
-      (case reason
-        :anchor-malformed
-        [(str "  " rel ": invalid " slot " anchor; expected line:hash.")]
-
-        :anchor-line-out-of-range
-        [(str "  " rel ": " slot " line " line " out of range; file has " lines " lines.")]
-
-        :anchor-mismatch
-        [(str "  "
-              rel
-              ": stale "
-              slot
-              " "
-              stated-line
-              ":"
-              hash
-              "; current "
-              (if (and current-from-anchor current-to-anchor)
-                (str current-from-anchor " .. " current-to-anchor)
-                current-anchor)
-              ".") (str "  " (anchor-window-hint rel stated-line))]
-
-        :anchor-range-inverted
-        [(str "  " rel ": from line " from-line " is after to line " to-line ".")]
-
-        [(str "  " rel ": " slot " " (name reason) ".")])
-      ;; The batch is atomic, so ONE stale anchor refuses every edit in the call:
-      ;; the coordinate is what turns "an anchor is stale" into "edit 2 of 5 is".
-      (str "patch refused"
-           (when edit-count (str " at edit " (inc (long edit-index)) " of " edit-count))
-           " — nothing was written."))))
-
 (defn- patch-status-line
-  "The one status line every successful patch answers with: what was written, how
-   many edits landed in that ONE write, how the file's line count moved, and any
-   trailing `clauses` the write earned, such as the note about a copied `cat` gutter.
-   The batch is atomic, so this line describes the FILE; the per-edit detail belongs
-   in the rows under it."
-  [rel edit-count old-count new-count clauses]
+  "The one status line every successful patch answers with: what was written, its
+   new version, how many edits landed in that ONE write, how the file's line count
+   moved, and any trailing `clauses` the write earned, such as the note about a
+   copied `cat` gutter. The batch is atomic, so this line describes the FILE; the
+   per-edit detail belongs in the rows under it."
+  [rel new-version edit-count old-count new-count clauses]
   (let [delta (- (long new-count) (long old-count))]
     (str "patched "
-         rel
+         (version/header rel new-version)
          "  "
          edit-count
          (if (= 1 (long edit-count)) " edit" " edits")
@@ -3767,23 +3714,18 @@
     (if (= :right side) (str pad s) (str s pad))))
 
 (defn- patch-edit-rows
-  "One row per applied edit, IN THE ORDER THE CALLER LISTED THEM, each carrying the
-   anchors that are live AFTER the write:
+  "One row per applied edit, IN THE ORDER THE CALLER LISTED THEM: the replaced
+   lines, the outcome and the lines it occupies AFTER the write:
 
-     1  41..41    → 2 lines   41:9c2 .. 42:7ab
-     2  88..90    → 1 line    89:0af
+     1  41..41    → 2 lines   41..42
+     2  88..90    → 1 line    89
      3  120..120  → deleted
 
-   These rows ARE the answer. A batch cannot be described by a window around one
-   edit, and the fresh anchor is the only part of an echo the next call spends —
-   so the text is dropped and the addresses are kept. `diff/head-tail-cap` bounds
-   so a 300-edit batch still answers in a block a reader can hold."
-  [applied new-lines]
-  (let [anchor-at
-        (fn [^long ln]
-          (hashline/line-anchor ln (nth new-lines (dec ln) "")))
-
-        cells
+   These rows ARE the answer. With the new version on the status line, they are
+   the next patch's addresses, so the text is dropped. `diff/head-tail-cap` bounds
+   them so a 300-edit batch still answers in a block a reader can hold."
+  [applied]
+  (let [cells
         (mapv (fn [{:keys [index from-line to-line new-from written unchanged?]}]
                 (let [n
                       (long written)
@@ -3793,20 +3735,13 @@
                             unchanged? "unchanged"
                             :else (str n (if (= 1 n) " line" " lines")))
 
-                      anchors
+                      output
                       (when (pos? n)
-                        (let [from-anchor
-                              (anchor-at new-from)
-
-                              to-anchor
-                              (anchor-at (+ (long new-from) (dec n)))]
-
-                          (if (= from-anchor to-anchor)
-                            from-anchor
-                            (str from-anchor " .. " to-anchor))))]
+                        (let [last-line (+ (long new-from) (dec n))]
+                          (if (= 1 n) (str new-from) (str new-from ".." last-line))))]
 
                   [(str (inc (long index))) (str from-line ".." to-line) (str "→ " outcome)
-                   (str anchors)]))
+                   (str output)]))
               (sort-by :index applied))
 
         width
@@ -3814,18 +3749,20 @@
           (reduce max 0 (map #(count (nth % col)) cells)))
 
         rows
-        (mapv (fn [[idx span outcome anchors]]
+        (mapv (fn [[idx span outcome output]]
                 (str/trimr (str "  " (pad-cell idx (width 0) :right)
                                 "  " (pad-cell span (width 1) :left)
                                 "  " (pad-cell outcome (width 2) :left)
-                                "  " anchors)))
+                                "  " output)))
               cells)]
 
     (diff/head-tail-cap rows patch-edit-rows-max "edit rows" "row")))
 
 (defn- patch-edits-shape!
   "Refuse — before the file is even read — every BATCH SHAPE that would damage it
-   silently, and answer the batch as `[{:index :from :to :replace}]`.
+   silently, and answer the batch as `[{:index :from :to :replace}]` with line numbers.
+   A line is an integer, a numeric string or a whole numbered row of a read, such as
+   `12│ text`; a refusal echoes only a short value.
 
    An entry with NO `replace` DELETED its span: `(str nil)` is the empty string, so
    a truncated entry erased lines and reported success. A key that is not
@@ -3839,36 +3776,57 @@
       (patch-refusal! rel
                       {:reason :edits-missing}
                       [(str "  " rel ": edits must be a non-empty list of maps.")]))
-    (into []
-          (map-indexed
-            (fn [i entry]
-              (let [at (str "  " rel ": edit " (inc (long i)) "/" (count batch) " ")]
-                (when-not (map? entry)
-                  (patch-refusal! rel
-                                  {:reason :edit-not-a-map :edit-index i}
-                                  [(str at "must be a map.")]))
-                (let [unknown (remove #{"from" "to" "replace"} (keys entry))
-                      from (get entry "from")
-                      replacement (get entry "replace")]
+    (into
+      []
+      (map-indexed
+        (fn [i entry]
+          (let [at (str "  " rel ": edit " (inc (long i)) "/" (count batch) " ")]
+            (when-not (map? entry)
+              (patch-refusal! rel
+                              {:reason :edit-not-a-map :edit-index i}
+                              [(str at "must be a map.")]))
+            (let [unknown (remove #{"from" "to" "replace"} (keys entry))
+                  from (get entry "from")
+                  replacement (get entry "replace")]
 
-                  (when (seq unknown)
-                    (patch-refusal!
-                      rel
-                      {:reason :edit-unknown-key :edit-index i :unknown-keys (vec unknown)}
-                      [(str at
-                            "unknown keys: "
-                            (str/join ", " (map pr-str unknown))
-                            "; allowed: from, to, replace.")]))
-                  (when (nil? from)
-                    (patch-refusal! rel
-                                    {:reason :anchor-missing :edit-index i}
-                                    [(str at "missing `from`.")]))
-                  (when (nil? replacement)
-                    (patch-refusal! rel
-                                    {:reason :replacement-missing :edit-index i}
-                                    [(str at "missing `replace`.")]))
-                  {:index i :from from :to (or (get entry "to") from) :replace replacement})))
-            batch))))
+              (when (seq unknown)
+                (patch-refusal!
+                  rel
+                  {:reason :edit-unknown-key :edit-index i :unknown-keys (vec unknown)}
+                  [(str at
+                        "unknown keys: "
+                        (str/join ", " (map pr-str unknown))
+                        "; allowed: from, to, replace.")]))
+              (when (nil? from)
+                (patch-refusal! rel
+                                {:reason :line-missing :edit-index i}
+                                [(str at "missing `from`.")]))
+              (when (nil? replacement)
+                (patch-refusal! rel
+                                {:reason :replacement-missing :edit-index i}
+                                [(str at "missing `replace`.")]))
+              (let [line-of
+                    (fn [slot v]
+                      (or (cond (integer? v) (long v)
+                                (string? v) (some-> (re-matches #"(?s)\s*(\d+)\s*(?:│.*)?" v)
+                                                    second
+                                                    parse-long))
+                          (patch-refusal! rel
+                                          {:reason :line-malformed :edit-index i}
+                                          [(str at
+                                                "`"
+                                                slot
+                                                "` must be a line number, got "
+                                                (let [shown (pr-str v)]
+                                                  (if (<= (count shown) 40)
+                                                    shown
+                                                    (str "a value of " (count shown) " chars")))
+                                                ".")])))]
+                {:index i
+                 :from (line-of "from" from)
+                 :to (line-of "to" (or (get entry "to") from))
+                 :replace replacement}))))
+        batch))))
 
 (defn- patch-overlap!
   "Refuse a batch whose spans touch the same line. Two edits over one line have no
@@ -3897,12 +3855,57 @@
                 ".")]
           (str "patch refused — edits " i " and " j " overlap; nothing was written."))))))
 
+(defn- patch-version-refusal!
+  "Refuse a batch whose `version` cannot be used: the cause, the current version
+   and the read that gives fresh line numbers."
+  ([rel reason message current-version line]
+   (patch-version-refusal! rel reason message current-version line nil nil))
+  ([rel reason message current-version line index total]
+   (patch-refusal! rel
+                   (cond-> {:reason reason :current-version current-version}
+                     index
+                     (assoc :edit-index index))
+                   [(str "  " rel ": " message " The file is now @" current-version ".")
+                    (str "  " (window-hint rel (long (or line 1))))]
+                   (str "patch refused"
+                        (when index (str " at edit " (inc (long index)) " of " total))
+                        " — nothing was written."))))
+
+(defn- patch-line-range!
+  "Refuse an edit whose lines are not inside the file version it names."
+  [rel {:keys [index from to]} total line-count shown-version]
+  (let [head
+        (str "patch refused at edit " (inc (long index)) " of " total " — nothing was written.")]
+    (cond (> (long from) (long to))
+          (patch-refusal! rel
+                          {:reason :range-inverted :edit-index index}
+                          [(str "  " rel ": from line " from " is after to line " to ".")]
+                          head)
+          (or (< (long from) 1) (> (long to) (long line-count)))
+          (patch-refusal! rel
+                          {:reason :line-out-of-range :edit-index index}
+                          [(str "  "
+                                rel
+                                ": lines "
+                                from
+                                ".."
+                                to
+                                " out of range; @"
+                                shown-version
+                                " has "
+                                line-count
+                                " lines.")]
+                          head))))
+
 (defn- patch-plan
-  "Resolve every anchored edit of ONE `patch` call against ONE read of its file,
-   and write nothing. A stale anchor or an overlap throws the same refusal the
-   write would. Answers `{:file :rel :total :original :resolved :updated}`:
+  "Resolve every edit of ONE `patch` call against ONE read of its file, and write
+   nothing. Each edit names lines of `version`, the version a read showed. When the
+   file is still that version, the lines are used as they are. Else each span moves
+   through a diff from the remembered text of that version to the current file, and
+   an edit whose own lines changed is refused. A refusal throws the same error the
+   write would. Answers `{:file :rel :total :original :resolved :updated :moved-from}`:
    `patch-file!` writes `:updated`, and `patch-preview` shows it to a hook first."
-  [path edits]
+  [path edits version]
   (let [^File f
         (ensure-existing-file! (safe-path (positional-only! :patch path)))
 
@@ -3918,6 +3921,9 @@
         original
         (slurp f)
 
+        current-version
+        (version/content-version original)
+
         _
         (when-let [repair (::repair (meta edits))]
           (when-not (= original (:before repair))
@@ -3925,27 +3931,72 @@
                             {:reason :source-changed}
                             ["The file changed during repair. Read it again before retrying."])))
 
+        shown-version
+        (or (version/parse-version version)
+            (patch-version-refusal! rel
+                                    :version-malformed
+                                    (str
+                                      "version must be the `@` value of a cat or grep header, got "
+                                      (pr-str version)
+                                      ".")
+                                    current-version
+                                    (:from (first batch))))
+
+        shown
+        (if (= shown-version current-version)
+          original
+          (or (version/recall (str (canonical-path f)) shown-version)
+              (patch-version-refusal! rel
+                                      :version-unknown
+                                      (str "version @" shown-version " is not known here.")
+                                      current-version
+                                      (:from (first batch)))))
+
+        shown-lines
+        (version/split-content-lines shown)
+
+        current-lines
+        (version/split-content-lines original)
+
         ;; Resolve all character spans against the same source before changing content.
-        ;; Validate the full batch while the file still matches the caller's read.
         resolved
-        (mapv (fn [{:keys [index from to replace]}]
-                (let [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
-                      ^String new-text
-                      (escapes/decode-unicode-escapes (str replace))
+        (mapv
+          (fn [{:keys [index from to replace] :as edit}]
+            (patch-line-range! rel edit total (count shown-lines) shown-version)
+            (let [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
+                  ^String new-text
+                  (escapes/decode-unicode-escapes (str replace))
 
-                      span
-                      (hashline/resolve-anchor-edit-span original from to new-text)]
+                  moved
+                  (if (identical? shown original)
+                    {:from from :to to}
+                    (diff/remap-line-span shown-lines current-lines from to))]
 
-                  (when-let [err (:error span)]
-                    (anchor-refusal! rel
-                                     (assoc err
-                                       :anchor (str (if (= :to (:which err)) to from))
-                                       :edit-index index
-                                       :edit-count total)))
-                  (assoc span
-                    :index index
-                    :new-text new-text)))
-              batch)
+              (case (:error moved)
+                :span-changed
+                (patch-version-refusal!
+                  rel
+                  :lines-changed
+                  (str "lines " from ".." to " of @" shown-version " changed since that read.")
+                  current-version
+                  from
+                  index
+                  total)
+
+                :too-many-changes
+                (patch-version-refusal!
+                  rel
+                  :version-diverged
+                  (str "the file changed too much since @" shown-version " to move this edit.")
+                  current-version
+                  from
+                  index
+                  total)
+
+                (assoc (version/edit-span original (:from moved) (:to moved) new-text)
+                  :index index
+                  :new-text new-text))))
+          batch)
 
         _
         (patch-overlap! rel resolved)
@@ -3956,7 +4007,10 @@
         (reduce (fn [^String acc {:keys [start end replacement]}]
                   (str (subs acc 0 (long start)) replacement (subs acc (long end))))
                 original
-                (sort-by :start #(compare %2 %1) resolved))]
+                (sort-by :start #(compare %2 %1) resolved))
+
+        moved-from
+        (when-not (= shown-version current-version) shown-version)]
 
     (if-let [{:keys [after notes]} (::repair (meta edits))]
       {:file f
@@ -3969,10 +4023,16 @@
                    :start 0
                    :end (count original)
                    :from-line 1
-                   :to-line (max 1 (count (hashline/split-content-lines original)))
+                   :to-line (max 1 (count current-lines))
                    :replacement after
                    :new-text after}]}
-      {:file f :rel rel :total total :original original :resolved resolved :updated updated})))
+      {:file f
+       :rel rel
+       :total total
+       :original original
+       :resolved resolved
+       :updated updated
+       :moved-from moved-from})))
 
 (defn- patch-output-rows
   "Locate each edit in the output, including the line delta from earlier edits."
@@ -4007,10 +4067,10 @@
 (defn- patch-preview
   "What ONE `patch` call would write, for an op hook that decides before the write:
    `{:path :before :after :spans}` with inclusive output line ranges. Nil when
-   the write would refuse the call anyway (a missing file, a stale anchor, an
+   the write would refuse the call anyway (a missing file, a changed span, an
    overlap), because that refusal then speaks for itself and nothing is written."
-  [[path edits]]
-  (try (let [{:keys [rel original updated resolved]} (patch-plan path edits)]
+  [[path edits version]]
+  (try (let [{:keys [rel original updated resolved]} (patch-plan path edits version)]
          {:path rel
           :before original
           :after updated
@@ -4021,14 +4081,15 @@
 
 (defn- repair-patch-args
   "Attach a checked source replacement to the original edits. Write nothing."
-  [[path edits] preview repair]
+  [[path edits version] preview repair]
   (when-not (and (map? preview) (string? (:before preview)) (string? (get repair "source")))
     (throw (ex-info "A patch repair needs a valid preview and source." {:reason :invalid-repair})))
   [path
    (with-meta (vec edits)
      {::repair {:before (:before preview)
                 :after (get repair "source")
-                :notes (into (vec (:notes (::repair (meta edits)))) (get repair "notes"))}})])
+                :notes (into (vec (:notes (::repair (meta edits)))) (get repair "notes"))}})
+   version])
 
 (defn- previewing-before-fn
   "`before-fn` that also hands the op's around hooks `:op/preview` in the env: a fn
@@ -4052,22 +4113,22 @@
                  :op/repair repair))))))
 
 (defn- patch-file!
-  "Every anchored edit for ONE file, resolved against ONE read and applied in ONE
+  "Every edit for ONE file, resolved against ONE read and applied in ONE
    write. Atomic for the FILE: every span resolves and every shape is checked
-   BEFORE anything reaches disk, so a refusal — a stale anchor, an overlap —
+   BEFORE anything reaches disk, so a refusal — a changed span, an overlap —
    leaves the file exactly as the caller
    last read it. The splice runs from the END of the file backwards, so the order
-   the edits arrive in is irrelevant and no anchor from the caller's own read can
-   go stale mid-batch. The answer is the status line and one row per edit, carrying
-   the anchors that are live AFTER the write."
-  [path edits]
-  (let [{^File f :file :keys [rel total original resolved updated repair-notes]}
-        (patch-plan path edits)
+   the edits arrive in is irrelevant and no line from the caller's own read can
+   move mid-batch. The answer is the status line with the new version and one row
+   per edit with its lines AFTER the write."
+  [path edits version]
+  (let [{^File f :file :keys [rel total original resolved updated repair-notes moved-from]}
+        (patch-plan path edits version)
 
         applied
         (patch-output-rows original resolved)
 
-        ;; What actually reaches disk. Every anchor, count and diff below is taken
+        ;; What actually reaches disk. Every version, count and diff below is taken
         ;; from THIS.
         ^String written-content
         updated
@@ -4078,10 +4139,13 @@
         gutter-clause
         (when (some (fn [{:keys [new-text]}]
                       (some (fn [l]
-                              (re-find #"^\s*\d+:[0-9a-f]{3}│ " (str l)))
-                            (hashline/split-content-lines new-text)))
+                              (re-find #"^\s*\d+│ " (str l)))
+                            (version/split-content-lines new-text)))
                     resolved)
-          "  note: a replacement carries a `line:hash│ ` gutter, written verbatim")
+          "  note: a replacement carries a `line│ ` gutter, written verbatim")
+
+        moved-clause
+        (when moved-from (str "  note: moved from @" moved-from " over changes elsewhere"))
 
         _
         (when-not (= original (slurp f))
@@ -4100,24 +4164,28 @@
             (fff-index/note-fs-write! f)
 
             new-lines
-            (hashline/split-content-lines written-content)]
+            (version/split-content-lines written-content)
+
+            new-version
+            (shown-version! f written-content)]
 
         (tool-success
           {:op :patch
            :path rel
            :kind :file
            :result (str (patch-status-line rel
+                                           new-version
                                            total
-                                           (count (hashline/split-content-lines original))
+                                           (count (version/split-content-lines original))
                                            (count new-lines)
-                                           (str gutter-clause))
+                                           (str moved-clause gutter-clause))
                         "\n"
-                        (str/join "\n" (patch-edit-rows applied new-lines))
+                        (str/join "\n" (patch-edit-rows applied))
                         (when (seq repair-notes)
                           (str "\nAuto-repair: " (str/join " " repair-notes))))
            ;; The unified diff is METADATA, not payload: the human channel can
-           ;; render the write in full while the model pays only for the fresh
-           ;; anchors it will actually spend.
+           ;; render the write in full while the model pays only for the new
+           ;; version and lines it will actually spend.
            :metadata {:mode :patch
                       :file-count 1
                       :changed-count (if (= original written-content) 0 1)
@@ -4129,22 +4197,22 @@
                       :file-befores [{:path rel :before original}]}})))))
 
 (defn- patch-tool
-  "patch — every anchored edit for ONE file, applied atomically in ONE write.
+  "patch — every edit for ONE file, applied atomically in ONE write.
 
-     patch(path, [{\"from\": anchor, \"replace\": new}])              ONE line
-     patch(path, [{\"from\": a, \"to\": b, \"replace\": new}])        a span
-     patch(path, [{\"from\": anchor, \"replace\": \"\"}])               delete
+     patch(path, [{\"from\": 41, \"replace\": new}], \"3f9a1c2b\")             ONE line
+     patch(path, [{\"from\": 41, \"to\": 48, \"replace\": new}], version)    a span
+     patch(path, [{\"from\": 41, \"replace\": \"\"}], version)               delete
 
-   A span is the canonical input; `to` defaults to `from` only for one line.
-   `replace` is required — an absent one is refused, never read as a deletion.
-   Every endpoint must match its exact current `<line>:<hash>` pair; patch never
-   searches for that hash on another line. Every anchor resolves against ONE read,
-   so edits may be listed in ANY order and no endpoint drifts mid-batch; overlapping
-   edits are refused. Success returns a fresh output range, abbreviated to one
-   anchor when the replacement has one line. One file per call; a refusal writes
-   NOTHING."
-  [path edits]
-  (patch-file! path edits))
+   `version` is the `@` value of the cat or grep header that showed the lines, and
+   `from`/`to` are line numbers of that version. A span is the canonical input; `to`
+   defaults to `from` only for one line. `replace` is required — an absent one is
+   refused, never read as a deletion. When the file changed after that read, each
+   span moves through a diff and is refused only when its own lines changed. Every
+   span resolves against ONE read, so edits may be listed in ANY order; overlapping
+   edits are refused. Success returns the new version and each edit's lines after
+   the write. One file per call; a refusal writes NOTHING."
+  [path edits version]
+  (patch-file! path edits version))
 
 (def cat-symbol
   (extension/symbol
@@ -4153,19 +4221,20 @@
      :symbol 'cat
      :result
      (str
-       "A plain string with one `<line>:<hash>│ <text>` line for each source line, blank lines "
-       "included. It has no map and no keys. A window is capped at 50 KiB of UTF-8, including the "
-       "continuation line, which keeps the end you asked for. If the first line is too large, you "
-       "get a diagnostic, not a partial patch anchor. Read that line in bounded slices with Python "
-       "file IO.")
+       "A plain string. Line 1 is the header `<path> @<version>`. Then comes one `<line>│ <text>` "
+       "row for each source line, blank lines included. It has no map and no keys.\n\n"
+       "A window is capped at 50 KiB of UTF-8, including the continuation line, which keeps the end you asked "
+       "for. If the first line is too large, you get a diagnostic, not a partial row. Read that line "
+       "in bounded slices with Python file IO.")
      :description
      (str
-       "Show the lines of one text file, or any window of them. Each line comes back with its "
-       "`line:hash` anchor, which `patch` uses as the edit address. Use `ls(dir)` to list a "
-       "directory, and use `grep` to find a file first.\n\n"
+       "Show the lines of one text file, or any window of them. The header gives the file version "
+       "once, and each line comes back with its line number. `patch` uses that version and those "
+       "line numbers as the edit address. Use `ls(dir)` to list a directory, and use `grep` to find "
+       "a file first.\n\n"
        "Call `cat(path)`, `cat(path, start)` or `cat(path, start, end)`. `start` and `end` are line "
-       "numbers or anchors. A negative line counts from the end, so -1 is the last line. `cat(path, "
-       "-50)` shows the last 50 lines, and `cat(path, -50, -30)` shows the window between them.")
+       "numbers. A negative line counts from the end, so -1 is the last line. `cat(path, -50)` shows "
+       "the last 50 lines, and `cat(path, -50, -30)` shows the window between them.")
      :call {:pos ["path"] :opt-pos ["start" "end"]}
      :before-fn (fs-access-before-fn :cat :file "file-read" read-arg-paths)
      :tag :observation
@@ -4179,22 +4248,25 @@
      :symbol 'patch
      :result
      (str
-       "A plain string. The first line gives the path, the edit count and the line count before → "
-       "after. Then comes one row per edit with its new output range, or one anchor for a one-line "
-       "edit. Those anchors are LIVE AFTER the write, so the next patch needs no cat.")
+       "A plain string. The first line gives the path, its NEW version, the edit count and the line "
+       "count before → after. Then comes one row per edit: the lines it replaced and the lines it "
+       "fills after the write. The next patch of this file can use the new version and those lines "
+       "without a cat.")
      :description
      (str
-       "Apply all anchored edits for one file in one atomic write. Use it to replace lines, rewrite "
-       "a docstring, swap a function body or rename an identifier, in any language. Call "
-       "`patch(path, [{\"from\": a, \"replace\": new}, {\"from\": b, \"to\": c, \"replace\": \"\"}])`.\n\n"
-       "Each edit covers the lines from `from` to `to`. `to` defaults to `from` for a one-line edit, "
-       "and `replace: \"\"` deletes the lines. Each endpoint must match its current `line:hash` "
-       "exactly. A mismatch is refused and is never moved to another line by its hash. You can list "
-       "the edits in any order, because they all apply to one read. Do not repeat the text that you "
-       "replace.\n\n"
-       "The write is atomic: a stale anchor or an overlap refuses the WHOLE batch and writes "
-       "NOTHING. The refusal names the edit and gives its current anchor or range.")
-     :call {:pos ["path" "edits"]}
+       "Apply all edits for one file in one atomic write. Use it to replace lines, rewrite a "
+       "docstring, swap a function body or rename an identifier, in any language. Call "
+       "`patch(path, [{\"from\": 12, \"replace\": new}, {\"from\": 30, \"to\": 34, \"replace\": \"\"}], "
+       "version)`.\n\n"
+       "`version` is the `@` value from the header of the `cat` or `grep` result that showed the "
+       "lines. `from` and `to` are line numbers of that version. `to` defaults to `from` for a "
+       "one-line edit, and `replace: \"\"` deletes the lines. You can list the edits in any order, "
+       "because they all apply to one read. Do not repeat the text that you replace.\n\n"
+       "If the file changed elsewhere after your read, patch moves each edit to its new lines. If "
+       "the lines of an edit changed, patch refuses. The write is atomic: a refused edit or an "
+       "overlap refuses the WHOLE batch and writes NOTHING. The refusal gives the current version "
+       "and a `cat` window to read again.")
+     :call {:pos ["path" "edits" "version"]}
      :before-fn (previewing-before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
                                       patch-preview
                                       repair-patch-args)
@@ -4210,14 +4282,15 @@
      :result
      (str
        "Text, not a map. Line 1 gives the hit count, the file count, any truncation and the exact "
-       "next call. Then each path has a header and one `  <line>:<hash>│ <text>` row per hit. "
-       "Context lines have anchors too, and `⋮` marks a gap. Fuzzy file-name matches follow as `~ "
-       "path`, then a `hint:` line. Give an anchor directly to `patch`.\n\n"
+       "next call. Then each path has a `<path> @<version>  (<count>)` header and one `  <line>│ "
+       "<text>` row per hit. Context lines have line numbers too, and `⋮` marks a gap. Fuzzy "
+       "file-name matches follow as `~ path`, then a `hint:` line. Give the version and the line "
+       "numbers directly to `patch`.\n\n"
        "A capped page continues itself. `next(r)` gives the next page and raises StopIteration after "
        "the last page, so use `next(r, None)` as the sentinel form. `r.pages()` walks the pages with "
        "a bound, `r.all()` joins every page into one text, and `r.next_offset` is where the next "
        "page starts. With `is_files_only`, each row is `<path>  <n>`: the file and its match count, "
-       "with no anchors.")
+       "with no lines and no version.")
      :description
      (str
        "Find where something is: where X is defined, who calls a function, which file defines a "
@@ -4226,9 +4299,9 @@
        "first when you do not know the location.\n\n"
        "Give ONE options map as the whole call, for example `grep({\"query\": q, \"paths\": [\"src\"], "
        "\"context\": 3})`. You can give the same keys as keyword arguments, but never a positional "
-       "query. `context: N` adds N anchored lines on each side (default 3). For pure location/count "
-       "sweeps only, set it to 0. Hits come back anchored, so each hit is already a `patch` "
-       "argument.\n\n"
+       "query. `context: N` adds N numbered lines on each side (default 3). For pure location/count "
+       "sweeps only, set it to 0. Hits come back with line numbers and their file version, so each "
+       "hit is already a `patch` address.\n\n"
        "By default, the query is literal smart-case content, and file names match fuzzily. "
        "`is_regex: True` runs the query as a regex over content only, and file names do not match. A "
        "stray literal, such as the `(` of `(defn foo`, is escaped, and `hint` shows the pattern that "

@@ -3,7 +3,7 @@
 
    Smoke-checks the loaded extension surface (symbol vector, doc
    strings, prompt fragment) plus behavioral coverage of the
-   anchored-text read/search verbs (`cat`, `grep`), the anchored writer
+   numbered-text read/search verbs (`cat`, `grep`) and the versioned writer
    (`patch`). Most tests invoke host functions directly; fixtures live under
    `target/editing-test/`, inside the workspace roots accepted by `safe-path`."
   (:require [com.blockether.vis.test-python-context :as tpc]
@@ -20,7 +20,7 @@
             [com.blockether.vis.internal.workspace.fff-index :as fff-index]
             [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
-            [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
+            [com.blockether.vis.internal.foundation.editing.version :as version]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -45,20 +45,24 @@
 
 (defn- private-fn [name] (deref (private-var name)))
 
-(defn- anchor-at
-  "The anchor `cat`/`patch`/`grep` printed for line `n` in one anchored text
-   block. Splitting on the gutter is exactly what the model does, so the tests
+(defn- line-at
+  "Line `n` when `cat`/`patch`/`grep` printed a numbered row for it in `text`, else
+   nil. Splitting on the gutter is exactly what the model does, so the tests
    address lines the same way the contract promises."
   [text n]
   (->> (string/split-lines text)
        (keep (fn [line]
-               (let [[a _] (string/split line #"│ " 2)]
-                 (when (= (str n) (first (string/split (string/trim (str a)) #":")))
-                   (string/trim a)))))
+               (let [[a b] (string/split line #"│ " 2)]
+                 (when (and b (= (str n) (string/trim (str a)))) n))))
        first))
 
+(defn- version-in
+  "The first file version that a `path @version` header in `text` names."
+  [text]
+  (second (re-find #" @([0-9a-f]{8})" (str text))))
+
 (defn- grep-data-fn
-  "grep answers in anchored TEXT now — `grep-tool` IS `render-grep-text` over
+  "grep answers in numbered TEXT now — `grep-tool` IS `render-grep-text` over
    `grep-data`'s map — so every assertion about counts, keys, scopes, hints and
    paging reads that pure core, wrapped in the same `{:result …}` envelope the
    tool used to hand back. The RENDERING has its own describes below."
@@ -485,7 +489,7 @@
     (it "patch refuses to write outside cwd"
         (let [patch (private-fn "patch-tool")]
           (doseq [p escape-paths]
-            (let [err (try (patch p [{"from" "1:000" "replace" "x"}])
+            (let [err (try (patch p [{"from" 1 "replace" "x"}] "00000000")
                            nil
                            (catch clojure.lang.ExceptionInfo e e))]
               (expect (some? err))
@@ -509,7 +513,7 @@
                                        "bash-symbol"))))
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                        "run-bash-safe"))))))
-  (it "editing exposes only anchored read, search and patch tools"
+  (it "editing exposes only versioned read, search and patch tools"
       (expect (= #{'cat 'grep 'patch}
                  (set (map :ext.symbol/symbol (editing/available-editing-symbols))))))
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
@@ -637,7 +641,7 @@
                                (before {:extensions (atom [])}
                                        (constantly :ok)
                                        ["target/editing-test/protected/policy.txt"
-                                        [{"from" "1:000" "replace" "x"}]])]
+                                        [{"from" 1 "replace" "x"}]])]
 
                            (expect (= :ext.foundation.editing/path-protected
                                       (-> out
@@ -660,8 +664,7 @@
                              out
                              (before {:extensions (atom [])}
                                      (constantly :ok)
-                                     ["target/editing-test/a.clj"
-                                      [{"from" "1:000" "replace" "x"}]])]
+                                     ["target/editing-test/a.clj" [{"from" 1 "replace" "x"}]])]
 
                          (expect (= :ext.foundation.editing/path-protected
                                     (-> out
@@ -678,7 +681,7 @@
             (:ext.symbol/before-fn (private-fn "patch-symbol"))
 
             args
-            ["target/editing-test/a.clj" [{"from" "1:000" "replace" "x"}]]
+            ["target/editing-test/a.clj" [{"from" 1 "replace" "x"}]]
 
             out
             (before {:extensions (atom [])} (constantly :ok) args)]
@@ -1209,7 +1212,7 @@
         (expect (not (string/includes? text "clipped"))))))
 
 (defdescribe
-  anchored-verbs-are-back-test
+  versioned-verbs-are-back-test
   ;; The inverse of the guard that used to keep these dead. Prose, config, a
   ;; comment, a docstring line and every language have no address of their own,
   ;; so the only one left was the old text quoted back. `cat` mints the address
@@ -1218,7 +1221,7 @@
       (doseq [v ["run-bash-safe" "bash-tool" "strict-bash-command" "coerce-bash-opts"
                  "bash-warnings" "channel-render-bash" "journal-render-bash"]]
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
-  (it "the anchored read/write verbs are in the namespace"
+  (it "the versioned read/write verbs are in the namespace"
       (doseq [v ["cat-tool" "cat-symbol" "cat-one" "patch-tool" "patch-symbol" "patch-file!"]]
         (expect (some? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                         v))))))
@@ -1228,13 +1231,12 @@
   (it "no batch coercion layer came back with them"
       (doseq [v ["coerce-patch-edits" "patch-analysis" "patch-safe" "read-file-by-anchor"]]
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
-  (it "the hashline namespace loads and owns the anchor"
-      (expect (= :loaded
+  (it "the version namespace owns the address and the anchor namespace is gone"
+      (expect (= :missing
                  (try (require 'com.blockether.vis.internal.foundation.editing.hashline)
                       :loaded
                       (catch Exception _ :missing))))
-      (expect (= "12:000" (hashline/line-anchor 12 "")))
-      (expect (re-matches #"\d+:[0-9a-f]{3}" (hashline/line-anchor 7 "(defn f [] 1)")))
+      (expect (version/version? (version/content-version "(defn f [] 1)")))
       (expect (some? (resolve (symbol "com.blockether.vis.internal.foundation.editing.escapes"
                                       "decode-unicode-escapes")))))
   (it "both verbs are advertised"
@@ -1244,8 +1246,8 @@
         (expect (contains? names "grep")))))
 
 (defdescribe
-  cat-returns-anchored-string-test
-  (it "every line is addressable, blanks included"
+  cat-returns-numbered-string-test
+  (it "a version header, then every line numbered, blanks included"
       (let [rel
             (write-temp! "cat/anchored.clj" "(ns a)\n\n(defn one [] 1)\n(defn two [] 2)\n")
 
@@ -1260,10 +1262,13 @@
 
         ;; A plain String, never a map: `print(cat(...))` IS the whole surface.
         (expect (string? out))
-        (expect (= 4 (count lines)))
-        (expect (every? #(re-matches #"\d+:[0-9a-f]{3}│ .*" %) lines))
-        ;; The blank line carries an anchor too, so the read is gap-free.
-        (expect (string/starts-with? (nth lines 1) "2:000│"))))
+        (expect (= 5 (count lines)))
+        (expect
+          (= (str rel " @" (version/content-version "(ns a)\n\n(defn one [] 1)\n(defn two [] 2)\n"))
+             (first lines)))
+        (expect (every? #(re-matches #"\d+│ .*" %) (rest lines)))
+        ;; The blank line is numbered too, so the read is gap-free.
+        (expect (= "2│ " (nth lines 2)))))
   ;; Regression: `cat` answered its anchored text as a BARE STRING, so a real
   ;; sandbox call died at the extension boundary with "Symbol 'cat' must
   ;; return a canonical :envelope map" while every direct call here passed.
@@ -1277,8 +1282,8 @@
         (expect (extension/tool-result? env))
         (expect (true? (:success? env)))
         (expect (string? (:result env)))
-        (expect (string/starts-with? (:result env) "1:"))))
-  (it "an anchor endpoint and a line number select the same window"
+        (expect (string/includes? (:result env) "\n1│ alpha"))))
+  (it "an anchor endpoint is no longer an address"
       (let [rel
             (write-temp! "cat/endpoints.txt" "alpha\nbeta\ngamma\ndelta\n")
 
@@ -1286,40 +1291,20 @@
             (comp :result (private-fn "cat-tool"))
 
             by-number
-            (cat-tool rel 2 3)
+            (cat-tool rel 2 3)]
 
-            anchor-from
-            (first (string/split (first (string/split-lines by-number)) #"│"))
-
-            by-anchor
-            (cat-tool rel anchor-from 3)]
-
-        (expect (= by-number by-anchor))
-        (expect (= 2 (count (string/split-lines by-number))))))
-  ;; Regression (session fbb1093f): only a BARE `<line>:<hash>` counted as an
-  ;; anchor, so the line `cat` had just printed was not an endpoint `cat` took
-  ;; back — the gutter it prints made its own output unusable as an address.
-  (it "a whole printed line is an endpoint — the gutter travels with the address"
-      (let [rel
-            (write-temp! "cat/whole-line.txt" "alpha\nBETA\ngamma\ndelta\n")
-
-            cat-tool
-            (comp :result (private-fn "cat-tool"))
-
-            printed
-            (first (string/split-lines (cat-tool rel 2 3)))]
-
-        (expect (string/includes? printed "│ BETA"))
-        (expect (= (cat-tool rel 2 3) (cat-tool rel printed 3)))))
+        (expect (= 3 (count (string/split-lines by-number))))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool rel "2:abc" 3)))
+        (expect (= by-number (cat-tool rel "2" 3)))))
   ;; Council #919/#940: byte ceilings and continuation must preserve the requested window.
-  (it "counts UTF-8 bytes and refuses an oversized first line without an anchor"
+  (it "counts UTF-8 bytes and refuses an oversized first line without a row"
       (doseq [unit ["x" "é" "😀"]]
         (let [rel (write-temp! "cat/huge.txt" (str (apply str (repeat 60000 unit)) "\ntail"))
               out (:result ((private-fn "cat-tool") rel 1 2))]
 
           (expect (<= (alength (.getBytes ^String out "UTF-8")) (* 50 1024)))
           (expect (string/includes? out "line 1 exceeds"))
-          (expect (nil? (anchor-at out 1)))
+          (expect (nil? (line-at out 1)))
           (expect (not (string/includes? out "continue with cat("))))))
   (it "bounds ASCII and multibyte windows and resumes within the caller's end"
       (doseq [unit ["x" "é" "😀"]]
@@ -1330,8 +1315,8 @@
           (expect (<= (alength (.getBytes ^String out "UTF-8")) (* 50 1024)))
           (expect (string/includes? out "clipped"))
           (expect (string/ends-with? out ", 40)"))
-          (expect (some? (anchor-at out 1))))))
-  (it "keeps complete anchors before an oversized later line and diagnoses it on resume"
+          (expect (some? (line-at out 1))))))
+  (it "keeps complete rows before an oversized later line and diagnoses it on resume"
       (let [rel
             (write-temp! "cat/later.txt" (str "small\n" (apply str (repeat 60000 "x")) "\ntail"))
 
@@ -1341,11 +1326,11 @@
             out
             (cat-tool rel 1 3)]
 
-        (expect (some? (anchor-at out 1)))
-        (expect (nil? (anchor-at out 2)))
+        (expect (some? (line-at out 1)))
+        (expect (nil? (line-at out 2)))
         (expect (string/ends-with? out ", 2, 3)"))
         (expect (string/includes? (cat-tool rel 2 3) "line 2 exceeds"))
-        (expect (some? (anchor-at (cat-tool rel 3 3) 3)))))
+        (expect (some? (line-at (cat-tool rel 3 3) 3)))))
   (it "quotes the continuation pathname and retains the explicit end"
       (let [rel
             (write-temp! "cat/a\"b\\c.txt" (string/join "\n" (repeat 3000 "x")))
@@ -1368,7 +1353,7 @@
             lines
             (string/split-lines out)]
 
-        (expect (= 2001 (count lines)))
+        (expect (= 2002 (count lines)))
         (expect (string/starts-with? (last lines) "… clipped at 2000 lines"))
         (expect (string/includes? (last lines) "continue with cat("))
         (expect (string/includes? (last lines) ", 2001, "))))
@@ -1390,7 +1375,7 @@
             out
             (cat-tool rel 2 99)]
 
-        (expect (= 2 (count (string/split-lines out))))
+        (expect (= 3 (count (string/split-lines out))))
         (expect (string/includes? out "│ b"))
         (expect (string/includes? out "│ c"))
         (expect (= out (cat-tool rel 2 3)))
@@ -1409,7 +1394,7 @@
             (cat-tool rel -2)]
 
         ;; -1 IS the last line, so -2 is the last TWO lines.
-        (expect (= 2 (count (string/split-lines tail))))
+        (expect (= 3 (count (string/split-lines tail))))
         (expect (string/includes? tail "│ e"))
         (expect (string/includes? tail "│ f"))
         (expect (= tail (cat-tool rel 5 6)))
@@ -1422,173 +1407,198 @@
         ;; Zero is still no line at all.
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool rel 0))))))
 
-;; `patch` is ONE call per FILE — `(patch-file! path edits)`. These tests drive one
-;; span at a time, so the helper wraps a single edit in the batch the verb takes;
-;; `patch-batch-test` covers what only a batch can prove.
+;; `patch` is ONE call per FILE — `(patch-file! path edits version)`. These tests
+;; drive one span at a time against the file's CURRENT version, so the helper wraps a
+;; single edit in the batch the verb takes; `patch-batch-test` covers what only a
+;; batch can prove, and `patch-version-test` covers a version older than the file.
+(defn- current-version
+  "The version of the file at `rel` as it is now."
+  [rel]
+  (version/content-version (slurp rel)))
+
+(defn- patch-now
+  "`patch-tool` with the file's current version, as after a fresh read."
+  [rel edits]
+  ((private-fn "patch-tool") rel edits (current-version rel)))
+
 (defn- patch-span
   [rel from to replacement]
   ((private-fn "patch-file!")
     rel
     [(cond-> {"from" from "replace" replacement}
        to
-       (assoc "to" to))]))
+       (assoc "to" to))]
+    (current-version rel)))
+
+(defn- refusal
+  "The ExceptionInfo that `f` throws, or nil."
+  [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo e e)))
+
+(defdescribe patch-spends-the-version-test
+             (it
+               "answers with the new version and line ranges, and that version is live"
+               (let [rel
+                     (write-temp! "patch/window.txt" "one\ntwo\nthree\nfour\nfive\nsix\nseven\n")
+
+                     cat-tool
+                     (comp :result (private-fn "cat-tool"))
+
+                     shown
+                     (version-in (cat-tool rel))
+
+                     patch-file
+                     (private-fn "patch-file!")
+
+                     first-out
+                     (:result (patch-file rel [{"from" 4 "replace" "FOUR\nFOUR B"}] shown))
+
+                     ;; No `cat` between the two edits: the version the status line just
+                     ;; reported IS the version the next edit spends.
+                     reported
+                     (version-in first-out)
+
+                     second-out
+                     (:result (patch-file rel [{"from" 5 "replace" "FOUR AGAIN"}] reported))]
+
+                 (expect (string/starts-with? first-out (str "patched " rel " @")))
+                 (expect (= reported
+                            (version/content-version
+                              "one\ntwo\nthree\nFOUR\nFOUR B\nfive\nsix\nseven\n")))
+                 (expect (string/includes? first-out "1 edit"))
+                 (expect (string/includes? first-out "4..4  → 2 lines  4..5"))
+                 ;; The answer carries addresses, not text.
+                 (expect (not (string/includes? first-out "│ ")))
+                 (expect (string/starts-with? second-out "patched "))
+                 (expect (= "one\ntwo\nthree\nFOUR\nFOUR AGAIN\nfive\nsix\nseven\n" (slurp rel)))))
+             (it "a span replace and an empty replacement both report the size they moved"
+                 (let [rel
+                       (write-temp! "patch/span.txt" "a\nb\nc\nd\ne\n")
+
+                       shrunk
+                       (:result (patch-span rel 2 4 "B"))
+
+                       deleted
+                       (:result (patch-span rel 1 nil ""))]
+
+                   (expect (string/includes? shrunk "1 edit  5 → 3 lines (-2)"))
+                   (expect (string/includes? shrunk "2..4  → 1 line"))
+                   (expect (string/includes? deleted "3 → 2 lines (-1)"))
+                   (expect (string/includes? deleted "1..1  → deleted"))
+                   (expect (= "B\ne\n" (slurp rel)))))
+             (it "a line number as a digit string is the same address"
+                 (let [rel (write-temp! "patch/digits.txt" "alpha\nbeta\n")]
+                   (patch-span rel "2" nil "BETA")
+                   (expect (= "alpha\nBETA\n" (slurp rel)))))
+             (it "an old line:hash anchor is refused — the anchor form is gone"
+                 (let [rel
+                       (write-temp! "patch/old-anchor.txt" "alpha\nbeta\n")
+
+                       thrown
+                       (refusal #(patch-span rel "2:abc" nil "BETA"))]
+
+                   (expect (= :line-malformed (:reason (ex-data thrown))))
+                   (expect (= "alpha\nbeta\n" (slurp rel))))))
 
 (defdescribe
-  patch-spends-the-anchor-test
-  (it "answers with fresh anchors instead of a window, and the anchor it reports is live"
+  patch-version-test
+  (it "a change elsewhere in the file moves the edit to its new lines"
       (let [rel
-            (write-temp! "patch/window.txt" "one\ntwo\nthree\nfour\nfive\nsix\nseven\n")
+            (write-temp! "patch/moved.txt" "a\nb\nc\nd\ne\n")
 
-            cat-tool
-            (comp :result (private-fn "cat-tool"))
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
 
-            a4
-            (anchor-at (cat-tool rel) 4)
+            _
+            (spit rel "new 1\nnew 2\na\nb\nc\nd\ne\n")
 
-            first-out
-            (:result (patch-span rel a4 a4 "FOUR"))
+            out
+            (:result ((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] shown))]
 
-            ;; No `cat` between the two edits: the anchor the row just reported IS the
-            ;; address the next edit spends.
-            reported
-            (last (string/split (string/trim first-out) #"\s+"))
-
-            second-out
-            (:result (patch-span rel reported reported "FOUR AGAIN"))]
-
-        (expect (string/starts-with? first-out "patched "))
-        (expect (string/includes? first-out "1 edit"))
-        ;; The re-anchored WINDOW is gone: the answer carries addresses, not text.
-        (expect (not (string/includes? first-out "\u2502 ")))
-        (expect (= (hashline/line-anchor 4 "FOUR") reported))
-        (expect (string/starts-with? second-out "patched "))
-        (expect (= "one\ntwo\nthree\nFOUR AGAIN\nfive\nsix\nseven\n" (slurp rel)))))
-  (it "a span replace and an empty replacement both report the size they moved"
+        (expect (= "new 1\nnew 2\na\nb\nc\nD\ne\n" (slurp rel)))
+        (expect (string/includes? out (str "note: moved from @" shown)))
+        (expect (string/includes? out "6..6  → 1 line  6"))))
+  (it "a change after the edited lines leaves them where they are"
       (let [rel
-            (write-temp! "patch/span.txt" "a\nb\nc\nd\ne\n")
+            (write-temp! "patch/after.txt" "a\nb\nc\n")
 
-            cat-tool
-            (comp :result (private-fn "cat-tool"))
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))]
 
-            text
-            (cat-tool rel)
-
-            shrunk
-            (:result (patch-span rel (anchor-at text 2) (anchor-at text 4) "B"))
-
-            deleted
-            (:result (patch-span rel (anchor-at (cat-tool rel) 1) nil ""))]
-
-        (expect (string/includes? shrunk "1 edit  5 \u2192 3 lines (-2)"))
-        (expect (string/includes? shrunk "2..4  \u2192 1 line"))
-        (expect (string/includes? deleted "3 \u2192 2 lines (-1)"))
-        (expect (string/includes? deleted "1..1  \u2192 deleted"))
-        (expect (= "B\ne\n" (slurp rel)))))
-  (it
-    "a stale anchor is refused with the fresh one attached and nothing is written"
-    (let [rel
-          (write-temp! "patch/stale.txt" "alpha\nbeta\ngamma\n")
-
-          cat-tool
-          (comp :result (private-fn "cat-tool"))
-
-          stale
-          (anchor-at (cat-tool rel) 2)
-
-          _
-          (patch-span rel stale stale "BETA")
-
-          before
-          (slurp rel)
-
-          thrown
-          (try (patch-span rel stale stale "again") nil (catch clojure.lang.ExceptionInfo e e))]
-
-      (expect (some? thrown))
-      (expect (= :anchor-mismatch (:reason (ex-data thrown))))
-      (expect (string/starts-with? (ex-message thrown)
-                                   "patch refused at edit 1 of 1 — nothing was written."))
-      ;; Recovery policy lives in the system prompt, not in each refusal.
-      (expect (= (str "patch refused at edit 1 of 1 — nothing was written.\n"
-                      "  "
-                      (:path (ex-data thrown))
-                      ": stale from "
-                      stale
-                      "; current "
-                      (hashline/line-anchor 2 "BETA")
-                      ".\n"
-                      "  cat("
-                      (pr-str (:path (ex-data thrown)))
-                      ", 1, 5)")
-                 (ex-message thrown)))
-      (expect (= before (slurp rel)))))
-  ;; Regression (session 633cdc58): a nearby line/hash contradiction relocated
-  ;; the write to the hash's line instead of refusing the mixed anchor.
-  (it "a nearby range mismatch is refused instead of relocating the write"
+        (spit rel "a\nb\nc\nappended\n")
+        ((private-fn "patch-file!") rel [{"from" 1 "to" 2 "replace" "AB"}] shown)
+        (expect (= "AB\nc\nappended\n" (slurp rel)))))
+  (it "a change inside the edited lines is refused with the current version"
       (let [rel
-            (write-temp! "patch/nearby-mismatch.txt" "alpha\nbeta\ngamma\n")
+            (write-temp! "patch/conflict.txt" "a\nb\nc\nd\n")
 
-            mixed
-            (str "2:" (hashline/line-hash "alpha"))
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
 
-            before
-            (slurp rel)
+            _
+            (spit rel "a\nB CHANGED\nc\nd\n")
 
             thrown
-            (try (patch-span rel mixed (hashline/line-anchor 3 "gamma") "wrong target")
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))]
+            (refusal #((private-fn "patch-file!") rel [{"from" 2 "to" 3 "replace" "x"}] shown))]
 
-        (expect (some? thrown))
-        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown)
-                                  (str "; current " (hashline/line-anchor 2 "beta")
-                                       " .. " (hashline/line-anchor 3 "gamma"))))
-        (expect (= (hashline/line-anchor 2 "beta") (:current-from-anchor (ex-data thrown))))
-        (expect (= (hashline/line-anchor 3 "gamma") (:current-to-anchor (ex-data thrown))))
-        (expect (= before (slurp rel)))))
-  (it "distance never changes the exact mismatch contract"
+        (expect (= :lines-changed (:reason (ex-data thrown))))
+        (expect (= (current-version rel) (:current-version (ex-data thrown))))
+        (expect (= (str "patch refused at edit 1 of 1 — nothing was written.\n"
+                        "  "
+                        (:path (ex-data thrown))
+                        ": lines 2..3 of @"
+                        shown
+                        " changed since that read. The file is now @"
+                        (current-version rel)
+                        ".\n"
+                        "  cat("
+                        (pr-str (:path (ex-data thrown)))
+                        ", 1, 5)")
+                   (ex-message thrown)))
+        (expect (= "a\nB CHANGED\nc\nd\n" (slurp rel)))))
+  (it "lines inserted inside the edited span are a change of that span"
       (let [rel
-            (write-temp! "patch/distant-mismatch.txt"
-                         (string/join "\n"
-                                      (concat ["needle"] (map #(str "filler " %) (range 1 200)))))
+            (write-temp! "patch/inserted.txt" "a\nb\nc\n")
 
-            mixed
-            (str "160:" (hashline/line-hash "needle"))
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))]
+
+        (spit rel "a\nb\nINSERTED\nc\n")
+        (expect (= :lines-changed
+                   (:reason (ex-data (refusal #((private-fn "patch-file!")
+                                                  rel
+                                                  [{"from" 2 "to" 3 "replace" "x"}]
+                                                  shown))))))))
+  (it "a version the host never showed is refused when the file differs"
+      (let [rel
+            (write-temp! "patch/unknown.txt" "a\nb\n")
 
             thrown
-            (try (patch-span rel mixed nil "x") nil (catch clojure.lang.ExceptionInfo e e))]
+            (refusal #((private-fn "patch-file!") rel [{"from" 1 "replace" "x"}] "0badc0de"))]
 
-        (expect (some? thrown))
-        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
-        (expect (string/includes? (ex-message thrown) ": stale from 160:"))
-        (expect (string/includes? (ex-message thrown) ", 157, 163)"))))
-  (it "a bare line number is refused — patch verifies, it does not guess"
-      (let [rel
-            (write-temp! "patch/bare.txt" "alpha\nbeta\n")
-
-            thrown
-            (try (patch-span rel "2" "2" "BETA") nil (catch clojure.lang.ExceptionInfo e e))]
-
-        (expect (some? thrown))
-        (expect (= :anchor-malformed (:reason (ex-data thrown))))
-        (expect (= "alpha\nbeta\n" (slurp rel))))))
+        (expect (= :version-unknown (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "version @0badc0de is not known here."))
+        (expect (= "a\nb\n" (slurp rel)))))
+  (it "an unchanged file needs no remembered version, so a restart keeps it usable"
+      (let [rel (write-temp! "patch/restart.txt" "a\nb\n")]
+        (version/forget-all!)
+        ((private-fn "patch-file!") rel [{"from" 2 "replace" "B"}] (str "@" (current-version rel)))
+        (expect (= "a\nB\n" (slurp rel)))))
+  (it "a malformed or missing version is refused"
+      (let [rel (write-temp! "patch/no-version.txt" "a\n")]
+        (doseq [v [nil "" "12:abc" "xyz"]]
+          (expect (= :version-malformed
+                     (:reason (ex-data (refusal #((private-fn "patch-file!")
+                                                    rel
+                                                    [{"from" 1 "replace" "x"}]
+                                                    v))))))))))
 
 (defdescribe
   patch-compact-refusal-test
   (it
-    "reports argument and anchor failures without examples or echoed payloads"
+    "reports argument and range failures without examples or echoed payloads"
     (let [rel
           (write-temp! "patch/compact.txt" "alpha\nbeta\n")
-
-          patch-tool
-          (private-fn "patch-tool")
-
-          a1
-          (hashline/line-anchor 1 "alpha")
-
-          a2
-          (hashline/line-anchor 2 "beta")
 
           large-input
           (apply str (repeat 10000 "x"))]
@@ -1597,28 +1607,23 @@
               [[[] :edits-missing "edits must be a non-empty list of maps" 2]
                [large-input :edits-missing "edits must be a non-empty list of maps" 2]
                [[large-input] :edit-not-a-map "edit 1/1 must be a map" 2]
-               [[{"replace" "x"}] :anchor-missing "edit 1/1 missing `from`" 2]
-               [[{"from" a1}] :replacement-missing "edit 1/1 missing `replace`" 2]
-               [[{"from" a1 "replacement" "x"}] :edit-unknown-key
+               [[{"replace" "x"}] :line-missing "edit 1/1 missing `from`" 2]
+               [[{"from" 1}] :replacement-missing "edit 1/1 missing `replace`" 2]
+               [[{"from" 1 "replacement" "x"}] :edit-unknown-key
                 "unknown keys: \"replacement\"; allowed: from, to, replace" 2]
                ;; #291: an edit is read under its JSON names only; keyword keys are named.
-               [[{:from a1 :replace "x"}] :edit-unknown-key
+               [[{:from 1 :replace "x"}] :edit-unknown-key
                 "unknown keys: :from, :replace; allowed: from, to, replace" 2]
-               [[{"from" large-input "replace" "x"}] :anchor-malformed
-                "invalid from anchor; expected line:hash" 2]
-               [[{"from" a1 "to" "2" "replace" "x"}] :anchor-malformed
-                "invalid to anchor; expected line:hash" 2]
-               [[{"from" "99:abc" "replace" "x"}] :anchor-line-out-of-range
-                "from line 99 out of range; file has 2 lines" 2]
-               [[{"from" a1 "to" "99:abc" "replace" "x"}] :anchor-line-out-of-range
-                "to line 99 out of range; file has 2 lines" 2]
-               [[{"from" a2 "to" a1 "replace" "x"}] :anchor-range-inverted
-                "from line 2 is after to line 1" 2]
-               [[{"from" a1 "to" (hashline/line-anchor 2 "stale") "replace" "x"}] :anchor-mismatch
-                (str "; current " a1 " .. " a2) 3]
-               [[{"from" a1 "to" a2 "replace" "x"} {"from" a2 "replace" "y"}] :edits-overlap
+               [[{"from" large-input "replace" "x"}] :line-malformed "`from` must be a line number"
+                2]
+               [[{"from" 1 "to" "2:abc" "replace" "x"}] :line-malformed "`to` must be a line number"
+                2] [[{"from" 99 "replace" "x"}] :line-out-of-range "lines 99..99 out of range" 2]
+               [[{"from" 1 "to" 99 "replace" "x"}] :line-out-of-range "has 2 lines" 2]
+               [[{"from" 2 "to" 1 "replace" "x"}] :range-inverted "from line 2 is after to line 1"
+                2]
+               [[{"from" 1 "to" 2 "replace" "x"} {"from" 2 "replace" "y"}] :edits-overlap
                 "lines 1..2 and 2..2" 2]]]
-        (let [thrown (try (patch-tool rel edits) nil (catch clojure.lang.ExceptionInfo e e))
+        (let [thrown (refusal #(patch-now rel edits))
               message (ex-message thrown)]
 
           (expect (= reason (:reason (ex-data thrown))))
@@ -1633,20 +1638,23 @@
             rel
             (write-temp! "patch/quoted-\"path.txt" (str "first\n" text "\nlast\n"))
 
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
+
+            _
+            (spit rel (str "first\n" text "y\nlast\n"))
+
             thrown
-            (try (patch-span rel (hashline/line-anchor 2 "stale") nil "wrong target")
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))
+            (refusal #((private-fn "patch-file!") rel [{"from" 2 "replace" "z"}] shown))
 
             message
             (ex-message thrown)]
 
-        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
-        (expect (string/includes? message (hashline/line-anchor 2 text)))
+        (expect (= :lines-changed (:reason (ex-data thrown))))
+        (expect (not (string/includes? message text)))
         (expect (string/includes? message (str "cat(" (pr-str (:path (ex-data thrown))) ", 1, 5)")))
         (expect (= 3 (count (string/split-lines message))))
-        (expect (< (count message) 350))
-        (expect (= (str "first\n" text "\nlast\n") (slurp rel))))))
+        (expect (< (count message) 350)))))
 
 (defdescribe
   patch-newline-semantics-test
@@ -1657,50 +1665,40 @@
       (let [rel
             (write-temp! "patch/blank-tail.txt" "alpha\nbeta\n\ngamma\n")
 
-            patch-tool
-            (private-fn "patch-tool")
-
             out
-            (:result (patch-tool rel
-                                 [{"from" (hashline/line-anchor 2 "beta")
-                                   "to" (hashline/line-anchor 3 "")
-                                   "replace" "BETA"}]))]
+            (:result (patch-now rel [{"from" 2 "to" 3 "replace" "BETA"}]))]
 
         (expect (= "alpha\nBETA\ngamma\n" (slurp rel)))
         (expect (string/includes? out "2..3"))))
   ;; Regression: a replacement carrying its OWN trailing newline wrote a blank line
   ;; nobody asked for, and the row counted the lines it had not written — so every
-  ;; later row's anchor drifted by one and addressed the wrong line.
+  ;; later row's range drifted by one and addressed the wrong line.
   (it "a replacement's own trailing newline neither doubles the line nor drifts the rows"
       (let [rel
             (write-temp! "patch/trailing-nl.txt" "one\ntwo\nthree\nfour\n")
 
-            patch-tool
-            (private-fn "patch-tool")
-
             out
-            (:result (patch-tool rel
-                                 [{"from" (hashline/line-anchor 1 "one") "replace" "ONE\n"}
-                                  {"from" (hashline/line-anchor 3 "three") "replace" "THREE"}]))]
+            (:result (patch-now rel [{"from" 1 "replace" "ONE\n"} {"from" 3 "replace" "THREE"}]))]
 
         (expect (= "ONE\ntwo\nTHREE\nfour\n" (slurp rel)))
-        (expect (string/includes? out (hashline/line-anchor 3 "THREE")))))
+        (expect (string/includes? out "3..3  → 1 line  3"))))
   (it "a replacement ending in TWO newlines still asks for one blank line after it"
       (let [rel
             (write-temp! "patch/trailing-blank.txt" "one\ntwo\n")
 
-            patch-tool
-            (private-fn "patch-tool")
-
             out
-            (:result (patch-tool rel
-                                 [{"from" (hashline/line-anchor 1 "one") "replace" "ONE\n\n"}]))]
+            (:result (patch-now rel [{"from" 1 "replace" "ONE\n\n"}]))]
 
         (expect (= "ONE\n\ntwo\n" (slurp rel)))
-        (expect (string/includes? out "2 lines"))
-        (expect (string/includes?
-                  out
-                  (str (hashline/line-anchor 1 "ONE") " .. " (hashline/line-anchor 2 "")))))))
+        (expect (string/includes? out "2 lines  1..2"))))
+  (it "a CRLF file keeps its CRLF on a last-line replace"
+      (let [rel (write-temp! "patch/crlf.txt" "one\r\ntwo\r\n")]
+        (patch-now rel [{"from" 2 "replace" "TWO"}])
+        (expect (= "one\r\nTWO\r\n" (slurp rel)))))
+  (it "a span ending on the file's last line keeps the file's final newline"
+      (let [rel (write-temp! "patch/last-line.txt" "alpha\nbeta\n\ngamma\ndelta\n")]
+        (patch-now rel [{"from" 4 "to" 5 "replace" "TAIL"}])
+        (expect (= "alpha\nbeta\n\nTAIL\n" (slurp rel))))))
 
 (defdescribe
   patch-batch-shape-test
@@ -1711,12 +1709,10 @@
             (write-temp! "patch/shape-missing.txt" "alpha\nbeta\n")
 
             patch-tool
-            (private-fn "patch-tool")
+            patch-now
 
             thrown
-            (try (patch-tool rel [{"from" (hashline/line-anchor 2 "beta")}])
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))]
+            (try (patch-tool rel [{"from" 2}]) nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
         (expect (= :replacement-missing (:reason (ex-data thrown))))
@@ -1731,13 +1727,13 @@
             (write-temp! "patch/shape-key.txt" "alpha\nbeta\ngamma\n")
 
             patch-tool
-            (private-fn "patch-tool")
+            patch-now
 
             a1
-            (hashline/line-anchor 1 "alpha")
+            1
 
             a3
-            (hashline/line-anchor 3 "gamma")
+            3
 
             thrown
             (try (patch-tool rel [{"from" a1 "replacement" "ONE"}])
@@ -1758,7 +1754,7 @@
             (write-temp! "patch/shape-empty.txt" "alpha\nbeta\n")
 
             patch-tool
-            (private-fn "patch-tool")
+            patch-now
 
             thrown
             (try (patch-tool rel []) nil (catch clojure.lang.ExceptionInfo e e))]
@@ -1766,21 +1762,20 @@
         (expect (= :edits-missing (:reason (ex-data thrown))))
         (expect (string/includes? (ex-message thrown) "edits must be a non-empty list of maps"))
         (expect (= "alpha\nbeta\n" (slurp rel)))))
-  ;; Regression: a replacement copied straight out of `cat` kept its `line:hash│ `
+  ;; Regression: a replacement copied straight out of `cat` kept its `N│ `
   ;; gutter and landed in the file verbatim, silently — the gutter is an ADDRESS.
   (it "a replacement carrying the gutter is written, and the status line says so"
       (let [rel
             (write-temp! "patch/shape-gutter.txt" "alpha\nbeta\n")
 
             patch-tool
-            (private-fn "patch-tool")
+            patch-now
 
             out
-            (:result
-              (patch-tool rel [{"from" (hashline/line-anchor 2 "beta") "replace" "2:5f0│ BETA"}]))]
+            (:result (patch-tool rel [{"from" 2 "replace" "2│ BETA"}]))]
 
-        (expect (string/includes? out "note: a replacement carries a `line:hash│ ` gutter"))
-        (expect (= "alpha\n2:5f0│ BETA\n" (slurp rel))))))
+        (expect (string/includes? out "note: a replacement carries a `line│ ` gutter"))
+        (expect (= "alpha\n2│ BETA\n" (slurp rel))))))
 
 (defdescribe
   patch-batch-test
@@ -1793,13 +1788,12 @@
           (comp :result (private-fn "cat-tool"))
 
           patch-tool
-          (private-fn "patch-tool")
+          patch-now
 
           edits
-          (fn [text]
-            [{"from" (anchor-at text 1) "replace" "ONE"}
-             {"from" (anchor-at text 2) "to" (anchor-at text 3) "replace" "TWO+THREE"}
-             {"from" (anchor-at text 5) "replace" "FIVE"}])
+          (fn [_text]
+            [{"from" 1 "replace" "ONE"} {"from" 2 "to" 3 "replace" "TWO+THREE"}
+             {"from" 5 "replace" "FIVE"}])
 
           ascending
           (write-temp! "patch/batch-asc.txt" content)
@@ -1814,41 +1808,37 @@
           (patch-tool descending (vec (reverse (edits (cat-tool descending)))))]
 
       (expect (= "ONE\nTWO+THREE\nfour\nFIVE\nsix\n" (slurp ascending)))
-      ;; One read, one write: the caller's order cannot matter, because no anchor is
+      ;; One read, one write: the caller's order cannot matter, because no line is
       ;; ever resolved against a file an earlier edit already moved.
       (expect (= (slurp ascending) (slurp descending)))
       (expect (string/includes? out "3 edits  6 → 5 lines (-1)"))
-      ;; One row per edit, each carrying the anchor that is LIVE after the write.
-      (expect (string/includes? out (hashline/line-anchor 1 "ONE")))
-      (expect (string/includes? out (hashline/line-anchor 2 "TWO+THREE")))
-      (expect (string/includes? out (hashline/line-anchor 4 "FIVE")))))
-  (it "one stale anchor refuses the WHOLE batch and names which edit it was"
+      ;; One row per edit: the lines it replaced and the lines it fills after the write.
+      (expect (re-find #"(?m)^  1  1\.\.1 +→ 1 line +1$" out))
+      (expect (re-find #"(?m)^  2  2\.\.3 +→ 1 line +2$" out))
+      (expect (re-find #"(?m)^  3  5\.\.5 +→ 1 line +4$" out))))
+  (it "one changed span refuses the WHOLE batch and names which edit it was"
       (let [rel
             (write-temp! "patch/batch-stale.txt" "alpha\nbeta\ngamma\n")
 
-            cat-tool
-            (comp :result (private-fn "cat-tool"))
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
 
-            patch-tool
-            (private-fn "patch-tool")
-
-            text
-            (cat-tool rel)
+            _
+            (spit rel "alpha\nBETA ELSEWHERE\ngamma\n")
 
             thrown
-            (try (patch-tool rel
-                             [{"from" (anchor-at text 1) "replace" "ALPHA"}
-                              {"from" (str "2:" (hashline/line-hash "never in this file"))
-                               "replace" "BETA"} {"from" (anchor-at text 3) "replace" "GAMMA"}])
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))]
+            (refusal #((private-fn "patch-file!")
+                         rel
+                         [{"from" 1 "replace" "ALPHA"} {"from" 2 "replace" "BETA"}
+                          {"from" 3 "replace" "GAMMA"}]
+                         shown))]
 
         (expect (some? thrown))
-        (expect (= :anchor-mismatch (:reason (ex-data thrown))))
+        (expect (= :lines-changed (:reason (ex-data thrown))))
         (expect (= 1 (:edit-index (ex-data thrown))))
         (expect (string/starts-with? (ex-message thrown) "patch refused at edit 2 of 3"))
         ;; Atomic for the FILE: the two GOOD edits are not written either.
-        (expect (= "alpha\nbeta\ngamma\n" (slurp rel)))))
+        (expect (= "alpha\nBETA ELSEWHERE\ngamma\n" (slurp rel)))))
   (it "two edits over the same line are refused with both of them, and nothing is written"
       (let [rel
             (write-temp! "patch/batch-overlap.txt" "alpha\nbeta\ngamma\n")
@@ -1857,15 +1847,13 @@
             (comp :result (private-fn "cat-tool"))
 
             patch-tool
-            (private-fn "patch-tool")
+            patch-now
 
-            text
+            _
             (cat-tool rel)
 
             thrown
-            (try (patch-tool rel
-                             [{"from" (anchor-at text 1) "to" (anchor-at text 2) "replace" "A+B"}
-                              {"from" (anchor-at text 2) "replace" "BETA"}])
+            (try (patch-tool rel [{"from" 1 "to" 2 "replace" "A+B"} {"from" 2 "replace" "BETA"}])
                  nil
                  (catch clojure.lang.ExceptionInfo e e))]
 
@@ -1881,16 +1869,14 @@
             (comp :result (private-fn "cat-tool"))
 
             patch-tool
-            (private-fn "patch-tool")
+            patch-now
 
-            text
+            _
             (cat-tool rel)
 
             out
             (:result (patch-tool rel
-                                 [{"from" (anchor-at text 1)
-                                   "to" (anchor-at text 1)
-                                   "replace" "ALPHA"} {"from" (anchor-at text 3) "replace" ""}]))]
+                                 [{"from" 1 "to" 1 "replace" "ALPHA"} {"from" 3 "replace" ""}]))]
 
         (expect (= "ALPHA\nbeta\ndelta\n" (slurp rel)))
         (expect (string/includes? out "2 edits  4 → 3 lines (-1)"))
@@ -1898,17 +1884,16 @@
 
 (defdescribe
   patch-preview-test
-  (it "shows what one call would write and leaves the file as it was"
-      (let [rel
-            (write-temp! "patch/preview.txt" "alpha\nbeta\n")
+  (it
+    "shows what one call would write and leaves the file as it was"
+    (let [rel
+          (write-temp! "patch/preview.txt" "alpha\nbeta\n")
 
-            preview
-            ((private-fn "patch-preview")
-              [rel [{"from" (hashline/line-anchor 2 "beta") "replace" "BETA"}]])]
+          preview
+          ((private-fn "patch-preview") [rel [{"from" 2 "replace" "BETA"}] (current-version rel)])]
 
-        (expect (= {:path rel :before "alpha\nbeta\n" :after "alpha\nBETA\n" :spans [[2 2]]}
-                   preview))
-        (expect (= "alpha\nbeta\n" (slurp rel)))))
+      (expect (= {:path rel :before "alpha\nbeta\n" :after "alpha\nBETA\n" :spans [[2 2]]} preview))
+      (expect (= "alpha\nbeta\n" (slurp rel)))))
   (it "is nil for a call that the write would refuse"
       (let [rel
             (write-temp! "patch/preview-stale.txt" "alpha\nbeta\n")
@@ -1916,8 +1901,8 @@
             preview
             (private-fn "patch-preview")]
 
-        (expect (nil? (preview [rel [{"from" (hashline/line-anchor 2 "stale") "replace" "BETA"}]])))
-        (expect (nil? (preview [(str rel ".missing") [{"from" "1:000" "replace" "x"}]])))
+        (expect (nil? (preview [rel [{"from" 2 "replace" "BETA"}] "ffffffff"])))
+        (expect (nil? (preview [(str rel ".missing") [{"from" 1 "replace" "x"}] "ffffffff"])))
         (expect (= "alpha\nbeta\n" (slurp rel)))))
   (it "reaches the op's around hooks through the env that the before-fn returns"
       (let [rel
@@ -1927,7 +1912,7 @@
             ((:ext.symbol/before-fn (private-fn "patch-symbol"))
               {:extensions (atom [])}
               (constantly :ok)
-              [rel [{"from" (hashline/line-anchor 1 "alpha") "replace" "ALPHA"}]])]
+              [rel [{"from" 1 "replace" "ALPHA"}] (current-version rel)])]
 
         (expect (= {:path rel :before "alpha\n" :after "ALPHA\n" :spans [[1 1]]}
                    ((get-in out [:env :op/preview]) (:args out)))))))
@@ -1935,12 +1920,12 @@
 (defdescribe
   patch-repair-test
   (it
-    "commits a repaired preview once and returns anchors for the repaired text"
+    "commits a repaired preview once and reports the new version of the repaired text"
     (let [rel
           (write-temp! "patch/repaired.clj" "(old)\n(keep)\n")
 
           args
-          [rel [{"from" (hashline/line-anchor 1 "(old)") "replace" "(new"}]]
+          [rel [{"from" 1 "replace" "(new"}] (current-version rel)]
 
           preview
           ((private-fn "patch-preview") args)
@@ -1967,14 +1952,14 @@
       (expect (= "(new)\n(keep)\n" (slurp rel)))
       (expect (string/includes? (:result result) "Added a closing parenthesis."))
       (expect (re-find #"\n\s+1\s+1\.\.2" (:result result)))
-      (expect (string/includes? (:result result) (hashline/line-anchor 1 "(new)")))
+      (expect (string/includes? (:result result) (str " @" (current-version rel) " ")))
       (expect (= "(old)\n(keep)\n" (get-in result [:metadata :file-befores 0 :before])))))
   (it "refuses a repair if any source changed while the hook worked"
       (let [rel
             (write-temp! "patch/repair-race.clj" "(old)\n(keep)\n")
 
             args
-            [rel [{"from" (hashline/line-anchor 1 "(old)") "replace" "(new"}]]
+            [rel [{"from" 1 "replace" "(new"}] (current-version rel)]
 
             preview
             ((private-fn "patch-preview") args)
@@ -1997,7 +1982,7 @@
           (write-temp! "patch/repair-preview.clj" "(a)\n")
 
           args
-          [rel [{"from" (hashline/line-anchor 1 "(a)") "replace" "(b"}]]
+          [rel [{"from" 1 "replace" "(b"}] (current-version rel)]
 
           out
           ((:ext.symbol/before-fn (private-fn "patch-symbol"))
@@ -2029,8 +2014,8 @@
       (expect (= "(a)\n" (slurp rel))))))
 
 (defdescribe
-  grep-returns-anchored-text-test
-  (it "line 1 summarizes and every content row carries an anchor"
+  grep-returns-numbered-text-test
+  (it "line 1 summarizes, each file header names its version and each row its line"
       (let [d
             (temp-dir-path "greptext")
 
@@ -2049,8 +2034,9 @@
         (expect (string? out))
         (expect (string/starts-with? (first lines) "grep 'ZZNEEDLEZZ'"))
         (expect (string/includes? (first lines) "1 hit · 1 file"))
-        (expect (some #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %) lines))))
-  (it "context lines are anchored too, so a context line is directly patchable"
+        (expect (some #(re-matches #".*greptext/one\.txt @[0-9a-f]{8}  \(1\)" %) lines))
+        (expect (some #(re-matches #"  \d+│ .*" %) lines))))
+  (it "context lines are numbered too, so a context line is directly patchable"
       (let [d
             (temp-dir-path "greptextctx")
 
@@ -2066,7 +2052,7 @@
                  (filter #(string/starts-with? % "  ")))]
 
         (expect (= 3 (count rows)))
-        (expect (every? #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %) rows))))
+        (expect (every? #(re-matches #"  \d+│ .*" %) rows))))
   (it "clips the default four-line context safely at a one-line file"
       (let [d
             (temp-dir-path "greptextone")
@@ -2092,7 +2078,7 @@
         (expect (= [] (get hit "before")))
         (expect (= [] (get hit "after")))
         (expect (= 1 (count rows)))
-        (expect (re-matches #"  1:[0-9a-f]{3}│ ZZONEZZ" (first rows)))))
+        (expect (= "  1│ ZZONEZZ" (first rows)))))
   (it "zero hits is the summary plus the hint that explains it"
       (let [d
             (temp-dir-path "greptextzero")
@@ -2133,63 +2119,88 @@
                      " \"is_files_only\": True for every file with its hit count")
                    head)))))
 
-(defdescribe a-grep-hit-is-a-patch-anchor-test
+(defdescribe a-grep-hit-feeds-patch-test
              ;; The point of the whole scheme: search, then edit, with NO read between.
-             (it "a hit's anchor feeds patch directly"
+             (it "a hit's line number and its header version feed patch directly"
                  (let [d
-                       (temp-dir-path "grepanchor")
+                       (temp-dir-path "grepline")
 
                        rel
-                       (write-temp! "grepanchor/target.txt" "keep\nZZHITZZ line\nkeep\n")
+                       (write-temp! "grepline/target.txt" "keep\nZZHITZZ line\nkeep\n")
 
-                       grep-tool
-                       (private-fn "grep-tool")
+                       grep-out
+                       (:result ((private-fn "grep-tool") {"query" "ZZHITZZ" "paths" [d]}))
 
                        hit-row
-                       (->> (:result (grep-tool {"query" "ZZHITZZ" "paths" [d]}))
-                            string/split-lines
-                            ;; Default context is anchored too; select the query-bearing hit.
+                       (->> (string/split-lines grep-out)
+                            ;; Default context rows are numbered too; select the hit itself.
                             (filter #(string/includes? % "│ ZZHITZZ line"))
                             first)
 
-                       anchor
-                       (string/trim (first (string/split hit-row #"│ ")))
+                       line
+                       (parse-long (string/trim (first (string/split hit-row #"│ "))))
 
                        out
-                       (:result (patch-span rel anchor anchor "replaced"))]
+                       (:result ((private-fn "patch-tool")
+                                  rel
+                                  [{"from" line "replace" "replaced"}]
+                                  (version-in grep-out)))]
 
-                   (expect (re-matches #"\d+:[0-9a-f]{3}" anchor))
+                   (expect (= 2 line))
+                   (expect (= (version/content-version "keep\nZZHITZZ line\nkeep\n")
+                              (version-in grep-out)))
                    (expect (string/starts-with? out "patched "))
                    (expect (= "keep\nreplaced\nkeep\n" (slurp rel)))))
-             ;; Regression (session fbb1093f): the anchor parser took EVERYTHING
-             ;; after the colon as the hash, so a row pasted WHOLE — the only form
-             ;; these tools ever print — hashed to `5af│ /**` and matched no line.
-             ;; Every paste was refused, and the refusal echoed the same anchor back.
-             (it "a whole hit row — indent, gutter, text and all — feeds patch too"
+             (it "a grep version still lands after an edit elsewhere in the file"
                  (let [d
-                       (temp-dir-path "grepanchorwhole")
+                       (temp-dir-path "greplinemoved")
 
                        rel
-                       (write-temp! "grepanchorwhole/target.txt" "keep\nZZWHOLEZZ LINE\nkeep\n")
+                       (write-temp! "greplinemoved/target.txt" "keep\nZZMOVEZZ line\nkeep\n")
 
-                       grep-tool
-                       (private-fn "grep-tool")
+                       grep-out
+                       (:result ((private-fn "grep-tool") {"query" "ZZMOVEZZ" "paths" [d]}))
+
+                       _
+                       (spit rel (str "added\n" (slurp rel)))
+
+                       out
+                       (:result ((private-fn "patch-tool")
+                                  rel
+                                  [{"from" 2 "replace" "replaced"}]
+                                  (version-in grep-out)))]
+
+                   (expect (string/includes? out "moved from @"))
+                   (expect (= "added\nkeep\nreplaced\nkeep\n" (slurp rel)))))
+             ;; Regression (session fbb1093f): a row pasted WHOLE — the form these tools
+             ;; print — was refused. The line number at its start is the address.
+             (it "a whole hit row — indent, gutter, text and all — feeds patch too"
+                 (let [d
+                       (temp-dir-path "greplinewhole")
+
+                       rel
+                       (write-temp! "greplinewhole/target.txt" "keep\nZZWHOLEZZ LINE\nkeep\n")
+
+                       grep-out
+                       (:result ((private-fn "grep-tool") {"query" "ZZWHOLEZZ" "paths" [d]}))
 
                        hit-row
-                       (->> (:result (grep-tool {"query" "ZZWHOLEZZ" "paths" [d]}))
-                            string/split-lines
+                       (->> (string/split-lines grep-out)
                             (filter #(string/includes? % "│ ZZWHOLEZZ LINE"))
                             first)
 
                        out
-                       (:result (patch-span rel hit-row hit-row "replaced"))]
+                       (:result ((private-fn "patch-tool")
+                                  rel
+                                  [{"from" hit-row "to" hit-row "replace" "replaced"}]
+                                  (version-in grep-out)))]
 
                    (expect (string/includes? hit-row "│ ZZWHOLEZZ LINE"))
                    (expect (string/starts-with? out "patched "))
                    (expect (= "keep\nreplaced\nkeep\n" (slurp rel))))))
 
 (defdescribe read-activity-snapshot-test
-             (it "keeps the read Activity summary-only without altering the anchored tool result"
+             (it "keeps the read Activity summary-only without altering the numbered tool result"
                  (let [rel
                        (write-temp! "read/activity-snapshot.clj"
                                     "(def before 1)\n(def untouched 2)\n")
@@ -2236,7 +2247,7 @@
               (extension/invoke-symbol-wrapper
                 {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols [sym]}}
                 sym
-                [rel [{"from" (hashline/line-anchor 1 "before") "replace" "after"}]]
+                [rel [{"from" 1 "replace" "after"}] (current-version rel)]
                 {:workspace/root (System/getProperty "user.dir")
                  :workspace {:root (System/getProperty "user.dir")
                              :repo-root (System/getProperty "user.dir")}}))
@@ -2710,9 +2721,7 @@
                    (try (spit tmp "before\n")
                         (binding [mpl-capture/*attachment-sink* sink]
                           (doseq [path [tmp ws]]
-                            (expect
-                              (:success?
-                                (patch-span path (hashline/line-anchor 1 "before") nil "after")))
+                            (expect (:success? (patch-span path 1 nil "after")))
                             (expect (= "after\n" (slurp path)))))
                         (expect (empty? @sink))
                         (finally (fs/delete-if-exists tmp))))))
@@ -2727,14 +2736,14 @@
                (it "describes the batch's atomic refusal"
                    (expect (string/includes?
                              patch-description
-                             "a stale anchor or an overlap refuses the WHOLE batch"))
+                             "a refused edit or an overlap refuses the WHOLE batch"))
                    ;; The batch's all-or-nothing property is a property of the BATCH,
                    ;; and `doc(name)` is the only place it can be stated now that no
                    ;; schema describes the `edits` parameter.
                    (expect (string/includes? patch-description "writes NOTHING")))
                (it "documents the Python result shape instead of relying on rendered output"
                    (expect (string/includes? patch-result "one row per edit"))
-                   (expect (string/includes? patch-result "LIVE AFTER the write")))))
+                   (expect (string/includes? patch-result "its NEW version")))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 
@@ -2972,81 +2981,79 @@
           (expect (= :ext.foundation.editing/grep-missing-path (:type (ex-data err))))
           (expect (clojure.string/includes? (ex-message err) "rgd-precise` first.")))))))
 
-(defdescribe atomic-write-test
-             "Patch replacements preserve permissions and leave the original intact on failure."
-             (it "a write that cannot land returns an IO refusal without temporary debris"
-                 (let [dir
-                       (temp-dir-path "atomic1")
+(defdescribe
+  atomic-write-test
+  "Patch replacements preserve permissions and leave the original intact on failure."
+  (it "a write that cannot land returns an IO refusal without temporary debris"
+      (let [dir
+            (temp-dir-path "atomic1")
 
-                       missing
-                       (str dir "/no-such-dir/f.txt")
+            missing
+            (str dir "/no-such-dir/f.txt")
 
-                       result
-                       ((private-fn "atomic-replace!") (fs/file missing) "f.txt" "never lands")]
+            result
+            ((private-fn "atomic-replace!") (fs/file missing) "f.txt" "never lands")]
 
-                   (expect (= :io-error (:reason result)))
-                   (expect (string/includes? (:message result) "The file is unchanged."))
-                   (expect (not (fs/exists? missing)))
-                   (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
-                                           (fs/list-dir dir))))))
-             (it "patch preserves executable permissions and notifies the index once"
-                 (let [dir
-                       (temp-dir-path "atomic2")
+        (expect (= :io-error (:reason result)))
+        (expect (string/includes? (:message result) "The file is unchanged."))
+        (expect (not (fs/exists? missing)))
+        (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
+                                (fs/list-dir dir))))))
+  (it "patch preserves executable permissions and notifies the index once"
+      (let [dir
+            (temp-dir-path "atomic2")
 
-                       path
-                       (write-temp! "atomic2/run.sh" "#!/bin/sh\necho one\n")
+            path
+            (write-temp! "atomic2/run.sh" "#!/bin/sh\necho one\n")
 
-                       ^java.io.File file
-                       (fs/file path)
+            ^java.io.File file
+            (fs/file path)
 
-                       notices
-                       (atom 0)]
+            notices
+            (atom 0)]
 
-                   (.setExecutable file true)
-                   (let [result
-                         (with-redefs [fff-index/note-fs-write! (fn [^java.io.File changed]
-                                                                  (expect
-                                                                    (= (.getCanonicalFile file)
-                                                                       (.getCanonicalFile changed)))
-                                                                  (swap! notices inc))]
-                           (patch-span path (hashline/line-anchor 2 "echo one") nil "echo two"))]
-                     (expect (:success? result))
-                     (expect (= 1 @notices))
-                     (expect (= "#!/bin/sh\necho two\n" (slurp file)))
-                     (expect (.canExecute file))
-                     (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
-                                             (fs/list-dir dir)))))))
-             ;; Regression, issue #147: an interrupted write must never truncate the original.
-             (it "patch reports a partial temporary write as a refusal and keeps the original"
-                 (let [path
-                       (write-temp! "atomic3/keep.txt" "before\n")
+        (.setExecutable file true)
+        (let [result (with-redefs [fff-index/note-fs-write! (fn [^java.io.File changed]
+                                                              (expect (= (.getCanonicalFile file)
+                                                                         (.getCanonicalFile
+                                                                           changed)))
+                                                              (swap! notices inc))]
+                       (patch-span path 2 nil "echo two"))]
+          (expect (:success? result))
+          (expect (= 1 @notices))
+          (expect (= "#!/bin/sh\necho two\n" (slurp file)))
+          (expect (.canExecute file))
+          (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
+                                  (fs/list-dir dir)))))))
+  ;; Regression, issue #147: an interrupted write must never truncate the original.
+  (it "patch reports a partial temporary write as a refusal and keeps the original"
+      (let [path
+            (write-temp! "atomic3/keep.txt" "before\n")
 
-                       write-bytes
-                       spit
+            write-bytes
+            spit
 
-                       notices
-                       (atom 0)
+            notices
+            (atom 0)
 
-                       thrown
-                       (with-redefs [clojure.core/spit
-                                     (fn [file content]
-                                       (write-bytes file (subs (str content) 0 2))
-                                       (throw (java.io.IOException. "interrupted write")))
+            thrown
+            (with-redefs [clojure.core/spit
+                          (fn [file content]
+                            (write-bytes file (subs (str content) 0 2))
+                            (throw (java.io.IOException. "interrupted write")))
 
-                                     fff-index/note-fs-write!
-                                     (fn [_]
-                                       (swap! notices inc))]
+                          fff-index/note-fs-write!
+                          (fn [_]
+                            (swap! notices inc))]
 
-                         (try (patch-span path (hashline/line-anchor 1 "before") nil "after")
-                              nil
-                              (catch clojure.lang.ExceptionInfo e e)))]
+              (try (patch-span path 1 nil "after") nil (catch clojure.lang.ExceptionInfo e e)))]
 
-                   (expect (= :ext.foundation.editing/patch-refused (:type (ex-data thrown))))
-                   (expect (= :io-error (:reason (ex-data thrown))))
-                   (expect (= "before\n" (slurp path)))
-                   (expect (zero? @notices))
-                   (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
-                                           (fs/list-dir (fs/parent path))))))))
+        (expect (= :ext.foundation.editing/patch-refused (:type (ex-data thrown))))
+        (expect (= :io-error (:reason (ex-data thrown))))
+        (expect (= "before\n" (slurp path)))
+        (expect (zero? @notices))
+        (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
+                                (fs/list-dir (fs/parent path))))))))
 
 (defdescribe
   find-files-op-name-test
@@ -4808,7 +4815,7 @@
             ls-shim
             (some #(when (= "ls" (:shim/name %)) %) (extension/sandbox-shims))]
 
-        ;; `cat` and `patch` are BOUND and DOCUMENTED: the anchored read/write
+        ;; `cat` and `patch` are BOUND and DOCUMENTED: the versioned read/write
         ;; pair is a first-class part of the sandbox surface again.
         (expect (some? (get bind 'cat)))
         (expect (some? (get docs 'cat)))
@@ -4891,8 +4898,8 @@
                  "print(inspect.signature(cat))\n" "print(inspect.signature(patch))\n"
                  "text = cat(p)\n" "print(text)\n"
                  "w = cat(p, start=2, end=3)\n" "print('window:', ' | '.join(w.splitlines()))\n"
-                 "print(patch(p, [{'from': text.splitlines()[1].split('│ ')[0], "
-                 "'replace': 'BETA'}]))\n")
+                 "head, row = text.splitlines()[0], text.splitlines()[2]\n"
+                 "print(patch(p, [{'from': row, 'replace': 'BETA'}], head.split(' @')[1]))\n")
             "t1/i2")
 
           out
@@ -4900,12 +4907,14 @@
 
       (expect (nil? (:error result)))
       (expect (string/includes? out "(path, start=None, end=None)"))
-      (expect (string/includes? out "(path, edits)"))
-      (expect (re-find #"(?m)^1:[0-9a-f]{3}│ alpha$" out))
+      (expect (string/includes? out "(path, edits, version)"))
+      (expect (re-find #"(?m)^\S*cat/sandbox\.txt @[0-9a-f]{8}$" out))
+      (expect (re-find #"(?m)^1│ alpha$" out))
       ;; Issue #274: the keyword bounds a block writes reach the same window
       ;; `cat(p, 2, 3)` reads — the door's kwargs dict is re-expanded, not
       ;; handed to `start` as an options map.
-      (expect (re-find #"(?m)^window: 2:[0-9a-f]{3}│ beta \| 3:[0-9a-f]{3}│ gamma$" out))
+      (expect (re-find #"(?m)^window: \S*cat/sandbox\.txt @[0-9a-f]{8} \| 2│ beta \| 3│ gamma$"
+                       out))
       (expect (string/includes? out "→ 1 line"))
       (expect (= "alpha\nBETA\ngamma\n" (slurp rel))))))
 
@@ -5368,7 +5377,7 @@
                  (expect (= :held-lock (:reason data)))))
              (finally (paths/release-held-files! ::held-shm))))))
 
-;; Regression: grep answers ONE anchored TEXT block, but the model-facing prose still
+;; Regression: grep answers ONE numbered TEXT block, but the model-facing prose still
 ;; described a keyed map — the blank-path refusal told the model to use "the keys under
 ;; matches", so it kept subscripting a string.
 (defdescribe
@@ -5404,7 +5413,7 @@
             message
             (try (safe-path "") nil (catch clojure.lang.ExceptionInfo e (ex-message e)))]
 
-        (expect (string/includes? message "anchored TEXT"))
+        (expect (string/includes? message "numbered TEXT"))
         (expect (not (string/includes? message "returns a MAP"))))))
 
 (defdescribe
@@ -5450,7 +5459,7 @@
           (expect (= "limit" (get out "hits_truncated_by")))
           ;; paging in this mode advances by FILES, since one row is one file
           (expect (= 2 (get out "next_offset")))))
-    (it "renders one `path  N` row per file, with no anchored lines"
+    (it "renders one `path  N` row per file, with no numbered lines"
         (let [_ (write-temp! "grepforender/a.txt" "alpha\nalpha\n")
               d (temp-dir-path "grepforender")
               text

@@ -931,12 +931,12 @@ For `"patch"`, a before hook also receives `preview`: `{"path", "before",
 "after", "spans"}`. It holds the current file and the proposed result of all edits.
 Each span is `[start, end]`, with inclusive, one-based lines in the proposed result.
 Use the preview to validate a repair before anything is written. `preview` is absent
-when the patch would be refused, for example for a stale anchor.
+when the patch would be refused, for example when the edited lines changed.
 
 A repair replaces the complete proposed source, not the edit list. Vis checks that
 the original file still matches, then writes the final source once. Later guards
 see the repaired preview. The result includes correction notes, the actual diff and
-fresh anchors. The hook must validate its candidate before returning it.
+the new file version. The hook must validate its candidate before returning it.
 
 `vis.repair` requires string source and a nonempty list or tuple of nonblank notes.
 Invalid repair markers fail without running the operation. Only `"patch"` accepts

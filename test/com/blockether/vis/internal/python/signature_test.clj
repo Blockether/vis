@@ -89,7 +89,7 @@
                  "assert observed['grep']['query'].kind is inspect.Parameter.KEYWORD_ONLY\n"
                  "assert observed['grep']['paths'].default is Ellipsis\n"
                  "assert not observed['main-agent-instructions']\n"
-                 "assert list(observed['patch']) == ['path', 'edits']\n"
+                 "assert list(observed['patch']) == ['path', 'edits', 'version']\n"
                  "assert all(p.default is inspect.Parameter.empty for p in observed['patch'].values())\n"
                  "assert list(observed['council.wait']) == ['session_ids', 'timeout_secs', 'kwargs']\n"
                  "assert list(observed['council.cancel']) == ['session_id']\n"

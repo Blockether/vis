@@ -16,7 +16,7 @@
       (doseq [[code expected]
               [["cat({})" "cat: use cat(path, start?, end?); not an options map."]
                ["patch({})" "patch: wrong number of arguments; see doc(\"patch\")."]
-               ["patch({}, [])" "patch: use patch(path, edits); see doc(\"patch\") for edit keys."]
+               ["patch({}, [], '00000000')" "patch: use patch(path, edits, version); see doc(\"patch\") for edit keys."]
                ["grep({'query': 'x', 'paths': ['resources'], 'wat': True})"
                 "grep: unknown keys: wat. See doc(\"grep\")."]
                ["await shell('')" "shell: command required; use shell(command)."]
@@ -39,7 +39,7 @@
               ["cat" "patch"]]
 
         (let [code
-              (str tool "('" missing-path "'" (when (= tool "patch") ", []") ")")
+              (str tool "('" missing-path "'" (when (= tool "patch") ", [], '00000000'") ")")
 
               out
               (ep/run-python-block ctx code "t1/i1")

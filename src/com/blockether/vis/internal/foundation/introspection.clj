@@ -341,11 +341,14 @@
 (def ^:private patch-refusal-causes
   "Cause phrases `patch` prints under its refusal head, in match order, paired with the
    classification whose advice actually fixes that cause. The wording is the editor's own
-   (`foundation.editing.core`): an overlap, an anchor mismatch, then the edit-shape checks."
-  [[:patch-overlapping-edits ["overlap"]] [:patch-stale-anchor ["stale from" "stale to"]]
+   (`foundation.editing.core`): an overlap, changed lines, an unusable version, then the
+   edit-shape checks."
+  [[:patch-overlapping-edits ["overlap"]]
+   [:patch-lines-changed ["changed since that read" "changed too much since"]]
+   [:patch-version-invalid ["is not known here" "version must be the `@` value"]]
    [:patch-invalid-edit
-    ["expected line:hash" "out of range" "is after to line" "must be a map" "non-empty list of maps"
-     "missing `from`" "missing `replace`" "allowed: from, to, replace"]]])
+    ["must be a line number" "out of range" "is after to line" "must be a map"
+     "non-empty list of maps" "missing `from`" "missing `replace`" "allowed: from, to, replace"]]])
 
 (defn- patch-refusal-classification
   "The classification a `patch` refusal earns from the cause line it printed, or nil when
@@ -367,10 +370,10 @@
   (let [lower-message (str/lower-case (or (error-text error) ""))]
     (cond (retired-python-error? error) :python-environment-retired
           (cancellation-failure? lower-message) :turn-cancelled
-          ;; A refused ANCHOR is its own loop: the exact line/hash pair no longer agrees, and
-          ;; the refusal already carries the fresh anchor. But an overlap and an unusable edit
-          ;; shape refuse under the SAME head, and stale-anchor advice sends those back with
-          ;; the very text that was refused, so the cause line decides — never the head alone.
+          ;; Changed lines are their own loop: the refusal names the current version and
+          ;; a window to read. But an overlap and an unusable edit shape refuse under the
+          ;; SAME head, and re-read advice sends those back with the very text that was
+          ;; refused, so the cause line decides — never the head alone.
           :else (or (patch-refusal-classification lower-message) :code-execution-error))))
 
 (defn- advice-for-classification
@@ -386,10 +389,13 @@
     "Two edits in the batch cover the same line, so the whole batch was refused. Merge them into ONE edit spanning both ranges instead of sending the same pair again."
 
     :patch-invalid-edit
-    "The edit shape is unusable as written: each edit is {\"from\": \"line:hash\", \"to\": \"line:hash\", \"replace\": text}, with anchors copied verbatim from cat/grep, inside the file and `from` before `to`. The cause line names the failing edit — fix that one and re-send."
+    "The edit shape is unusable as written: each edit is {\"from\": 12, \"to\": 14, \"replace\": text}, with line numbers of the version that the cat/grep header showed, inside the file and `from` before `to`. The cause line names the failing edit — fix that one and re-send."
 
-    :patch-stale-anchor
-    "The anchor no longer matches the line it names. The refusal already carries the CURRENT anchor — retry with that one instead of re-reading the file, and put every edit for that file in ONE patch(path, edits) call so earlier edits cannot drift later anchors."
+    :patch-lines-changed
+    "The lines of this edit changed after the read that showed them, so the whole batch was refused. Read only the `cat` window the refusal names, then send the edit again with the current version it gives. Edits elsewhere in the file move on their own."
+
+    :patch-version-invalid
+    "The `version` argument is not a version this file showed. Pass the `@` value from the header of the last cat, grep or patch result for this file, or read the lines again to get the current version."
 
     :turn-cancelled
     "Not a code defect: the turn was cancelled and the interrupt surfaced on the frame that was running. Re-run the interrupted step if you still need it."
@@ -811,9 +817,9 @@
         (conj
           "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use raw_preview from read_session()[\"failures\"] and retry/switch model only if it repeats.")
 
-        (contains? classes :patch-stale-anchor)
+        (contains? classes :patch-lines-changed)
         (conj
-          "Spend the anchor the refusal handed back instead of re-reading; put every edit for one file in ONE patch(path, edits) call, so no earlier edit can drift a later anchor.")))))
+          "Read only the window the patch refusal names and use the current version it gives; put every edit for one file in ONE patch(path, edits, version) call.")))))
 
 (def ^:private STALE_RUNNING_TURN_MS
   "A running turn with no new iteration for this long is a suspected hang."

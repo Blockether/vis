@@ -1915,7 +1915,7 @@
                    (if denied-write? "file-write" "file-read")
                    ": the resource is outside approved filesystem roots. "
                    "Use grep({\"query\": q, \"context\": 3}) or cat(path, start, end) to read, "
-                   "patch(path, edits) to edit, "
+                   "patch(path, edits, version) to edit, "
                    "or ask the USER to add the path to workspace.filesystem in vis.yml "
                    "and run /reload. Original error: ")
               ;; A refusal names its problem instead.

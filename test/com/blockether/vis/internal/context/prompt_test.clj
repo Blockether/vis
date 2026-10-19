@@ -688,7 +688,7 @@
   (it "states exact retry and completion conditions"
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (expect (str/includes? text "Prompt v1."))
-        (expect (str/includes? text "For stale anchors, read only the region that the error names"))
+        (expect (str/includes? text "For changed lines, read only the window that the error names"))
         (expect (str/includes? text "When the checks for the changed files pass"))
         ;; User report: a working turn ran silently between calls, where opencode asks for
         ;; short progress notes; the answer must still read on its own without them.
@@ -765,9 +765,9 @@
       ;; as `saturation 15%, headroom 850k`, so "watch `session[\"utilization\"]`" pointed the
       ;; model at the one pair of numbers that stays calm while the budget empties.
       ;; 5k → 5.5k exactly once more, for the two verbs that give an edit a COORDINATE:
-      ;; `cat` mints `line:hash` and `patch` spends it. §3 previously ordered the opposite —
+      ;; `cat` mints a line address and `patch` spends it. §3 previously ordered the opposite —
       ;; "CHANGING the tree is plain Python" — and that sentence is gone, but naming both
-      ;; verbs, the anchor format the model has to recognize, and the batch shape ONE
+      ;; verbs, the address format the model has to recognize, and the batch shape ONE
       ;; call takes does not fit in what it freed. Measured against 40 real
       ;; sessions, the instruction it replaces cost 48% of ALL block characters in blocks
       ;; that write a file, 80% of it the old text quoted back; this is the cheaper order.
@@ -880,8 +880,8 @@
       ;; Opus 5.5 wrote English and German notes in Polish turns. §7 names no standard now.
       (expect (< (count text) 12200))
       (let [steps (mapv #(str/index-of text %)
-                        ["`grep` locates unknown code" "each hit is a `patch` anchor"
-                         "`patch(path, edits)`"])]
+                        ["`grep` locates unknown code" "`N│ text` rows"
+                         "`patch(path, edits, version)`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
       ;; User report: a model asked the user a question in a progress note and kept working.
@@ -894,7 +894,7 @@
       ;; Every code verb §3 names carries its literal call shape, and the options-dict ones
       ;; name the keys inside it — the shape is read, never remembered or looked up.
       (doseq [shape ["`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"
-                     "`cat(path, start, end)`" "`patch(path, edits)`"
+                     "`cat(path, start, end)`" "`patch(path, edits, version)`"
                      "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
         (expect (str/includes? text shape)))
       (expect (str/includes? text
@@ -1624,36 +1624,37 @@
   ;; The verbs exist only if the prompt spends them. Before this, the core
   ;; prompt told the model to CHANGE the tree with `Path.write_text` — which is
   ;; how a 2 KB block that restates the old text becomes the normal way to edit.
-  (it "names both anchored verbs and the address they speak"
+  (it "names both versioned verbs and the address they speak"
       (let [text (prompt/build-system-prompt {})]
         (expect (str/includes? text "cat(path, start, end)"))
-        (expect (str/includes? text "patch(path, edits)"))
+        (expect (str/includes? text "patch(path, edits, version)"))
         (expect (str/includes? text "\"replace\""))
-        (expect (str/includes? text "line:hash"))
-        (expect (str/includes? text "then changes exactly those lines"))))
+        (expect (str/includes? text "a `path @version` line, then `N│ text` lines"))
+        (expect (str/includes? text "refuses it when its lines changed"))))
   (it "never tells the model to write a text EDIT in plain Python"
       (let [text (prompt/build-system-prompt {})]
         (expect (not (str/includes? text "CHANGING the tree is plain Python")))
         (expect (not (str/includes? text "are edited in plain Python")))
-        (expect (str/includes? text "Use one `patch(path, edits)` call for each file"))))
+        (expect (str/includes? text "Use one `patch(path, edits, version)` call for each file"))))
   ;; Regression: `cat` grew a negative endpoint and the prompt kept quiet, so
   ;; the tail of a file still cost a line count first and then a read.
   (it "says a negative `start` counts from the end"
       (let [text (prompt/build-system-prompt {})]
         (expect (str/includes? text "a negative"))
         (expect (str/includes? text "`start` counts from the end"))))
-  ;; Regression: after grep started answering ONE anchored TEXT block the
+  ;; Regression: after grep started answering ONE numbered TEXT block the
   ;; prompt still said only "hits arrive ANCHORED", never WHAT arrives, so the
   ;; model kept treating the answer as a keyed map.
-  (it "says grep answers anchored TEXT, models context, and spends several hits at once"
+  (it "says grep answers numbered TEXT, models context, and spends several hits at once"
       (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text "It returns a string; each hit is a `patch` anchor"))
+        (expect (str/includes? text
+                               "It returns a string: `path @version` headers and `N│ text` rows"))
         (expect (not (str/includes? text "returns a MAP")))
         ;; Several hits in ONE file are ONE patch call now, so there is no
         ;; order left for the caller to compute.
         (expect (not (str/includes? text "bottom-up")))
-        (expect (str/includes? text "Use one `patch(path, edits)` call for each file"))
-        (expect (str/includes? text "use a fresh anchor"))
+        (expect (str/includes? text "Use one `patch(path, edits, version)` call for each file"))
+        (expect (str/includes? text "use the version and lines of the last `patch` result"))
         ;; User reports: recent sessions copied the primary grep example without
         ;; context even though nearby lines often answered the question outright.
         ;; Naming the default was still ambiguous: context is counted independently
@@ -1680,36 +1681,34 @@
       (let [text (prompt/build-system-prompt {})]
         (expect (str/includes? text "`sh.logs(-50)` (the last n lines)")))))
 
-;; Regression, user report: cat and a patch with unseen or placeholder hashes
+;; Regression, user report: cat and a patch with an unseen or placeholder version
 ;; ran in one block; printing the read cannot inform a prewritten replacement.
 (defdescribe
   core-prompt-grounds-patch-retries-test
-  (it "waits for observed anchors before generating a dependent patch"
+  (it "waits for an observed version before generating a dependent patch"
       (let [text (prompt/build-system-prompt {})]
-        (doseq [rule ["End the block, then decide in the next block"
-                      "Copy them exactly from a read in an earlier block"
-                      "Vis checks the line number and full hash of each end"
-                      "then changes exactly those lines"]]
+        (doseq [rule
+                ["End the block, then decide in the next block"
+                 "`version` is the `@` value of the `cat` or `grep` header that showed the lines"
+                 "Vis moves an edit over other changes"]]
           (expect (str/includes? text rule) rule))))
-  ;; Editing e2e used source text or bare line numbers despite the anchor instruction.
-  (it "defines both endpoints as hashline strings rather than text or line numbers"
+  ;; Editing e2e used source text instead of the address that a read printed.
+  (it "defines both endpoints as line numbers of the version that a read showed"
       (let [text (prompt/build-system-prompt {})]
-        (doseq
-          [rule
-           ["Use `Path.read_text` to process a whole file" "`from` and `to` are `line:hash` anchors"
-            "For `12:abc│ old`, a one-line edit is `{\"from\": \"12:abc\", \"replace\": \"new\"}`"
-            "`replace` is new file text without hash gutters"]]
+        (doseq [rule ["Use `Path.read_text` to process a whole file"
+                      "`from` and `to` are its line numbers"
+                      "`replace` is new file text without `N│ ` gutters"]]
           (expect (str/includes? text rule) rule))))
   (it
-    "distinguishes stale-anchor recovery from invalid replacement syntax"
+    "distinguishes changed-lines recovery from invalid replacement syntax"
     (let [text (prompt/build-system-prompt {})]
       (doseq
         [rule
-         ["use a fresh anchor from the last result, or read the target again"
+         ["use the version and lines of the last `patch` result, or read the target again"
           "A refused patch writes nothing"
-          "For stale anchors, read only the region that the error names"
-          "Confirm the target before you try again"
-          "For a parse error, fix the syntax of the replacement and try again with the same anchors"]]
+          "For changed lines, read only the window that the error names"
+          "Confirm the target before you try again with the current version"
+          "For a parse error, fix the syntax of the replacement and try again with the same version"]]
         (expect (str/includes? text rule) rule)))))
 
 (defdescribe

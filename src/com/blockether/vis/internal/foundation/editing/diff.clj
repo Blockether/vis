@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.editing.diff
-  "Unified-diff rendering and line accounting for anchored patches.
+  "Unified-diff rendering and line accounting for versioned patches.
    Independent of the tool and activity namespaces."
   (:require [clojure.string :as str])
   (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
@@ -416,3 +416,54 @@
                     (vec (str/split-lines after))]
 
                 (if (affordable? a b) (delta-line-counts a b) (window-line-counts a b)))))
+
+(defn remap-line-span
+  "Map the 1-based inclusive line span `from`..`to` of `old-lines` onto `new-lines`.
+   Answers `{:from F :to T :shift D}` when no line of the span changed and nothing
+   was inserted inside it. A change outside the span only shifts it. Answers
+   `{:error :span-changed}` when the span itself changed, and
+   `{:error :too-many-changes}` when the diff is over the work budget."
+  [old-lines new-lines ^long from ^long to]
+  (let [a
+        (vec old-lines)
+
+        b
+        (vec new-lines)
+
+        prefix
+        (long (common-prefix-count a b))
+
+        suffix
+        (long (common-suffix-count a b prefix))
+
+        a-win
+        (subvec a prefix (- (count a) suffix))
+
+        b-win
+        (subvec b prefix (- (count b) suffix))
+
+        lo
+        (dec from)]
+
+    (if-not (affordable? a-win b-win)
+      {:error :too-many-changes}
+      (loop [deltas
+             (seq (.getDeltas ^Patch (DiffUtils/diff a-win b-win)))
+
+             shift
+             0]
+
+        (if-let [^AbstractDelta delta (first deltas)]
+          (let [^Chunk source (.getSource delta)
+                start (+ prefix (long (.getPosition source)))
+                size (long (count (.getLines source)))
+                added (long (count (.getLines ^Chunk (.getTarget delta))))
+                end (+ start size)]
+
+            ;; A pure insert (`size` 0) conflicts only strictly INSIDE the span: an insert
+            ;; at its first line lands before it, and one after its last line after it.
+            (cond (if (pos? size) (and (< start to) (> end lo)) (< lo start to)) {:error
+                                                                                  :span-changed}
+                  (<= end lo) (recur (next deltas) (+ shift (- added size)))
+                  :else (recur (next deltas) shift)))
+          {:from (+ from shift) :to (+ to shift) :shift shift})))))

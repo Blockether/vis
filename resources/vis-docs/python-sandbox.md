@@ -52,7 +52,7 @@ message and the first wrong quote, bracket or escape. It also shows the line wit
 
 Language extensions check proposed `patch` edits before Vis writes the file. They can propose a
 repair, validate it, then let Vis write the final source once. The patch result shows corrections,
-the actual diff and fresh anchors. If validation fails, the original file stays unchanged.
+the actual diff and the new file version. If validation fails, the original file stays unchanged.
 
 Plain writes inside Python blocks have a different boundary. The extensions inspect changed files
 after the block, including a block that raises an exception. They can then repair invalid files and

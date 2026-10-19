@@ -91,7 +91,7 @@ class ScenarioFilesTest(unittest.TestCase):
             latency = [int(row.split("ms=")[1]) for row in charlie]
             self.assertEqual(18.5, round(sum(latency) / len(latency), 1))
 
-    def test_namespace_rename_uses_anchored_edits_and_checks_the_moved_source(self):
+    def test_namespace_rename_uses_patch_edits_and_checks_the_moved_source(self):
         scenario = load_scenarios(["clj-ns-rename"])[0]
         self.assertEqual(["patch"], scenario["want_tools"])
         self.assertNotIn("symbol_rename", scenario["prompt"])

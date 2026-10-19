@@ -1145,7 +1145,7 @@
                       "    if len(L) > 3 and L[3].startswith('Keys:'): keyed.append(item.name)\n"
                       "print('NOCALL='+json.dumps(bad))\n" "print('KEYED='+str(len(keyed) > 8))\n"
                       "print('REQUIRED='+str(any('(REQUIRED)' in doc(n) for n in wired)))\n"
-                      "print('ONCE='+str(doc('patch').count('patch(path, edits)')))"))]
+                      "print('ONCE='+str(doc('patch').count('patch(path, edits, version)')))"))]
           (expect (re-find #"NOCALL=\[\]" out) out)
           (expect (str/includes? out "KEYED=True"))
           (expect (str/includes? out "REQUIRED=True"))

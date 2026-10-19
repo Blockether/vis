@@ -3355,10 +3355,11 @@ vis.register_extension(vis.Extension(
                    ctx
                    (str
                      "lines = cat(path).splitlines()\n"
-                     "anchors = [line.split('│', 1)[0].strip() for line in lines if '│' in line]\n"
-                     "print(patch(path, [{'from': anchors[0], 'to': anchors[-1], 'replace': "
+                     "version = lines[0].rsplit(' @', 1)[1]\n"
+                     "rows = [line.split('│', 1)[0].strip() for line in lines if '│' in line]\n"
+                     "print(patch(path, [{'from': rows[0], 'to': rows[-1], 'replace': "
                      (json-text replacement)
-                     "}]))"))]
+                     "}], version))"))]
                 (expect (nil? (:error result)) (pr-str result))
                 (expect (= replacement (slurp file)))
                 (expect (= findings (get (report) "findings")))))
