@@ -290,10 +290,29 @@
                           failures)))
       status)))
 
+(defn- prepare-known-projects!
+  "Prepare the catalog of each project that the person added or opened before (#396).
+   A session there then reuses that catalog and does not wait for its first load.
+   One failed project never stops the others."
+  []
+  (doseq [root
+          (keep #(get % "workspace_root") (state/list-projects))
+
+          :when (.isDirectory (java.io.File. ^String root))]
+
+    (try (python-extensions/prepare-project! root)
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::project-extensions-failed
+                      :data {:root root
+                             :error (extension-diagnostic-text (or (ex-message t) (str t)))}
+                      :msg "Could not prepare the extensions of a known project at startup"})))))
+
 (defn- prepare-startup-extensions!
   "Load the global catalog after HTTP starts so clients can report preparation without a
-   health timeout. The gateway has no project of its own: a session prepares its project's
-   catalog when it opens it, never the directory the gateway started in."
+   health timeout. Then prepare the catalogs of known projects, so the first session in a
+   project after a start does not wait for them. The gateway has no project of its own:
+   it never prepares the directory it started in."
   []
   ;; A later successful scan must clear a failed startup, including an empty catalog.
   (python-extensions/add-change-listener! ::extension-startup
@@ -305,7 +324,13 @@
        (catch Throwable t
          (reset! extension-startup {:stage "failed"
                                     :error (extension-diagnostic-text (or (ex-message t)
-                                                                          (str t)))}))))
+                                                                          (str t)))})))
+  (try (prepare-known-projects!)
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::known-projects-failed
+                    :data {:error (extension-diagnostic-text (or (ex-message t) (str t)))}
+                    :msg "Could not list the known projects at startup"}))))
 
 (defn- status-map
   []

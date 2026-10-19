@@ -3,6 +3,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.server :as server]
+            [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.runtime :as runtime]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
@@ -12,7 +13,8 @@
                                                 #'pyx/change-listeners (atom {})
                                                 #'pyx/load-failures (constantly [])
                                                 #'pyx/loaded-python-extensions (constantly {})
-                                                #'runtime/preparation-status (constantly [])}
+                                                #'runtime/preparation-status (constantly [])
+                                                #'state/list-projects (constantly [])}
                                  run))])
 
 (defdescribe startup-prepares-before-announcing-completion
@@ -37,6 +39,62 @@
                      (#'server/prepare-startup-extensions!)
                      (expect (= [{:global-only? true}] @requests))
                      (expect (= {:stage "ready"} @@#'server/extension-startup))))))
+
+(defdescribe
+  startup-prepares-known-projects-after-the-global-catalog
+  ;; Issue #396: the first session in a project after a gateway start waited for
+  ;; that project's whole extension catalog to load.
+  (it "prepares each existing known project after the global catalog"
+      (let [calls
+            (atom [])
+
+            first-root
+            (str (System/getProperty "java.io.tmpdir"))
+
+            second-root
+            (System/getProperty "user.dir")]
+
+        (with-redefs [pyx/ensure-python-extensions-loaded!
+                      (fn [opts]
+                        (swap! calls conj [:global opts])
+                        {:loaded 1 :failed 0})
+
+                      state/list-projects
+                      (constantly [{"workspace_root" first-root}
+                                   {"workspace_root" "/missing/vis-project"}
+                                   {"workspace_root" second-root}])
+
+                      pyx/prepare-project!
+                      #(swap! calls conj [:project %])]
+
+          (#'server/prepare-startup-extensions!)
+          (expect (= [[:global {:global-only? true}] [:project first-root] [:project second-root]]
+                     @calls))
+          (expect (= {:stage "ready"} @@#'server/extension-startup)))))
+  (it "keeps preparing the other projects after one project fails"
+      (let [prepared
+            (atom [])
+
+            failing-root
+            (str (System/getProperty "java.io.tmpdir"))
+
+            next-root
+            (System/getProperty "user.dir")]
+
+        (with-redefs [pyx/ensure-python-extensions-loaded!
+                      (constantly {:loaded 0 :failed 0})
+
+                      state/list-projects
+                      (constantly [{"workspace_root" failing-root} {"workspace_root" next-root}])
+
+                      pyx/prepare-project!
+                      (fn [root]
+                        (when (= failing-root root) (throw (ex-info "Project catalog failed" {})))
+                        (swap! prepared conj root))]
+
+          (#'server/prepare-startup-extensions!)
+          (expect (= [next-root] @prepared))
+          (expect (= {:stage "ready"} @@#'server/extension-startup))))))
 
 (defdescribe
   startup-failure-is-safe-and-does-not-stop-the-server
