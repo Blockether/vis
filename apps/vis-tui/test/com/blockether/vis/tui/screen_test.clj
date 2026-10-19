@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.agent-team :as agent-team]
+            [com.blockether.vis.tui.artifact-inspector :as artifact-inspector]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.components :as components]
@@ -2395,11 +2396,11 @@ therapy line 2"
   [target opts]
   (let [{:keys [artifacts bytes session-id viewer-result]}
         (merge {:artifacts [{"attachment_id" linked-artifact-id
-                             "filename" "vis-czapka.zip"
+                             "filename" "vis-czapka.pdf"
                              "iteration_id" "iteration-old"
                              "index" 0}
                             {"attachment_id" "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-                             "filename" "vis-czapka.zip"
+                             "filename" "vis-czapka.pdf"
                              "iteration_id" "iteration-new"
                              "index" 1}]
                 :bytes "linked version"
@@ -2407,10 +2408,16 @@ therapy line 2"
                 :viewer-result {:status :ok}}
                opts)
 
+        saved-dir
+        (io/file (System/getProperty "java.io.tmpdir") (str "vis-saved-" (random-uuid)))
+
         requests
         (atom [])
 
         opened
+        (atom nil)
+
+        revealed
         (atom nil)
 
         urls
@@ -2443,6 +2450,20 @@ therapy line 2"
                          (finally (.delete ^java.io.File file)
                                   (.delete (.getParentFile ^java.io.File file)))))
 
+                  artifact-inspector/saved-artifacts-dir
+                  (fn []
+                    saved-dir)
+
+                  opener/reveal-local!
+                  (fn [file]
+                    (let [file (io/file file)]
+                      (try (reset! revealed [(.getName file) (slurp file)
+                                             (= saved-dir (.getParentFile (.getParentFile file)))])
+                           {:status :ok}
+                           (finally (.delete file)
+                                    (.delete (.getParentFile file))
+                                    (.delete saved-dir)))))
+
                   opener/open!
                   (fn [url]
                     (swap! urls conj url))
@@ -2455,7 +2476,11 @@ therapy line 2"
         ;; Run only AFTER the user switches tabs, deterministically.
         (swap! state/app-db assoc-in [:session :id] "session-after-click")
         @worker)
-      {:requests @requests :opened @opened :urls @urls :notifications @notifications})))
+      {:requests @requests
+       :opened @opened
+       :revealed @revealed
+       :urls @urls
+       :notifications @notifications})))
 
 ;; Regression: assistant attachment:// links looked clickable but the URL opener
 ;; silently rejected them. An id names one exact version, not the newest filename.
@@ -2466,9 +2491,25 @@ therapy line 2"
         (let [result (attachment-click-outcome {:kind :url :url url} {})]
           (expect (= [[:index "session-1"] [:bytes "session-1" "iteration-old" 0]]
                      (:requests result)))
-          (expect (= ["vis-czapka.zip" "linked version"] (:opened result)))
+          (expect (= ["vis-czapka.pdf" "linked version"] (:opened result)))
           (expect (empty? (:urls result)))
           (expect (empty? (:notifications result))))))
+  ;; Regression: ZIP support (848c57e31) saves an archive and shows it in the
+  ;; file manager, because no viewer opens an archive.
+  (it "saves a linked archive in the downloads folder and shows it there"
+      (let [result (attachment-click-outcome {:kind :url :url linked-artifact-url}
+                                             {:artifacts [{"attachment_id" linked-artifact-id
+                                                           "filename" "vis-czapka.zip"
+                                                           "iteration_id" "iteration-old"
+                                                           "index" 0}]})]
+        (expect (= [[:index "session-1"] [:bytes "session-1" "iteration-old" 0]]
+                   (:requests result)))
+        (expect (= ["vis-czapka.zip" "linked version" true] (:revealed result)))
+        (expect (nil? (:opened result)))
+        (expect (empty? (:urls result)))
+        (expect (= 1 (count (:notifications result))))
+        (expect (str/starts-with? (get-in result [:notifications 0 0]) "Saved to "))
+        (expect (nil? (get-in result [:notifications 0 1 :level])))))
   (it "prefers a session carried by the click target to the active tab"
       (let [result (attachment-click-outcome
                      {:kind :url :url linked-artifact-url :session-id "clicked-session"}
@@ -2548,7 +2589,7 @@ therapy line 2"
                  (subs (nth (str/split-lines (cap/frame-text capture)) row)
                        col
                        (+ (long col) (long width)))))
-      (expect (= ["vis-czapka.zip" "linked version"]
+      (expect (= ["vis-czapka.pdf" "linked version"]
                  (:opened (attachment-click-outcome hit {})))))))
 
 (defdescribe session-id-exit-print-test
