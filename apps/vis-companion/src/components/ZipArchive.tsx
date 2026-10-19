@@ -14,8 +14,10 @@ import {
   readZipEntries,
   type ZipEntry,
 } from '../lib/zip';
+import { DataTable, parseCsv } from './DataTable';
 import { ChevronIcon } from './icons';
 import { MediaShareButton } from './Media';
+import { TextBody } from './TextArtifact';
 import { ListRow } from './ui';
 
 const TEXT_EXTENSIONS = new Set([
@@ -44,8 +46,23 @@ export function zipEntryMediaType(name: string): string {
   const extension = extensionOf(name);
   if (IMAGE_MEDIA[extension]) return IMAGE_MEDIA[extension];
   if (extension === 'zip') return 'application/zip';
+  if (extension === 'md' || extension === 'markdown') return 'text/markdown';
+  if (extension === 'csv') return 'text/csv';
+  if (extension === 'tsv') return 'text/tab-separated-values';
   if (TEXT_EXTENSIONS.has(extension)) return 'text/plain';
   return 'application/octet-stream';
+}
+
+/** The `vis-table` block that `DataTable` reads: five header lines, then the CSV. */
+function tableBlock(entry: ZipEntry, media: string, csv: string): string {
+  const grid = parseCsv(csv);
+  const cols = grid.reduce((widest, row) => Math.max(widest, row.length), 0);
+  const rows = Math.max(0, grid.length - 1);
+  const name = entry.name.split('/').pop() || entry.name;
+  const size = attachmentBytes(entry.size);
+  return [`[Table: ${name} ${rows} rows × ${cols} cols, ${size}]`, name, media, `${cols}x${rows}`, size, csv].join(
+    '\n',
+  );
 }
 
 type Preview =
@@ -63,11 +80,12 @@ function EntryPreview({ buffer, entry }: { buffer: ArrayBuffer; entry: ZipEntry 
       setPreview({ kind: 'none', reason: entry.encrypted ? 'This entry is encrypted.' : 'This entry cannot be opened in the app.' });
       return;
     }
-    if (media === 'text/plain' && entry.size > TEXT_PREVIEW_BYTES * 20) {
+    const isText = media.startsWith('text/');
+    if (isText && entry.size > TEXT_PREVIEW_BYTES * 20) {
       setPreview({ kind: 'none', reason: 'This file is too large to preview. Save it to read it.' });
       return;
     }
-    if (media !== 'text/plain' && !media.startsWith('image/')) {
+    if (!isText && !media.startsWith('image/')) {
       setPreview({ kind: 'none', reason: 'No preview for this file type. Save it to open it.' });
       return;
     }
@@ -97,11 +115,18 @@ function EntryPreview({ buffer, entry }: { buffer: ArrayBuffer; entry: ZipEntry 
     return <img src={preview.url} alt={entry.name} className="mx-auto max-h-96 max-w-full object-contain p-3" />;
   }
   if (preview.kind === 'text') {
+    const media = zipEntryMediaType(entry.name);
+    // The same readers as an opened artifact: a note renders as a document, a table as a
+    // table, and other text keeps its own line breaks.
+    const body =
+      media === 'text/csv' || media === 'text/tab-separated-values' ? (
+        <DataTable body={tableBlock(entry, media, preview.text)} compact frameless />
+      ) : (
+        <TextBody text={preview.text} mime={media} name={entry.name} />
+      );
     return (
       <div className="px-3 py-2">
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words border border-dialog-edge bg-panel p-2 font-mono text-meta text-answer-foreground">
-          {preview.text}
-        </pre>
+        <div className="max-h-96 overflow-auto border border-dialog-edge bg-panel p-2">{body}</div>
         {preview.truncated ? (
           <p className="pt-1 font-mono text-meta text-dialog-hint">Preview shows the start of the file. Save it to read all of it.</p>
         ) : null}

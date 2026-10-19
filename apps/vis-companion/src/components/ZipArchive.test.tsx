@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { CompressionStream, DecompressionStream } from 'node:stream/web';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildZip } from '../lib/zip-harness';
@@ -36,7 +36,8 @@ describe('ZIP archive view', () => {
     ]);
 
     fireEvent.click(view.getByText('docs/readme.md'));
-    expect(await view.findByText('# Hello from the archive')).toBeVisible();
+    expect(await view.findByRole('heading', { name: 'Hello from the archive' })).toBeVisible();
+    expect(view.queryByText('# Hello from the archive')).toBeNull();
 
     fireEvent.click(view.getByText('data.bin'));
     expect(await view.findByText('No preview for this file type. Save it to open it.')).toBeVisible();
@@ -44,6 +45,15 @@ describe('ZIP archive view', () => {
     fireEvent.click(view.getByRole('button', { name: 'Save readme.md' }));
     expect(await view.findByText('File downloaded.')).toBeVisible();
     expect((click.mock.instances[0] as HTMLAnchorElement).download).toBe('readme.md');
+    view.unmount();
+  });
+
+  it('shows a CSV entry as a table', async () => {
+    const buffer = await buildZip([{ name: 'coverage.csv', data: bytes('file,lines\ncore.clj,92\n') }]);
+    const view = render(<ZipArchive blob={new Blob([buffer])} name="results.zip" />);
+
+    fireEvent.click(await view.findByText('coverage.csv'));
+    await waitFor(() => expect(view.getByRole('grid')).toHaveTextContent('core.clj'));
     view.unmount();
   });
 
@@ -58,6 +68,8 @@ describe('ZIP archive view', () => {
   it.each([
     ['photo.PNG', 'image/png'],
     ['src/main.clj', 'text/plain'],
+    ['docs/README.md', 'text/markdown'],
+    ['coverage.csv', 'text/csv'],
     ['inner.zip', 'application/zip'],
     ['tool.exe', 'application/octet-stream'],
   ])('types the entry %s as %s', (name, media) => {
