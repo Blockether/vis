@@ -5260,34 +5260,47 @@
    Bounded SQL `INSERT ... SELECT` per history: the invocation rows never enter
    the heap. Histories are session-owned (`db-activity-page` rejects another
    soul) and cascade with their soul, so a fork must own its own copy to keep the
-   forms' Activity readable after the source is deleted (Blockether/vis#212)."
-  [tx-info new-soul-id forms]
-  (into {}
-        (for [old-id
-              (distinct (keep #(get-in % [:activity :history :id]) forms))
+   forms' Activity readable after the source is deleted (Blockether/vis#212).
 
-              :let [old-s
-                    (str old-id)]
-              :when (query-one! tx-info
-                                {:select [:id] :from :activity_history :where [:= :id old-s]})
-              :let [new-id
-                    (str (new-uuid))]]
+   A managed child (`share-settled?`) cascades with its parent, so it reads the
+   parent's settled histories in place. It copies only a history that still runs,
+   because settlement of the child's copied turn must not close the parent's rows."
+  [tx-info new-soul-id forms share-settled?]
+  (into
+    {}
+    (for [old-id
+          (distinct (keep #(get-in % [:activity :history :id]) forms))
 
-          (do (execute! tx-info
-                        {:insert-into
-                         [[:activity_history [:id :session_soul_id :revision :metadata]]
-                          {:select [[[:lift new-id]] [[:lift new-soul-id]] :revision :metadata]
-                           :from :activity_history
-                           :where [:= :id old-s]}]})
-              (execute! tx-info
-                        {:insert-into [[:activity_invocation
-                                        [:history_id :id :sequence :state :visible :payload
-                                         :search_text]]
-                                       {:select [[[:lift new-id]] :id :sequence :state :visible
-                                                 :payload :search_text]
-                                        :from :activity_invocation
-                                        :where [:= :history_id old-s]}]})
-              [old-id new-id]))))
+          :let [old-s
+                (str old-id)
+
+                history
+                (query-one!
+                  tx-info
+                  {:select [:id :metadata] :from :activity_history :where [:= :id old-s]})]
+          :when (and history
+                     (not (and share-settled?
+                               (zero? (long (get-in (<-blob (:metadata history))
+                                                    [:counts :running]
+                                                    0))))))
+          :let [new-id
+                (str (new-uuid))]]
+
+      (do (execute! tx-info
+                    {:insert-into [[:activity_history [:id :session_soul_id :revision :metadata]]
+                                   {:select [[[:lift new-id]] [[:lift new-soul-id]] :revision
+                                             :metadata]
+                                    :from :activity_history
+                                    :where [:= :id old-s]}]})
+          (execute! tx-info
+                    {:insert-into [[:activity_invocation
+                                    [:history_id :id :sequence :state :visible :payload
+                                     :search_text]]
+                                   {:select [[[:lift new-id]] :id :sequence :state :visible :payload
+                                             :search_text]
+                                    :from :activity_invocation
+                                    :where [:= :history_id old-s]}]})
+          [old-id new-id]))))
 
 (defn- fork-iteration-tool-calls
   "The copied iteration's `tool_calls` BLOB with every form's Activity history id
@@ -5659,7 +5672,8 @@
                                                                                  ":forked"))))))]}))
                   (doseq [it iters
                           :let [forms (<-blob (:tool_calls it))
-                                history-id-map (fork-activity-histories! tx-info new-soul-id forms)]]
+                                history-id-map
+                                (fork-activity-histories! tx-info new-soul-id forms (some? agent))]]
 
                     (execute! tx-info
                               {:insert-into :session_turn_iteration
@@ -6978,22 +6992,37 @@
                              :revision (inc (long (:revision history)))}
                        :where [:= :id (str aid)]})))))))
 
+(defn- activity-reader-souls
+  "The soul `sid` and each managed-fork ancestor whose settled Activity it may read."
+  [db sid]
+  (into
+    #{}
+    (map :soul_id)
+    (query-sql!
+      db
+      ["WITH RECURSIVE chain(soul_id) AS (SELECT ?
+                        UNION SELECT st.session_soul_id FROM chain
+                        JOIN session_soul s ON s.id = chain.soul_id
+                        JOIN session_state st ON st.id = s.parent_state_id)
+                      SELECT soul_id FROM chain"
+       (str sid)])))
+
 (defn db-activity-page
-  "A session-authorized, keyset page of complete records. Search never clips retention."
+  "A session-authorized, keyset page of complete records. Search never clips retention.
+   A managed child also reads the settled histories that it shares with its ancestors."
   [db sid aid {:keys [after limit q] :or {after 0 limit activity-contract/page-row-limit} :as opts}]
   (when (or (neg? (long after))
             (not (<= 1 (long limit) (long activity-contract/page-row-limit)))
             (and q (> (count q) 512)))
     (throw (ex-info "Invalid Activity page parameters" {:type :activity/invalid-page})))
   ;; One transaction keeps metadata/revision and its bounded row page consistent.
-  (sqlite-write-tx! db
-                    (fn [db]
-                      (when-let [history (query-one! db
-                                                     {:select [:*]
-                                                      :from [:activity_history]
-                                                      :where [:and [:= :id (str aid)]
-                                                              [:= :session_soul_id (str sid)]]})]
-                        (activity-history-page db history opts)))))
+  (sqlite-write-tx!
+    db
+    (fn [db]
+      (when-let [history
+                 (query-one! db {:select [:*] :from [:activity_history] :where [:= :id (str aid)]})]
+        (when (contains? (activity-reader-souls db sid) (:session_soul_id history))
+          (activity-history-page db history opts))))))
 
 ;; Improve workflow: mutable analysis/hierarchy over immutable Council intake.
 

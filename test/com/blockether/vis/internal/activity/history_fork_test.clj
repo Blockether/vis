@@ -176,3 +176,46 @@
           (expect (= 145
                      (get-in (db/db-activity-page store fork-sid fork-aid {})
                              [:history :total]))))))))
+
+(defdescribe
+  managed-child-shares-settled-activity-test
+  ;; A subagent fork cascades with its parent, so a copy of each settled history only
+  ;; multiplied storage: one leader with many subagents stored one copy for each.
+  (it
+    "reads the parent's settled history in place without copying rows"
+    (let [store
+          (h/store)
+
+          sid
+          (h/store-session! store {:channel :tui :title "Leader"})]
+
+      (tpc/with-own
+        [pc {}]
+        (let [[t1 aid1]
+              (run-stored-turn! store pc sid "Q1" 5)
+
+              rows
+              (all-rows store sid aid1 {})
+
+              child
+              (h/fork-session-at-turn! store
+                                       sid
+                                       {:through-turn-id t1
+                                        :agent {:parent_id (str sid)
+                                                :leader_id (str sid)
+                                                :team_id (str t1)
+                                                :task "Check evidence"
+                                                :iteration_budget 4
+                                                :spawn_key (str t1)
+                                                :spawn_fingerprint "fixture"
+                                                :checkpoint [{:role :user :content "Context"}]}})
+
+              [ct1]
+              (fork-turn-ids store child)]
+
+          (expect (= aid1 (form-history-id store ct1)))
+          (expect (= 1 (h/raw-count store :activity_history)))
+          (expect (= 5 (h/raw-count store :activity_invocation)))
+          (expect (= rows (all-rows store child aid1 {})))
+          ;; Sharing is one way: the leader still cannot read a child's own history.
+          (expect (nil? (db/db-activity-page store (java.util.UUID/randomUUID) aid1 {}))))))))
