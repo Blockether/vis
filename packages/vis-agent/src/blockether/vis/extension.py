@@ -1127,6 +1127,8 @@ class Extension:
         network_filters: `NetworkFilter` declarations.
         settings: Host-owned `Setting` declarations with explicit allowed scopes.
         env: Environment variable names resolved at host registration.
+        grants: `Grant` declarations: toolchain paths for this extension's
+            `jailed_shell` children.
 
     Collection inputs are copied into tuples. Constructing an Extension is pure: it does
     not run callbacks or register anything. In an application, pass it to
@@ -1155,6 +1157,7 @@ class Extension:
     network_filters: Sequence[NetworkFilter] = ()
     settings: Sequence[Setting] = ()
     env: Sequence[str] = ()
+    grants: Sequence[Grant] = ()
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name.strip():
@@ -1186,6 +1189,7 @@ class Extension:
             ("providers", Provider),
             ("network_filters", NetworkFilter),
             ("settings", Setting),
+            ("grants", Grant),
         ):
             value = getattr(self, name)
             if not isinstance(value, (tuple, list)) or not all(
@@ -1219,6 +1223,7 @@ class Extension:
             "providers",
             "network_filters",
             "settings",
+            "grants",
         }
         return {
             field.name: (
@@ -2710,6 +2715,48 @@ class NetworkFilter:
 
     def _spec(self):
         return {"marker": "network_filter", "fn": self.fn}
+
+
+@dataclass(frozen=True, slots=True)
+class Grant:
+    """Filesystem access that this extension's own jailed child processes need.
+
+    A toolchain often lives outside the workspace: a JDK, a package cache or a
+    launcher. Declare each path once. The host checks every grant at registration.
+    It adds the grant only to the `jailed_shell` children of this extension. The
+    model's shell never receives it, and the jail deny rules still win.
+
+    Args:
+        path: Absolute path, or a path that starts with `~`.
+        mode: `"read"` to read and run files, or `"read_write"` for a cache that
+            the tool also writes.
+        reason: Short text that tells people why the extension needs the path.
+
+    Raises:
+        ValueError: The path or reason is blank, or the mode is unknown.
+    """
+
+    path: str | PathLike[str]
+    mode: Literal["read", "read_write"] = "read"
+    reason: str = field(kw_only=True)
+
+    def __post_init__(self):
+        path = os.fspath(self.path) if isinstance(self.path, PathLike) else self.path
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("vis.Grant requires path=<non-empty string>")
+        object.__setattr__(self, "path", path)
+        if self.mode not in ("read", "read_write"):
+            raise ValueError('vis.Grant mode must be "read" or "read_write"')
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError("vis.Grant requires reason=<non-empty string>")
+
+    def _spec(self):
+        return {
+            "marker": "grant",
+            "path": self.path,
+            "mode": self.mode,
+            "reason": self.reason,
+        }
 
 
 # Provider vocabularies are pinned to the canonical provider/config JSON in tests.

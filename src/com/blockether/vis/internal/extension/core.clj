@@ -550,6 +550,13 @@
        (optional-field? x :description string?)
        (optional-field? x :choices #(and (vector-of? keyword? %) (seq %)))))
 
+(defn- grant-entry?
+  [x]
+  (and (map? x)
+       (non-blank-string? (:path x))
+       (#{:read :read-write} (:mode x))
+       (non-blank-string? (:reason x))))
+
 (defn- provider-entry?
   [x]
   (let [optional-fn? (fn [k]
@@ -647,6 +654,7 @@
        (optional-field? x :ext/op-hooks #(every? op-hook? %))
        (optional-field? x :ext/network-filters #(every? ifn? %))
        (optional-field? x :ext/env #(vector-of? env-entry? %))
+       (optional-field? x :ext/grants #(vector-of? grant-entry? %))
        (optional-field? x :ext/settings #(vector-of? setting-entry? %))
        (optional-field? x :ext/toggles #(vector-of? toggle-contract/contribution-valid? %))
        (optional-field? x :ext/theme theme/extension-theme-map?)
@@ -2924,6 +2932,16 @@
 
      (into (into [] (comp (keep registry) (remove #(local-names (:ext/name %)))) @extension-order)
            local))))
+
+(defn current-extension-grants
+  "Filesystem grants of the extension that runs the current callback, or nil.
+   A Python adapter can bind a map with only the name, so the registry of the
+   active project supplies the declared grants then."
+  []
+  (when-let [ext *current-extension*]
+    (if (contains? ext :ext/grants)
+      (:ext/grants ext)
+      (some #(when (= (:ext/name ext) (:ext/name %)) (:ext/grants %)) (registered-extensions)))))
 
 ;; Reload hooks — the seam `/reload` uses to refresh EXTENSION-owned resource
 ;; caches (harness skills/agents discovery, …) without core knowing about the

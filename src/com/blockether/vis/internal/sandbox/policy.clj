@@ -58,6 +58,42 @@
                                             home)]
      (if (= "~/" abbreviated) "~" abbreviated))))
 
+(defn extension-grant
+  "Check one filesystem grant from an extension declaration and return
+   `{:path :mode :reason}`, or throw. `grant` has the wire keys `path`, `mode` and
+   `reason`. The path must be absolute after `~` expansion. The checks use its
+   resolved form, but the grant keeps the path as declared, so the jail can follow
+   its links. A grant must not cover the filesystem root, the home directory or
+   `vis-home`: these hold the user's files and the Vis credentials."
+  [ext-name grant {:keys [home vis-home]}]
+  (let [{:strs [path mode reason]}
+        grant
+
+        refuse
+        (fn [why]
+          (throw (ex-info (str "Extension '" ext-name "' grant " (pr-str path) " " why ".")
+                          {:type ::bad-grant :extension ext-name :path path})))]
+
+    (when-not (util/non-blank-string? path) (refuse "needs a path"))
+    (when-not (#{"read" "read_write"} mode) (refuse "needs mode \"read\" or \"read_write\""))
+    (when-not (util/non-blank-string? reason) (refuse "needs a reason"))
+    (let [^Path declared (Paths/get (paths/expand-home path home) (make-array String 0))]
+      (when-not (.isAbsolute declared) (refuse "must be absolute or start with ~"))
+      (let [^Path resolved (Paths/get (nearest-real-path (str declared) "/" home)
+                                      (make-array String 0))
+            covers? (fn [protected]
+                      (when-not (str/blank? (str protected))
+                        (.startsWith ^Path
+                                     (Paths/get (nearest-real-path protected "/" home)
+                                                (make-array String 0))
+                                     resolved)))]
+
+        (when (or (nil? (.getParent resolved)) (covers? home) (covers? vis-home))
+          (refuse "covers the filesystem root, the home directory or the Vis home"))
+        {:path (str (.normalize declared))
+         :mode (if (= "read" mode) :read :read-write)
+         :reason (str/trim reason)}))))
+
 (defn- resolve-paths
   [paths base-dir home]
   (vec (distinct (keep #(nearest-real-path % base-dir home) paths))))

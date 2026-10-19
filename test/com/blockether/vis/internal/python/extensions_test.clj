@@ -3421,6 +3421,33 @@ vis.register_extension(vis.Extension(
               (:allow?
                 (pf {:phase :http-response :status 200 :host "x.com" :path "/" :headers {}}))))))))
 
+;; Regression, issue #394: a language pack declares its toolchain paths once, and the
+;; host checks them at registration, before a jailed child receives them.
+(defdescribe
+  extension-grants-test
+  (it "registers declared grants by mode and refuses a grant over the home directory"
+      (with-loaded
+        {"tools.py"
+         (str "import blockether.vis.extension as vis\n"
+              "vis.register_extension(vis.Extension(name='tools', description='Tools.',\n"
+              "    grants=[vis.Grant('/opt/jdk', reason='Run the JDK.'),\n"
+              "            vis.Grant('~/.m2/repository', 'read_write', reason='Maven cache.')]))\n")
+         "greedy.py"
+         (str "import blockether.vis.extension as vis\n"
+              "vis.register_extension(vis.Extension(name='greedy', description='Greedy.',\n"
+              "    grants=[vis.Grant('~', 'read_write', reason='Everything.')]))\n")}
+        (fn [result _]
+          (expect (= 1 (:loaded result)) (pr-str (pyx/load-failures)))
+          (expect (= 1 (:failed result)))
+          (expect (= [{:path "/opt/jdk" :mode :read :reason "Run the JDK."}
+                      {:path (str (System/getProperty "user.home") "/.m2/repository")
+                       :mode :read-write
+                       :reason "Maven cache."}]
+                     (:ext/grants (registered "tools"))))
+          (expect (nil? (registered "greedy")))
+          (expect (str/includes? (:error (first (pyx/load-failures)))
+                                 "covers the filesystem root"))))))
+
 ;; Failure containment
 (defdescribe
   load-failure-test

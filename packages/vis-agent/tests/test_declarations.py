@@ -87,6 +87,7 @@ def test_dictionary_builders_are_retired(name):
         "slash_commands",
         "op_hooks",
         "network_filters",
+        "grants",
     ],
 )
 def test_declarations_refuse_untyped_children(field, monkeypatch):
@@ -324,3 +325,29 @@ def test_registration_snapshots_collections_and_provider_config(monkeypatch):
     }
     wire["providers"][0]["preset"]["extra_body"]["models"].clear()
     assert provider.preset.extra_body["models"][0]["name"] == "example"
+
+
+# Regression for #394: an extension declares its toolchain paths as typed grants.
+def test_grant_declarations_reach_the_wire(tmp_path):
+    grant = vis.Grant(tmp_path, "read_write", reason="Cache")
+    assert grant.path == str(tmp_path)
+    extension = vis.Extension(
+        name="tools",
+        description="Tools",
+        grants=[grant, vis.Grant("/opt/jdk", reason="JDK")],
+    )
+    assert extension._spec()["grants"] == [
+        {
+            "marker": "grant",
+            "path": str(tmp_path),
+            "mode": "read_write",
+            "reason": "Cache",
+        },
+        {"marker": "grant", "path": "/opt/jdk", "mode": "read", "reason": "JDK"},
+    ]
+    with pytest.raises(ValueError, match="mode"):
+        vis.Grant("/opt/jdk", "write", reason="JDK")
+    with pytest.raises(ValueError, match="reason"):
+        vis.Grant("/opt/jdk", reason=" ")
+    with pytest.raises(TypeError):
+        vis.Grant("/opt/jdk")

@@ -1927,7 +1927,11 @@
         declared-env
         (mapv (fn [n]
                 {:name n :required? true})
-              (normalize-env-names (get reg "env")))]
+              (normalize-env-names (get reg "env")))
+
+        grants
+        (let [protected {:home (System/getProperty "user.home") :vis-home (config/config-dir)}]
+          (mapv #(security-policy/extension-grant ext-name % protected) (get reg "grants")))]
 
     (cond-> {:ext/name ext-name
              :ext/description (str (get reg "description"))
@@ -1984,7 +1988,10 @@
       (assoc :ext/network-filters network-filters)
 
       (seq declared-env)
-      (assoc :ext/env declared-env))))
+      (assoc :ext/env declared-env)
+
+      (seq grants)
+      (assoc :ext/grants grants))))
 
 ;; Loader
 

@@ -19,6 +19,8 @@ callbacks and host operations.
   API](sessions-api.md#read-activity-history).
 - **Your editor or type checker reports errors for code that runs in Vis.**
   Install the [SDK version that Vis bundles](#editor-types).
+- **A jailed tool cannot find its JDK, package cache or launcher.** Declare
+  [toolchain grants](#toolchain-grants).
 
 Start with the [tutorial](extending.md) for a complete entry file or [Extension
 design](extension-design.md) for authoring and test guidance.
@@ -111,6 +113,7 @@ of the corresponding SDK declarations and are stored as tuples, not mutable regi
 | `providers` | `()` | `vis.Provider` declarations |
 | `ctx` | `None` | Optional `(env) -> dict` merged into the model's session context |
 | `env` | `()` | Names of host environment variables this entry may read |
+| `grants` | `()` | `vis.Grant` toolchain paths for this extension's jailed children (see [toolchain grants](#toolchain-grants)) |
 | `kind`, `version` | `None` | Display metadata. An installed package supplies its manifest metadata |
 
 The callback env dict contains `cwd`, `session_id` and `channel`. Keep `prompt`,
@@ -1270,6 +1273,44 @@ sh = vis.jailed_shell({
 Use them when the child must talk back to the extension. A shell child runs under a real terminal,
 so its merged output cannot carry a request/response protocol. Give the child a rendezvous endpoint
 instead. When the jail is disabled, Vis ignores both options.
+
+### Toolchain grants
+
+A jailed child can read system files and the session roots. A toolchain often lives in
+another place: a JDK under `~/.sdkman`, a package cache or a launcher script. Declare these
+paths once with `vis.Grant` in `Extension.grants`.
+
+```python
+vis.register_extension(vis.Extension(
+    name="java-tools",
+    description="Java build tools.",
+    grants=[
+        vis.Grant(java_home, reason="Run the JDK."),
+        vis.Grant("~/.m2/repository", "read_write", reason="Read and fill the Maven cache."),
+    ],
+))
+```
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `path` | Required | Absolute path, or a path that starts with `~` |
+| `mode` | `"read"` | `"read"` to read and run files. `"read_write"` for a cache that the tool also writes |
+| `reason` | Required | Short text that tells people why the extension needs the path |
+
+Vis checks each grant when it loads the extension:
+
+- The path must be absolute after `~` expansion.
+- The grant must not cover the filesystem root, your home directory or the Vis home `~/.vis`.
+  A path inside them is allowed.
+- A refused grant makes the extension a load failure. `vis-agent doctor` shows the reason.
+
+Vis adds the grants only to the `vis.jailed_shell` children of the extension that declared
+them. The model's shell and other extensions never receive them. The deny rules of the jail
+configuration still win. A grant can name a symbolic link, such as
+`~/.sdkman/candidates/java/current`. The jail then also follows the link to its target.
+
+Use `allow_read_write` only for a path that you create for one run, such as a FIFO. Declare
+a fixed toolchain path as a grant.
 
 `vis.fs` provides filesystem operations with extension permissions: `mkdir`,
 `write`, `read` (bytes), `read_text`, `copy`, `move`, `list`, `stat` and `remove`.

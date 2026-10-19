@@ -51,7 +51,9 @@ A trusted extension can opt into confinement with `vis.jailed_shell(...)`, which
 the merged configuration at every spawn. Project extension files are executable plugins
 and require the same review as build scripts. A confined child can be given the exact
 paths it needs on top of the session roots with the `allow_read_write` and `unix_connect`
-options. See [Extension API](extension-api.md).
+options. An extension declares its fixed toolchain paths, such as a JDK or a package cache,
+as `vis.Grant` values. Vis gives them only to that extension's confined children. See
+[Extension API](extension-api.md#toolchain-grants).
 
 ## Filesystem access
 

@@ -88,6 +88,7 @@ class ClientExtensions:
                     "network_filters",
                     "slash_commands",
                     "settings",
+                    "grants",
                 )
                 if getattr(extension, name)
             ]

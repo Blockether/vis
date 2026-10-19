@@ -557,3 +557,44 @@
           (expect (some? (process-jail/deny-refusal env "file-write" (str root "/src/secret/key"))))
           (expect (some? (process-jail/deny-refusal env "file-read" (str root "/.env"))))
           (expect (nil? (process-jail/deny-refusal env "file-write" (str root "/src/ok.txt")))))))))
+
+;; Regression, issue #394: an extension grant is a toolchain path, never a whole tree
+;; that holds the user's files or the Vis credentials.
+(defn- grant-home
+  []
+  (str (Files/createTempDirectory "vis-grant-home"
+                                  (make-array java.nio.file.attribute.FileAttribute 0))))
+
+(defn- grant-in
+  [home g]
+  (policy/extension-grant "tools" g {:home home :vis-home (str home "/.vis")}))
+
+(defn- grant-refusal
+  [home g]
+  (try (grant-in home g) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
+
+(defdescribe
+  extension-grant-test
+  (it "keeps the declared path, expands ~ and maps the mode"
+      (let [home (grant-home)]
+        (expect (= {:path (str home "/.m2/repository") :mode :read-write :reason "Maven cache."}
+                   (grant-in
+                     home
+                     {"path" "~/.m2/repository" "mode" "read_write" "reason" " Maven cache. "})))
+        (expect (= {:path (str home "/.vis/install") :mode :read :reason "Vis launcher."}
+                   (grant-in home
+                             {"path" "~/.vis/install/" "mode" "read" "reason" "Vis launcher."})))))
+  (it "refuses the root, the home, the Vis home and their ancestors"
+      (let [home (grant-home)]
+        (doseq [path ["/" "~" "~/.vis" (str home "/..")]]
+          (expect (some-> (grant-refusal home {"path" path "mode" "read" "reason" "Wide."})
+                          (.contains "covers the filesystem root"))
+                  path))))
+  (it "refuses a relative path, an unknown mode and a missing reason"
+      (let [home (grant-home)]
+        (expect (some-> (grant-refusal home {"path" "cache" "mode" "read" "reason" "Cache."})
+                        (.contains "must be absolute")))
+        (expect (some-> (grant-refusal home {"path" "/opt/jdk" "mode" "write" "reason" "JDK."})
+                        (.contains "needs mode")))
+        (expect (some-> (grant-refusal home {"path" "/opt/jdk" "mode" "read" "reason" " "})
+                        (.contains "needs a reason"))))))

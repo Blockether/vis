@@ -3171,6 +3171,20 @@
         (expect (= {:allow-read-write ["/workspace" "/tmp/fifo"] :unix-connect ["/tmp/s.sock"]}
                    (merged {:allow-read-write ["/workspace"]} grants)))
         (expect (= {:net-enabled? true} (merged {:net-enabled? true} {})))))
+  (it "gives the calling extension's declared grants to its jailed child by mode (#394)"
+      (let [seen (atom nil)]
+        (with-redefs [shell/shell-dispatch (fn [env _opts]
+                                             (reset! seen ((:jail-policy-fn env)))
+                                             {})
+                      shell/latest-jail-policy (constantly {:allow-read-write ["/workspace"]})]
+
+          (binding [extension/*current-extension*
+                    {:ext/name "tools"
+                     :ext/grants [{:path "/opt/jdk" :mode :read :reason "JDK"}
+                                  {:path "/cache" :mode :read-write :reason "Cache"}]}]
+            (shell/jailed-shell nil {"command" "true" "allow_read_write" ["/tmp/fifo"]})))
+        (expect (= {:allow-read ["/opt/jdk"] :allow-read-write ["/workspace" "/cache" "/tmp/fifo"]}
+                   @seen))))
   (it "spawns with the grants in the options map"
       (with-shell-on
         (fn []

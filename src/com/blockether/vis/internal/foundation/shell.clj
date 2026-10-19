@@ -2637,10 +2637,13 @@
 (defn- with-granted-paths
   "Merge a caller's explicit grants into a freshly built jail policy. A DISABLED policy
    is returned untouched: there is no boundary to widen."
-  [policy {:keys [allow-read-write unix-connect]}]
+  [policy {:keys [allow-read allow-read-write unix-connect]}]
   (if (:disabled? policy)
     policy
     (cond-> policy
+      (seq allow-read)
+      (update :allow-read (fnil into []) allow-read)
+
       (seq allow-read-write)
       (update :allow-read-write (fnil into []) allow-read-write)
 
@@ -2739,12 +2742,23 @@
    on-disk configuration at every process spawn. Works with or without a session;
    invalid current config refuses that spawn instead of using a snapshot.
 
-   `allow_read_write` and `unix_connect` are the CALLER's own grants, added to that
-   policy by [[granted-paths]]: the extension hands its child the exact rendezvous
-   endpoint it created and nothing else. A disabled jail ignores them."
+   The calling extension's declared `vis.Grant` paths come first: its toolchain
+   (a JDK, a package cache, a launcher) by mode, from the registry and never from
+   the call. `allow_read_write` and `unix_connect` are the CALLER's own per-call
+   grants, added by [[granted-paths]]: the extension hands its child the exact
+   rendezvous endpoint it created and nothing else. A disabled jail ignores all of
+   them."
   [env opts]
-  (let [grants {:allow-read-write (granted-paths opts :allow_read_write "allow_read_write")
-                :unix-connect (granted-paths opts :unix_connect "unix_connect")}]
+  (let [declared
+        (extension/current-extension-grants)
+
+        grants
+        {:allow-read (into [] (comp (filter #(= :read (:mode %))) (map :path)) declared)
+         :allow-read-write
+         (into (into [] (comp (filter #(= :read-write (:mode %))) (map :path)) declared)
+               (granted-paths opts :allow_read_write "allow_read_write"))
+         :unix-connect (granted-paths opts :unix_connect "unix_connect")}]
+
     (shell-dispatch (-> (or env {})
                         (assoc :shell-origin "jailed-extension")
                         (assoc :jail-policy-fn #(with-granted-paths (latest-jail-policy env)
