@@ -633,3 +633,37 @@
                           (doseq [m [not-directory refused]]
                             (expect (not (re-find #"(?i)\b(rg|fff)\b" m)))))
                         (finally (fs/delete file))))))
+
+;; Regression: the fff watcher dropped every event when the index base sat inside a
+;; gitignored directory (`target/` here). The first scan indexed the files, then a
+;; file written outside Vis never reached grep until the index closed.
+(defdescribe index-below-an-ignored-directory-sees-outside-writes-test
+             (it "a file written below target/ outside Vis is found without a rescan"
+                 (let [dir (fs/file "target" "fff-index-watch" (str (System/nanoTime)))]
+                   (fs/create-dirs dir)
+                   (spit (fs/file dir "old.txt") "ZZOLDZZ\n")
+                   (try
+                     (with-pool
+                       (fn [_ _]
+                         (let [lease (index/lease dir true)
+                               hits (fn [query]
+                                      (index/with-index*
+                                        lease
+                                        (fn [idx]
+                                          (count (:matches (fff/grep idx {:query query}))))))
+                               eventually (fn [query]
+                                            (loop [tries 0]
+                                              (let [n (hits query)]
+                                                (if (or (pos? n) (= tries 100))
+                                                  n
+                                                  (do (Thread/sleep 50) (recur (inc tries)))))))]
+
+                           (expect (= 1 (hits "ZZOLDZZ")))
+                           ;; Let the watcher start before the write.
+                           (Thread/sleep 300)
+                           (spit (fs/file dir "new.txt") "ZZFRESHZZ\n")
+                           (fs/create-dirs (fs/file dir "sub"))
+                           (spit (fs/file dir "sub" "deep.txt") "ZZDEEPZZ\n")
+                           (expect (= 1 (eventually "ZZFRESHZZ")))
+                           (expect (= 1 (eventually "ZZDEEPZZ"))))))
+                     (finally (fs/delete-tree dir))))))
