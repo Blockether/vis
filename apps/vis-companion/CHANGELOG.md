@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.2.53 (7852) — 2026-10-20
+<!-- commit: 3c679ff3027d07fdd47c2ea80c69fb754dec1486 -->
+
+- Reserve the keyboard band only while a field shows
+- Release the iOS audio session when dictation ends
+- Stream text spans and compact Activity receipts
+- Keep the machine focus ring inside its segment
+- Show machines as a segmented switch
+- Count unread news and show its age on machine tabs
+- Name the cause and route of a failed call (#401 #402 #403)
+- Open session images named by a host path in prose
+- Render Markdown and CSV entries of a ZIP archive
+- Align ZIP entry sizes to the row edge
+- Support ZIP archives end to end
+- Keep repeated vis-agent web launches on one machine (#397)
+- Poll machines outside the fleet stream every 5s
+- Connect vis-agent web browsers to their gateway (#397)
+- V0.2.53
+- Create a project folder from the location field
+- One location field in the project folder sheet
+- V0.2.52
+- Share a document blob that Node can read
+- Wait for the share outcome text
+
 ## 0.2.29 (7241) — 2026-10-04
 <!-- commit: 624ee3262bacc8b1b64265aec0f390f339622bab -->
 
