@@ -1,201 +1,309 @@
-# Evaluations on Harbor
+# One API for sessions and Council
 
-Run every Vis evaluation through Harbor, keep trajectories on this machine and decide harness changes with paired statistics.
+Give extensions, the Python SDK and HTTP one session and Council interface over the existing gateway domain, with portable session snapshots (#405).
 
 ## Context
 
-The previous plan, Automations, is complete and verified (phases 1 to 6, native test `2687ca926`).
-Git history keeps that plan.
+The previous plan, Evaluations on Harbor, stopped with phases 1 to 6 done and verified.
+Phase 7 (trajectory judges) is open: a paid judge run, 30 human labels for each rubric and the action type of each tool call.
+Phase 8 (ablations and the improvement gate) is not started.
+Git history keeps that plan (last state at `8c380c91f`).
 
-Vis has four evaluation runners, and each one writes its own result format:
+Issue #405 asks for managed-child control from trusted extension code.
+Its comment adds independent sessions through `vis.run(...)` and a session file that you can restore and continue after a restart.
 
-- `e2e/<id>/` holds 40 editing tasks as native Harbor task folders. `harbor run --path e2e` runs them on the host with the SDK agent `blockether.vis.evals.agent:VisAgent`.
-- `~/curated-terminal-benchmark/terminal_bench/` runs the full Terminal-Bench queue for Vis on Harbor 0.23.0.
-- `~/curated-terminal-benchmark/ctb/` runs 12 curated Terminal-Bench tasks for 7 agents and seals each round in `results/<round>.json`.
-- `~/.vis/tmp/subagent-bench/` holds a one-time subagent benchmark.
+Current state:
 
-The SDK module `blockether.vis.evals` holds the evaluation logic: 95% intervals with tasks as clusters, paired comparisons, power, round scores, failure causes and Cohen's kappa for human labels. The gateway serves it under `/v1/evals`. The same module holds the Harbor agent, the host environment, the grader, the check and the judge. The `evals` project extension and the scenario compiler are removed.
+- The domain is in `session/agents.clj` (`run`, `wait-agents`, `resume-agent`, `cancel-agent`, `extend-agent`, `deny-agent`, `grant-files`, `operation!`) and `gateway/state.clj` (`create-session!`, `submit-turn!`, `fork-session!`, `agents-operation!`, `council-operation!`).
+- The model has `council.run/wait/resume/cancel/extend/deny/grant/ask*` and `council.publish/read/get/threads/members`.
+- HTTP has `/v1/sessions/...`, `/v1/sessions/:sid/council/...` and only `GET`/`POST /agents`, `/agents/cancel` and `/agents/route` (`gateway/server/council.clj`).
+- `packages/vis-contract/.../schema/agents.json` already defines `extend`, `deny`, `grant` and `resume`. No route or SDK method uses them.
+- The SDK (`blockether.vis.engine`) has `Session`, `Turn`, `Agent.run` and `Council` with `publish_spawn`, `subagents`, `cancel`, `route` and `wake`.
+- The extension SDK (`blockether.vis.extension`) has only `vis.council.wake`, `vis.read_session` and `vis.list_sessions`. `vis.tools.council.run(...)` works only inside a callback and only when the model has that tool.
+- `LocalEngine` (stdio) uses a temporary database and deletes it on `close`. A session cannot survive that today.
+- Nippy (`com.taoensso/nippy`) is already in `deps.edn`.
 
 Problems:
 
-- You cannot compare an e2e result with a Terminal-Bench result.
-- The Vis Harbor adapters write no ATIF `trajectory.json`. They copy only the token counts. `harbor view`, `harbor analyze` and trajectory criteria do not see the Vis steps.
-- Two Vis adapters do the same work: `ctb/agents/vis.py` and `terminal_bench/vis_agent.py`.
-- Harness components have no named switches. A component ablation is not possible.
-- Harbor sends usage telemetry by default, with agents, models, rewards and durations. Nothing in our tools prevents an upload to Harbor Hub.
-- Container runs need a Linux native build. The benchmark uses v0.2.37, which does not have the Council subagent API (`104c91899`). A dry run of `native-release.yml` uploads only build logs, not the binary.
-
-Evidence: arXiv 2609.20804, "An Empirical Study of Harness Design for Coding Agents", keeps the agent loop fixed and changes one component at a time: planning, action space and context management.
-It runs SWE-Bench Verified and Terminal-Bench 2.1 through Harbor and reports success rate and cost together.
-It compares settings with two-sided exact McNemar tests on paired tasks and the Benjamini-Hochberg procedure (FDR 0.05).
-LLM judges label failure stages and action types, and human labels validate the judges with Cohen's kappa.
-
-Harbor facts (0.23.0 installed, 0.24.0 latest):
-
-- `Job.create(JobConfig)` and `Job.run()` return a `JobResult`. Trial hooks run on start, environment start, agent start and end, verification start, end and cancel.
-- `JobConfig` takes several agents, datasets, attempts, retries and metrics in one job.
-- `--agent`, `--env` and `--plugin` accept a `module:Class` import path.
-- A task is `task.toml`, an instruction, an environment and `tests/`. It can have steps, network rules for each phase, MCP servers, skills and a separate verifier.
-- `harbor-rewardkit` 0.2.3 gives file, command, data, HTTP and trajectory criteria, and LLM or agent judges with `samples` and `guard`.
-- ATIF v1.8 has steps, tool calls, observations, step metrics, `is_copied_context` and `subagent_trajectories`.
-- `harbor job regrade` grades a job again without a new agent run. `harbor view`, `harbor analyze` and `harbor check` read jobs, trajectories and tasks.
-- Telemetry turns off only with `HARBOR_TELEMETRY=off`. There is no configuration file for it.
-
-Decisions:
-
-- Harbor is the only runner. A Harbor job directory is the only raw result format.
-- Vis writes ATIF itself. Every consumer (Harbor, e2e and other tools) gets the same trajectory.
-- Trajectories and results stay on this machine. No tool of ours uploads them.
-- A round is one Vis build, one profile set and one Harbor version. A sealed round never changes.
-- A harness change is accepted only through a paired test on held-out tasks and a person's approval.
+- One operation has four names: `council.run`, `POST /agents`, `publish_spawn` and `"spawn"` in the supplied patch.
+- Extensions have no typed session or Council API.
+- No artifact can save a session tree and restore it as a working session.
 
 Rejected alternatives:
 
-- A new runner in Vis: Harbor already owns tasks, containers, verifiers, retries, job results and trajectories.
-- An ATIF converter in the benchmark repository: e2e also needs ATIF, and the engine owns the trace.
-- Harbor Hub as result storage: it sends trajectories off this machine.
-- A self-improvement loop that changes Vis without a gate: it fits the benchmark, not the work.
+- `vis.managed_agent(operation, options)` from the supplied patch: a string operation loses types and adds a fifth vocabulary.
+- `vis.tools.council.*` as the public extension API: it depends on model tool selection and returns untyped records.
+- A second Python implementation of the client for extensions: it duplicates validation and key conversion.
+- Independent sessions in the model sandbox, also behind a toggle: the user forbids it. The model uses `council.run` for parallel work.
+- Markdown or JSON transcript export as the session file: it does not restore continuation state.
 
-## 1. Private trajectories
+Decisions:
 
-Rationale: trajectories hold source code, prompts and command output, and they can hold credentials. They must stay on this machine.
+- **Session** is an independent conversation. **Subagent** is a managed child that a parent owns through Council. **Turn** is one unit of work in a session.
+- The model tool names are canonical. The SDK and extensions use the same names: `spawn`, `run`, `wait`, `resume`, `cancel`, `extend`, `deny`, `grant`, `route`, `subagents`.
+- `Council.publish_spawn` becomes `Council.spawn`. Update all consumers and remove the old name.
+- Extensions use the SDK classes `Session`, `Turn` and `Council` over a third execution layer, `HostLayer`. `HostLayer` calls the gateway route handlers in process. It never exports credentials.
+- The model sandbox gets no independent-session API and no toggle for it.
+- The session file is one recursive artifact: the root session and all its descendants.
+- Python reserves the word `import`, so `x.import(...)` is a syntax error. The restore call is `restore`. The HTTP route keeps the word `import`.
 
-Data:
+## 1. One domain entry point and contract
 
-- Every Harbor process that our tools start gets `HARBOR_TELEMETRY=off`. In the benchmark repository, `sitecustomize.py` also sets it for each Python process with the repository on `PYTHONPATH`. A running round then stops telemetry at its next trial.
-- Our Harbor commands refuse the Hub flags `--upload`, `--public`, `--share-org`, `--launch` and `--stream`.
-- Vis redacts credentials in `trajectory.json`: known provider credentials and environment values whose names contain `KEY`, `TOKEN`, `SECRET`, `PASSWORD` or `CREDENTIAL`. The Harbor adapter then removes the exact secret values that it gave to the trial.
-- Job directories get mode `0700`. `jobs/` and `runs/` stay out of git. A sealed result has no trajectory content.
-- Claude Code in Harbor already sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
-- Harbor 0.24 comes after the running baseline round is sealed. A round never changes its Harbor version.
-
-Acceptance criteria: tests check the process environment, the refused flags, the redaction and the directory mode. A planted fake credential does not appear in `trajectory.json`.
-
-Unknowns: none.
-
-## 2. ATIF trajectories from Vis
-
-Rationale: Harbor tools read ATIF. With ATIF, Vis trials appear in `harbor view`, `harbor analyze`, rewardkit trajectory criteria and `harbor-atif2otel`.
+Rationale: all transports must call one function, so semantics cannot drift.
 
 Data:
 
-- The `result` frame of `--full-trace-json-stream` has each iteration: thinking, prose, code blocks, stdout, error, tool call id, times and the final answer. `tokens` and `cost` hold the totals.
-- `vis-agent --trajectory PATH` writes ATIF v1.8 when the run ends. `src/com/blockether/vis/internal/loop/trajectory.clj` owns the mapping.
-- The prompt is the first `user` step. Each iteration is one `agent` step, with `reasoning_content`, `model_name` and `reasoning_effort`.
-- Each code block is one tool call `python_execution` with the argument `code`. Its stdout and error are the observation.
-- The final answer is the message of the last agent step. Totals go to `final_metrics`.
-- Vis facts go to `extra`: iteration, provider, block status, Activity counts, repairs, timeouts, session id and profile.
-- Council children go to `subagent_trajectories` (phase 3).
+- `agents/operation!` handles `:spawn`, `:list`, `:wait`, `:resume`, `:cancel`, `:extend`, `:deny`, `:grant` and `:route`.
+- The model tools `council.*` call `operation!`, not the separate functions.
+- `agents.json` gets `wait` (`session_ids`, `timeout_secs`) and `record` (the record fields that `council.run` returns today). All layers validate against these schemas.
+- Spawn idempotency:
+  - Without `key`, the host derives a key. It uses the parent session, the caller, the tool call id and the spawn ordinal in that call.
+  - The caller is the model tool or the extension id.
+  - With `key`, the scope is (parent session, caller, key). This scope lasts across turns and restarts. Store it durably.
+  - The same key with different input fails with `idempotency-conflict`.
 
-Acceptance criteria: Lazytest tests cover the mapping and the redaction. A host run with `--trajectory` passes validation with Harbor's `Trajectory` model. `harbor view` shows its steps. The token totals equal the result frame.
+Acceptance criteria:
 
-Unknowns: the trace has no token counts for each iteration, so step metrics can stay empty.
+- Every `council.*` model tool gives the same records as before (existing managed-agent tests stay green).
+- A repeated spawn with the same derived or explicit key returns the same child and creates no second session.
+- A repeated explicit key after a gateway restart returns the same child.
 
-## 3. One Vis agent, profiles and a current Linux build
+Unknowns:
 
-Rationale: one adapter gives one behavior. Named profiles make each harness component a switch, and the profile is part of each result.
+- Where to store explicit keys durably: a new table or a column on the agent row.
 
-Data:
+## 2. HTTP routes
 
-- `ctb/agents/vis.py` stays the only Vis adapter. `terminal_bench/` uses it.
-- Current switches: `--toggles` (for example `council`, `draft_backend`, `subagents` and `reasoning_level`), `--extensions`, `--reasoning-effort` and `--db :memory` or `--persist`.
-- `profiles.toml` names each profile: toggles, extensions, effort and a configuration overlay. The profile goes to ATIF `agent.extra` and to the run record.
-- `native-release.yml` dry runs upload the Linux binary as a workflow artifact with a short retention. The benchmark pins that archive by sha256, run id and commit. This is not a release.
-
-Acceptance criteria: one canary task each for `vis-solo` and `vis-team` on a build from `main`, with valid ATIF and the profile in it. The second adapter is removed.
-
-Unknowns: none. The engine has toggles for reasoning, Council, subagents, drafts, introspection and shell commands. It has no switch for compaction, the context budget, fold hints, planning or the action space. Phase 8 adds them as engine toggles.
-
-## 4. e2e scenarios as a Harbor dataset
-
-Rationale: one runner for all evaluations. Harbor gives retries, job results, `view` and `regrade`.
+Rationale: the SDK and `HostLayer` need one route for each operation.
 
 Data:
 
-- `scenario.json` keys: `want`, `wantnot`, `want_answer`, `want_answer_json`, `want_json_files`, `want_tools`, `want_forms`, `want_requested_route`, `want_folded_prefix`, `want_cache_read`, `want_cache_metrics`, `want_helper_reuse`, `measurement`, `files_from`, `fixture_generator`, `timeout_s` and `lang`.
-- A Harbor environment for the host (`--env module:Class`) makes a new git repository for each trial, as `e2e/run.py` does now. It uses the source CLI, so no Linux build is necessary.
-- A compiler makes one Harbor task from each `scenario.json`: `task.toml`, `instruction.md`, the files and `tests/`.
-- The verifier reads the workspace and `trajectory.json`, and writes named rewards: correctness and each process guard. Rewardkit criteria are used where one fits.
+- Add `POST /v1/sessions/:sid/agents/wait`, `/resume`, `/extend`, `/deny` and `/grant` to the gateway contract route table and `gateway/server/council.clj`.
+- `wait` is a long poll. The server caps `timeout_secs` at 300. On timeout it returns the current records with each `status` unchanged.
+- Map errors as `agents-handler` does today: `invalid-request` 400, `session-not-found` 404, others 409.
 
-Acceptance criteria: one Harbor run of all scenarios is graded by the old and the new grader, and they agree on 100% of the verdicts. Then `evals.run("scenarios", ...)` uses Harbor, and `e2e/run.py` is removed.
+Acceptance criteria:
 
-Unknowns: some e2e guards read Activity data that the trace may not hold. Such a guard gets its data in ATIF `extra` first.
+- Each new route validates its body against `agents.json` before any state change.
+- Each route returns the same record shape as the model tool.
 
-## 5. One result store and one statistics module
+## 3. SDK
 
-Rationale: the same code and the same rules compare any two runs.
-
-Data:
-
-- A Harbor job directory has `config.json`, `result.json` and trials with `result.json`, `agent/trajectory.json` and `verifier/reward.json`.
-- The SDK module `blockether.vis.evals` reads Harbor jobs and holds the statistics: cluster intervals, exact McNemar, Benjamini-Hochberg, power and cost. The `evals` extension and the benchmark repository import it.
-- Every round has a seal: commit, pins, profiles, artifact sha256, task checksums and one row for each trial.
-- Vis keeps an index of runs that it can build again from the files. It does not keep a copy.
-
-Acceptance criteria: `evals.compare` reads a benchmark round and an e2e round with the same code. McNemar and Benjamini-Hochberg values equal reference values.
-
-Unknowns: none.
-
-## 6. Evaluations in Vis
-
-Rationale: a person starts, watches and compares evaluations from chat, the TUI and the Companion app. A real failed session becomes a new scenario.
+Rationale: the SDK is the typed reference implementation. Extensions reuse it in phase 4.
 
 Data:
 
-- `evals.run(dataset, agents, profiles, attempts)` starts a Harbor job in the background.
-- `evals.watch(run_id)` follows a run in a live view: its progress, counters and one row for each finished trial. The view reads the run directory, so the run continues when a person stops the view.
-- The TUI and the Companion app show this live view like every other live view.
-- `evals.capture(session, turn)` makes a task draft from a session: instruction, files and rubric. A person approves the rubric.
-- An automation runs the e2e dataset every night and reports a regression.
+- `Council.spawn(task, *, provider, model, iteration_budget, allowed_models, files, key) -> Subagent` (renamed from `publish_spawn`).
+- `Council.run(tasks, *, timeout) -> tuple[SubagentRecord, ...]`: spawn all, then wait.
+- `Council.wait(session_ids=None, *, timeout)`, `resume(session_id, task, *, timeout)`, `extend(session_id, iterations)`, `deny(session_id, reason)`, `grant(session_id, files)`.
+- `Council.subagents`, `cancel` and `route` stay.
+- `Session.run(request, *, response_model=None, timeout=None)`. `Agent.run` calls it.
+- `Session.fork(through_turn_id=None) -> Session` over `POST /v1/sessions/:sid/forks`.
+- `SubagentRecord` is a frozen dataclass from the `record` schema.
 
-Acceptance criteria: a run starts from chat, its progress shows live and its result is sealed. `harbor check` accepts a captured task. Each new TUI fold has arrow-key tests.
+Acceptance criteria:
 
-Unknowns: none for live progress. Rejected: a Harbor plugin `VisLive` with its own gateway route. The run directory already holds every trial result, and a live view needs no new route, authentication or client code.
+- Unit tests cover each method against a fake layer and the contract schemas.
+- Pyright CI stays green.
+- No remaining reference to `publish_spawn` in code, docs or examples.
 
-## 7. Trajectory judges
+## 4. Extension API through `HostLayer`
 
-Rationale: a pass rate does not tell why a run fails.
-
-Data:
-
-- Rubrics label the failure stage and the action type of each tool call: understand, write, verify and other, as in the paper.
-- `harbor analyze` or rewardkit judges read `trajectory.json`, with `samples` for agreement and `guard` against prompt injection.
-- People label failures with `evals.label`. Cohen's kappa compares each judge with the people.
-
-Acceptance criteria: each rubric has at least 30 human labels. A judge with kappa of 0.6 or more is used for review. Automatic causes need kappa of 0.8 or more.
-
-Unknowns: the judge cost and the time for human labels.
-
-## 8. Ablations and the improvement gate
-
-Rationale: find which component helps which model, and at which cost.
+Rationale: extensions get the SDK interface without credentials and without a second implementation.
 
 Data:
 
-- Axes:
-  - context management (compaction off and on, thresholds and fold hints) for each context budget,
-  - planning on and off,
-  - all tools or the shell only,
-  - solo or Council,
-  - effort.
-- New engine toggles give the axes that have no switch today: compaction, the context budget, fold hints, planning and the action space.
-- The tasks are split into a working set and a held-out set.
-- `evals.ablate` plans a run before it starts: cost, time and statistical power.
-- A change needs a paired test on the held-out set and a person's approval. The test must show a gain, or a lower cost without a loss.
-- An agent can propose a change from the paper and the diagnoses. The gate makes the decision.
+- New host door `__vis_host_request__(method, path, query, body)`. The engine dispatches it to the built-in router (`gateway/server.clj`, `route-precedence`) with the bound session identity.
+- `HostLayer(ExecutionLayer)` implements `_request` through that door. `connect` and `close` do nothing.
+- `HostLayer` allows only these route groups: sessions, turns, transcript, attachments, forks, snapshot, Council and agents. It refuses all other routes with `forbidden-route`.
+- `vis.council` becomes the engine `Council` bound to the calling session. Remove the separate `_Council` class. `wake` keeps its behavior.
+- `vis.sessions` gives `create(**options) -> Session`, `get(id) -> Session`, `list(search=None)`, `export(id=None) -> bytes` and `restore(data, *, root=None, group_id=None, key=None) -> Session`.
+- `vis.run(request, **options)` creates an independent session, runs one turn and returns the result. It accepts the same options as `Agent.run`.
+- Sessions that an extension creates record `origin = {kind: "extension", extension, session_id}`.
+- Each new public method has an Activity presentation, for example "Run subagents", "Create session", "Export session" and "Restore session".
 
-Acceptance criteria: one complete ablation family on held-out tasks, with a sealed report.
+Execution contexts:
 
-Unknowns: the budget, the number of tasks for enough power and the Podman machine time.
+| Caller | Allowed |
+|---|---|
+| Active extension callback | All operations. `spawn` needs the parent's complete checkpoint. |
+| Extension background thread with a bound session | Reads, `wait`, `cancel`, `extend`, `deny`, `wake`, and `send` or `run` in sessions that this extension created. |
+| Model `python_execution` block | Nothing from `vis.sessions`, `vis.run` or `HostLayer`. Existing model tools stay. |
+| Registration-only context or outside host | Refused with `session-not-bound`. |
+
+Authorization:
+
+- The parent is always the bound session. No argument selects another parent.
+- An extension can mutate only the bound session, its owned children and sessions that the same extension created.
+- An extension can read the sessions that `vis.read_session` can read today.
+- A created session gets at most the permissions of the bound session. It never gets more.
+
+Acceptance criteria:
+
+- A JVM boundary test calls every `vis.council.*` and `vis.sessions.*` method from a sync and an async callback.
+- A test calls `vis.sessions.create` from a `python_execution` block and gets a refusal.
+- `apropos("sessions.create")` and `apropos(r"^vis\.run")` find nothing in the model sandbox.
+- Activity tests cover registration and the running, success, failure and empty states.
+
+## 5. Session snapshots
+
+Rationale: you can save a session tree, close a stdio engine or restart a gateway, then continue.
+
+Data, file format `.vissnap` version 1:
+
+- Magic bytes `VISSNAP\0`, a 4-byte format version, a 4-byte manifest length and the manifest as UTF-8 JSON.
+- The manifest holds `format_version`, `vis_version`, `created_at`, `root_session_id`, the session tree (`id`, `parent_id`, `title`), counts, sizes and `payload_sha256`.
+- The payload is a Nippy-frozen map of plain EDN values, with Nippy compression.
+- Python reads the manifest without a JVM: `blockether.vis.engine.Snapshot.info(data)`. Python never decodes the payload.
+
+Content for each session in the tree:
+
+- Kept: turns, the model-visible context with fold gists, goal, title, project root, model preference, tool selection, session toggles and attachments (one copy for each sha256).
+- Kept for children: task, iteration budget and use, file rules, parent link and the Council team thread between tree members.
+- Excluded: credentials, granted permissions, processes, REPLs, sandbox variables, live views, pending replies and messages from sessions outside the tree.
+
+Routes and calls:
+
+- `GET /v1/sessions/:sid/snapshot` returns the artifact. `POST /v1/sessions/import` takes it.
+- SDK: `Session.export() -> bytes` and `ExecutionLayer.restore_session(data, *, root=None, group_id=None, key=None) -> Session`.
+- Extension: `vis.sessions.export` and `vis.sessions.restore` (phase 4).
+
+Restore rules:
+
+- Each session gets a new id. Parent and child links point to the new ids. Each session records `imported_from = {session_id, snapshot_sha256}`.
+- A child that was running at export restores as `interrupted`. The parent continues it with `council.resume`.
+- Permissions come from the policy of the caller who restores, never from the file.
+- With `key`, a second restore returns the tree from the first restore.
+- The write is atomic: all sessions and attachments, or nothing.
+
+Acceptance criteria:
+
+- Export, close a `LocalEngine`, restore in a new `LocalEngine`, then the next turn uses the earlier context.
+- The same round trip works on a gateway across a restart, with a parent that has two children.
+- The restored parent resumes a restored child with `council.resume`.
+
+Unknowns:
+
+- The default size limit. Start with 1 GiB and make it a setting.
+
+## 6. Documentation
+
+Data:
+
+- `sessions-api.md`: independent sessions from the SDK and extensions, `Session.run`, `fork`, `export` and `restore`.
+- `council-api.md`: the managed-child operations with the new names.
+- `extension-api.md`: `vis.sessions`, `vis.run`, `vis.council` and the execution-context table.
+- `http-api.md`: the new routes.
+- Give each example as a Python block, then as an HTTP block (`PAIRED VARIANTS` in `docs/core.clj`).
+- Document spawn idempotency, reconciliation after an uncertain write, the budget after `resume`, and that a cancel request does not prove that a child stopped.
+
+Acceptance criteria:
+
+- `docs-page-canon-test`, `docs-modules-test` and `test_api_guides.py` pass.
+
+## 7. End-to-end validation on a separate server
+
+Rationale: JVM tests and a native build do not prove that the shipped binary works.
+
+Environment:
+
+- Use the administered staging server through the `uplink` extension. Keep its host details in `infrastructure`, never here.
+- Install the Linux x86_64 native build of the candidate commit and the matching `vis-agent` wheel.
+- Run a gateway as a user service with its own database. Do not reuse the developer machine's state.
+- Install one test extension, `e2e-sessions`, from `test-native/` fixtures. Its tools call `vis.council.*`, `vis.sessions.*` and `vis.run`.
+- Use one cheap model route for all scenarios, and record the route.
+
+Scenarios. Each one must pass on the server:
+
+| # | Scenario | Pass condition |
+|---|---|---|
+| E1 | SDK: `GatewayClient` creates a session, `Session.run` answers, `Turn.cancel` stops a long turn | Answer is non-empty; cancelled turn has status `cancelled` |
+| E2 | SDK: `council.spawn` twice with one `key`, then `wait` | One child exists; record status `completed` |
+| E3 | Extension tool calls `vis.council.spawn` without a key; a forced host retry repeats the write | One child exists |
+| E4 | Child exhausts a budget of 3 iterations; extension calls `extend`, then `resume` | Child completes; `iterations_used` is above 3 |
+| E5 | Extension calls `deny` on a budget request | Child ends without more iterations; parent gets the reason |
+| E6 | Extension calls `cancel` on a running child, then `wait` | Record status is `cancelled` or `interrupted`; no turn runs 10 s later |
+| E7 | Extension background thread calls `spawn` | Refused; no child exists |
+| E8 | Model block calls `vis.sessions.create` and `HostLayer` directly | Both refused; session count unchanged |
+| E9 | Extension calls `vis.run` | New independent session with `origin.kind = "extension"` and no parent |
+| E10 | Extension calls `HostLayer` on `/v1/settings` | Refused with `forbidden-route` |
+| E11 | Extension mutates a session that another extension created | Refused |
+| E12 | Snapshot of a parent with two children, `systemctl restart` of the gateway, `restore`, then a follow-up turn that needs earlier context | Answer uses the earlier context; tree shape and new ids are correct |
+| E13 | Snapshot taken while a child runs | Restored child is `interrupted`; `council.resume` completes it |
+| E14 | stdio: export from `LocalEngine`, `close`, restore in a new `LocalEngine`, continue | Answer uses the earlier context |
+| E15 | Restore the same file twice without `key`, then twice with `key` | Two trees, then one tree |
+| E16 | An automation runs a prompt that calls the `e2e-sessions` tool | Automation run succeeds; child and independent session exist |
+
+Acceptance criteria:
+
+- All of E1 to E16 pass on the candidate build, with the session ids and commit recorded in the plan state.
+- The `test-native/` suite covers E3, E7, E8 and E12 against the built image (`-M:test-native`).
+- A grep of the server logs and every artifact finds no gateway token, provider key or lease secret.
+
+## Edge cases
+
+Each edge case needs a retained test. "Unit" means a JVM or pytest test, "native" means `test-native/`, "E" means a scenario above.
+
+Council and spawn:
+
+- `spawn` when Council or subagents are off: `disabled`, no child (unit).
+- `spawn` when the parent has no complete checkpoint: refused before any write (unit).
+- `spawn` with a model outside the inherited `allowed_models`: refused (unit).
+- `spawn` with file rules wider than the parent's grants: refused (unit).
+- `iteration_budget` of 0, a negative value or above 600: `invalid-request` (unit).
+- An empty `tasks` list for `run`: `invalid-request` (unit).
+- The same `key` with different input: `idempotency-conflict` (unit).
+- `wait`, `resume`, `extend`, `deny` or `grant` on a session that is not an owned child: refused (unit).
+- `wait` with an unknown id: `invalid-request`, no partial wait (unit).
+- `wait` with a timeout above 300 s: capped at 300 s (unit).
+- `resume` on a running child: refused; `resume` on a cancelled child: allowed and recorded (unit).
+- `cancel` on a finished child: returns its record unchanged (unit).
+- `cancel` cascades to grandchildren (unit, E6).
+- The parent is cancelled while an extension waits on a child: `wait` returns, the child is cancelled (unit).
+- The gateway restarts during `wait`: the SDK raises `TransportError`; a new `wait` returns the durable records (unit).
+- A human holds the queue of the child: `wait` reports `held`, and the extension cannot release the hold (unit).
+
+Extension boundary:
+
+- A call from a registration-only context: `session-not-bound` (unit).
+- A nested call: an extension tool calls `vis.tools` that calls back into the waiting extension: refused as today (unit).
+- An async callback and a sync callback give the same result (unit).
+- A background thread outlives the bound session: later calls fail with `session-not-bound` (unit).
+- `/reload` replaces the extension while its background thread runs: old thread calls fail, no crash (unit).
+- A large response (1000 children, a long transcript) crosses the door within the descriptor and memory limits (unit).
+
+Snapshots:
+
+- A truncated file, a wrong magic value or a wrong `payload_sha256`: rejected before any write (unit).
+- A newer `format_version`: `unsupported-version` (unit).
+- A payload with a Java class or record that is not on the Nippy allowlist: rejected (unit).
+- A file above the size limit: rejected before decoding (unit).
+- A cycle or a duplicate id in the manifest tree: rejected (unit).
+- The project root does not exist on the target: `project-not-found` unless `root` is given (unit).
+- A tool in the selection is not installed on the target: dropped, with a warning in the result (unit).
+- A model route is not configured on the target: preference kept, warning in the result, next turn uses the router (unit).
+- A session without turns: exported and restored with its settings (unit).
+- A session with a running turn: that turn is excluded and marked `interrupted` (E13).
+- An export of a child alone: the child restores as an independent session without a parent link (unit).
+- A disk-full or other failure in the middle of a restore: nothing remains (unit).
+- Attachments shared by several sessions: stored once, restored to each session (unit).
+- Unicode titles and content, including 4-byte characters, survive the round trip (unit).
+- Restore by another user or on another machine: no credential is needed and none is restored (E12, E14).
+
+## Checks
+
+- Clojure: `clj.run_tests` for the affected namespaces, `clj.lint_code` and `clj.format_code`.
+- Python: `vis-agent python -m pytest packages/vis-agent/tests`, ruff and pyright.
+- Contract: schema tests in `packages/vis-contract`.
+- Native: `-M:test-native` on the built image for the cases above.
+- End to end: phase 7 on the separate server.
 
 ## Plan state
 
-- Phase 1: done. The benchmark commit `22223a5` stays local until the baseline round is sealed.
-- Phase 2: done. A host run with `--trajectory` passed Harbor's `Trajectory` model, and `harbor view` showed its 3 steps. Its totals equaled the result frame. A planted fake credential did not appear in the file, and the file mode was `0600`.
-- Phase 3: done. Vis `a93089b62` writes the steps of a persisted run. The native-release dry run `38185257847` built it, and `profiles.toml` pins that archive by sha256 (benchmark commit `bf1ae0b`, local). In round `canary-p3b`, `vis-solo` and `vis-team` each wrote valid ATIF v1.8 with 15 steps, mode `0600` and the profile in `agent.extra`. Both trials had reward 0: each one failed 1 of 2 task tests, with no infrastructure error. `terminal_bench/vis_agent.py` is removed.
-- Phase 4: done. One Harbor run graded all 40 scenarios with the old and the new grader on the `anthropic-coding-plan/claude-opus-5-5` route. The verdicts agreed in 40 of 40 trials: 37 passed and 3 failed in both, with no trial exception. Later, `e2e/<id>/` became native Harbor tasks. The compiler, `e2e/vis_harbor/` and `evals.run` are removed, and `harbor run --path e2e` runs the tasks.
-- Phase 5: done. Release v0.2.38 ships `blockether.vis.evals` in `vis-agent` 0.2.38 on PyPI. The McNemar and Benjamini-Hochberg tests equal the binomial and statsmodels reference values. `evals.compare` pairs scenario runs and benchmark rounds with the same code (4 tests in `.vis/extensions/test_evals.py`). With the real e2e runs `20261006-005150-scenarios-ec87` and `20261012-085548-scenarios-d4c4`, it paired 5 cases with no measurable difference. The benchmark repository reads and seals rounds with the SDK (commit `812b2d5`, local).
-- Phase 6: done. `evals.run(dataset, ...)` replaces `run_scenarios` and `run_bench`. It takes the datasets `scenarios` and `terminal-bench`, and it refuses an option of the other dataset. `evals.capture(session_id, turn)` drafts a scenario from a session turn through `vis.read_session` (commits `513895774` and `f050802a6`). `evals.watch(run_id)` follows a run in a live view. On the real run `20261012-085548-scenarios-d4c4`, it showed 40 trials and "39 of 40 runs passed". `python -m blockether.vis.evals.check` runs the `harbor check` rubric with the Vis agent in the host environment. On a task captured from a real session turn, it gave a valid result: 5 pass, 2 fail and 4 not applicable. Both fails named the weak oracle of the draft. The automation `Nightly e2e evaluation` runs every scenario at 02:00 Europe/Warsaw on `anthropic-coding-plan/claude-opus-5-5` and compares the run with the previous run. Its first run found four faults, now fixed: `evals.run("scenarios")` without `ids` refused to start, `evals.watch` sent counter updates without the label that the View schema requires, and a provider refusal ended with exit code 0 and counted as a wrong answer. The CLI now exits 1, and the Harbor agent raises `ProviderUnavailableError`. The fourth fault was the exhausted `zai-coding-plan` quota of the default route.
-- Phase 7: started. `python -m blockether.vis.evals.judge` runs the `harbor analyze` prompt with the stage rubric `judge-rubric.toml` of the SDK and the Vis agent in the host environment. The SDK functions `save_stage_label` and `stage_agreement` record a person's stage and give Cohen's kappa with the limits of this phase. A real trial of run `20261012-185805-scenarios-97de` built a valid wrapper. Open: a paid judge run, at least 30 human labels for each rubric and the action type of each tool call.
-- Phase 8: not started.
-- The baseline round (`ctb-baseline`) has no Vis trials. It runs until about 2026-10-13. After its seal, commit `results/baseline.json` in the benchmark repository.
+- Phase 1: not started.
+- Phase 2: not started.
+- Phase 3: not started.
+- Phase 4: not started.
+- Phase 5: not started.
+- Phase 6: not started.
+- Phase 7: not started. The server is reachable through `uplink`; it has `vis-agent` and Java, but no `vis` binary yet.
