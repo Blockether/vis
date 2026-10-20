@@ -513,6 +513,15 @@ The core runtime requires CPython 3.14 and its standard library, supplied by
 `com.blockether/vis-python-runtime` and a platform archive. The bridge is MIT;
 CPython is PSF-2.0.
 
+Native builds also include the Python packages that the `vis-agent` SDK
+imports: `jsonschema`, `referencing` and `pydantic`, with their dependencies
+`jsonschema-specifications`, `rpds-py`, `attrs`, `pydantic-core`,
+`annotated-types`, `typing-inspection` and `typing-extensions`. The build
+installs them from PyPI into `python/lib/vis-sdk-packages`. Vis puts that
+directory last on the import path, so packages that you install take
+precedence. Each package keeps its license file in its `dist-info` directory.
+All are MIT, except `typing-extensions`, which is PSF-2.0.
+
 Local speech uses `sherpa-onnx` (Apache-2.0) and ONNX Runtime (MIT). Its API jar
 is a declared dependency; platform-specific native libraries are loaded
 separately. Some native builds include eSpeak NG (GPL-3.0), which requires

@@ -9,6 +9,15 @@ from types import ModuleType
 # The host stages the SDK engine next to this file, for `blockether.vis.engine`.
 _ENGINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vis_engine")
 
+# A native build ships the packages that the SDK engine imports here (#405).
+_PACKAGES = os.path.join(sys.base_prefix, "lib", "vis-sdk-packages")
+
+
+def _add_packages():
+    """Add the bundled SDK packages last, so packages that the user installs win."""
+    if os.path.isdir(_PACKAGES) and _PACKAGES not in sys.path:
+        sys.path.append(_PACKAGES)
+
 
 class _SandboxHost:
     """Refuse extension host operations without creating an outside host."""
@@ -26,6 +35,7 @@ def install(source, host=None):
 
     A new `blockether.vis` package also finds the staged SDK engine.
     """
+    _add_packages()
     for name in ("blockether", "blockether.vis"):
         try:
             package = importlib.import_module(name)

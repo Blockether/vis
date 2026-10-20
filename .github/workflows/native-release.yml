@@ -246,8 +246,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          out="$(target/release-bundle/vis-agent python -c "import ast; print('py-ok')")"
-          [ "$out" = "py-ok" ] || { echo '::error::the staged interpreter does not load'; exit 1; }
+          out="$(target/release-bundle/vis-agent python -c "import ast, jsonschema, pydantic, referencing; print('py-ok')")"
+          [ "$out" = "py-ok" ] || { echo '::error::the staged interpreter or its SDK packages do not load'; exit 1; }
       # Boot a job-owned gateway and positively verify its complete HTTP route table.
       # An ephemeral port and unique DB keep this check separate from user services.
       - name: Smoke-test the gateway
@@ -556,8 +556,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          out="$(target/release-bundle/vis-agent python -c "import ast; print('py-ok')")"
-          [ "$out" = "py-ok" ] || { echo '::error::the staged interpreter does not load'; exit 1; }
+          out="$(target/release-bundle/vis-agent python -c "import ast, jsonschema, pydantic, referencing; print('py-ok')")"
+          [ "$out" = "py-ok" ] || { echo '::error::the staged interpreter or its SDK packages do not load'; exit 1; }
       # Same isolated gateway smoke as the matrix job.
       - name: Smoke-test the gateway
         shell: bash

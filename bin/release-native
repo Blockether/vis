@@ -146,9 +146,9 @@ build_macos_arm64() {
   bin/smoke-gateway-routes target/release-bundle
   # The sidecar is the whole point of this bundle: prove the wrapper finds the
   # staged interpreter beside itself, not a build leftover on this machine.
-  say "smoke: CPython stdlib from the staged interpreter"
-  target/release-bundle/vis-agent python -c "import ast, json, os; print('py-ok')" \
-    | grep -qx 'py-ok' || die "the staged interpreter does not load: no Python stdlib"
+  say "smoke: CPython stdlib and SDK packages from the staged interpreter"
+  target/release-bundle/vis-agent python -c "import ast, json, os, jsonschema, pydantic, referencing; print('py-ok')" \
+    | grep -qx 'py-ok' || die "the staged interpreter does not load its stdlib or SDK packages"
   built_asset="$asset"
 }
 
@@ -375,8 +375,8 @@ build_linux() {
   say "smoke: CPython stdlib inside that container"
   eng run --rm --platform "$platform" \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
-    "$probe_image" /bundle/vis-agent python -c "import ast; print('py-ok')" \
-    | grep -qx 'py-ok' || die "the $target bundle cannot import the Python stdlib"
+    "$probe_image" /bundle/vis-agent python -c "import ast, jsonschema, pydantic, referencing; print('py-ok')" \
+    | grep -qx 'py-ok' || die "the $target bundle cannot import the Python stdlib or SDK packages"
   built_asset="$asset"
 }
 

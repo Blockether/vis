@@ -95,6 +95,15 @@ The core runtime requires CPython 3.14 and its standard library, supplied by
 `com.blockether/vis-python-runtime` and a platform archive. The bridge is MIT;
 CPython is PSF-2.0.
 
+Native builds also include the Python packages that the `vis-agent` SDK
+imports: `jsonschema`, `referencing` and `pydantic`, with their dependencies
+`jsonschema-specifications`, `rpds-py`, `attrs`, `pydantic-core`,
+`annotated-types`, `typing-inspection` and `typing-extensions`. The build
+installs them from PyPI into `python/lib/vis-sdk-packages`. Vis puts that
+directory last on the import path, so packages that you install take
+precedence. Each package keeps its license file in its `dist-info` directory.
+All are MIT, except `typing-extensions`, which is PSF-2.0.
+
 Local speech uses `sherpa-onnx` (Apache-2.0) and ONNX Runtime (MIT). Its API jar
 is a declared dependency; platform-specific native libraries are loaded
 separately. Some native builds include eSpeak NG (GPL-3.0), which requires
@@ -142,7 +151,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/parinferish` | `0.2.4` | MIT | 70 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.206` | Apache-2.0 | 848 KB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `git:0407ecdc79082beffffea63ac32e16f1b5a91560` | MIT | source checkout | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:eb7ae7adc9ed8cf55532d510b23b7badeb5e986e` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.042` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.2` | Apache-2.0 | 580 KB | 3rd-party |
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.2` | Apache-2.0 | 72 KB | 3rd-party |

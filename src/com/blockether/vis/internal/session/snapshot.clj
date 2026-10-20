@@ -21,6 +21,8 @@
            (java.nio.charset StandardCharsets)
            (java.util Arrays)))
 
+(set! *warn-on-reflection* true)
+
 (def ^:private magic (.getBytes "VISSNAP\u0000" StandardCharsets/US_ASCII))
 
 (def ^:const format-version 1)
@@ -87,7 +89,7 @@
       (throw (ex-info "The session snapshot exceeds the size limit"
                       {:type :session/snapshot-too-large :bytes size :limit (max-bytes)})))
     (-> (ByteBuffer/allocate (int size))
-        (.put magic)
+        (.put ^bytes magic)
         (.putInt (int format-version))
         (.putInt (alength head))
         (.put head)

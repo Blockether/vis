@@ -53,8 +53,8 @@
            ;; An anchored write is the editing path the agent depends on most.
            "edit_target = project_root_path / 'edit.txt'\n"
            "edit_target.write_text('alpha\\nbeta\\n')\n"
-           "anchor = re.match(r'\\d+:[0-9a-f]{3}', cat(str(edit_target)).splitlines()[1]).group(0)\n"
-           "patch(str(edit_target), [{'from': anchor, 'replace': 'gamma'}])\n"
+           "version = cat(str(edit_target)).splitlines()[0].rsplit(' @', 1)[1]\n"
+           "patch(str(edit_target), [{'from': 2, 'replace': 'gamma'}], version)\n"
            "assert edit_target.read_text() == 'alpha\\ngamma\\n', edit_target.read_text()\n"
            "print('NATIVE_PATCH_READY')\n"
            ;; #279: let the refusal escape this tool call; the next model step must

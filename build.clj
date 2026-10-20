@@ -852,6 +852,57 @@
         (.renameTo partial archive)))
     archive))
 
+(def ^:private sdk-runtime-packages
+  "The `vis-agent` dependencies that `blockether.vis.engine` imports. An extension that uses
+   `vis.sessions`, `vis.run` or `vis.council` needs them, so the sidecar ships them (#405)."
+  #{"jsonschema" "pydantic" "referencing"})
+
+(defn- sdk-runtime-specs
+  "The requirement strings of `sdk-runtime-packages`, read from the SDK `pyproject.toml`."
+  []
+  (let [toml
+        (slurp "packages/vis-agent/pyproject.toml")
+
+        block
+        (or (second (re-find #"(?s)\ndependencies = \[(.*?)\n\]" toml))
+            (throw (ex-info "The SDK pyproject.toml has no dependencies list." {})))
+
+        specs
+        (->> (re-seq #"\"([^\"]+)\"" block)
+             (map second)
+             (filter #(contains? sdk-runtime-packages (re-find #"^[A-Za-z0-9_.-]+" %))))]
+
+    (when-not (= (count sdk-runtime-packages) (count specs))
+      (throw (ex-info "The SDK pyproject.toml misses a runtime package."
+                      {:expected sdk-runtime-packages :found specs})))
+    (vec (sort specs))))
+
+(defn- install-sdk-packages!
+  "Install the SDK runtime packages into `python/lib/vis-sdk-packages` of the staged interpreter.
+   `vis_sdk.install` adds that directory last to `sys.path`, so installed packages take precedence."
+  []
+  (let [python
+        (io/file python-sidecar-dir "python" "bin" "python3")
+
+        target
+        (io/file python-sidecar-dir "python" "lib" "vis-sdk-packages")
+
+        specs
+        (sdk-runtime-specs)]
+
+    (when-not (.canExecute python)
+      (throw (ex-info "The CPython sidecar has no interpreter." {:dir python-sidecar-dir})))
+    (let [{:keys [exit]} (b/process {:command-args (into [(str python) "-m" "pip" "install"
+                                                          "--disable-pip-version-check" "--no-input"
+                                                          "--no-warn-script-location"
+                                                          "--only-binary=:all:" "--target"
+                                                          (str target)]
+                                                         specs)})]
+      (when-not (zero? exit)
+        (throw (ex-info "Could not install the SDK packages into the CPython sidecar."
+                        {:specs specs :exit exit}))))
+    (println "->" (str target) specs)))
+
 (defn- stage-python-sidecar!
   "Put the embedded CPython for this platform into `target/vis-agent-python/`.
 
@@ -859,7 +910,7 @@
    keeps the tree's symlinks and executable bits; otherwise the release archive
    is unpacked with `tar`, which keeps the same. Missing is a hard build
    failure: a binary without the sidecar answers every Python block with a
-   library-not-found."
+   library-not-found. The SDK runtime packages are then installed into it."
   [basis]
   (let [tok
         (native-lib-token)
@@ -889,6 +940,7 @@
           (when-not (zero? exit)
             (throw (ex-info "Could not unpack the CPython sidecar."
                             {:archive (str archive) :exit exit}))))))
+    (install-sdk-packages!)
     (println "->" python-sidecar-dir)))
 
 (defn- sherpa-native-jars

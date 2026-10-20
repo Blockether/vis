@@ -2008,7 +2008,10 @@
                                  (str
                                    "import json, dataclasses, importlib.util\n"
                                    "assert all(importlib.util.find_spec(name) is None "
-                                   "for name in ('numpy', 'scipy', 'pydantic', 'cryptography'))\n"
+                                   "for name in ('numpy', 'scipy', 'cryptography'))\n"
+                                   ;; #405: the sandbox sees only the pydantic that ships with the SDK.
+                                   "spec = importlib.util.find_spec('pydantic')\n"
+                                   "assert spec is None or 'vis-sdk-packages' in spec.origin, spec\n"
                                    "status = await packages_status()\n"
                                    "assert type(status).__name__ == 'PackageStatus' and status.state == 'ready'\n"
                                    "assert dataclasses.is_dataclass(status)\n"
