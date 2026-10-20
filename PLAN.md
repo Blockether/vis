@@ -303,7 +303,7 @@ Scenarios. Each one must pass on the server:
 | E16 | An automation runs a prompt that calls the `e2e-sessions` tool | Automation run succeeds; child and independent session exist |
 | E17 | SDK and extension call `models()` | Same list as the TUI picker; a metered model has `pricing`; each model has its provider `limits`; an unauthenticated provider has `is_available = false` |
 | E18 | Create a session and spawn a child with explicit `provider` and `model`, run one turn each | Turn usage shows that pair; turn cost equals tokens times the listed rates |
-| E19 | Create a session with an unknown model; spawn a child with a model outside `allowed_models` | `unknown-model` and `model-not-allowed`; no session or child exists |
+| E19 | Create a session with an unknown provider; spawn a child with a model outside `allowed_models` | `unknown-provider` and `model-not-allowed`; no session or child exists |
 
 Acceptance criteria:
 
@@ -393,5 +393,5 @@ Models:
   - E8: `test-native/` covers it against the built image; the server run did not repeat it.
   - E4 and E16 passed on the second run. On the first run the model answered "Acknowledged" without the task. E9 passed alone; in parallel, another test added a session to its count.
   - E13: the SDK `council.resume` on an idle restored parent gives `inactive-session`. The resume works from a turn of the parent, like `spawn`.
-  - E19 is open: `model-not-allowed` works, but `create_session` with an unknown model creates the session. `server_test` keeps the model name free for the live catalog. Decide between the plan and that test.
+  - E19: decided for the live catalog. `create_session` refuses an unknown provider with `unknown-provider` and makes no session (`server_test`, "pins the given provider and model"). The model name stays free, because a provider can serve a model that the cached catalog does not list. `model-not-allowed` works.
   - No secret value from the auth files, the gateway token or the registry is in the journals, logs or snapshots.
