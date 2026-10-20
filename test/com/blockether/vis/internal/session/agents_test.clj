@@ -1293,3 +1293,21 @@
         (ps/db-agent-update! db (fork n) {:status "completed"}))
       (expect (= :agent-limit (refusal agents/max-team-children)))
       (expect (= agents/max-team-children (count (ps/db-agent-list db leader)))))))
+
+;; Regression, issue #405: an extension's extend or deny of an open budget request
+;; failed with inactive-session, because the reply had no live parent execution.
+(defdescribe agent-answers-use-the-live-parent-env
+             (it "extend and deny run in the parent's live env; reads do not need it"
+                 (let [seen (atom [])]
+                   (with-redefs-fn {#'lp/db-info (constantly ::db)
+                                    #'ps/db-get-session (constantly {:id "parent"})
+                                    (ns-resolve 'com.blockether.vis.internal.gateway.state
+                                                'live-env)
+                                    (constantly {:live? true})
+                                    #'agents/operation! (fn [env operation _]
+                                                          (swap! seen conj [operation (:live? env)])
+                                                          [])}
+                     (fn []
+                       (doseq [operation [:extend :deny :wait :list]]
+                         (gateway/agents-operation! "parent" operation {}))
+                       (expect (= [[:extend true] [:deny true] [:wait nil] [:list nil]] @seen)))))))

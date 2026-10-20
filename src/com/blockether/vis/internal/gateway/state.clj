@@ -6509,13 +6509,14 @@
     (when (contains? #{:spawn :run} operation) (agents/require-enabled! db sid))
     ;; Reads and controls need durable state, not a newly bootstrapped interpreter.
     ;; Spawn consumes the running parent's safe model checkpoint, resume publishes in its
-    ;; active execution, and spawn and grant check its security policy.
-    (agents/operation! (assoc (when (contains? #{:spawn :run :grant :resume} operation)
-                                (live-env sid))
-                         :db-info db
-                         :session-id sid)
-                       operation
-                       opts)))
+    ;; active execution, and spawn and grant check its security policy. Extend and deny
+    ;; answer an open child request with a Council reply in that execution too.
+    (agents/operation!
+      (assoc (when (contains? #{:spawn :run :grant :resume :extend :deny} operation) (live-env sid))
+        :db-info db
+        :session-id sid)
+      operation
+      opts)))
 
 (defn fork-session!
   "Fork `sid` into a NEW INDEPENDENT session holding a deep copy of every turn
