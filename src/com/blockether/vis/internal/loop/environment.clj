@@ -365,7 +365,7 @@
    Params:
      `router` - Required. Result of `llm/make-router`.
      `opts`   - Map with `:db` and optional `:session`,
-                 `:channel`, `:external-id`, `:title`, `:sources` and `:tools`
+                 `:channel`, `:external-id`, `:title`, `:sources`, `:tools` and `:origin`
                  (see [[tool-selection]]). A resumed session keeps its saved tools.
 
      `:db` accepted forms:
@@ -376,7 +376,7 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id sources tools]}]
+  [router {:keys [db session channel external-id title workspace-id sources tools origin]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; Everything from here to the end runs with the sandbox GUARDED: the session is
   ;; built ~130 lines before this function returns, and workspace resolution,
@@ -473,7 +473,10 @@
                                                                    ;; list.
                                                                    :claimed? true}
                                                             root-provider
-                                                            (assoc :provider root-provider))))
+                                                            (assoc :provider root-provider)
+
+                                                            origin
+                                                            (assoc :origin origin))))
             ;; A new session keeps the configuration tiers it was created with.
             ;; `open-env!` reads them back when it rebuilds the session.
             _ (when (and sources db-info (not resolved-session-id))
@@ -1767,9 +1770,9 @@
 (defn open-env!
   "Open or resume a session with its project and configuration tiers bound before
    resolving config and providers. A new session takes `:sources`, `:extensions` (see
-   `extension-selection`) and `:tools` (see [[tool-selection]]); a resumed session keeps
-   what it was created with."
-  [id {:keys [channel external-id title workspace-id sources extensions tools]}]
+   `extension-selection`), `:tools` (see [[tool-selection]]) and `:origin`; a resumed
+   session keeps what it was created with."
+  [id {:keys [channel external-id title workspace-id sources extensions tools origin]}]
   (let [db
         (config/resolve-db-spec)
 
@@ -1818,7 +1821,10 @@
                                   (assoc :title title)
 
                                   workspace-id
-                                  (assoc :workspace-id workspace-id)))]
+                                  (assoc :workspace-id workspace-id)
+
+                                  (and origin (not id))
+                                  (assoc :origin origin)))]
 
         (turn-off-extensions! env turned-off)
         env))))

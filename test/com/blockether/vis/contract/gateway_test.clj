@@ -87,12 +87,21 @@
         (expect (= {:request :none :response :resource} (operation :get "/docs")))
         (expect (= {:request :none :response :negotiated} (operation :get "/metrics")))
         (expect (= {:request :binary :response :json} (operation :post "/v1/speech/voices")))
-        (expect (= {:request :none :response :empty} (operation :delete "/v1/sessions/:sid")))
-        (expect (= {:request :json :response :json}
+        (expect (= {:request :none :response :empty :extension :callback}
+                   (operation :delete "/v1/sessions/:sid")))
+        (expect (= {:request :json :response :json :extension :background}
                    (operation :post "/v1/sessions/:sid/council/wake")))
         (expect (= {:request :none :response :sse} (operation :get "/v1/events")))
         (expect (= {:request :none :response :binary}
                    (operation :get "/v1/sessions/:sid/speech/jobs/:job-id/audio")))))
+  (it "matches a request path to one route and its parameters"
+      (expect (= ["/v1/sessions/:sid/turns/:tid" {:sid "s1" :tid "t2"}]
+                 (update (contract/match-route "/v1/sessions/s1/turns/t2") 0 :path)))
+      ;; A literal segment wins over a parameter in the same position.
+      (expect (= ["/v1/sessions/actions/search" {}]
+                 (update (contract/match-route "/v1/sessions/actions/search") 0 :path)))
+      (expect (nil? (contract/match-route "/v1/sessions/s1/unknown")))
+      (expect (nil? (contract/match-route nil))))
   (it "owns protocol compatibility without a runtime mirror"
       (expect (= 18 contract/protocol-version))
       (expect (= 18 contract/minimum-client-protocol))

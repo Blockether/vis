@@ -1,5 +1,6 @@
 """Council's session-bound SDK, using the existing HTTP fixture."""
 
+import base64
 import json
 
 import pytest
@@ -357,30 +358,134 @@ def test_source_identity_and_automatic_complain(scope):
         )
 
 
-def test_extension_self_wake_uses_only_its_host_binding(monkeypatch):
-    # #202: the extension API supplies no target or activation to its host.
+def _host_reply(status, value):
+    content = base64.b64encode(json.dumps(value).encode()).decode()
+    headers = {"content-type": "application/json"}
+    return json.dumps({"status": status, "headers": headers, "content": content})
+
+
+def test_extension_council_wakes_its_bound_session_through_the_host(monkeypatch):
+    # #405: an extension uses the engine Council through its host door, without a token.
     from blockether.vis import extension as vis
 
-    requests = []
-    monkeypatch.setattr(
-        vis._host, "council_wake", lambda opts: requests.append(opts) or opts
-    )
-    result = vis.council.wake(
+    frames = []
+
+    def request(frame):
+        frame = json.loads(frame)
+        frames.append(frame)
+        if frame["route"] == "/v1/sessions/A/council":
+            return _host_reply(200, {"activation_id": None, "default_group_id": "G"})
+        validate("council", "wake", frame["body"])
+        return _host_reply(
+            200,
+            {
+                "entry_id": 1,
+                "thread_id": 1,
+                "group_id": "G",
+                "content": frame["body"]["content"],
+                "kind": frame["body"]["kind"],
+                "author_session_id": "A",
+                "created_at": 1,
+                "source": "sdk",
+                "ping": ["A"],
+            },
+        )
+
+    monkeypatch.setattr(vis._host, "request", request)
+    monkeypatch.setattr(vis._host, "bound_session", lambda: "A")
+    monkeypatch.setattr(vis, "_LAYER", [])
+    entry = vis.council.wake(
         "Build finished", kind="informational", idempotency_key="build-1"
     )
-    assert result == {
-        "content": "Build finished",
-        "kind": "informational",
-        "idempotency_key": "build-1",
-    }
-    assert requests == [result]
-    with pytest.raises(TypeError):
-        vis.council.wake("Wrong target", kind="informational", session_id="B")
+    assert entry.ping == ("A",)
+    assert [(frame["method"], frame["route"]) for frame in frames] == [
+        ("GET", "/v1/sessions/A/council"),
+        ("POST", "/v1/sessions/A/council/wake"),
+    ]
+    assert frames[1]["body"]["idempotency_key"] == "build-1"
+    assert vis.session.id == "A"
 
 
-def test_extension_self_wake_refuses_without_a_host_session():
-    from blockether.vis import _outside
+def test_extension_host_refusal_raises_gateway_error(monkeypatch):
+    # #405: the host refuses a change to a session that the extension does not own.
+    from blockether.vis import extension as vis
+    from blockether.vis.engine import GatewayError
+
+    refusal = {"error": {"type": "forbidden-session", "message": "Not yours"}}
+    monkeypatch.setattr(vis._host, "request", lambda frame: _host_reply(403, refusal))
+    monkeypatch.setattr(vis, "_LAYER", [])
+    with pytest.raises(GatewayError) as raised:
+        vis.sessions.get("B").send("Hello")
+    assert (raised.value.status, raised.value.code) == (403, "forbidden-session")
+
+
+def test_extension_sessions_create_list_and_run_through_the_host(monkeypatch):
+    # #405: vis.sessions and vis.run send each SDK request through the host door.
     from blockether.vis import extension as vis
 
-    with pytest.raises(_outside.Refused, match="bound Vis session"):
-        vis.council.wake("No session", kind="informational")
+    frames = []
+    session = {"id": "N", "title": None, "status": "idle"}
+
+    def request(frame):
+        frame = json.loads(frame)
+        frames.append((frame["method"], frame["route"], frame.get("query")))
+        if frame["method"] == "POST" and frame["route"] == "/v1/sessions":
+            return _host_reply(201, session)
+        if frame["route"] == "/v1/sessions":
+            return _host_reply(200, {"sessions": [session], "next_cursor": None})
+        if frame["route"] == "/v1/sessions/actions/search":
+            return _host_reply(200, {"sessions": []})
+        raise AssertionError(frame)
+
+    monkeypatch.setattr(vis._host, "request", request)
+    monkeypatch.setattr(vis, "_LAYER", [])
+    assert vis.sessions.create().id == "N"
+    assert vis.sessions.get("N").id == "N"
+    assert [row["id"] for row in vis.sessions.list()] == ["N"]
+    assert vis.sessions.list(search="deploy") == []
+    assert frames == [
+        ("POST", "/v1/sessions", None),
+        ("GET", "/v1/sessions", None),
+        ("GET", "/v1/sessions/actions/search", "q=deploy"),
+    ]
+
+
+def test_extension_run_creates_a_session_and_runs_one_turn(monkeypatch):
+    # #405: vis.run passes the model pair to create and the other options to Session.run.
+    from blockether.vis import extension as vis
+
+    calls = []
+
+    class Created:
+        def run(self, request, **options):
+            calls.append(("run", request, options))
+            return {"status": "completed"}
+
+    def create(**options):
+        calls.append(("create", options))
+        return Created()
+
+    monkeypatch.setattr(vis.sessions, "create", create)
+    assert vis.run("Do it", provider="p", model="m", timeout=5, title="x") == {
+        "status": "completed"
+    }
+    assert calls == [
+        ("create", {"provider": "p", "model": "m"}),
+        (
+            "run",
+            "Do it",
+            {
+                "timeout": 5,
+                "response_model": None,
+                "max_corrections": 2,
+                "title": "x",
+            },
+        ),
+    ]
+
+
+def test_extension_council_refuses_without_a_host_session():
+    from blockether.vis import extension as vis
+
+    with pytest.raises(RuntimeError, match="bound Vis session"):
+        getattr(vis, "council")  # noqa: B009 - the attribute access is the call under test.

@@ -88,6 +88,7 @@
                              (paths/claim-dir! dir)))
     (doseq [[name source] sources]
       (let [target (io/file dir name)]
+        (.mkdirs (.getParentFile target))
         (when-not (and (.isFile target) (= source (slurp target)))
           (let [staged (Files/createTempFile (.toPath dir)
                                              ".vis-guest-"
@@ -102,14 +103,35 @@
                  (finally (Files/deleteIfExists staged)))))))
     (.getCanonicalPath dir)))
 
+(def ^:no-doc engine-sources
+  "SDK files that `blockether.vis.engine` needs in an extension context, as
+   `{guest path classpath resource}`. They go under `vis_engine/`, and
+   `vis_sdk.install` adds that tree to a new `blockether.vis` package."
+  (into {}
+        (concat (map (fn [path]
+                       [(str "vis_engine/blockether/vis/" path) (str "blockether/vis/" path)])
+                     ["_contracts.py" "_wire.py" "activity.py" "views.py" "engine/__init__.py"
+                      "engine/_agent.py" "engine/_agents.py" "engine/_client.py"
+                      "engine/_council.py" "engine/_extensions.py" "engine/_host.py"
+                      "engine/_install.py" "engine/_local.py" "engine/_models.py"])
+                (map (fn [schema]
+                       [(str "vis_engine/blockether/vis/_data/schema/" schema ".json")
+                        (str "vis-contract/schema/" schema ".json")])
+                     ["activity" "agents" "automations" "common" "config" "content" "council" "diff"
+                      "evals" "gateway" "improve" "provider" "rooms" "symbol" "toggle" "view"]))))
+
 (defonce ^:private guest-sources
   (delay (into {}
-               (map (fn [name]
-                      (let [resource (or (io/resource (str "vis-guest/" name))
+               (map (fn [[name path]]
+                      (let [resource (or (io/resource path)
                                          (throw (ex-info (str "Missing Vis guest module " name)
                                                          {:module name})))]
                         [name (slurp resource)])))
-               ["vis_introspection.py" "vis_results.py" "vis_sdk.py" "vis_snapshot.py"])))
+               (concat (map (fn [name]
+                              [name (str "vis-guest/" name)])
+                            ["vis_introspection.py" "vis_results.py" "vis_sdk.py"
+                             "vis_snapshot.py"])
+                       engine-sources))))
 
 (defn guest-source-dir
   "Stage Vis-owned Python guest modules in the current home, restoring missing files."
@@ -129,12 +151,14 @@
         (get message "session")
 
         ;; Guest-created threads have no runtime activation identity. Only the
-        ;; explicitly session-bound Council wake may use a trusted connection's
-        ;; assigned namespace; model workers and every other host op still refuse.
+        ;; host request door may use a trusted connection's assigned namespace
+        ;; from such a thread, and it limits that call to reads and Council.
+        ;; Model workers and every other host op still refuse.
+        guest-thread?
+        (and (= "" caller) (true? (:trusted? peer)) (= "__vis_host_request__" (get message "tool")))
+
         caller
-        (if (and (= "" caller)
-                 (true? (:trusted? peer))
-                 (= "__vis_host_council_wake__" (get message "tool")))
+        (if guest-thread?
           (try (get (json/read-json (str (get message "payload"))) "session")
                (catch Exception _ nil))
           caller)]
@@ -142,7 +166,8 @@
     (swap! (:serving peer) assoc id (Thread/currentThread))
     (let [reply (if (and (string? caller) (contains? @(:host-sessions peer) caller))
                   {"value"
-                   (python-host/dispatch caller (get message "tool") (get message "payload"))}
+                   (binding [python-host/*guest-thread?* guest-thread?]
+                     (python-host/dispatch caller (get message "tool") (get message "payload")))}
                   {"error" "Worker is not authorized for this host session"})]
       (when (child/claim-reply! peer id) (child/send-line! peer (assoc reply "id" id))))))
 

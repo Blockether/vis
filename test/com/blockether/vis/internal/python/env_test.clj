@@ -71,7 +71,9 @@
              (str
                "import blockether.vis.extension as sdk\n"
                "operations = [lambda: sdk.state.get('key'), lambda: sdk.notify('hello'), "
-               "lambda: sdk.shell({'command': 'exit 0'}), "
+               "lambda: sdk.shell({'command': 'exit 0'}), lambda: sdk.sessions.create(), "
+               "lambda: sdk.sessions.list(), lambda: sdk.run('Hello'), lambda: sdk.session, "
+               "lambda: sdk.council, "
                "lambda: sdk.register_extension(sdk.Extension(name='blocked', description='Not installed'))]\n"
                "for operation in operations:\n"
                "    try:\n" "        operation()\n"
@@ -1071,7 +1073,16 @@
                       (expect (= "apropos: invalid regex at index 0: Unclosed character class."
                                  (get-in out [:error :message])))
                       (expect (= :python/host (get-in out [:error :data :phase])))
-                      (expect (= :apropos (get-in out [:error :data :symbol])))))))
+                      (expect (= :apropos (get-in out [:error :data :symbol]))))))
+  (it "finds no extension session API through apropos (#405)"
+      (tpc/with-own [ctx {} (constantly [(System/getProperty "user.dir")])
+                     {:worker? true :jail-enabled? true}]
+                    (let [out (ep/run-python-block
+                                ctx
+                                (str "print([item.name for item in apropos(r'sessions\\.create')]"
+                                     " + [item.name for item in apropos(r'^vis\\.run')])"))]
+                      (expect (nil? (:error out)) (pr-str out))
+                      (expect (= "[]\n" (:stdout out)))))))
 
 (defdescribe
   doc-apropos-surface-test

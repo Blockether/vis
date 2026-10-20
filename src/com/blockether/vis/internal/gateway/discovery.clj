@@ -527,21 +527,18 @@
            (let [entry (read-registry db)]
              (when (registry-fresh? entry probe) entry)))]
 
-     (loop []
+     (util/poll hard-deadline
+                poll-ms
+                (fn []
+                  (if-let [entry (fresh)]
+                    (reduced entry)
+                    (let [now (util/now-ms)
+                          alive (when alive? (try (boolean (alive?)) (catch Throwable _ nil)))]
 
-       (or (fresh)
-           (let [now
-                 (util/now-ms)
-
-                 alive
-                 (when alive? (try (boolean (alive?)) (catch Throwable _ nil)))]
-
-             (cond (false? alive) (fresh)
-                   (or (< now deadline) (and alive (< now hard-deadline)))
-                   (do (when on-tick (try (on-tick (- now start)) (catch Throwable _ nil)))
-                       (Thread/sleep (long poll-ms))
-                       (recur))
-                   :else nil)))))))
+                      (cond (false? alive) (reduced (fresh))
+                            (or (< now deadline) (and alive (< now hard-deadline)))
+                            (when on-tick (try (on-tick (- now start)) (catch Throwable _ nil)) nil)
+                            :else (reduced nil)))))))))
 
 (defn discover-or-start!
   "Resolve a gateway for `db`. Returns:

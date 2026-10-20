@@ -97,8 +97,12 @@ class Host(Protocol):
         """Show one notification on the user's channel."""
         ...
 
-    def council_wake(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Publish to the bound session. Only an eligible managed subagent wakes itself."""
+    def request(self, frame: str) -> str:
+        """Send one SDK request frame as JSON. Return the reply envelope as JSON."""
+        ...
+
+    def bound_session(self) -> str | None:
+        """Return the ID of the bound Vis session, or None."""
         ...
 
     def shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -187,43 +191,98 @@ if "_host" not in globals():  # Installed from PyPI: no host in the room, so bri
     _host = outside.host
 
 
-class _Council:
-    """Council operations bound by the host to this extension's owning session."""
+_LAYER: list[Any] = []
 
-    def wake(
-        self,
-        content: str,
-        *,
-        kind: Literal["complain", "coordination", "informational"],
-        thread_id: int | None = None,
-        title: str | None = None,
-        idempotency_key: str | None = None,
-    ) -> Mapping[str, Any]:
-        """Notify the bound session without a target ID or an active model turn.
 
-        May run from extension-owned background Python after a tool returns. Only a managed subagent
-        can self-wake while idle. An independent leader stays idle. Active sessions receive a ping,
-        and held queues are not resumed.
+def _host_layer() -> Any:
+    """Return this extension's session layer through the host, created on first use."""
+    if not _LAYER:
+        try:
+            from blockether.vis.engine._host import HostLayer
+        except ModuleNotFoundError as missing:
+            raise ImportError(
+                f"vis.sessions needs the Python package {missing.name!r}. "
+                "Add vis-agent to the dependencies of the extension project."
+            ) from None
+        _LAYER.append(HostLayer(_host.request))
+    return _LAYER[0]
 
-        Retry with the same idempotency_key to avoid duplicate delivery. Registration-only contexts
-        and an outside host have no bound session and refuse this operation.
+
+class Sessions:
+    """Create, find and read Vis sessions from an extension, as `vis.sessions`.
+
+    Each method returns `blockether.vis.engine.Session` handles that use the host. The
+    host records this extension as the origin of each session that it creates. An
+    extension can change only its bound session, its subagents and its own sessions.
+    """
+
+    def create(
+        self, *, provider: str | None = None, model: str | None = None, **options
+    ) -> Any:
+        """Create an independent session and return its `Session`.
+
+        Without `root`, the session starts in the root of the bound session. The other
+        options are the options of `ExecutionLayer.create_session`. Only an extension
+        callback can create a session.
         """
-        options = {"content": content, "kind": kind}
-        options.update(
-            {
-                key: value
-                for key, value in {
-                    "thread_id": thread_id,
-                    "title": title,
-                    "idempotency_key": idempotency_key,
-                }.items()
-                if value is not None
-            }
-        )
-        return _host.council_wake(options)
+        return _host_layer().create_session(provider=provider, model=model, **options)
+
+    def get(self, session_id: str) -> Any:
+        """Return the `Session` handle of `session_id` without a request."""
+        return _host_layer().session(session_id)
+
+    def list(self, search: str | None = None) -> list[dict[str, Any]]:
+        """Return the session records of the first page, or the matches of `search`."""
+        layer = _host_layer()
+        if search is None:
+            page = layer.list_sessions()
+        else:
+            page = layer.get_sessions_search(query={"q": search})
+        return list(page.get("sessions") or [])
 
 
-council = _Council()
+sessions = Sessions()
+
+
+def run(
+    request: str,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    timeout: float = 300,
+    response_model: Any = None,
+    max_corrections: int = 2,
+    **options,
+) -> Any:
+    """Create an independent session, run one turn in it and return the result.
+
+    The arguments are those of `blockether.vis.engine.Agent.run`. `provider` and
+    `model` pin the model of the new session. Without `response_model`, the result
+    is the turn record; check its `status`. Only an extension callback can call it.
+    """
+    session = sessions.create(provider=provider, model=model)
+    return session.run(
+        request,
+        timeout=timeout,
+        response_model=response_model,
+        max_corrections=max_corrections,
+        **options,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    """Create the API of the bound session through the host on first use.
+
+    `session` is the `Session` of the bound Vis session, and `council` is its
+    `Council`. Without a bound session, both raise `RuntimeError`.
+    """
+    if name in ("session", "council"):
+        sid = _host.bound_session()
+        if not sid:
+            raise RuntimeError(f"vis.{name} needs a bound Vis session")
+        handle = _host_layer().session(sid)
+        return handle if name == "session" else handle.council()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class _ToolRecord(dict):

@@ -480,9 +480,6 @@
         ids
         (when (seq ids) (set (map str ids)))
 
-        deadline
-        (+ (util/now-ms) (* 1000 (long timeout-secs)))
-
         pick
         (fn []
           (let [rows
@@ -502,19 +499,32 @@
 
                           :when (not (seen i))]
 
-                      {:session_id i :status "unknown"}))))]
+                      {:session_id i :status "unknown"}))))
 
-    (loop [grace-until nil]
-      (let [now (util/now-ms)
-            recs (mapv #(record db live? now %) (pick))
-            done? (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
-            answered? (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
+        ;; A completed child gets 5 s to store its answer.
+        done-at
+        (volatile! nil)]
 
-        (if (or (some #(= "asking" (:status %)) recs)
-                (and done? (or answered? (and grace-until (> now (long grace-until)))))
-                (> now deadline))
-          recs
-          (do (Thread/sleep 1000) (recur (if done? (or grace-until (+ now 5000)) grace-until))))))))
+    (util/poll (util/deadline-ms timeout-secs)
+               1000
+               (fn []
+                 (let [now
+                       (util/now-ms)
+
+                       recs
+                       (mapv #(record db live? now %) (pick))
+
+                       done?
+                       (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
+
+                       answered?
+                       (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
+
+                   (when (and done? (nil? @done-at)) (vreset! done-at now))
+                   (if (or (some #(= "asking" (:status %)) recs)
+                           (and done? (or answered? (> now (+ (long @done-at) 5000)))))
+                     (reduced recs)
+                     recs))))))
 
 (defn- wait-timeout
   [opts default]
@@ -542,32 +552,23 @@
         _
         (when (empty? specs) (fail! :invalid-request "tasks must not be empty"))
 
-        timeout
-        (wait-timeout opts 240)
+        deadline
+        (util/deadline-ms (wait-timeout opts 240))
 
-        started
-        (util/now-ms)
-
+        ;; A full team admits the next child when an earlier one ends.
         spawn
         (fn [spec]
-          (loop []
-
-            (let [r (try (str (:session_id (runtime-op! env :spawn spec)))
-                         (catch clojure.lang.ExceptionInfo e
-                           ;; A full team admits the next child when an earlier one ends.
-                           (if (and (= :agent-limit (:error (ex-data e)))
-                                    (< (- (util/now-ms) started) (* 1000 (long timeout))))
-                             ::full
-                             (throw e))))]
-              (if (= ::full r) (do (Thread/sleep 1000) (recur)) r))))
+          (let [r (util/poll deadline
+                             1000
+                             #(try (reduced (str (:session_id (runtime-op! env :spawn spec))))
+                                   (catch clojure.lang.ExceptionInfo e
+                                     (if (= :agent-limit (:error (ex-data e))) e (throw e)))))]
+            (if (string? r) r (throw r))))
 
         ids
-        (mapv spawn specs)
+        (mapv spawn specs)]
 
-        left
-        (max 1 (- (long timeout) (quot (- (util/now-ms) started) 1000)))]
-
-    (wait-records env ids left)))
+    (wait-records env ids (max 1 (util/seconds-left deadline)))))
 
 (defn run
   "Run each task in its own subagent and wait for all of them. A task is a string or a dict with
@@ -638,11 +639,8 @@
         _
         (when-not me (fail! :invalid-request (str op " works only in a subagent")))
 
-        timeout
-        (wait-timeout (walk/keywordize-keys opts) 600)
-
         deadline
-        (+ (util/now-ms) (* 1000 (long timeout)))
+        (util/deadline-ms (wait-timeout (walk/keywordize-keys opts) 600))
 
         parent
         (str (:parent_id me))
@@ -660,17 +658,17 @@
             (:entry_id entry)]
 
         (swap! questions assoc sid (merge {:question question :entry_id entry-id} request))
-        (try (loop []
-
-               (let [reply-id (some :reply_entry_id (:replies (ps/db-council-get db entry-id)))]
-                 ;; The call returns the reply, so Council input must not deliver it again.
-                 (cond reply-id (do (ps/db-council-delivered! db sid [reply-id])
-                                    (:content (ps/db-council-get db reply-id)))
-                       (or (> (util/now-ms) deadline)
-                           (= "cancelled" (:status (info db sid)))
-                           (not (live? parent)))
-                       nil
-                       :else (do (Thread/sleep 1000) (recur)))))
+        (try (util/poll deadline
+                        1000
+                        (fn []
+                          (let [reply-id (some :reply_entry_id
+                                               (:replies (ps/db-council-get db entry-id)))]
+                            ;; The call returns the reply, so Council input must not deliver it again.
+                            (cond reply-id (reduced (do (ps/db-council-delivered! db sid [reply-id])
+                                                        (:content (ps/db-council-get db reply-id))))
+                                  (or (= "cancelled" (:status (info db sid))) (not (live? parent)))
+                                  (reduced nil)
+                                  :else nil))))
              (finally (swap! questions #(if (= entry-id (get-in % [sid :entry_id]))
                                           (dissoc % sid)
                                           %))))))))

@@ -2174,6 +2174,52 @@
                                            :error t)))
                    (throw t)))))))))
 
+(defn observe-host-call
+  "Run `thunk` as one observed host call of extension `ext-name` and answer its value.
+
+   `operation` is a keyword and `label` the Activity text. Quick calls pass a false
+   `show-start?`. `failure` reads the answer and returns an error message for a
+   refused answer, or nil. Without an Activity sink, only `thunk` runs."
+  [ext-name operation label show-start? failure thunk]
+  (if-not *tool-event-sink*
+    (thunk)
+    (let [ctx
+          (or *tool-event-context* (activity-event/context))
+
+          invocation
+          (activity-event/invocation ctx *current-invocation-id*)
+
+          started-at-ms
+          (util/now-ms)
+
+          details
+          {:operation operation
+           :presenter :generic
+           :extension ext-name
+           :label label
+           :activity {:show-start show-start? :summary-only true}}
+
+          finish!
+          (fn [outcome extra]
+            (record-tool-event!
+              (activity-event/terminal-event
+                ctx
+                invocation
+                (merge details {:started-at-ms started-at-ms :outcome outcome} extra))))]
+
+      (record-tool-event! (activity-event/start-event ctx invocation details))
+      (try (let [value (binding [*tool-event-context* ctx
+                                 *current-invocation-id* (:invocation-id invocation)]
+
+                         (thunk))]
+             (if-let [message (failure value)]
+               (finish! :failed {:error (ex-info message {:operation operation})})
+               (finish! :succeeded {:result {}}))
+             value)
+           (catch Throwable t
+             (finish! (if (cancellation/cancellation? t) :cancelled :failed) {:error t})
+             (throw t))))))
+
 (def ^:private ^:dynamic *log-writer*
   "Writer that sends output to the log file instead of stdout/stderr.
    Bound during extension invocations so tool fns never bleed into the TUI."

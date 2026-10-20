@@ -355,7 +355,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/models"
@@ -610,12 +611,14 @@
         "get": {
           "request": "none",
           "response": "json",
-          "response_schema": "session_list"
+          "response_schema": "session_list",
+          "extension": "background"
         },
         "post": {
           "request": "json",
           "response": "json",
-          "response_schema": "session"
+          "response_schema": "session",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions"
@@ -625,17 +628,20 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "empty"
+          "response": "empty",
+          "extension": "callback"
         },
         "get": {
           "request": "none",
           "response": "json",
-          "response_schema": "session"
+          "response_schema": "session",
+          "extension": "background"
         },
         "patch": {
           "request": "json",
           "response": "json",
-          "response_schema": "session"
+          "response_schema": "session",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid"
@@ -665,7 +671,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/artifacts"
@@ -675,7 +682,8 @@
       "operations": {
         "post": {
           "request": "binary",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/attachments"
@@ -695,7 +703,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/context"
@@ -705,7 +714,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/council"
@@ -715,11 +725,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/agents"
@@ -729,7 +741,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/agents/cancel"
@@ -739,7 +752,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/agents/deny"
@@ -749,7 +763,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/agents/extend"
@@ -759,7 +774,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/agents/grant"
@@ -769,7 +785,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/agents/resume"
@@ -779,7 +796,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/agents/route"
@@ -789,7 +807,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/agents/run"
@@ -799,7 +818,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/agents/wait"
@@ -819,11 +839,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/council/entries"
@@ -833,7 +855,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/council/entries/:entry-id"
@@ -843,7 +866,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/council/members"
@@ -853,7 +877,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/council/threads"
@@ -863,7 +888,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/council/wake"
@@ -883,7 +909,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/events-since"
@@ -893,11 +920,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/forks"
@@ -927,7 +956,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/iterations/:iid/attachments"
@@ -937,7 +967,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "binary"
+          "response": "binary",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/iterations/:iid/attachments/:idx"
@@ -947,11 +978,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "patch": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/model"
@@ -1021,7 +1054,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/seq"
@@ -1095,7 +1129,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/transcript"
@@ -1105,7 +1140,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "html"
+          "response": "html",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/transcript.html"
@@ -1115,7 +1151,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "markdown"
+          "response": "markdown",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/transcript.md"
@@ -1125,11 +1162,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "created"
         }
       },
       "path": "/v1/sessions/:sid/turns"
@@ -1139,15 +1178,18 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         },
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "patch": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/sessions/:sid/turns/:tid"
@@ -1157,7 +1199,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/turns/:tid/attachments"
@@ -1167,7 +1210,8 @@
       "operations": {
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "created"
         }
       },
       "path": "/v1/sessions/:sid/turns/:tid/cancel"
@@ -1177,7 +1221,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/turns/:tid/trace"
@@ -1187,7 +1232,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/:sid/usage"
@@ -1301,7 +1347,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/sessions/actions/search"

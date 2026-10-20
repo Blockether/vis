@@ -364,7 +364,7 @@
   [provider-id message]
   {:provider-id provider-id
    :status :error
-   :fetched-at-ms (System/currentTimeMillis)
+   :fetched-at-ms (util/now-ms)
    :static {}
    :dynamic {:limits []}
    :error {:type :vis/limits-unavailable :message message}})

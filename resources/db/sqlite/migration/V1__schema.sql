@@ -148,7 +148,12 @@ CREATE TABLE session_soul (
   -- sight on every device, so ONE column answers the app, the TUI and the SDK.
   -- Epoch ms of the archiving; NULL = active. An archived session leaves the
   -- navigator list and turns READ-ONLY, while resume by id still finds it.
-  archived_at       INTEGER
+  archived_at       INTEGER,
+
+  -- The program that created this session, as a JSON object. An extension that
+  -- creates a session through its host gets {"kind":"extension","extension":
+  -- name,"session_id":creator}. NULL = a person or an SDK client created it.
+  origin            TEXT CHECK (origin IS NULL OR json_valid(origin))
 );
 
 -- Human model picks lock automatic routing until the user clears the preference.

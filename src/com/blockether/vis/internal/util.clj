@@ -173,6 +173,28 @@
   ^long []
   (System/currentTimeMillis))
 
+(defn deadline-ms
+  "The [[now-ms]] instant `secs` seconds from now."
+  ^long [secs]
+  (+ (now-ms) (* 1000 (long secs))))
+
+(defn seconds-left
+  "Whole seconds until `deadline`, rounded up. Answers 0 once it has passed."
+  ^long [^long deadline]
+  (max 0 (long (Math/ceil (/ (- deadline (now-ms)) 1000.0)))))
+
+(defn poll
+  "Call `f` every `interval-ms` until it answers a `reduced` value or `deadline` passes.
+   Answer the reduced value, or the last answer of `f` at the deadline. No sleep goes past
+   the deadline. An interrupt ends the wait with `InterruptedException`."
+  [^long deadline ^long interval-ms f]
+  (loop []
+
+    (let [v (f)]
+      (cond (reduced? v) @v
+            (>= (now-ms) deadline) v
+            :else (do (Thread/sleep (max 1 (min interval-ms (- deadline (now-ms))))) (recur))))))
+
 (defn non-blank-string?
   "True when `x` is a string carrying something other than whitespace."
   [x]

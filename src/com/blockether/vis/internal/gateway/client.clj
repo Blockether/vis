@@ -386,6 +386,14 @@
          false)
        (catch Throwable _ true)))
 
+(defn- await-port-free!
+  "Block (bounded) until nothing is listening on host:port. True when the port was
+   released, false on timeout."
+  [host port timeout-ms]
+  (util/poll (+ (util/now-ms) (long timeout-ms))
+             50
+             #(if (port-free? (str host) port) (reduced true) false)))
+
 (defn- retire-loopback-orphan!
   "Stop a registry-less standard loopback gateway before replacing it.
 
@@ -434,18 +442,8 @@
                    (discovery/pid-alive? pid)
                    daemon-db
                    (= (discovery/registry-key db) (discovery/registry-key daemon-db)))
-          (let [stop-response
-                (gw-send! (assoc candidate :pid pid) "POST" "/v1/admin/stop" {})
-
-                deadline
-                (+ (util/now-ms) 3000)]
-
-            (when (<= 200 (long (:status stop-response)) 299)
-              (loop []
-
-                (cond (port-free? host port) true
-                      (>= (util/now-ms) deadline) false
-                      :else (do (Thread/sleep 50) (recur))))))))
+          (let [stop-response (gw-send! (assoc candidate :pid pid) "POST" "/v1/admin/stop" {})]
+            (when (<= 200 (long (:status stop-response)) 299) (await-port-free! host port 3000)))))
       (catch Throwable t (cancellation/preserve-interrupt! t) nil))))
 
 (def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
@@ -656,43 +654,44 @@
    gateway is already ready. Healthy preparation prints nothing: a cached or freshly
    installed package is not news."
   [entry initial]
-  (let [initial-stage (get-in initial ["extensions" "stage"])]
-    (when (or (contains? #{"initializing" "failed"} initial-stage)
+  (let [initializing? #(= "initializing" (get-in % ["extensions" "stage"]))]
+    (when (or (contains? #{"initializing" "failed"} (get-in initial ["extensions" "stage"]))
               (pos? (long (get-in initial ["extensions" "failed"] 0))))
-      (let [deadline (+ (util/now-ms) 600000)]
+      (let [status (if (initializing? initial)
+                     (util/poll (util/deadline-ms 600)
+                                200
+                                #(let [s (send-json-with-entry! entry "GET" "/v1/admin/status" nil)]
+                                   (if (initializing? s) s (reduced s))))
+                     initial)
+            {:strs [stage loaded failed failures error]} (get status "extensions")]
+
         (binding [*out* *err*]
-          (loop [status initial]
-            (let [{:strs [stage loaded failed failures error]} (get status "extensions")]
-              (cond
-                (= "initializing" stage)
-                (if (< (util/now-ms) deadline)
-                  (do (Thread/sleep 200)
-                      (recur (send-json-with-entry! entry "GET" "/v1/admin/status" nil)))
-                  (throw
-                    (ex-info
-                      "Extension preparation is still running; inspect gateway status and retry."
-                      {:type :gateway/extension-preparation-timeout})))
-                (and (= "ready" stage) (zero? (long (or failed 0)))) nil
-                :else
-                (do
-                  (println (if (= "ready" stage)
-                             (str "[vis extensions] " loaded " loaded, " failed " failed")
-                             "[vis extensions] preparation failed; run vis-agent doctor"))
-                  (when error
-                    (doseq [line (str/split-lines error)]
-                      (println (str "  " line))))
-                  (doseq [{:strs [file extension error stale]} failures]
-                    (println
-                      (str "[vis extensions] "
+          (cond
+            (= "initializing" stage)
+            (throw (ex-info
+                     "Extension preparation is still running; inspect gateway status and retry."
+                     {:type :gateway/extension-preparation-timeout}))
+            (and (= "ready" stage) (zero? (long (or failed 0)))) nil
+            :else
+            (do
+              (println (if (= "ready" stage)
+                         (str "[vis extensions] " loaded " loaded, " failed " failed")
+                         "[vis extensions] preparation failed; run vis-agent doctor"))
+              (when error
+                (doseq [line (str/split-lines error)]
+                  (println (str "  " line))))
+              (doseq [{:strs [file extension error stale]} failures]
+                (println (str
+                           "[vis extensions] "
                            (or file extension "Unknown extension")
                            (when (and file extension) (str " (" extension ")"))
                            ": "
                            (if stale "reload failed; using last-known-good version" "not loaded")))
-                    (doseq [line (str/split-lines error)]
-                      (println (str "  " line))))
-                  (println
-                    "[vis extensions] Vis remains available. Fix the reported problems, then run /reload to retry.")
-                  (flush))))))))))
+                (doseq [line (str/split-lines error)]
+                  (println (str "  " line))))
+              (println
+                "[vis extensions] Vis remains available. Fix the reported problems, then run /reload to retry.")
+              (flush))))))))
 
 (defn- ensure-client!
   "Register this JVM as a daemon client exactly once. This is the refcount lease
@@ -778,17 +777,6 @@
       (if (discovery/registry-fresh? entry probe-entry?)
         {:running? true :host host :port port :token secret :loopback? (loopback-host? host)}
         {:running? false}))))
-
-(defn- await-port-free!
-  "Block (bounded) until nothing is listening on host:port. True when the port was
-   released, false on timeout."
-  [host port timeout-ms]
-  (let [deadline (+ (util/now-ms) (long timeout-ms))]
-    (loop []
-
-      (cond (port-free? (str host) port) true
-            (>= (util/now-ms) deadline) false
-            :else (do (Thread/sleep 50) (recur))))))
 
 (defn- registered-daemon-handle
   "The OS handle for the pid a registry entry names, or nil when signalling it
@@ -919,13 +907,12 @@
    on respawn. Returns true when down, false on timeout (the caller still
    proceeds: discover-or-start! deletes a stale registry and tolerates a race)."
   [db host port]
-  (let [deadline (+ (util/now-ms) 3000)]
-    (loop []
-
-      (let [entry (discovery/read-registry db)]
-        (cond (and (not (discovery/registry-fresh? entry probe-entry?)) (port-free? host port)) true
-              (> (util/now-ms) deadline) false
-              :else (do (Thread/sleep 50) (recur)))))))
+  (util/poll (util/deadline-ms 3)
+             50
+             #(if (and (not (discovery/registry-fresh? (discovery/read-registry db) probe-entry?))
+                       (port-free? host port))
+                (reduced true)
+                false)))
 
 (defn- wire-count
   "A count read off a peer's status map, or nil when this build cannot read it. An

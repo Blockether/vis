@@ -384,7 +384,7 @@ Models:
 - Phase 2: done. Routes for `run`, `wait`, `resume`, `extend`, `deny` and `grant`.
 - Phase 3: done. `GET /v1/models` lists model objects; `loop.router/model-rates` gives the listed rates and the cost estimate. SDK `models()`, `model_limits()`, `Model`, `create_session(provider, model)`, `Session.model()`, `Session.set_model()` and `SessionModel`.
 - Phase 4: done. `Council` agent methods and `SubagentRecord` stay experimental and hidden from the API reference. `Session.run` shares one implementation with `Agent.run`; `Session.fork` returns the new `Session`.
-- Phase 5: not started.
+- Phase 5: done. The host door `__vis_host_request__`, `HostLayer`, the `Sessions` facade (`create`, `get`, `list`), `vis.run`, `vis.session`, `vis.council` and the session `origin`. The `extension` field of each route in `gateway.json` sets the access. A new session starts in the bound session root. Each change through the door has an Activity from `host-activities`; reads have none, because a turn wait polls them. Phase 6 adds `export` and `restore` to `Sessions`.
 - Phase 6: not started.
 - Phase 7: not started.
 - Phase 8: not started. The server is reachable through `uplink`; it has `vis-agent` and Java, but no `vis` binary yet.

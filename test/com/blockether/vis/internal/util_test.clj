@@ -468,3 +468,19 @@
                    (expect (= 1 (cached {:version 1 :unused "second source"})))
                    (expect (= 1 @calls))
                    (expect (= [[[first-request] 1]] @weighed)))))
+
+(defdescribe poll-test
+             (it "stops at the first reduced answer"
+                 (let [calls (atom 0)]
+                   (expect (= :done
+                              (util/poll (util/deadline-ms 5)
+                                         1
+                                         #(if (= 3 (swap! calls inc)) (reduced :done) :waiting))))
+                   (expect (= 3 @calls))))
+             (it "answers the last answer at the deadline without sleeping past it"
+                 (let [started (util/now-ms)]
+                   (expect (= :waiting (util/poll (+ started 50) 1000 (constantly :waiting))))
+                   (expect (< (- (util/now-ms) started) 900))))
+             (it "counts whole seconds left, rounded up, and 0 after the deadline"
+                 (expect (<= 4 (util/seconds-left (util/deadline-ms 5)) 5))
+                 (expect (zero? (util/seconds-left (- (util/now-ms) 1000))))))

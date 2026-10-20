@@ -37,6 +37,7 @@
     [com.blockether.vis.internal.foundation.core :as foundation]
     [com.blockether.vis.internal.foundation.shell :as shell]
     [com.blockether.vis.internal.python.extensions :as pyx]
+    [com.blockether.vis.internal.python.host :as python-host]
     [com.blockether.vis.internal.python.runtime :as python-runtime]
     [com.blockether.vis.internal.python.worker :as worker]
     [com.blockether.vis-python-runtime :as runtime]
@@ -49,6 +50,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.python.test-runner :as runner]
     [com.blockether.vis.internal.workspace.core :as workspace]
+    [com.blockether.vis.contract.gateway :as gateway-contract]
     [com.blockether.vis.internal.paths :as paths]
     [taoensso.nippy :as nippy]
     [lazytest.core :refer [defdescribe expect it]])
@@ -2407,12 +2409,14 @@ vis.register_extension(vis.Extension(
 
 (defdescribe
   extension-background-self-wake-test
-  ;; #202: exercise the real trusted Python worker after its invoking call has returned.
+  ;; #202, #405: exercise the real trusted Python worker after its invoking call has returned.
   (it
-    "keeps a managed child's host-bound identity between turns with model shell disabled"
+    "serves a background Council wake through the host door and limits the guest thread"
     (with-fresh-loaded
       {"council_watch.py"
-       "from pathlib import Path
+       "import base64
+import json
+from pathlib import Path
 import threading
 import time
 import blockether.vis.extension as vis
@@ -2421,9 +2425,15 @@ _outcome = {}
 _thread = None
 
 
+def _send(method, route, body=None):
+    reply = json.loads(vis._host.request(json.dumps({\"method\": method, \"route\": route, \"body\": body})))
+    return reply[\"status\"], json.loads(base64.b64decode(reply[\"content\"]) or b\"null\")
+
+
 def start_watch(gate):
     \"\"\"Start a bounded fixture watcher; the host releases it after this call returns.\"\"\"
     global _thread
+    route = f\"/v1/sessions/{vis._host.bound_session()}\"
 
     def watch():
         deadline = time.monotonic() + 10
@@ -2431,7 +2441,9 @@ def start_watch(gate):
             time.sleep(0.01)
         if Path(gate).exists():
             try:
-                _outcome[\"entry\"] = vis.council.wake(\"Build finished\", kind=\"informational\", idempotency_key=\"background\")
+                body = {\"content\": \"Build finished\", \"kind\": \"informational\", \"idempotency_key\": \"background\"}
+                _outcome[\"wake\"] = _send(\"POST\", route + \"/council/wake\", body)
+                _outcome[\"change\"] = _send(\"PATCH\", route + \"/model\", {\"provider\": None, \"model\": None})
             except Exception as error:
                 _outcome[\"error\"] = str(error)
     _thread = threading.Thread(target=watch, daemon=True)
@@ -2463,71 +2475,406 @@ vis.register_extension(vis.Extension(
         (let [ext
               (registered "council-watch")
 
-              gid
-              (str (:id (ps/db-create-project! store {:name "Extension watcher"})))
-
               store-session!
               (requiring-resolve
                 'com.blockether.vis.internal.persistance.sqlite.test-helpers/store-session!)
 
-              leader
-              (str (store-session! store {:channel :api}))]
+              frames
+              (atom [])
 
-          (ps/db-set-session-project! store leader gid)
-          (with-redefs [toggles/enabled? #(contains? #{"council" "subagents"} %)]
-            (let [unbound ((symbol-fn ext 'wake_now))]
-              (expect (false? (:success? unbound)))
-              (expect (str/includes? (pr-str unbound) "needs a bound Vis session")))
-            (doseq [_ (range 2)]
-              (let [sid (str (store-session! store {:channel :api}))
-                    ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
-                    env {:python-context ctx :session-id sid :db-info store}
-                    gate (io/file ext-dir (str sid ".ready"))
-                    delivered (promise)]
+              envelope
+              (fn [status body]
+                {:status status
+                 :headers {"content-type" "application/json"}
+                 :content (.encodeToString (java.util.Base64/getEncoder)
+                                           (.getBytes ^String (json/write-json-str body)
+                                                      StandardCharsets/UTF_8))})
 
-                (ps/db-set-session-project! store sid gid)
-                ;; #202: self-wake is restricted to owned children, even for trusted extensions.
-                (db-test/raw-query store
-                                   {:insert-into :session_agent
-                                    :values [{:session_id sid
-                                              :parent_id leader
-                                              :leader_id leader
-                                              :team_id leader
-                                              :task "Background watcher fixture"
-                                              :status "running"
-                                              :depth 1
-                                              :iteration_budget 32
-                                              :iterations_used 0
-                                              :inherited_turns 0
-                                              :spawn_key sid
-                                              :spawn_fingerprint "fixture"
-                                              :created_at 1
-                                              :checkpoint (nippy/freeze [])}]})
-                (try (with-redefs-fn {(ns-resolve 'com.blockether.vis.internal.council.core
-                                                  'runtime-waker)
-                                      (atom {:eligible? (constantly true)
-                                             :wake! (fn [db target entry]
-                                                      (deliver delivered
-                                                               [db target entry
-                                                                extension/*current-environment*])
-                                                      true)})}
-                       (fn []
-                         (binding [extension/*current-environment* env]
-                           (expect (= "started"
-                                      (:result ((symbol-fn ext 'start_watch)
-                                                 (.getCanonicalPath gate))))))
-                         ;; There is now no tool call or conveyed invocation frame in the worker.
-                         (spit gate "ready")
-                         (let [[db target entry invocation] (deref delivered 10000 nil)
-                               status (binding [extension/*current-environment* env]
-                                        ((symbol-fn ext 'watch_status)))]
+              ;; Stands in for the gateway: it records what the door passes on.
+              exchange
+              (fn [frame extra]
+                (swap! frames conj
+                  {:frame frame
+                   :extra extra
+                   :env extension/*current-environment*
+                   :guest-thread? python-host/*guest-thread?*})
+                (envelope 200 {"content" (get-in frame ["body" "content"])}))
 
-                           (expect (= store db) (pr-str status))
-                           (expect (= sid target (:author_session_id entry)))
-                           (expect (= [sid] (:ping entry)))
-                           (expect (nil? invocation))
-                           (expect (= "Build finished" (:content entry))))))
-                     (finally (ep/dispose-python-context! ctx)))))))))))
+              previous
+              @@#'pyx/host-exchange]
+
+          (pyx/install-host-exchange! exchange)
+          (try (let [unbound ((symbol-fn ext 'wake_now))]
+                 (expect (false? (:success? unbound)))
+                 (expect (str/includes? (pr-str unbound) "needs a bound Vis session")))
+               (doseq [_ (range 2)]
+                 (let [sid (str (store-session! store {:channel :api}))
+                       ctx (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+                       env {:python-context ctx :session-id sid :db-info store}
+                       gate (io/file ext-dir (str sid ".ready"))]
+
+                   (reset! frames [])
+                   (try (binding [extension/*current-environment* env]
+                          (let [started ((symbol-fn ext 'start_watch) (.getCanonicalPath gate))]
+                            (expect (= "started" (:result started)) (pr-str started))))
+                        ;; There is now no tool call or conveyed invocation frame in the worker.
+                        (spit gate "ready")
+                        (let [status (:result (binding [extension/*current-environment* env]
+                                                ((symbol-fn ext 'watch_status))))
+                              [wake] @frames]
+
+                          (expect (= [200 {"content" "Build finished"}] (get status "wake"))
+                                  (pr-str status))
+                          (expect (= 403 (first (get status "change"))))
+                          (expect (= "forbidden-route"
+                                     (get-in (get status "change") [1 "error" "type"])))
+                          (expect (= 1 (count @frames)))
+                          (expect (= ["POST" (str "/v1/sessions/" sid "/council/wake") "background"]
+                                     [(get-in wake [:frame "method"]) (get-in wake [:frame "route"])
+                                      (get-in wake [:frame "body" "idempotency_key"])]))
+                          (expect (true? (:guest-thread? wake)))
+                          (expect (contains? #{nil sid} (:session-id (:env wake))))
+                          (expect (= {} (:extra wake))))
+                        (finally (ep/dispose-python-context! ctx)))))
+               (finally (pyx/install-host-exchange! previous))))))))
+
+(defdescribe
+  host-request-door-test
+  ;; #405: the host door serves SDK routes in process and guards every change.
+  (let [store
+        (ps/db-create-connection! :memory)
+
+        own
+        (str (db-test/store-session! store {:channel :api}))
+
+        child
+        (str (db-test/store-session! store {:channel :api}))
+
+        created
+        (str (db-test/store-session!
+               store
+               {:channel :api :origin {"kind" "extension" "extension" "watch" "session_id" own}}))
+
+        foreign-created
+        (str (db-test/store-session!
+               store
+               {:channel :api :origin {"kind" "extension" "extension" "other" "session_id" own}}))
+
+        stranger
+        (str (db-test/store-session! store {:channel :api}))
+
+        _
+        (db-test/raw-query store
+                           {:insert-into :session_agent
+                            :values [{:session_id child
+                                      :parent_id own
+                                      :leader_id own
+                                      :team_id own
+                                      :task "Host door fixture"
+                                      :status "running"
+                                      :depth 1
+                                      :iteration_budget 32
+                                      :iterations_used 0
+                                      :inherited_turns 0
+                                      :spawn_key child
+                                      :spawn_fingerprint "fixture"
+                                      :created_at 1
+                                      :checkpoint (nippy/freeze [])}]})
+
+        served
+        (atom [])
+
+        exchange
+        (fn [frame extra]
+          (swap! served conj [(get frame "method") (get frame "route") extra])
+          {:status 200 :headers {} :content ""})
+
+        request
+        (fn [frame & {:keys [bound guest?]}]
+          (reset! served [])
+          (binding [extension/*current-environment*
+                    (when bound {:session-id bound :db-info store})
+
+                    python-host/*guest-thread?*
+                    (boolean guest?)]
+
+            (#'pyx/host-request "watch" nil frame)))
+
+        refusal
+        (fn [reply]
+          (when (= 403 (:status reply))
+            (get-in (json/read-json (String. (.decode (java.util.Base64/getDecoder)
+                                                      ^String (:content reply))
+                                             StandardCharsets/UTF_8))
+                    ["error" "type"])))]
+
+    (it "needs an installed gateway exchange"
+        (let [previous @@#'pyx/host-exchange]
+          (pyx/install-host-exchange! nil)
+          (try (expect (str/includes? (try (request {"method" "GET" "route" "/v1/models"})
+                                           ""
+                                           (catch Exception e (ex-message e)))
+                                      "need a running Vis gateway"))
+               (finally (pyx/install-host-exchange! previous)))))
+    (it "serves only allowlisted routes"
+        (let [previous @@#'pyx/host-exchange]
+          (pyx/install-host-exchange! exchange)
+          (try (doseq [route ["/v1/settings" "/v1/providers/openai/limits" "/v1/projects"
+                              "/v1/sessions/x/unknown"]]
+                 (expect (= "forbidden-route" (refusal (request {"method" "GET" "route" route})))
+                         route)
+                 (expect (empty? @served)))
+               (doseq [route ["/v1/models" "/v1/sessions" "/v1/sessions/actions/search"
+                              (str "/v1/sessions/" stranger "/transcript")]]
+                 (request {"method" "GET" "route" route})
+                 (expect (= [["GET" route {}]] @served) route))
+               (finally (pyx/install-host-exchange! previous)))))
+    (it "allows a change only to the bound session, its subagents and its own sessions"
+        (let [previous @@#'pyx/host-exchange]
+          (pyx/install-host-exchange! exchange)
+          (try (expect (= "session-not-bound"
+                          (refusal (request {"method" "POST"
+                                             "route" (str "/v1/sessions/" own "/turns")}))))
+               (doseq [[sid allowed?] [[own true] [child true] [created true]
+                                       [foreign-created false] [stranger false]]]
+                 (let [reply (request {"method" "POST" "route" (str "/v1/sessions/" sid "/turns")}
+                                      :bound
+                                      own)]
+                   (expect (= (if allowed? 200 403) (:status reply)) sid)
+                   (expect (= (when-not allowed? "forbidden-session") (refusal reply)) sid)))
+               (finally (pyx/install-host-exchange! previous)))))
+    (it "records the extension as the origin of a session that it creates"
+        (let [previous @@#'pyx/host-exchange]
+          (pyx/install-host-exchange! exchange)
+          (try (request {"method" "POST" "route" "/v1/sessions"} :bound own)
+               (expect (= [["POST" "/v1/sessions"
+                            {:vis.host/origin
+                             {"kind" "extension" "extension" "watch" "session_id" own}}]]
+                          @served))
+               (finally (pyx/install-host-exchange! previous)))))
+    (it "limits a thread that the guest created to the contract's background access"
+        (let [previous
+              @@#'pyx/host-exchange
+
+              guest
+              (fn [method sid path]
+                (request {"method" method "route" (str "/v1/sessions/" sid path)}
+                         :bound own
+                         :guest? true))]
+
+          (pyx/install-host-exchange! exchange)
+          (try (doseq [[method sid path] [["GET" own "/turns"] ["POST" own "/council/wake"]
+                                          ["POST" own "/agents/wait"] ["POST" created "/turns"]]]
+                 (expect (= 200 (:status (guest method sid path))) path))
+               ;; A spawn or a Council publication needs an active callback.
+               (doseq [path ["/agents" "/council/entries"]]
+                 (expect (= "forbidden-route" (refusal (guest "POST" own path))) path))
+               ;; A turn goes only to a session that this extension created.
+               (expect (= "forbidden-session" (refusal (guest "POST" own "/turns"))))
+               (finally (pyx/install-host-exchange! previous)))))
+    (it "gives each change route an Activity and no read route one"
+        (let [changes (set (for [{:keys [path operations]} gateway-contract/route-table
+                                 [method {:keys [extension]}] operations
+                                 :when (and extension (not= :get method))]
+
+                             [method path]))]
+          (expect (= changes (set (keys @#'pyx/host-activities))))
+          (doseq [[operation label show-start?] (vals @#'pyx/host-activities)]
+            (expect (keyword? operation))
+            (expect (re-matches #"[A-Z][a-z]+( [A-Za-z]+)*" label) label)
+            (expect (boolean? show-start?)))))
+    (it "starts a new session in the bound session root and records the origin"
+        (let [previous
+              @@#'pyx/host-exchange
+
+              seen
+              (atom nil)
+
+              root
+              (workspace/normalize-root (System/getProperty "user.dir"))]
+
+          (pyx/install-host-exchange! (fn [frame extra]
+                                        (reset! seen [(get frame "body") extra])
+                                        {:status 201 :headers {} :content ""}))
+          (try (binding [extension/*current-environment*
+                         {:session-id own :db-info store :workspace/root root}]
+                 (#'pyx/host-request "watch" nil {"method" "POST" "route" "/v1/sessions"})
+                 (expect (= {"root" root} (first @seen)))
+                 (expect (= {"kind" "extension" "extension" "watch" "session_id" own}
+                            (:vis.host/origin (second @seen))))
+                 (#'pyx/host-request
+                  "watch"
+                  nil
+                  {"method" "POST" "route" "/v1/sessions" "body" {"root" "/elsewhere"}})
+                 (expect (= {"root" "/elsewhere"} (first @seen))))
+               (finally (pyx/install-host-exchange! previous)))))))
+
+(defdescribe
+  extension-session-api-boundary-test
+  ;; #405: every vis.sessions and vis.council method crosses the host door from a sync and
+  ;; an async extension callback, with the bound session and without a refusal.
+  (it
+    "sends each session and Council call through the host door"
+    (with-fresh-loaded
+      {"session_boundary.py"
+       "import blockether.vis.extension as vis
+from blockether.vis.engine import GatewayError
+
+
+def _calls():
+    council = vis.council
+    return [
+        ('sessions.create', lambda: vis.sessions.create()),
+        ('sessions.list', lambda: vis.sessions.list()),
+        ('sessions.search', lambda: vis.sessions.list(search='deploy')),
+        ('council.publish', lambda: council.publish('Done', kind='informational')),
+        ('council.read', lambda: council.read()),
+        ('council.get', lambda: council.get(1)),
+        ('council.threads', lambda: council.threads()),
+        ('council.members', lambda: council.members()),
+        ('council.wake', lambda: council.wake('Done', kind='informational')),
+        ('council.subagents', lambda: council.subagents()),
+        ('council.spawn', lambda: council.spawn('Check')),
+        ('council.run', lambda: council.run(['Check'])),
+        ('council.wait', lambda: council.wait()),
+        ('council.resume', lambda: council.resume('C', 'Again')),
+        ('council.cancel', lambda: council.cancel('C')),
+        ('council.deny', lambda: council.deny('C', 'No')),
+        ('council.extend', lambda: council.extend('C', 4)),
+        ('council.grant', lambda: council.grant('C', {'read_only': ['src']})),
+        ('council.route', lambda: council.route('m', provider='p', session_id='C')),
+    ]
+
+
+def _outcomes():
+    outcomes = {}
+    for name, call in _calls():
+        try:
+            call()
+            outcomes[name] = 'answered'
+        except GatewayError as error:
+            outcomes[name] = error.code
+        except Exception as error:
+            outcomes[name] = type(error).__name__ + ': ' + str(error)
+    return outcomes
+
+
+def call_sync():
+    \"\"\"Call each session and Council method from a synchronous callback.\"\"\"
+    return _outcomes()
+
+
+async def call_async():
+    \"\"\"Call each session and Council method from an asynchronous callback.\"\"\"
+    return _outcomes()
+
+
+vis.register_extension(vis.Extension(
+    name='session-boundary', alias='boundary', description='Session API boundary fixture.',
+    symbols=[
+        vis.Symbol(call_sync, activity=vis.Activity(label='Call sync', show_start=False)),
+        vis.Symbol(call_async, activity=vis.Activity(label='Call async', show_start=False)),
+    ],
+))
+"}
+      (fn [_ {:keys [store]}]
+        (let [ext
+              (registered "session-boundary")
+
+              sid
+              (str (db-test/store-session! store {:channel :api}))
+
+              frames
+              (atom [])
+
+              envelope
+              (fn [status body]
+                {:status status
+                 :headers {"content-type" "application/json"}
+                 :content (.encodeToString (java.util.Base64/getEncoder)
+                                           (.getBytes ^String (json/write-json-str body)
+                                                      StandardCharsets/UTF_8))})
+
+              ;; Stands in for the gateway: it answers the Council handle and refuses the rest.
+              exchange
+              (fn [frame _]
+                (swap! frames conj [(get frame "method") (get frame "route")])
+                (if (= (str "/v1/sessions/" sid "/council") (get frame "route"))
+                  (envelope 200 {"activation_id" nil "default_group_id" "G"})
+                  (envelope 409 {"error" {"type" "fixture" "message" "Recorded"}})))
+
+              expected
+              (into {}
+                    (map (fn [[call [method route]]]
+                           [call
+                            [method
+                             (if (str/starts-with? route "/v1/")
+                               route
+                               (str "/v1/sessions/" sid route))]]))
+                    {"sessions.create" ["POST" "/v1/sessions"]
+                     "sessions.list" ["GET" "/v1/sessions"]
+                     "sessions.search" ["GET" "/v1/sessions/actions/search"]
+                     "council.publish" ["POST" "/council/entries"]
+                     "council.read" ["GET" "/council/entries"]
+                     "council.get" ["GET" "/council/entries/1"]
+                     "council.threads" ["GET" "/council/threads"]
+                     "council.members" ["GET" "/council/members"]
+                     "council.wake" ["POST" "/council/wake"]
+                     "council.subagents" ["GET" "/agents"]
+                     "council.spawn" ["POST" "/agents"]
+                     "council.run" ["POST" "/agents/run"]
+                     "council.wait" ["POST" "/agents/wait"]
+                     "council.resume" ["POST" "/agents/resume"]
+                     "council.cancel" ["POST" "/agents/cancel"]
+                     "council.deny" ["POST" "/agents/deny"]
+                     "council.extend" ["POST" "/agents/extend"]
+                     "council.grant" ["POST" "/agents/grant"]
+                     "council.route" ["POST" "/agents/route"]})
+
+              previous
+              @@#'pyx/host-exchange]
+
+          (pyx/install-host-exchange! exchange)
+          (try (doseq [callback ['call_sync 'call_async]]
+                 (reset! frames [])
+                 (let [outcome (binding [extension/*current-environment* {:session-id sid
+                                                                          :db-info store}]
+                                 ((symbol-fn ext callback)))]
+                   (expect (= (zipmap (keys expected) (repeat "fixture")) (:result outcome))
+                           (pr-str callback outcome))
+                   (expect (every? (set @frames) (vals expected)) (pr-str callback @frames))))
+               (finally (pyx/install-host-exchange! previous))))))))
+
+(defdescribe
+  engine-sources-test
+  ;; #405: the worker stages the whole SDK engine and every schema that it validates.
+  (it "stages every engine module and contract schema"
+      (let [package
+            (io/file "packages/vis-agent/src/blockether/vis")
+
+            modules
+            (->> (.listFiles (io/file package "engine"))
+                 (map #(.getName ^java.io.File %))
+                 (filter #(str/ends-with? % ".py"))
+                 set)
+
+            staged
+            (set (keys worker/engine-sources))
+
+            schemas
+            (->> (re-seq #"\"([a-z_]+)\""
+                         (second (re-find #"(?s)_SCHEMA_NAMES\s*=\s*\(([^)]*)\)"
+                                          (slurp (io/file package "_contracts.py")))))
+                 (map second))]
+
+        (expect (seq schemas))
+        (doseq [module modules]
+          (expect (contains? staged (str "vis_engine/blockether/vis/engine/" module)) module))
+        (doseq [schema schemas]
+          (expect (contains? staged (str "vis_engine/blockether/vis/_data/schema/" schema ".json"))
+                  schema))
+        (doseq [[_ resource] worker/engine-sources]
+          (expect (some? (io/resource resource)) resource)))))
 
 ;; Tool adapter — envelope semantics
 (defdescribe tool-envelope-test
@@ -3349,17 +3696,16 @@ vis.register_extension(vis.Extension(
             ;; refresh the report itself, not rely on python_execution to do it.
             (doseq [[replacement findings] [["value = 1\n" []]
                                             [nested ["src/orders.py:4: nesting 4 exceeds 3"]]]]
-              (let
-                [result
-                 (ep/run-python-block
-                   ctx
-                   (str
-                     "lines = cat(path).splitlines()\n"
-                     "version = lines[0].rsplit(' @', 1)[1]\n"
-                     "rows = [line.split('│', 1)[0].strip() for line in lines if '│' in line]\n"
-                     "print(patch(path, [{'from': rows[0], 'to': rows[-1], 'replace': "
-                     (json-text replacement)
-                     "}], version))"))]
+              (let [result
+                    (ep/run-python-block
+                      ctx
+                      (str
+                        "lines = cat(path).splitlines()\n"
+                        "version = lines[0].rsplit(' @', 1)[1]\n"
+                        "rows = [line.split('│', 1)[0].strip() for line in lines if '│' in line]\n"
+                        "print(patch(path, [{'from': rows[0], 'to': rows[-1], 'replace': "
+                        (json-text replacement)
+                        "}], version))"))]
                 (expect (nil? (:error result)) (pr-str result))
                 (expect (= replacement (slurp file)))
                 (expect (= findings (get (report) "findings")))))

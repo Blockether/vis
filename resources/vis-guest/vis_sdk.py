@@ -2,8 +2,12 @@
 
 import importlib
 import importlib.machinery
+import os
 import sys
 from types import ModuleType
+
+# The host stages the SDK engine next to this file, for `blockether.vis.engine`.
+_ENGINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vis_engine")
 
 
 class _SandboxHost:
@@ -18,7 +22,10 @@ class _SandboxHost:
 
 
 def install(source, host=None):
-    """Load the bundled SDK without replacing other Blockether packages."""
+    """Load the bundled SDK without replacing other Blockether packages.
+
+    A new `blockether.vis` package also finds the staged SDK engine.
+    """
     for name in ("blockether", "blockether.vis"):
         try:
             package = importlib.import_module(name)
@@ -26,7 +33,7 @@ def install(source, host=None):
             if missing.name != name:
                 raise
             package = ModuleType(name)
-            package.__path__ = []
+            package.__path__ = [os.path.join(_ENGINE, *name.split("."))]
             package.__package__ = name
             package.__spec__ = importlib.machinery.ModuleSpec(
                 name, None, is_package=True

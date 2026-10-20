@@ -89,7 +89,10 @@
    first create with the same key made.
 
    Optional `provider` and `model` pin the session model before the answer, as
-   `PATCH /v1/sessions/:sid/model` does. Give both or neither."
+   `PATCH /v1/sessions/:sid/model` does. Give both or neither.
+
+   The extension host exchange sets `:vis.host/origin` on the request. The new
+   session then records which extension created it. An HTTP client cannot set it."
   [request]
   (let [body
         (http/body-json request)
@@ -154,7 +157,10 @@
                                               :tools tools
                                               :idempotency-key idempotency-key}
                                        gid
-                                       (assoc :group-id gid)))]
+                                       (assoc :group-id gid)
+
+                                       (:vis.host/origin request)
+                                       (assoc :origin (:vis.host/origin request))))]
                        (when pid (state/set-session-model! (get created "id") pid model))
                        (http/json-response 201 created))
                      (catch clojure.lang.ExceptionInfo e

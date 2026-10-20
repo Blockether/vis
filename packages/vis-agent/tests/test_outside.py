@@ -117,10 +117,19 @@ def test_python_environment_defaults_to_project_outside_vis():
     assert vis.python_environment() == "project"
 
 
-@pytest.mark.parametrize("name", ["jailed_shell", "council_wake"])
-def test_session_bound_operations_refuse_without_the_host(name):
-    with pytest.raises(_outside.Refused, match=f"vis\\.{name}"):
-        getattr(vis._host, name)({"command": "true"})
+def test_session_bound_operations_refuse_without_the_host():
+    with pytest.raises(_outside.Refused, match="vis\\.jailed_shell"):
+        vis._host.jailed_shell({"command": "true"})
+
+
+def test_host_sessions_refuse_without_the_host(monkeypatch):
+    # #405: outside Vis, the session API names the SDK layers to use instead.
+    from blockether.vis.engine import TransportError
+
+    monkeypatch.setattr(vis, "_LAYER", [])
+    assert vis._host.bound_session() is None
+    with pytest.raises(TransportError, match="GatewayClient or LocalEngine"):
+        vis.sessions.list()
 
 
 # -- State, logs, secrets, environment -----------------------------------------

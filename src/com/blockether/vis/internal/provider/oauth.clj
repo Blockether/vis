@@ -115,17 +115,13 @@
    cancelled, so the wait aborts, the interrupt flag is RESTORED (`Thread/sleep`
    clears it) and `InterruptedException` propagates for the caller to close over."
   [ch timeout-ms]
-  (let [deadline (+ (util/now-ms) (long timeout-ms))]
-    (loop []
-
-      (let [fl (try (try-lock! ch) (catch Throwable _ ::failed))]
-        (cond (= ::failed fl) nil
-              (some? fl) fl
-              (>= (util/now-ms) deadline) nil
-              :else
-              (do (try (Thread/sleep 50)
-                       (catch InterruptedException e (.interrupt (Thread/currentThread)) (throw e)))
-                  (recur)))))))
+  (try (util/poll (+ (util/now-ms) (long timeout-ms))
+                  50
+                  #(let [fl (try (try-lock! ch) (catch Throwable _ ::failed))] (cond (= ::failed fl)
+                                                                                     (reduced nil)
+                                                                                     (some? fl)
+                                                                                     (reduced fl))))
+       (catch InterruptedException e (.interrupt (Thread/currentThread)) (throw e))))
 
 (defn call-with-file-lock
   "Run `f` while holding an OS advisory lock on `lock-path`, serializing the

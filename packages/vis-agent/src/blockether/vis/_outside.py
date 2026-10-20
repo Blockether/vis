@@ -66,12 +66,17 @@ def jailed_shell(opts):
     )
 
 
-def council_wake(opts):
-    """Refuse a session wake without a bound Vis session."""
+def request(frame):
+    """Refuse a host session request outside a Vis process."""
     raise Refused(
-        "vis.council_wake (vis.council.wake) needs a bound Vis session. Outside an "
-        "extension, use sdk_session.council().wake(...) with an authenticated SDK session."
+        "vis.sessions, vis.session and vis.council need a Vis host. Outside an "
+        "extension, use GatewayClient or LocalEngine from blockether.vis.engine."
     )
+
+
+def bound_session():
+    """Report that no Vis session is bound outside a Vis process."""
+    return None
 
 
 def call_tool(tool, args, kwargs):
@@ -1448,7 +1453,8 @@ _IMPLEMENTATIONS = {
     "notify": notify,
     "shell": shell,
     "jailed_shell": jailed_shell,
-    "council_wake": council_wake,
+    "request": request,
+    "bound_session": bound_session,
     "call_tool": call_tool,
     "read_session": read_session,
     "list_sessions": list_sessions,

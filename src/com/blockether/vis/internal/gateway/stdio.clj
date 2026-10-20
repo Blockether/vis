@@ -13,16 +13,8 @@
 
 (defn- sdk-operation
   [method uri]
-  (some (fn [{:keys [path audience operations]}]
-          (when (and (= :sdk audience)
-                     (re-matches (re-pattern (str/join "/"
-                                                       (map #(if (str/starts-with? % ":")
-                                                               "[^/]+"
-                                                               (java.util.regex.Pattern/quote %))
-                                                            (str/split path #"/"))))
-                                 uri))
-            (get operations method)))
-        contract/route-table))
+  (let [[{:keys [audience operations]}] (contract/match-route uri)]
+    (when (= :sdk audience) (get operations method))))
 
 (defn- read-frame
   [^Reader reader]
@@ -40,7 +32,10 @@
   (.write writer (str (wire/json-str value) "\n"))
   (.flush writer))
 
-(defn- dispatch
+(defn dispatch
+  "Answer one SDK `frame` through `handler` as `{:status :headers :content}`.
+   `:content` holds the response bytes in base64. A route outside the SDK
+   audience, or a stream, answers status 400. The extension host door uses it too."
   [handler frame]
   (try
     (let [method

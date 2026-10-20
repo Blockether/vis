@@ -1894,7 +1894,7 @@
               (str "[project]\nname = 'vis-native-package-check'\nversion = '1.0'\n"
                    "requires-python = '>=3.14,<3.15'\n"
                    "dependencies = ['numpy==2.5.3', 'scipy==1.18.1', "
-                   "'pydantic==2.13.5', 'cryptography==49.0.0']\n"))
+                   "'pydantic==2.14.1', 'cryptography==49.0.0']\n"))
         (io/copy (io/file "test-native/com/blockether/vis/fixtures/package_checks.py")
                  (io/file source "package_checks.py"))
         (spit

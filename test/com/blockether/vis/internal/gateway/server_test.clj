@@ -7883,3 +7883,28 @@
             (state/create-session! {})
             (expect (= [["session.created" "s1"] ["session.created" "s2"]]
                        (mapv (juxt #(get % "type") #(get % "session_id")) @frames))))))))
+
+(defdescribe session-create-origin-test
+             ;; #405: only the extension host exchange can set a session origin.
+             (it "passes the host origin and ignores an origin in the HTTP body"
+                 (let [created
+                       (atom [])
+
+                       create
+                       (fn [request]
+                         (with-redefs [state/create-session! (fn [opts]
+                                                               (swap! created conj (:origin opts))
+                                                               {"id" "s1"})]
+                           (#'sessions-api/create-session-handler
+                            (merge {:request-method :post
+                                    :body (java.io.ByteArrayInputStream.
+                                            (.getBytes (wire/json-str {"origin" {"kind" "forged"}})
+                                                       "UTF-8"))}
+                                   request))))
+
+                       origin
+                       {"kind" "extension" "extension" "watch" "session_id" "leader"}]
+
+                   (expect (= 201 (:status (create {}))))
+                   (expect (= 201 (:status (create {:vis.host/origin origin}))))
+                   (expect (= [nil origin] @created)))))

@@ -58,6 +58,7 @@
     [com.blockether.vis.internal.sandbox.gateway :as gateway-sandbox]
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.python.extensions :as python-extensions]
+    [com.blockether.vis.internal.gateway.stdio :as stdio]
     [com.blockether.vis.internal.python.runtime :as python-runtime]
     [com.blockether.vis.internal.paths :as paths]
     [com.blockether.vis.internal.config.toggles :as toggles]
@@ -1392,11 +1393,12 @@
    channel's HttpOnly cookie) via :request-authed-fn, declare
    :open-uris, and shape their own unauthorized response for uris under
    their :prefix. `contribs` is the realized contribution vector baked
-   in at handler-build time."
+   in at handler-build time. A request from [[host-exchange]] skips the gate:
+   it never comes from the network, and its door authorizes it."
   [handler ^String token contribs]
   (let [expected (str "Bearer " token)]
     (fn [request]
-      (if-not (auth-required?)
+      (if (or (not (auth-required?)) (:vis.host/exchange request))
         (handler request)
         (let [uri (str (:uri request))
               open? (or (= "/healthz" uri)
@@ -1815,12 +1817,22 @@
          (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                    "Toggle hydration from config failed; defaults stand."))))
 
+(defn- host-exchange
+  "Answer one SDK frame for the extension host door through `handler`.
+   `extra` adds trusted request keys, such as `:vis.host/origin`. The frame
+   never passes the network, so the token gate does not apply to it."
+  [handler]
+  (fn [frame extra]
+    (stdio/dispatch #(handler (merge % extra {:vis.host/exchange true})) frame)))
+
 (defn local-handler
   "Build the SDK handler for an owned stdio engine, without opening HTTP listeners.
    The caller owns process lifetime and must select an isolated database."
   []
   (install-toggle-persistence!)
-  (app nil []))
+  (let [handler (app nil [])]
+    (python-extensions/install-host-exchange! (host-exchange handler))
+    handler))
 
 (defn- bind-failure?
   "True when `t`'s cause chain carries a port-already-bound `BindException` —
@@ -1840,14 +1852,11 @@
    it was starting.\" Instead we back off and retry until the port frees or the
    deadline passes, then let the original failure surface."
   [handler opts deadline-ms]
-  (loop []
-
-    (let [outcome (try {:server (jetty/run-jetty handler opts)}
-                       (catch Throwable t
-                         (if (and (bind-failure? t) (< (util/now-ms) (long deadline-ms)))
-                           ::retry
-                           (throw t))))]
-      (if (= outcome ::retry) (do (Thread/sleep 150) (recur)) (:server outcome)))))
+  (let [outcome (util/poll deadline-ms
+                           150
+                           #(try (reduced (jetty/run-jetty handler opts))
+                                 (catch Throwable t (if (bind-failure? t) t (throw t)))))]
+    (if (instance? Throwable outcome) (throw outcome) outcome)))
 
 (defn- loopback-mirror-configurator
   "Ring/Jetty `:configurator` adding a SECOND connector on 127.0.0.1:`port`.
@@ -1984,6 +1993,7 @@
    (when @instance/server-state
      (throw (ex-info "gateway already running" {:type :gateway/already-running})))
    (wiring/install!)
+   (python-extensions/install-host-exchange! (host-exchange serving-handler))
    (let [port
          (int (or port DEFAULT_PORT))
 
@@ -2160,11 +2170,9 @@
   "Block up to `GRACEFUL_DRAIN_MS` for running turns to reach zero, polling
    every 100ms. Returns the residual running-turn count (0 = fully drained)."
   []
-  (let [deadline (+ (util/now-ms) (long GRACEFUL_DRAIN_MS))]
-    (loop []
-
-      (let [n (long (running-turn-count))]
-        (if (or (zero? n) (>= (util/now-ms) deadline)) n (do (Thread/sleep 100) (recur)))))))
+  (util/poll (+ (util/now-ms) (long GRACEFUL_DRAIN_MS))
+             100
+             #(let [n (long (running-turn-count))] (if (zero? n) (reduced n) n))))
 
 (defn stop!
   "Stop the gateway server if running. Idempotent."

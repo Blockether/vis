@@ -495,29 +495,34 @@
    403/404 mean pending in this protocol (not RFC 8628 JSON errors). Cancellation
    interrupts the worker; the absolute deadline also survives delayed startup."
   [{:keys [device-auth-id user-code interval-ms expires-at]}]
-  (loop []
-
-    (assert-device-active! expires-at)
-    (let [{:keys [status json]} (post-device "token"
-                                             {:device_auth_id device-auth-id :user_code user-code})]
-      (cond (<= 200 (long status) 299)
-            (let [{:keys [authorization_code code_verifier]} json]
-              (when-not (every? util/non-blank-string? [authorization_code code_verifier])
-                (throw (ex-info "Codex returned an incomplete device grant."
-                                {:type :vis/openai-codex-device-response})))
-              (assert-device-active! expires-at)
-              (let [credentials (exchange-authorization-code!
-                                  authorization_code
-                                  code_verifier
-                                  "https://auth.openai.com/deviceauth/callback")]
-                (assert-device-active! expires-at)
-                (save-auth-file! credentials)
-                {:status :ok}))
-            (contains? #{403 404} status)
-            (do (Thread/sleep (max 1 (min (long interval-ms) (- (long expires-at) (util/now-ms)))))
-                (recur))
-            :else (throw (ex-info (str "Codex device authorization failed (HTTP " status ").")
-                                  {:type :vis/openai-codex-device-failed :status status}))))))
+  (assert-device-active! expires-at)
+  (let [result
+        (util/poll
+          expires-at
+          interval-ms
+          (fn []
+            (assert-device-active! expires-at)
+            (let [{:keys [status json]}
+                  (post-device "token" {:device_auth_id device-auth-id :user_code user-code})]
+              (cond (<= 200 (long status) 299)
+                    (let [{:keys [authorization_code code_verifier]} json]
+                      (when-not (every? util/non-blank-string? [authorization_code code_verifier])
+                        (throw (ex-info "Codex returned an incomplete device grant."
+                                        {:type :vis/openai-codex-device-response})))
+                      (assert-device-active! expires-at)
+                      (let [credentials (exchange-authorization-code!
+                                          authorization_code
+                                          code_verifier
+                                          "https://auth.openai.com/deviceauth/callback")]
+                        (assert-device-active! expires-at)
+                        (save-auth-file! credentials)
+                        (reduced {:status :ok})))
+                    (contains? #{403 404} status) ::pending
+                    :else (throw (ex-info
+                                   (str "Codex device authorization failed (HTTP " status ").")
+                                   {:type :vis/openai-codex-device-failed :status status}))))))]
+    (when (= ::pending result) (assert-device-active! expires-at))
+    result))
 
 ;; Public CLI helpers
 

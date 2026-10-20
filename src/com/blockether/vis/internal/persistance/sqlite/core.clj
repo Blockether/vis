@@ -719,9 +719,9 @@
   (try (when-not (.isClosed pool)
          (when-let [^HikariPoolMXBean mx (.getHikariPoolMXBean pool)]
            (.softEvictConnections mx)
-           (let [deadline (+ (now-ms) (long POOL_DRAIN_TIMEOUT_MS))]
-             (while (and (pos? (.getActiveConnections mx)) (< (now-ms) deadline))
-               (Thread/sleep 20)))))
+           (util/poll (+ (now-ms) (long POOL_DRAIN_TIMEOUT_MS))
+                      20
+                      #(when (zero? (.getActiveConnections mx)) (reduced nil)))))
        (catch Throwable _ nil))
   (try (.close pool) (catch Throwable _ nil))
   nil)
@@ -1383,10 +1383,12 @@
    Session identity and LLM root defaults are first-class columns:
      session_soul.channel / external_id
      session_state.system_prompt / llm_root_provider / llm_root_model
-     session_state.title."
+     session_state.title.
+
+   Optional `:origin` is a JSON map that names the program that created the session."
   [db-info
    {:keys [channel external-id title system-prompt provider model workspace-id parent-state-id
-           claimed? owner-id]
+           claimed? owner-id origin]
     :or {claimed? true}}]
   (when-not workspace-id
     (throw (ex-info "db-store-session! requires :workspace-id (1:1 invariant)"
@@ -1422,7 +1424,10 @@
                                 ;; keeps the child OUT of the top-level list (queryable
                                 ;; sub-tree + cascade-delete with the parent).
                                 parent-state-id
-                                (assoc :parent_state_id (->ref parent-state-id)))]})
+                                (assoc :parent_state_id (->ref parent-state-id))
+
+                                origin
+                                (assoc :origin (->json origin)))]})
           (execute! tx-info
                     {:insert-into :session_state
                      :values [(cond-> {:id (str state-id)
@@ -1489,7 +1494,10 @@
                    ;; The human's ARCHIVE stamp, off the same `:*` soul row the
                    ;; star came from: nil means active, a date means the session
                    ;; is out of sight and read-only until it comes back.
-                   :archived-at (->date (:archived_at soul))}
+                   :archived-at (->date (:archived_at soul))
+                   ;; The program that created the session, or nil for a person or a client.
+                   :origin (some-> (:origin soul)
+                                   json/read-json)}
             (:llm_root_provider state)
             (assoc :provider (->kw-back (:llm_root_provider state)))
 

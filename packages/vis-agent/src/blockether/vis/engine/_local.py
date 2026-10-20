@@ -50,6 +50,42 @@ class _Reply(io.BytesIO):
             self.headers[name] = str(value)
 
 
+def _request_frame(method, route, *, query=None, body=None, content=None, headers=None):
+    """Build one SDK request frame for the stdio and extension host transports."""
+    frame = {
+        "method": method,
+        "route": route,
+        "query": urlencode(query) if query else None,
+    }
+    if headers:
+        frame["headers"] = headers
+    if body is not None:
+        frame["body"] = body
+    if content is not None:
+        frame["content"] = base64.b64encode(content).decode("ascii")
+    return frame
+
+
+def _envelope(response, what):
+    """Check one reply envelope and return its status, decoded content and headers."""
+    try:
+        status = response["status"]
+        headers = response.get("headers") or {}
+        decoded = base64.b64decode(response["content"], validate=True)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise ProtocolError(f"malformed {what}") from None
+    if type(status) is not int or not isinstance(headers, dict):
+        raise ProtocolError(f"malformed {what}")
+    return status, decoded, headers
+
+
+def _reply(status, decoded, headers):
+    """Raise the gateway error of a refused reply, or wrap a successful one."""
+    if status >= 400:
+        raise _gateway_error(status, decoded[:65536])
+    return _Reply(status, decoded, headers)
+
+
 class LocalEngine(ExecutionLayer):
     """Own a private Vis process without starting an HTTP server.
 
@@ -215,17 +251,14 @@ class LocalEngine(ExecutionLayer):
         deadline = time.monotonic() + _duration(
             self.timeout if timeout is None else timeout
         )
-        request = {
-            "method": method,
-            "route": route,
-            "query": urlencode(query) if query else None,
-        }
-        if self._lease is not None:
-            request["headers"] = {"x-vis-client-id": self._lease}
-        if body is not None:
-            request["body"] = body
-        if content is not None:
-            request["content"] = base64.b64encode(content).decode("ascii")
+        request = _request_frame(
+            method,
+            route,
+            query=query,
+            body=body,
+            content=content,
+            headers=None if self._lease is None else {"x-vis-client-id": self._lease},
+        )
         data = (json.dumps(request, allow_nan=False) + "\n").encode()
         if len(data) > 67108864:
             raise ValueError("local request exceeds 64 MiB")
@@ -239,14 +272,9 @@ class LocalEngine(ExecutionLayer):
                 ):
                     raise VisTimeout("local engine request timed out")
                 offset += os.write(self._process.stdin.fileno(), data[offset:])
-            response = self._read_line(deadline)
-            if (
-                not isinstance(response, dict)
-                or type(response.get("status")) is not int
-                or not isinstance(response.get("headers"), dict)
-            ):
-                raise ProtocolError("malformed local response envelope")
-            decoded = base64.b64decode(response["content"], validate=True)
+            status, decoded, headers = _envelope(
+                self._read_line(deadline), "local response envelope"
+            )
         except (TransportError, ProtocolError) as error:
             self.close()
             raise self._explained(error) from None
@@ -256,9 +284,7 @@ class LocalEngine(ExecutionLayer):
             raise self._explained(
                 ProtocolError("malformed local engine exchange; process was closed")
             ) from None
-        if response["status"] >= 400:
-            raise _gateway_error(response["status"], decoded[:65536])
-        return _Reply(response["status"], decoded, response["headers"])
+        return _reply(status, decoded, headers)
 
     def session(self, sid):
         return _LocalSession(self, sid)

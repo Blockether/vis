@@ -5761,7 +5761,7 @@
 ;; Session lifecycle + souls
 
 (defn- session->wire
-  [{:keys [id channel title external-id workspace-id goal group-id]}]
+  [{:keys [id channel title external-id workspace-id goal group-id origin]}]
   (wire/canonical {:id (str id)
                    :channel (name channel)
                    :title title
@@ -5772,7 +5772,8 @@
                    ;; client that asked for it paints the new row in that band at
                    ;; once, without a second read.
                    :group_id (some-> group-id
-                                     str)}))
+                                     str)
+                   :origin origin}))
 
 (defn- group-project-root
   "Folder of the project that owns session group `group-id`, or nil."
@@ -5785,7 +5786,7 @@
            not-empty))
 
 (defn- create-session-cold!
-  [{:keys [channel title external-id workspace-id root group-id sources extensions tools]}]
+  [{:keys [channel title external-id workspace-id root group-id sources extensions tools origin]}]
   (let [channel
         (or channel :api)
 
@@ -5816,7 +5817,10 @@
                       (assoc :extensions extensions)
 
                       (some? tools)
-                      (assoc :tools tools)))]
+                      (assoc :tools tools)
+
+                      origin
+                      (assoc :origin origin)))]
 
     (put-session! (:id created) {:next-seq 0 :last-active (util/now-ms)})
     ;; A session STARTED inside a group belongs to it from its first breath. The
@@ -6007,6 +6011,8 @@
                  ;; client merging this row onto a cached one sees an archive taken
                  ;; away as well as one put on.
                  :archived_at (:archived-at session)
+                 ;; The program that created the session: null for a person or an SDK client.
+                 :origin (:origin session)
                  :status (cond current-turn-id "running"
                                (= "suspended" (:status last-turn)) "suspended"
                                :else "idle")

@@ -41,6 +41,37 @@
                              operations)})
         (wire/->engine (get @source "x-vis-routes"))))
 
+(def ^:private route-matchers
+  "Route records by segment count, compiled once. Within a count, a route with
+   fewer parameters comes first, so a literal segment wins over a parameter."
+  (delay (update-vals (group-by #(count (str/split (:path %) #"/" -1)) route-table)
+                      (fn [routes]
+                        (mapv (fn [{:keys [path] :as route}]
+                                (let [segments
+                                      (str/split path #"/" -1)
+
+                                      parameter?
+                                      #(str/starts-with? % ":")]
+
+                                  [route
+                                   (re-pattern (str/join "/"
+                                                         (map #(if (parameter? %)
+                                                                 "([^/]+)"
+                                                                 (java.util.regex.Pattern/quote %))
+                                                              segments)))
+                                   (mapv #(keyword (subs % 1)) (filter parameter? segments))]))
+                              (sort-by #(count (re-seq #"/:" (:path %))) routes))))))
+
+(defn match-route
+  "The built-in route that `uri` matches, as `[route params]`, or nil.
+   `params` maps each path parameter keyword to its segment."
+  [uri]
+  (when (string? uri)
+    (some (fn [[route pattern names]]
+            (when-let [found (re-matches pattern uri)]
+              [route (zipmap names (when (vector? found) (rest found)))]))
+          (get @route-matchers (count (str/split uri #"/" -1))))))
+
 (def route-operations
   "Complete `[method path]` to request/response transport declaration."
   (into {}

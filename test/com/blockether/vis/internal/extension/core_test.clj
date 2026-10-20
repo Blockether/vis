@@ -1669,3 +1669,44 @@
                    (expect (true? (#'extension/slash? (assoc slash :slash/saveable? true))))
                    (expect (true? (#'extension/slash? (assoc slash :slash/saveable? false))))
                    (expect (false? (#'extension/slash? (assoc slash :slash/saveable? "yes")))))))
+
+(defdescribe
+  observe-host-call-test
+  "A change through the extension host door has its own Activity (#405)."
+  (let [observe (fn [failure thunk]
+                  (let [events (atom [])
+                        value (try (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                                     (extension/observe-host-call "test.host"
+                                                                  :vis.sessions.create
+                                                                  "Create session"
+                                                                  false
+                                                                  failure
+                                                                  thunk))
+                                   (catch Throwable t (ex-message t)))]
+
+                    [value @events]))]
+    (it "only runs the call without an Activity sink"
+        (expect (= :answer
+                   (extension/observe-host-call "test.host"
+                                                :vis.sessions.create
+                                                "Create session"
+                                                false
+                                                (constantly nil)
+                                                (constantly :answer)))))
+    (it "records an end-only start and a success"
+        (let [[value events] (observe (constantly nil) (constantly {:status 201}))]
+          (expect (= {:status 201} value))
+          (expect (= [:start :terminal] (mapv :phase events)))
+          (expect (= "Create session" (:label (first events))))
+          (expect (false? (:show-start (first events))))
+          (expect (= "test.host" (:extension (first events))))
+          (expect (nil? (:failed (second events))))))
+    (it "records a refused answer as a failure and returns the answer"
+        (let [[value events] (observe (constantly "Not yours") (constantly {:status 403}))]
+          (expect (= {:status 403} value))
+          (expect (true? (:failed (second events))))))
+    (it "records a thrown error as a failure and throws it again"
+        (let [[value events] (observe (constantly nil) #(throw (ex-info "No gateway" {})))]
+          (expect (= "No gateway" value))
+          (expect (= [:start :terminal] (mapv :phase events)))
+          (expect (true? (:failed (second events))))))))

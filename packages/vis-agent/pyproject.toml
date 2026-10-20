@@ -22,7 +22,7 @@ dependencies = [
   "jsonschema>=4.23,<5",
   "litellm==1.103.1",
   "packaging>=24",
-  "pydantic>=2.13.5,<3",
+  "pydantic==2.14.1",
   "referencing>=0.28.4",
 ]
 authors = [{ name = "Blockether" }]

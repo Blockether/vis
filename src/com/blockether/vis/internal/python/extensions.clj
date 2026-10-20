@@ -44,7 +44,6 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.sandbox.egress-proxy :as egress]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
@@ -597,6 +596,175 @@
   [root project-path]
   (if (str/blank? project-path) root (str (io/file root project-path))))
 
+(defn- host-refusal
+  "A gateway error envelope that the SDK raises as `GatewayError`."
+  [status type message]
+  {:status status
+   :headers {"content-type" "application/json"}
+   :content (.encodeToString (java.util.Base64/getEncoder)
+                             (.getBytes ^String
+                                        (wire/json-str {:error {:type type :message message}})
+                                        java.nio.charset.StandardCharsets/UTF_8))})
+
+(defn- created-by?
+  "True when extension `ext-name` created session `sid`, as its origin records."
+  [db ext-name sid]
+  (let [origin (:origin (persistance/db-get-session db sid))]
+    (and (= "extension" (get origin "kind")) (= ext-name (get origin "extension")))))
+
+(defn- host-may-change?
+  "True when extension `ext-name`, bound to session `bound`, may change session `sid`:
+   the bound session itself, a managed child of it, or a session that this extension created."
+  [db ext-name bound sid]
+  (or (= (str bound) sid)
+      (= (str bound)
+         (some-> (persistance/db-agent-info db sid)
+                 :parent_id
+                 str))
+      (created-by? db ext-name sid)))
+
+(defonce ^:private host-exchange (atom nil))
+
+(defn install-host-exchange!
+  "Install the gateway exchange `(f frame extra)` that serves `__vis_host_request__`.
+   The gateway server installs it, because this namespace cannot require the server."
+  [f]
+  (reset! host-exchange f)
+  nil)
+
+(def ^:private host-activities
+  "The Activity `[operation label show-start?]` of each change through the host door.
+   A read has no Activity of its own: a turn wait polls reads, and the calling tool
+   already shows its Activity."
+  {[:post "/v1/sessions"] [:vis.sessions.create "Create session" false]
+   [:patch "/v1/sessions/:sid"] [:vis.session.update "Update session" false]
+   [:delete "/v1/sessions/:sid"] [:vis.session.delete "Delete session" false]
+   [:post "/v1/sessions/:sid/attachments"] [:vis.session.attach "Attach file" false]
+   [:post "/v1/sessions/:sid/agents"] [:vis.council.spawn "Run subagents" false]
+   [:post "/v1/sessions/:sid/agents/run"] [:vis.council.run "Run subagents" false]
+   [:post "/v1/sessions/:sid/agents/wait"] [:vis.council.wait "Wait for subagents" true]
+   [:post "/v1/sessions/:sid/agents/cancel"] [:vis.council.cancel "Cancel subagents" false]
+   [:post "/v1/sessions/:sid/agents/deny"] [:vis.council.deny "Deny subagent request" false]
+   [:post "/v1/sessions/:sid/agents/extend"] [:vis.council.extend "Extend subagent budget" false]
+   [:post "/v1/sessions/:sid/agents/grant"] [:vis.council.grant "Grant files to subagent" false]
+   [:post "/v1/sessions/:sid/agents/resume"] [:vis.council.resume "Resume subagent" false]
+   [:post "/v1/sessions/:sid/agents/route"] [:vis.council.route "Route subagent message" false]
+   [:post "/v1/sessions/:sid/council/entries"] [:vis.council.publish "Publish to Council" false]
+   [:post "/v1/sessions/:sid/council/wake"] [:vis.council.wake "Wake session" false]
+   [:post "/v1/sessions/:sid/forks"] [:vis.session.fork "Fork session" false]
+   [:post "/v1/sessions/:sid/iterations/:iid/attachments"] [:vis.session.attach "Attach file" false]
+   [:patch "/v1/sessions/:sid/model"] [:vis.session.set-model "Set session model" false]
+   [:post "/v1/sessions/:sid/turns"] [:vis.session.run "Run session" false]
+   [:patch "/v1/sessions/:sid/turns/:tid"] [:vis.turn.update "Update turn" false]
+   [:delete "/v1/sessions/:sid/turns/:tid"] [:vis.turn.delete "Delete turn" false]
+   [:post "/v1/sessions/:sid/turns/:tid/cancel"] [:vis.turn.cancel "Cancel turn" false]})
+
+(defn- host-failure
+  "The error message of a refused host `reply`, or nil for a success."
+  [{:keys [status content]}]
+  (when (>= (long status) 400)
+    (or (try (-> (.decode (java.util.Base64/getDecoder) (str content))
+                 (String. java.nio.charset.StandardCharsets/UTF_8)
+                 (json/read-json :key-fn identity)
+                 (get-in ["error" "message"]))
+             (catch Exception _ nil))
+        (str "The host answered status " status))))
+
+(defn- env-root
+  "The normalized workspace root of extension context `env`, or nil."
+  [env]
+  (workspace/normalize-root (if-let [live (:workspace-atom env)]
+                              (:root @live)
+                              (or (get-in env [:workspace :root]) (:workspace/root env)))))
+
+(defn- host-request
+  "Serve one SDK `frame` for extension `ext-name` through the installed gateway exchange.
+   The `:extension` field of the contract operation decides the access:
+
+   - No field: the route is refused.
+   - `:background`: any thread may call it.
+   - `:created`: a thread that the guest created may call it only in a session that this
+     extension created.
+   - `:callback`: only an active callback may call it.
+
+   A change also needs [[host-may-change?]]. A new session records this extension as
+   origin, and it starts in the bound session's root when the frame gives no root.
+   Each change has the Activity of [[host-activities]]."
+  [ext-name bound-session frame]
+  (let
+    [env
+     extension/*current-environment*
+
+     bound
+     (or (:session-id env) (:session-id bound-session))
+
+     db
+     (or (:db-info env) (:db-info bound-session))
+
+     method
+     (some-> (get frame "method")
+             str/lower-case
+             keyword)
+
+     [route {:keys [sid]}]
+     (gateway-contract/match-route (get frame "route"))
+
+     access
+     (get-in route [:operations method :extension])
+
+     read?
+     (= :get method)
+
+     create?
+     (and (= :post method) (= "/v1/sessions" (:path route)))
+
+     frame
+     (let [root (when create? (env-root env))]
+       (cond-> frame
+         (and root (map? (get frame "body")) (nil? (get-in frame ["body" "root"])))
+         (assoc-in ["body" "root"] root)
+
+         (and root (not (contains? frame "body")))
+         (assoc "body" {"root" root})))
+
+     exchange
+     @host-exchange
+
+     answer
+     #(cond
+        (nil? exchange) (throw (ex-info "Vis host requests need a running Vis gateway"
+                                        {:error :host-exchange-unavailable}))
+        (nil? access)
+        (host-refusal 403 "forbidden-route" "An extension cannot call this gateway route")
+        (and python-host/*guest-thread?* (= :callback access))
+        (host-refusal
+          403
+          "forbidden-route"
+          "A thread that the extension created cannot call this route; use an extension callback")
+        (and python-host/*guest-thread?*
+             (= :created access)
+             (not (and sid db (created-by? db ext-name sid))))
+        (host-refusal
+          403
+          "forbidden-session"
+          "A thread that the extension created can send turns only in sessions that the extension created")
+        (and (not read?) (nil? bound))
+        (host-refusal 403 "session-not-bound" "A change through the host needs a bound Vis session")
+        (and (not read?) sid (not (and db (host-may-change? db ext-name bound sid))))
+        (host-refusal
+          403
+          "forbidden-session"
+          "An extension can change only its session, its subagents and its own sessions")
+        :else (exchange frame
+                        (cond-> {}
+                          create?
+                          (assoc :vis.host/origin
+                            {"kind" "extension" "extension" ext-name "session_id" (str bound)}))))]
+
+    (if-let [[operation label show-start?] (get host-activities [method (:path route)])]
+      (extension/observe-host-call ext-name operation label show-start? host-failure answer)
+      (answer))))
+
 (defn ^:no-doc host-doors
   "The `__vis_host_*` callables an extension context receives as `{name fn}`.
    The bootstrap and inert checker derive their members from these bindings.
@@ -626,10 +794,7 @@
           (let [env extension/*current-environment*]
             (when-not (:session-id env)
               (throw (ex-info (str api " needs a bound Vis session") {:error :session-not-bound})))
-            (or (workspace/normalize-root (if-let [live (:workspace-atom env)]
-                                            (:root @live)
-                                            (or (get-in env [:workspace :root])
-                                                (:workspace/root env))))
+            (or (env-root env)
                 (throw (ex-info (str api " needs a session workspace")
                                 {:error :workspace-root-unavailable})))))
 
@@ -740,19 +905,16 @@
           (fn [search]
             (session-read "list_sessions" introspection/list-sessions search)))
     (put! g
-          "__vis_host_council_wake__"
-          (fn [opts]
-            (let [{:keys [session-id db-info]} bound-session]
-              (when-not (and session-id db-info)
-                (throw (ex-info "vis.council.wake needs a bound Vis session"
-                                {:error :session-not-bound})))
-              (stringify-deep (council/wake! db-info
-                                             #(council/runtime db-info)
-                                             {:session-id (str session-id) :source "host"}
-                                             (into {}
-                                                   (map (fn [[k v]]
-                                                          [(keyword k) v]))
-                                                   opts))))))
+          "__vis_host_request__"
+          (fn [frame]
+            ;; One SDK exchange as JSON in and JSON out: `{status headers content}`.
+            (wire/json-str
+              (host-request label bound-session (json/read-json (str frame) :key-fn identity)))))
+    (put! g
+          "__vis_host_bound_session__"
+          (fn []
+            (some-> (or (:session-id extension/*current-environment*) (:session-id bound-session))
+                    str)))
     (put! g
           "__vis_host_state_get__"
           (fn [k]

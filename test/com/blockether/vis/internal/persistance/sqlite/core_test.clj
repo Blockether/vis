@@ -5231,6 +5231,24 @@
         (persistance/db-set-session-model-pref! s (str sid) nil nil)
         (expect (nil? (:model-pref (persistance/db-get-session s sid)))))))
 
+(defdescribe session-origin-test
+             ;; #405: a session that an extension creates records that extension as its origin.
+             (it "stores the origin as JSON and reads it back, and keeps it empty by default"
+                 (let [s
+                       (h/store)
+
+                       origin
+                       {"kind" "extension" "extension" "watch" "session_id" "leader"}
+
+                       created
+                       (h/store-session! s {:channel :api :origin origin})
+
+                       plain
+                       (h/store-session! s {:channel :api})]
+
+                   (expect (= origin (:origin (persistance/db-get-session s created))))
+                   (expect (nil? (:origin (persistance/db-get-session s plain)))))))
+
 ;; Regression, user report: the star lived in each DEVICE's own storage, so the same
 ;; session could show a star on one screen and none on another, and no answer from
 ;; the gateway could settle which was true. The soul owns the star now.

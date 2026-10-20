@@ -38,9 +38,10 @@
      :extensions    extension names to keep, `-name` entries to turn off, or an
                     empty list for none; nil keeps every extension.
      :tools         tool names to keep, or `-name` entries to turn off, in optional
-                    extensions; nil keeps every tool."
+                    extensions; nil keeps every tool.
+     :origin        JSON map that names the program that created the session."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id workspace-id sources extensions tools]}]
+  ([channel {:keys [title external-id workspace-id sources extensions tools origin]}]
    (let [env
          (loop-env/open-env! nil
                              (cond-> {:channel channel
@@ -51,7 +52,10 @@
                                       :extensions extensions
                                       :tools tools}
                                workspace-id
-                               (assoc :workspace-id workspace-id)))
+                               (assoc :workspace-id workspace-id)
+
+                               origin
+                               (assoc :origin origin)))
 
          id
          (:session-id env)
@@ -64,7 +68,8 @@
       :external-id (some-> external-id
                            str)
       :title title
-      :workspace-id (:workspace/id env)})))
+      :workspace-id (:workspace/id env)
+      :origin origin})))
 
 (defn by-id
   "Return the session record (UUID `:id`) or nil."
@@ -85,7 +90,8 @@
      :project-position (:project-position session)
      :group-id (:group-id session)
      :favorite-rank (:favorite-rank session)
-     :archived-at (:archived-at session)}))
+     :archived-at (:archived-at session)
+     :origin (:origin session)}))
 
 (defn by-channel
   [channel]

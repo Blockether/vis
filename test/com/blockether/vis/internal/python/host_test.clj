@@ -408,3 +408,31 @@
                               :when call]
 
                         (future-cancel (:result call))))))))
+
+(defdescribe guest-thread-frame-test
+             ;; #405: a guest thread that meets an active call must keep its limits.
+             (it "keeps the guest-thread flag under the driver's conveyed frame"
+                 (let [session
+                       "guest-frame-fixture"
+
+                       driver
+                       (binding [python-host/*guest-thread?* false]
+                         (clojure.lang.Var/getThreadBindingFrame))]
+
+                   (swap! @#'python-host/frames assoc session driver)
+                   (try (expect (= {"value" true}
+                                   (binding [python-host/*guest-thread?* true]
+                                     (#'python-host/answer-in-frame
+                                      session
+                                      "fixture"
+                                      (fn []
+                                        python-host/*guest-thread?*)
+                                      []))))
+                        (expect (= {"value" false}
+                                   (#'python-host/answer-in-frame
+                                    session
+                                    "fixture"
+                                    (fn []
+                                      python-host/*guest-thread?*)
+                                    [])))
+                        (finally (swap! @#'python-host/frames dissoc session))))))

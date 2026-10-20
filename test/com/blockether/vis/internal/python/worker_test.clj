@@ -603,17 +603,17 @@ print(worker_value)"))))
   background-wake-authorization-test
   ;; #202: connection ownership survives a trusted thread's missing activation;
   ;; it never grants an unbound sandbox thread access to host tools.
-  (it "admits only Council wake from a trusted worker's assigned namespace"
+  (it "admits only the host request door from a trusted worker's assigned namespace"
       (doseq [[trusted? caller tool payload assigned? allowed?]
-              [[true "" "__vis_host_council_wake__" "{\"session\":\"owned\"}" true true]
-               [false "" "__vis_host_council_wake__" "{\"session\":\"owned\"}" true false]
+              [[true "" "__vis_host_request__" "{\"session\":\"owned\"}" true true]
+               [false "" "__vis_host_request__" "{\"session\":\"owned\"}" true false]
                [true "" "__vis_host_shell__" "{\"session\":\"owned\"}" true false]
-               [true "" "__vis_host_council_wake__" "{\"session\":\"other\"}" true false]
-               [true "" "__vis_host_council_wake__" "{\"session\":\"owned\"}" false false]
-               [true "other" "__vis_host_council_wake__" "{\"session\":\"owned\"}" true false]
-               [true nil "__vis_host_council_wake__" "{\"session\":\"owned\"}" true false]
-               [true "" "__vis_host_council_wake__" "invalid" true false]
-               [true "" "__vis_host_council_wake__" "{}" true false]]]
+               [true "" "__vis_host_request__" "{\"session\":\"other\"}" true false]
+               [true "" "__vis_host_request__" "{\"session\":\"owned\"}" false false]
+               [true "other" "__vis_host_request__" "{\"session\":\"owned\"}" true false]
+               [true nil "__vis_host_request__" "{\"session\":\"owned\"}" true false]
+               [true "" "__vis_host_request__" "invalid" true false]
+               [true "" "__vis_host_request__" "{}" true false]]]
         (let [peer {:serving (atom {})
                     :host-sessions (atom (if assigned? #{"owned"} #{}))
                     :trusted? trusted?}
@@ -621,18 +621,39 @@ print(worker_value)"))))
               replies (atom [])]
 
           (with-redefs [python-host/dispatch (fn [caller tool payload]
-                                               (swap! calls conj [caller tool payload])
+                                               (swap! calls conj
+                                                 [caller tool payload python-host/*guest-thread?*])
                                                "ok")
                         worker-peer/send-line! (fn [_ reply]
                                                  (swap! replies conj reply))]
 
             (#'worker/serve-host-call! peer {"id" 1 "session" caller "tool" tool "payload" payload})
             (expect (= allowed? (boolean (seq @calls))))
+            (when allowed? (expect (= [["owned" tool payload true]] @calls)))
             (expect (= (if allowed?
                          {"id" 1 "value" "ok"}
                          {"id" 1 "error" "Worker is not authorized for this host session"})
                        (first @replies)))
-            (expect (empty? @(:serving peer))))))))
+            (expect (empty? @(:serving peer)))))))
+  (it "keeps an activated call outside the guest-thread limits"
+      (let [peer
+            {:serving (atom {}) :host-sessions (atom #{"owned"}) :trusted? true}
+
+            calls
+            (atom [])]
+
+        (with-redefs [python-host/dispatch
+                      (fn [caller tool _]
+                        (swap! calls conj [caller tool python-host/*guest-thread?*])
+                        "ok")
+
+                      worker-peer/send-line!
+                      (fn [_ _])]
+
+          (#'worker/serve-host-call!
+           peer
+           {"id" 1 "session" "owned" "tool" "__vis_host_request__" "payload" "{}"})
+          (expect (= [["owned" "__vis_host_request__" false]] @calls))))))
 
 (defdescribe
   worker-host-authorization-lifecycle-test

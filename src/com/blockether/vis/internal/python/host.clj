@@ -25,6 +25,11 @@
             [taoensso.telemere :as tel])
   (:import [java.util.concurrent.locks ReentrantLock]))
 
+(def ^:dynamic *guest-thread?*
+  "True while the host serves a call from a thread that the guest created.
+   Such a call has no active extension call, so its doors can limit what it does."
+  false)
+
 (defonce
   ^:private
   ^{:doc
@@ -170,12 +175,18 @@
                  ~@body)))
 
 (defn- answer-in-frame
-  "[[answer]], under the binding frame the driver of `session` published."
+  "[[answer]], under the binding frame the driver of `session` published.
+   [[*guest-thread?*]] stays from the serving thread, because the driver's frame
+   belongs to another call."
   [session tool f args]
   (if-let [frame (get @frames session)]
-    (let [held (clojure.lang.Var/getThreadBindingFrame)]
+    (let [held (clojure.lang.Var/getThreadBindingFrame)
+          guest-thread? *guest-thread?*]
+
       (clojure.lang.Var/resetThreadBindingFrame frame)
-      (try (answer tool f args) (finally (clojure.lang.Var/resetThreadBindingFrame held))))
+      (try (binding [*guest-thread?* guest-thread?]
+             (answer tool f args))
+           (finally (clojure.lang.Var/resetThreadBindingFrame held))))
     (answer tool f args)))
 
 (defn call-args
