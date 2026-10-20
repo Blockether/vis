@@ -102,6 +102,7 @@
            :title (:title c)
            :goal (:goal c)
            :created-at (:created-at c)
+           :claimed-at (:claimed-at c)
            :owner-id (:owner-id c)
            :project-id (:project-id c)
            :project-name (:project-name c)

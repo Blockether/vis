@@ -95,7 +95,7 @@ def activity_rows(projection):
 
 
 @contextmanager
-def model_endpoint(*, tool_code=None, before_reply=None):
+def model_endpoint(*, tool_code=None, before_reply=None, refuse=None):
     requests = []
     positions = count(1)
 
@@ -105,6 +105,14 @@ def model_endpoint(*, tool_code=None, before_reply=None):
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if refuse is not None and body.get("tools") and refuse(body):
+                error = json.dumps({"error": {"message": "fixture refusal"}}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(error)))
+                self.end_headers()
+                self.wfile.write(error)
+                return
             if not body.get("tools"):
                 delta, finish = {"content": "SDK fixture"}, "stop"
             else:
@@ -260,6 +268,7 @@ def sdk_fixture(
     subagents=False,
     tool_code=None,
     before_reply=None,
+    refuse=None,
     project_extensions=None,
     on_process=None,
 ):
@@ -278,7 +287,9 @@ def sdk_fixture(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("JAVA_TOOL_OPTIONS", f"-Duser.home={home}")
     monkeypatch.delenv("VIS_GATEWAY_URL", raising=False)
-    with model_endpoint(tool_code=tool_code, before_reply=before_reply) as (
+    with model_endpoint(
+        tool_code=tool_code, before_reply=before_reply, refuse=refuse
+    ) as (
         model_url,
         requests,
     ):
@@ -1052,3 +1063,107 @@ def test_real_concurrent_sessions_keep_repeated_turns_isolated(tmp_path, monkeyp
         with ThreadPoolExecutor(max_workers=len(markers)) as executor:
             list(executor.map(exercise, range(len(markers))))
         assert len(requests) == 24
+
+
+def _last_user(body):
+    """The text of the newest user message in a model request."""
+    users = [m for m in body["messages"] if m["role"] == "user"]
+    return json.dumps(users[-1]["content"]) if users else ""
+
+
+def _asked_with(requests, request, marker):
+    """True when the model request for `request` carried `marker` in its messages."""
+    return any(
+        request in _last_user(body) and marker in json.dumps(body["messages"])
+        for body in requests
+    )
+
+
+def _finish(session, request, *, cancel=False, during=None):
+    """Send `request` and return its status. Once a block runs, call `during`, then
+    cancel the turn when `cancel` is true."""
+    turn = session.send(request)
+    if cancel:
+        with session.events(cursor=turn.cursor, reconnects=0) as events:
+            for event in events:
+                if event.type.startswith("block."):
+                    if during is not None:
+                        during()
+                    turn.cancel()
+                    break
+    return turn.wait(timeout=60)["status"]
+
+
+def test_real_snapshot_continues_on_another_engine(tmp_path, monkeypatch):
+    # Two engines with their own homes, databases and model endpoints stand for two
+    # computers (#405). A runs over HTTP, B over stdio.
+    seen = {}
+
+    def code(_position):
+        if "slow-turn" in _last_user(seen["now"][-1]):
+            return "import asyncio\nawait asyncio.sleep(120)"
+        return "print('noted')"
+
+    def refuse(body):
+        return "broken-turn" in _last_user(body)
+
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    with (
+        sdk_fixture(
+            tmp_path / "a", monkeypatch, "http", tool_code=code, refuse=refuse
+        ) as (a, a_work, a_requests),
+        sdk_fixture(
+            tmp_path / "b", monkeypatch, "stdio", tool_code="print('noted')"
+        ) as (b, b_work, b_requests),
+    ):
+        seen["now"] = a_requests
+        original = a.create_session(title="Durable talk", root=str(a_work))
+        assert _finish(original, "remember the word ORCA-4127") == "completed"
+        running = []
+        assert (
+            _finish(
+                original,
+                "slow-turn: wait",
+                cancel=True,
+                during=lambda: running.append(original.export()),
+            )
+            == "cancelled"
+        )
+        assert _finish(original, "broken-turn: fail") == "failed"
+        snapshot = tmp_path / "talk.vissnap"
+        snapshot.write_bytes(original.export())
+        data = snapshot.read_bytes()
+        assert GatewayClient.snapshot_info(data)["counts"]["turns"] == 3
+
+        restored = b.restore_session(data, root=str(b_work))
+        listed = [row["id"] for row in b.list_sessions(limit=20)["sessions"]]
+        assert restored.id in listed
+        assert restored.id != original.id
+        assert [t["status"] for t in restored.turns()] == [
+            "completed",
+            "cancelled",
+            "failed",
+        ]
+        assert restored.set_model("sdk-fixture", "sdk-test").model == "sdk-test"
+        assert _finish(restored, "follow-up-on-b: which word?") == "completed"
+        assert _asked_with(b_requests, "follow-up-on-b", "ORCA-4127")
+
+        # A snapshot taken while a turn ran restores that turn as stopped and continues.
+        paused = b.restore_session(running[0], root=str(b_work))
+        assert [t["status"] for t in paused.turns()] == ["completed", "cancelled"]
+        assert _finish(paused, "follow-up-on-paused: which word?") == "completed"
+        assert _asked_with(b_requests, "follow-up-on-paused", "ORCA-4127")
+
+        # The same file restores again as a second session; a key restores it once.
+        assert b.restore_session(data, root=str(b_work)).id != restored.id
+        keyed = b.restore_session(data, root=str(b_work), key="talk-1")
+        assert b.restore_session(data, root=str(b_work), key="talk-1").id == keyed.id
+
+        # Reimport: the session that B continued goes back to A and continues there.
+        back = a.restore_session(restored.export(), root=str(a_work))
+        seen["now"] = a_requests
+        assert len(back.turns()) == 4
+        assert _finish(back, "follow-up-on-a: which word?") == "completed"
+        assert _asked_with(a_requests, "follow-up-on-a", "ORCA-4127")
+        assert _asked_with(a_requests, "follow-up-on-a", "follow-up-on-b")

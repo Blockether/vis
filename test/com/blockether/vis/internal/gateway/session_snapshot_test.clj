@@ -105,6 +105,12 @@
            (f store))
          (finally (ps/db-close! store)))))
 
+(defn- on
+  "Call `f` with `store` as the gateway store: one store stands for one computer."
+  [store f]
+  (with-redefs [lp/db-info (constantly store)]
+    (f)))
+
 (defdescribe
   session-snapshot-test
   (describe
@@ -155,6 +161,81 @@
     (it "answers nil for an unknown session"
         (with-store (fn [_store]
                       (expect (nil? (state/export-session (str (random-uuid)))))))))
+  (describe
+    "another machine"
+    (it
+      "restores every turn state into a separate store and lists the session first"
+      (let [source
+            (ps/db-open! :memory)
+
+            target
+            (ps/db-open! :memory)]
+
+        (try (let [sid
+                   (on source #(session! source "Durable talk"))
+
+                   data
+                   (on source
+                       (fn []
+                         (doseq [[request status] [["remember ORCA-4127" :success]
+                                                   ["slow" :cancelled] ["broken" :error]
+                                                   ["still running" :running]]]
+                           (turn! source sid request status))
+                         ;; A week-old conversation: its turns are older than any work on the target.
+                         (jdbc/execute! (:datasource source)
+                                        ["UPDATE session_turn_soul SET created_at = 1000"])
+                         (state/export-session sid)))
+
+                   fresh
+                   (on target #(session! target "Fresh work"))]
+
+               (on target #(turn! target fresh "today" :success))
+               (let [new-id (on target #(get (state/import-session! data {}) "id"))]
+                 (expect (= [:done :interrupted :error :interrupted]
+                            (mapv :status (ps/db-list-session-turns target new-id))))
+                 (expect (= [new-id fresh]
+                            (on target
+                                #(mapv (fn [row]
+                                         (get row "id"))
+                                       (:sessions (state/list-sessions-page {:limit 10}))))))))
+             (finally (ps/db-close! source) (ps/db-close! target)))))
+    (it
+      "exports a restored session again and records the session that it came from"
+      (let [stores
+            (vec (repeatedly 3 #(ps/db-open! :memory)))
+
+            [a b c]
+            stores]
+
+        (try (let [sid
+                   (on a #(session! a "Durable talk"))
+
+                   _
+                   (on a #(turn! a sid "remember ORCA-4127" :success))
+
+                   on-b
+                   (on b
+                       #(get (state/import-session! (on a
+                                                        (fn []
+                                                          (state/export-session sid)))
+                                                    {})
+                             "id"))
+
+                   _
+                   (on b #(turn! b on-b "continued on b" :success))
+
+                   on-c
+                   (on c
+                       #(get (state/import-session! (on b
+                                                        (fn []
+                                                          (state/export-session on-b)))
+                                                    {})
+                             "id"))]
+
+               (expect (= ["remember ORCA-4127" "continued on b"]
+                          (mapv :user-request (ps/db-list-session-turns c on-c))))
+               (expect (= on-b (get (:imported-from (ps/db-get-session c on-c)) "session_id"))))
+             (finally (run! ps/db-close! stores))))))
   (describe
     "children and Council"
     (it

@@ -6688,9 +6688,11 @@
   (->epoch-ms (or (get session "modified_at") (get session "created_at"))))
 
 (defn- record-recency-ms
-  "`session-recency-ms` from the cheap record and grouped turn stats."
+  "`session-recency-ms` from the cheap record and grouped turn stats. A restored or forked
+   session copies older turns, so its claim time counts as recent activity (#405)."
   ^long [record st]
-  (->epoch-ms (or (:latest-turn-at st) (:created-at record))))
+  (max (->epoch-ms (or (:latest-turn-at st) (:created-at record)))
+       (->epoch-ms (:claimed-at record))))
 
 (def ^:private favorite-band
   "Starred. The one piece of ordering a HUMAN typed in themselves, so it outranks

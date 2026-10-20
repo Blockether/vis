@@ -1587,6 +1587,8 @@
            :version (:version row)
            :fork-count (or (:fork_count row) 0)
            :created-at (->date (:created_at row))
+           ;; When the session became a conversation here: a restore or a fork sets it.
+           :claimed-at (->date (:claimed_at row))
            :owner-id (:owner_id row)
            :project-id (->uuid (:project_id row))
            :project-position (:project_position row)
@@ -1599,10 +1601,10 @@
            :favorite-rank (:favorite_rank row)
            :archived-at (->date (:archived_at row))})
         (query! db-info
-                {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
-                          :cs.project_id :cs.project_position :cs.group_id :cs.favorite_rank
-                          :cs.archived_at :cs.goal [:p.name :project_name] [:s.title :state_title]
-                          :s.version
+                {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.claimed_at
+                          :cs.owner_id :cs.project_id :cs.project_position :cs.group_id
+                          :cs.favorite_rank :cs.archived_at :cs.goal [:p.name :project_name]
+                          [:s.title :state_title] :s.version
                           [{:select [[[:count :*]]]
                             :from [[:session_state :child]]
                             :where [:and [:= :child.session_soul_id :cs.id]
