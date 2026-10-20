@@ -129,7 +129,12 @@
 
                                 (= event :scan)
                                 (update-in [:scans (:reason data) (:status data)] (fnil inc 0)))))
-  (tel/log! {:level (if (#{:acquire :reuse :release :invalidate} event) :debug :info)
+  ;; A successful rescan after a write and the per-lease events repeat on every edit.
+  (tel/log! {:level (if (or (#{:create :close :evict} event)
+                            (and (= :scan event)
+                                 (or (= :initial (:reason data)) (= :failed (:status data)))))
+                      :info
+                      :debug)
              :id ::lifecycle
              :data (assoc data :event event)}
             "FFF index lifecycle"))

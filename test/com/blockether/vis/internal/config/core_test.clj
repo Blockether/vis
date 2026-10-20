@@ -1715,6 +1715,50 @@
                  (expect (= :daily (:interval config/diagnostic-log-options)))
                  (expect (= 14 (:max-num-intervals config/diagnostic-log-options)))))
 
+;; Regression: the Telemere file handler opened its file at installation, so every CLI
+;; run that logged nothing left an empty `vis-*.log` and `.problems.jsonl` behind.
+(defdescribe
+  diagnostic-file-handler-test
+  (it "creates its file only at the first signal and writes lines without the host name"
+      (let [dir
+            (Files/createTempDirectory "vis-log-handler"
+                                       (make-array java.nio.file.attribute.FileAttribute 0))
+
+            path
+            (str (.resolve dir "process.log"))
+
+            handler
+            (config/diagnostic-file-handler {:path path})
+
+            signal
+            (tel/with-signal (tel/log! {:level :info :id ::handler-probe} "probe message"))
+
+            host
+            (get-in signal [:host :name])]
+
+        (try (expect (not (.exists (io/file path))))
+             (handler signal)
+             (handler)
+             (let [line (slurp path)]
+               (expect (str/includes? line "probe message") line)
+               (expect (str/includes? line "INFO") line)
+               (expect (not (str/includes? line " LOG ")) line)
+               (expect (or (nil? host) (not (str/includes? line (str host)))) line))
+             (finally (doseq [f (reverse (file-seq (.toFile dir)))]
+                        (io/delete-file f true))))))
+  (it "stops without creating a file when no signal arrived"
+      (let [dir
+            (Files/createTempDirectory "vis-log-handler"
+                                       (make-array java.nio.file.attribute.FileAttribute 0))
+
+            path
+            (str (.resolve dir "problems.jsonl"))]
+
+        (try ((config/problem-log-handler path))
+             (expect (not (.exists (io/file path))))
+             (finally (doseq [f (reverse (file-seq (.toFile dir)))]
+                        (io/delete-file f true)))))))
+
 ;; Regression: System/out and System/err kept one descriptor on the log file. A rotation
 ;; renamed and deleted that file, so every later print went to a deleted inode.
 (defdescribe

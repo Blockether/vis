@@ -180,8 +180,7 @@
   ^:dynamic
   ^{:doc
     "Test seam for the diagnostic log directory. `nil` (production) resolves to
-                 `~/.vis/logs`, mirroring `internal.paths/logs-dir` — the location is a
-                 fixed contract shared with the sandbox grant, not a configurable."}
+                 `internal.paths/logs-dir`: the `vis.logs.dir` property, else `~/.vis/logs`."}
   *logs-home*
   nil)
 
@@ -209,7 +208,7 @@
   ^File [^String override segs]
   (if override (io/file override) (apply io/file (System/getProperty "user.home") ".vis" segs)))
 
-(defn- logs-dir ^File [] (home-dir *logs-home* ["logs"]))
+(defn- logs-dir ^File [] (if *logs-home* (io/file *logs-home*) (io/file (paths/logs-dir))))
 
 (defn- cache-dir ^File [^String sub] (io/file (home-dir *cache-home* ["cache"]) sub))
 

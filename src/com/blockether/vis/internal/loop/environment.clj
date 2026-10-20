@@ -1301,7 +1301,7 @@
 
     (when (mem-log-enabled?)
       (tel/log!
-        {:level :info
+        {:level (if (or (pos? (long total)) pressure?) :info :debug)
          :id ::env-reaper-sweep
          :data {:evicted total
                 :ttl-evicted ttl-evicted

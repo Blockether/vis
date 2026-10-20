@@ -92,6 +92,26 @@
    :max-num-intervals 14
    :gzip-archives? true})
 
+(def ^:private format-diagnostic-signal (tel/format-signal-fn))
+
+(defn diagnostic-log-line
+  "Text line for a diagnostic log signal: Telemere's format without the host name,
+   and without the kind of a plain `log!` signal. Each process writes its own file
+   on one host, so these values repeat in each line."
+  [signal]
+  (format-diagnostic-signal (cond-> (dissoc signal :host)
+                              (= :log (:kind signal))
+                              (dissoc :kind))))
+
+(defn diagnostic-file-handler
+  "Telemere file handler over `diagnostic-log-options` and `opts` that writes
+   `diagnostic-log-line` text. It creates the file at the first signal, so a
+   process that logs nothing leaves no empty file."
+  [opts]
+  (let [handler (delay (tel/handler:file
+                         (merge diagnostic-log-options {:output-fn diagnostic-log-line} opts)))]
+    (fn ([] (when (realized? handler) (@handler))) ([signal] (@handler signal)))))
+
 (def tty-in (delay (FileInputStream. "/dev/tty")))
 
 (def ^:private ^"[B" sync-update-begin
@@ -298,11 +318,10 @@
   (str/replace (log-path) #"\.log$" ".problems.jsonl"))
 
 (defn problem-log-handler
-  "Telemere file handler that appends `problem-log-line` rows to `path`."
+  "Telemere file handler that appends `problem-log-line` rows to `path`. It creates
+   the file at the first warning or error."
   [path]
-  (tel/handler:file (assoc diagnostic-log-options
-                      :path path
-                      :output-fn problem-log-line)))
+  (diagnostic-file-handler {:path path :output-fn problem-log-line}))
 
 (defn install-problem-log!
   "Install the `:file/problems` handler for warnings and errors. Idempotent: the same
@@ -396,9 +415,7 @@
   ;; here (rolling, sized, retention-aware); drop the boot handler so only one
   ;; writer remains.
   (tel/remove-handler! :file)
-  (tel/add-handler! :file/vis
-                    (tel/handler:file (assoc diagnostic-log-options :path (log-path)))
-                    {:min-level :debug})
+  (tel/add-handler! :file/vis (diagnostic-file-handler {:path (log-path)}) {:min-level :debug})
   (install-problem-log!)
   (tel/call-on-shutdown! (fn []
                            (tel/stop-handlers!))))
@@ -426,9 +443,7 @@
   ;; doubles every signal. Drop it before our `:file/vis` handler
   ;; takes over as the single writer.
   (tel/remove-handler! :file)
-  (tel/add-handler! :file/vis
-                    (tel/handler:file (assoc diagnostic-log-options :path (log-path)))
-                    {:min-level :debug})
+  (tel/add-handler! :file/vis (diagnostic-file-handler {:path (log-path)}) {:min-level :debug})
   (install-problem-log!))
 
 (defn shutdown!

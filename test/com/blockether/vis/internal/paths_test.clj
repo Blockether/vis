@@ -91,13 +91,22 @@
                  (expect (nil? (paths/shell-path nil "/home/u")))))
 
 (defdescribe logs-dir-test
-             (it "is a DEDICATED subdir, never ~/.vis itself"
+             (it "defaults to a DEDICATED subdir, never ~/.vis itself"
                  ;; The file tools and the Python sandbox get always-on access to logs; that
                  ;; must not expose config.edn, the session DB, or gateway tokens.
-                 (let [d (paths/logs-dir)]
-                   (expect (str/ends-with? (paths/unixify d) "/.vis/logs"))
-                   (expect (str/starts-with? d (System/getProperty "user.home")))
-                   (expect (not= d (str (System/getProperty "user.home") "/.vis")))))
+                 (let [previous (System/clearProperty "vis.logs.dir")]
+                   (try (let [d (paths/logs-dir)]
+                          (expect (str/ends-with? (paths/unixify d) "/.vis/logs"))
+                          (expect (str/starts-with? d (System/getProperty "user.home")))
+                          (expect (not= d (str (System/getProperty "user.home") "/.vis"))))
+                        (finally (when previous (System/setProperty "vis.logs.dir" previous))))))
+             (it "follows the vis.logs.dir property so a test JVM keeps its logs in target/"
+                 (let [previous (System/getProperty "vis.logs.dir")]
+                   (try (System/setProperty "vis.logs.dir" "target/vis-logs-override")
+                        (expect (= "target/vis-logs-override" (paths/logs-dir)))
+                        (finally (if previous
+                                   (System/setProperty "vis.logs.dir" previous)
+                                   (System/clearProperty "vis.logs.dir"))))))
              (it "creates the directory and returns the same path"
                  (let [d (paths/ensure-logs-dir!)]
                    (expect (= (paths/logs-dir) d))

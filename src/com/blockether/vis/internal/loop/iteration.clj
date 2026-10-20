@@ -3341,7 +3341,7 @@
                                         {"turn" (:turn cursor) "iter" (:iter cursor) "next_form" 1})
                                       forms-vec))))
           _ (when ctx-atom-ref
-              (tel/log! {:level :info
+              (tel/log! {:level :debug
                          :id ::iter-end-ctx
                          :data
                          {:iteration iteration :cursor cursor :pinned-forms (count forms-vec)}}

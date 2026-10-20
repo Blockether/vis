@@ -2677,7 +2677,7 @@
     (scoped/engine-setting! ext)
     (when-not (contains? @extension-registry ns-sym) (swap! extension-order conj ns-sym))
     (swap! extension-registry assoc ns-sym ext)
-    (tel/log! {:level :info
+    (tel/log! {:level :debug
                :id ::register-global
                :data {:ext ns-sym
                       :symbols (count (ext-symbols ext))

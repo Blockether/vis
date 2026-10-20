@@ -3284,12 +3284,23 @@
 
 (def original-stdout tty/original-stdout)
 
+(def ^:private format-log-signal (tel/format-signal-fn))
+
+(defn- log-line
+  "Telemere text line without the host name, and without the kind of a plain
+   `log!` signal: the same line as the engine's diagnostic logs."
+  [signal]
+  (format-log-signal (cond-> (dissoc signal :host)
+                       (= :log (:kind signal))
+                       (dissoc :kind))))
+
 (defn init!
   "The standalone client owns its file sink; no engine init runs in this process.
    A bounded dropping queue keeps diagnostic IO off the input and render threads."
   []
   (tel/add-handler! :file/tui
                     (tel/handler:file {:path (paths/log-file)
+                                       :output-fn log-line
                                        :interval :daily
                                        :max-file-size 8000000
                                        :max-num-parts 8

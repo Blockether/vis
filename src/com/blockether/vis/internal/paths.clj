@@ -120,11 +120,13 @@
               (str "'" (str/replace word "'" "'\\''") "'")))))))
 
 (defn logs-dir
-  "Root for diagnostic logs and reports: `~/.vis/logs`. Writers use UTC date
-   directories below it. This dedicated root is accessible to the file tools and
-   sandbox without exposing configuration, session databases or gateway tokens."
+  "Root for diagnostic logs and reports: the `vis.logs.dir` system property, else
+   `~/.vis/logs`. Writers use UTC date directories below it. This dedicated root
+   is accessible to the file tools and sandbox without exposing configuration,
+   session databases or gateway tokens. The `:test` alias points it at `target/`."
   ^String []
-  (str (System/getProperty "user.home") "/.vis/logs"))
+  (or (not-empty (System/getProperty "vis.logs.dir"))
+      (str (System/getProperty "user.home") "/.vis/logs")))
 
 (defn ensure-logs-dir!
   "Create `~/.vis/logs` (and parents) when absent; return its path string.

@@ -21,7 +21,7 @@
         ;; Names the wrong quote or bracket when Python refuses a `python_execution` block.
         com.blockether/parinferish {:mvn/version "0.2.4"}
         com.blockether/rift {:mvn/version "0.0.10-11"}
-        com.blockether/svar {:mvn/version "0.7.204"}
+        com.blockether/svar {:mvn/version "0.7.205"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
         com.blockether/vis-python-runtime {:git/sha "81a8da8008d456ca961d36c12df58ace99420150"
@@ -108,14 +108,15 @@
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
   ;; The whole-repo suite. :extra-paths is the classpath, the bare paths after `lazytest.main` are
   ;; what Lazytest walks (`dev` is classpath-only); keep them in step. --hook bans remote HTTP.
-  ;; The -D paths keep drafts and the default session DB out of the real ~/.vis: a test must
-  ;; never open the running gateway's database.
+  ;; The -D paths keep drafts, diagnostic logs and the default session DB out of the real ~/.vis:
+  ;; a test must never open the running gateway's database.
   :test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}}
          :extra-paths ["test" "dev"]
          :jvm-opts ["-Xmx2g" "-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                     "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
                     "-Dvis.drafts.dir=target/vis-drafts-test" "-Dvis.db.path=target/vis-test.mdb"
-                    "-Dvis.image-descriptions.dir=target/vis-image-descriptions-test"]
+                    "-Dvis.image-descriptions.dir=target/vis-image-descriptions-test"
+                    "-Dvis.logs.dir=target/vis-logs-test"]
          :main-opts ["-m" "lazytest.main" "--hook"
                      "com.blockether.vis.test-network-guard/no-network" "test"]}
   ;; What only `target/vis` can answer, after `clojure -T:build native`; separate so it fails

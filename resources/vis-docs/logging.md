@@ -32,7 +32,9 @@ on the gateway machine. Client-side diagnostics use the client's account and
 machine.
 
 Paths below are relative to `~/.vis/logs/YYYY-MM-DD/`. Angle brackets mark values
-that change between runs.
+that change between runs. A process creates its log file at its first message, so
+a run that logs nothing leaves no file. To use another directory, start the JVM with
+`-Dvis.logs.dir=<path>`. The test suites use this to keep their logs in `target/`.
 
 | What you need | Path | Format |
 | --- | --- | --- |
@@ -135,8 +137,9 @@ by `turn_id` or `query_id`.
 ## Python runtime
 
 Session sandboxes and trusted Python extensions run in separate worker processes. Each worker
-writes its output to `pyext-<worker-id>/worker.log` while it runs. Python `print()` output comes
-back with the execution result. Extension `vis.log` messages go to the gateway log.
+writes its output to `pyext-<worker-id>/worker.log` while it runs. When a worker stops with only
+empty files, Vis deletes its directory. Python `print()` output comes back with the execution
+result. Extension `vis.log` messages go to the gateway log.
 
 A source build without a packaged Python worker runs the worker on the JVM. That worker writes
 fatal-error reports beside `worker.log`, and heap dumps if you enable them. Operating-system crash

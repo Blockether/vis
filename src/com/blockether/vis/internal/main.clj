@@ -2961,9 +2961,7 @@
     (config/route-svar-logs!)
     (tel/set-min-level! (if debug? :debug :info))
     ;; File handler ALWAYS on, so post-mortem reads always have data.
-    (try (tel/add-handler! :file
-                           (tel/handler:file (assoc config/diagnostic-log-options :path path))
-                           {:min-level :debug})
+    (try (tel/add-handler! :file (config/diagnostic-file-handler {:path path}) {:min-level :debug})
          (catch Throwable _ nil))
     ;; Console handler: re-add only when the user asked for verbosity.
     ;; Boot-time noise is already gone (registry.clj removed it during

@@ -59,6 +59,37 @@
                         (doseq [^File file (reverse (file-seq directory))]
                           (Files/deleteIfExists (.toPath file)))))))))
 
+(defdescribe worker-run-directory-exit-cleanup-test
+             (it "removes an empty run directory when the worker exits on its own"
+                 ;; Regression: only `stop-worker!` pruned, so a worker that died or outlived the
+                 ;; 200 ms stop wait left an empty pyext-* directory behind.
+                 (let [directory
+                       (.getCanonicalFile (.toFile (Files/createTempDirectory
+                                                     "vis-worker-exit-"
+                                                     (make-array FileAttribute 0))))
+
+                       key
+                       (worker/extension-worker-key (str (java.util.UUID/randomUUID)))]
+
+                   (try (with-redefs [paths/log-date-dir (fn [& _]
+                                                           (str (io/file directory "2026-10-20")))]
+                          (worker/exec! key runtime/default-session "1")
+                          (let [^File log (:log (get @@#'worker/workers key))
+                                ^Process process (:process (get @@#'worker/workers key))
+                                run-directory (.getParentFile log)]
+
+                            (expect (.isDirectory run-directory))
+                            (.destroyForcibly process)
+                            (.waitFor process)
+                            (loop [attempt 0]
+                              (when (and (< attempt 200) (.exists run-directory))
+                                (Thread/sleep 10)
+                                (recur (inc attempt))))
+                            (expect (not (.exists run-directory)))))
+                        (finally (worker/stop-worker! key)
+                                 (doseq [^File file (reverse (file-seq directory))]
+                                   (Files/deleteIfExists (.toPath file))))))))
+
 (defdescribe
   worker-process-output-keeps-start-date-test
   (doseq [jvm?

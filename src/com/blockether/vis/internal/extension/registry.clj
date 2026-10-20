@@ -327,7 +327,7 @@
 
     (reset! command-registry (let [stripped (vec (remove #(= k (registry-key %)) cur))]
                                (conj stripped c)))
-    (tel/log! {:level :info
+    (tel/log! {:level :debug
                :id ::register-cmd
                :data {:name (:cmd/name c) :parent (:cmd/parent c)}
                :msg (str "Command '"

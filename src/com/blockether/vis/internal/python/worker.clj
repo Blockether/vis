@@ -280,6 +280,15 @@
           (.delete file))
         (.delete dir)))))
 
+(defn- prune-run-dir-on-exit!
+  "Prune the run directory on every exit of `process`, also a crash or a forced
+   kill after `stop-worker!` returned."
+  [^Process process ^File log]
+  (.thenRun (.onExit process)
+            ^Runnable
+            (fn []
+              (try (prune-empty-run-dir! process log) (catch Throwable _ nil)))))
+
 (defn configure!
   "Register the live session policy used whenever worker `k` starts or restarts.
    Must happen before the first interpreter request; a missing policy fails closed.
@@ -472,6 +481,7 @@
                   policy
                   {:extra-environment extra :merge-stderr? true})
                 _ (drain-output! process log)
+                _ (prune-run-dir-on-exit! process log)
                 accepted (await-worker-connection server process)]
 
             (when-not accepted
