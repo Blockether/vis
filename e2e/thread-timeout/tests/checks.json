@@ -1,0 +1,70 @@
+{
+  "want": {
+    "client.py": [
+      "def _get(path, timeout=DEFAULT_TIMEOUT):",
+      "def _post(path, body, timeout=DEFAULT_TIMEOUT):",
+      "def _delete(path, timeout=DEFAULT_TIMEOUT):",
+      "def get_user(user_id, timeout=DEFAULT_TIMEOUT):",
+      "def list_orders(user_id, timeout=DEFAULT_TIMEOUT):",
+      "def create_order(user_id, items, timeout=DEFAULT_TIMEOUT):",
+      "def cancel_order(order_id, timeout=DEFAULT_TIMEOUT):",
+      "def user_summary(user_id, timeout=DEFAULT_TIMEOUT):",
+      "def reorder(order_id, user_id, timeout=DEFAULT_TIMEOUT):",
+      "return _request(\"GET\", path, timeout=timeout)",
+      "return _request(\"POST\", path, body, timeout=timeout)",
+      "return _request(\"DELETE\", path, timeout=timeout)",
+      "return _get(f\"/users/{user_id}\", timeout=timeout)",
+      "return _get(f\"/users/{user_id}/orders\", timeout=timeout)",
+      "return _post(\"/orders\", {\"user\": user_id, \"items\": items}, timeout=timeout)",
+      "return _delete(f\"/orders/{order_id}\", timeout=timeout)",
+      "user = get_user(user_id, timeout=timeout)",
+      "return create_order(user_id, [o for o in orders if o == order_id], timeout=timeout)",
+      "orders = list_orders(user_id, timeout=timeout)",
+      "def _cache_get(key):",
+      "def format_user(user):",
+      "def parse_order(raw):"
+    ],
+    "service.py": [
+      "def profile_page(user_id, timeout=DEFAULT_TIMEOUT):",
+      "def repeat_order(order_id, user_id, timeout=DEFAULT_TIMEOUT):",
+      "def cancel(order_id, timeout=DEFAULT_TIMEOUT):",
+      "summary = user_summary(user_id, timeout=timeout)",
+      "return reorder(order_id, user_id, timeout=timeout)",
+      "return cancel_order(order_id, timeout=timeout)",
+      "DEFAULT_TIMEOUT",
+      "def display_name(user):"
+    ]
+  },
+  "wantnot": {
+    "client.py": [
+      "def _get(path):",
+      "def _post(path, body):",
+      "def _delete(path):",
+      "def get_user(user_id):",
+      "def list_orders(user_id):",
+      "def create_order(user_id, items):",
+      "def cancel_order(order_id):",
+      "def user_summary(user_id):",
+      "def reorder(order_id, user_id):",
+      "return _request(\"GET\", path)",
+      "return _request(\"POST\", path, body)",
+      "return _request(\"DELETE\", path)",
+      "return _get(f\"/users/{user_id}\")",
+      "return _get(f\"/users/{user_id}/orders\")",
+      "return _post(\"/orders\", {\"user\": user_id, \"items\": items})",
+      "return _delete(f\"/orders/{order_id}\")",
+      "user = get_user(user_id)\n",
+      "return create_order(user_id, [o for o in orders if o == order_id])",
+      "list_orders(user_id)"
+    ],
+    "service.py": [
+      "def profile_page(user_id):",
+      "def repeat_order(order_id, user_id):",
+      "def cancel(order_id):",
+      "summary = user_summary(user_id)\n",
+      "return reorder(order_id, user_id)\n",
+      "return cancel_order(order_id)\n"
+    ]
+  },
+  "max_patch_calls_per_file": 1
+}

@@ -141,7 +141,7 @@ A trial passes only when all its checks pass. These are the checks that most tas
 | `max_total_output_chars` | The tool output of the run stayed below this size. |
 
 The grader always checks that the agent finished without an error. The `e2e/` folder of the Vis
-repository has 41 tasks that use these checks. Read them for more examples.
+repository has 42 tasks that use these checks. Read them for more examples.
 
 To test a project with its own test suite, write a standard Harbor verifier instead. Read the
 Harbor guide [Create a task](https://docs.harborframework.com/tutorials/create-a-task).
