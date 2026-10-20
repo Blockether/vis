@@ -392,6 +392,6 @@ Models:
   - Pass, with the session id: E1 `78cecc9e`, E2 `fee47c43`, E3 `e90d1231`, E4 `f86a9cc9`, E5 `d7f0b018`, E6 `5dac4944`, E7 `d8788499`, E9 `325a0d8d`, E10 `46c171f2`, E11 `c6b832c1`, E12 `c39885e0`, E13 `a848eb84`, E14 `5d82e7c3`, E15 `74c722d1`, E16 `5977f8d4`, E17 `161e6912`, E18 `e4f31596`.
   - E8: `test-native/` covers it against the built image; the server run did not repeat it.
   - E4 and E16 passed on the second run. On the first run the model answered "Acknowledged" without the task. E9 passed alone; in parallel, another test added a session to its count.
-  - E13: the SDK `council.resume` on an idle restored parent gives `inactive-session`. The resume works from a turn of the parent, like `spawn`.
+  - E13: decided as designed. The SDK `council.resume` on an idle restored parent gives `inactive-session`, like `spawn`. The resume works from a turn of the parent. The `Council.resume` docstring states this rule.
   - E19: decided for the live catalog. `create_session` refuses an unknown provider with `unknown-provider` and makes no session (`server_test`, "pins the given provider and model"). The model name stays free, because a provider can serve a model that the cached catalog does not list. `model-not-allowed` works.
   - No secret value from the auth files, the gateway token or the registry is in the journals, logs or snapshots.

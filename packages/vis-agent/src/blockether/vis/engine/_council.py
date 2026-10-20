@@ -320,8 +320,9 @@ class Council:
     ) -> SubagentRecord:
         """Give a finished subagent a follow-up task in its own session, then wait for it.
 
-        The child keeps its whole context. A child without iterations left needs
-        ``extend`` first. A running child needs ``wait``.
+        The parent must be active, as for ``spawn``: an idle parent gets
+        ``inactive-session``. The child keeps its whole context. A child without
+        iterations left needs ``extend`` first. A running child needs ``wait``.
         """
         body = {"session_id": session_id, "task": task, "timeout_secs": timeout_secs}
         return self._records("/resume", body, "resume", timeout_secs)[0]
