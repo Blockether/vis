@@ -197,14 +197,21 @@
 
               worker
               (cancellation/worker-future "virtual-worker-fixture"
-                                          #(do (deliver ready true) (.await gate)))
+                                          #(do (deliver ready (Thread/currentThread))
+                                               (.await gate)))
 
               worker-entry
               (fn [report]
                 (some #(when (= "virtual-worker-fixture" (get % "name")) %)
                       (get report "threads")))]
 
-          (try (expect (true? (deref ready 2000 false)))
+          ;; A dump taken before the worker parks can miss it, so wait for the park.
+          (try (let [^Thread thread (deref ready 2000 nil)]
+                 (expect (some? thread))
+                 (loop [attempts 0]
+                   (when (and (not= Thread$State/WAITING (.getState thread)) (< attempts 200))
+                     (Thread/sleep 10)
+                     (recur (inc attempts)))))
                (let [dumped (wire/parse-json (slurp (:path (diagnostics/capture!
                                                              {:session-id "session"
                                                               :turn-id "dumped"

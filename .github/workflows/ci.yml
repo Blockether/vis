@@ -148,6 +148,12 @@ jobs:
           uv pip install --python "$RUNNER_TEMP/vis-project-pytest/bin/python" pytest
           "$RUNNER_TEMP/vis-project-pytest/bin/python" -m pytest --version
           echo "$RUNNER_TEMP/vis-project-pytest/bin" >> "$GITHUB_PATH"
+      # The parallel runner orders namespaces by the times of the previous run.
+      - uses: actions/cache@v6
+        with:
+          path: target/test-parallel/timings.edn
+          key: test-timings-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: test-timings-${{ runner.os }}-
       - name: Run test suite
         env:
           # These are hard CI contracts, not best-effort coverage: macOS must
@@ -159,7 +165,8 @@ jobs:
           # less memory than Linux, whose default quarter-RAM heap also exhausted.
           # Our own Apple-silicon runner has 36 GiB, so it takes the Linux size.
           JAVA_TOOL_OPTIONS: ${{ env.JAVA_TOOL_OPTIONS }} ${{ (runner.os == 'macOS' && runner.environment == 'github-hosted') && '-Xmx5g' || '-Xmx10g' }}
-        run: clojure -M:test
+        # Each worker is a separate JVM with its own paths: tests change process-wide state.
+        run: clojure -M:test:test-parallel
       - name: Run standalone TUI suite
         working-directory: apps/vis-tui
         run: clojure -X:deps prep && clojure -M:test

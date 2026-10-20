@@ -2464,37 +2464,43 @@
   ;; A run the human stops LONG after the block returned: that block's collector was
   ;; drained the instant it returned, so a row filed into it is listed nowhere and the
   ;; picture the human watched is lost at the moment they stop it.
-  (it "files a stop that lands after the block ended onto the iteration instead"
-      (recorded
-        (fn []
-          (let [sink
-                (atom [])
+  (it
+    "files a stop that lands after the block ended onto the iteration instead"
+    (recorded
+      (fn []
+        (let [sink
+              (atom [])
 
-                filed
-                (atom [])
+              filed
+              (atom [])
 
-                view
-                (binding [mpl/*attachment-sink* sink]
-                  (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))
+              view
+              (binding [mpl/*attachment-sink* sink]
+                (hi/open-live! (live-spec {:id "now" :type "status" :text "Polling…"})))
 
-                ;; The block ENDS: its iteration is nameable now, and from here the
-                ;; record belongs to it.
-                adopted
-                (hi/adopt-open-views! (:session-id view) "iteration-7")
+              ;; The block ENDS: its iteration is nameable now, and from here the
+              ;; record belongs to it.
+              adopted
+              (hi/adopt-open-views! (:session-id view) "iteration-7")
 
-                result
-                (try (hi/set-late-artifact-filer! (fn [home att]
-                                                    (swap! filed conj [home att])
-                                                    {:id "row-1"}))
-                     @(future (hi/interrupt-live! (:id view) "enough"))
-                     (finally (hi/set-late-artifact-filer! nil)))]
+              ;; Restore the filer that the gateway wiring installed, not nil: later
+              ;; tests in this JVM read it.
+              previous
+              @(var-get #'hi/late-artifact-filer)
 
-            (expect (= [(:id view)] adopted))
-            (expect (= :interrupted (:reason result)))
-            (expect (empty? @sink) "the collector the block already drained is never written again")
-            (expect (= ["iteration-7"] (mapv first @filed)))
-            (expect (str/ends-with? (:filename (second (first @filed))) ".live.ndjson"))
-            (expect (string? (:artifact-id result))))))))
+              result
+              (try (hi/set-late-artifact-filer! (fn [home att]
+                                                  (swap! filed conj [home att])
+                                                  {:id "row-1"}))
+                   @(future (hi/interrupt-live! (:id view) "enough"))
+                   (finally (hi/set-late-artifact-filer! previous)))]
+
+          (expect (= [(:id view)] adopted))
+          (expect (= :interrupted (:reason result)))
+          (expect (empty? @sink) "the collector the block already drained is never written again")
+          (expect (= ["iteration-7"] (mapv first @filed)))
+          (expect (str/ends-with? (:filename (second (first @filed))) ".live.ndjson"))
+          (expect (string? (:artifact-id result))))))))
 
 (defdescribe
   live-view-holds-the-watchers-wall-test

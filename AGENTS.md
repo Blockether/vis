@@ -206,6 +206,7 @@ included:
 - Group cases with `describe`; an `it` inside another `it` never runs.
 - Use `lazytest.core/set-ns-context!` and `around-each`, not `use-fixtures`.
 - Run the affected namespaces in a clean JVM with `clojure -M:test`, optionally with `--namespace my.ns-test` or `--var my.ns-test/my-test`.
+- Run the full suite with `clojure -M:test:test-parallel`. It runs the namespaces in separate worker JVMs, so a test can change process-wide state.
 - Passing JVM tests or a successful native build do not prove that the binary runs. Interop changes need the relevant `test-native/` coverage against the built image (`-M:test-native`).
 - Reachability metadata is inside jars under `META-INF/native-image/`; `native_reachability_test` pins the engine metadata.
 - Read `.graalvm-version` before you change the locked GraalVM CE pin, and use `bin/require-graalvm` for setup. Never substitute Oracle GraalVM. Companion Android Gradle uses stock JDK 21.

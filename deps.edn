@@ -119,6 +119,8 @@
                     "-Dvis.logs.dir=target/vis-logs-test"]
          :main-opts ["-m" "lazytest.main" "--hook"
                      "com.blockether.vis.test-network-guard/no-network" "test"]}
+  ;; The same suite in a pool of worker JVMs: `clojure -M:test:test-parallel [--workers N]`.
+  :test-parallel {:main-opts ["-m" "com.blockether.vis.test-parallel"]}
   ;; What only `target/vis` can answer, after `clojure -T:build native`; separate so it fails
   ;; loudly when the binary is missing. No network hook: the binary is a separate process.
   :test-native {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.1.0"}}
