@@ -2998,6 +2998,7 @@
                                                                        :output #{:text}}}]}
                                                {:id :beta :models [{:name "beta-local"}]}])
          #'providers/default-selection (constantly {:provider-id :alpha :model "alpha-large"})
+         #'providers/provider-status-current? (constantly true)
          #'providers/provider-status-cached (fn [provider]
                                               {:is-authenticated (= :alpha (:id provider))})
          #'providers/provider-limits-safe (fn [provider]
@@ -3039,6 +3040,40 @@
             (expect (true? (get alpha "is_image_input")))
             (expect (nil? (get beta "pricing")))
             (expect (= (get-in alpha ["pricing" "tiers" 0 "input"]) (get cost "input_cost")))))))))
+
+;; Regression, issue #405: a fresh headless gateway had no live verdict yet, so
+;; `GET /v1/models` listed a signed-in OAuth provider with `is_available` false.
+(defdescribe
+  models-handler-checks-providers-without-a-verdict
+  (it
+    "GET /v1/models asks live only providers without a current verdict"
+    (let [probed
+          (atom [])
+
+          cached
+          (atom [])
+
+          fleet
+          [{:id :kept :models [{:name "kept-model"}]} {:id :fresh :models [{:name "fresh-model"}]}]]
+
+      (with-redefs-fn {#'providers/picker-fleet (constantly fleet)
+                       #'providers/default-selection (constantly nil)
+                       #'providers/provider-status-current? (fn [p]
+                                                              (= :kept (:id p)))
+                       #'providers/provider-status (fn [p]
+                                                     (swap! probed conj (:id p))
+                                                     {:is-authenticated true})
+                       #'providers/provider-status-cached (fn [p]
+                                                            (swap! cached conj (:id p))
+                                                            {:is-authenticated false})
+                       #'providers/provider-limits-safe (constantly nil)
+                       #'providers-api/normalized-models :models}
+        (fn []
+          (let [models (get (wire/parse-json (:body (#'providers-api/models-handler {}))) "models")]
+            (expect (= [["kept" false] ["fresh" true]]
+                       (mapv (juxt #(get % "provider") #(get % "is_available")) models))))
+          (expect (= [:fresh] @probed))
+          (expect (= [:kept] @cached)))))))
 
 (defdescribe
   set-session-model-handler-validates-against-the-gateway-fleet

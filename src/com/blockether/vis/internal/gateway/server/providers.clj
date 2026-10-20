@@ -110,7 +110,9 @@
 (defn catalog-models
   "Every model that the pickers show, in fleet order, with price, limits and capabilities.
    Each model carries the limits report of its provider; one report serves all its models.
-   The limits probes run in parallel, and each probe has its own time bound."
+   A provider without a current verdict gets a live status check, so a fresh gateway does
+   not list a signed-in provider as unavailable. The limits and status probes run in
+   parallel, and each probe has its own time bound."
   []
   (let [fleet
         (providers/picker-fleet)
@@ -119,16 +121,22 @@
         (providers/default-selection fleet)
 
         limits
-        (mapv #(future (providers/provider-limits-safe %)) fleet)]
+        (mapv #(future (providers/provider-limits-safe %)) fleet)
 
-    (vec (mapcat (fn [provider limits]
-                   (let [opts {:is-available (true? (:is-authenticated
-                                                      (providers/provider-status-cached provider)))
+        statuses
+        (mapv #(future (if (providers/provider-status-current? %)
+                         (providers/provider-status-cached %)
+                         (providers/provider-status %)))
+              fleet)]
+
+    (vec (mapcat (fn [provider limits status]
+                   (let [opts {:is-available (true? (:is-authenticated @status))
                                :primary primary
                                :limits @limits}]
                      (mapv #(model-object provider % opts) (normalized-models provider))))
                  fleet
-                 limits))))
+                 limits
+                 statuses))))
 
 (defn- models-handler
   [_]
