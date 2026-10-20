@@ -184,7 +184,7 @@ def test_real_http_redirect_never_forwards_credentials():
             pass
 
     with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
-        thread = Thread(target=server.serve_forever, daemon=True)
+        thread = Thread(target=server.serve_forever, args=(0.01,), daemon=True)
         thread.start()
         try:
             client = RoomsClient(

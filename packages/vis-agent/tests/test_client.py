@@ -62,7 +62,7 @@ def endpoint(respond):
         do_GET = do_POST = do_PATCH = do_PUT = do_DELETE = handle_request
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(target=server.serve_forever, args=(0.01,), daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_port}", calls

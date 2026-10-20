@@ -22,39 +22,23 @@
     "required reply model loop"
     ;; #182: a plain thread reply must also resolve the obligation across the Python boundary.
     ;; Session 29ac86ff t4: reading and calculating before a reply must not fail tool iterations.
-    (doseq [first-action
-            [:final :tool :read :research :read-final]
-
-            reply-mode
-            ["reply_to" "thread_id"]]
-
+    ;; The reply mode only selects the publish argument, so the modes alternate over the actions.
+    (doseq [[first-action reply-mode] (map vector
+                                           [:final :tool :read :research :read-final]
+                                           (cycle ["reply_to" "thread_id"]))]
       (let [router
             ;; Exercise reply enforcement with room for the full system/Council prompt.
             (svar/make-router [{:id :lmstudio
                                 :api-key "test"
                                 :base-url "http://127.0.0.1:1234/v1"
                                 :models [{:name "model" :context 200000}]}])
-
-            a
-            (loop-env/create-environment router {:db :memory})
-
-            db
-            (:db-info a)
-
-            b
-            (loop-env/create-environment router {:db db})
-
-            aid
-            (str (:session-id a))
-
-            bid
-            (str (:session-id b))
-
-            calls
-            (atom 0)
-
-            prompts
-            (atom [])]
+            a (loop-env/create-environment router {:db :memory})
+            db (:db-info a)
+            b (loop-env/create-environment router {:db db})
+            aid (str (:session-id a))
+            bid (str (:session-id b))
+            calls (atom 0)
+            prompts (atom [])]
 
         (try
           (doseq [sid [aid bid]]

@@ -65,7 +65,7 @@ def scripted_model():
             self.wfile.write(data)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Model)
-    thread = Thread(target=server.serve_forever, daemon=True)
+    thread = Thread(target=server.serve_forever, args=(0.01,), daemon=True)
     thread.start()
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}/v1"

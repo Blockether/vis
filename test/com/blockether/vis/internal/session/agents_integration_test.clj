@@ -293,7 +293,8 @@
                  (expect (str/includes? refusal "Subagent file grant: write only"))
                  (expect (str/includes? refusal "is outside the writable roots")))
                (finally (loop-env/dispose-environment! child))))
-        (finally (loop-env/dispose-environment! parent))))))
+        (finally (loop-env/dispose-environment! parent)
+                 (run! #(.delete ^java.io.File %) (reverse (file-seq (java.io.File. root)))))))))
 
 (defdescribe
   subagent-file-grant-reaches-a-running-child-test
@@ -370,7 +371,8 @@
                  (expect (= [(str root "/out/**") target]
                             (get-in (agents/info db sid) [:files :write]))))
                (finally (loop-env/dispose-environment! child))))
-        (finally (loop-env/dispose-environment! parent))))))
+        (finally (loop-env/dispose-environment! parent)
+                 (run! #(.delete ^java.io.File %) (reverse (file-seq (java.io.File. root)))))))))
 
 (defdescribe session-route-changes-at-the-next-model-request-test
              (it "session route changes at the next model request"

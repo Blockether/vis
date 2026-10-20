@@ -12,7 +12,7 @@
             [com.blockether.vis.internal.python.project]
             [com.blockether.vis.internal.python.test-runner]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
 (def ^:private python-cli-context #'com.blockether.vis.internal.main/python-cli-context)
 
@@ -75,6 +75,15 @@
   (with-open [walk (java.nio.file.Files/walk dir (make-array java.nio.file.FileVisitOption 0))]
     (doseq [^java.nio.file.Path p (reverse (vec (.toArray (.sorted walk))))]
       (.delete (.toFile p)))))
+
+(def ^:private project-roots
+  "The roots that `write-project!` and `write-files!` made for the running test."
+  (atom []))
+
+;; Delete each throwaway project after its test, so `target/` does not fill up.
+(set-ns-context!
+  [(around-each [f]
+                (try (f) (finally (run! delete-tree! (first (reset-vals! project-roots []))))))])
 
 (defdescribe
   python-cli-test
@@ -436,6 +445,7 @@
    metadata points at. Returns the project root as a `java.io.File`."
   [pyproject dirs]
   (let [root (.toFile (scratch-dir! "vis-python-srclayout-"))]
+    (swap! project-roots conj (.toPath root))
     (doseq [d dirs]
       (.mkdirs (java.io.File. root ^String d)))
     (spit (java.io.File. root "pyproject.toml") pyproject)
@@ -446,6 +456,7 @@
    its metadata points at. Returns the project root as a `java.io.File`."
   [files dirs]
   (let [root (.toFile (scratch-dir! "vis-python-srclayout-"))]
+    (swap! project-roots conj (.toPath root))
     (doseq [d dirs]
       (.mkdirs (java.io.File. root ^String d)))
     (doseq [[name content] files]

@@ -638,54 +638,54 @@
 
 (defdescribe
   approve-origin-test
-  (it
-    "publishes only after restoring all unrelated local states, preserving existing stashes"
-    (doseq [backend
-            [:worktree :rift]
+  (it "publishes only after restoring all unrelated local states, preserving existing stashes"
+      ;; The branch name does not interact with the local state, so the targets alternate:
+      ;; each backend still meets each kind and each target, in half the fixtures.
+      (doseq [backend
+              [:worktree :rift]
 
-            target
-            ["main" "master"]
+              [kind target]
+              (map vector
+                   [:clean :staged :unstaged :partial :untracked :delete :rename]
+                   (cycle ["main" "master"]))]
 
-            kind
-            [:clean :staged :unstaged :partial :untracked :delete :rename]]
+        (with-origin-draft
+          backend
+          target
+          (fn [base origin env draft]
+            (spit (io/file base "saved.txt") "old stash\n")
+            (git! base "stash" "push" "-u" "-m" "user stash")
+            (case kind
+              :clean
+              nil
 
-      (with-origin-draft
-        backend
-        target
-        (fn [base origin env draft]
-          (spit (io/file base "saved.txt") "old stash\n")
-          (git! base "stash" "push" "-u" "-m" "user stash")
-          (case kind
-            :clean
-            nil
+              :untracked
+              (spit (io/file base "local space\nfile.txt") "local\n")
 
-            :untracked
-            (spit (io/file base "local space\nfile.txt") "local\n")
+              :delete
+              (.delete (io/file base "a.txt"))
 
-            :delete
-            (.delete (io/file base "a.txt"))
+              :rename
+              (git! base "mv" "a.txt" "renamed.txt")
 
-            :rename
-            (git! base "mv" "a.txt" "renamed.txt")
+              (do (spit (io/file base "a.txt") "staged\n")
+                  (when (#{:staged :partial} kind) (git! base "add" "a.txt"))
+                  (when (= :partial kind) (spit (io/file base "a.txt") "unstaged\n"))))
+            (spit (io/file (:root draft) "b.txt") "draft\n")
+            (let [before
+                  (local-state base)
 
-            (do (spit (io/file base "a.txt") "staged\n")
-                (when (#{:staged :partial} kind) (git! base "add" "a.txt"))
-                (when (= :partial kind) (spit (io/file base "a.txt") "unstaged\n"))))
-          (spit (io/file (:root draft) "b.txt") "draft\n")
-          (let [before
-                (local-state base)
+                  result
+                  (drafts/approve! env {:workspace-id (:id draft)})]
 
-                result
-                (drafts/approve! env {:workspace-id (:id draft)})]
-
-            (expect (= :approved (:status result)))
-            (expect (true? (:published result)))
-            (expect (= before (local-state base)))
-            (expect (= (:commit result) (git! origin "rev-parse" target)))
-            (when (= :untracked kind)
-              (expect (= "local\n" (slurp (io/file base "local space\nfile.txt")))))
-            (expect (= :nothing-to-approve
-                       (:status (drafts/approve! env {:workspace-id (:id draft)})))))))))
+              (expect (= :approved (:status result)))
+              (expect (true? (:published result)))
+              (expect (= before (local-state base)))
+              (expect (= (:commit result) (git! origin "rev-parse" target)))
+              (when (= :untracked kind)
+                (expect (= "local\n" (slurp (io/file base "local space\nfile.txt")))))
+              (expect (= :nothing-to-approve
+                         (:status (drafts/approve! env {:workspace-id (:id draft)})))))))))
   (it
     "refuses stale origin even when local target has not moved, then accepts explicit synchronization"
     (doseq [backend

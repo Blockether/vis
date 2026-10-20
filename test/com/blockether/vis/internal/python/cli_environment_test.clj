@@ -22,10 +22,23 @@
   (doseq [^File file (reverse (file-seq dir))]
     (.delete file)))
 
+(defn- shared-uv-program
+  "The program that `-main` runs for `python --shared uv ARGS`, without loading the engine."
+  [args]
+  (pr-str `(do (require 'com.blockether.vis.internal.python.runtime)
+               (System/exit (try ((resolve 'com.blockether.vis.internal.python.runtime/uv-command!)
+                                   ~(vec args)
+                                   {:shared? true})
+                                 (catch Throwable t#
+                                   (binding [*out* *err*]
+                                     (println (.getMessage t#)))
+                                   1))))))
+
 (defn- start-cli!
   "Start `vis-agent python` from source like the launcher: the process runs in `dir`
-   and an :invocation-dir travels in user.dir. :input is written to its stdin."
-  [^File dir environment args {:keys [invocation-dir jvm-opts ^String input]}]
+   and an :invocation-dir travels in user.dir. :input is written to its stdin.
+   :runtime-only? runs a `--shared uv` invocation without the engine load of `-main`."
+  [^File dir environment args {:keys [invocation-dir jvm-opts ^String input runtime-only?]}]
   (let [classpath
         (str/join File/pathSeparator
                   (map (fn [entry]
@@ -41,9 +54,12 @@
                 invocation-dir
                 (conj (str "-Duser.dir=" (.getCanonicalPath ^File invocation-dir)))
 
-                true
+                runtime-only?
+                (into ["-cp" classpath "clojure.main" "-e" (shared-uv-program (drop 2 args))])
+
+                (not runtime-only?)
                 (into ["-cp" classpath "clojure.main" "-m" "com.blockether.vis.core" "python"]))
-              args)
+              (when-not runtime-only? args))
 
         log
         (str "cli-" (java.util.UUID/randomUUID))
@@ -91,6 +107,12 @@
                   (.waitFor process 10 TimeUnit/SECONDS)))))
 
 (defn- run-cli [dir environment args] (await-cli! (start-cli! dir environment args {}) 90))
+
+(defn- run-uv-cli
+  "Run a `--shared uv` invocation in a clean process without the engine load of `-main`.
+   Each test sends its first invocation through `run-cli`, which proves the real dispatch."
+  [dir environment args]
+  (await-cli! (start-cli! dir environment args {:runtime-only? true}) 90))
 
 (defn- run-cli-together
   "Run independent invocations at once. C1 and the serial collector roughly halve
@@ -278,11 +300,12 @@
            "UV_PYTHON" "not-the-embedded-python"}
 
           sync!
+          ;; A plain sync goes through the real `-main` dispatch; the variants skip its engine load.
           (fn [& args]
-            (run-cli dir
-                     environment
-                     (into ["--shared" "uv" "sync" "--project" (.getPath project) "--offline"]
-                           args)))
+            ((if (empty? args) run-cli run-uv-cli)
+              dir
+              environment
+              (into ["--shared" "uv" "sync" "--project" (.getPath project) "--offline"] args)))
 
           probe!
           (fn [code]
@@ -390,12 +413,14 @@
           {"VIS_PYTHON_PACKAGES" (str shared)}
 
           sync!
+          ;; A plain sync goes through the real `-main` dispatch; the variants skip its engine load.
           (fn [& options]
-            (run-cli dir
-                     environment
-                     (into ["--shared" "uv" "sync" "--directory" (str member) "--package=member"
-                            "--offline"]
-                           options)))]
+            ((if (empty? options) run-cli run-uv-cli)
+              dir
+              environment
+              (into ["--shared" "uv" "sync" "--directory" (str member) "--package=member"
+                     "--offline"]
+                    options)))]
 
       (try (shared-fixture-wheel! project "shared_base")
            (spit
