@@ -26,13 +26,19 @@ requests, select **HTTP** at the top of the page.
 - **A turn waits for a person.** [Answer a form](#answer-a-form).
 - **A session must stop using some tools, or use them again.** [Change the tools of a
   session](#change-the-tools-of-a-session).
+- **A session must use a cheaper or stronger model.** [Choose the model of a
+  session](#choose-the-model-of-a-session).
 - **Your program must stop work or change waiting messages.** [Queue and cancel
   messages](#queue-and-cancel-messages).
 - **Your program must find, copy or sort saved sessions.** [Find a saved
   session](#find-a-saved-session), [fork a session](#fork-a-session) or [organize sessions into
   groups](#organize-sessions-into-groups).
+- **Your program needs a checked answer in a fixed shape.** [Run a task and read a typed
+  answer](#run-a-task-and-read-a-typed-answer).
 - **Your program must keep a record of the work.** [Export a session](#export-a-session) or [read
   Activity history](#read-activity-history).
+- **A session must move to another gateway, or you need a full backup.** [Save and restore a session
+  snapshot](#save-and-restore-a-session-snapshot).
 
 To learn what a session is and how to use it in the terminal or the app, read
 [Sessions](sessions.md).
@@ -77,8 +83,13 @@ request.
 | Task | Typed call | Generated method |
 |---|---|---|
 | Create a session | `client.create_session(...)` | `post_sessions(body=...)` |
+| List models with prices and limits | `client.models(...)` | `get_models()` |
+| Read the limits of a provider | `client.model_limits(provider)` | `get_provider_limits(provider_id)` |
+| Read the model of a session | `session.model()` | `get_session_model(sid)` |
+| Pin or clear the model of a session | `session.set_model(provider, model)` | `patch_session_model(sid, body=...)` |
 | Read a session | `session.read()` | `get_session(sid)` |
 | Send a message | `session.send(request)` | `get_session_seq(sid)`, then `post_session_turns(sid, body=...)` |
+| Send a message and wait for a checked answer | `session.run(request, ...)` | — |
 | Read a turn | `turn.read()`, `turn.wait()` | `get_session_turn(sid, tid)` |
 | Follow events | `session.events(cursor=...)` | `get_session_events_since(sid, query=...)` |
 | List open forms | `session.input_views()` | `get_session_views_input(sid)` |
@@ -93,7 +104,7 @@ request.
 | Search sessions | — | `get_sessions_search(query=...)` |
 | List sessions | `client.list_sessions(...)` | `get_sessions(query=...)` |
 | List the turns that a fork can keep | — | `get_session_forks(sid)` |
-| Fork a session | — | `post_session_forks(sid, body=...)` |
+| Fork a session | `session.fork(...)` | `post_session_forks(sid, body=...)` |
 | List groups | — | `get_session_groups(query=...)` |
 | Create a group | — | `post_session_groups(body=...)` |
 | Change or archive a group | — | `patch_session_group(gid, body=...)` |
@@ -103,6 +114,9 @@ request.
 | Archive many sessions | — | `post_sessions_archive(body=...)` |
 | Delete a session | `session.delete()` | `delete_session(sid)` |
 | Export a transcript | `session.transcript(format=...)` | `get_session_transcript(sid)`, `get_session_transcript_md(sid)`, `get_session_transcript_html(sid)` |
+| Save a snapshot | `session.export()` | `get_session_snapshot(sid)` |
+| Read the manifest of a snapshot | `client.snapshot_info(data)` | — |
+| Restore a snapshot | `client.restore_session(data, ...)` | `post_sessions_import(query=..., content=...)` |
 | List live views | `session.live_views()` | `get_session_views_live(sid)` |
 | Read a page of a log node | — | `get_session_views_live_log(sid, view_id, node_id, query=...)` |
 | Read one page of Activity history | — | `get_session_activity(sid, aid, query=...)` |
@@ -115,6 +129,10 @@ request.
 | Task | Method and path |
 |---|---|
 | Create a session | `POST /v1/sessions` |
+| List models with prices and limits | `GET /v1/models` |
+| Read the limits of a provider | `GET /v1/providers/{provider-id}/limits` |
+| Read the model of a session | `GET /v1/sessions/{sid}/model` |
+| Pin or clear the model of a session | `PATCH /v1/sessions/{sid}/model` |
 | Read a session | `GET /v1/sessions/{sid}` |
 | Read the event cursor | `GET /v1/sessions/{sid}/seq` |
 | Send a message | `POST /v1/sessions/{sid}/turns` |
@@ -143,6 +161,8 @@ request.
 | Archive many sessions | `POST /v1/sessions/actions/archive` |
 | Delete a session | `DELETE /v1/sessions/{sid}` |
 | Export a transcript | `GET /v1/sessions/{sid}/transcript`, `GET /v1/sessions/{sid}/transcript.md`, `GET /v1/sessions/{sid}/transcript.html` |
+| Save a snapshot | `GET /v1/sessions/{sid}/snapshot` |
+| Restore a snapshot | `POST /v1/sessions/actions/import` |
 | List live views | `GET /v1/sessions/{sid}/views/live` |
 | Read a page of a log node | `GET /v1/sessions/{sid}/views/live/{view-id}/log` |
 | Read one page of Activity history | `GET /v1/sessions/{sid}/activity/{aid}` |
@@ -298,6 +318,68 @@ old list stays. An archived session returns 409.
 
 </div>
 
+## Choose the model of a session
+
+<div data-variant="python">
+
+```python
+models = client.models(is_available=True)
+priced = [model for model in models if model.pricing]
+cheap = min(priced, key=lambda model: model.pricing["input"])
+session.set_model(cheap.provider, cheap.name)
+print(session.model())
+```
+
+`models()` returns the models that the model pickers of the TUI and the app show, in the same order.
+`provider` keeps only the models of one provider. `is_available=True` keeps the models of providers
+that are signed in. `get_models()` sends the same request and returns the JSON answer.
+
+Each `Model` has `provider`, `name` and `label`, and capabilities such as `is_reasoning`,
+`is_tool_call` and `is_image_input`. `context`, `input_limit` and `output_limit` give the token
+limits. `billing` is `metered`, `subscription` or `local`.
+
+`pricing` gives US dollars for each million tokens: `input`, `output`, `cache_read` and
+`cache_write`. It is None when Vis has no price for the model. `limits` holds the limits report of
+the provider. `client.model_limits(provider)` reads a new report, as `get_provider_limits(provider_id)`
+does. A failed read gives an error report, not an exception.
+
+`set_model(provider, model)` pins the model of the next turns. `set_model(None, None)` removes the
+pin. A running or queued turn keeps its model. `model()` returns a `SessionModel` with `provider`,
+`model`, `is_pinned`, `default_provider` and `default_model`. `get_session_model(sid)` and
+`patch_session_model(sid, body=...)` send the same requests.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/models"
+vis_api "$VIS_GATEWAY_URL/v1/providers/$PROVIDER/limits"
+vis_api -X PATCH "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/model" \
+  -H 'content-type: application/json' \
+  --data "{\"provider\": \"$PROVIDER\", \"model\": \"$MODEL\"}"
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/model"
+```
+
+The `models` list of the first answer has the order of the model pickers in the TUI and the app.
+Each model has `provider`, `name`, `label`, `billing`, `is_available` and capabilities such as
+`is_reasoning` and `is_tool_call`. `context`, `input_limit` and `output_limit` give the token limits.
+
+`pricing` gives US dollars for each million tokens: `input`, `output`, `cache_read` and
+`cache_write`. It is `null` when Vis has no price for the model. `limits` holds the limits report of
+the provider. The limits route reads a new report. A failed read gives an error report, not an HTTP
+error.
+
+The `PATCH` body pins the model of the next turns. `null` for both fields removes the pin. A running
+or queued turn keeps its model. The model answer has `model`, the pin or `null`, and `default`, the
+pair that the session uses without a pin.
+
+</div>
+
+A provider that the gateway does not serve returns 400 with the code `unknown-provider`. An archived
+session returns 409. A model request can cost money. Read `pricing` before you choose a model for
+many turns.
+
 ## Send a message and wait
 
 <div data-variant="python">
@@ -346,6 +428,41 @@ status is data in the answer, not an HTTP error. Check it before you use `conten
 A message can also be a slash command, for example `/rename Release notes`. The body also takes
 `provider` and `model` to select a configured alternative for this message. To retry after a network
 failure without a second message, send the same `idempotency_key` again.
+
+</div>
+
+### Run a task and read a typed answer
+
+<div data-variant="python">
+
+```python
+from pydantic import BaseModel
+
+
+class Summary(BaseModel):
+    title: str
+    open_items: list[str]
+
+
+summary = session.run("Summarize TODO.md without changing files.", response_model=Summary)
+print(summary.open_items)
+```
+
+`run()` sends the message and waits for the turn, as `Agent.run()` does. Without `response_model`,
+it returns the turn as a dictionary. With a Pydantic model, it checks the final answer and returns an
+instance of the model.
+
+An answer that does not match starts a correction turn. `max_corrections` sets the number of
+correction turns, 2 by default. Each correction turn costs model tokens. When no answer matches,
+`run()` raises `StructuredOutputError` with each attempt.
+
+</div>
+
+<div data-variant="http">
+
+Send the message and read the turn as in [Send a message and wait](#send-a-message-and-wait). Then
+check the `content` of the turn in your program. If it does not match, send a correction as the next
+message of the same session.
 
 </div>
 
@@ -662,13 +779,14 @@ recent activity, with the most recent first.
 
 ```python
 points = client.get_session_forks(session.id)["turns"]
-fork = client.post_session_forks(session.id, body={"through_turn_id": points[0]["turn_id"]})
-print(fork["session"]["id"])
+fork = session.fork(through_turn_id=points[0]["turn_id"])
+print(fork.id)
 ```
 
 `get_session_forks()` lists the turns of a session, oldest first, with `turn_id` and `request`. The
 fork keeps the turn that you name and every turn before it. Without `through_turn_id`, the fork keeps
-all turns. [What a fork keeps](sessions.md#what-a-fork-keeps) describes the copy.
+all turns. `fork()` returns the handle of the new session. `post_session_forks(sid, body=...)` sends
+the same request. [What a fork keeps](sessions.md#what-a-fork-keeps) describes the copy.
 
 A session without turns, or a turn of another session, raises `GatewayError` with the status 409.
 
@@ -832,6 +950,80 @@ self-contained HTML page.
 
 Vis does not remove private data from an export. Read an export before you share it. To remove
 private details, follow [Reporting a bug](reporting-bugs.md#sharing-a-transcript).
+
+## Save and restore a session snapshot
+
+A snapshot is one `.vissnap` file with a session, the child sessions that it manages and their
+Council messages. Use it to move a session to another gateway or to keep a full backup. A
+transcript is for people to read, but you can restore a snapshot and continue the work.
+
+<div data-variant="python">
+
+```python
+from pathlib import Path
+
+Path("release.vissnap").write_bytes(session.export())
+
+data = Path("release.vissnap").read_bytes()
+info = client.snapshot_info(data)
+print(info["root_session_id"], info["counts"])
+restored = client.restore_session(data, root=os.environ["VIS_PROJECT_ROOT"], key="release-1")
+print(restored.id)
+```
+
+`export()` returns the snapshot bytes. `snapshot_info()` reads the manifest without a gateway
+request. The manifest has `vis_version`, `created_at`, `root_session_id`, `sessions`, `counts` and
+`sizes`. It raises `ValueError` when the bytes are not a snapshot.
+
+`restore_session()` creates a new session tree and returns the handle of its root session. `root`
+sets the project folder, and `group_id` sets the session group. A second restore with the same `key`
+returns the first session and creates nothing. Without a key, each restore creates a new tree.
+
+`get_session_snapshot(sid)` and `post_sessions_import(query=..., content=...)` send the same
+requests. A refused request raises `GatewayError` with the status and the code of the table below.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/snapshot" -o release.vissnap
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/actions/import" \
+  --url-query "root=$VIS_PROJECT_ROOT" --url-query "key=release-1" \
+  -H 'content-type: application/octet-stream' --data-binary @release.vissnap
+```
+
+The snapshot answer is binary, with the type `application/octet-stream`. The import body is the
+snapshot file. The query takes the optional `root`, `group_id` and `key`.
+
+The import answer has the status 201 and the new root session, with its `id`. A second import with
+the same `key` returns the first session and creates nothing. Without a key, each import creates a
+new tree.
+
+</div>
+
+A restore changes these things:
+
+- Each restored session gets a new ID. `imported_from` names the source session, the SHA-256 of
+  the snapshot and the key.
+- Your own permissions apply, not the permissions in the snapshot.
+- A turn that ran at export time comes back as interrupted. Send a new message to continue the work.
+- A Council question that waited for an answer comes back as interrupted.
+
+A snapshot does not hold the prompt cache, the workspace files or provider credentials. It also does
+not hold sessions and messages outside the session tree. Restore the workspace files separately.
+
+The **Session snapshot limit** setting, `session_snapshot_limit`, sets the largest snapshot that the
+machine exports or restores. The choices are `256_mib`, `512_mib` and `1_gib`. The default is
+`1_gib`.
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid-snapshot` | The file is not a Vis session snapshot, or it is damaged. |
+| 409 | `snapshot-incomplete` | The export cannot read an attachment of the session. |
+| 413 | `snapshot-too-large` | The snapshot is larger than the size limit. |
+
+A snapshot holds the whole conversation, also its private data. Keep it as safe as the session.
 
 ## Watch live views
 

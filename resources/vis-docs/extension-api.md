@@ -15,6 +15,8 @@ callbacks and host operations.
   state](#durable-state), [environment variables](#environment), [session
   context](#session-context), [attachments](#attachments), [another session
   tool](#call-other-session-tools) or [other sessions](#find-and-read-sessions).
+- **Your extension must start work in new sessions.** [Create and control
+  sessions](#create-and-control-sessions).
 - **Your own program must read or export Activity history.** Read [Sessions
   API](sessions-api.md#read-activity-history).
 - **Your editor or type checker reports errors for code that runs in Vis.**
@@ -1161,6 +1163,69 @@ from the TUI or the Companion app. The dict has `session`, `current_turn`, `fail
 The `introspection` setting does not apply, because an extension is trusted code. The setting
 controls only the model's own session tools. Outside a Vis process, both functions raise an
 error. There, use the SDK client.
+
+## Create and control sessions
+
+Use `vis.sessions`, `vis.run` and `vis.session` when your extension must start work in other
+sessions. For example, a review tool can ask a new session for a second opinion. These calls return
+the `Session` handles of the [Sessions API](sessions-api.md).
+
+```python
+import blockether.vis.extension as vis
+
+
+def second_opinion(question: str) -> str:
+    """Ask a new independent session and return its answer."""
+    turn = vis.run(question, timeout=300)
+    return turn["content"] if turn["status"] == "completed" else turn["status"]
+
+
+def start_review(path: str) -> str:
+    """Start a review in a new session and return the session ID."""
+    session = vis.sessions.create()
+    session.send(f"Review {path}. Do not change files.")
+    return session.id
+```
+
+- `vis.session` is the `Session` of the bound session, the session that called your extension.
+  `vis.council` is its [Council](council-api.md) handle. Without a bound session, both raise
+  `RuntimeError`.
+- `vis.sessions.create(provider=..., model=..., **options)` creates an independent session. Without
+  `root`, it starts in the root of the bound session. The options are those of `create_session`.
+- `vis.sessions.get(session_id)` returns a handle without a request. `vis.sessions.list(search=None)`
+  returns the sessions of the first page, or the matches of `search`.
+- `vis.sessions.export(session_id=None)` returns a
+  [snapshot](sessions-api.md#save-and-restore-a-session-snapshot) of the bound session or of
+  `session_id`. `vis.sessions.restore(data, root=..., group_id=..., key=...)` restores one.
+- `vis.run(request, ...)` creates an independent session and runs one turn in it. It takes the
+  arguments of `Agent.run`, also `response_model`. Without `response_model`, check the `status` of
+  the turn.
+
+The host records your extension as the origin of each session that it creates. Such a session has no
+parent. [Choose the model of a session](sessions-api.md#choose-the-model-of-a-session) shows the
+model list with prices and limits. Each turn of a new session costs model tokens.
+
+### Where each call works
+
+Vis checks each call against the thread that makes it:
+
+| Call | Where it works |
+|---|---|
+| Reads: `get`, `list`, `export`, `models()`, transcripts, turns and Council reads | In a callback and in a thread that your extension created. |
+| `Session.send()` and `Turn.cancel()` | In a callback. A thread of your extension can use them only in sessions that your extension created. |
+| Other changes: `create`, `restore`, `run`, `fork`, `set_model` and `publish` | Only in an active callback, such as a tool call or a command. |
+
+A change also needs a bound session. It can change only that session and the sessions that your
+extension created. A refused call raises `GatewayError` with the status 403:
+
+| Code | Meaning |
+|---|---|
+| `forbidden-route` | Extensions cannot use this call, or this thread cannot use it. Use a callback. |
+| `forbidden-session` | The session belongs to another extension or to a person. |
+| `session-not-bound` | The call changes something, but no session called your extension. |
+
+The model cannot use these calls from `python_execution`. They are for trusted extension code. A read
+shows no Activity. Each change shows its own Activity under the Activity of your tool.
 
 ## Call other session tools
 
