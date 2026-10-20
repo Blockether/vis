@@ -36,23 +36,30 @@
        (body)
        (finally (extension/unregister-op-hooks-for-owner! :ext/test-ls-shim-gate))))
 
+(def ^:private names-py
+  "Python that defines `names(text)`: every entry name of a listing, without header or size.
+   A directory shares one line among its entries, separated by two spaces."
+  (str
+    "def names(text):\n"
+    "    return [x.split(' ')[0] for l in text.split('\\n')[1:] for x in l.strip().split('  ') if x]\n"))
+
 (defdescribe
   ls-shim-listing-test
   "`ls` answers ONE compact tree string, in the documented order."
-  (it "renders a header and one line per entry, directories first then alphabetical"
+  (it "renders a header, then the files and closed directories of a directory on one line"
       (let [ctx
             (sandbox)
 
             code
-            (str "text = ls(\"src/com/blockether/vis/internal/foundation\")\n"
-                 "lines = text.split(\"\\n\")\n"
-                 "head, body = lines[0], lines[1:]\n" "labels = body\n"
+            (str names-py
+                 "text = ls(\"src/com/blockether/vis/internal/foundation\")\n"
+                 "lines = text.split(\"\\n\")\n" "head, labels = lines[0], names(text)\n"
                  "dirs = [l for l in labels if l.endswith(\"/\")]\n"
                  "files = [l for l in labels if not l.endswith(\"/\")]\n"
                  "print(head.endswith(\"d %sf\" % len(files)) and \"foundation\" in head,\n"
                  "      labels[:len(dirs)] == dirs, dirs == sorted(dirs),\n"
-                 "      \"editing/\" in dirs, any(f.startswith(\"core.clj \") for f in files),\n"
-                 "      \"\\u251c\" not in text, not body[0].startswith(\" \"))")]
+                 "      \"editing/\" in dirs, \"shim_ls.clj\" in files,\n"
+                 "      len(lines) == 2, \"\\u251c\" not in text)")]
 
         (expect (= "True True True True True True True\n" (out ctx code)))))
   (it "batches a LIST of paths into one blank-line separated section per directory"
@@ -62,11 +69,13 @@
 
          code
          (str
+           names-py
            "text = ls([\"resources/vis-shims\",\n"
            "           {\"path\": \"src/com/blockether/vis/internal/foundation\", \"depth\": 1}])\n"
            "first, second = text.split(\"\\n\\n\")\n"
            "print(first.split(\"\\n\")[0].split(\"  \")[0].endswith(\"vis-shims\"),\n"
-           "      \"ls.py \" in first, \"editing/\" in second, \"ls.py\" not in second)")]
+           "      \"ls.py\" in names(first), \"editing/\" in names(second),\n"
+           "      \"ls.py\" not in second)")]
 
         (expect (= "True True True True\n" (out ctx code)))))
   (it "indents children at depth, counts them on the directory, and hides dotfiles"
@@ -74,13 +83,14 @@
             (sandbox)
 
             code
-            (str "text = ls(\"src/com/blockether/vis/internal/foundation\", depth=2)\n"
+            (str names-py
+                 "text = ls(\"src/com/blockether/vis/internal/foundation\", depth=2)\n"
                  "editing = [l for l in text.split(\"\\n\") if l.startswith(\"editing/ \")][0]\n"
                  "nested = [l for l in text.split(\"\\n\") if l.startswith(\"  \")]\n"
-                 "hidden = ls(\".\", is_hidden=True)\n" "plain = ls(\".\")\n"
+                 "hidden = names(ls(\".\", is_hidden=True))\n" "plain = ls(\".\")\n"
                  "print(int(editing.split(\"/ \")[1]) > 0,\n"
-                 "      any(\"core.clj \" in l for l in nested),\n"
-                 "      \".gitignore \" in hidden, \".gitignore\" in plain,\n"
+                 "      any(\"core.clj\" in l.split() for l in nested),\n"
+                 "      \".gitignore\" in hidden, \".gitignore\" in plain,\n"
                  "      \"target/\" in plain)")]
 
         ;; gitignored entries stay out of the default listing on either axis
@@ -102,18 +112,19 @@
             (sandbox)
 
             code
-            (str "from pathlib import Path\n"
+            (str names-py
+                 "from pathlib import Path\n"
                  "p = Path('resources/vis-shims')\n" "plain = ls(p)\n"
                  "filtered = ls(p, pattern='l?.py')\n"
                  "batch = ls([p, {'path': p, 'pattern': None}], pattern='l?.py').split('\\n\\n')\n"
                  "tree = ls('resources', depth=2, pattern='ls.py')\n"
                  "print(ls(p, pattern=None) == plain, ls(p, pattern='*') == plain,\n"
-                 "      '  0d 1f\\n' in filtered, 'ls.py ' in filtered,\n"
+                 "      '  0d 1f\\n' in filtered, 'ls.py' in names(filtered),\n"
                  "      batch == [filtered, plain], 'vis-shims/ 1' in tree,\n"
-                 "      'ls.py ' in tree, 'attach.py ' not in tree,\n"
+                 "      'ls.py' in names(tree), 'attach.py' not in tree,\n"
                  "      ls(p, pattern='__no_match__').endswith('  empty'),\n"
-                 "      '.gitignore ' not in ls('.', pattern='.git*'),\n"
-                 "      '.gitignore ' in ls('.', pattern='.git*', hidden=True))")]
+                 "      '.gitignore' not in names(ls('.', pattern='.git*')),\n"
+                 "      '.gitignore' in names(ls('.', pattern='.git*', hidden=True)))")]
 
         (expect (= "True True True True True True True True True True True\n" (out ctx code)))))
   (it "rejects malformed patterns and filters case-sensitively within the requested depth"
@@ -130,17 +141,27 @@
                  "      'vis-shims/' in ls('resources', pattern='vis-shims'))")]
 
         (expect (= "VisToolError VisToolError True True True\n" (out ctx code)))))
-  (it "sizes a file in at most four characters"
-      (let [ctx
-            (sandbox)
+  (it
+    "sizes only a file of 64k or more, in at most four characters, and quotes spaced names"
+    (let
+      [ctx
+       (sandbox)
 
-            code
-            (str "text = ls(\"resources/vis-shims\")\n"
-                 "sizes = [l.rsplit(\" \", 1)[1] for l in text.split(\"\\n\")[1:]]\n"
-                 "print(all(len(s) <= 4 for s in sizes),\n"
-                 "      all(s[-1].isdigit() or s[-1] in \"kMGT\" for s in sizes))")]
+       code
+       (str
+         "import json\n"
+         "g = globals()\n" "saved = g[\"__vis_list_directories__\"]\n"
+         "entries = [{\"name\": \"small.txt\", \"type\": \"file\", \"size\": 65535},\n"
+         "           {\"name\": \"big.json\", \"type\": \"file\", \"size\": 65536},\n"
+         "           {\"name\": \"huge.bin\", \"type\": \"file\", \"size\": 3 * 1024 ** 3},\n"
+         "           {\"name\": \"my notes.md\", \"type\": \"file\", \"size\": 3}]\n"
+         "g[\"__vis_list_directories__\"] = lambda _a: json.dumps([{\"path\": \"d\", \"entries\": entries}])\n"
+         "try:\n"
+         "    text = ls(\"d\")\n" "finally:\n"
+         "    g[\"__vis_list_directories__\"] = saved\n" "print(repr(text))")]
 
-        (expect (= "True True\n" (out ctx code)))))
+      (expect (= "'d  0d 4f\\nsmall.txt  big.json 64k  huge.bin 3.0G  \"my notes.md\"'\n"
+                 (out ctx code)))))
   (it "documents itself in the sandbox `__vis_docs__` table"
       (let [ctx
             (sandbox)
@@ -167,8 +188,8 @@
          "root = Path(\"src/com/blockether/vis/internal/foundation\")\n"
          "text = ls(root)\n"
          "batch = ls([Path(\"resources/vis-shims\"), {\"path\": root, \"depth\": 1}]).split(\"\\n\\n\")\n"
-         "print(\"core.clj \" in text, len(batch) == 2,\n"
-         "      \"ls.py \" in batch[0], \"editing/\" in batch[1])")]
+         "print(\"core.clj\" in text.split(), len(batch) == 2,\n"
+         "      \"ls.py\" in batch[0].split(), \"editing/\" in batch[1].split())")]
 
       (expect (= "True True True True\n" (out ctx code))))))
 
@@ -197,8 +218,8 @@
                          "text = ls(Path('.'), depth=2)\n"
                          "batch = ls([Path('resources/vis-shims'), "
                          "{'path': Path('src/com/blockether/vis/internal/foundation')}])\n"
-                         "print('AGENTS.md ' in text, 'vis-shims/' in text, "
-                         "'ls.py ' in batch and 'core.clj ' in batch, "
+                         "print('AGENTS.md' in text.split(), 'vis-shims/' in text, "
+                         "'ls.py' in batch.split() and 'core.clj' in batch.split(), "
                          "'  0d 1f\\n' in ls(Path('resources/vis-shims'), pattern='ls.py'))"))))))))
 
 (defdescribe
@@ -546,6 +567,81 @@
 
 ;; Regression, user report: feeding a listing to `cat` or `grep` meant parsing the
 ;; rendered tree back into paths, so sessions fell back to a hand-rolled `os.walk`.
+;; User request: a long listing must not flood the context, and the reader must
+;; be able to walk the rest of it the way a capped grep continues.
+(defdescribe
+  ls-shim-paging-test
+  "`limit` caps a page level by level, and the page continues itself like grep."
+  (it
+    "names the continuation in the header and walks every page exactly once"
+    (let
+      [ctx
+       (sandbox)
+
+       code
+       (str
+         "import json, pickle\n"
+         "g = globals()\n" "saved = g[\"__vis_list_directories__\"]\n"
+         "def f(name):\n" "    return {\"name\": name, \"type\": \"file\", \"size\": 1}\n"
+         "def tree():\n"
+         "    return [{\"name\": \"a\", \"type\": \"dir\", \"children\": [f(\"1.txt\"), f(\"2.txt\"), f(\"3.txt\")]},\n"
+         "            {\"name\": \"b\", \"type\": \"dir\", \"children\": [f(\"1.txt\"), f(\"2.txt\")]}, f(\"c.txt\")]\n"
+         "g[\"__vis_list_directories__\"] = lambda a: json.dumps(\n"
+         "    [{\"path\": p, \"entries\": tree()} for p in json.loads(a)[\"paths\"]])\n" "try:\n"
+         "    first = ls(\"d\", depth=2, limit=4)\n" "    second = next(first)\n"
+         "    walked = [page.next_offset for page in first.pages()]\n" "    print(repr(first))\n"
+         "    print(repr(second))\n"
+         "    print(first.next_offset, first.is_capped, second.next_offset, next(second, None))\n"
+         "    print(walked, first.all() == ls(\"d\", depth=2, limit=None), second == ls(\"d\", depth=2, limit=4, offset=4))\n"
+         "    print(pickle.loads(pickle.dumps(first)) == first, type(pickle.loads(pickle.dumps(first))).__name__)\n"
+         "finally:\n" "    g[\"__vis_list_directories__\"] = saved\n")]
+
+      (expect
+        (=
+          "'d  2d 1f  1-4 of 8 → next(r), or the same call with offset=4\\nb/ 2  c.txt\\na/ 3\\n  1.txt  +2 more (2 .txt)'\n'd  2d 1f  5-8 of 8\\na/ 3\\n  2.txt  3.txt\\nb/ 2\\n  1.txt  2.txt'\n4 True None None\n[4, None] True True\nTrue str\n"
+          (out ctx code)))))
+  (it
+    "pages each directory of a batch on its own and refuses a bad window"
+    (let
+      [ctx
+       (sandbox)
+
+       code
+       (str
+         "import json, pickle\n"
+         "g = globals()\n" "saved = g[\"__vis_list_directories__\"]\n"
+         "def f(name):\n" "    return {\"name\": name, \"type\": \"file\", \"size\": 1}\n"
+         "def tree():\n"
+         "    return [{\"name\": \"a\", \"type\": \"dir\", \"children\": [f(\"1.txt\"), f(\"2.txt\"), f(\"3.txt\")]},\n"
+         "            {\"name\": \"b\", \"type\": \"dir\", \"children\": [f(\"1.txt\"), f(\"2.txt\")]}, f(\"c.txt\")]\n"
+         "g[\"__vis_list_directories__\"] = lambda a: json.dumps(\n"
+         "    [{\"path\": p if isinstance(p, str) else p[\"path\"], \"entries\": tree()}\n"
+         "     for p in json.loads(a)[\"paths\"]])\n"
+         "def refused(**kw):\n" "    try:\n"
+         "        ls(\"d\", **kw)\n" "    except ValueError as e:\n"
+         "        return str(e)\n" "try:\n"
+         "    batch = ls([\"d\", {\"path\": \"e\", \"depth\": 1}], depth=2, limit=4)\n"
+         "    rest = next(batch)\n"
+         "    print(batch.next_offset, rest.next_offset, rest.split(\"\\n\")[0])\n"
+         "    print(ls(\"d\", offset=9))\n"
+         "    print(refused(limit=0))\n" "    print(refused(offset=-1))\n"
+         "finally:\n" "    g[\"__vis_list_directories__\"] = saved\n")]
+
+      (expect
+        (=
+          "[4, 4] [None, None] d  2d 1f  5-8 of 8\nd  2d 1f  · offset 9 is past the last entry (8)\nls: limit must be an int >= 1 or None, got 0\nls: offset must be an int >= 0, got -1\n"
+          (out ctx code)))))
+  (it "documents the paging protocol in the one help text"
+      (let [ctx
+            (sandbox)
+
+            code
+            (str "d = ls.__doc__\n"
+                 "print(all(w in d for w in ['limit=250', 'offset=0', 'next(r, None)',\n"
+                 "                           'r.pages()', 'r.all()', 'r.next_offset']))")]
+
+        (expect (= "True\n" (out ctx code))))))
+
 ;; `as_paths` answers the same walk as the flat list the next call actually needs.
 (defdescribe
   ls-shim-as-paths-test
@@ -558,7 +654,7 @@
           code
           (str "d = \"src/com/blockether/vis/internal/foundation\"\n" "tree = ls(d)\n"
                "paths = ls(d, as_paths=True)\n"
-               "labels = [l.split(\" \")[0] for l in tree.split(\"\\n\")[1:]]\n"
+               "labels = [l.split(\" \")[0] for l in tree.split(\"\\n\")[1].split(\"  \")]\n"
                "names = [(p[:-1].split(\"/\")[-1] + \"/\") if p.endswith(\"/\")\n"
                "         else p.split(\"/\")[-1] for p in paths]\n"
                "print(isinstance(paths, list),\n"
@@ -634,28 +730,29 @@
 
         (expect (= "True True True\n" (out ctx code))))))
 
-(defdescribe
-  ls-shim-ignored-test
-  "`is_ignored=True` lists gitignored entries; the default keeps them out."
-  (it "lists a gitignored directory only when is_ignored asks for it"
-      (let [ctx
-            (sandbox)
+(defdescribe ls-shim-ignored-test
+             "`is_ignored=True` lists gitignored entries; the default keeps them out."
+             (it "lists a gitignored directory only when is_ignored asks for it"
+                 (let [ctx
+                       (sandbox)
 
-            code
-            (str "plain = ls('.', is_hidden=True)\n"
-                 "wide = ls('.', is_hidden=True, is_ignored=True)\n"
-                 "spec = ls([{'path': '.', 'is_ignored': True}], is_hidden=True)\n"
-                 "flat = ls('.', is_hidden=True, is_ignored=True, as_paths=True)\n"
-                 "print('.cpcache/' in plain.split('\\n'), '.cpcache/' in wide.split('\\n'),\n"
-                 "      spec == wide, './.cpcache/' in flat,\n"
-                 "      'is_ignored=False' in ls.__doc__)")]
+                       code
+                       (str names-py
+                            "plain = ls('.', is_hidden=True)\n"
+                            "wide = ls('.', is_hidden=True, is_ignored=True)\n"
+                            "spec = ls([{'path': '.', 'is_ignored': True}], is_hidden=True)\n"
+                            "flat = ls('.', is_hidden=True, is_ignored=True, as_paths=True)\n"
+                            "print('.cpcache/' in names(plain), '.cpcache/' in names(wide),\n"
+                            "      spec == wide, './.cpcache/' in flat,\n"
+                            "      'is_ignored=False' in ls.__doc__)")]
 
-        (expect (= "False True True True True\n" (out ctx code)))))
-  (it "applies the ignore files again when is_ignored is false"
-      (let [ctx
-            (sandbox)
+                   (expect (= "False True True True True\n" (out ctx code)))))
+             (it "applies the ignore files again when is_ignored is false"
+                 (let
+                   [ctx
+                    (sandbox)
 
-            code
-            "print(ls('.', is_hidden=True, is_ignored=False) == ls('.', is_hidden=True))"]
+                    code
+                    "print(ls('.', is_hidden=True, is_ignored=False) == ls('.', is_hidden=True))"]
 
-        (expect (= "True\n" (out ctx code))))))
+                   (expect (= "True\n" (out ctx code))))))
