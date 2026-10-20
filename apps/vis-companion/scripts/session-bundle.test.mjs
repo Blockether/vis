@@ -21,10 +21,9 @@ it.runIf(process.env.CI)('loads the production session bundle on a cold mobile l
     output
       .filter((entry) => entry.type === 'chunk' && entry.moduleIds.some((id) => id.includes(path)))
       .map((chunk) => chunk.fileName);
-  // Justice ships inside the prose bundle, not as a separately loaded script.
+  // Justified prose ships inside one chunk, not as a separately loaded script.
   const prose = chunksWith('/src/components/JustifiedProse.tsx');
   expect(prose).toHaveLength(1);
-  expect(chunksWith('/@kitlangton/justice/')).toEqual(prose);
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
@@ -86,8 +85,7 @@ it.runIf(process.env.CI)('loads the production session bundle on a cold mobile l
     for (const { language, highlighted: hasTokens } of highlighted) {
       expect(hasTokens, language).toBe(true);
     }
-    // #282 follow-up: eager prose loading must retain the native-text fallback.
-    // Justice constructs its segmenter at module evaluation, not on prepare().
+    // #282 follow-up: the session bundle must load where the runtime has no Intl.Segmenter.
     await page.addInitScript(() => {
       Object.defineProperty(Intl, 'Segmenter', { value: undefined });
     });

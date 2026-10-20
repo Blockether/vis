@@ -2200,7 +2200,7 @@ describe('a markdown table', () => {
     expect(text(markup)).toContain('manifest.edn');
   });
 
-  // Prose stays justified when Justice cannot compose it; code never inherits that alignment.
+  // Prose stays justified natively; code never inherits that alignment.
   it('justifies native Markdown prose while every code surface stays left-aligned', () => {
     const markdown = renderToStaticMarkup(
       <Markdown>

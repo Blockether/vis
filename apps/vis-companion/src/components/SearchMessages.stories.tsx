@@ -79,7 +79,7 @@ export const MarkdownBlocks: Story = {
   },
   play: async ({ canvas, canvasElement }) => {
     await expect(canvas.getByText('Done')).toHaveClass('font-bold');
-    // Justice composes in a real browser; jsdom checks only the structure here.
+    // Line geometry needs a real browser; jsdom checks only the structure here.
     await expect(canvasElement.querySelector('span.block.text-justify')).toHaveTextContent(
       /^The Send all now button/,
     );

@@ -3053,8 +3053,8 @@ export const LIST_EDGE = 'pl-3 sm:pl-4';
 /**
  * RUNNING PROSE, and the app has exactly ONE native fallback rule for it.
  *
- * Reasoning, answers, speech and user requests share a reading column. Justice
- * composes supported paragraphs across that column; native justification keeps
- * other prose aligned, with hyphenation and balanced wrapping on narrow screens.
+ * Reasoning, answers, speech and user requests share a reading column. Native
+ * justification aligns it, with hyphenation and balanced wrapping on narrow screens.
+ * `JustifiedProse` sets a line ragged only where its gaps would open too wide.
  */
 export const PROSE = 'hyphens-auto [hyphenate-limit-chars:6_3_3] text-justify text-pretty';

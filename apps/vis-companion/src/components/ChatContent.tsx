@@ -4695,7 +4695,7 @@ function UserFileAttachment({ attachment }: { attachment: GatewayAttachment }) {
   );
 }
 
-/** Council requests and wakes share the Justice prose of typed requests. */
+/** Council requests and wakes share the justified prose of typed requests. */
 function CouncilRequestBody({ children }: { children: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const bodyId = useId();
@@ -4742,8 +4742,8 @@ const councilKindLabel: Record<CouncilRequest['kind'], string> = {
 };
 
 function UserRequestText({ text }: { text: string }) {
-  // Keep authored breaks and literal spacing. Justice composes ordinary lines;
-  // native justification keeps other prose aligned without collapsing its spaces.
+  // Keep authored breaks and literal spacing. Native justification keeps ordinary lines
+  // aligned without collapsing their spaces.
   // Indentation, tabs and fences mark literal lines, which stay left-aligned.
   let fence = '';
   return text.split(/\r?\n/).map((line, index) => {

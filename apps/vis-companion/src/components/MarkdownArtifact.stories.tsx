@@ -80,9 +80,7 @@ export const StableHighlight: Story = {
     );
     // Take the baseline after fonts and paragraph composition have settled.
     await document.fonts.ready;
-    await waitFor(() => expect(passage).toHaveAttribute('data-justice'));
     const blocks = [...canvasElement.querySelectorAll('h1, p, li')];
-    await waitFor(() => expect(canvasElement.querySelector('li')).toHaveAttribute('data-justice'));
     const geometry = () =>
       blocks.map((block) => {
         const box = block.getBoundingClientRect();
@@ -119,21 +117,33 @@ const readerClient = { base: 'http://127.0.0.1:7777' } as ComponentProps<
   typeof MarkdownArtifact
 >['client'];
 
+/** Every line stays inside the column, and no gap outside code opens wider than five spaces. */
 function fittedParagraph(prose: HTMLElement) {
-  expect(prose).toHaveAttribute('data-justice');
   const bounds = prose.getBoundingClientRect();
+  // A canvas measures the space without a DOM change, which would wake `waitFor` again.
   const style = getComputedStyle(prose);
-  const left = bounds.left + parseFloat(style.paddingLeft);
-  const right = bounds.right - parseFloat(style.paddingRight);
-  const lines = [...prose.children];
-  expect(lines.length).toBeGreaterThan(1);
-  for (const [index, line] of lines.entries()) {
-    const range = document.createRange();
-    range.selectNodeContents(line);
-    const rect = range.getBoundingClientRect();
-    expect(Math.abs(rect.left - left)).toBeLessThan(1);
-    expect(rect.right).toBeLessThanOrEqual(right + 1);
-    if (index < lines.length - 1) expect(Math.abs(rect.right - right)).toBeLessThan(1);
+  const context = document.createElement('canvas').getContext('2d')!;
+  context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  const space = context.measureText(' ').width;
+  const range = document.createRange();
+  const walker = document.createTreeWalker(prose, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const text = walker.currentNode as Text;
+    for (const word of text.data.matchAll(/\S+/g)) {
+      range.setStart(text, word.index);
+      range.setEnd(text, word.index + word[0].length);
+      for (const rect of range.getClientRects()) {
+        expect(rect.left).toBeGreaterThanOrEqual(bounds.left - 1);
+        expect(rect.right).toBeLessThanOrEqual(bounds.right + 1);
+      }
+    }
+    if (text.parentElement?.closest('code')) continue;
+    for (const gap of text.data.matchAll(/ +/g)) {
+      range.setStart(text, gap.index);
+      range.setEnd(text, gap.index + 1);
+      const rect = range.getClientRects()[0];
+      if (rect) expect(rect.width).toBeLessThanOrEqual(5 * space + 1);
+    }
   }
 }
 
@@ -159,15 +169,15 @@ export const RichReadOnlyArtifact: Story = {
   play: async ({ canvas, canvasElement }) => {
     await document.fonts.ready;
     const column = canvasElement.querySelector<HTMLElement>('[data-artifact-column]')!;
-    await waitFor(() => expect(column.querySelector('p')).toHaveAttribute('data-justice'));
+    await waitFor(() => fittedParagraph(column.querySelector('p')!));
     const prose = column.querySelector('p')!;
     const original = prose.textContent;
     fittedParagraph(prose);
-    const wideLines = prose.children.length;
+    const wideHeight = prose.getBoundingClientRect().height;
     column.style.width = '300px';
     await waitFor(() => {
       fittedParagraph(prose);
-      expect(prose.children.length).toBeGreaterThan(wideLines);
+      expect(prose.getBoundingClientRect().height).toBeGreaterThan(wideHeight);
     });
     const link = canvas.getByRole('link', { name: 'the reference' });
     expect(link).toHaveAttribute('href', 'https://example.com');
@@ -201,7 +211,7 @@ export const RichReadOnlyArtifact: Story = {
   },
 };
 
-/** Formatting and optimized line spans remain transparent to artifact comments. */
+/** Formatting and composed line spans remain transparent to artifact comments. */
 export const RichArtifactComments: Story = {
   // Line fitting measures text in real browser layout, which the jsdom story run lacks: open
   // this story in Storybook to play it.

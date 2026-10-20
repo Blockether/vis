@@ -6,7 +6,8 @@ import { Markdown, ThinkingBand, UserMessage } from './ChatContent';
 import { MarkdownArtifact } from './MarkdownArtifact';
 
 const paragraph =
-  'A paragraph reads more evenly when its line breaks are chosen together. Justice considers the whole paragraph, balancing the spaces between words instead of stretching each line independently. The same prose should remain readable when you resize the window or open a document on a narrow phone.';
+  'A paragraph reads more evenly when no gap between its words opens wide. The browser justifies each line, and a line beside `apps/vis-companion/src/components/JustifiedProse.tsx` or another long path keeps its natural spacing instead. The same prose should remain readable when you resize the window or open a document on a narrow phone.';
+const paragraphText = paragraph.replaceAll('`', '');
 
 function ProseExample() {
   const [text, setText] = useState(paragraph);
@@ -28,7 +29,7 @@ function ProseExample() {
 }
 
 const meta = {
-  title: 'Components/Justice prose',
+  title: 'Components/Justified prose',
   component: ProseExample,
   parameters: { layout: 'fullscreen' },
 } satisfies Meta<typeof ProseExample>;
@@ -36,28 +37,34 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /**
- * A line whose gaps would open wider than the ragged limit keeps natural spacing and ends
- * short by design. Glyph advances differ by platform, and so does which line that is.
+ * Every line of the passage stays inside its column, and no gap outside inline code opens
+ * wider than five natural spaces. Native and composed lines must both pass.
  */
-function isRagged(line: Element) {
-  const { wordSpacing, letterSpacing } = (line as HTMLElement).style;
-  return parseFloat(wordSpacing) === 0 && parseFloat(letterSpacing) === 0;
-}
-
-function expectFitted(prose: HTMLElement) {
+function expectEven(prose: HTMLElement) {
   const column = prose.getBoundingClientRect();
-  const inset = parseFloat(getComputedStyle(prose).paddingLeft);
-  const lines = [...prose.children];
-  expect(lines.length).toBeGreaterThan(1);
-  expect(lines.slice(0, -1).some((line) => !isRagged(line))).toBe(true);
-  for (const [index, line] of lines.entries()) {
-    const range = document.createRange();
-    range.selectNodeContents(line);
-    const rect = range.getBoundingClientRect();
-    expect(Math.abs(rect.left - column.left - inset)).toBeLessThan(1);
-    expect(rect.right).toBeLessThanOrEqual(column.right + 1);
-    if (index < lines.length - 1 && !isRagged(line)) {
-      expect(Math.abs(rect.right - column.right)).toBeLessThan(1);
+  // A canvas measures the space without a DOM change, which would wake `waitFor` again.
+  const style = getComputedStyle(prose);
+  const context = document.createElement('canvas').getContext('2d')!;
+  context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  const space = context.measureText(' ').width;
+  const range = document.createRange();
+  const walker = document.createTreeWalker(prose, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const text = walker.currentNode as Text;
+    for (const word of text.data.matchAll(/\S+/g)) {
+      range.setStart(text, word.index);
+      range.setEnd(text, word.index + word[0].length);
+      for (const rect of range.getClientRects()) {
+        expect(rect.left).toBeGreaterThanOrEqual(column.left - 1);
+        expect(rect.right).toBeLessThanOrEqual(column.right + 1);
+      }
+    }
+    if (text.parentElement?.closest('code')) continue;
+    for (const gap of text.data.matchAll(/ +/g)) {
+      range.setStart(text, gap.index);
+      range.setEnd(text, gap.index + 1);
+      const rect = range.getClientRects()[0];
+      if (rect) expect(rect.width).toBeLessThanOrEqual(5 * space + 1);
     }
   }
 }
@@ -73,37 +80,40 @@ function expectSelection(prose: HTMLElement, text: string) {
   expect(prose.textContent).toBe(text);
 }
 
+/** The passage keeps its box from one frame to the next: no second layout appears. */
+async function expectSteady(element: HTMLElement, frames = 12) {
+  const boxes: number[][] = [];
+  for (let frame = 0; frame < frames; frame++) {
+    const box = element.getBoundingClientRect();
+    boxes.push([box.x, box.y, box.width, box.height]);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+  for (const box of boxes) expect(box).toEqual(boxes[0]);
+}
+
 export const ResponsiveParagraphs: Story = {
-  // Line fitting measures text in real browser layout, which the jsdom story run lacks: open
-  // this story in Storybook to play it.
+  // Line geometry needs real browser layout, which the jsdom story run lacks: open this
+  // story in Storybook to play it.
   tags: ['!test'],
   play: async ({ canvasElement }) => {
     await document.fonts.ready;
     const column = canvasElement.querySelector<HTMLElement>('[data-prose-column]')!;
-    let prose = column.querySelector('p')!;
-    await waitFor(() => expect(prose).toHaveAttribute('data-justice'));
-    // Prose composes at once and again when its web font finishes loading, so the first
-    // composition may still carry the fallback font's advances.
-    await waitFor(() => expectFitted(prose));
-    expectSelection(prose, paragraph);
-    const narrowLines = prose.children.length;
-    column.style.width = '280px';
-    await waitFor(() => expect(prose.children.length).toBeGreaterThan(narrowLines));
-    expectFitted(prose);
-    expectSelection(prose, paragraph);
-    const smallerFontLines = prose.children.length;
-    // Text sizes change the line height too. Composed lines never wrap, so the new line
-    // height is what resizes the passage for its ResizeObserver.
+    const passages = () => [...column.querySelectorAll<HTMLElement>('p, li')];
+    for (const width of [340, 300, 280, 360]) {
+      column.style.width = `${width}px`;
+      await waitFor(() => passages().forEach(expectEven));
+      await expectSteady(column);
+    }
+    expectSelection(column.querySelector('p')!, paragraphText);
+    // Text sizes change the line height too, which resizes the passage for its observer.
     column.style.fontSize = '22px';
     column.style.lineHeight = '30px';
-    await waitFor(() => expect(prose.children.length).toBeGreaterThan(smallerFontLines));
-    expectFitted(prose);
+    await waitFor(() => passages().forEach(expectEven));
     await userEvent.click(within(canvasElement).getByRole('button', { name: 'Continue response' }));
-    prose = column.querySelector('p')!;
-    const streamed = `${paragraph} More words arrive as the response continues to stream.`;
+    const prose = column.querySelector('p')!;
+    const streamed = `${paragraphText} More words arrive as the response continues to stream.`;
     await waitFor(() => expect(prose.textContent).toBe(streamed));
-    await waitFor(() => expect(prose).toHaveAttribute('data-justice'));
-    expectFitted(prose);
+    await waitFor(() => expectEven(prose));
     expectSelection(prose, streamed);
     const range = document.createRange();
     range.selectNodeContents(prose);
@@ -111,16 +121,13 @@ export const ResponsiveParagraphs: Story = {
     selection.addRange(range);
     const selectedMarkup = prose.innerHTML;
     column.style.width = '320px';
-    // Let ResizeObserver and its scheduled fit run while the passage is selected.
+    // Let ResizeObserver and its scheduled reading run while the passage is selected.
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     expect(selection.toString()).toBe(streamed);
     expect(prose.innerHTML).toBe(selectedMarkup);
     selection.removeAllRanges();
-    await waitFor(() => expectFitted(prose));
-    const item = column.querySelector('li')!;
-    await waitFor(() => expect(item).toHaveAttribute('data-justice'));
-    await waitFor(() => expectFitted(item));
-    expectSelection(item, paragraph);
+    await waitFor(() => passages().forEach(expectEven));
+    expectSelection(column.querySelector('li')!, paragraphText);
   },
 };
 
@@ -133,7 +140,7 @@ const longReasoning = spokenRequest.replaceAll('  ', ' ');
 
 /** Native prose fills the column without stretching its final line or changing copied text. */
 function expectNativeFitted(prose: HTMLElement) {
-  expect(prose).not.toHaveAttribute('data-justice');
+  expect(prose).not.toHaveAttribute('data-justified-lines');
   expect(getComputedStyle(prose).textAlign).toBe('justify');
   const column = prose.getBoundingClientRect();
   // Measure words rather than hanging spaces, and include generated hyphen glyphs.
@@ -214,7 +221,7 @@ export const NativeFallbacks: Story = {
     expect(canvas.getByRole('heading', { name: 'Headings stay native' })).toBeVisible();
     expect(canvasElement.querySelector('br')).not.toBeNull();
     for (const prose of canvasElement.querySelectorAll('p')) {
-      expect(prose).not.toHaveAttribute('data-justice');
+      expect(prose).not.toHaveAttribute('data-justified-lines');
     }
   },
 };
@@ -257,10 +264,10 @@ function OpeningArtifact() {
   );
 }
 
-/** #282 follow-up: opening a document must not reveal a second, justified layout. */
+/** #282 follow-up: opening a document must not reveal a second layout. */
 export const StableOpening: Story = {
-  // Line fitting measures text in real browser layout, which the jsdom story run lacks: open
-  // this story in Storybook to play it.
+  // Line geometry needs real browser layout, which the jsdom story run lacks: open this
+  // story in Storybook to play it.
   tags: ['!test'],
   render: () => <OpeningArtifact />,
   play: async ({ canvasElement }) => {
@@ -269,32 +276,26 @@ export const StableOpening: Story = {
     const column = canvasElement.querySelector<HTMLElement>('[data-opening-column]')!;
     for (const width of [600, 300]) {
       column.style.width = `${width}px`;
-      const frames: { composed: boolean; geometry: number[][] }[] = [];
+      const frames: number[][][] = [];
       let frame = 0;
       const capture = () => {
         // The artifact shows a loading line until its source is read; the document ends in h2.
         if (column.querySelector('h2')) {
-          const prose = [...column.querySelectorAll('p, li')];
-          frames.push({
-            composed: prose.every((element) => element.hasAttribute('data-justice')),
-            geometry: [...column.querySelectorAll('p, li, h2')].map((element) => {
+          frames.push(
+            [...column.querySelectorAll('p, li, h2')].map((element) => {
               const box = element.getBoundingClientRect();
               return [box.x, box.y, box.width, box.height];
             }),
-          });
+          );
         }
         frame = requestAnimationFrame(capture);
       };
       frame = requestAnimationFrame(capture);
       try {
         await userEvent.click(canvas.getByRole('button', { name: 'Open Markdown' }));
-        await waitFor(() => {
-          expect(frames.length).toBeGreaterThanOrEqual(12);
-          expect(frames.at(-1)?.composed).toBe(true);
-        });
-        expect(frames.every((sample) => sample.composed)).toBe(true);
-        for (const sample of frames) expect(sample.geometry).toEqual(frames[0].geometry);
-        for (const prose of column.querySelectorAll<HTMLElement>('p, li')) expectFitted(prose);
+        await waitFor(() => expect(frames.length).toBeGreaterThanOrEqual(12));
+        for (const sample of frames) expect(sample).toEqual(frames[0]);
+        for (const prose of column.querySelectorAll<HTMLElement>('p, li')) expectEven(prose);
       } finally {
         cancelAnimationFrame(frame);
       }
@@ -303,54 +304,20 @@ export const StableOpening: Story = {
   },
 };
 
-const codeLists = `1. Open \`apps/vis-companion/src/components/JustifiedProse.tsx\` and find \`prepareInline\`, \`inlineSlice\` and \`measuredSlice\` before you change anything.
+const codeLists = `1. Open \`apps/vis-companion/src/components/JustifiedProse.tsx\` and find \`inlineContent\`, \`inlineSlice\` and \`nativeLines\` before you change anything.
 2. Run \`npm test -- --run src/components/JustifiedProse.test.tsx\`, then \`npx vitest --project=storybook --run\` to check the stories.
-3. Set \`wordSpacing\`, \`letterSpacing\` and \`fontKerning\` on each \`span\` so \`Range.getBoundingClientRect()\` matches the probe.
-4. Keep \`ResizeObserver\`, \`Intl.Segmenter\` and \`document.fonts\` available before \`engine.solve\` runs.
+3. Read \`Range.getClientRects()\` for each word so \`ResizeObserver\` and \`IntersectionObserver\` see the same lines.
+4. Keep \`document.fonts\` and \`getComputedStyle\` available before \`nativeLines\` runs.
 
 - \`INLINE_CODE_CLASS\` keeps \`px-0.5\`, \`mx-px\` and \`inline-block\` on every \`code\` element in the answer.
 - The \`li\` marker uses \`::before\` with \`position: absolute\`, so \`padding-left\` reserves \`2ch\` or \`var(--marker-column)\`.
 - \`a\`, \`b\`, \`c\`, \`d\`, \`e\`, \`f\`, \`g\` and \`h\` are short values, while \`src/com/blockether/vis/internal/gateway/state.clj\` is long.
 - Read \`deps.edn\`, \`bb.edn\`, \`build.clj\`, \`package.json\`, \`tsconfig.json\` and \`vite.config.ts\` first.`;
 
-/**
- * Count the lines of a composed item that end flush and those left short at natural
- * spacing. Every line starts at the inset and stays inside the column, and no line
- * opens word gaps wider than five spaces.
- */
-function countEndings(prose: HTMLElement) {
-  const column = prose.getBoundingClientRect();
-  const style = getComputedStyle(prose);
-  const inset = parseFloat(style.paddingLeft);
-  const context = document.createElement('canvas').getContext('2d')!;
-  context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-  const space = context.measureText(' ').width;
-  const lines = [...prose.children] as HTMLElement[];
-  let flush = 0;
-  let ragged = 0;
-  for (const [index, line] of lines.entries()) {
-    const range = document.createRange();
-    range.selectNodeContents(line);
-    const rect = range.getBoundingClientRect();
-    const spacing = parseFloat(line.style.wordSpacing) || 0;
-    expect(Math.abs(rect.left - column.left - inset)).toBeLessThan(1);
-    expect(rect.right).toBeLessThanOrEqual(column.right + 1);
-    expect(spacing).toBeLessThanOrEqual(4 * space);
-    if (index === lines.length - 1) continue;
-    if (Math.abs(rect.right - column.right) < 1) flush++;
-    else {
-      // Only a line kept at natural spacing may end short of the column.
-      expect(spacing).toBe(0);
-      ragged++;
-    }
-  }
-  return { flush, ragged };
-}
-
-/** Lists crowded with inline code compose every item without opening holes. */
+/** Lists crowded with inline code keep every gap narrow at each column width. */
 export const InlineCodeLists: Story = {
-  // Line fitting measures text in real browser layout, which the jsdom story run lacks: open
-  // this story in Storybook to play it.
+  // Line geometry needs real browser layout, which the jsdom story run lacks: open this
+  // story in Storybook to play it.
   tags: ['!test'],
   render: () => (
     <div className="p-3 text-body text-white">
@@ -366,18 +333,8 @@ export const InlineCodeLists: Story = {
     expect(items).toHaveLength(8);
     for (const width of [390, 340, 300, 260]) {
       column.style.width = `${width}px`;
-      await waitFor(() => {
-        let flush = 0;
-        let ragged = 0;
-        for (const item of items) {
-          expect(item).toHaveAttribute('data-justice');
-          const endings = countEndings(item);
-          flush += endings.flush;
-          ragged += endings.ragged;
-        }
-        // Each hole is avoided on its own line; the lists as a whole stay justified.
-        expect(ragged).toBeLessThan(flush);
-      });
+      await waitFor(() => items.forEach(expectEven));
+      await expectSteady(column);
     }
   },
 };

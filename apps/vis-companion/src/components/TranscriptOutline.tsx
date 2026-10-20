@@ -85,8 +85,8 @@ const STATUS_TEXT: Record<OutlineStatus, { label: string; tone: string }> = {
 };
 
 /**
- * The mask of an answer that the preview cuts: the end of its last line fades out. Justice
- * sets each line in a box of its own, so the browser draws no ellipsis there.
+ * The mask of an answer that the preview cuts: the end of its last line fades out. Composed
+ * prose sets each line in a box of its own, so the browser draws no ellipsis there.
  */
 const CUT_ANSWER_FADE =
   '[mask-image:linear-gradient(black,black),linear-gradient(to_right,black_60%,transparent)] [mask-position:top,bottom] [mask-repeat:no-repeat] [mask-size:100%_calc(100%_-_1lh),100%_1lh]';
@@ -548,8 +548,8 @@ export function TranscriptOutline({
 
   // The preview is measured before the browser paints it, and then placed again. Its
   // justified lines can change its height after that, so a resize measures it again.
-  // Justice can also break the answer into more lines at the same height, so a change
-  // of its lines checks again if the preview cuts the answer.
+  // Composed prose can also split the answer into other lines at the same height, so a
+  // change of its lines checks again if the preview cuts the answer.
   useLayoutEffect(() => {
     const element = previewRef.current;
     if (!element) return;

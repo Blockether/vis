@@ -1,32 +1,119 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Markdown, ThinkingBand, UserMessage } from './ChatContent';
+import { Markdown, UserMessage } from './ChatContent';
 import { JustifiedProse } from './JustifiedProse';
-import { MarkdownAnnotator } from './MarkdownArtifact';
-import { lineText, prepare, solve } from '@kitlangton/justice';
-import { useLayoutEffect } from 'react';
-import { noteReaderGesture, releaseReaderScroll } from '../lib/reader-gesture';
 
+/** Every glyph and natural space is this wide; every line is this tall. */
+const CHAR = 8;
+const LINE = 20;
 const paragraph =
-  'A paragraph should choose its line breaks together rather than treating every line as an isolated decision. The final line can remain naturally short.';
+  'A paragraph should keep the lines that the browser chose for it. The final line can remain naturally short.';
+/** At 240px the code does not fit after "Look at", which then stretches one gap 192px. */
+const coded = 'Look at `src/components/Prose.tsx` for the details of the change today.';
+const codedText = coded.replaceAll('`', '');
 let width = 240;
-let glyphWidth = 8;
 let resize: ResizeObserverCallback;
 let disconnect: ReturnType<typeof vi.fn>;
-let measure: ReturnType<typeof vi.spyOn>;
+let reads: ReturnType<typeof vi.fn>;
 let fonts: EventTarget & { ready: Promise<void>; status: 'loaded' | 'loading' };
 const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts');
-const originalRangeRect = Object.getOwnPropertyDescriptor(Range.prototype, 'getBoundingClientRect');
+const originalRects = Object.getOwnPropertyDescriptor(Range.prototype, 'getClientRects');
 const nativeStyle = window.getComputedStyle;
+
+type Box = { line: number; left: number; width: number };
+
+/**
+ * Lay out the prose as a browser does: greedy breaks at spaces outside code, every line
+ * but the last justified by stretching its gaps.
+ */
+function layoutOf(root: Element): Box[] {
+  const text = root.textContent ?? '';
+  const glued: boolean[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const leaf = walker.currentNode as Text;
+    const code = !!leaf.parentElement?.closest('code');
+    for (let index = 0; index < leaf.length; index++) glued.push(code);
+  }
+  const breakable = (index: number) => /\s/.test(text[index]) && !glued[index];
+  const words: [number, number][] = [];
+  for (let index = 0; index < text.length; ) {
+    while (index < text.length && breakable(index)) index++;
+    const start = index;
+    while (index < text.length && !breakable(index)) index++;
+    if (index > start) words.push([start, index]);
+  }
+  const lines: [number, number][][] = [];
+  let x = 0;
+  for (const word of words) {
+    const size = (word[1] - word[0]) * CHAR;
+    const line = lines.at(-1);
+    if (line && x + CHAR + size <= width) {
+      line.push(word);
+      x += CHAR + size;
+    } else {
+      lines.push([word]);
+      x = size;
+    }
+  }
+  const boxes: Box[] = Array.from(text, () => ({ line: 0, left: 0, width: 0 }));
+  for (const [number, line] of lines.entries()) {
+    const used = line.reduce((sum, [start, end]) => sum + (end - start) * CHAR, 0);
+    const gap =
+      number < lines.length - 1 && line.length > 1 ? (width - used) / (line.length - 1) : CHAR;
+    let left = 0;
+    for (const [index, [start, end]] of line.entries()) {
+      for (let at = start; at < end; at++)
+        boxes[at] = { line: number, left: left + (at - start) * CHAR, width: CHAR };
+      left += (end - start) * CHAR;
+      const next = line[index + 1] ?? words[words.indexOf(line[index]) + 1];
+      for (let at = end; at < (next?.[0] ?? text.length); at++) {
+        const first = at === end && index < line.length - 1;
+        boxes[at] = { line: number, left, width: first ? gap : 0 };
+      }
+      left += gap;
+    }
+  }
+  return boxes;
+}
+
+function offsetIn(root: Element, node: Node, offset: number) {
+  let total = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    if (walker.currentNode === node) return total + offset;
+    total += (walker.currentNode as Text).length;
+  }
+  return total;
+}
+
+function clientRects(this: Range) {
+  const root = (this.startContainer.parentElement ?? this.startContainer as Element).closest(
+    'p, li',
+  )!;
+  const boxes = layoutOf(root);
+  const start = offsetIn(root, this.startContainer, this.startOffset);
+  const end = offsetIn(root, this.endContainer, this.endOffset);
+  const lines = new Map<number, { left: number; right: number }>();
+  for (const box of boxes.slice(start, end)) {
+    const line = lines.get(box.line);
+    if (line) line.right = Math.max(line.right, box.left + box.width);
+    else lines.set(box.line, { left: box.left, right: box.left + box.width });
+  }
+  return [...lines].map(([line, { left, right }]) => {
+    const top = line * LINE;
+    const bottom = top + LINE;
+    return { left, right, x: left, y: top, top, bottom, width: right - left, height: LINE };
+  });
+}
 
 beforeEach(() => {
   width = 240;
-  glyphWidth = 8;
   disconnect = vi.fn();
   fonts = Object.assign(new EventTarget(), {
     ready: Promise.resolve(),
-    status: 'loading' as 'loaded' | 'loading',
+    status: 'loaded' as 'loaded' | 'loading',
   });
   Object.defineProperty(document, 'fonts', { configurable: true, value: fonts });
   vi.stubGlobal(
@@ -47,138 +134,213 @@ beforeEach(() => {
   vi.stubGlobal('getComputedStyle', (element: Element) =>
     Object.assign(nativeStyle(element), {
       width: `${width}px`,
-      boxSizing: 'content-box',
       direction: 'ltr',
       writingMode: 'horizontal-tb',
       whiteSpace: 'normal',
       textTransform: 'none',
       textIndent: '0px',
-      font: '16px sans-serif',
+      hyphens: 'manual',
+      wordBreak: 'normal',
+      overflowWrap: 'normal',
     }),
   );
-  measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
-  });
-  Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
-    configurable: true,
-    value: vi.fn(function (this: Range) {
-      return { width: this.toString().length * glyphWidth } as DOMRect;
-    }),
-  });
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    font: '',
+    measureText: () => ({ width: CHAR }),
+  } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+    () => ({ left: 0, top: 0, right: width, bottom: LINE, width, height: LINE }) as DOMRect,
+  );
+  reads = vi.fn(clientRects);
+  Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: reads });
 });
 
 afterEach(() => {
-  releaseReaderScroll();
+  window.getSelection()?.removeAllRanges();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   if (originalFonts) Object.defineProperty(document, 'fonts', originalFonts);
   else Reflect.deleteProperty(document, 'fonts');
-  if (originalRangeRect)
-    Object.defineProperty(Range.prototype, 'getBoundingClientRect', originalRangeRect);
-  else Reflect.deleteProperty(Range.prototype, 'getBoundingClientRect');
+  if (originalRects) Object.defineProperty(Range.prototype, 'getClientRects', originalRects);
+  else Reflect.deleteProperty(Range.prototype, 'getClientRects');
 });
-
-async function composed(element: Element) {
-  await waitFor(() => expect(element).toHaveAttribute('data-justice'));
-}
 
 /** Let the placement that follows a commit run, as it does before the browser paints. */
 async function settle() {
   await act(async () => {});
 }
 
-/** Words measured so far; placing a paragraph reads only the paragraph's own box. */
-function wordMeasurements() {
-  return measure.mock.instances.filter((node: Element) => node.tagName !== 'P').length;
+/** Let a scheduled frame and its placement run. */
+async function frame(ms = 0) {
+  await act(() => new Promise((resolve) => setTimeout(resolve, ms)));
 }
 
-function resized() {
-  act(() => resize([], {} as ResizeObserver));
+/** Report the paragraph's current width to the shared ResizeObserver. */
+function delivered(element: Element) {
+  act(() => resize([{ target: element } as ResizeObserverEntry], {} as ResizeObserver));
 }
 
-describe('Justice prose', () => {
-  // #282 follow-up: opening Markdown must not paint native text, then reflow it.
-  it('composes the opening render without waiting for an animation frame', async () => {
-    vi.stubGlobal('requestAnimationFrame', () => 0);
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
+/** The text alignment of each composed line: `justify`, or `start` where it stays ragged. */
+function endings(prose: Element) {
+  return [...prose.children]
+    .filter(
+      (line): line is HTMLElement =>
+        line instanceof HTMLElement && line.style.display === 'inline-block',
+    )
+    .map((line) => line.style.textAlignLast);
+}
+
+describe('justified prose', () => {
+  it('leaves ordinary prose native without reading a single line', async () => {
+    const view = render(<Markdown>{paragraph}</Markdown>);
     await settle();
     const prose = view.getByRole('paragraph');
-    expect(prose).toHaveAttribute('data-justice');
-    expect(prose.children.length).toBeGreaterThan(1);
+    expect(prose).not.toHaveAttribute('data-justified-lines');
+    expect(prose).toHaveClass('text-justify');
     expect(prose.textContent).toBe(paragraph);
+    expect(reads).not.toHaveBeenCalled();
   });
 
-  it('composes a plain user request with Justice on the first paint', async () => {
-    const view = render(<UserMessage>{paragraph}</UserMessage>);
+  // #282 follow-up: opening Markdown must not paint native text, then reflow it.
+  it('sets a hole beside inline code ragged before the first frame, on the native breaks', async () => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    const view = render(<Markdown>{coded}</Markdown>);
     await settle();
-    const prose = view.container.querySelector('article p');
-    expect(prose).toHaveAttribute('data-justice');
-    expect(prose?.textContent).toBe(paragraph);
+    const prose = view.getByRole('paragraph');
+    expect(prose).toHaveAttribute('data-justified-lines');
+    expect(endings(prose)).toEqual(['start', 'justify', 'justify', 'start']);
+    expect(prose.textContent).toBe(codedText);
+    expect(prose.querySelector('code')?.textContent).toBe('src/components/Prose.tsx');
   });
 
-  // Council messages and wakes must read like typed requests: Justice, not native justify.
-  it('composes a Council request with Justice on the first paint', async () => {
-    const view = render(
-      <UserMessage
-        requestKind="council"
-        council={{ entry_id: 7698, thread_id: 7698, kind: 'coordination', content: paragraph }}
-      >
-        Council notification #7698. Read the attributed Council input.
-      </UserMessage>,
-    );
+  it('reads a paragraph with a long token even without code', async () => {
+    const text = 'Read it in averyveryverylongidentifier now please.';
+    const view = render(<JustifiedProse>{text}</JustifiedProse>);
     await settle();
-    const prose = view.container.querySelector('article p');
-    expect(prose).toHaveAttribute('data-justice');
-    expect(prose?.textContent).toBe(paragraph);
+    const prose = view.getByRole('paragraph');
+    expect(endings(prose)).toEqual(['start', 'justify', 'start']);
+    expect(prose.textContent).toBe(text);
   });
 
-  it('justifies a spoken request with doubled sentence spaces without changing its text', async () => {
-    const request = `${paragraph}  And another sentence follows the first.  It should still fill the column.`;
-    const view = render(<UserMessage>{request}</UserMessage>);
+  it('keeps native lines when the risky token opens no wide gap', async () => {
+    width = 400;
+    const view = render(<Markdown>{coded}</Markdown>);
     await settle();
-    const prose = view.container.querySelector('article p');
-    expect(prose).toHaveAttribute('data-justice');
-    expect(prose?.textContent).toBe(request);
+    expect(view.getByRole('paragraph')).not.toHaveAttribute('data-justified-lines');
+    expect(reads).toHaveBeenCalled();
   });
 
-  // Regression, user report: a 585-word speech transcript lost justification at
-  // Justice's 400-word limit and at doubled spaces within a sentence.
-  it.each(['request', 'reasoning', 'answer', 'list'] as const)(
-    'keeps long %s prose justified without exceeding the solver budget',
-    async (kind) => {
-      const text = Array(585).fill('rozwiązanie').join(' ');
-      const view = render(
-        kind === 'request' ? (
-          <UserMessage>{text}</UserMessage>
-        ) : kind === 'reasoning' ? (
-          <ThinkingBand>{text}</ThinkingBand>
-        ) : (
-          <Markdown>{kind === 'list' ? `- ${text}` : text}</Markdown>
-        ),
-      );
-      await settle();
-      const prose = view.container.querySelector(kind === 'list' ? 'li' : 'p');
-      expect(prose).not.toHaveAttribute('data-justice');
-      expect(prose).toHaveClass('text-justify');
-      expect(prose?.textContent).toBe(text);
-      expect(wordMeasurements()).toBe(0);
-    },
-  );
+  it('keeps native text when it is disabled or cannot be measured', async () => {
+    const disabled = render(<JustifiedProse enabled={false}>{coded}</JustifiedProse>);
+    await settle();
+    expect(disabled.getByRole('paragraph')).not.toHaveAttribute('data-justified-lines');
+    expect(reads).not.toHaveBeenCalled();
+    disabled.unmount();
+    reads.mockImplementation(() => []);
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    const prose = view.getByRole('paragraph');
+    expect(prose).not.toHaveAttribute('data-justified-lines');
+    expect(prose.textContent).toBe(codedText);
+  });
 
-  it.each([20, 585])(
-    'justifies a %i-word spoken request with doubled spaces inside a sentence',
-    async (words) => {
-      const text = ['Omawiamy, ', ...Array(words - 1).fill('rozwiązanie')].join(' ');
-      const view = render(<UserMessage>{text}</UserMessage>);
-      await settle();
-      const prose = view.container.querySelector('article p');
-      expect(prose).toHaveClass('text-justify', 'whitespace-pre-wrap');
-      expect(prose?.textContent).toBe(text);
-    },
-  );
+  it('keeps its lines when a parent repeats the same prose with new elements', async () => {
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    const line = view.getByRole('paragraph').firstElementChild;
+    const before = reads.mock.calls.length;
+    view.rerender(<Markdown>{coded}</Markdown>);
+    await settle();
+    expect(view.getByRole('paragraph').firstElementChild).toBe(line);
+    expect(reads.mock.calls.length).toBe(before);
+  });
 
+  it('reads streamed text again and shows it at once', async () => {
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    const streamed = `${coded} More words arrive while the answer streams.`;
+    view.rerender(<Markdown>{streamed}</Markdown>);
+    await settle();
+    const prose = view.getByRole('paragraph');
+    expect(prose.textContent).toBe(streamed.replaceAll('`', ''));
+    expect(endings(prose)[0]).toBe('start');
+  });
+
+  it('reads one step of its column again and returns to native lines that read well', async () => {
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    const prose = view.getByRole('paragraph');
+    // The first delivery reports the width that the placement already read.
+    delivered(prose);
+    expect(prose).toHaveAttribute('data-justified-lines');
+    width = 400;
+    delivered(prose);
+    expect(prose).not.toHaveAttribute('data-justified-lines');
+    width = 240;
+    await frame(100);
+    delivered(prose);
+    expect(endings(prose)).toEqual(['start', 'justify', 'justify', 'start']);
+  });
+
+  it('rides native lines while its column moves and reads them where it rests', async () => {
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    const prose = view.getByRole('paragraph');
+    delivered(prose);
+    width = 400;
+    delivered(prose);
+    width = 240;
+    delivered(prose);
+    expect(prose).not.toHaveAttribute('data-justified-lines');
+    await frame(120);
+    await frame();
+    expect(endings(prose)).toEqual(['start', 'justify', 'justify', 'start']);
+  });
+
+  it('keeps the lines a selection covers until the selection clears', async () => {
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    const prose = view.getByRole('paragraph');
+    delivered(prose);
+    const range = document.createRange();
+    // A reader's selection runs across the paragraph, as jsdom's `containsNode` requires.
+    range.setStartBefore(prose);
+    range.setEndAfter(prose);
+    window.getSelection()!.addRange(range);
+    const markup = prose.innerHTML;
+    width = 400;
+    delivered(prose);
+    expect(prose.innerHTML).toBe(markup);
+    expect(window.getSelection()!.toString()).toBe(codedText);
+    window.getSelection()!.removeAllRanges();
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await frame();
+    expect(prose).not.toHaveAttribute('data-justified-lines');
+  });
+
+  it('reads its lines again after fonts load', async () => {
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    const before = reads.mock.calls.length;
+    act(() => {
+      fonts.dispatchEvent(new Event('loadingdone'));
+    });
+    await frame();
+    expect(reads.mock.calls.length).toBeGreaterThan(before);
+    expect(view.getByRole('paragraph')).toHaveAttribute('data-justified-lines');
+  });
+
+  it('releases its observer on unmount', async () => {
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    view.unmount();
+    expect(disconnect).toHaveBeenCalled();
+  });
+});
+
+describe('request and Markdown prose', () => {
   it('keeps tabs and indented commands left-aligned', async () => {
     const text = `${paragraph}
   git  status
@@ -190,54 +352,9 @@ git\tstatus`;
     for (const line of lines.slice(1)) {
       expect(line).toHaveClass('text-left', 'whitespace-pre-wrap');
       expect(line).not.toHaveClass('text-justify');
-      expect(line).not.toHaveAttribute('data-justice');
+      expect(line).not.toHaveAttribute('data-justified-lines');
     }
     expect(lines.map((line) => line.textContent)).toEqual(text.split('\n'));
-  });
-
-  it('composes a single reasoning paragraph from the chat band', async () => {
-    const reasoning =
-      'I am looking at how the Python and Clojure extensions report activity — specifically the detail shown during REPL status/connect/start that repeats the summary, and how linting activity could be improved.';
-    const view = render(<ThinkingBand>{reasoning}</ThinkingBand>);
-    await settle();
-    const prose = view.container.querySelector('section p');
-    expect(prose).toHaveAttribute('data-justice');
-    expect(prose?.textContent).toBe(reasoning);
-  });
-
-  it('justifies reasoning on each side of an authored line break', async () => {
-    const first = 'I am looking at how the Python and Clojure extensions report activity so a reader can see the right message as it runs';
-    const second = 'and the next thought continues here with enough words to fill the narrow column without losing this line break.';
-    const view = render(<ThinkingBand>{`${first}\n${second}`}</ThinkingBand>);
-    await settle();
-    const lines = [...view.container.querySelectorAll('section p')];
-    expect(lines).toHaveLength(2);
-    expect(lines.map((line) => line.textContent)).toEqual([first, second]);
-    expect(lines.map((line) => line.hasAttribute('data-justice'))).toEqual([true, true]);
-    expect(lines.every((line) => line.classList.contains('my-0'))).toBe(true);
-  });
-
-  it('keeps doubled spaces in an inline command literal', async () => {
-    const request = 'Run git  status --short.  Then read the result.';
-    const view = render(<UserMessage>{request}</UserMessage>);
-    await settle();
-    const prose = view.container.querySelector('article p');
-    expect(prose).not.toHaveAttribute('data-justice');
-    expect(prose).toHaveClass('whitespace-pre-wrap');
-    expect(prose?.textContent).toBe(request);
-  });
-
-  it('keeps hard line breaks and literal spacing in a user request', async () => {
-    const view = render(<UserMessage>{`${paragraph}\n\n  git  status\n${paragraph}`}</UserMessage>);
-    await settle();
-    const lines = [...view.container.querySelectorAll('article p')];
-    expect(lines.map((line) => line.textContent)).toEqual([paragraph, '', '  git  status', paragraph]);
-    expect(lines.map((line) => line.hasAttribute('data-justice'))).toEqual([
-      true,
-      false,
-      false,
-      true,
-    ]);
   });
 
   it('leaves fenced code literal while justifying the surrounding request', async () => {
@@ -252,42 +369,10 @@ git\tstatus`;
       '```',
       paragraph,
     ]);
-    expect(lines.map((line) => line.hasAttribute('data-justice'))).toEqual([
-      true,
-      false,
-      false,
-      false,
-      true,
-    ]);
     for (const line of lines.slice(1, 4)) {
       expect(line).toHaveClass('text-left', 'whitespace-pre-wrap');
       expect(line).not.toHaveClass('text-justify');
     }
-  });
-
-  it('justifies request prose around a collapsed paste without opening its literal body', async () => {
-    const request = [
-      paragraph,
-      '````vis-paste',
-      '[Pasted #1: 1 line, 3B]',
-      'abc',
-      '````',
-      paragraph,
-    ].join('\n');
-    const view = render(<UserMessage>{request}</UserMessage>);
-    await settle();
-    expect(
-      [...view.container.querySelectorAll('article p[data-justice]')].map((line) => line.textContent),
-    ).toEqual([paragraph, paragraph]);
-    expect(view.container.querySelector('details code')?.textContent).toBe('abc');
-  });
-
-  it('keeps an inline image chip beside the original text rather than moving it into a paragraph', () => {
-    const view = render(<UserMessage>{'Look at /art/chart.png and describe it.'}</UserMessage>);
-    const article = view.container.querySelector('article')!;
-    expect(article.querySelector('p')).toBeNull();
-    expect(article).toHaveTextContent('Look at chart.png and describe it.');
-    expect(article).not.toHaveTextContent('/art/chart.png');
   });
 
   it('keeps an empty request bubble without introducing a blank paragraph', () => {
@@ -296,741 +381,30 @@ git\tstatus`;
     expect(view.container.querySelector('article .border-you-role')).toBeInTheDocument();
   });
 
-  it('measures plain prose without laying out every word separately', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    expect(prose.textContent).toBe(paragraph);
-    expect(measure.mock.calls.length).toBeLessThan(6);
-  });
-
-  it('defers distant prose while keeping its source text and composes before it enters view', async () => {
-    let notify: IntersectionObserverCallback = () => {};
-    const options: (IntersectionObserverInit | undefined)[] = [];
-    const observe = vi.fn();
-    const unobserve = vi.fn();
-    const disconnect = vi.fn();
-    vi.stubGlobal(
-      'IntersectionObserver',
-      class {
-        constructor(callback: IntersectionObserverCallback, init?: IntersectionObserverInit) {
-          options.push(init);
-          notify = callback;
-        }
-        observe = observe;
-        unobserve = unobserve;
-        disconnect = disconnect;
-      },
-    );
-    measure.mockImplementation(function (this: HTMLElement) {
-      if (this.dataset.testid === 'scroller') return { top: 0, bottom: 800 } as DOMRect;
-      if (this.tagName === 'P') return { width, top: 3000, bottom: 3040 } as DOMRect;
-      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
-    });
-    const transcript = (both: boolean) => (
-      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
-        <JustifiedProse>{paragraph}</JustifiedProse>
-        {both && <JustifiedProse>{`${paragraph} It follows the first one.`}</JustifiedProse>}
-      </div>
-    );
-
-    const view = render(transcript(true));
-    await settle();
-    const scroller = view.getByTestId('scroller');
-    const [prose, next] = view.getAllByRole('paragraph');
-    for (const element of [prose, next]) {
-      expect(element).not.toHaveAttribute('data-justice');
-      expect(observe).toHaveBeenCalledWith(element);
-    }
-    expect(prose.textContent).toBe(paragraph);
-    // One observer per scroller, looking a scroller height ahead: the page viewport
-    // cannot see prose that the scroller still clips.
-    expect(options).toEqual([{ root: scroller, rootMargin: '100% 0px' }]);
-    // Placing prose reads where it stands, never the words inside it.
-    const placed = [scroller, prose, next];
-    expect(measure.mock.instances.every((node: HTMLElement) => placed.includes(node))).toBe(true);
-
-    act(() =>
-      notify(
-        [{ isIntersecting: true, target: prose } as unknown as IntersectionObserverEntry],
-        {} as IntersectionObserver,
-      ),
-    );
-    await composed(prose);
-    expect(prose.textContent).toBe(paragraph);
-    expect(next).not.toHaveAttribute('data-justice');
-    view.rerender(transcript(false));
-    expect(unobserve).toHaveBeenCalledWith(next);
-    expect(disconnect).not.toHaveBeenCalled();
-    view.unmount();
-    expect(unobserve).toHaveBeenCalledWith(prose);
-    expect(disconnect).toHaveBeenCalledOnce();
-  });
-
-  // Opening a session scrolls its transcript to the newest turn in a layout effect.
-  // Prose measured before that scroll would take the lines on screen for distant ones.
-  it('composes prose that its screen scrolls into view as it opens, before any frame', async () => {
-    vi.stubGlobal('requestAnimationFrame', () => 0);
-    let scrolled = 0;
-    measure.mockImplementation(function (this: HTMLElement) {
-      if (this.dataset.testid === 'scroller') return { top: 0, bottom: 800 } as DOMRect;
-      if (this.tagName === 'P')
-        return { width, top: 3000 - scrolled, bottom: 3040 - scrolled } as DOMRect;
-      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
-    });
-    function Screen() {
-      // A parent's layout effect runs after those of the prose inside it.
-      useLayoutEffect(() => {
-        scrolled = 2900;
-      }, []);
-      return (
-        <div data-testid="scroller" style={{ overflowY: 'auto' }}>
-          <JustifiedProse>{paragraph}</JustifiedProse>
-        </div>
-      );
-    }
-    const view = render(<Screen />);
-    await settle();
-    expect(view.getByRole('paragraph')).toHaveAttribute('data-justice');
-  });
-
-  // Composed lines can stand shorter than the native wrap. A screen pinned to its end then
-  // shows prose that stood just above it when the paragraphs were placed.
-  it('composes prose that composing brings into view, before any frame', async () => {
-    vi.stubGlobal('requestAnimationFrame', () => 0);
-    const above = `${paragraph} It stood just above the screen.`;
-    measure.mockImplementation(function (this: HTMLElement) {
-      if (this.dataset.testid === 'scroller') return { top: 0, bottom: 800 } as DOMRect;
-      if (this.tagName === 'P') {
-        const [first, last] = Array.from(document.querySelectorAll('p'));
-        // The prose on screen composes 20px shorter, so the pinned end moves the rest down.
-        const shift = last.hasAttribute('data-justice') ? 20 : 0;
-        return this === first
-          ? ({ width, top: shift - 70, bottom: shift - 10 } as DOMRect)
-          : ({ width, top: shift + 400, bottom: 480 } as DOMRect);
-      }
-      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
-    });
+  it('keeps nested block structure and task controls native while reading child paragraphs', async () => {
     const view = render(
-      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
-        <JustifiedProse>{above}</JustifiedProse>
-        <JustifiedProse>{paragraph}</JustifiedProse>
-      </div>,
+      <Markdown>{`- [ ] **Keep this control**\n\n- ${coded}\n\n  Another paragraph in the same item.`}</Markdown>,
     );
     await settle();
-    for (const prose of view.getAllByRole('paragraph')) expect(prose).toHaveAttribute('data-justice');
-  });
-
-  it('composes prose above the reader once they stop scrolling, without moving what they read', async () => {
-    let notify: IntersectionObserverCallback = () => {};
-    vi.stubGlobal(
-      'IntersectionObserver',
-      class {
-        constructor(callback: IntersectionObserverCallback) {
-          notify = callback;
-        }
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    let scroller: HTMLElement | null = null;
-    let top = -2000;
-    measure.mockImplementation(function (this: HTMLElement) {
-      if (this.dataset.testid === 'scroller') return { top: 0, bottom: 800 } as DOMRect;
-      if (this.tagName === 'P') {
-        // Here the composed lines stand taller than the native wrap they replace.
-        const height = this.hasAttribute('data-justice') ? 64 : 40;
-        const start = top - (scroller?.scrollTop ?? 0);
-        return { width, top: start, bottom: start + height } as DOMRect;
-      }
-      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
-    });
-    const view = render(
-      <div data-testid="scroller" style={{ overflowY: 'auto' }}>
-        <JustifiedProse>{paragraph}</JustifiedProse>
-      </div>,
-    );
-    scroller = view.getByTestId('scroller');
-    const prose = view.getByRole('paragraph');
-    await settle();
-    expect(prose).not.toHaveAttribute('data-justice');
-
-    // The reader scrolls up, and the paragraph comes within reach above what they see.
-    noteReaderGesture();
-    top = -600;
-    act(() =>
-      notify(
-        [{ isIntersecting: true, target: prose } as unknown as IntersectionObserverEntry],
-        {} as IntersectionObserver,
-      ),
-    );
-    await act(() => new Promise((resolve) => setTimeout(resolve, 100)));
-    expect(prose).not.toHaveAttribute('data-justice');
-    expect(scroller.scrollTop).toBe(0);
-
-    await composed(prose);
-    expect(prose.textContent).toBe(paragraph);
-    expect(scroller.scrollTop).toBe(24);
-  });
-
-  it('leaves the reading position to the screen that declares it keeps it', async () => {
-    let notify: IntersectionObserverCallback = () => {};
-    vi.stubGlobal(
-      'IntersectionObserver',
-      class {
-        constructor(callback: IntersectionObserverCallback) {
-          notify = callback;
-        }
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-      },
-    );
-    let scroller: HTMLElement | null = null;
-    let top = -2000;
-    measure.mockImplementation(function (this: HTMLElement) {
-      if (this.dataset.testid === 'scroller') return { top: 0, bottom: 800 } as DOMRect;
-      if (this.tagName === 'P') {
-        const height = this.hasAttribute('data-justice') ? 64 : 40;
-        const start = top - (scroller?.scrollTop ?? 0);
-        return { width, top: start, bottom: start + height } as DOMRect;
-      }
-      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
-    });
-    const view = render(
-      <div data-testid="scroller" data-keeps-reading-position style={{ overflowY: 'auto' }}>
-        <JustifiedProse>{paragraph}</JustifiedProse>
-      </div>,
-    );
-    scroller = view.getByTestId('scroller');
-    const prose = view.getByRole('paragraph');
-    await settle();
-
-    noteReaderGesture();
-    top = -600;
-    act(() =>
-      notify(
-        [{ isIntersecting: true, target: prose } as unknown as IntersectionObserverEntry],
-        {} as IntersectionObserver,
-      ),
-    );
-    await composed(prose);
-
-    // The transcript's own observer bills this growth once; a second shift here was a
-    // scroll its owner read as the reader's.
-    expect(scroller.scrollTop).toBe(0);
-  });
-
-  it('keeps its lines when a parent repeats the same prose with new handlers', async () => {
-    const first = vi.fn();
-    const second = vi.fn();
-    const prose = (open: () => void) => (
-      <JustifiedProse>
-        {paragraph} Then{' '}
-        <button type="button" onClick={open}>
-          open
-        </button>{' '}
-        it.
-      </JustifiedProse>
-    );
-    const view = render(prose(first));
-    const element = view.getByRole('paragraph');
-    await composed(element);
-    const markup = element.innerHTML;
-    const measurements = measure.mock.calls.length;
-    view.rerender(prose(second));
-    await settle();
-    expect(element).toHaveAttribute('data-justice');
-    expect(element.innerHTML).toBe(markup);
-    expect(measure.mock.calls.length).toBe(measurements);
-    fireEvent.click(view.getByRole('button', { name: 'open' }));
-    expect(second).toHaveBeenCalledOnce();
-    expect(first).not.toHaveBeenCalled();
-  });
-
-  it('keeps the initial composition on the first ResizeObserver delivery', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const markup = prose.innerHTML;
-    resized();
-    expect(prose).toHaveAttribute('data-justice');
-    expect(prose.innerHTML).toBe(markup);
-  });
-
-  it('keeps readable native text when the initial measurement fails', async () => {
-    measure.mockImplementation(() => {
-      throw new Error('Measurement unavailable');
-    });
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    await settle();
-    const prose = view.getByRole('paragraph');
-    expect(measure).toHaveBeenCalled();
-    expect(prose).not.toHaveAttribute('data-justice');
-    expect(prose.textContent).toBe(paragraph);
-    expect(prose.querySelector('[aria-hidden]')).toBeNull();
-  });
-
-  it('preserves the source text and paragraph semantics, including soft whitespace', async () => {
-    const text = paragraph.replace('should choose', 'should\nchoose');
-    const view = render(<JustifiedProse>{text}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    expect(prose.textContent).toBe(text);
-    expect(prose.querySelector('[aria-hidden]')).toBeNull();
-  });
-
-  it('reuses measurements on resize and remeasures after fonts load', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const narrowLines = prose.children.length;
-    const measurements = wordMeasurements();
-    width = 480;
-    resized();
-    await composed(prose);
-    expect(prose.children.length).toBeLessThan(narrowLines);
-    expect(wordMeasurements()).toBe(measurements);
-    glyphWidth = 12;
-    act(() => fonts.dispatchEvent(new Event('loadingdone')));
-    await waitFor(() => expect(measure.mock.calls.length).toBeGreaterThan(measurements));
-    expect(prose.textContent).toBe(paragraph);
-  });
-
-  it('does not remeasure when fonts were already loaded at composition', async () => {
-    fonts.status = 'loaded';
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    await settle();
-    const prose = view.getByRole('paragraph');
-    expect(prose).toHaveAttribute('data-justice');
-    const measurements = measure.mock.calls.length;
-    await act(async () => {
-      await fonts.ready;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
-    expect(measure.mock.calls.length).toBe(measurements);
-    act(() => fonts.dispatchEvent(new Event('loadingdone')));
-    await waitFor(() => expect(measure.mock.calls.length).toBeGreaterThan(measurements));
-  });
-
-  it('wraps natively while its column is moving and composes where it lands', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const narrowLines = prose.children.length;
-    const measurements = wordMeasurements();
-
-    // The desk rail riding off its seam hands this column a new width on every frame
-    // of the ride. Solving and rewriting every line for each of them composes for a
-    // width nobody reads, and that work is what the ride stutters on.
-    for (const next of [300, 360, 420]) {
-      width = next;
-      resized();
-    }
-
-    expect(prose).not.toHaveAttribute('data-justice');
-    expect(prose.textContent).toBe(paragraph);
-
-    // The rail lands, and the paragraph is composed once, for the width it kept.
-    width = 480;
-    resized();
-    await composed(prose);
-
-    expect(prose.children.length).toBeLessThan(narrowLines);
-    expect(wordMeasurements()).toBe(measurements);
-  });
-
-  it('composes a single step of its column in the next frame, with no native lines between', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const narrowLines = prose.children.length;
-    const native: boolean[] = [];
-    const watch = new MutationObserver(() => native.push(!prose.hasAttribute('data-justice')));
-    watch.observe(prose, { attributes: true, attributeFilter: ['data-justice'] });
-
-    // A gutter opens beside the column once: one step, not a ride. Native wrapping until
-    // the next composition would move every line the reader sees two times.
-    width = 480;
-    resized();
-    expect(prose).toHaveAttribute('data-justice');
-    await waitFor(() => expect(prose.children.length).toBeLessThan(narrowLines));
-    watch.disconnect();
-
-    expect(native).not.toContain(true);
-    expect(prose.textContent).toBe(paragraph);
-  });
-
-  it('wraps natively when its column moves on before a step is composed', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const narrowLines = prose.children.length;
-
-    // The desk rail starts its ride: the next frame stands at another width before it
-    // composes the step, so the step was the first move of a burst.
-    width = 420;
-    resized();
-    width = 480;
-    await waitFor(() => expect(prose).not.toHaveAttribute('data-justice'));
-    expect(prose.textContent).toBe(paragraph);
-
-    await composed(prose);
-    expect(prose.children.length).toBeLessThan(narrowLines);
-  });
-
-  it('keeps lines composed for a width the observer reports later, on new line nodes', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const narrow = [...prose.children];
-
-    // Fonts finish loading in the frame that widens the column, before its resize arrives.
-    width = 480;
-    act(() => fonts.dispatchEvent(new Event('loadingdone')));
-    await waitFor(() => expect(prose.children.length).toBeLessThan(narrow.length));
-    const wide = [...prose.children];
-    // Chrome can keep a space collapsed in a line rewritten in place, leaving it short.
-    expect(wide.filter((line) => narrow.includes(line))).toEqual([]);
-
-    // The delivery of the width these lines were composed for is not a move.
-    resized();
-    expect(prose).toHaveAttribute('data-justice');
-    expect(prose.firstElementChild).toBe(wide[0]);
-  });
-
-  it('refits a passage its selection held through a resize once the selection clears', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const narrowLines = prose.children.length;
-    const selectedMarkup = prose.innerHTML;
-    // jsdom does not report a node inside a range that selects its contents.
-    let selected = true;
-    vi.spyOn(window, 'getSelection').mockImplementation(
-      () => ({ isCollapsed: !selected, containsNode: () => selected }) as unknown as Selection,
-    );
-
-    width = 480;
-    resized();
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
-    expect(prose.innerHTML).toBe(selectedMarkup);
-
-    selected = false;
-    act(() => document.dispatchEvent(new Event('selectionchange')));
-    await waitFor(() => expect(prose.children.length).toBeLessThan(narrowLines));
-  });
-
-  it('shows the latest streamed text immediately and composes updated rich markup', async () => {
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const next = `${paragraph} New words arrive while the response is running.`;
-    view.rerender(<JustifiedProse>{next}</JustifiedProse>);
-    expect(prose.textContent).toBe(next);
-    await composed(prose);
-    view.rerender(
-      <JustifiedProse>
-        Read <a href="https://example.com">the source</a>.
-      </JustifiedProse>,
-    );
-    await composed(prose);
-    expect(view.getByRole('link', { name: 'the source' })).toHaveAttribute(
-      'href',
-      'https://example.com',
-    );
-  });
-
-  it.each([
-    'مرحبا بكم في هذا النص الذي يحتفظ باتجاهه الأصلي',
-    '日本語の文章はブラウザーが改行します。',
-    'Keep\u00a0these words together.',
-    'Directional \u202etext remains native.',
-    'word '.repeat(401).trim(),
-    'x'.repeat(16_385),
-    `${'a-'.repeat(17)}z`,
-    Array(129).fill('well-known').join(' '),
-    '',
-  ])('keeps unsupported text native (case %#)', (text) => {
-    const view = render(<JustifiedProse>{text}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    expect(prose).not.toHaveAttribute('data-justice');
-    expect(prose.textContent).toBe(text);
-    expect(measure).not.toHaveBeenCalled();
-  });
-
-  it.each(['measurement', 'segmentation'])('keeps native text without %s support', (capability) => {
-    if (capability === 'measurement') vi.stubGlobal('ResizeObserver', undefined);
-    else vi.stubGlobal('Intl', { Segmenter: undefined });
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    expect(view.getByRole('paragraph')).not.toHaveAttribute('data-justice');
-    expect(view.getByRole('paragraph').textContent).toBe(paragraph);
-    expect(measure).not.toHaveBeenCalled();
-  });
-
-  it('waits for a hidden column to gain width and releases observers on unmount', async () => {
-    width = 0;
-    const view = render(<JustifiedProse>{paragraph}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    expect(prose).not.toHaveAttribute('data-justice');
-    width = 240;
-    resized();
-    await composed(prose);
-    view.unmount();
-    expect(disconnect).toHaveBeenCalledOnce();
-    const measurements = measure.mock.calls.length;
-    act(() => fonts.dispatchEvent(new Event('loadingdone')));
-    expect(measure.mock.calls.length).toBe(measurements);
-  });
-
-  it('falls back when an unbreakable token cannot fit, then composes when widened', async () => {
-    const text = `Read ${'longidentifier'.repeat(8)} carefully.`;
-    const view = render(<JustifiedProse>{text}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await waitFor(() => expect(measure).toHaveBeenCalled());
-    expect(prose).not.toHaveAttribute('data-justice');
-    expect(prose.textContent).toBe(text);
-    width = 1200;
-    resized();
-    await composed(prose);
-  });
-
-  it('keeps explicit hyphen breaks in the original source, without inserting spaces', async () => {
-    const text =
-      'Well-known paragraph-wide choices keep source-authored hyphens intact across lines.';
-    const view = render(<JustifiedProse>{text}</JustifiedProse>);
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    expect(prose.textContent).toBe(text);
-  });
-
-  it('optimizes formatted artifact paragraphs without losing annotations or inline semantics', async () => {
-    const text =
-      'Artifact paragraphs keep **bold words**, *emphasis*, ~~old wording~~, [a link](https://example.com) and `git  status --short` while choosing their line breaks together.';
-    const view = render(
-      <MarkdownAnnotator text={text} onSave={async () => 2} chrome={({ body }) => <>{body}</>} />,
-    );
-    const prose = view.getByRole('paragraph');
-    const original = prose.textContent;
-    await composed(prose);
-    expect(prose.textContent).toBe(original);
-    expect([...prose.querySelectorAll('strong')].map((node) => node.textContent).join(' ')).toBe(
-      'bold words',
-    );
-    expect(prose.querySelector('em')).toHaveTextContent('emphasis');
-    expect([...prose.querySelectorAll('del')].map((node) => node.textContent).join(' ')).toBe(
-      'old wording',
-    );
-    expect(view.getByRole('link', { name: 'a link' })).toHaveAttribute(
-      'href',
-      'https://example.com',
-    );
-    expect(prose.querySelectorAll('code')).toHaveLength(1);
-    expect(prose.querySelector('code')?.textContent).toBe('git  status --short');
-  });
-
-  it('optimizes formatted list items and quotations in artifact Markdown', async () => {
-    const view = render(
-      <Markdown>{`- A **formatted** list item chooses all its line breaks together.
-
-> A quoted paragraph with *emphasis* uses the same paragraph optimizer.`}</Markdown>,
-    );
-    await composed(view.getByRole('listitem'));
-    await composed(view.container.querySelector('blockquote p')!);
-    expect(view.container.querySelector('strong')).toHaveTextContent('formatted');
-    expect(view.container.querySelector('em')).toHaveTextContent('emphasis');
-  });
-
-  it('feeds Justice distinct advances for identical words in different styles', async () => {
-    const measured: { text: string; width: number }[] = [];
-    const advance = (node: Node, bold = false): number => {
-      if (node.nodeType === Node.TEXT_NODE)
-        return (node.textContent?.length ?? 0) * (bold ? 16 : 8);
-      const strong = bold || (node instanceof HTMLElement && node.tagName === 'STRONG');
-      return [...node.childNodes].reduce((sum, child) => sum + advance(child, strong), 0);
-    };
-    measure.mockImplementation(function (this: HTMLElement) {
-      const width = advance(this);
-      // Placing the paragraph reads its own box, not an advance.
-      if (this.tagName !== 'P') measured.push({ text: this.textContent ?? '', width });
-      return { width } as DOMRect;
-    });
-    vi.spyOn(Range.prototype, 'getBoundingClientRect').mockImplementation(function (this: Range) {
-      const width = advance(this.cloneContents());
-      measured.push({ text: this.toString(), width });
-      return { width } as DOMRect;
-    });
-    const text = 'Read echo echo echo carefully and keep each repeated word in its own style.';
-    const view = render(
-      <JustifiedProse>
-        Read echo <strong>echo</strong> echo carefully and keep each repeated word in its own style.
-      </JustifiedProse>,
-    );
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    expect(measured).toContainEqual({ text: 'echo', width: 32 });
-    expect(measured).toContainEqual({ text: 'echo', width: 64 });
-    const expected = prepare(text, (word) => word.length * 8);
-    for (let index = 3; index < expected.widths.length; index++) expected.widths[index] += 32;
-    const layout = solve(expected, width, { hanging: 0, opening: 0 });
-    expect([...prose.children].map((line) => line.textContent)).toEqual(
-      layout.lines.map((line) => lineText(expected, line)),
-    );
-    const count = measured.length;
-    width = 480;
-    resized();
-    await composed(prose);
-    expect(measured).toHaveLength(count);
-    view.rerender(<JustifiedProse>{text}</JustifiedProse>);
-    await composed(prose);
-    expect(prose.querySelector('strong')).toBeNull();
-    expect(measured.length).toBeGreaterThan(count);
-    expect(prose.textContent).toBe(text);
-  });
-
-  it('measures rich prose without rebuilding layout for each word', async () => {
-    const text =
-      'Measure every styled word while repeated requests make the whole transcript expensive to compose again and again.';
-    const view = render(
-      <JustifiedProse>
-        Measure every <strong>styled word</strong> while repeated requests make the whole transcript
-        expensive to compose again and again.
-      </JustifiedProse>,
-    );
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    expect(prose.textContent).toBe(text);
-    expect(measure.mock.calls.length).toBeLessThan(6);
-  });
-
-  it('measures prose around inline code without reflowing every ordinary word', async () => {
-    const boxes: string[] = [];
-    measure.mockImplementation(function (this: HTMLElement) {
-      boxes.push(this.textContent ?? '');
-      return { width: (this.textContent?.length ?? 0) * glyphWidth } as DOMRect;
-    });
-    const text =
-      'The plain words before and after inline code still need one shared layout when this transcript opens again.';
-    const view = render(
-      <Markdown>
-        {'The plain words before and after `inline code` still need one shared layout when this transcript opens again.'}
-      </Markdown>,
-    );
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    expect(prose.textContent).toBe(text);
-    expect(prose.querySelector('code')).toHaveTextContent('inline code');
-    // Besides the paragraph, only the space and the code box are laid out: the box whole,
-    // and on each side of its break.
-    expect(new Set(boxes)).toEqual(new Set([text, ' ', 'inline code', 'inline', 'code']));
-  });
-
-  it('retains styled partial words, explicit hyphens, graphemes and link actions', async () => {
-    const open = vi.fn();
-    const view = render(
-      <JustifiedProse>
-        A para<strong>graph</strong> keeps well-<em>known</em> words, naïve café é 👩‍💻 👍🏽 and{' '}
-        <button onClick={open}>a note</button> intact while wrapping.
-      </JustifiedProse>,
-    );
-    const prose = view.getByRole('paragraph');
-    const original = prose.textContent;
-    await composed(prose);
-    expect(prose.textContent).toBe(original);
-    expect(prose.querySelector('strong')).toHaveTextContent('graph');
-    expect(prose.querySelector('em')).toHaveTextContent('known');
-    fireEvent.click(view.getByRole('button', { name: 'a note' }));
-    expect(open).toHaveBeenCalledOnce();
-    expect(prose.innerHTML).not.toContain('�');
-  });
-
-  it('keeps oversized inline code native instead of changing its spaces or hyphens', async () => {
-    const code = 'git  status --short-with-a-long-identifier-name';
-    const view = render(<Markdown>{`Read \`${code}\` without changing the command.`}</Markdown>);
-    const prose = view.getByRole('paragraph');
-    const original = prose.textContent;
-    await waitFor(() => expect(measure).toHaveBeenCalled());
-    // The hyphenated option alone is wider than the column.
-    expect(prose).not.toHaveAttribute('data-justice');
-    expect(prose.textContent).toBe(original);
-    width = 720;
-    resized();
-    await composed(prose);
-    expect(prose.querySelectorAll('code')).toHaveLength(1);
-    expect(prose.querySelector('code')?.textContent).toBe(code);
-  });
-
-  it('breaks inline code only after spaces and slashes or before a dot', async () => {
-    const path = 'apps/vis-companion/src/components/well-known-name.tsx';
-    const text = `Open ${path} and run npm test -- --run --reporter dot before you commit.`;
-    const view = render(
-      <Markdown>
-        {`Open \`${path}\` and run \`npm test -- --run --reporter dot\` before you commit.`}
-      </Markdown>,
-    );
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    expect(prose.textContent).toBe(text);
-    expect([...prose.children].map((line) => line.textContent)).toEqual([
-      'Open apps/vis-companion/src/',
-      'components/well-known-name.tsx',
-      'and run npm test -- --run',
-      '--reporter dot before you',
-      'commit.',
-    ]);
-    // A space at a break stays between the lines, outside both code boxes.
-    for (const part of prose.querySelectorAll('code')) expect(part.textContent).not.toMatch(/^\s|\s$/);
-  });
-
-  it('leaves a line short at natural spacing rather than opening holes beside long code', async () => {
-    const view = render(
-      <Markdown>
-        {'Open `src/components/JustifiedProse.tsx` and read how every line is measured before you change it.'}
-      </Markdown>,
-    );
-    const prose = view.getByRole('paragraph');
-    await composed(prose);
-    const lines = [...prose.children] as HTMLElement[];
-    expect(lines.map((line) => line.textContent)).toEqual([
-      'Open src/components/',
-      'JustifiedProse.tsx and read',
-      'how every line is measured',
-      'before you change it.',
-    ]);
-    // One gap beside the path would have to open ten glyphs wide.
-    expect(parseFloat(lines[0].style.wordSpacing)).toBe(0);
-    expect(parseFloat(lines[1].style.wordSpacing)).toBeGreaterThan(0);
-  });
-
-  it('keeps nested block structure and task controls native while optimizing child paragraphs', async () => {
-    const view = render(
-      <Markdown>
-        {
-          '- [ ] **Keep this control**\n\n- A paragraph with **emphasis**.\n\n  Another paragraph in the same item.\n\n  - Nested list'
-        }
-      </Markdown>,
-    );
     expect(view.getByRole('checkbox')).not.toBeChecked();
-    const outer = view.getAllByRole('listitem').slice(0, 2);
-    for (const item of outer) expect(item).not.toHaveAttribute('data-justice');
-    for (const prose of view
-      .getAllByRole('paragraph')
-      .filter((node) => !node.querySelector('input')))
-      await composed(prose);
-    expect(view.getAllByRole('list')).toHaveLength(2);
+    for (const item of view.getAllByRole('listitem'))
+      expect(item).not.toHaveAttribute('data-justified-lines');
+    const [, prose] = view.getAllByRole('paragraph');
+    expect(prose).toHaveAttribute('data-justified-lines');
+    expect(prose.textContent).toBe(codedText);
   });
 
-  it('enhances Markdown paragraphs and list items, but not compact results or rich hard breaks', async () => {
-    const view = render(<Markdown>{`${paragraph}\n\n- ${paragraph}`}</Markdown>);
-    await composed(view.getByRole('paragraph'));
-    await composed(view.getByRole('listitem'));
-    view.rerender(<Markdown nested>{paragraph}</Markdown>);
-    expect(view.getByRole('paragraph')).not.toHaveAttribute('data-justice');
-    view.rerender(<Markdown hardBreaks>{'First line.\nSecond line with **emphasis**.'}</Markdown>);
-    expect(view.getByRole('paragraph')).not.toHaveAttribute('data-justice');
+  it('reads Markdown paragraphs and list items, but not compact results or rich hard breaks', async () => {
+    const view = render(<Markdown>{`${coded}\n\n- ${coded}`}</Markdown>);
+    await settle();
+    expect(view.getByRole('paragraph')).toHaveAttribute('data-justified-lines');
+    expect(view.getByRole('listitem')).toHaveAttribute('data-justified-lines');
+    view.rerender(<Markdown nested>{coded}</Markdown>);
+    await settle();
+    expect(view.getByRole('paragraph')).not.toHaveAttribute('data-justified-lines');
+    view.rerender(<Markdown hardBreaks>{`${coded}\nSecond line with **emphasis**.`}</Markdown>);
+    await settle();
+    expect(view.getByRole('paragraph')).not.toHaveAttribute('data-justified-lines');
     expect(view.container.querySelectorAll('br')).toHaveLength(1);
     expect(view.getByText('emphasis').tagName).toBe('STRONG');
   });

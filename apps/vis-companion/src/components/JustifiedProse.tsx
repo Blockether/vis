@@ -7,45 +7,41 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
 } from 'react';
 import { flushSync } from 'react-dom';
-import type { Prepared, WordFragments } from '@kitlangton/justice';
-import { engine } from '../lib/justice';
-import { readerOwnsScroll } from '../lib/reader-gesture';
 
 type InlineProps = { children?: ReactNode; node?: { tagName?: string } };
 type InlineContent = {
   children: ReactNode;
   text: string;
+  /** The text with the spaces inside atomic boxes made non-breaking, at the same offsets. */
   measured: string;
-  rich: boolean;
-  code: boolean;
-  /** Ascending offsets inside inline code where a line may end. */
-  breaks: number[];
+  /** Atomic boxes (code, buttons) as `[start, end)` text ranges. A line never ends inside one. */
+  atomic: [start: number, end: number][];
+  /**
+   * Its lines can open wide gaps: it holds an atomic box, or a token that hyphenation
+   * cannot split. Other prose keeps its native justified lines and costs no work at all.
+   */
+  risky: boolean;
   /**
    * The text and the markup that decides how it measures. A render that repeats it
-   * keeps its composition, even though every child element is new.
+   * keeps its lines, even though every child element is new.
    */
   signature: string;
 };
 const INLINE_TAGS = new Set(['a', 'strong', 'em', 'del', 's', 'code', 'span', 'button']);
-const LITERAL_STYLE: CSSProperties = { whiteSpace: 'pre', wordSpacing: 0, letterSpacing: 0 };
+const ATOMIC_TAGS = new Set(['code', 'button']);
 /**
- * Inline code may wrap where a reader expects it to: after its spaces, after a path
- * separator, or before a dot inside a name. Each match ends at the break. Hyphens and
- * every other character stay joined; earlier rules win when a word has too many breaks.
+ * A token at least this long is a path, an identifier or a link. Hyphenation cannot split
+ * it, so the line before it may have to stretch its few gaps across the whole column.
  */
-const CODE_BREAKS = [
-  /[^ \t\r\n\f][ \t\r\n\f]+(?=[^ \t\r\n\f])/g,
-  /[^/ \t\r\n\f]\/(?=[^/ \t\r\n\f])/g,
-  /[\p{L}\p{N}_)\]](?=\.[\p{L}_])/gu,
-];
+const LONG_TOKEN = 18;
 /**
- * Literal code never stretches, so a line of long code beside one or two words can only
- * be justified by opening holes between them. A line whose gaps would grow wider than
- * this many natural spaces keeps its natural spacing and ends ragged instead.
+ * Native justification stretches the gaps of every line but the last. Beside an atomic
+ * box or a long token, a line can hold only one or two gaps. A line whose gaps would grow
+ * wider than this many natural spaces keeps its natural spacing and ends ragged instead,
+ * as the terminal client does.
  */
 const MAX_GAP = 5;
 
@@ -65,33 +61,29 @@ function inlineContent(children: ReactNode): InlineContent | null {
   let text = '';
   let measured = '';
   let shape = '';
-  let rich = false;
-  let code = false;
-  const candidates: [offset: number, rank: number][] = [];
+  let boxed = false;
+  const atomic: [number, number][] = [];
   const visit = (value: ReactNode, literal = false): boolean =>
     Children.toArray(value).every((part) => {
       if (typeof part === 'string' || typeof part === 'number') {
         const source = String(part);
-        if (literal)
-          for (const [rank, pattern] of CODE_BREAKS.entries())
-            for (const match of source.matchAll(pattern))
-              candidates.push([text.length + match.index + match[0].length, rank]);
         text += source;
         shape += `#${source.length}`;
-        // Keep UTF-16 offsets identical while joining code between its chosen breaks.
-        measured += literal
-          ? source.replace(/[ \t\r\n\f]/g, '\u00a0').replace(/[-‐]/g, '‑')
-          : source;
+        measured += literal ? source.replace(/[ \t\r\n\f]/g, '\u00a0') : source;
         return true;
       }
       if (!isValidElement<InlineProps>(part)) return false;
       const tag = typeof part.type === 'string' ? part.type : part.props.node?.tagName;
       if (part.type !== Fragment && (!tag || !INLINE_TAGS.has(tag))) return false;
-      rich ||= part.type !== Fragment;
-      code ||= tag === 'code';
+      const box = !literal && !!tag && ATOMIC_TAGS.has(tag);
+      const start = text.length;
       shape += `<${tag ?? ''}${shapeOf(part.props)}>`;
-      if (!visit(part.props.children, literal || tag === 'code')) return false;
+      if (!visit(part.props.children, literal || box)) return false;
       shape += '</>';
+      if (box) {
+        boxed = true;
+        atomic.push([start, text.length]);
+      }
       return true;
     });
   if (!visit(children)) return null;
@@ -101,135 +93,95 @@ function inlineContent(children: ReactNode): InlineContent | null {
     text !== text.trim() ||
     text.length > 16_384 ||
     /[\u00a0\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(text) ||
-    words.length > 400 ||
-    (measured.match(/[-‐]/g)?.length ?? 0) > 128 ||
-    words.some(([word]) => (word.match(/[-‐]/g)?.length ?? 0) > 16) ||
-    [...text.matchAll(/\p{Letter}/gu)].some(
-      ([letter]) => !/[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}]/u.test(letter),
-    )
+    words.length > 400
   )
     return null;
-  // Like source hyphens, code breaks stay bounded: at most 16 in a word and 128 in the
-  // paragraph. Every fragment between two breaks is measured.
-  const byRank = (a: readonly number[], b: readonly number[]) => a[1] - b[1] || a[0] - b[0];
-  const chosen: [offset: number, rank: number][] = [];
-  candidates.sort((a, b) => a[0] - b[0]);
-  let next = 0;
-  for (const word of words) {
-    const end = word.index + word[0].length;
-    const inside: [offset: number, rank: number][] = [];
-    for (; next < candidates.length && candidates[next][0] < end; next++)
-      inside.push(candidates[next]);
-    chosen.push(...inside.sort(byRank).slice(0, 16));
-  }
-  const breaks = chosen
-    .sort(byRank)
-    .slice(0, 128)
-    .map(([offset]) => offset)
-    .sort((a, b) => a - b);
-  return { children, text, measured, rich, code, breaks, signature: `${shape}\u0000${text}` };
+  return {
+    children,
+    text,
+    measured,
+    atomic,
+    risky: boxed || words.some(([word]) => word.length >= LONG_TOKEN),
+    signature: `${shape}\u0000${text}`,
+  };
 }
 
 /** Slice the React-owned inline tree, retaining links, styles and event handlers. */
-function inlineSlice(
-  content: InlineContent,
-  start: number,
-  end: number,
-  spaceFont: CSSProperties,
-): ReactNode {
+function inlineSlice(content: InlineContent, start: number, end: number): ReactNode {
   let offset = 0;
-  const visit = (value: ReactNode, literal = false): ReactNode =>
+  const visit = (value: ReactNode): ReactNode =>
     Children.map(value, (part) => {
       if (typeof part === 'string' || typeof part === 'number') {
         const source = String(part);
         const from = offset;
         offset += source.length;
-        const text = source.slice(Math.max(0, start - from), Math.max(0, end - from));
-        if (!content.rich || literal) return text;
-        // Justice has one space advance. Match it even inside bold/emphasized links.
-        return text.split(/([ \t\r\n\f]+)/g).map((piece, index) =>
-          /^[ \t\r\n\f]+$/.test(piece) ? (
-            <span key={index} style={spaceFont}>
-              {piece}
-            </span>
-          ) : (
-            piece
-          ),
-        );
+        return source.slice(Math.max(0, start - from), Math.max(0, end - from));
       }
       if (!isValidElement<InlineProps>(part)) return null;
       const from = offset;
-      const tag = typeof part.type === 'string' ? part.type : part.props.node?.tagName;
-      const children = visit(part.props.children, literal || tag === 'code');
+      const children = visit(part.props.children);
       if (offset <= start || from >= end) return null;
-      const element = cloneElement(part, undefined, children);
-      return tag === 'code' ? <span style={LITERAL_STYLE}>{element}</span> : element;
+      return cloneElement(part, undefined, children);
     });
   return visit(content.children);
 }
 
-/** Clone a source range for measurement, including partially selected ancestors. */
-function measuredSlice(source: Node, start: number, end: number): Node[] {
-  let offset = 0;
-  const visit = (node: Node): Node | null => {
-    const from = offset;
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.textContent ?? '';
-      offset += text.length;
-      return document.createTextNode(
-        text.slice(Math.max(0, start - from), Math.max(0, end - from)),
-      );
-    }
-    const copy = node.cloneNode(false);
-    for (const child of node.childNodes) {
-      const sliced = visit(child);
-      if (sliced) copy.appendChild(sliced);
-    }
-    if (offset <= start || from >= end) return null;
-    if (copy instanceof HTMLElement && copy.tagName === 'CODE')
-      Object.assign(copy.style, LITERAL_STYLE);
-    return copy;
-  };
-  return [...source.childNodes].map(visit).filter((node): node is Node => node !== null);
+type ProseLine = {
+  start: number;
+  end: number;
+  /** The source whitespace between this line and the next; empty after a split word. */
+  separator: string;
+  /** The browser hyphenated the word that this line ends in. */
+  hyphen: boolean;
+  /** Natural spacing: justified, its gaps would open wider than `MAX_GAP`. */
+  ragged: boolean;
+};
+
+const spaces = new Map<string, number>();
+let canvas: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * One natural space in a paragraph's font. A canvas measures it without touching the
+ * document, so the reads of many paragraphs share one layout.
+ */
+function spaceWidth(style: CSSStyleDeclaration): number {
+  const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  let width = spaces.get(font);
+  if (width === undefined) {
+    canvas ??= document.createElement('canvas').getContext('2d');
+    if (!canvas) return 0;
+    canvas.font = font;
+    width = canvas.measureText(' ').width;
+    spaces.set(font, width);
+  }
+  return width;
 }
 
-/** Justice owns segmentation and hyphen boundaries; the adapter supplies styled advances. */
-function prepareInline(
-  engine: typeof import('@kitlangton/justice'),
-  content: InlineContent,
-  source: Node,
-  probe: HTMLElement,
-): Prepared {
-  // All placeholder advances are replaced before solving. A text-keyed measurement
-  // cache would incorrectly give “word” and **word** the same width.
-  const prepared = engine.prepare(content.measured, (text) => text.length);
-  probe.textContent = ' ';
-  prepared.space = probe.getBoundingClientRect().width;
-  if (!(prepared.space > 0)) throw new RangeError('Space width must be positive');
-  prepared.endHangs.fill(0);
-  prepared.startHangs.fill(0);
-  // A Range reads ordinary styled tokens from one laid-out inline tree. Replacing
-  // the probe for every word forces a full layout and style recalculation per token.
-  probe.replaceChildren(...measuredSlice(source, 0, content.text.length));
-  const range = document.createRange();
+/**
+ * The lines exactly as the browser broke them. Returns `null` when native justification
+ * already reads well, or when a break cannot be kept outside the native flow.
+ */
+function nativeLines(element: HTMLElement, content: InlineContent): ProseLine[] | null {
+  const style = getComputedStyle(element);
+  if (
+    style.direction !== 'ltr' ||
+    style.writingMode !== 'horizontal-tb' ||
+    style.whiteSpace !== 'normal' ||
+    style.textTransform !== 'none' ||
+    parseFloat(style.textIndent) !== 0
+  )
+    return null;
+  const { text, measured } = content;
   const leaves: Text[] = [];
   const offsets = [0];
-  const boxed: { node: Element; start: number; end: number }[] = [];
-  const walker = document.createTreeWalker(probe, NodeFilter.SHOW_TEXT);
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
     const leaf = walker.currentNode as Text;
     if (!leaf.length) continue;
     leaves.push(leaf);
-    const start = offsets[offsets.length - 1];
-    offsets.push(start + leaf.length);
-    // Code and controls have padding or borders. Measure those tokens as boxes.
-    const box = leaf.parentElement?.closest('code, button');
-    const last = boxed[boxed.length - 1];
-    if (box && last?.node === box) last.end = start + leaf.length;
-    else if (box) boxed.push({ node: box, start, end: start + leaf.length });
+    offsets.push(offsets[offsets.length - 1] + leaf.length);
   }
-  if (offsets[offsets.length - 1] !== content.text.length)
-    throw new RangeError('Inline source mismatch');
+  if (offsets[offsets.length - 1] !== text.length) return null;
   const locate = (index: number): readonly [Text, number] => {
     let low = 0;
     let high = leaves.length - 1;
@@ -240,138 +192,190 @@ function prepareInline(
     }
     return [leaves[low], index - offsets[low]];
   };
-  const widths = new Map<string, number>();
-  const boxes = new Map<string, HTMLElement>();
-  const request = (start: number, end: number) => {
-    const key = `${start}:${end}`;
-    if (widths.has(key) || boxes.has(key)) return key;
-    if (boxed.some((box) => start < box.end && end > box.start)) {
-      // Keep the ranged tree untouched while preserving the full code/control box.
-      // An out-of-flow child cannot affect its parent's inline measurement.
-      const box = probe.cloneNode(false) as HTMLElement;
-      box.append(...measuredSlice(source, start, end));
-      boxes.set(key, box);
-    } else {
-      const [startNode, startOffset] = locate(start);
-      const [endNode, endOffset] = locate(end);
-      range.setStart(startNode, startOffset);
-      range.setEnd(endNode, endOffset);
-      widths.set(key, range.getBoundingClientRect().width);
-    }
-    return key;
+  const range = document.createRange();
+  const rects = (start: number, end: number) => {
+    const [startNode, startOffset] = locate(start);
+    const [endNode, endOffset] = locate(end - 1);
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset + 1);
+    return [...range.getClientRects()].filter((rect) => rect.height > 0);
   };
-  const words = [...content.measured.matchAll(/[^ \t\r\n\f]+/g)];
+  const middle = (rect: DOMRect) => rect.top + rect.height / 2;
+  const inAtomic = (offset: number) =>
+    content.atomic.some(([start, end]) => offset > start && offset < end);
+  /**
+   * Whether the browser drew a hyphen at a break inside a word: `false` when it breaks
+   * without one, `null` when the break cannot be told apart and the lines stay native.
+   */
+  const hyphenated = (offset: number): boolean | null => {
+    // Source hyphens and slashes are break opportunities without a glyph.
+    if (/[-‐/]/u.test(text[offset - 1])) return false;
+    const [leaf] = locate(offset);
+    const owner = getComputedStyle(leaf.parentElement ?? element);
+    if (
+      owner.wordBreak === 'break-all' ||
+      owner.overflowWrap === 'anywhere' ||
+      owner.overflowWrap === 'break-word'
+    )
+      return false;
+    const letters = /\p{L}/u.test(text[offset - 1]) && /\p{L}/u.test(text[offset]);
+    return owner.hyphens === 'auto' && letters ? true : null;
+  };
+  const space = spaceWidth(style);
+  if (!(space > 0)) return null;
+  /** A gap that native justification stretched past `MAX_GAP` natural spaces. */
+  const wide = (offset: number) => {
+    if (offset < 0 || offset >= text.length || !/[ \t\r\n\f]/.test(measured[offset])) return false;
+    const gap = rects(offset, offset + 1)[0];
+    return !!gap && gap.width > MAX_GAP * space;
+  };
+  const words = [...measured.matchAll(/[^ \t\r\n\f]+/g)];
+
+  // Each read costs tens of microseconds. Wide gaps open only beside a risky token: on
+  // its own line, or on the line before it that the token did not fit. Read those first.
+  const risky = [
+    ...content.atomic,
+    ...words
+      .filter(([word]) => word.length >= LONG_TOKEN)
+      .map(({ index, 0: word }): [number, number] => [index, index + word.length]),
+  ];
+  const suspects = new Set<number>();
+  for (const [start, end] of risky) {
+    suspects.add(end);
+    let at = start - 1;
+    suspects.add(at);
+    while (at >= 0 && !/[ \t\r\n\f]/.test(measured[at])) at--;
+    while (at >= 0 && /[ \t\r\n\f]/.test(measured[at])) at--;
+    while (at >= 0 && !/[ \t\r\n\f]/.test(measured[at])) at--;
+    suspects.add(at);
+  }
+  if (![...suspects].some(wide)) return null;
+
+  /** The rectangles of each word, read once: one per line it stands on. */
+  const read: DOMRect[][] = [];
+  const wordRects = (index: number) => {
+    let found = read[index];
+    if (!found) {
+      const { index: start, 0: word } = words[index];
+      found = read[index] = rects(start, start + word.length);
+      if (!found.length) throw new RangeError('Unmeasured word');
+    }
+    return found;
+  };
+  const lines: Omit<ProseLine, 'separator' | 'ragged'>[] = [];
+  let lineStart = words[0].index;
+  let lineEnd = lineStart;
+  let bottom = Number.NaN;
   let next = 0;
-  const plans = words.map(
-    (word, index): { start: number; whole: string; bounds: number[]; keys: string[][] } => {
-      const start = word.index;
-      const end = start + word[0].length;
-      const whole = request(start, end);
-      const bounds = new Set(prepared.hyphenation?.[index]?.offsets);
-      for (; next < content.breaks.length && content.breaks[next] < end; next++)
-        bounds.add(content.breaks[next] - start);
-      if (!bounds.size) return { start, whole, bounds: [], keys: [] };
-      // A line ending at a break inside code leaves the spaces before it between lines.
-      const stop = (offset: number) => {
-        let bound = start + offset;
-        if (bound < end) while (content.measured[bound - 1] === '\u00a0') bound--;
-        return bound;
-      };
-      const sorted = [...bounds.add(0).add(end - start)].sort((a, b) => a - b);
-      const keys = sorted.map((from, i) =>
-        sorted.map((to, j) => (j > i ? request(start + from, stop(to)) : '')),
-      );
-      return { start, whole, bounds: sorted, keys };
-    },
-  );
-  // Lay every box out together: one layout pass instead of one per measured token.
-  probe.append(...boxes.values());
-  for (const [key, box] of boxes) widths.set(key, box.getBoundingClientRect().width);
-  const width = (key: string) => {
-    const value = widths.get(key) ?? Number.NaN;
-    if (!Number.isFinite(value) || value < 0) throw new RangeError('Invalid inline width');
-    return value;
-  };
-  const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-  const hyphenation = plans.map(({ start, whole, bounds, keys }, index) => {
-    prepared.widths[index + 1] = prepared.widths[index] + width(whole);
-    if (!bounds.length) return undefined;
-    const size = bounds.length;
-    const counts = bounds.map(
-      (bound) => [...graphemes.segment(content.measured.slice(start, start + bound))].length,
-    );
-    const fragments: WordFragments = {
-      offsets: bounds,
-      widths: new Float64Array(size * size),
-      hyphenWidths: new Float64Array(size * size),
-      characters: new Float64Array(size * size),
-      explicit: bounds.map((_, at) => at > 0 && at < size - 1),
-    };
-    for (let from = 0; from < size - 1; from++) {
-      for (let to = from + 1; to < size; to++) {
-        const at = from * size + to;
-        // Source hyphens and code breaks are literal: no glyph is inserted.
-        fragments.widths[at] = fragments.hyphenWidths[at] = width(keys[from][to]);
-        fragments.characters[at] = counts[to] - counts[from];
-      }
+  let guess = 4;
+  /** The current line holds the rest of a split word and is not pushed yet. */
+  let open = false;
+  while (next < words.length) {
+    if (Number.isNaN(bottom)) bottom = wordRects(next)[0].bottom;
+    const onLine = (index: number) => middle(wordRects(index)[0]) <= bottom;
+    if (!onLine(next)) {
+      // The rest of a split word filled its line.
+      lines.push({ start: lineStart, end: lineEnd, hyphen: false });
+      lineStart = words[next].index;
+      bottom = Number.NaN;
+      open = false;
+      continue;
     }
-    return fragments;
+    // Gallop to the last word on this line, then search between the last two guesses.
+    let low = next;
+    let high = next;
+    for (let step = guess; high < words.length - 1; step *= 2) {
+      const probe = Math.min(words.length - 1, high + step);
+      if (!onLine(probe)) {
+        high = probe - 1;
+        break;
+      }
+      low = high = probe;
+    }
+    while (low < high) {
+      const at = Math.ceil((low + high) / 2);
+      if (onLine(at)) low = at;
+      else high = at - 1;
+    }
+    guess = Math.max(1, low - next + 1);
+    const { index: start, 0: word } = words[low];
+    const end = start + word.length;
+    next = low + 1;
+    lineEnd = end;
+    const fragments = wordRects(low);
+    if (middle(fragments[fragments.length - 1]) <= bottom) {
+      lines.push({ start: lineStart, end, hyphen: false });
+      if (next < words.length) lineStart = words[next].index;
+      bottom = Number.NaN;
+      open = false;
+      continue;
+    }
+    open = true;
+    // The browser split this word across lines: find each break by its first moved letter.
+    let from = Math.max(start, lineStart);
+    for (let guard = 0; guard < 64; guard++) {
+      const last = rects(end - 1, end)[0];
+      if (!last || middle(last) <= bottom) break;
+      let first = from + 1;
+      let past = end - 1;
+      while (first < past) {
+        const at = Math.floor((first + past) / 2);
+        const glyph = rects(at, at + 1)[0];
+        if (glyph && middle(glyph) > bottom) past = at;
+        else first = at + 1;
+      }
+      if (inAtomic(first)) return null;
+      const hyphen = hyphenated(first);
+      if (hyphen === null) return null;
+      lines.push({ start: lineStart, end: first, hyphen });
+      const moved = rects(first, first + 1)[0];
+      if (!moved) return null;
+      lineStart = from = first;
+      bottom = moved.bottom;
+    }
+  }
+  if (open) lines.push({ start: lineStart, end: lineEnd, hyphen: false });
+
+  let repaired = false;
+  const composed = lines.map((line, index): ProseLine => {
+    const next = lines[index + 1];
+    let ragged = false;
+    if (next) {
+      const gap = measured.slice(line.start, line.end).search(/[ \t\r\n\f]/);
+      ragged = gap >= 0 && wide(line.start + gap);
+    }
+    repaired ||= ragged;
+    return {
+      ...line,
+      separator: next ? text.slice(line.end, next.start) : '',
+      ragged,
+    };
   });
-  if (hyphenation.some(Boolean)) prepared.hyphenation = hyphenation;
-  return prepared;
+  return repaired ? composed : null;
 }
 
-type ProseLine = {
-  start: number;
-  end: number;
-  separator: string;
-  wordSpacing: number;
-  tracking: number;
-};
 /**
  * Lines stay valid for every render that repeats the signature they were composed for.
  * Each composition mounts its own line nodes: Chrome can keep a space collapsed after
  * the text around it is rewritten in place, leaving a justified line short of its column.
  */
-type Composition = {
-  id: number;
-  signature: string;
-  lines: ProseLine[];
-  spaceFont: CSSProperties;
-};
+type Composition = { id: number; signature: string; lines: ProseLine[] };
 
 /**
  * A width arrives as a BURST — the desk rail riding off its seam, a window dragged by
- * its corner — and the width a paragraph is composed for is its last frame. Composing
- * on each of the others solves and rewrites every line for a width nobody reads. A
- * move this soon after the last one belongs to a burst; a later one is a single step.
+ * its corner. While it moves, native justified lines fit every frame; the lines are
+ * read again once the width has rested this long.
  */
 const SETTLE_MS = 80;
 
 /**
- * Prose is composed while it is still this many scroller heights away, so it is
- * already justified when it scrolls into view. The transcript keeps the same
- * neighbourhood laid out; further prose stays native until the reader comes near.
+ * Prose is checked while it is still this many scroller heights away, so its lines are
+ * already in place when it scrolls into view.
  */
 const LOOKAHEAD = 1;
 
-/**
- * Composing can change a paragraph's height. Below the reader that moves nothing they
- * see; above them it moves every line on screen unless the scroll moves by the same
- * amount, and moving it while a gesture or its momentum owns the scroll would stop or
- * fight that gesture. Prose above the reader therefore waits until the scroller is this
- * quiet, and is then composed in place.
- */
-const REST_MS = 150;
-
 /** Prose that is not on screen yet never takes more than this from one frame. */
 const FRAME_BUDGET_MS = 6;
-
-/**
- * How many times one placement measures again after it composes the prose on screen.
- * Each composition can move more unpainted prose onto the screen; `pump` takes the rest.
- */
-const PLACE_PASSES = 4;
 
 type Paragraph = {
   element: HTMLElement;
@@ -379,22 +383,28 @@ type Paragraph = {
   root: Element | null;
   /** Within the look-ahead, as the placement or the observer last saw it. */
   near: boolean;
-  /** Its content, width or fonts changed since it was last composed. */
+  /** Its width or fonts may have changed since its lines were last read. */
   stale: boolean;
   observed: boolean;
   disposed: boolean;
-  compose: () => void;
+  /** False when its lines already stand for its current width and fonts. */
+  due: () => boolean;
+  /** Back to the native flow, so its lines can be read again. */
+  revert: () => void;
+  /** Read the native lines; the returned call commits them. */
+  read: () => () => void;
+  /** Its box changed size: `step` reads it again now, `ride` keeps native lines meanwhile. */
+  resized: () => 'step' | 'ride' | null;
   fontsChanged: () => void;
   isSelected: () => boolean;
 };
 
 type View = { top: number; bottom: number };
-type Spot = { above: boolean; distance: number; reach: number; bottom: number };
 
 const paragraphs = new Map<Element, Paragraph>();
 /** Registered by the current commit, placed after all of its layout effects. */
 const placing = new Set<Paragraph>();
-/** Near and stale: composed by `pump`, nearest to the reader first. */
+/** Near and stale: read by `pump`, nearest to the reader first. */
 const waiting = new Set<Paragraph>();
 /** Left as they stand while a native selection covers them. */
 const held = new Set<Paragraph>();
@@ -404,11 +414,8 @@ let fontSet: FontFaceSet | null = null;
 let awaitedFonts: FontFaceSet | null = null;
 let placementQueued = false;
 let frame = 0;
-let restTimer = 0;
-let lastScrollAt = Number.NEGATIVE_INFINITY;
-/** The last pump left prose above the reader until the scroller rests. */
-let holding = false;
 let compositions = 0;
+let sizes: ResizeObserver | null = null;
 
 /** The nearest vertical scroller, cached per parent as the transcript's paint skip does. */
 function scrollerOf(element: Element): Element | null {
@@ -428,15 +435,10 @@ function scrollerOf(element: Element): Element | null {
   return scroller;
 }
 
-/**
- * Where a paragraph stands against what the reader sees of its scroller: its gap to
- * that view (0 while any of it is inside), whether it starts above the view, where a
- * new height would move everything below it, and where it ends.
- */
-function locate(paragraph: Paragraph, views: Map<Element | null, View>): Spot {
-  const visible = { above: false, distance: 0, reach: 0, bottom: 0 };
+/** A paragraph's gap to what the reader sees of its scroller (0 while any of it is inside). */
+function distanceOf(paragraph: Paragraph, views: Map<Element | null, View>): [number, number] {
   // Without an observer nothing could wake a distant paragraph: treat all as visible.
-  if (typeof IntersectionObserver !== 'function') return visible;
+  if (typeof IntersectionObserver !== 'function') return [0, 0];
   try {
     const rect = paragraph.element.getBoundingClientRect();
     let view = views.get(paragraph.root);
@@ -447,98 +449,70 @@ function locate(paragraph: Paragraph, views: Map<Element | null, View>): Spot {
         : { top: 0, bottom: window.innerHeight };
       views.set(paragraph.root, view);
     }
-    if (![rect.top, rect.bottom, view.top, view.bottom].every(Number.isFinite)) return visible;
+    if (![rect.top, rect.bottom, view.top, view.bottom].every(Number.isFinite)) return [0, 0];
     const reach = (view.bottom - view.top) * LOOKAHEAD;
-    const bottom = rect.bottom;
-    if (rect.top < view.top)
-      return { above: true, distance: Math.max(0, view.top - rect.bottom), reach, bottom };
-    return { above: false, distance: Math.max(0, rect.top - view.bottom), reach, bottom };
+    return [Math.max(0, view.top - rect.bottom, rect.top - view.bottom), reach];
   } catch {
-    // Measurement is unavailable; composing falls back to native text.
-    return visible;
+    return [0, 0];
   }
 }
 
 /**
- * Whether something else keeps the reader's lines in place in this scroller: the
- * browser's own scroll anchoring, or the screen that owns the scroller and says so
- * with `data-keeps-reading-position`. Moving that scroller here as well bills the
- * same height twice, and reads to its owner as a scroll nobody made.
+ * Read and commit the lines of each paragraph that needs it, nearest first. Lines keep
+ * the native breaks, so nothing above, below or inside the paragraph moves vertically:
+ * this can run at any time, also above the reader while a gesture owns the scroll. The
+ * first `required` paragraphs are always read; the rest stop at `budget` milliseconds
+ * and wait for the next frame.
  */
-function anchorsItself(root: Element | null): boolean {
-  if (root?.hasAttribute('data-keeps-reading-position')) return true;
-  if (typeof CSS === 'undefined' || !CSS.supports?.('overflow-anchor', 'auto')) return false;
-  const scroller = root ?? document.scrollingElement;
-  return !!scroller && getComputedStyle(scroller).overflowAnchor !== 'none';
-}
-
-/**
- * Prose composed above the view moves everything below it by its change in height.
- * Scroll by the same amount, so the lines the reader sees stay where they were. The
- * lowest such paragraph carries every change above it in where its bottom now stands.
- */
-function keepPlace(root: Element | null, paragraph: Paragraph, bottom: number) {
-  if (anchorsItself(root)) return;
-  try {
-    const shift = paragraph.element.getBoundingClientRect().bottom - bottom;
-    if (!shift || !Number.isFinite(shift)) return;
-    if (root) root.scrollTop += shift;
-    else window.scrollBy(0, shift);
-  } catch {
-    // Without a measurement the place cannot be kept; the composition still stands.
-  }
-}
-
-function compose(list: Paragraph[]) {
-  if (!list.length) return;
-  // Commit every line before the browser paints the native text they replace.
+function compose(list: Paragraph[], required = list.length, budget = Number.POSITIVE_INFINITY) {
+  const due = list.filter((paragraph) => {
+    waiting.delete(paragraph);
+    return !paragraph.disposed && paragraph.due();
+  });
+  if (!due.length) return;
   flushSync(() => {
-    for (const paragraph of list) {
-      waiting.delete(paragraph);
-      paragraph.compose();
+    for (const paragraph of due) paragraph.revert();
+  });
+  // Reads change nothing: every paragraph here shares the one layout after the revert.
+  const started = performance.now();
+  const commits: (() => void)[] = [];
+  for (const [index, paragraph] of due.entries()) {
+    if (index >= required && commits.length && performance.now() - started > budget) {
+      for (const later of due.slice(index)) request(later);
+      break;
     }
+    commits.push(paragraph.read());
+  }
+  flushSync(() => {
+    for (const commit of commits) commit();
   });
 }
 
 /**
- * Runs once after each commit that mounts or changes prose: after every layout effect,
- * including the one that scrolls a screen to where it opens, and still before paint.
- * Only prose that this paint shows is composed here; `pump` composes the rest near it.
- * Composed lines can stand shorter or taller than the native wrap, so a screen pinned to
- * its end then shows prose that stood just outside it. That prose is not painted yet
- * either: measure it again and compose it before the same paint.
+ * Runs once after each commit that mounts or changes prose, after every layout effect
+ * and still before paint. Prose on screen is read here; `pump` reads the prose near it.
  */
 function place() {
   placementQueued = false;
-  let unpainted: Paragraph[] = [];
+  const views = new Map<Element | null, View>();
+  const visible: Paragraph[] = [];
   for (const paragraph of placing) {
     if (paragraph.disposed) continue;
     paragraph.root = scrollerOf(paragraph.element);
-    unpainted.push(paragraph);
     observe(paragraph);
+    const [distance, reach] = distanceOf(paragraph, views);
+    paragraph.near = distance <= reach;
+    if (distance === 0) visible.push(paragraph);
+    else if (paragraph.near) waiting.add(paragraph);
   }
   placing.clear();
-  for (let pass = 0; pass < PLACE_PASSES && unpainted.length; pass++) {
-    const views = new Map<Element | null, View>();
-    const visible: Paragraph[] = [];
-    const rest: Paragraph[] = [];
-    for (const paragraph of unpainted) {
-      if (paragraph.disposed) continue;
-      const spot = locate(paragraph, views);
-      paragraph.near = spot.distance <= spot.reach;
-      if (spot.distance === 0) visible.push(paragraph);
-      else rest.push(paragraph);
-    }
-    unpainted = rest;
-    if (!visible.length) break;
-    compose(visible);
-  }
-  for (const paragraph of unpainted) if (paragraph.near) waiting.add(paragraph);
+  compose(visible);
   if (waiting.size) schedulePump();
 }
 
 /** One observer per scroller follows every paragraph in and out of its look-ahead. */
 function observe(paragraph: Paragraph) {
+  if (paragraph.observed) return;
   if (typeof IntersectionObserver !== 'function') {
     paragraph.near = true;
     return;
@@ -569,7 +543,7 @@ function nearby(entries: IntersectionObserverEntry[]) {
   if (waiting.size) schedulePump();
 }
 
-/** Ask for a composition; a paragraph out of reach waits until it comes near. */
+/** Ask for a reading; a paragraph out of reach waits until it comes near. */
 function request(paragraph: Paragraph) {
   if (paragraph.disposed) return;
   paragraph.stale = true;
@@ -582,62 +556,53 @@ function schedulePump() {
   if (!frame) frame = requestAnimationFrame(pump);
 }
 
-/**
- * Compose waiting prose nearest to the reader first, within one frame's budget. Prose
- * on screen or below it is composed at once; prose above it waits for the scroller to
- * rest, and is then composed without moving the lines the reader sees.
- */
+/** Read waiting prose nearest to the reader first, within one frame's budget. */
 function pump() {
   frame = 0;
-  window.clearTimeout(restTimer);
-  const rest = !readerOwnsScroll() && performance.now() - lastScrollAt >= REST_MS;
   const views = new Map<Element | null, View>();
-  const ready: [paragraph: Paragraph, spot: Spot][] = [];
-  holding = false;
+  const ready: [paragraph: Paragraph, distance: number][] = [];
   for (const paragraph of waiting) {
     if (paragraph.disposed || !paragraph.near || !paragraph.stale) {
       waiting.delete(paragraph);
       continue;
     }
-    const spot = locate(paragraph, views);
-    if (spot.above && !rest) holding = true;
-    else ready.push([paragraph, spot]);
+    ready.push([paragraph, distanceOf(paragraph, views)[0]]);
   }
-  ready.sort((a, b) => a[1].distance - b[1].distance);
-  const started = performance.now();
-  let taken = 0;
-  /** Per scroller, the lowest paragraph composed above the view and where it ended. */
-  const anchors = new Map<Element | null, [paragraph: Paragraph, bottom: number]>();
-  if (ready.length) {
-    flushSync(() => {
-      for (const [paragraph, spot] of ready) {
-        // Prose on screen is never deferred; the rest shares one frame's budget.
-        if (taken && spot.distance > 0 && performance.now() - started > FRAME_BUDGET_MS) break;
-        taken++;
-        waiting.delete(paragraph);
-        paragraph.compose();
-        const lowest = anchors.get(paragraph.root);
-        if (spot.above && (!lowest || spot.bottom > lowest[1]))
-          anchors.set(paragraph.root, [paragraph, spot.bottom]);
-      }
-    });
-  }
-  for (const [root, [paragraph, bottom]] of anchors) keepPlace(root, paragraph, bottom);
-  if (taken < ready.length) schedulePump();
-  if (holding) restTimer = window.setTimeout(schedulePump, REST_MS);
+  ready.sort((a, b) => a[1] - b[1]);
+  // Prose on screen is never deferred; the rest shares one frame's budget.
+  const visible = ready.filter(([, distance]) => distance === 0).length;
+  compose(
+    ready.map(([paragraph]) => paragraph),
+    visible,
+    FRAME_BUDGET_MS,
+  );
 }
 
-function scrolled() {
-  lastScrollAt = performance.now();
-  // Prose held above the reader may have scrolled into view or below it meanwhile.
-  if (holding) schedulePump();
+/**
+ * One observer reports every paragraph that changed size in this frame, after layout and
+ * before paint. Their lines are read together, on one layout.
+ */
+function resizedAll(entries: ResizeObserverEntry[]) {
+  const steps: Paragraph[] = [];
+  const rides: Paragraph[] = [];
+  for (const entry of entries) {
+    const paragraph = paragraphs.get(entry.target);
+    const change = paragraph?.resized();
+    if (change === 'step') steps.push(paragraph!);
+    else if (change === 'ride') rides.push(paragraph!);
+  }
+  if (rides.length)
+    flushSync(() => {
+      for (const paragraph of rides) paragraph.revert();
+    });
+  compose(steps);
 }
 
 function windowResized() {
   for (const paragraph of paragraphs.values()) request(paragraph);
 }
 
-/** Only paragraphs a selection held are refitted, once it no longer covers them. */
+/** Only paragraphs a selection held are read again, once it no longer covers them. */
 function selectionChanged() {
   for (const paragraph of held) {
     if (paragraph.isSelected()) continue;
@@ -670,10 +635,11 @@ function watchFonts() {
 function register(paragraph: Paragraph): () => void {
   if (!paragraphs.size) {
     window.addEventListener('resize', windowResized);
-    window.addEventListener('scroll', scrolled, { capture: true, passive: true });
     document.addEventListener('selectionchange', selectionChanged);
   }
   paragraphs.set(paragraph.element, paragraph);
+  sizes ??= typeof ResizeObserver === 'function' ? new ResizeObserver(resizedAll) : null;
+  sizes?.observe(paragraph.element);
   watchFonts();
   placing.add(paragraph);
   if (!placementQueued) {
@@ -689,6 +655,7 @@ function unregister(paragraph: Paragraph) {
   placing.delete(paragraph);
   waiting.delete(paragraph);
   held.delete(paragraph);
+  sizes?.unobserve(paragraph.element);
   const entry = paragraph.observed ? observers.get(paragraph.root) : undefined;
   if (entry) {
     entry.observer.unobserve(paragraph.element);
@@ -699,20 +666,21 @@ function unregister(paragraph: Paragraph) {
   }
   if (paragraphs.size) return;
   window.removeEventListener('resize', windowResized);
-  window.removeEventListener('scroll', scrolled, { capture: true });
   document.removeEventListener('selectionchange', selectionChanged);
   fontSet?.removeEventListener('loadingdone', fontsLoaded);
   fontSet = null;
   awaitedFonts = null;
   cancelAnimationFrame(frame);
   frame = 0;
-  window.clearTimeout(restTimer);
-  holding = false;
+  sizes?.disconnect();
+  sizes = null;
 }
 
 /**
- * Justify inline prose while React keeps ownership of all visible text. Prose on screen
- * is composed before it is first painted, and prose near it before it scrolls into view.
+ * Justified prose that never reflows. The browser breaks and justifies every line, as
+ * the `PROSE` classes ask. Only a line whose justified gaps would open wider than
+ * `MAX_GAP` spaces keeps natural spacing, on the same break, the way the terminal client
+ * justifies. React keeps ownership of all visible text.
  */
 export function JustifiedProse({
   as: Tag = 'p',
@@ -728,76 +696,31 @@ export function JustifiedProse({
 }) {
   const ref = useRef<HTMLParagraphElement & HTMLLIElement & HTMLSpanElement>(null);
   const content = useMemo(() => (enabled ? inlineContent(children) : null), [children, enabled]);
-  const signature = content?.signature ?? null;
+  const signature = content?.risky ? content.signature : null;
   const [composition, setComposition] = useState<Composition | null>(null);
 
   // Keyed by the signature: a parent render that repeats the same prose with new
-  // elements keeps its lines and measurements instead of measuring everything again.
+  // elements keeps its lines instead of reading them again.
   useLayoutEffect(() => {
     const element = ref.current;
-    if (
-      !element ||
-      !engine ||
-      content === null ||
-      signature === null ||
-      typeof Intl.Segmenter !== 'function' ||
-      typeof ResizeObserver !== 'function'
-    )
-      return;
-    let prepared: Prepared | undefined;
-    let fontKey = '';
-    let lastWidth = 0;
-    /** The width the box last stood at, so a delivery can tell whether it moved. */
+    if (!element || content === null || signature === null) return;
+    /** Width and fonts the standing lines were read for; empty until the first read. */
+    let readFor = '';
+    let composed = false;
     let seenWidth = 0;
-    let settleTimer = 0;
-    /** True while the box is moving and the paragraph is left to wrap natively. */
-    let riding = false;
-    /** When the width last moved: a move within `SETTLE_MS` of it belongs to a burst. */
     let movedAt = Number.NEGATIVE_INFINITY;
-    /** The width a single step went to, until the next frame composes it there. */
-    let stepTo = 0;
-    const { text } = content;
-    const words = [...content.measured.matchAll(/[^ \t\r\n\f]+/g)];
-    // Snapshot only the original markup, never a previous composition's line spans.
-    const source = element.cloneNode(true);
-    if (source.textContent !== text) return;
+    let riding = false;
+    let settleTimer = 0;
 
-    /**
-     * Replacing line nodes during a native selection would discard the range. Leave
-     * the composition exactly as it stands and refit once the range is cleared,
-     * instead of disrupting copying or annotation.
-     */
+    /** Replacing line nodes during a native selection would discard the range. */
     const isSelected = () => {
       const selection = window.getSelection();
       return !!selection && !selection.isCollapsed && selection.containsNode(element, true);
     };
-
-    const fit = () => {
-      if (!engine) return;
+    const shape = () => {
       const style = getComputedStyle(element);
-      // A later ResizeObserver delivery at the width fitted here is not a move.
-      seenWidth = parseFloat(style.width) || 0;
-      const width =
-        parseFloat(style.width) -
-        (style.boxSizing === 'border-box'
-          ? parseFloat(style.paddingLeft) +
-            parseFloat(style.paddingRight) +
-            parseFloat(style.borderLeftWidth) +
-            parseFloat(style.borderRightWidth)
-          : 0);
-      if (
-        !(width > 0) ||
-        style.direction !== 'ltr' ||
-        style.writingMode !== 'horizontal-tb' ||
-        style.whiteSpace !== 'normal' ||
-        style.textTransform !== 'none' ||
-        parseFloat(style.textIndent) !== 0
-      ) {
-        lastWidth = 0;
-        setComposition(null);
-        return;
-      }
-      const nextFont = [
+      return [
+        style.width,
         style.fontFamily,
         style.fontSize,
         style.fontWeight,
@@ -805,83 +728,9 @@ export function JustifiedProse({
         style.fontStretch,
         style.fontFeatureSettings,
         style.fontVariationSettings,
-        style.fontOpticalSizing,
+        style.letterSpacing,
+        style.wordSpacing,
       ].join('|');
-      if (prepared && fontKey === nextFont && lastWidth === width) return;
-      if (!prepared || fontKey !== nextFont) {
-        // DOM measurement inherits the exact face, variable axes and OpenType features.
-        // A canvas font shorthand alone loses the app's character-variant settings.
-        const probe = document.createElement('span');
-        Object.assign(probe.style, {
-          position: 'fixed',
-          width: 'max-content',
-          visibility: 'hidden',
-          pointerEvents: 'none',
-          whiteSpace: 'pre',
-          letterSpacing: '0px',
-          wordSpacing: '0px',
-          fontKerning: 'none',
-          fontVariantLigatures: 'none',
-        });
-        probe.setAttribute('aria-hidden', 'true');
-        element.appendChild(probe);
-        try {
-          prepared = prepareInline(engine, content, source, probe);
-          fontKey = nextFont;
-        } finally {
-          probe.remove();
-        }
-      }
-      lastWidth = width;
-      const layout = engine.solve(prepared, width, {
-        hanging: 0,
-        opening: 0,
-        // Literal code does not inherit line tracking or stretched internal spaces.
-        ...(content.code ? { tracking: 0 } : {}),
-      });
-      // An unbreakable URL or identifier must wrap natively rather than overflow.
-      if (
-        !Number.isFinite(layout.cost) ||
-        !layout.lines.length ||
-        layout.lines.some((line) => line.residual < -0.5)
-      ) {
-        setComposition(null);
-        return;
-      }
-      const loose = (MAX_GAP - 1) * prepared.space;
-      const lines = layout.lines.map((line, index) => {
-        const start = words[line.start].index + (line.startOffset ?? 0);
-        const last = words[line.end - 1];
-        let end = last.index + (line.endOffset ?? last[0].length);
-        // A break after spaces inside code leaves them between the lines, outside the box.
-        if (line.endOffset !== undefined) while (content.measured[end - 1] === '\u00a0') end--;
-        const next = layout.lines[index + 1];
-        const nextStart = next ? words[next.start].index + (next.startOffset ?? 0) : text.length;
-        const ragged = line.wordSpacing > loose;
-        return {
-          start,
-          end,
-          separator: text.slice(end, nextStart),
-          wordSpacing: ragged ? 0 : line.wordSpacing,
-          tracking: ragged ? 0 : line.tracking,
-        };
-      });
-      setComposition({
-        id: ++compositions,
-        signature,
-        lines,
-        spaceFont: {
-          display: 'contents',
-          fontFamily: style.fontFamily,
-          fontSize: style.fontSize,
-          fontWeight: style.fontWeight,
-          fontStyle: style.fontStyle,
-          fontStretch: style.fontStretch,
-          fontFeatureSettings: style.fontFeatureSettings,
-          fontVariationSettings: style.fontVariationSettings,
-          fontOpticalSizing: style.fontOpticalSizing === 'none' ? 'none' : 'auto',
-        },
-      });
     };
     const paragraph: Paragraph = {
       element,
@@ -890,95 +739,85 @@ export function JustifiedProse({
       stale: true,
       observed: false,
       disposed: false,
-      compose: () => {
-        // Nothing is composed while the box is moving; `rest` asks again once it stops.
-        if (riding) return;
-        // A step that moved on before this frame composed it was the first move of a burst.
-        if (stepTo && (parseFloat(getComputedStyle(element).width) || 0) !== stepTo) {
-          ride();
-          return;
-        }
-        stepTo = 0;
+      due: () => {
         paragraph.stale = false;
+        if (riding) return false;
         if (isSelected()) {
           held.add(paragraph);
-          return;
+          return false;
         }
+        return shape() !== readFor;
+      },
+      revert: () => {
+        if (!composed) return;
+        composed = false;
+        setComposition(null);
+      },
+      read: () => {
+        let lines: ProseLine[] | null = null;
         // Measurement may be unavailable in an embedded or hidden document.
         try {
-          fit();
+          if (element.getBoundingClientRect().width > 0) {
+            lines = nativeLines(element, content);
+            readFor = shape();
+          }
         } catch {
-          setComposition(null);
+          lines = null;
         }
+        if (!lines) return () => {};
+        const id = ++compositions;
+        const read = lines;
+        return () => {
+          composed = true;
+          setComposition({ id, signature, lines: read });
+        };
+      },
+      /**
+       * A single step of the column is read again before it paints. During a burst the
+       * paragraph rides on its native lines, which fit every frame, and is read again
+       * where the width comes to rest.
+       */
+      resized: () => {
+        const width = parseFloat(getComputedStyle(element).width) || 0;
+        if (width === seenWidth) {
+          // A delivery that keeps the width may still bring a new font size or style.
+          request(paragraph);
+          return null;
+        }
+        const first = !seenWidth;
+        seenWidth = width;
+        // The first delivery reports the width that the placement already read.
+        if (first) return null;
+        const now = performance.now();
+        const burst = now - movedAt < SETTLE_MS;
+        movedAt = now;
+        if (isSelected()) {
+          held.add(paragraph);
+          return null;
+        }
+        if (burst || riding) {
+          riding = true;
+          window.clearTimeout(settleTimer);
+          settleTimer = window.setTimeout(() => {
+            riding = false;
+            request(paragraph);
+          }, SETTLE_MS);
+          return 'ride';
+        }
+        paragraph.stale = true;
+        return paragraph.near || composed ? 'step' : null;
       },
       fontsChanged: () => {
-        prepared = undefined;
+        readFor = '';
         request(paragraph);
       },
       isSelected,
     };
-    /** The box has come to rest: compose for the width it stopped at. */
-    const rest = () => {
-      riding = false;
-      request(paragraph);
-    };
-    /** The box is moving: wrap natively until it rests, then compose where it stops. */
-    const ride = () => {
-      riding = true;
-      lastWidth = 0;
-      stepTo = 0;
-      setComposition(null);
-      window.clearTimeout(settleTimer);
-      settleTimer = window.setTimeout(rest, SETTLE_MS);
-    };
-    /**
-     * A paragraph that already stands composed goes back to NATIVE wrapping for as
-     * long as its width keeps changing, and is composed again once it stops. A single
-     * step of the column, such as a gutter that opens beside it, keeps the lines on and
-     * below the screen and composes them again in the next frame: native wrapping in
-     * between would move the reader's lines twice. One with nothing composed yet — a
-     * paragraph still streaming in, or one arriving into a column that just gained
-     * width — is composed straight away and never waits.
-     */
-    const resized = () => {
-      // A selected passage keeps the composition it was selected in, moving or not,
-      // and is refitted once the selection no longer covers it.
-      if (isSelected()) {
-        held.add(paragraph);
-        return;
-      }
-      const width = parseFloat(getComputedStyle(element).width) || 0;
-      const moved = width !== seenWidth;
-      seenWidth = width;
-      const now = performance.now();
-      const burst = moved && now - movedAt < SETTLE_MS;
-      if (moved) movedAt = now;
-      if (riding) {
-        if (moved) {
-          window.clearTimeout(settleTimer);
-          settleTimer = window.setTimeout(rest, SETTLE_MS);
-        }
-        return;
-      }
-      if (moved && lastWidth > 0) {
-        // Prose above the view waits for the scroller to rest: native lines fit meanwhile.
-        if (!burst && paragraph.near && !locate(paragraph, new Map()).above) {
-          stepTo = width;
-          request(paragraph);
-        } else ride();
-        return;
-      }
-      // A delivery that keeps the width may still bring a new font size or style.
-      request(paragraph);
-    };
     const release = register(paragraph);
-    const observer = new ResizeObserver(resized);
-    observer.observe(element);
     return () => {
       window.clearTimeout(settleTimer);
-      observer.disconnect();
       release();
-      // The next signature snapshots native markup, even one that repeats an old one.
+      // The next signature reads native markup, even one that repeats an old one.
       setComposition(null);
     };
     // `content` changes whenever its signature does; the signature alone keys the work.
@@ -986,7 +825,7 @@ export function JustifiedProse({
 
   const lines = composition?.signature === signature ? composition?.lines : null;
   return (
-    <Tag ref={ref} className={className} data-justice={lines ? '' : undefined}>
+    <Tag ref={ref} className={className} data-justified-lines={lines ? '' : undefined}>
       {lines && content
         ? lines.map((line, index) => (
             <Fragment key={`${composition!.id}:${index}`}>
@@ -995,15 +834,13 @@ export function JustifiedProse({
                   display: 'inline-block',
                   width: '100%',
                   whiteSpace: 'nowrap',
-                  textAlign: 'left',
-                  hyphens: 'none',
-                  fontKerning: 'none',
-                  fontVariantLigatures: 'none',
-                  wordSpacing: line.wordSpacing,
-                  letterSpacing: line.tracking,
+                  textAlignLast: line.ragged || index === lines.length - 1 ? 'start' : 'justify',
                 }}
               >
-                {inlineSlice(content, line.start, line.end, composition!.spaceFont)}
+                {inlineSlice(content, line.start, line.end)}
+                {line.hyphen ? (
+                  <span aria-hidden="true" className="select-none after:content-['-']" />
+                ) : null}
               </span>
               {line.separator}
             </Fragment>
