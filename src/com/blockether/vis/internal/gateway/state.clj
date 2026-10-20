@@ -56,6 +56,8 @@
     [com.blockether.vis.internal.gateway.resources :as resources]
     [com.blockether.vis.internal.foundation.shell-log :as shell-log]
     [com.blockether.vis.internal.util :as util]
+    [com.blockether.vis.internal.gateway.runtime :as runtime]
+    [com.blockether.vis.internal.session.snapshot :as snapshot]
     [com.blockether.vis.internal.workspace.core :as workspace]
     [com.blockether.vis.internal.workspace.drafts :as drafts]
     [taoensso.telemere :as tel]))
@@ -6571,6 +6573,56 @@
               project-id (persistance/db-set-session-project! db forked project-id)))
       (put-session! forked {:next-seq 0 :last-active (util/now-ms)})
       (publish-session-created! db (soul forked)))))
+
+(defn export-session
+  "The `.vissnap` snapshot bytes of `sid` and its managed children (#405). Answers nil for
+   an unknown session. Throws `ex-info` with `:type` `:session/snapshot-too-large` or
+   `:session/snapshot-incomplete`."
+  [sid]
+  (let [db (lp/db-info)]
+    (when-let [tree (persistance/db-export-session-tree db sid)]
+      (snapshot/encode tree {:vis-version (runtime/release-version) :now (util/now-ms)}))))
+
+(defn import-session!
+  "Restore the snapshot `data` as a new session tree and answer the wire `soul` of its new
+   root (#405). Each session gets a new id and a trunk workspace at `root`; without it, the
+   folder of the project of `group-id`, else the gateway folder. The restorer's policy gives
+   the permissions. With `key`, a second restore answers the root of the first one. Throws
+   `ex-info` with `:type` `:session/invalid-snapshot` or `:session/snapshot-too-large`."
+  [^bytes data {:keys [root group-id key]}]
+  (let [db
+        (lp/db-info)
+
+        {:keys [tree]}
+        (snapshot/decode data)
+
+        root
+        (or (some-> root
+                    str
+                    not-empty)
+            (group-project-root group-id)
+            (workspace/trunk-root))
+
+        {new-root :root existing? :existing? sessions :sessions}
+        (persistance/db-import-session-tree!
+          db
+          tree
+          {:imported-from {"snapshot_sha256" (util/sha256-hex data)}
+           :key (some-> key
+                        str
+                        not-empty)
+           :workspace-for (fn [tx _]
+                            (:id (workspace/create-trunk-at! tx root)))
+           :place! (fn [tx sid]
+                     (when group-id (persistance/db-set-session-group! tx sid group-id)))
+           :council-group (fn [tx sid]
+                            (council/session-group tx (persistance/db-get-session tx sid)))})]
+
+    (if existing?
+      (soul new-root)
+      (do (doseq [sid (vals sessions)]
+            (put-session! sid {:next-seq 0 :last-active (util/now-ms)}))
+          (publish-session-created! db (soul new-root))))))
 
 (defn- session-summary-extras
   "Bulk summary decorations for `list-sessions`: per-session `turn_count` +

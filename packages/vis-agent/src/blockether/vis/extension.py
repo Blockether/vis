@@ -240,6 +240,35 @@ class Sessions:
             page = layer.get_sessions_search(query={"q": search})
         return list(page.get("sessions") or [])
 
+    def export(self, session_id: str | None = None) -> bytes:
+        """Return a `.vissnap` snapshot of a session and its children as bytes.
+
+        Without `session_id`, export the bound session. See `Session.export`.
+        """
+        sid = session_id or _host.bound_session()
+        if not sid:
+            raise RuntimeError(
+                "vis.sessions.export needs a session ID or a bound session"
+            )
+        return _host_layer().session(sid).export()
+
+    def restore(
+        self,
+        data: bytes,
+        *,
+        root: str | None = None,
+        group_id: str | None = None,
+        key: str | None = None,
+    ) -> Any:
+        """Restore snapshot `data` as a new session and return its `Session`.
+
+        The arguments are those of `ExecutionLayer.restore_session`. Only an extension
+        callback can restore a session.
+        """
+        return _host_layer().restore_session(
+            data, root=root, group_id=group_id, key=key
+        )
+
 
 sessions = Sessions()
 

@@ -637,6 +637,7 @@
    A read has no Activity of its own: a turn wait polls reads, and the calling tool
    already shows its Activity."
   {[:post "/v1/sessions"] [:vis.sessions.create "Create session" false]
+   [:post "/v1/sessions/actions/import"] [:vis.sessions.restore "Restore session" true]
    [:patch "/v1/sessions/:sid"] [:vis.session.update "Update session" false]
    [:delete "/v1/sessions/:sid"] [:vis.session.delete "Delete session" false]
    [:post "/v1/sessions/:sid/attachments"] [:vis.session.attach "Attach file" false]

@@ -934,3 +934,44 @@ def test_activity_export_rejects_marked_partial_response(incomplete):
             assert response.content == text
             assert len(response.content) > 65536
         assert len([c for c in calls if c[1] == route]) == 1
+
+
+def _snapshot(manifest):
+    head = json.dumps(manifest).encode()
+    return (
+        b"VISSNAP\0"
+        + (1).to_bytes(4, "big")
+        + len(head).to_bytes(4, "big")
+        + head
+        + b"x"
+    )
+
+
+def test_session_snapshot_export_and_restore_round_trip():
+    data = _snapshot({"format_version": 1, "root_session_id": "S1"})
+
+    def respond(method, path, body):
+        if method == "GET":
+            return 200, data, "application/octet-stream"
+        return 201, {"id": "S2"}
+
+    with endpoint(respond) as (url, calls):
+        client = GatewayClient(url)
+        assert client.session("S1").export() == data
+        assert calls[-1][:2] == ("GET", "/v1/sessions/S1/snapshot")
+        restored = client.restore_session(data, group_id="G", key="k-1")
+        assert restored.id == "S2"
+        method, path, headers, body = calls[-1]
+        assert (method, urlsplit(path).path) == ("POST", "/v1/sessions/actions/import")
+        assert parse_qs(urlsplit(path).query) == {"group_id": ["G"], "key": ["k-1"]}
+        assert body == data
+
+
+def test_snapshot_info_reads_the_manifest_without_a_request():
+    manifest = {"format_version": 1, "counts": {"sessions": 2}}
+    assert GatewayClient.snapshot_info(_snapshot(manifest)) == manifest
+    with pytest.raises(ValueError, match="not a Vis session snapshot"):
+        GatewayClient.snapshot_info(b"not a snapshot")
+    damaged = _snapshot(manifest)[:20]
+    with pytest.raises(ValueError, match="damaged"):
+        GatewayClient.snapshot_info(damaged)

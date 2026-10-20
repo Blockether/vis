@@ -284,15 +284,27 @@
     "Queue one idle child for a follow-up task in one transaction, under the active cap. `turns`
      is its turn count before the task. Answer the new row or nil."))
 
+(defprotocol SnapshotStore
+  "Session snapshot operations of a persistence backend, with the `Store` dispatch. They
+   are a separate protocol for the same JVM method-size limit as `AutomationStore`."
+  (db-export-session-tree [db-info session-id]
+    "Read one session and its managed children as plain rows for a snapshot, or nil.")
+  (db-import-session-tree! [db-info tree opts]
+    "Write an exported tree with new ids in one transaction. Answer the new root and id map."))
+
 (defmacro store-implementation
   "Expand, inside a backend namespace, to its op map for `Store`, `AutomationStore`,
-   `QueueStore` and `AgentStore`: every op keyed to the backend's own fn of the same name. A
+   `QueueStore`, `AgentStore` and `SnapshotStore`: every op keyed to the backend's own fn of the same name. A
    backend missing an op fails to compile instead of failing at its first call."
   []
   (into {}
         (map (fn [op]
                [op (symbol (name op))]))
-        (keys (merge (:sigs Store) (:sigs AutomationStore) (:sigs QueueStore) (:sigs AgentStore)))))
+        (keys (merge (:sigs Store)
+                     (:sigs AutomationStore)
+                     (:sigs QueueStore)
+                     (:sigs AgentStore)
+                     (:sigs SnapshotStore)))))
 
 ;; Turn outcome
 
@@ -428,6 +440,10 @@
   "Every `AgentStore` op forwarded to the backend."
   (into {} (map (juxt identity forward)) (keys (:sigs AgentStore))))
 
+(def ^:private snapshot-ops
+  "Every `SnapshotStore` op forwarded to the backend."
+  (into {} (map (juxt identity forward)) (keys (:sigs SnapshotStore))))
+
 ;; Extended once, while this namespace loads: re-exports copy the protocol fns,
 ;; and a later `extend` would rebind them behind those copies.
 (extend nil
@@ -438,7 +454,9 @@
     QueueStore
     queue-ops
     AgentStore
-    agent-ops)
+    agent-ops
+    SnapshotStore
+    snapshot-ops)
 
 (extend Object
   Store
@@ -448,7 +466,9 @@
     QueueStore
     queue-ops
     AgentStore
-    agent-ops)
+    agent-ops
+    SnapshotStore
+    snapshot-ops)
 
 ;; Connection lifecycle
 

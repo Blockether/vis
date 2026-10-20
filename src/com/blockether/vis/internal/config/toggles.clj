@@ -819,4 +819,14 @@
                        :owner :vis
                        :group :experimental
                        :persist? true})
+    ;; A snapshot is read into memory whole, and a Java byte array holds less than 2 GiB.
+    (register-toggle! {:id "session_snapshot_limit"
+                       :label "Session snapshot limit"
+                       :description "Largest session snapshot that this machine exports or restores."
+                       :type :enum
+                       :choices ["256_mib" "512_mib" "1_gib"]
+                       :default "1_gib"
+                       :scopes ["global"]
+                       :owner :vis
+                       :persist? true})
     true))

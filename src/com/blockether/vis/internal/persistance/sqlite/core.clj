@@ -1497,7 +1497,10 @@
                    :archived-at (->date (:archived_at soul))
                    ;; The program that created the session, or nil for a person or a client.
                    :origin (some-> (:origin soul)
-                                   json/read-json)}
+                                   json/read-json)
+                   ;; The snapshot that a restore made this session from, or nil.
+                   :imported-from (some-> (:imported_from soul)
+                                          json/read-json)}
             (:llm_root_provider state)
             (assoc :provider (->kw-back (:llm_root_provider state)))
 
@@ -5449,6 +5452,136 @@
                         0)))
     (db-agent-info db sid)))
 
+(defn- turn-copy-rows
+  "One transcript turn as raw rows: its soul, its latest state, that state's iterations in
+   order and the turn's attachments. A fork and a session snapshot copy these rows."
+  [tx-info turn-id]
+  (let [turn-s
+        (->ref turn-id)
+
+        state
+        (query-one! tx-info
+                    {:select [:*]
+                     :from :session_turn_state
+                     :where [:and [:= :session_turn_soul_id turn-s]
+                             [:= :version
+                              {:select [[[:max :version]]]
+                               :from :session_turn_state
+                               :where [:= :session_turn_soul_id turn-s]}]]})]
+
+    {:soul (query-one! tx-info {:select [:*] :from :session_turn_soul :where [:= :id turn-s]})
+     :state state
+     :iterations (if state
+                   (query! tx-info
+                           {:select [:*]
+                            :from :session_turn_iteration
+                            :where [:= :session_turn_state_id (:id state)]
+                            :order-by [[:position :asc]]})
+                   [])
+     :attachments
+     (query! tx-info
+             {:select [:*] :from :session_attachment :where [:= :session_turn_soul_id turn-s]})}))
+
+(defn- insert-turn-copy!
+  "Insert a copy of one turn's `rows` from [[turn-copy-rows]] as turn `position` of the
+   session state `state-id`, with fresh ids. Answers the new turn id.
+
+   `opts`:
+     :now                the copy time; a copy stays older than it
+     :notice             (fn [new-turn-id] block) settles a copied running turn
+     :copy-histories!    (fn [forms] {old-history-id new-history-id}) copies the
+                         Activity histories that one iteration's forms name
+     :council-entry-ids  old to new Council entry ids, or nil to keep the ids; a turn
+                         whose entry is not in the map becomes a user turn"
+  [tx-info {:keys [soul state iterations attachments]} state-id position
+   {:keys [now notice copy-histories! council-entry-ids]}]
+  (let [new-turn-id
+        (str (new-uuid))
+
+        new-ts-id
+        (str (new-uuid))
+
+        iter-id-map
+        (into {}
+              (map (fn [it]
+                     [(:id it) (str (new-uuid))]))
+              iterations)
+
+        ;; Each copy gets its new id first: a copied step record (`user_input`) names its
+        ;; stored files by id.
+        att-id-map
+        (into {}
+              (map (fn [a]
+                     [(:id a) (str (new-uuid))]))
+              attachments)
+
+        entry-id
+        (some->> (:council_entry_id soul)
+                 (get council-entry-ids))]
+
+    (when soul
+      (execute! tx-info
+                {:insert-into :session_turn_soul
+                 :values [(cond-> (assoc soul
+                                    :id new-turn-id
+                                    :session_state_id state-id
+                                    :position (long position)
+                                    ;; Usage counts only turns created at or after the
+                                    ;; copy's root state, so a fork copy stays before it.
+                                    :created_at (min (long (:created_at soul)) (dec (long now))))
+                            (and council-entry-ids (:council_entry_id soul))
+                            (assoc :council_entry_id
+                              entry-id :request_kind
+                              (if entry-id "council" "user")))]}))
+    (when state
+      (execute! tx-info
+                {:insert-into :session_turn_state
+                 :values [(cond-> (assoc state
+                                    :id new-ts-id
+                                    :session_turn_soul_id new-turn-id
+                                    :version 0
+                                    :forked_from_session_turn_state_id nil)
+                            ;; The copy runs nothing: a turn that still runs in the source is
+                            ;; settled here the way a cancel settles it, or every client paints
+                            ;; the copy as live. The notice names what ended the copy.
+                            (= "running" (:status state))
+                            (assoc :status
+                              (normalize-status :interrupted) :prior_outcome
+                              "cancelled" :content_json
+                              (->json (conj (vec (<-json (:content_json state)))
+                                            (notice new-turn-id)))))]}))
+    (doseq [it
+            iterations
+
+            :let [history-id-map
+                  (copy-histories! (<-blob (:tool_calls it)))]]
+
+      (execute! tx-info
+                {:insert-into :session_turn_iteration
+                 :values [(assoc it
+                            :id (get iter-id-map (:id it))
+                            :session_turn_state_id new-ts-id
+                            :tool_calls (fork-iteration-tool-calls (:tool_calls it) history-id-map)
+                            :user_input (fork-user-input (:user_input it) att-id-map))]}))
+    ;; Attachments: user-rail rows (nil iteration) always copy; tool-rail rows copy only
+    ;; when their iteration was copied (latest state), with the iteration FK remapped.
+    ;; Skip tool rows from older versions.
+    (doseq [a
+            attachments
+
+            :let [it-id
+                  (:session_turn_iteration_id a)]
+            :when (or (nil? it-id) (contains? iter-id-map it-id))]
+
+      (execute! tx-info
+                {:insert-into :session_attachment
+                 :values [(assoc a
+                            :id (get att-id-map (:id a))
+                            :session_turn_soul_id new-turn-id
+                            :session_turn_iteration_id (some-> it-id
+                                                               iter-id-map))]}))
+    new-turn-id))
+
 (defn db-fork-session-at-turn!
   "Fork a session UP TO AND INCLUDING the turn whose `session_turn_soul` id is
    `:through-turn-id`, into a new independent session by default.
@@ -5577,101 +5710,16 @@
                                       (name (->kw (:llm_root_provider current)))))]})
               ;; Deep-copy each source turn into the fork's root state. A child gets the handoff.
               (doseq [[idx turn] (map-indexed vector (when-not agent cut))]
-                (let [old-soul-s (->ref (:id turn))
-                      new-turn-soul-id (str (new-uuid))
-                      soul-row (query-one!
-                                 tx-info
-                                 {:select [:*] :from :session_turn_soul :where [:= :id old-soul-s]})
-                      ts-row (query-one! tx-info
-                                         {:select [:*]
-                                          :from :session_turn_state
-                                          :where [:and [:= :session_turn_soul_id old-soul-s]
-                                                  [:= :version
-                                                   {:select [[[:max :version]]]
-                                                    :from :session_turn_state
-                                                    :where [:= :session_turn_soul_id
-                                                            old-soul-s]}]]})
-                      new-ts-id (str (new-uuid))
-                      iters (when ts-row
-                              (query! tx-info
-                                      {:select [:*]
-                                       :from :session_turn_iteration
-                                       :where [:= :session_turn_state_id (:id ts-row)]
-                                       :order-by [[:position :asc]]}))
-                      iter-id-map (into {}
-                                        (map (fn [it]
-                                               [(:id it) (str (new-uuid))])
-                                             iters))
-                      atts (query! tx-info
-                                   {:select [:*]
-                                    :from :session_attachment
-                                    :where [:= :session_turn_soul_id old-soul-s]})
-                      ;; Each copy gets its new id first: a copied step record
-                      ;; (`user_input`) names its stored files by id.
-                      att-id-map (into {}
-                                       (map (fn [a]
-                                              [(:id a) (str (new-uuid))]))
-                                       atts)]
-
-                  (when soul-row
-                    (execute! tx-info
-                              {:insert-into :session_turn_soul
-                               :values [(assoc soul-row
-                                          :id new-turn-soul-id
-                                          :session_state_id new-state-id
-                                          :position (inc (long idx))
-                                          ;; Usage counts only turns created at or after the
-                                          ;; fork's root state, so a copy stays before it.
-                                          :created_at (min (long (:created_at soul-row))
-                                                           (dec (long now))))]}))
-                  (when ts-row
-                    (execute! tx-info
-                              {:insert-into :session_turn_state
-                               :values [(cond-> (assoc ts-row
-                                                  :id new-ts-id
-                                                  :session_turn_soul_id new-turn-soul-id
-                                                  :version 0
-                                                  :forked_from_session_turn_state_id nil)
-                                          ;; The fork runs nothing: a turn still running in the
-                                          ;; source is settled here the way a cancel settles
-                                          ;; it, or every client paints the fork as live. The
-                                          ;; fork notice tells people and the next turn that a
-                                          ;; fork, not a cancel, ended the copy.
-                                          (= "running" (:status ts-row))
-                                          (assoc :status
-                                            (normalize-status :interrupted) :prior_outcome
-                                            "cancelled" :content_json
-                                            (->json (conj (vec (<-json (:content_json ts-row)))
-                                                          (content/fork-notice (str
-                                                                                 new-turn-soul-id
-                                                                                 ":forked"))))))]}))
-                  (doseq [it iters
-                          :let [forms (<-blob (:tool_calls it))
-                                history-id-map (fork-activity-histories! tx-info new-soul-id forms)]]
-
-                    (execute! tx-info
-                              {:insert-into :session_turn_iteration
-                               :values [(assoc it
-                                          :id (get iter-id-map (:id it))
-                                          :session_turn_state_id new-ts-id
-                                          :tool_calls (fork-iteration-tool-calls (:tool_calls it)
-                                                                                 history-id-map)
-                                          :user_input (fork-user-input (:user_input it)
-                                                                       att-id-map))]}))
-                  ;; Attachments: user-rail rows (nil iteration) always copy; tool-rail
-                  ;; rows copy only when their iteration was copied (latest state), with
-                  ;; the iteration FK remapped. Skip tool rows from older versions.
-                  (doseq [a atts
-                          :let [it-id (:session_turn_iteration_id a)]
-                          :when (or (nil? it-id) (contains? iter-id-map it-id))]
-
-                    (execute! tx-info
-                              {:insert-into :session_attachment
-                               :values [(assoc a
-                                          :id (get att-id-map (:id a))
-                                          :session_turn_soul_id new-turn-soul-id
-                                          :session_turn_iteration_id (some-> it-id
-                                                                             iter-id-map))]}))))
+                (insert-turn-copy! tx-info
+                                   (turn-copy-rows tx-info (:id turn))
+                                   new-state-id
+                                   (inc (long idx))
+                                   {:now now
+                                    ;; The fork notice tells people and the next turn that a
+                                    ;; fork, not a cancel, ended the copy.
+                                    :notice #(content/fork-notice (str % ":forked"))
+                                    :copy-histories!
+                                    #(fork-activity-histories! tx-info new-soul-id %)}))
               (when agent
                 (execute! tx-info
                           {:insert-into :session_agent
@@ -5687,6 +5735,379 @@
                                       :created_at now)]}))
               ;; Return the fork's soul, never a state id.
               new-soul-id)))))))
+
+;; Session snapshots (#405)
+
+(defn- snapshot-histories
+  "Each durable Activity history that `iterations` name, by its string id, with its
+   invocation rows in order."
+  [tx-info iterations]
+  (into {}
+        (for [it
+              iterations
+
+              id
+              (distinct (keep #(get-in % [:activity :history :id]) (<-blob (:tool_calls it))))
+
+              :let [id-s
+                    (str id)
+
+                    history
+                    (query-one! tx-info
+                                {:select [:*] :from :activity_history :where [:= :id id-s]})]
+              :when history]
+
+          [id-s
+           {:history history
+            :invocations (query! tx-info
+                                 {:select [:*]
+                                  :from :activity_invocation
+                                  :where [:= :history_id id-s]
+                                  :order-by [[:sequence :asc]]})}])))
+
+(defn- snapshot-council
+  "The Council entries that tree members wrote to tree members, in id order, with their
+   pings. A thread entry stays only with its thread root, a reply only with its target."
+  [tx-info tree]
+  (let [entries
+        (query! tx-info
+                {:select [:*]
+                 :from :council_entry
+                 :where [:in :author_sid (vec tree)]
+                 :order-by [[:id :asc]]})
+
+        pings
+        (group-by
+          :entry_id
+          (when (seq entries)
+            (query! tx-info
+                    {:select [:*] :from :council_ping :where [:in :entry_id (mapv :id entries)]})))
+
+        kept
+        (reduce (fn [kept e]
+                  (if (and (every? #(contains? tree (:recipient_sid %)) (get pings (:id e)))
+                           (or (nil? (:thread_id e)) (contains? kept (:thread_id e)))
+                           (or (nil? (:reply_to e)) (contains? kept (:reply_to e))))
+                    (conj kept (:id e))
+                    kept))
+                #{}
+                entries)]
+
+    {:entries (filterv #(contains? kept (:id %)) entries)
+     :pings (into [] (comp (filter (comp kept key)) (mapcat val)) pings)}))
+
+(defn- snapshot-session
+  "One session of a snapshot tree as rows. `payload!` moves an attachment payload out of
+   its row."
+  [tx-info sid tree payload!]
+  (let [soul
+        (query-one! tx-info {:select [:*] :from :session_soul :where [:= :id sid]})
+
+        state
+        (query-one!
+          tx-info
+          {:select [:*] :from :session_state :where [:= :id (latest-state-id-for tx-info sid)]})
+
+        agent
+        (query-one! tx-info {:select [:*] :from :session_agent :where [:= :session_id sid]})
+
+        parent
+        (when-let [state-id (:parent_state_id soul)]
+          (:session_soul_id (query-one! tx-info
+                                        {:select [:session_soul_id]
+                                         :from :session_state
+                                         :where [:= :id state-id]})))
+
+        turns
+        (mapv (fn [turn]
+                (update (turn-copy-rows tx-info (:id turn)) :attachments #(mapv payload! %)))
+              (db-list-session-turns tx-info sid))]
+
+    {:soul soul
+     :parent-id (when (contains? tree parent) parent)
+     ;; The prompt cache belongs to the provider account, the workspace to this machine.
+     :state (dissoc state :prompt_cache_state :workspace_id)
+     :settings (query!
+                 tx-info
+                 {:select [:setting_id :value] :from :session_setting :where [:= :owner_id sid]})
+     :agent
+     (when (and agent (contains? tree (:leader_id agent)) (contains? tree (:parent_id agent)))
+       agent)
+     :turns turns
+     :histories (snapshot-histories tx-info (mapcat :iterations turns))}))
+
+(defn db-export-session-tree
+  "Read the session `session-id` and its managed children as plain rows for a session
+   snapshot (#405), in one transaction. Answers nil for an unknown session.
+
+   Each session holds its soul, its latest state, its explicit settings, its child row,
+   its transcript turns and the Activity histories that they name. `:council` holds the
+   entries that tree members wrote to tree members. `:blobs` holds each attachment
+   payload once, by SHA-256; a payload in external storage is read in. The prompt cache,
+   the workspace and storage handles stay out."
+  [db-info session-id]
+  (when (ds db-info)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [root-s (->ref session-id)]
+          (when (query-one! tx-info {:select [:id] :from :session_soul :where [:= :id root-s]})
+            (let [ids (into [root-s]
+                            (map :session_id)
+                            (query! tx-info
+                                    {:select [:session_id]
+                                     :from :session_agent
+                                     :where [:= :leader_id root-s]
+                                     :order-by [[:created_at :asc] [:session_id :asc]]}))
+                  tree (set ids)
+                  blobs (volatile! {})
+                  payload! (fn [att]
+                             (let [^bytes data (or (:bytes att)
+                                                   (attachment-storage/resolve-bytes (:storage_uri
+                                                                                       att)))]
+                               (when-not data
+                                 (throw (ex-info "An attachment payload is not readable"
+                                                 {:type :session/snapshot-incomplete
+                                                  :attachment-id (:id att)})))
+                               (let [sha (util/sha256-hex data)]
+                                 (vswap! blobs assoc sha data)
+                                 (assoc att
+                                   :bytes nil
+                                   :storage_uri nil
+                                   :bytes_sha256 sha))))
+                  sessions (mapv #(snapshot-session tx-info % tree payload!) ids)]
+
+              {:root-id root-s
+               :sessions sessions
+               :council (snapshot-council tx-info tree)
+               :blobs @blobs})))))))
+
+(defn- import-histories!
+  "Insert the snapshot `histories` that `forms` name under the session `soul-id`, with
+   fresh ids. Answers `{old-history-id new-history-id}`."
+  [tx-info histories soul-id forms]
+  (into {}
+        (for [old-id
+              (distinct (keep #(get-in % [:activity :history :id]) forms))
+
+              :let [{:keys [history invocations]}
+                    (get histories (str old-id))]
+              :when history
+              :let [new-id
+                    (str (new-uuid))]]
+
+          (do (execute! tx-info
+                        {:insert-into :activity_history
+                         :values [(assoc history
+                                    :id new-id
+                                    :session_soul_id soul-id)]})
+              (doseq [batch (partition-all 500 invocations)]
+                (execute! tx-info
+                          {:insert-into :activity_invocation
+                           :values (mapv #(assoc % :history_id new-id) batch)}))
+              [old-id new-id]))))
+
+(defn- import-council!
+  "Insert the snapshot Council `entries` and `pings` into `group-id` with remapped
+   sessions and entries. A ping that waited at export ends as interrupted. Answers
+   `{old-entry-id new-entry-id}`."
+  [tx-info {:keys [entries pings]} group-id session-ids]
+  (let [rename
+        (fn [text]
+          (reduce-kv (fn [s old new]
+                       (str/replace s old new))
+                     (str text)
+                     session-ids))
+
+        entry-ids
+        (reduce (fn [ids e]
+                  (execute! tx-info
+                            {:insert-into :council_entry
+                             :values [(-> (dissoc e :id)
+                                          (assoc :group_id group-id
+                                                 :author_sid (get session-ids (:author_sid e))
+                                                 :source_ref nil
+                                                 :thread_id (some->> (:thread_id e)
+                                                                     (get ids))
+                                                 :reply_to (some->> (:reply_to e)
+                                                                    (get ids))
+                                                 :idempotency_key (rename (:idempotency_key e))))]})
+                  (assoc ids
+                    (:id e) (:id (query-one! tx-info
+                                             {:select [[[:raw "last_insert_rowid()"] :id]]}))))
+                {}
+                entries)]
+
+    (doseq [p pings]
+      (execute! tx-info
+                {:insert-into :council_ping
+                 :values [(assoc p
+                            :recipient_sid (get session-ids (:recipient_sid p))
+                            :group_id group-id
+                            :entry_id (get entry-ids (:entry_id p))
+                            :state (if (contains? #{"pending" "delivered"} (:state p))
+                                     "interrupted"
+                                     (:state p))
+                            :reply_entry_id (some->> (:reply_entry_id p)
+                                                     (get entry-ids)))]}))
+    entry-ids))
+
+(defn- import-turn-rows
+  "Snapshot turn `rows` with each attachment payload put back from `blobs`."
+  [rows blobs]
+  (update rows
+          :attachments
+          (fn [atts]
+            (mapv (fn [a]
+                    (let [data (get blobs (:bytes_sha256 a))]
+                      (when-not data
+                        (throw (ex-info "The snapshot misses an attachment payload"
+                                        {:type :session/invalid-snapshot})))
+                      (-> (dissoc a :bytes_sha256)
+                          (assoc :bytes data
+                                 :storage_uri nil))))
+                  atts))))
+
+(defn db-import-session-tree!
+  "Write a session tree that [[db-export-session-tree]] read, with new ids, in one
+   transaction (#405). Answers `{:root new-root-id :sessions {old-id new-id}}`.
+
+   `opts`:
+     :owner-id       the owner of the new sessions
+     :imported-from  the JSON map that each new session records, with its source id
+     :key            a second import with this key answers `{:root id :existing? true}`
+     :workspace-for  (fn [tx-info old-session-id] workspace-id) for each session state
+     :place!         (fn [tx-info new-root-id]) files the new root in a group or project
+     :council-group  (fn [tx-info new-root-id] group-id) for the copied Council entries
+
+   A child that was queued or running becomes failed, and a running turn interrupted, so
+   the restored parent can resume the child."
+  [db-info {:keys [sessions council blobs]}
+   {:keys [owner-id imported-from key workspace-for place! council-group]}]
+  (when (ds db-info)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let [owner
+              (or owner-id "local")
+
+              existing
+              (when key
+                (:id (query-one! tx-info
+                                 {:select [:id]
+                                  :from :session_soul
+                                  :where [:and [:= :owner_id owner]
+                                          [:= [:json_extract :imported_from "$.key"] key]]})))]
+
+          (if existing
+            {:root existing :existing? true}
+            (let [now
+                  (now-ms)
+
+                  root-old
+                  (:id (:soul (first sessions)))
+
+                  ids
+                  (into {}
+                        (map (fn [s]
+                               [(:id (:soul s)) (str (new-uuid))]))
+                        sessions)
+
+                  state-ids
+                  (into {}
+                        (map (fn [s]
+                               [(:id (:soul s)) (str (new-uuid))]))
+                        sessions)]
+
+              (doseq [{:keys [soul state settings parent-id]}
+                      sessions
+
+                      :let [old-sid
+                            (:id soul)
+
+                            new-sid
+                            (get ids old-sid)]]
+
+                (execute! tx-info
+                          {:insert-into :session_soul
+                           :values [(cond-> {:id new-sid
+                                             :channel (:channel soul)
+                                             :created_at (:created_at soul)
+                                             :claimed_at now
+                                             :owner_id owner
+                                             :llm_pref_provider (:llm_pref_provider soul)
+                                             :llm_pref_model (:llm_pref_model soul)
+                                             :goal (:goal soul)
+                                             :origin (:origin soul)
+                                             :imported_from (->json (cond-> (assoc imported-from
+                                                                              "session_id" old-sid)
+                                                                      (and key (= old-sid root-old))
+                                                                      (assoc "key" key)))}
+                                      parent-id
+                                      (assoc :parent_state_id (get state-ids parent-id)))]})
+                (execute! tx-info
+                          {:insert-into :session_state
+                           :values [{:id (get state-ids old-sid)
+                                     :session_soul_id new-sid
+                                     :parent_state_id nil
+                                     :workspace_id (->ref (workspace-for tx-info old-sid))
+                                     :title (:title state)
+                                     :version 0
+                                     :system_prompt (or (:system_prompt state) "")
+                                     :llm_root_provider (:llm_root_provider state)
+                                     :llm_root_model (or (:llm_root_model state) "")
+                                     :created_at (:created_at soul)}]})
+                (when (seq settings)
+                  (execute! tx-info
+                            {:insert-into :session_setting
+                             :values (mapv #(assoc % :owner_id new-sid) settings)})))
+              (when place! (place! tx-info (get ids root-old)))
+              (let [entry-ids
+                    (import-council! tx-info
+                                     council
+                                     (when council-group (council-group tx-info (get ids root-old)))
+                                     ids)
+
+                    turn-ids
+                    (into {}
+                          (for [{:keys [soul turns histories]}
+                                sessions
+
+                                :let [new-sid
+                                      (get ids (:id soul))]
+                                [idx rows]
+                                (map-indexed vector turns)]
+
+                            [(:id (:soul rows))
+                             (insert-turn-copy!
+                               tx-info
+                               (import-turn-rows rows blobs)
+                               (get state-ids (:id soul))
+                               (inc (long idx))
+                               {:now now
+                                :notice #(content/notice (str % ":imported")
+                                                         "turn_imported"
+                                                         "Stopped by a session export.")
+                                :copy-histories! #(import-histories! tx-info histories new-sid %)
+                                :council-entry-ids entry-ids})]))]
+
+                (doseq [{:keys [soul agent]}
+                        sessions
+
+                        :when agent]
+
+                  (execute! tx-info
+                            {:insert-into :session_agent
+                             :values [(assoc agent
+                                        :session_id (get ids (:id soul))
+                                        :parent_id (get ids (:parent_id agent))
+                                        :leader_id (get ids (:leader_id agent))
+                                        :team_id (get turn-ids (:team_id agent) (:team_id agent))
+                                        :status (if (contains? #{"queued" "running"}
+                                                               (:status agent))
+                                                  "failed"
+                                                  (:status agent)))]})))
+              {:root (get ids root-old) :sessions ids})))))))
 
 (defn- normalize-routing-event
   "THE one adapter between `event_json` (parsed with STRING keys — `<-json`

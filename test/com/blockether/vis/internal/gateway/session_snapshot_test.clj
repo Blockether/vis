@@ -1,0 +1,265 @@
+(ns com.blockether.vis.internal.gateway.session-snapshot-test
+  "Session snapshots (#405): export a session tree to `.vissnap` bytes and restore it."
+  (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.persistance.sqlite.core :as ps]
+            [com.blockether.vis.internal.session.snapshot :as snapshot]
+            [lazytest.core :refer [defdescribe describe expect it]]
+            [next.jdbc :as jdbc]
+            [next.jdbc.result-set :as rs]))
+
+(defn- temp-dir
+  [prefix]
+  (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                prefix
+                                (make-array java.nio.file.attribute.FileAttribute 0)))))
+
+(defn- rows
+  [store sql-params]
+  (jdbc/execute! (:datasource store) sql-params {:builder-fn rs/as-unqualified-maps}))
+
+(defn- session!
+  "A new session on a trunk workspace with `title`. Returns its id."
+  [store title]
+  (let [root
+        (temp-dir "vis-snapshot")
+
+        trunk
+        (ps/db-workspace-insert! store
+                                 {:repo-id (str "repo-" title)
+                                  :repo-root root
+                                  :root root
+                                  :workspace-kind :trunk
+                                  :workspace-backend :live
+                                  :state :active})
+
+        sid
+        (str (random-uuid))
+
+        ds
+        (:datasource store)]
+
+    (spit (io/file root "seed.txt") "seed")
+    (jdbc/execute! ds
+                   ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" sid "api"
+                    1])
+    (jdbc/execute!
+      ds
+      ["INSERT INTO session_state (id, session_soul_id, workspace_id, version, title, created_at) VALUES (?,?,?,?,?,?)"
+       (str (random-uuid)) sid (:id trunk) 0 title 1])
+    sid))
+
+(defn- turn!
+  [store sid request status]
+  (str (ps/db-store-session-turn! store
+                                  {:parent-session-id sid :user-request request :status status})))
+
+(defn- attach!
+  "Store `bytes` as a user attachment of turn `tid`."
+  [store tid ^bytes data]
+  (jdbc/execute!
+    (:datasource store)
+    ["INSERT INTO session_attachment (id, session_turn_soul_id, position, media_type, filename, size_bytes, bytes, created_at) VALUES (?,?,?,?,?,?,?,?)"
+     (str (random-uuid)) tid 0 "image/png" "seed.png" (alength data) data 1]))
+
+(defn- child!
+  "A managed child of `parent` with agent `status`, made by turn `team-id`."
+  [store parent team-id status]
+  (let [cid (session! store "Child")]
+    (jdbc/execute!
+      (:datasource store)
+      ["INSERT INTO session_agent (session_id, parent_id, leader_id, team_id, task, status, depth, inherited_turns, spawn_key, spawn_fingerprint, checkpoint, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+       cid parent parent team-id "Check the seed" status 1 0 "k1" "f1" (byte-array 0) 1])
+    cid))
+
+(defn- entry!
+  "A Council entry by `author` that pings `recipient`. Returns its id."
+  [store author recipient]
+  (let
+    [ds
+     (:datasource store)
+
+     id
+     (->
+       (jdbc/execute-one!
+         ds
+         ["INSERT INTO council_entry (group_id, author_sid, activation_id, title, content, created_at, idempotency_key, fingerprint) VALUES (?,?,?,?,?,?,?,?) RETURNING id"
+          "g1" author "a1" "Status" "Seed is fine" 1 (str "key-" author) "fp"]
+         {:builder-fn rs/as-unqualified-maps})
+       :id)]
+
+    (jdbc/execute!
+      ds
+      ["INSERT INTO council_ping (recipient_sid, activation_id, group_id, entry_id, state) VALUES (?,?,?,?,?)"
+       recipient "a1" "g1" id "pending"])
+    id))
+
+(defn- error-type [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+
+(defn- with-store
+  "Call `f` with an in-memory store that the gateway uses."
+  [f]
+  (let [store (ps/db-open! :memory)]
+    (try (with-redefs [lp/db-info (constantly store)]
+           (f store))
+         (finally (ps/db-close! store)))))
+
+(defdescribe
+  session-snapshot-test
+  (describe
+    "export and restore"
+    (it
+      "restores turns and attachment bytes under new ids"
+      (with-store
+        (fn [store]
+          (let [sid
+                (session! store "Trunk talk")
+
+                tid
+                (turn! store sid "first ask" :success)
+
+                image
+                (.getBytes "png-bytes" "UTF-8")]
+
+            (turn! store sid "second ask" :success)
+            (attach! store tid image)
+            (let [data
+                  (state/export-session sid)
+
+                  manifest
+                  (snapshot/info data)
+
+                  restored
+                  (state/import-session! data {})
+
+                  new-id
+                  (get restored "id")]
+
+              (expect (= sid (get manifest "root_session_id")))
+              (expect (= 2 (get-in manifest ["counts" "turns"])))
+              (expect (= 1 (get-in manifest ["counts" "attachments"])))
+              (expect (not= sid new-id))
+              (expect (= ["first ask" "second ask"]
+                         (mapv :user-request (ps/db-list-session-turns store new-id))))
+              (expect (= sid (get (:imported-from (ps/db-get-session store new-id)) "session_id")))
+              (expect
+                (=
+                  [(seq image)]
+                  (mapv
+                    (comp seq :bytes)
+                    (rows
+                      store
+                      ["SELECT a.bytes FROM session_attachment a JOIN session_turn_soul t ON t.id = a.session_turn_soul_id JOIN session_state s ON s.id = t.session_state_id WHERE s.session_soul_id = ?"
+                       new-id])))))))))
+    (it "answers nil for an unknown session"
+        (with-store (fn [_store]
+                      (expect (nil? (state/export-session (str (random-uuid)))))))))
+  (describe
+    "children and Council"
+    (it
+      "remaps the child, fails its unfinished work and interrupts open pings"
+      (with-store
+        (fn [store]
+          (let [sid
+                (session! store "Leader")
+
+                team
+                (turn! store sid "spawn" :success)
+
+                cid
+                (child! store sid team "running")]
+
+            (turn! store cid "child work" :running)
+            (entry! store sid cid)
+            (let [data
+                  (state/export-session sid)
+
+                  manifest
+                  (snapshot/info data)
+
+                  new-root
+                  (get (state/import-session! data {}) "id")
+
+                  [agent]
+                  (rows store
+                        ["SELECT session_id, team_id, status FROM session_agent WHERE parent_id = ?"
+                         new-root])
+
+                  new-child
+                  (:session_id agent)]
+
+              (expect (= 2 (get-in manifest ["counts" "sessions"])))
+              (expect (= 1 (get-in manifest ["counts" "council_entries"])))
+              (expect (= "failed" (:status agent)))
+              (expect (not= cid new-child))
+              (expect (= (str (:id (first (ps/db-list-session-turns store new-root))))
+                         (:team_id agent)))
+              (expect (= [:interrupted] (mapv :status (ps/db-list-session-turns store new-child))))
+              (expect
+                (=
+                  [{:author_sid new-root :recipient_sid new-child :state "interrupted"}]
+                  (rows
+                    store
+                    ["SELECT e.author_sid, p.recipient_sid, p.state FROM council_entry e JOIN council_ping p ON p.entry_id = e.id WHERE e.author_sid = ?"
+                     new-root]))))))))
+    (it "keeps entries that ping a session outside the tree out of the snapshot"
+        (with-store (fn [store]
+                      (let [sid
+                            (session! store "Leader")
+
+                            other
+                            (session! store "Other")]
+
+                        (entry! store sid other)
+                        (expect (= 0
+                                   (get-in (snapshot/info (state/export-session sid))
+                                           ["counts" "council_entries"]))))))))
+  (describe
+    "restore keys and refusals"
+    (it "answers the first restore again for the same key"
+        (with-store (fn [store]
+                      (let [sid
+                            (session! store "Trunk talk")
+
+                            _
+                            (turn! store sid "ask" :success)
+
+                            data
+                            (state/export-session sid)
+
+                            first-id
+                            (get (state/import-session! data {:key "k-405"}) "id")]
+
+                        (expect (= first-id (get (state/import-session! data {:key "k-405"}) "id")))
+                        (expect (not= first-id (get (state/import-session! data {}) "id")))))))
+    (it "refuses bytes that are not a snapshot or that were changed"
+        (with-store
+          (fn [store]
+            (let [sid
+                  (session! store "Trunk talk")
+
+                  _
+                  (turn! store sid "ask" :success)
+
+                  ^bytes data
+                  (state/export-session sid)
+
+                  changed
+                  (aclone data)
+
+                  last-index
+                  (dec (alength changed))]
+
+              (aset-byte changed last-index (unchecked-byte (bit-xor (aget changed last-index) 1)))
+              (expect (= :session/invalid-snapshot
+                         (error-type #(state/import-session! (.getBytes "not a snapshot") {}))))
+              (expect (= :session/invalid-snapshot
+                         (error-type #(state/import-session! changed {}))))))))
+    (it "refuses a snapshot above the size limit"
+        (with-store (fn [store]
+                      (let [sid (session! store "Trunk talk")]
+                        (turn! store sid "ask" :success)
+                        (with-redefs [snapshot/max-bytes (constantly 64)]
+                          (expect (= :session/snapshot-too-large
+                                     (error-type #(state/export-session sid)))))))))))

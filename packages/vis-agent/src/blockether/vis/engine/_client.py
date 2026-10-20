@@ -442,6 +442,64 @@ class ExecutionLayer(ABC):
         ).json()
         return self.session(_field(data, "id", str))
 
+    def restore_session(
+        self,
+        data: bytes,
+        *,
+        root: str | None = None,
+        group_id: str | None = None,
+        key: str | None = None,
+        timeout: float | None = None,
+    ) -> Session:
+        """Restore a session snapshot as a new session and return its handle.
+
+        Args:
+            data: The bytes that `Session.export` returned, for example read from a
+                `.vissnap` file.
+            root: Optional folder for the restored sessions. Without it, the gateway
+                uses the project folder of `group_id`, else its own folder.
+            group_id: Optional session group for the restored session.
+            key: Optional restore key. A second restore with the same key returns
+                the session of the first restore and creates nothing.
+            timeout: Optional timeout in seconds for this request.
+
+        Each restored session and child gets a new ID. Your own permissions apply,
+        not the permissions in the snapshot. A child that was running fails, so you
+        can resume it. Read the manifest first with `snapshot_info`.
+        """
+        query = {
+            name: value
+            for name, value in (("root", root), ("group_id", group_id), ("key", key))
+            if value is not None
+        }
+        reply = self.post_sessions_import(query=query, timeout=timeout, content=data)
+        return self.session(_field(reply, "id", str))
+
+    @staticmethod
+    def snapshot_info(data: bytes) -> dict[str, Any]:
+        """Read the manifest of session snapshot `data` without a gateway request.
+
+        The manifest gives `format_version`, `vis_version`, `created_at`,
+        `root_session_id`, `sessions`, `counts`, `sizes` and `payload_sha256`.
+        Raises `ValueError` when `data` is not a Vis session snapshot.
+        """
+        view = memoryview(data)
+        if len(view) < 16 or bytes(view[:8]) != b"VISSNAP\0":
+            raise ValueError("This file is not a Vis session snapshot")
+        version = int.from_bytes(view[8:12], "big", signed=True)
+        length = int.from_bytes(view[12:16], "big", signed=True)
+        if version != 1:
+            raise ValueError(f"Unsupported session snapshot format version {version}")
+        if length < 0 or 16 + length > len(view):
+            raise ValueError("The session snapshot manifest is damaged")
+        try:
+            manifest = json.loads(bytes(view[16 : 16 + length]))
+        except (ValueError, UnicodeError):
+            raise ValueError("The session snapshot manifest is damaged") from None
+        if not isinstance(manifest, dict):
+            raise ValueError("The session snapshot manifest is damaged")
+        return manifest
+
     def _pump_client_extensions(self, session_id):
         extensions = self._client_extensions.get(session_id)
         if extensions is not None and extensions.manifest:
@@ -1812,6 +1870,19 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
+    def get_session_snapshot(
+        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+    ) -> Response:
+        """GET /v1/sessions/:sid/snapshot — binary response."""
+        response = self._request(
+            "GET",
+            "/v1/sessions/:sid/snapshot",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+        )
+        return response
+
     def post_session_speech(
         self,
         sid: str,
@@ -2263,6 +2334,24 @@ class ExecutionLayer(ABC):
             query=query,
             timeout=timeout,
             body=body,
+        )
+        return response.json()
+
+    def post_sessions_import(
+        self,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        content: bytes | None,
+    ) -> JSONValue:
+        """POST /v1/sessions/actions/import — restore a session snapshot."""
+        response = self._request(
+            "POST",
+            "/v1/sessions/actions/import",
+            path={},
+            query=query,
+            timeout=timeout,
+            content=content,
         )
         return response.json()
 
@@ -3556,6 +3645,17 @@ class Session:
         body = {} if through_turn_id is None else {"through_turn_id": through_turn_id}
         data = self._call("POST", "/forks", body=body)
         return self.client.session(_field(_field(data, "session", dict), "id", str))
+
+    def export(self) -> bytes:
+        """Return a snapshot of this session and its managed children as bytes.
+
+        Save the bytes as a `.vissnap` file, and restore them with
+        `ExecutionLayer.restore_session`. The snapshot holds turns, attachments
+        and the Council entries inside the session tree. It does not hold
+        provider credentials or workspace files. The `session_snapshot_limit`
+        setting limits its size.
+        """
+        return self.client.get_session_snapshot(self.id).content
 
     def input_views(self) -> list[InputView]:
         """Read pending input requests as typed `blockether.vis.views.InputView` records.

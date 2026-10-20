@@ -1073,6 +1073,17 @@
     {
       "audience": "sdk",
       "operations": {
+        "get": {
+          "request": "none",
+          "response": "binary",
+          "extension": "background"
+        }
+      },
+      "path": "/v1/sessions/:sid/snapshot"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
         "post": {
           "request": "json",
           "response": "json"
@@ -1341,6 +1352,18 @@
         }
       },
       "path": "/v1/sessions/actions/archive"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "binary",
+          "response": "json",
+          "response_schema": "session",
+          "extension": "callback"
+        }
+      },
+      "path": "/v1/sessions/actions/import"
     },
     {
       "audience": "sdk",
@@ -3467,6 +3490,123 @@
     },
     "evals_leaderboard": {
       "$ref": "evals.json#/$defs/leaderboard"
+    },
+    "session_snapshot_manifest": {
+      "type": "object",
+      "description": "The manifest of a .vissnap session snapshot, readable without the engine.",
+      "required": [
+        "format_version",
+        "vis_version",
+        "created_at",
+        "root_session_id",
+        "sessions",
+        "counts",
+        "sizes",
+        "payload_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "format_version": {
+          "const": 1
+        },
+        "vis_version": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "root_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "parent_id",
+              "title"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "parent_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sessions",
+            "turns",
+            "iterations",
+            "attachments",
+            "council_entries"
+          ],
+          "properties": {
+            "sessions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "turns": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "iterations": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "attachments": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "council_entries": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "sizes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "payload_bytes",
+            "attachment_bytes"
+          ],
+          "properties": {
+            "payload_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "attachment_bytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "payload_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
     }
   }
 }

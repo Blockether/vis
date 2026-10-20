@@ -219,8 +219,9 @@ Data, file format `.vissnap` version 1:
 
 - Magic bytes `VISSNAP\0`, a 4-byte format version, a 4-byte manifest length and the manifest as UTF-8 JSON.
 - The manifest holds `format_version`, `vis_version`, `created_at`, `root_session_id`, the session tree (`id`, `parent_id`, `title`), counts, sizes and `payload_sha256`.
-- The payload is a Nippy-frozen map of plain EDN values, with Nippy compression.
-- Python reads the manifest without a JVM: `blockether.vis.engine.Snapshot.info(data)`. Python never decodes the payload.
+- The payload is a Nippy-frozen map of plain EDN values with Zstandard compression (`nippy/zstd-compressor`). On an 11 MB conversation journal, Zstandard gives 602 kB against 1194 kB for LZ4, with faster decompression. Airlift Zstd already compresses persisted session data in the native image.
+- Python reads the manifest without a JVM: `ExecutionLayer.snapshot_info(data)`. Python never decodes the payload.
+- Rejected: a Python pickle payload. It runs code from the file and only Python can read it. Rejected for now: a JSON payload that Python 3.14 `compression.zstd` reads. The rows hold maps with string keys and bytes, so JSON needs its own key and blob encoding.
 
 Content for each session in the tree:
 
@@ -230,14 +231,14 @@ Content for each session in the tree:
 
 Routes and calls:
 
-- `GET /v1/sessions/:sid/snapshot` returns the artifact. `POST /v1/sessions/import` takes it.
+- `GET /v1/sessions/:sid/snapshot` returns the artifact. `POST /v1/sessions/actions/import` takes it; `/v1/sessions/import` would conflict with `/v1/sessions/:sid`.
 - SDK: `Session.export() -> bytes` and `ExecutionLayer.restore_session(data, *, root=None, group_id=None, key=None) -> Session`.
 - Extension: `vis.sessions.export` and `vis.sessions.restore` (phase 5).
 
 Restore rules:
 
 - Each session gets a new id. Parent and child links point to the new ids. Each session records `imported_from = {session_id, snapshot_sha256}`.
-- A child that was running at export restores as `interrupted`. The parent continues it with `council.resume`.
+- A child that was queued or running at export restores as `failed`, and its running turn as `interrupted`. The parent continues it with `council.resume`.
 - Permissions come from the policy of the caller who restores, never from the file.
 - With `key`, a second restore returns the tree from the first restore.
 - The write is atomic: all sessions and attachments, or nothing.
@@ -385,6 +386,6 @@ Models:
 - Phase 3: done. `GET /v1/models` lists model objects; `loop.router/model-rates` gives the listed rates and the cost estimate. SDK `models()`, `model_limits()`, `Model`, `create_session(provider, model)`, `Session.model()`, `Session.set_model()` and `SessionModel`.
 - Phase 4: done. `Council` agent methods and `SubagentRecord` stay experimental and hidden from the API reference. `Session.run` shares one implementation with `Agent.run`; `Session.fork` returns the new `Session`.
 - Phase 5: done. The host door `__vis_host_request__`, `HostLayer`, the `Sessions` facade (`create`, `get`, `list`), `vis.run`, `vis.session`, `vis.council` and the session `origin`. The `extension` field of each route in `gateway.json` sets the access. A new session starts in the bound session root. Each change through the door has an Activity from `host-activities`; reads have none, because a turn wait polls them. Phase 6 adds `export` and `restore` to `Sessions`.
-- Phase 6: not started.
+- Phase 6: implemented and tested at the store, gateway, SDK and extension levels (`session_snapshot_test`, `test_client.py`, `extension-session-api-boundary-test`). The setting `session_snapshot_limit` (256 MiB, 512 MiB or 1 GiB) limits the file size. The `LocalEngine` and gateway-restart round trips of the acceptance criteria run in phase 8.
 - Phase 7: not started.
 - Phase 8: not started. The server is reachable through `uplink`; it has `vis-agent` and Java, but no `vis` binary yet.

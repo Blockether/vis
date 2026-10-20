@@ -153,7 +153,11 @@ CREATE TABLE session_soul (
   -- The program that created this session, as a JSON object. An extension that
   -- creates a session through its host gets {"kind":"extension","extension":
   -- name,"session_id":creator}. NULL = a person or an SDK client created it.
-  origin            TEXT CHECK (origin IS NULL OR json_valid(origin))
+  origin            TEXT CHECK (origin IS NULL OR json_valid(origin)),
+  -- The snapshot that a restore made this session from (#405), as a JSON object:
+  -- {"session_id":source,"snapshot_sha256":digest}, plus "key" on the restored root.
+  -- NULL = the session was not restored from a snapshot.
+  imported_from     TEXT CHECK (imported_from IS NULL OR json_valid(imported_from))
 );
 
 -- Human model picks lock automatic routing until the user clears the preference.

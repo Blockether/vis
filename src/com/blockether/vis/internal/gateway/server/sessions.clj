@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.internal.provider.service :as providers]
             [com.blockether.vis.internal.python.extensions :as python-extensions]
+            [com.blockether.vis.internal.session.snapshot :as snapshot]
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
 (def ^:private web-native-slashes
@@ -870,11 +871,69 @@
             (http/error-response 409 :workspace-unavailable "Session workspace is unavailable."))
           (http/error-response 400 :invalid-request (str "unknown suggest kind: " kind)))))))
 
+(defn- snapshot-error
+  [^clojure.lang.ExceptionInfo e]
+  (case (:type (ex-data e))
+    :session/invalid-snapshot
+    (http/error-response 400 :session/invalid-snapshot (ex-message e))
+
+    :session/snapshot-too-large
+    (http/error-response 413 :session/snapshot-too-large (ex-message e))
+
+    :session/snapshot-incomplete
+    (http/error-response 409 :session/snapshot-incomplete (ex-message e))
+
+    (throw e)))
+
+(defn- export-session-handler
+  "GET /v1/sessions/:sid/snapshot — the `.vissnap` file of the session and its children."
+  [request]
+  (if-let [sid (http/path-sid request)]
+    (try (if-let [^bytes data (state/export-session sid)]
+           {:status 200
+            :headers {"Content-Type" "application/octet-stream"
+                      "Content-Length" (str (alength data))
+                      "Content-Disposition" (str "attachment; filename=\"" sid ".vissnap\"")}
+            :body data}
+           (http/session-404 sid))
+         (catch clojure.lang.ExceptionInfo e (snapshot-error e)))
+    (http/session-404 (get-in request [:path-params :sid]))))
+
+(defn- read-snapshot-body
+  "The request body bytes, or nil past `limit`."
+  ^bytes [request limit]
+  (with-open [^java.io.InputStream in (or (:body request)
+                                          (java.io.ByteArrayInputStream. (byte-array 0)))]
+    (let [out (java.io.ByteArrayOutputStream.)
+          buffer (byte-array 1048576)]
+
+      (loop [total 0]
+        (let [n (.read in buffer)]
+          (cond (neg? n) (.toByteArray out)
+                (> (+ total n) (long limit)) nil
+                :else (do (.write out buffer 0 n) (recur (+ total n)))))))))
+
+(defn- import-session-handler
+  "POST /v1/sessions/actions/import — restore a `.vissnap` body as a new session tree.
+   Query: optional `root`, `group_id` and `key`."
+  [request]
+  (if-let [data (read-snapshot-body request (snapshot/max-bytes))]
+    (try (http/json-response 201
+                             (state/import-session! data
+                                                    {:root (http/query-str request "root")
+                                                     :group-id (http/query-str request "group_id")
+                                                     :key (http/query-str request "key")}))
+         (catch clojure.lang.ExceptionInfo e (snapshot-error e)))
+    (http/error-response 413
+                         :session/snapshot-too-large
+                         "The session snapshot exceeds the size limit")))
+
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/sessions"] list-sessions-handler
    [:post "/v1/sessions"] create-session-handler
    [:post "/v1/sessions/actions/archive"] archive-sessions-handler
+   [:post "/v1/sessions/actions/import"] import-session-handler
    [:get "/v1/sessions/actions/search"] search-sessions-handler
    [:get "/v1/sessions/:sid"] soul-handler
    [:patch "/v1/sessions/:sid"] patch-session-handler
@@ -892,4 +951,5 @@
    [:get "/v1/sessions/:sid/usage"] usage-handler
    [:get "/v1/sessions/:sid/forks"] fork-points-handler
    [:post "/v1/sessions/:sid/forks"] fork-session-handler
+   [:get "/v1/sessions/:sid/snapshot"] export-session-handler
    [:get "/v1/sessions/:sid/suggest"] suggest-handler})

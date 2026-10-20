@@ -2727,6 +2727,8 @@ def _calls():
         ('sessions.create', lambda: vis.sessions.create()),
         ('sessions.list', lambda: vis.sessions.list()),
         ('sessions.search', lambda: vis.sessions.list(search='deploy')),
+        ('sessions.export', lambda: vis.sessions.export()),
+        ('sessions.restore', lambda: vis.sessions.restore(b'VISSNAP', key='k')),
         ('council.publish', lambda: council.publish('Done', kind='informational')),
         ('council.read', lambda: council.read()),
         ('council.get', lambda: council.get(1)),
@@ -2814,6 +2816,8 @@ vis.register_extension(vis.Extension(
                     {"sessions.create" ["POST" "/v1/sessions"]
                      "sessions.list" ["GET" "/v1/sessions"]
                      "sessions.search" ["GET" "/v1/sessions/actions/search"]
+                     "sessions.export" ["GET" "/snapshot"]
+                     "sessions.restore" ["POST" "/v1/sessions/actions/import"]
                      "council.publish" ["POST" "/council/entries"]
                      "council.read" ["GET" "/council/entries"]
                      "council.get" ["GET" "/council/entries/1"]
