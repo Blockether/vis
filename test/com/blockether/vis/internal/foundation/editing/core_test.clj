@@ -1616,6 +1616,27 @@
                   (ex-message thrown)
                   (str "no cat, grep or patch result showed lines 4..4 of @" after ".")))
         (expect (= "a\nB1\nB2\nc\nd\ne\n" (slurp rel)))))
+  ;; Eval iterative-fix: after a patch that added lines, an edit with correct new numbers
+  ;; was refused and needed a separate `cat` before the same edit went through.
+  (it "shows the refused lines of the current version, so the same edit can go again"
+      (let [rel
+            (write-temp! "patch/shown-on-refusal.txt" "a\nb\nc\nd\ne\n")
+
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
+
+            after
+            (version-in (:result
+                          ((private-fn "patch-file!") rel [{"from" 2 "replace" "B1\nB2"}] shown)))
+
+            thrown
+            (refusal #((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] after))]
+
+        (expect (string/includes? (ex-message thrown)
+                                  (str "These lines of @" after " are shown now:")))
+        (expect (string/includes? (ex-message thrown) "  4│ c"))
+        ((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] after)
+        (expect (= "a\nB1\nB2\nD\nd\ne\n" (slurp rel)))))
   (it "keeps the written lines and the lines before the change usable at the new version"
       (let [rel
             (write-temp! "patch/kept-lines.txt" "a\nb\nc\nd\ne\n")

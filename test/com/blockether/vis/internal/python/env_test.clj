@@ -1570,50 +1570,73 @@ Follow every fixture step without truncation."}]))
                (finally (doc-corpus/register-source! ::late (constantly []))))
           (expect (str/includes? (read-it) "is not a handle"))))))
 
-(defdescribe tool-introspection-test
-             ;; Every bound tool was a bare `(*a, **k)` trampoline with an empty docstring,
-             ;; so `help(tool)` and `inspect.signature(tool)` showed nothing of the
-             ;; contract the host declares for it.
-             (it "carries the host doc and the declared parameters onto the bound callable"
-                 (let [ctx
-                       (tpc/shared-with! {'meta-probe (fn [& args]
-                                                        (str "called:" (count args)))})
+(defdescribe
+  tool-introspection-test
+  ;; Every bound tool was a bare `(*a, **k)` trampoline with an empty docstring,
+  ;; so `help(tool)` and `inspect.signature(tool)` showed nothing of the
+  ;; contract the host declares for it.
+  (it "carries the host doc and the declared parameters onto the bound callable"
+      (let [ctx
+            (tpc/shared-with! {'meta-probe (fn [& args]
+                                             (str "called:" (count args)))})
 
-                       _
-                       (ep/set-python-binding-doc!
-                         ctx
-                         'meta-probe
-                         "meta_probe(mode=None, **kwargs) -> str. The declared contract.")
+            _
+            (ep/set-python-binding-doc!
+              ctx
+              'meta-probe
+              "meta_probe(mode=None, **kwargs) -> str. The declared contract.")
 
-                       _
-                       (ep/set-python-binding-signature! ctx 'meta-probe "(mode=None, **kwargs)")
+            _
+            (ep/set-python-binding-signature! ctx 'meta-probe "(mode=None, **kwargs)")
 
-                       result
-                       (ep/run-python-block ctx
-                                            (str "import inspect\n"
-                                                 "print(str(inspect.signature(meta_probe)))\n"
-                                                 "print(meta_probe.__doc__.split('.')[0])\n"
-                                                 "print(meta_probe.__name__)\n"))]
+            result
+            (ep/run-python-block
+              ctx
+              (str "import inspect\n" "print(str(inspect.signature(meta_probe)))\n"
+                   "print(meta_probe.__doc__.split('.')[0])\n" "print(meta_probe.__name__)\n"))]
 
-                   (expect (= (str "(mode=None, **kwargs)\n"
-                                   "meta_probe(mode=None, **kwargs) -> str\n"
-                                   "meta_probe\n")
-                              (:stdout result)))))
-             (it "keeps accepting the call shapes the reported signature does not name"
-                 (let [ctx
-                       (tpc/shared-with! {'meta-probe (fn [& args]
-                                                        (str "called:" (count args)))})
+        (expect (= (str "(mode=None, **kwargs)\n"
+                        "meta_probe(mode=None, **kwargs) -> str\n"
+                        "meta_probe\n")
+                   (:stdout result)))))
+  (it "keeps accepting the call shapes the reported signature does not name"
+      (let [ctx
+            (tpc/shared-with! {'meta-probe (fn [& args]
+                                             (str "called:" (count args)))})
 
-                       _
-                       (ep/set-python-binding-signature! ctx 'meta-probe "(mode=None, **kwargs)")
+            _
+            (ep/set-python-binding-signature! ctx 'meta-probe "(mode=None, **kwargs)")
 
-                       result
-                       (ep/run-python-block ctx
-                                            (str "kw = meta_probe(mode=\"fast\", extra=1)\n"
-                                                 "mapped = meta_probe({\"mode\": \"fast\"})\n"
-                                                 "print(kw, mapped)\n"))]
+            result
+            (ep/run-python-block ctx
+                                 (str "kw = meta_probe(mode=\"fast\", extra=1)\n"
+                                      "mapped = meta_probe({\"mode\": \"fast\"})\n"
+                                      "print(kw, mapped)\n"))]
 
-                   (expect (= "called:1 called:1\n" (:stdout result))))))
+        (expect (= "called:1 called:1\n" (:stdout result)))))
+  ;; Regression: `results.append(patch(...))` only stored a thunk, so 141 patches
+  ;; of an edit eval never ran while the block reported them as done.
+  (it
+    "runs a mutation tool where the block calls it, also when a list only stores it"
+    (let [calls
+          (atom 0)
+
+          ctx
+          (tpc/shared-with! {'eager-probe (fn [& _]
+                                            (swap! calls inc)
+                                            "written")})
+
+          _
+          (ep/set-python-binding-contract! ctx 'eager-probe {"name" "eager_probe" "tag" "mutation"})
+
+          result
+          (ep/run-python-block ctx
+                               (str "rs = []\n" "for i in range(3):\n"
+                                    "    rs.append(eager_probe())\n"
+                                    "print([str(r) for r in rs])\n"))]
+
+      (expect (= 3 @calls))
+      (expect (= "['written', 'written', 'written']\n" (:stdout result))))))
 
 (defdescribe
   defs-verb-test

@@ -3961,6 +3961,38 @@
                                 " lines.")]
                           head))))
 
+(def ^:private ^:const unshown-window-max
+  "The most lines that a `:lines-not-shown` refusal shows in place of a `cat` hint."
+  40)
+
+(defn- patch-unshown-refusal!
+  "Refuse an edit whose lines no result of `shown-version` showed. When that version is
+   the current file and the window is short, the refusal shows the window and records it
+   as shown, so the same edit can go again without a separate read."
+  [^File f rel {:keys [index from to]} total shown-version current-version current-lines]
+  (let [message
+        (str "no cat, grep or patch result showed lines " from ".." to " of @" shown-version ".")
+
+        lo
+        (max 1 (- (long from) (long diff/context-lines)))
+
+        hi
+        (min (count current-lines) (+ (long to) (long diff/context-lines)))]
+
+    (if (and (= shown-version current-version) (<= (inc (- hi lo)) (long unshown-window-max)))
+      (do
+        (shown-lines! f current-version [[lo hi]])
+        (patch-refusal!
+          rel
+          {:reason :lines-not-shown :current-version current-version :edit-index index}
+          [(str "  " rel ": " message " These lines of @" current-version " are shown now:")
+           (version/render-numbered-block (map (fn [ln]
+                                                 [ln (nth current-lines (dec (long ln)))])
+                                               (range lo (inc hi)))
+                                          "  ")]
+          (str "patch refused at edit " (inc (long index)) " of " total " — nothing was written.")))
+      (patch-version-refusal! rel :lines-not-shown message current-version from index total))))
+
 (defn- patch-plan
   "Resolve every edit of ONE `patch` call against ONE read of its file, and write
    nothing. Each edit names lines of `version`, the version a read showed. When the
@@ -4031,19 +4063,7 @@
           (fn [{:keys [index from to replace] :as edit}]
             (patch-line-range! rel edit total (count shown-lines) shown-version)
             (when (and seen (not (version/covers? seen from to)))
-              (patch-version-refusal! rel
-                                      :lines-not-shown
-                                      (str "no cat, grep or patch result showed lines "
-                                           from
-                                           ".."
-                                           to
-                                           " of @"
-                                           shown-version
-                                           ".")
-                                      current-version
-                                      from
-                                      index
-                                      total))
+              (patch-unshown-refusal! f rel edit total shown-version current-version current-lines))
             (let [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
                   ^String new-text
                   (escapes/decode-unicode-escapes (str replace))
@@ -4387,9 +4407,9 @@
      (str
        "A plain string. The first line gives the path, its NEW version, the edit count and the line "
        "count before → after. Then comes one row per edit: the lines it replaced and the lines it "
-        "fills after the write. The next patch of this file can use the new version with those lines. "
-        "Lines above the first change of the line count keep their numbers too. For other lines, use "
-        "the version of your read or read again.")
+       "fills after the write. The next patch of this file can use the new version with those lines. "
+       "Lines above the first change of the line count keep their numbers too. For other lines, use "
+       "the version of your read or read again.")
      :description
      (str
        "Apply all edits for one file in one atomic write. Use it to replace lines, rewrite a "
@@ -4404,7 +4424,8 @@
        "the lines of an edit changed, patch refuses. It also refuses lines that no `cat`, `grep` or "
        "`patch` result of that version showed. The write is atomic: a refused edit or an "
        "overlap refuses the WHOLE batch and writes NOTHING. The refusal gives the current version "
-       "and a `cat` window to read again.")
+       "and a `cat` window to read again. If it shows the lines instead, check them and send the "
+       "edit again.")
      :call {:pos ["path" "edits" "version"]}
      :before-fn (previewing-before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
                                       patch-preview

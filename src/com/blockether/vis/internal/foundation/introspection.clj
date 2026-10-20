@@ -396,7 +396,7 @@
     "The lines of this edit changed after the read that showed them, so the whole batch was refused. Read only the `cat` window the refusal names, then send the edit again with the current version it gives. Edits elsewhere in the file move on their own."
 
     :patch-lines-not-shown
-    "No cat, grep or patch result of this version showed these lines, so their numbers can come from another read. Send the edit with the version of the read that showed the lines, or read the `cat` window that the refusal names and use the version it gives."
+    "No cat, grep or patch result of this version showed these lines, so their numbers can come from another read. If the refusal shows the lines, check them and send the edit again with the version it gives. Else send the edit with the version of the read that showed the lines, or read the `cat` window that the refusal names."
 
     :patch-version-invalid
     "The `version` argument is not a version this file showed. Pass the `@` value from the header of the last cat, grep or patch result for this file, or read the lines again to get the current version."

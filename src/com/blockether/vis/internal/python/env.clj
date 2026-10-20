@@ -682,20 +682,26 @@
   "Attach portable descriptions to installed callables in ONE guest call.
    `sym->contract` maps each bound symbol to the `symbol.json` contract that its
    `.contract` attribute holds, and a nil contract is skipped. No runtime shim or
-   parallel registry: each value comes from its symbol entry."
+   parallel registry: each value comes from its symbol entry. A `mutation` tag also
+   names the tool in `__vis_eager__`, so the runtime runs it where the block calls it."
   [session sym->contract]
   (when-let [named (and session
                         (not-empty (into {}
                                          (keep (fn [[sym contract]]
                                                  (when contract [(sym->py-name sym) contract])))
                                          sym->contract)))]
-    (exec! session
-           (str "for __vis_n__, __vis_c__ in " (py-json-literal named)
-                ".items():\n" "    __vis_tool__ = globals()[__vis_n__.split('.')[0]]\n"
-                "    for __vis_part__ in __vis_n__.split('.')[1:]:\n"
-                "        __vis_tool__ = getattr(__vis_tool__, __vis_part__)\n"
-                "    __vis_tool__.contract = __vis_c__\n"
-                "del __vis_n__, __vis_c__, __vis_tool__\n"))))
+    (exec!
+      session
+      (str
+        "for __vis_n__, __vis_c__ in "
+        (py-json-literal named)
+        ".items():\n"
+        "    __vis_tool__ = globals()[__vis_n__.split('.')[0]]\n"
+        "    for __vis_part__ in __vis_n__.split('.')[1:]:\n"
+        "        __vis_tool__ = getattr(__vis_tool__, __vis_part__)\n"
+        "    __vis_tool__.contract = __vis_c__\n"
+        "    globals().setdefault('__vis_eager__', {})[__vis_n__] = __vis_c__.get('tag') == 'mutation'\n"
+        "del __vis_n__, __vis_c__, __vis_tool__\n"))))
 
 (defn set-python-binding-contract!
   "Attach a portable description to one installed callable."
@@ -715,7 +721,7 @@
         ":\n" "    if '.' in __vis_n__:\n"
         "        __vis_remove_dotted_tool__(__vis_n__)\n" "    else:\n"
         "        globals().pop(__vis_n__, None)\n"
-        "    for __vis_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__', '__vis_results__'):\n"
+        "    for __vis_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__', '__vis_results__', '__vis_eager__'):\n"
         "        globals().get(__vis_table__, {}).pop(__vis_n__, None)\n"
         "del __vis_n__, __vis_table__"))
     nil))
