@@ -84,6 +84,7 @@ import {
   sessionHash,
   tabHash,
 } from './lib/router';
+import { parseTalkLink, talkConnection, type TalkLink } from './lib/talk';
 import { reclaimViewportForExternalNavigation, useVisualViewportShell } from './lib/viewport';
 import { dismissTopLayer, useEdgeBack } from './lib/edge-back';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -393,7 +394,11 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     conn: GatewayConn;
     sid: string;
     fresh?: boolean;
+    /** The nonce of a Talk link: a new value arms voice conversation once. */
+    talk?: string;
   } | null>(null);
+  // A Talk link waits here until the launch route is applied.
+  const [talkIntent, setTalkIntent] = useState<TalkLink | null>(null);
   const [settingsDestination, setSettingsDestination] = useState<{
     providerMachineUrl?: string;
     machineUrl?: string;
@@ -511,12 +516,15 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   // between tapping a row and seeing the transcript. Nothing on this path reads
   // them back, so they are persisted underneath the navigation, not in front of
   // it.
-  const openGatewaySession = useCallback((conn: GatewayConn, sid: string, fresh = false) => {
-    setActive(conn);
-    setOpenTarget({ conn, sid, fresh });
-    void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
-    void rememberOpenSession(conn.url, sid).catch(() => undefined);
-  }, []);
+  const openGatewaySession = useCallback(
+    (conn: GatewayConn, sid: string, fresh = false, talk?: string) => {
+      setActive(conn);
+      setOpenTarget({ conn, sid, fresh, ...(talk ? { talk } : {}) });
+      void rememberSubscribedSession(conn.url, sid).catch(() => undefined);
+      void rememberOpenSession(conn.url, sid).catch(() => undefined);
+    },
+    [],
+  );
 
   // Opening a session from the LIST is the moment a parked share gets its
   // destination: every door out of that screen — a row, a fresh session, a fork —
@@ -843,6 +851,11 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
         // Park it BEFORE navigating: a link the user handed us must not depend
         // on this app managing to reach a composer in this launch.
         receiveSharedText(shared);
+        return;
+      }
+      const talk = parseTalkLink(url);
+      if (talk) {
+        setTalkIntent(talk);
         return;
       }
       const hash = parseSessionDeepLink(url);
@@ -1231,6 +1244,26 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     if (outcome.action === 'open') openGatewaySession(outcome.conn, outcome.sid);
   }, [pushIntent, routeApplied, conns, active, openGatewaySession]);
 
+  // The Action Button (`Talk to Vis`): open the session of the link, or a new one,
+  // and arm voice conversation there. Like a parked tap, it waits for the route.
+  useEffect(() => {
+    if (!talkIntent || !routeApplied || conns.length === 0) return;
+    const link = talkIntent;
+    setTalkIntent(null);
+    const conn = talkConnection(link, conns, primary ?? active);
+    if (!conn) return;
+    if (link.session !== 'new') {
+      openGatewaySession(conn, link.session, false, link.nonce);
+      return;
+    }
+    void new GatewayClient(conn)
+      .createSession({ channel: 'web', idempotencyKey: `talk-${link.nonce}` })
+      .then((session) => {
+        if (session.id) openGatewaySession(conn, session.id, true, link.nonce);
+      })
+      .catch((error: unknown) => setOffline(error instanceof Error ? error.message : String(error)));
+  }, [talkIntent, routeApplied, conns, primary, active, openGatewaySession]);
+
   // Primary owns the fleet order. Failures keep the last durable answer, and retries
   // never derive positions from health or response timing.
   useEffect(() => {
@@ -1477,6 +1510,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
                   subscriptions={subscriptions}
                   sid={openTarget.sid}
                   fresh={openTarget.fresh}
+                  talk={openTarget.talk}
                   onBack={leaveSession}
                   sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
                   onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}

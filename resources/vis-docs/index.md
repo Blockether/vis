@@ -295,6 +295,7 @@ Each concept page explains one feature: what it does, when to use it and how to 
 - [Drafts](drafts.md) — review changes in a separate working copy.
 - [Council](council.md) — ask another session for help or a second review.
 - [Automations](automations.md) — run a prompt on a schedule or from a webhook.
+- [Siri and Shortcuts](shortcuts.md) — talk to Vis with the Action Button and use answers in shortcuts.
 - [Evaluations](evals.md) — score benchmark rounds, find failure causes and compare runs.
 - [Forms and user input](human-input.md) — ask for choices, credentials or confirmation.
 - [Live views](live-views.md) — show progress a person can watch and stop.

@@ -27,6 +27,7 @@
  {:kind "doc" :name "keyboard-shortcuts" :resource "vis-docs/keyboard-shortcuts.md"}
  {:kind "doc" :name "council" :resource "vis-docs/council.md"}
  {:kind "doc" :name "automations" :resource "vis-docs/automations.md"}
+ {:kind "doc" :name "shortcuts" :resource "vis-docs/shortcuts.md"}
  {:kind "doc" :name "evals" :resource "vis-docs/evals.md"}
  {:kind "doc" :name "reporting-bugs" :resource "vis-docs/reporting-bugs.md"}
  {:kind "doc" :name "logging" :resource "vis-docs/logging.md"}

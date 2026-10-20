@@ -1,0 +1,458 @@
+{
+  "cases": [
+    {
+      "model": "Quote",
+      "schema": {
+        "properties": {
+          "cents": {
+            "title": "Cents",
+            "type": "integer"
+          },
+          "express": {
+            "title": "Express",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cents",
+          "express"
+        ],
+        "title": "Quote",
+        "type": "object"
+      },
+      "schema_text": "{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}",
+      "request": "Quote a 1000 gram parcel.\n\nReturn the final answer as exactly one JSON value matching the schema. Do not include Markdown fences, commentary, or text outside the JSON. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}",
+      "answers": [
+        {
+          "answer": "{\"cents\": 1200, \"express\": false}",
+          "is_valid": true,
+          "problems": [],
+          "correction": null
+        },
+        {
+          "answer": "{\"cents\": \"1200\", \"express\": false}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$.cents",
+              "message": "expected integer, got string (input: \"1200\")",
+              "source": "schema"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $.cents: expected integer, got string (input: \"1200\")\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"express\": true}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$.cents",
+              "message": "required property is missing",
+              "source": "schema"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $.cents: required property is missing\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "```json\n{\"cents\": 1, \"express\": true}\n```",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "the answer is wrapped in a Markdown code fence; send only the JSON value",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: the answer is wrapped in a Markdown code fence; send only the JSON value\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "Here you go: {\"cents\": 1}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "the answer starts with text instead of a JSON value",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: the answer starts with text instead of a JSON value\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"cents\": 1, \"express\": true} trailing",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "text follows the JSON value at line 1, column 31; send exactly one JSON value",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: text follows the JSON value at line 1, column 31; send exactly one JSON value\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"cents\": 1, \"cents\": 2, \"express\": true}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "object has duplicate member \"cents\"",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: object has duplicate member \"cents\"\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"cents\": 1, \"express\": tru}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "not valid JSON: Expecting value at line 1, column 25",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: not valid JSON: Expecting value at line 1, column 25\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"cents\": NaN, \"express\": true}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "NaN is not valid JSON",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: NaN is not valid JSON\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"cents\": 1e400, \"express\": true}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "number 1e400 is outside the finite JSON number range",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: number 1e400 is outside the finite JSON number range\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"cents\": 1.0, \"express\": true}",
+          "is_valid": true,
+          "problems": [],
+          "correction": null
+        },
+        {
+          "answer": "{\"cents\": 1.5, \"express\": true}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$.cents",
+              "message": "expected integer, got number (input: 1.5)",
+              "source": "schema"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $.cents: expected integer, got number (input: 1.5)\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "[1, 2]",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "expected object, got array",
+              "source": "schema"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: expected object, got array\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"cents\": 1,\n \"express\": }",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "not valid JSON: Expecting value at line 2, column 13",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: not valid JSON: Expecting value at line 2, column 13\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "the answer starts with text instead of a JSON value",
+              "source": "json"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: the answer starts with text instead of a JSON value\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        },
+        {
+          "answer": null,
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$",
+              "message": "the turn has no final text answer",
+              "source": "answer"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $: the turn has no final text answer\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"properties\": {\"cents\": {\"title\": \"Cents\", \"type\": \"integer\"}, \"express\": {\"title\": \"Express\", \"type\": \"boolean\"}}, \"required\": [\"cents\", \"express\"], \"title\": \"Quote\", \"type\": \"object\"}"
+        }
+      ]
+    },
+    {
+      "model": "Order",
+      "schema": {
+        "$defs": {
+          "Item": {
+            "properties": {
+              "name": {
+                "minLength": 1,
+                "title": "Name",
+                "type": "string"
+              },
+              "count": {
+                "minimum": 0,
+                "title": "Count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "count"
+            ],
+            "title": "Item",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/$defs/Item"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Tags",
+            "type": "array"
+          },
+          "price": {
+            "exclusiveMinimum": 0,
+            "title": "Price",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "items",
+          "price"
+        ],
+        "title": "Order",
+        "type": "object"
+      },
+      "schema_text": "{\"$defs\": {\"Item\": {\"properties\": {\"name\": {\"minLength\": 1, \"title\": \"Name\", \"type\": \"string\"}, \"count\": {\"minimum\": 0, \"title\": \"Count\", \"type\": \"integer\"}}, \"required\": [\"name\", \"count\"], \"title\": \"Item\", \"type\": \"object\"}}, \"properties\": {\"id\": {\"title\": \"Id\", \"type\": \"integer\"}, \"status\": {\"enum\": [\"open\", \"closed\"], \"title\": \"Status\", \"type\": \"string\"}, \"items\": {\"items\": {\"$ref\": \"#/$defs/Item\"}, \"title\": \"Items\", \"type\": \"array\"}, \"note\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Note\"}, \"tags\": {\"items\": {\"type\": \"string\"}, \"maxItems\": 3, \"title\": \"Tags\", \"type\": \"array\"}, \"price\": {\"exclusiveMinimum\": 0, \"title\": \"Price\", \"type\": \"number\"}}, \"required\": [\"id\", \"status\", \"items\", \"price\"], \"title\": \"Order\", \"type\": \"object\"}",
+      "request": "Quote a 1000 gram parcel.\n\nReturn the final answer as exactly one JSON value matching the schema. Do not include Markdown fences, commentary, or text outside the JSON. Match this JSON Schema:\n{\"$defs\": {\"Item\": {\"properties\": {\"name\": {\"minLength\": 1, \"title\": \"Name\", \"type\": \"string\"}, \"count\": {\"minimum\": 0, \"title\": \"Count\", \"type\": \"integer\"}}, \"required\": [\"name\", \"count\"], \"title\": \"Item\", \"type\": \"object\"}}, \"properties\": {\"id\": {\"title\": \"Id\", \"type\": \"integer\"}, \"status\": {\"enum\": [\"open\", \"closed\"], \"title\": \"Status\", \"type\": \"string\"}, \"items\": {\"items\": {\"$ref\": \"#/$defs/Item\"}, \"title\": \"Items\", \"type\": \"array\"}, \"note\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Note\"}, \"tags\": {\"items\": {\"type\": \"string\"}, \"maxItems\": 3, \"title\": \"Tags\", \"type\": \"array\"}, \"price\": {\"exclusiveMinimum\": 0, \"title\": \"Price\", \"type\": \"number\"}}, \"required\": [\"id\", \"status\", \"items\", \"price\"], \"title\": \"Order\", \"type\": \"object\"}",
+      "answers": [
+        {
+          "answer": "{\"id\": 1, \"status\": \"open\", \"items\": [{\"name\": \"a\", \"count\": 1}], \"price\": 2.5}",
+          "is_valid": true,
+          "problems": [],
+          "correction": null
+        },
+        {
+          "answer": "{\"id\": 1, \"status\": \"pending\", \"items\": [{\"name\": \"\", \"count\": -1}], \"price\": 0}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$.status",
+              "message": "does not satisfy enum [\"open\", \"closed\"] (input: \"pending\")",
+              "source": "schema"
+            },
+            {
+              "path": "$.items[0].name",
+              "message": "does not satisfy minLength 1 (input: \"\")",
+              "source": "schema"
+            },
+            {
+              "path": "$.items[0].count",
+              "message": "does not satisfy minimum 0 (input: -1)",
+              "source": "schema"
+            },
+            {
+              "path": "$.price",
+              "message": "does not satisfy exclusiveMinimum 0 (input: 0)",
+              "source": "schema"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $.status: does not satisfy enum [\"open\", \"closed\"] (input: \"pending\")\n- $.items[0].name: does not satisfy minLength 1 (input: \"\")\n- $.items[0].count: does not satisfy minimum 0 (input: -1)\n- $.price: does not satisfy exclusiveMinimum 0 (input: 0)\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"$defs\": {\"Item\": {\"properties\": {\"name\": {\"minLength\": 1, \"title\": \"Name\", \"type\": \"string\"}, \"count\": {\"minimum\": 0, \"title\": \"Count\", \"type\": \"integer\"}}, \"required\": [\"name\", \"count\"], \"title\": \"Item\", \"type\": \"object\"}}, \"properties\": {\"id\": {\"title\": \"Id\", \"type\": \"integer\"}, \"status\": {\"enum\": [\"open\", \"closed\"], \"title\": \"Status\", \"type\": \"string\"}, \"items\": {\"items\": {\"$ref\": \"#/$defs/Item\"}, \"title\": \"Items\", \"type\": \"array\"}, \"note\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Note\"}, \"tags\": {\"items\": {\"type\": \"string\"}, \"maxItems\": 3, \"title\": \"Tags\", \"type\": \"array\"}, \"price\": {\"exclusiveMinimum\": 0, \"title\": \"Price\", \"type\": \"number\"}}, \"required\": [\"id\", \"status\", \"items\", \"price\"], \"title\": \"Order\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"id\": 1, \"status\": \"open\", \"items\": [{\"count\": 1}], \"note\": 5, \"price\": 1, \"tags\": [\"a\", \"b\", \"c\", \"d\"]}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$.items[0].name",
+              "message": "required property is missing",
+              "source": "schema"
+            },
+            {
+              "path": "$.note",
+              "message": "does not satisfy anyOf [{\"type\": \"string\"}, {\"type\": \"null\"}] (input: 5)",
+              "source": "schema"
+            },
+            {
+              "path": "$.tags",
+              "message": "does not satisfy maxItems 3",
+              "source": "schema"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $.items[0].name: required property is missing\n- $.note: does not satisfy anyOf [{\"type\": \"string\"}, {\"type\": \"null\"}] (input: 5)\n- $.tags: does not satisfy maxItems 3\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"$defs\": {\"Item\": {\"properties\": {\"name\": {\"minLength\": 1, \"title\": \"Name\", \"type\": \"string\"}, \"count\": {\"minimum\": 0, \"title\": \"Count\", \"type\": \"integer\"}}, \"required\": [\"name\", \"count\"], \"title\": \"Item\", \"type\": \"object\"}}, \"properties\": {\"id\": {\"title\": \"Id\", \"type\": \"integer\"}, \"status\": {\"enum\": [\"open\", \"closed\"], \"title\": \"Status\", \"type\": \"string\"}, \"items\": {\"items\": {\"$ref\": \"#/$defs/Item\"}, \"title\": \"Items\", \"type\": \"array\"}, \"note\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Note\"}, \"tags\": {\"items\": {\"type\": \"string\"}, \"maxItems\": 3, \"title\": \"Tags\", \"type\": \"array\"}, \"price\": {\"exclusiveMinimum\": 0, \"title\": \"Price\", \"type\": \"number\"}}, \"required\": [\"id\", \"status\", \"items\", \"price\"], \"title\": \"Order\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{\"id\": true, \"status\": \"open\", \"items\": \"none\", \"price\": 1}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$.id",
+              "message": "expected integer, got boolean (input: true)",
+              "source": "schema"
+            },
+            {
+              "path": "$.items",
+              "message": "expected array, got string (input: \"none\")",
+              "source": "schema"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $.id: expected integer, got boolean (input: true)\n- $.items: expected array, got string (input: \"none\")\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"$defs\": {\"Item\": {\"properties\": {\"name\": {\"minLength\": 1, \"title\": \"Name\", \"type\": \"string\"}, \"count\": {\"minimum\": 0, \"title\": \"Count\", \"type\": \"integer\"}}, \"required\": [\"name\", \"count\"], \"title\": \"Item\", \"type\": \"object\"}}, \"properties\": {\"id\": {\"title\": \"Id\", \"type\": \"integer\"}, \"status\": {\"enum\": [\"open\", \"closed\"], \"title\": \"Status\", \"type\": \"string\"}, \"items\": {\"items\": {\"$ref\": \"#/$defs/Item\"}, \"title\": \"Items\", \"type\": \"array\"}, \"note\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Note\"}, \"tags\": {\"items\": {\"type\": \"string\"}, \"maxItems\": 3, \"title\": \"Tags\", \"type\": \"array\"}, \"price\": {\"exclusiveMinimum\": 0, \"title\": \"Price\", \"type\": \"number\"}}, \"required\": [\"id\", \"status\", \"items\", \"price\"], \"title\": \"Order\", \"type\": \"object\"}"
+        },
+        {
+          "answer": "{}",
+          "is_valid": false,
+          "problems": [
+            {
+              "path": "$.id",
+              "message": "required property is missing",
+              "source": "schema"
+            },
+            {
+              "path": "$.status",
+              "message": "required property is missing",
+              "source": "schema"
+            },
+            {
+              "path": "$.items",
+              "message": "required property is missing",
+              "source": "schema"
+            },
+            {
+              "path": "$.price",
+              "message": "required property is missing",
+              "source": "schema"
+            }
+          ],
+          "correction": "Your previous final answer is not a valid structured result ($ is the whole JSON value):\n- $.id: required property is missing\n- $.status: required property is missing\n- $.items: required property is missing\n- $.price: required property is missing\n\nAnswer the previous request again with exactly one corrected JSON value. Do not include Markdown fences, commentary, or text outside the JSON. Keep completed work; repeat tools or file changes only if the correction requires them. Match this JSON Schema:\n{\"$defs\": {\"Item\": {\"properties\": {\"name\": {\"minLength\": 1, \"title\": \"Name\", \"type\": \"string\"}, \"count\": {\"minimum\": 0, \"title\": \"Count\", \"type\": \"integer\"}}, \"required\": [\"name\", \"count\"], \"title\": \"Item\", \"type\": \"object\"}}, \"properties\": {\"id\": {\"title\": \"Id\", \"type\": \"integer\"}, \"status\": {\"enum\": [\"open\", \"closed\"], \"title\": \"Status\", \"type\": \"string\"}, \"items\": {\"items\": {\"$ref\": \"#/$defs/Item\"}, \"title\": \"Items\", \"type\": \"array\"}, \"note\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Note\"}, \"tags\": {\"items\": {\"type\": \"string\"}, \"maxItems\": 3, \"title\": \"Tags\", \"type\": \"array\"}, \"price\": {\"exclusiveMinimum\": 0, \"title\": \"Price\", \"type\": \"number\"}}, \"required\": [\"id\", \"status\", \"items\", \"price\"], \"title\": \"Order\", \"type\": \"object\"}"
+        }
+      ]
+    }
+  ],
+  "problem_lines": {
+    "problems": [
+      {
+        "path": "$.f0",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f1",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f2",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f3",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f4",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f5",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f6",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f7",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f8",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f9",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f10",
+        "message": "bad",
+        "source": "schema"
+      },
+      {
+        "path": "$.f11",
+        "message": "bad",
+        "source": "schema"
+      }
+    ],
+    "text": "\n- $.f0: bad\n- $.f1: bad\n- $.f2: bad\n- $.f3: bad\n- $.f4: bad\n- $.f5: bad\n- $.f6: bad\n- $.f7: bad\n- $.f8: bad\n- $.f9: bad\n- ...and 2 more"
+  }
+}

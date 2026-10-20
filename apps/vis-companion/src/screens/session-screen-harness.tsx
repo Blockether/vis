@@ -44,12 +44,15 @@ export function renderSessionScreen({
   client: clientOverrides = {},
   subscriptions: hubOverrides = {},
   onOpenSession = () => {},
+  talk,
 }: {
   session?: Session;
   client?: Fake;
   subscriptions?: Fake;
   /** Where the screen sends the reader when it opens ANOTHER session. */
   onOpenSession?: (sid: string, fresh?: boolean) => void;
+  /** The nonce of a Talk link (the Action Button). */
+  talk?: string;
 } = {}) {
   const nothing = () => null;
   const known: Fake = {
@@ -113,6 +116,7 @@ export function renderSessionScreen({
       sid={sid}
       onBack={() => {}}
       onOpenSession={onOpenSession}
+      talk={talk}
     />
   );
   const view = render(screenFor(session.id));

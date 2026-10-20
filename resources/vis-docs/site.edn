@@ -48,6 +48,10 @@
      :page "automations"
       :title "Automations"}
      {:blurb
+      "Talk to Vis with the Action Button, ask Vis with Siri and get text or JSON answers in your shortcuts."
+      :page "shortcuts"
+      :title "Siri and Shortcuts"}
+     {:blurb
       "Score a Harbor benchmark round, find why tasks fail and check if a change makes the agent better."
       :page "evals"
       :title "Evaluations"}

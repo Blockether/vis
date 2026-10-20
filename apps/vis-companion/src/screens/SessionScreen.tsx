@@ -741,6 +741,7 @@ export function SessionScreen({
   onOpenSession,
   onManageProviders,
   fresh = false,
+  talk,
   sidebar,
 }: {
   client: GatewayClient;
@@ -751,6 +752,8 @@ export function SessionScreen({
   /** Open this gateway's settings, where provider accounts and OAuth live. */
   onManageProviders?: () => void;
   fresh?: boolean;
+  /** The nonce of a Talk link (the Action Button). A new value arms voice conversation once. */
+  talk?: string;
   /** The desk's list toggle, handed to the header's leading edge. */
   sidebar?: { isShown: boolean; onToggle: () => void };
 }) {
@@ -5090,6 +5093,22 @@ export function SessionScreen({
     }
     await enterVoiceConversation();
   };
+
+  // A Talk link arms voice conversation once, after voice support is known. The
+  // web view needs a tap before it can record, so the notice asks for that tap.
+  const enterVoiceConversationRef = useRef(enterVoiceConversation);
+  useEffect(() => {
+    enterVoiceConversationRef.current = enterVoiceConversation;
+  });
+  const handledTalkRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!talk || !voiceSupported || handledTalkRef.current === talk) return;
+    handledTalkRef.current = talk;
+    if (voiceConversationRef.current) return;
+    void enterVoiceConversationRef.current().then(() => {
+      if (voiceConversationRef.current) setComposerNotice('Voice conversation · tap the microphone to talk');
+    });
+  }, [talk, voiceSupported]);
 
   const beginVoiceModeHold = (event: ReactPointerEvent<HTMLButtonElement>) => {
     // A right-click is the pointer's own switch (below); it must not also arm

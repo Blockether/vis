@@ -27,4 +27,8 @@ debug-storybook.log
 /android
 /ios
 
+# SwiftPM build state of the native/shortcuts package (`swift test`).
+/native/shortcuts/.build
+/native/shortcuts/.swiftpm
+
 .DS_Store
