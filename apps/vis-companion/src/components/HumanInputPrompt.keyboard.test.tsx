@@ -86,15 +86,13 @@ function SessionWithForm({ request }: { request: HumanInputRequest }) {
 }
 
 /** The app shell with a wide sheet that stops at its content, like Settings. */
-function ShellWithSettingsSheet() {
+function ShellWithSettingsSheet({ hasField = true }: { hasField?: boolean }) {
   const shell = useRef<HTMLDivElement>(null);
   useVisualViewportShell(shell);
   return (
     <div ref={shell} data-viewport-shell="" data-testid="shell">
       <Modal size="wide" isKeyboardReserved onDismiss={() => undefined}>
-        <DialogFrame title="Settings">
-          <input aria-label="Machine name" />
-        </DialogFrame>
+        <DialogFrame title="Settings">{hasField ? <input aria-label="Machine name" /> : <p>Machines</p>}</DialogFrame>
       </Modal>
     </div>
   );
@@ -180,6 +178,27 @@ describe('the settings sheet on the iPhone', () => {
     expect(sheetBottom()).toBe(resting);
   });
 
+  // Regression, user report: Settings opened on the machine list floated above an empty
+  // keyboard band, and the session list showed below it.
+  it('stays docked to the bottom edge while no typed field is on the sheet', async () => {
+    pointing('coarse');
+    const { rerender } = render(<ShellWithSettingsSheet hasField={false} />);
+    const scrim = document.querySelector<HTMLElement>('[data-testid="shell"] [role="presentation"]');
+    expect(reserve()).toBe(0);
+    expect(scrim).toHaveClass('items-end');
+
+    // The sheet sees its fields through a MutationObserver. It reports in a microtask
+    // after the commit, so a second act lets that report land.
+    const settle = () => act(async () => await Promise.resolve());
+    act(() => rerender(<ShellWithSettingsSheet hasField />));
+    await settle();
+    expect(reserve()).toBeGreaterThan(0);
+    expect(scrim).toHaveClass('items-end-safe');
+
+    act(() => rerender(<ShellWithSettingsSheet hasField={false} />));
+    await settle();
+    expect(reserve()).toBe(0);
+  });
   it('is the sheet that Settings opens', () => {
     expect(settingsSource).toContain('<Modal size="wide" isKeyboardReserved onDismiss={onClose}>');
   });

@@ -56,7 +56,7 @@ import viewSchema from '../../../../packages/vis-contract/resources/vis-contract
 
 import { EDGE_MARGIN, menuPosition } from '../lib/anchored-menu';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
-import { useKeyboardReserve } from '../lib/viewport';
+import { isKeyboardInputElement, useKeyboardReserve } from '../lib/viewport';
 import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
 
 /**
@@ -2645,8 +2645,8 @@ export function Modal({
    */
   within?: 'app' | 'session';
   /**
-   * The sheet holds a field that raises the software keyboard. It then stands where
-   * the keyboard will put it, so a tap on the field does not move the field.
+   * The sheet can hold a field that raises the software keyboard. While such a field is
+   * on the sheet, it stands where the keyboard will put it, so a tap does not move it.
    */
   isKeyboardReserved?: boolean;
   children: ReactNode;
@@ -2673,7 +2673,32 @@ export function Modal({
   // A sheet with a typed field stands where the keyboard will put it. A short one sits
   // above the reserved band. A tall one stands under the notch and lets the band run
   // under its foot (`items-end-safe`), so it keeps its full height until the keys rise.
-  const isReserving = isKeyboardReserved && stopsAtContent;
+  // Reserve the band only while a typed field is on the sheet. Reported on an iPhone:
+  // the machine list in Settings has no field, but it floated above an empty band,
+  // with the session list visible below it.
+  const watchesFields = isKeyboardReserved && stopsAtContent;
+  // The portal host can change after the first render, and the scrim then mounts again.
+  // A ref would leave the observer on the old node, so the element is state.
+  const [scrim, setScrim] = useState<HTMLDivElement | null>(null);
+  const [holdsTypedField, setHoldsTypedField] = useState(false);
+  useLayoutEffect(() => {
+    const element = scrim;
+    if (!watchesFields || element === null) return undefined;
+    const check = () =>
+      setHoldsTypedField(
+        Array.from(element.querySelectorAll('input, textarea, [contenteditable]')).some(isKeyboardInputElement),
+      );
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(element, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['type', 'contenteditable'],
+    });
+    return () => observer.disconnect();
+  }, [watchesFields, scrim]);
+  const isReserving = watchesFields && holdsTypedField;
   const phoneCeiling = isReserving
     ? 'mt-[env(safe-area-inset-top)] max-h-[calc(100%+var(--keyboard-reserve,0px)-env(safe-area-inset-top))] sm:mt-0 sm:max-h-[calc(100%-env(safe-area-inset-top))]'
     : 'max-h-[calc(100%-env(safe-area-inset-top))]';
@@ -2689,6 +2714,7 @@ export function Modal({
 
   return createPortal(
     <div
+      ref={setScrim}
       className={`${position} inset-0 z-50 flex justify-center pb-[var(--keyboard-reserve,0px)] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom),var(--keyboard-reserve,0px))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
         stopsAtContent ? (isReserving ? 'items-end-safe' : 'items-end') : 'items-stretch'
       }`}
