@@ -300,15 +300,28 @@ export async function startWavRecording(options: WavRecordingOptions = {}): Prom
   source.connect(processor);
   processor.connect(silentOutput);
   silentOutput.connect(context.destination);
+
+  // ORDER MATTERS ON iOS. WebKit deactivates the audio session when capture stops, but it keeps
+  // the session while the page still declares `play-and-record` or a live AudioContext needs it
+  // (MediaSessionManagerInterface::maybeDeactivateAudioSession). With the `audio` background
+  // mode, that active session kept the iOS microphone indicator on after a dictation ended. So
+  // hand the session type back first, close the graph next and stop the track last: the last
+  // capture change then finds nothing that holds the session.
+  const release = async () => {
+    releaseAudioSession();
+    source.disconnect();
+    processor.disconnect();
+    silentOutput.disconnect();
+    await context.close().catch(() => undefined);
+    for (const track of stream.getTracks()) track.stop();
+    await releaseAndroidRoute();
+  };
   await context.resume();
   // A context that stays suspended captures nothing: iOS/WKWebView parks it when
   // resume() lands outside the tap's gesture window, or when another app owns the
   // audio session. Fail loudly here instead of shipping a silent WAV.
   if (context.state !== 'running') {
-    for (const track of stream.getTracks()) track.stop();
-    await context.close();
-    await releaseAndroidRoute();
-    releaseAudioSession();
+    await release();
     throw new Error('Microphone could not start — tap the mic again');
   }
 
@@ -342,13 +355,7 @@ export async function startWavRecording(options: WavRecordingOptions = {}): Prom
     closed = true;
     processor.onaudioprocess = null;
     context.onstatechange = null;
-    source.disconnect();
-    processor.disconnect();
-    silentOutput.disconnect();
-    for (const track of stream.getTracks()) track.stop();
-    await context.close();
-    await releaseAndroidRoute();
-    releaseAudioSession();
+    await release();
   };
 
   return {
