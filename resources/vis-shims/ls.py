@@ -222,7 +222,7 @@ def __vis_install_ls__():
                 page = next(page, None)
 
         def all(self):
-            """The rest of the listing from this page, as ONE unpaged page."""
+            """This page and every later page of the listing, as ONE unpaged page."""
             return _page(self._specs, self._shared, self._starts, None, self._one)
 
     def _page(specs, shared, offsets, limit, one):
@@ -308,7 +308,7 @@ def __vis_install_ls__():
         "everything."
         "\n\n`next(r)` gives the next page and raises StopIteration after the last, so "
         "use `next(r, None)` as the sentinel form. `r.pages()` walks the pages with a "
-        "bound of 10. `r.all()` gives the rest in one unpaged page. `r.next_offset` is "
+        "bound of 10. `r.all()` gives this page and every later one as one unpaged page. `r.next_offset` is "
         "where the next page starts, or None."
         "\n\n`ls([dir, ...])` gives one such section per directory, in request order, "
         "separated by a blank line. A path is a str or a pathlib.Path. A batch entry "

@@ -880,7 +880,8 @@
       ;; Opus 5.5 wrote English and German notes in Polish turns. §7 names no standard now.
       ;; 12.2k → 12.35k: `ls` pages long listings, so the rule names `limit` and `offset`.
       ;; One rule states the paging that `ls` and `grep` share. It lands at 12 339.
-      (expect (< (count text) 12350))
+      ;; 12.35k → 12.4k: an eval showed that `r.all()` includes the current page. It lands at 12 378.
+      (expect (< (count text) 12400))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows"
                          "`patch(path, edits, version)`"])]
@@ -1725,6 +1726,9 @@
             "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, is_ignored=False, pattern=None, "
             "as_paths=False, limit=250, offset=0)")
           "`ls` and `grep` page a long result the same way"
+          ;; Eval regression: the rule said `r.all()` gives "the rest", and Codex joined
+          ;; `str(r) + r.all()`, so the first page of a grep was patched twice.
+          "`r.all()` gives this page and every later one as one text"
           "`pattern` is a case-sensitive basename glob, not a regex"
           "It applies at each depth and keeps ancestors; a per-path spec overrides it"
           "takes a str, a Path or a list"
