@@ -4,6 +4,7 @@ import json
 import math
 import re
 import time
+from collections.abc import Callable
 from functools import lru_cache
 from itertools import islice
 from typing import Any, TypeVar, overload
@@ -359,6 +360,64 @@ class _ResponseContract:
         return item["msg"]
 
 
+def _run(
+    connect: Callable[[], Session],
+    request: str,
+    *,
+    timeout: float,
+    response_model: type[ResponseModel] | None,
+    max_corrections: int,
+    options: dict[str, Any],
+) -> dict | ResponseModel:
+    """Submit one turn and wait; with a response model, validate and correct it.
+
+    `connect` gives the session only after the options are valid.
+    """
+    if response_model is None:
+        return connect().send(request, **options).wait(timeout=timeout)
+
+    contract = _ResponseContract(response_model)
+    if isinstance(max_corrections, bool) or not isinstance(max_corrections, int):
+        raise TypeError("max_corrections must be an integer")
+    if max_corrections < 0:
+        raise ValueError("max_corrections must not be negative")
+    wait = _duration(timeout)
+    follow_up = {
+        name: value for name, value in options.items() if name not in _FIRST_TURN_ONLY
+    }
+    name = response_model.__name__
+    attempts: list[dict] = []
+    session = connect()
+    pending = session.send(contract.request(request), **options)
+    deadline = time.monotonic() + wait
+    while True:
+        turn = pending.wait(timeout=max(deadline - time.monotonic(), 0.001))
+        if turn.get("status") != "completed":
+            attempts.append(
+                {"turn": turn, "answer": None, "errors": [_turn_problem(turn)]}
+            )
+            raise StructuredOutputError(f"{name} turn did not complete", attempts)
+        answer = _final_answer(turn)
+        result, problems = contract.validate(answer)
+        if not problems:
+            return result
+        attempts.append({"turn": turn, "answer": answer, "errors": problems})
+        if len(attempts) > max_corrections:
+            count = len(attempts)
+            raise StructuredOutputError(
+                f"{name} answer is invalid after {count} "
+                f"attempt{'s' if count > 1 else ''}",
+                attempts,
+            )
+        if deadline <= time.monotonic():
+            raise StructuredOutputError(
+                f"{name} answer is invalid and the timeout left no time "
+                "for a correction",
+                attempts,
+            )
+        pending = session.send(contract.correction(problems), **follow_up)
+
+
 class Agent:
     """Run one conversation, with optional application-owned tools.
 
@@ -437,9 +496,8 @@ class Agent:
         if self._session is None:
             try:
                 self.execution_layer.connect()
-                self._session = self.execution_layer.create_session(
-                    **self._session_options
-                )
+                options: dict[str, Any] = self._session_options
+                self._session = self.execution_layer.create_session(**options)
                 self._mount_extensions(self._session, self._extensions)
             except BaseException:
                 try:
@@ -558,50 +616,20 @@ class Agent:
         `VisTimeout` does not cancel the turn, and transport errors propagate. Closing
         an owned local agent stops unfinished work.
         """
-        if response_model is None:
-            return self.send(request, **options).wait(timeout=timeout)
 
-        contract = _ResponseContract(response_model)
-        if isinstance(max_corrections, bool) or not isinstance(max_corrections, int):
-            raise TypeError("max_corrections must be an integer")
-        if max_corrections < 0:
-            raise ValueError("max_corrections must not be negative")
-        wait = _duration(timeout)
-        follow_up = {
-            name: value
-            for name, value in options.items()
-            if name not in _FIRST_TURN_ONLY
-        }
-        name = response_model.__name__
-        attempts: list[dict] = []
-        pending = self.send(contract.request(request), **options)
-        deadline = time.monotonic() + wait
-        while True:
-            turn = pending.wait(timeout=max(deadline - time.monotonic(), 0.001))
-            if turn.get("status") != "completed":
-                attempts.append(
-                    {"turn": turn, "answer": None, "errors": [_turn_problem(turn)]}
-                )
-                raise StructuredOutputError(f"{name} turn did not complete", attempts)
-            answer = _final_answer(turn)
-            result, problems = contract.validate(answer)
-            if not problems:
-                return result
-            attempts.append({"turn": turn, "answer": answer, "errors": problems})
-            if len(attempts) > max_corrections:
-                count = len(attempts)
-                raise StructuredOutputError(
-                    f"{name} answer is invalid after {count} "
-                    f"attempt{'s' if count > 1 else ''}",
-                    attempts,
-                )
-            if deadline <= time.monotonic():
-                raise StructuredOutputError(
-                    f"{name} answer is invalid and the timeout left no time "
-                    "for a correction",
-                    attempts,
-                )
-            pending = self.send(contract.correction(problems), **follow_up)
+        def connect() -> Session:
+            conversation = self.session
+            self._extensions.started = True
+            return conversation
+
+        return _run(
+            connect,
+            request,
+            timeout=timeout,
+            response_model=response_model,
+            max_corrections=max_corrections,
+            options=options,
+        )
 
     def close(self):
         """Detach callbacks and release only resources owned by this agent.

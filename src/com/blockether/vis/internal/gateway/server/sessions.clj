@@ -53,6 +53,23 @@
       (http/session-404 (get-in request [:path-params :sid])))
     (http/session-404 (get-in request [:path-params :sid]))))
 
+(defn- trimmed
+  "The trimmed text of `value`, or nil when it is blank."
+  [value]
+  (some-> value
+          str
+          str/trim
+          not-empty))
+
+(defn- unknown-provider-error
+  "A 400 answer when `pid` is not in the picker fleet of this gateway, else nil."
+  [pid]
+  (when (and pid (not (contains? (into #{} (map (comp name :id)) (providers/picker-fleet)) pid)))
+    (http/error-response 400
+                         :unknown-provider
+                         (str "provider " pid " is not configured on this gateway")
+                         :provider_id pid)))
+
 (defn- create-session-handler
   "POST /v1/sessions — mint one session.
 
@@ -69,7 +86,10 @@
    create with a 400 answer.
 
    An optional `idempotency_key` makes a retry return the session that the
-   first create with the same key made."
+   first create with the same key made.
+
+   Optional `provider` and `model` pin the session model before the answer, as
+   `PATCH /v1/sessions/:sid/model` does. Give both or neither."
   [request]
   (let [body
         (http/body-json request)
@@ -93,6 +113,15 @@
         idempotency-key
         (get body "idempotency_key")
 
+        pid
+        (trimmed (get body "provider"))
+
+        model
+        (trimmed (get body "model"))
+
+        provider-error
+        (unknown-provider-error pid)
+
         string-list?
         #(or (nil? %) (and (sequential? %) (every? string? %)))]
 
@@ -105,25 +134,29 @@
           (http/error-response 400 :invalid-request "extensions must be a list of extension names")
           (not (string-list? tools))
           (http/error-response 400 :invalid-request "tools must be a list of tool names")
+          (not= (some? pid) (some? model))
+          (http/error-response 400 :invalid-request "provider and model must be given together")
+          provider-error provider-error
           (not (or (nil? idempotency-key)
                    (and (string? idempotency-key) (<= 1 (count idempotency-key) 200))))
           (http/error-response 400
                                :invalid-request
                                "idempotency_key must be a string of 1 to 200 characters")
-          :else (try (http/json-response 201
-                                         (state/create-session!
-                                           (cond-> {:channel (some-> (get body "channel")
-                                                                     keyword)
-                                                    :title (get body "title")
-                                                    :external-id (get body "external_id")
-                                                    :workspace-id (get body "workspace_id")
-                                                    :root (get body "root")
-                                                    :sources sources
-                                                    :extensions extensions
-                                                    :tools tools
-                                                    :idempotency-key idempotency-key}
-                                             gid
-                                             (assoc :group-id gid))))
+          :else (try (let [created (state/create-session!
+                                     (cond-> {:channel (some-> (get body "channel")
+                                                               keyword)
+                                              :title (get body "title")
+                                              :external-id (get body "external_id")
+                                              :workspace-id (get body "workspace_id")
+                                              :root (get body "root")
+                                              :sources sources
+                                              :extensions extensions
+                                              :tools tools
+                                              :idempotency-key idempotency-key}
+                                       gid
+                                       (assoc :group-id gid)))]
+                       (when pid (state/set-session-model! (get created "id") pid model))
+                       (http/json-response 201 created))
                      (catch clojure.lang.ExceptionInfo e
                        (if-let [status (:status (ex-data e))]
                          (http/error-response status
@@ -749,20 +782,13 @@
   [request]
   (if-let [sid (http/path-sid request)]
     (let [{:strs [provider model]} (http/body-json request)
-          pid (some-> provider
-                      str
-                      str/trim
-                      not-empty)
-          known (into #{} (map (comp name :id)) (providers/picker-fleet))]
+          pid (trimmed provider)
+          provider-error (unknown-provider-error pid)]
 
       (cond
         ;; READ-ONLY: pinning a model is a write, and an archived session takes none.
         (state/session-archived? sid) (http/session-archived-409 sid)
-        (and pid (not (contains? known pid)))
-        (http/error-response 400
-                             :unknown-provider
-                             (str "provider " pid " is not configured on this gateway")
-                             :provider_id pid)
+        provider-error provider-error
         :else (do (state/set-session-model! sid pid model)
                   (http/json-response {:model (state/session-model sid)
                                        :default (state/session-default-model sid)}))))

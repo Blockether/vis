@@ -137,7 +137,7 @@ Model sandbox:
 
 Validation:
 
-- An unknown provider or model fails with `unknown-model` before any session, child or pin is written.
+- An unknown provider fails with `unknown-provider` before the session or pin is written. A half pair fails with `invalid-request`. The model name stays free, as in `PATCH /v1/sessions/:sid/model`: the live provider catalog can offer more models than the picker.
 - A model outside the bound session's `allowed_models` fails with `model-not-allowed`.
 - A human model lock wins over `set_model` and `route`, as today.
 
@@ -382,8 +382,8 @@ Models:
 
 - Phase 1: done. `agents/operation!` is the one entry; it does not need the model tool registry.
 - Phase 2: done. Routes for `run`, `wait`, `resume`, `extend`, `deny` and `grant`.
-- Phase 3: done. `GET /v1/models` lists model objects; `loop.router/model-rates` gives the listed rates and the cost estimate. SDK `models()`, `model_limits()` and `Model`.
-- Phase 4: in progress. `Council` agent methods and `SubagentRecord` are done; they stay experimental and hidden from the API reference.
+- Phase 3: done. `GET /v1/models` lists model objects; `loop.router/model-rates` gives the listed rates and the cost estimate. SDK `models()`, `model_limits()`, `Model`, `create_session(provider, model)`, `Session.model()`, `Session.set_model()` and `SessionModel`.
+- Phase 4: done. `Council` agent methods and `SubagentRecord` stay experimental and hidden from the API reference. `Session.run` shares one implementation with `Agent.run`; `Session.fork` returns the new `Session`.
 - Phase 5: not started.
 - Phase 6: not started.
 - Phase 7: not started.

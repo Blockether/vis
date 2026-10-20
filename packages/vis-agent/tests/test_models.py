@@ -1,7 +1,10 @@
 """The model catalog: price, billing and provider limits over the canonical schema."""
 
+import json
+
 import pytest
-from blockether.vis.engine import GatewayClient, Model
+from blockether.vis.engine import GatewayClient, Model, Session, SessionModel
+from pydantic import BaseModel
 from test_client import compatible, endpoint
 
 
@@ -85,3 +88,74 @@ def test_model_rejects_a_catalog_row_outside_the_schema():
         Model.from_wire({**row, "billing": "invented"})
     with pytest.raises(ValueError):
         Model.from_wire({**row, "pricing": {"input": 1.0}})
+
+
+def session_respond(method, path, raw):
+    if result := compatible(method, path, raw):
+        return result
+    body = json.loads(raw) if raw else {}
+    route = path.split("?")[0]
+    if route == "/v1/sessions" and method == "POST":
+        return 201, {"id": "s1"}
+    if route == "/v1/sessions/s1/model":
+        pin = (
+            {"provider": body["provider"], "model": body["model"]}
+            if method == "PATCH" and body["model"]
+            else None
+        )
+        return 200, {"model": pin, "default": {"provider": "alpha", "model": "large"}}
+    if route == "/v1/sessions/s1/forks":
+        return 200, {"session": {"id": "s2"}}
+    return 404, {"error": "missing"}
+
+
+def test_session_model_pin_and_fork():
+    with endpoint(session_respond) as (url, calls):
+        with GatewayClient(url) as client:
+            session = client.create_session(provider="beta", model="small")
+            assert session.id == "s1"
+            created = next(call for call in calls if call[1] == "/v1/sessions")
+            assert {"provider": "beta", "model": "small"}.items() <= json.loads(
+                created[3]
+            ).items()
+            assert session.model() == SessionModel(
+                "alpha", "large", False, "alpha", "large"
+            )
+            pinned = session.set_model("beta", "small")
+            assert (pinned.provider, pinned.model, pinned.is_pinned) == (
+                "beta",
+                "small",
+                True,
+            )
+            assert session.set_model(None, None).is_pinned is False
+            assert session.fork().id == "s2"
+            session.fork("t1")
+            assert json.loads(calls[-1][3]) == {"through_turn_id": "t1"}
+            with pytest.raises(ValueError):
+                session.set_model("beta", None)
+            with pytest.raises(ValueError):
+                client.create_session(model="small")
+
+
+class Answer(BaseModel):
+    text: str
+
+
+def test_session_run_waits_on_the_same_conversation(monkeypatch):
+    sent = []
+
+    class Done:
+        def wait(self, timeout):
+            return {"status": "completed", "content": [], "turn_id": "t1"}
+
+    def send(self, request, **options):
+        sent.append((self.id, request, options))
+        return Done()
+
+    monkeypatch.setattr(Session, "send", send)
+    session = GatewayClient("http://127.0.0.1:9").session("s1")
+    assert session.run("Hello", model="small")["status"] == "completed"
+    assert sent == [("s1", "Hello", {"model": "small"})]
+    with pytest.raises(ValueError):
+        session.run("Hello", response_model=Answer, max_corrections=-1)
+    assert len(sent) == 1

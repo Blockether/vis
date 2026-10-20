@@ -7743,7 +7743,39 @@
           (let [response (handler (request {"extensions" ["-spell"]}))]
             (expect (= 400 (:status response)))
             (expect (= {"type" "unknown" "message" "Unknown extension: spell."}
-                       (get (wire/parse-json (:body response)) "error"))))))))
+                       (get (wire/parse-json (:body response)) "error"))))))
+    (it "pins the given provider and model and refuses an unknown provider or half a pair"
+        (let [pinned
+              (atom nil)
+
+              created
+              (atom 0)]
+
+          (with-redefs [state/create-session!
+                        (fn [_]
+                          (swap! created inc)
+                          {"id" "s1"})
+
+                        state/set-session-model!
+                        (fn [sid provider model]
+                          (reset! pinned [sid provider model]))
+
+                        providers/picker-fleet
+                        (constantly [{:id :alpha}])]
+
+            (expect (= 201 (:status (handler (request {"provider" " alpha " "model" "large"})))))
+            (expect (= ["s1" "alpha" "large"] @pinned))
+            (reset! pinned nil)
+            (expect (= 201 (:status (handler (request {})))))
+            (expect (nil? @pinned))
+            (let [response (handler (request {"provider" "beta" "model" "large"}))]
+              (expect (= 400 (:status response)))
+              (expect (= "unknown-provider"
+                         (get-in (wire/parse-json (:body response)) ["error" "type"]))))
+            (expect (= 400 (:status (handler (request {"provider" "alpha"})))))
+            (expect (= 400 (:status (handler (request {"model" "large"})))))
+            (expect (= 2 @created))
+            (expect (nil? @pinned)))))))
 
 (defdescribe
   create-session-idempotency-test

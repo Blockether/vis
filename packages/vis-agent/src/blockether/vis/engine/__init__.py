@@ -35,7 +35,7 @@ from ._council import (
 )
 from ._install import InstallError, ensure_installed, install
 from ._local import LocalEngine
-from ._models import Model
+from ._models import Model, SessionModel
 
 __all__ = [
     "Agent",
@@ -64,6 +64,7 @@ __all__ = [
     "Query",
     "Response",
     "Session",
+    "SessionModel",
     "StructuredOutputError",
     "TransportError",
     "Turn",

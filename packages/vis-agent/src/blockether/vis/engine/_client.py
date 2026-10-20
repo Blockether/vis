@@ -17,15 +17,18 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any, BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias, overload
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from blockether.vis._contracts import definition, schema, validate
 from blockether.vis.activity import ActivityProjection
-from blockether.vis.engine._models import Model
+from blockether.vis.engine._models import Model, SessionModel
 from blockether.vis.views import InputView, LiveView, ViewEvent
+
+if TYPE_CHECKING:
+    from ._agent import ResponseModel
 
 JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
@@ -407,10 +410,20 @@ class ExecutionLayer(ABC):
         """
         return Session(self, sid)
 
-    def create_session(self, *, timeout=None, **options) -> Session:
+    def create_session(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        timeout=None,
+        **options,
+    ) -> Session:
         """Create a conversation and return a `Session` handle.
 
         Args:
+            provider: Optional provider ID from `models`. Give it with `model`.
+            model: Optional model name. The pair pins the model of the session
+                before its first turn.
             timeout: Optional timeout in seconds for this creation request.
             **options: Session creation fields from the gateway contract. For a
                 project path, pass `**layer.session_options(project)`. This
@@ -420,6 +433,10 @@ class ExecutionLayer(ABC):
         This sends a creation request immediately. Unlike `session`, it creates
         a new record. To attach to it later, use the returned handle's `id`.
         """
+        if (provider is None) != (model is None):
+            raise ValueError("provider and model must be given together")
+        if provider is not None:
+            options = {**options, "provider": provider, "model": model}
         data = self._request(
             "POST", "/v1/sessions", body=options, timeout=timeout
         ).json()
@@ -3464,6 +3481,81 @@ class Session:
             },
         )
         return Turn(self, _field(data, "turn_id", str), cursor)
+
+    @overload
+    def run(
+        self,
+        request: str,
+        *,
+        timeout: float = 300,
+        response_model: None = None,
+        **options,
+    ) -> dict: ...
+
+    @overload
+    def run(
+        self,
+        request: str,
+        *,
+        response_model: type[ResponseModel],
+        timeout: float = 300,
+        max_corrections: int = 2,
+        **options,
+    ) -> ResponseModel: ...
+
+    def run(
+        self,
+        request: str,
+        *,
+        timeout: float = 300,
+        response_model: type[ResponseModel] | None = None,
+        max_corrections: int = 2,
+        **options,
+    ) -> dict | ResponseModel:
+        """Submit a request and wait for its result, as `Agent.run` does.
+
+        Without `response_model`, return the turn dictionary in contract form.
+        With a Pydantic model, validate the final answer and return the instance.
+        An invalid answer starts up to `max_corrections` correction turns.
+        `Agent.run` describes the answer rules, the errors and the timeout.
+        """
+        from ._agent import _run
+
+        return _run(
+            lambda: self,
+            request,
+            timeout=timeout,
+            response_model=response_model,
+            max_corrections=max_corrections,
+            options=options,
+        )
+
+    def model(self) -> SessionModel:
+        """Read the model of the next turn: the pin, else the default pair."""
+        return SessionModel.from_wire(self._call("GET", "/model"))
+
+    def set_model(self, provider: str | None, model: str | None) -> SessionModel:
+        """Pin the provider and model of the next turns, or clear the pin with None.
+
+        Get the names from `ExecutionLayer.models`. The gateway refuses a provider
+        that it does not serve. A running or queued turn keeps its model. A model
+        request can cost money; `Model.pricing` gives the rates.
+        """
+        if (provider is None) != (model is None):
+            raise ValueError("provider and model must be given together")
+        return SessionModel.from_wire(
+            self._call("PATCH", "/model", body={"provider": provider, "model": model})
+        )
+
+    def fork(self, through_turn_id: str | None = None) -> Session:
+        """Copy this conversation into a new independent session and return it.
+
+        The fork holds every turn through `through_turn_id`, or through the last
+        turn when you omit it. The source session does not change.
+        """
+        body = {} if through_turn_id is None else {"through_turn_id": through_turn_id}
+        data = self._call("POST", "/forks", body=body)
+        return self.client.session(_field(_field(data, "session", dict), "id", str))
 
     def input_views(self) -> list[InputView]:
         """Read pending input requests as typed `blockether.vis.views.InputView` records.
