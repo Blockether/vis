@@ -328,8 +328,8 @@
 
         result
         (try (let [raw
-                   ;; Turn ids in the Telemere context reach the DB `log` row and the
-                   ;; problem log, so a provider failure is found by its turn (issue #403).
+                   ;; Turn ids in the Telemere context reach the log file and the problem
+                   ;; log, so a provider failure is found by its turn (issue #403).
                    (tel/with-ctx+ {:session-turn-id session-turn-id :turn (or turn-position 1)}
                                   (iteration/iteration-loop env
                                                             user-request
@@ -1405,7 +1405,7 @@
                (rt/clamp-eval-timeout-ms (or eval-timeout-ms rt/*eval-timeout-ms*))]
 
        (tel/with-ctx+
-         {:db-info db-info :session-soul-id (:session-id environment)}
+         {:session-soul-id (:session-id environment)}
          (iteration/log-stage!
            :turn/open
            0

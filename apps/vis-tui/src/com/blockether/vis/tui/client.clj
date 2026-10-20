@@ -3290,10 +3290,10 @@
   []
   (tel/add-handler! :file/tui
                     (tel/handler:file {:path (paths/log-file)
-                                       :interval :monthly
-                                       :max-file-size 4000000
+                                       :interval :daily
+                                       :max-file-size 8000000
                                        :max-num-parts 8
-                                       :max-num-intervals 6
+                                       :max-num-intervals 14
                                        :gzip-archives? true})
                     {:min-level :info :async {:mode :dropping :buffer-size 2048 :n-threads 1}})
   (tel/log! {:level :info

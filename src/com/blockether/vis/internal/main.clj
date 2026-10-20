@@ -82,91 +82,6 @@
     [taoensso.telemere :as tel])
   (:import [com.blockether.skjema Uri]))
 
-;; Persistence-backed Telemere :db handler
-
-;; Signal -> log entry
-
-(defn- signal->entry
-  "Transform a telemere signal into the entry map accepted by the
-   persistence facade's `db-log!`. The facade fills in `:id`/`:created_at`
-   and converts ids/keywords through `persistance.base`, so this fn
-   only carries the semantic payload."
-  [signal]
-  (let [ctx
-        (or (:ctx signal) {})
-
-        level
-        (or (:level signal) :info)
-
-        event
-        (or (some-> (:id signal)
-                    str)
-            (some-> (:ns signal)
-                    str)
-            "unknown")
-
-        data
-        ;; Persisted payload boundary: the log table's `data` column is JSON —
-        ;; encode via the canonical wire (snake_case STRING keys, `foo?` -> is_foo).
-        (try (wire/json-str (cond-> {}
-                              (:msg_ signal)
-                              (assoc :msg (force (:msg_ signal)))
-
-                              (:data signal)
-                              (assoc :data (:data signal))
-
-                              (:ns signal)
-                              (assoc :ns (str (:ns signal)))
-
-                              (:error signal)
-                              (assoc :error (str (:error signal)))))
-             (catch Throwable _ nil))]
-
-    (cond-> {:level level :event event :data data}
-      (:session-soul-id ctx)
-      (assoc :session-soul-id (:session-soul-id ctx))
-
-      (:session-turn-id ctx)
-      (assoc :session-turn-soul-id (:session-turn-id ctx))
-
-      (:iteration-id ctx)
-      (assoc :iteration-id (:iteration-id ctx)))))
-
-(defn handler:db
-  "Telemere handler that persists every signal through the
-   `persistance/db-log!`.
-
-   The handler reads `:db-info` from the signal's telemere context
-   (`*ctx*`). When `:db-info` is absent (no DB connection active in
-   scope), the signal is silently dropped - the console handler still
-   prints it.
-
-   Usage:
-     (tel/add-handler! :db (handler:db))
-
-     (tel/with-ctx+ {:db-info db-info :session-soul-id session-id}
-       (tel/log! :info \"something happened\"))"
-  ([] (handler:db nil))
-  ([_opts]
-   (fn handler ([signal] (when-let [db-info (get-in signal [:ctx :db-info])]
-                           (try (persistance/db-log! db-info (signal->entry signal))
-                                (catch Throwable _ nil)))) ([] nil))))
-
-(defn setup-db-handler!
-  "Install the `:db` Telemere handler. Idempotent - reusing the same
-   handler key replaces the previous registration. Call once at
-   process startup, after the persistence backend is loaded
-   (otherwise the handler will silently drop signals because no
-   backend is registered with the facade yet).
-
-   The handler is asynchronous (dropping mode, 2048-entry buffer,
-   single drain thread) so a slow DB write never back-pressures the
-   call site that emitted the signal."
-  []
-  (tel/add-handler! :db
-                    (handler:db)
-                    {:async {:mode :dropping :buffer-size 2048 :n-threads 1} :min-level :info}))
-
 ;; Extension CLI dispatcher
 
 ;;; ── Extension introspection ─────────────────────────────────────────────
@@ -3031,9 +2946,7 @@
   (if (= ["gateway" "start"] (vec (take 2 args))) "gateway" "vis"))
 
 (defn- configure-logging!
-  "Route Telemere signals: file handler always on, persistence-backed
-   `:db` handler always on (so the loop's `tel/with-ctx+ {:db-info ...}`
-   bindings land in the session_log table), and the
+  "Route Telemere signals: the file handler is always on, and the
    `:default/console` handler is OFF by default - it was removed by
    `internal.extension.registry` at namespace load so boot-time registration
    logs never spray to stdout. We re-add it here only when `--debug`
@@ -3056,14 +2969,7 @@
     ;; Boot-time noise is already gone (registry.clj removed it during
     ;; namespace load); this restores the stdout stream for debugging.
     (when (and debug? (not= "stdio" (first args)))
-      (try (tel/add-handler! :default/console (tel/handler:console)) (catch Throwable _ nil)))
-    ;; Persistence handler: scopes signals to the right DB rows via
-    ;; `:db-info` / `:session-soul-id` / `:session-turn-id` /
-    ;; `:iteration-id` carried in telemere `*ctx*`. Wrapped because
-    ;; the persistence facade is loaded lazily; if no backend has
-    ;; registered yet, the handler will silently drop signals until
-    ;; one does.
-    (try (setup-db-handler!) (catch Throwable _ nil))))
+      (try (tel/add-handler! :default/console (tel/handler:console)) (catch Throwable _ nil)))))
 
 (defn- initialize-clojure-extensions! [] (manifest/initialize!) nil)
 

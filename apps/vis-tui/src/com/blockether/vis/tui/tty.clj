@@ -11,7 +11,8 @@
    `tty-out` is frame-buffered on purpose; [[frame-buffered-tty-out]] carries
    why a raw stream flickers."
   (:require [com.blockether.vis.tui.util :as util])
-  (:import (java.io FileInputStream FileOutputStream OutputStream)))
+  (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)
+           (java.nio.file Files OpenOption Path StandardOpenOption)))
 
 (def tty-in (delay (FileInputStream. "/dev/tty")))
 
@@ -113,3 +114,49 @@
   "The process's REAL stderr, captured at load - before the app points
    `System/err` at its log file."
   System/err)
+
+(def ^:private ^:const log-output-flush-bytes
+  "Buffered bytes at which `log-output-stream` writes without an explicit flush."
+  65536)
+
+(defn log-output-stream
+  "Output stream that appends each flushed chunk to the log file at `path`.
+
+   It opens the path again for each write to the file. A log rotation renames the
+   file, and the next chunk then goes to the new file at `path`. A stream that keeps
+   one open file writes to the renamed part, which the rotation then compresses
+   and deletes. A failed write drops its chunk, so a print never throws."
+  ^OutputStream [^String path]
+  (let [buffer
+        (ByteArrayOutputStream.)
+
+        target
+        (.toPath (java.io.File. path))
+
+        options
+        (into-array OpenOption [StandardOpenOption/CREATE StandardOpenOption/APPEND])
+
+        drain!
+        (fn []
+          (when (pos? (.size buffer))
+            (try (Files/write ^Path target
+                              (.toByteArray buffer)
+                              ^"[Ljava.nio.file.OpenOption;" options)
+                 (catch java.io.IOException _ nil))
+            (.reset buffer)))]
+
+    (proxy [OutputStream] []
+      (write
+        ([b]
+         (locking buffer
+           (if (bytes? b)
+             (let [^bytes data b]
+               (.write buffer data 0 (alength data)))
+             (.write buffer (int b)))
+           (when (> (.size buffer) (long log-output-flush-bytes)) (drain!))))
+        ([b off len]
+         (locking buffer
+           (.write buffer ^bytes b (int off) (int len))
+           (when (> (.size buffer) (long log-output-flush-bytes)) (drain!)))))
+      (flush [] (locking buffer (drain!)))
+      (close [] (locking buffer (drain!))))))

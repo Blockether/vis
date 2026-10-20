@@ -83,11 +83,13 @@
 
 (def diagnostic-log-options
   "Shared rolling policy for the boot and steady-state Telemere handlers. The
-   active file stays plain; every rotated part is explicitly gzip-compressed."
-  {:interval :monthly
-   :max-file-size 4000000
+   active file stays plain; every rotated part is explicitly gzip-compressed.
+   Daily intervals keep 14 days, the same fortnight as the housekeeping sweep.
+   Eight parts of 8 MB bound one day of one process."
+  {:interval :daily
+   :max-file-size 8000000
    :max-num-parts 8
-   :max-num-intervals 6
+   :max-num-intervals 14
    :gzip-archives? true})
 
 (def tty-in (delay (FileInputStream. "/dev/tty")))
@@ -309,6 +311,67 @@
   (try (tel/add-handler! :file/problems (problem-log-handler (problem-log-path)) {:min-level :warn})
        (catch Throwable _ nil)))
 
+(def ^:private ^:const log-output-flush-bytes
+  "Buffered bytes at which `log-path-output-stream` writes without an explicit flush."
+  65536)
+
+(defn log-path-output-stream
+  "Output stream that appends each flushed chunk to the file at `path`.
+
+   It opens the path again for each write to the file. A log rotation renames the
+   file, and the next chunk then goes to the new file at `path`. A stream that keeps
+   one open file writes to the renamed part, which the rotation then compresses
+   and deletes. A failed write drops its chunk, so a print never throws."
+  ^OutputStream [^String path]
+  (let [buffer
+        (ByteArrayOutputStream.)
+
+        target
+        (.toPath (io/file path))
+
+        options
+        (into-array OpenOption [StandardOpenOption/CREATE StandardOpenOption/APPEND])
+
+        drain!
+        (fn []
+          (when (pos? (.size buffer))
+            (try (Files/write ^Path target
+                              (.toByteArray buffer)
+                              ^"[Ljava.nio.file.OpenOption;" options)
+                 (catch java.io.IOException _ nil))
+            (.reset buffer)))]
+
+    (proxy [OutputStream] []
+      (write
+        ([b]
+         (locking buffer
+           (if (bytes? b)
+             (let [^bytes data b]
+               (.write buffer data 0 (alength data)))
+             (.write buffer (int b)))
+           (when (> (.size buffer) (long log-output-flush-bytes)) (drain!))))
+        ([b off len]
+         (locking buffer
+           (.write buffer ^bytes b (int off) (int len))
+           (when (> (.size buffer) (long log-output-flush-bytes)) (drain!)))))
+      (flush [] (locking buffer (drain!)))
+      (close [] (locking buffer (drain!))))))
+
+(defn- redirect-output-to-log!
+  "Send System/out, System/err, `*out*` and `*err*` to this process's log file
+   through one `log-path-output-stream`, so that they follow its rotation."
+  []
+  (let [stream
+        (log-path-output-stream (log-path))
+
+        print-stream
+        (java.io.PrintStream. ^OutputStream stream true "UTF-8")]
+
+    (System/setOut print-stream)
+    (System/setErr print-stream)
+    (alter-var-root #'*out* (constantly (io/writer stream)))
+    (alter-var-root #'*err* (constantly (io/writer stream)))))
+
 (defn init!
   "Redirect System/out and System/err to the log file. Lanterna uses
    tty-in / tty-out for terminal I/O. Call from the TUI entry point."
@@ -322,16 +385,7 @@
   (alter-var-root #'*print-level* (constantly 10))
   (alter-var-root #'*print-length* (constantly 100))
   (.mkdirs (io/file (config-dir) "logs"))
-  (let [raw-out
-        (FileOutputStream. (log-path) true)
-
-        log-stream
-        (java.io.PrintStream. raw-out true)]
-
-    (System/setOut log-stream)
-    (System/setErr log-stream))
-  (alter-var-root #'*out* (constantly (io/writer (log-path) :append true)))
-  (alter-var-root #'*err* (constantly (io/writer (log-path) :append true)))
+  (redirect-output-to-log!)
   ;; svar logs through Trove; its console default would write into the
   ;; buffered `*out*` above and never be flushed. See `route-svar-logs!`.
   (route-svar-logs!)
@@ -362,16 +416,7 @@
   (alter-var-root #'*print-level* (constantly 10))
   (alter-var-root #'*print-length* (constantly 100))
   (.mkdirs (io/file (config-dir) "logs"))
-  (let [raw-out
-        (FileOutputStream. (log-path) true)
-
-        log-stream
-        (java.io.PrintStream. raw-out true)]
-
-    (System/setOut log-stream)
-    (System/setErr log-stream))
-  (alter-var-root #'*out* (constantly (io/writer (log-path) :append true)))
-  (alter-var-root #'*err* (constantly (io/writer (log-path) :append true)))
+  (redirect-output-to-log!)
   ;; Mirror `init!`: svar's Trove logs must reach Telemere, not the
   ;; buffered console writer. See `route-svar-logs!`.
   (route-svar-logs!)

@@ -1709,8 +1709,53 @@
                    (expect (str/ends-with? filename (str "pid" (paths/process-id) ".log")))))
              (it "keeps active logs tail-able and gzip-compresses every rotated part"
                  (expect (= true (:gzip-archives? config/diagnostic-log-options)))
-                 (expect (= 4000000 (:max-file-size config/diagnostic-log-options)))
-                 (expect (= 8 (:max-num-parts config/diagnostic-log-options)))))
+                 (expect (= 8000000 (:max-file-size config/diagnostic-log-options)))
+                 (expect (= 8 (:max-num-parts config/diagnostic-log-options))))
+             (it "keeps one day in each interval and the same 14 days as the housekeeping sweep"
+                 (expect (= :daily (:interval config/diagnostic-log-options)))
+                 (expect (= 14 (:max-num-intervals config/diagnostic-log-options)))))
+
+;; Regression: System/out and System/err kept one descriptor on the log file. A rotation
+;; renamed and deleted that file, so every later print went to a deleted inode.
+(defdescribe
+  log-path-output-stream-test
+  (it "appends to the new file at the path after a rotation renames the old one"
+      (let [dir
+            (Files/createTempDirectory "vis-log-stream"
+                                       (make-array java.nio.file.attribute.FileAttribute 0))
+
+            path
+            (str (.resolve dir "process.log"))
+
+            stream
+            (config/log-path-output-stream path)
+
+            out
+            (java.io.PrintStream. ^java.io.OutputStream stream true "UTF-8")]
+
+        (try (.println out "before")
+             (expect (= "before\n" (slurp path)))
+             (.renameTo (io/file path) (io/file (str path ".1")))
+             (.println out "after")
+             (expect (= "after\n" (slurp path)))
+             (expect (= "before\n" (slurp (str path ".1"))))
+             (finally (doseq [f (reverse (file-seq (.toFile dir)))]
+                        (io/delete-file f true))))))
+  (it "writes a large print without a flush"
+      (let [dir
+            (Files/createTempDirectory "vis-log-stream"
+                                       (make-array java.nio.file.attribute.FileAttribute 0))
+
+            path
+            (str (.resolve dir "process.log"))
+
+            stream
+            (config/log-path-output-stream path)]
+
+        (try (.write stream (byte-array 70000 (byte 65)))
+             (expect (= 70000 (.length (io/file path))))
+             (finally (doseq [f (reverse (file-seq (.toFile dir)))]
+                        (io/delete-file f true)))))))
 
 ;; Regression, issue #140: `<cwd>/vis.yml` is the COMMITTED, team-shared project
 ;; file, yet it was deep-merged whole and merges over `~/.vis` — so one author's

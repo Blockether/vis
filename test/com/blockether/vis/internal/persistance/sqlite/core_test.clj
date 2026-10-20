@@ -1621,7 +1621,7 @@
         (expect (= 0 (user-version s)))
         (rewrite-older-store! (:datasource s))
         (let [[text] (activity-search-texts s)]
-          (expect (= 2 (user-version s)))
+          (expect (= 3 (user-version s)))
           (expect (not= old-text text))
           (expect (str/includes? text "Disk quota reached"))
           (expect (<= (count text) 4096))
@@ -1731,7 +1731,7 @@
                      ["UPDATE session_turn_iteration SET tool_calls = ?" (nippy/freeze older)])
       (jdbc/execute! (:datasource s) ["PRAGMA user_version = 1"])
       (rewrite-older-store! (:datasource s))
-      (expect (= 2 (user-version s)))
+      (expect (= 3 (user-version s)))
       (expect (= [(dissoc snapshot :rows) orphan grouped] (stored-activities s)))
       (expect (= [snapshot orphan grouped]
                  (mapv :activity
@@ -2000,13 +2000,13 @@
                                      (catch Throwable t t)))]
 
              (try (expect (true? (.await started 1 TimeUnit/SECONDS)))
-                  (persistance/db-log! s {:level :info :event :snapshot-test})
+                  (h/store-session! s {:channel :cli})
                   (expect (nil? @worker))
                   (expect (= "new" (:title (persistance/db-get-session s cid))))
                   (finally (persistance/db-dispose-connection! s))))
            (finally (fs/delete-tree dir)))))
   (it
-    "serializes Vis write APIs while concurrent db-log! calls contend"
+    "serializes Vis write APIs while concurrent session writes contend"
     (let [s
           (h/store)
 
@@ -2031,21 +2031,19 @@
                        nil
                        (catch Throwable t t)))
 
-          logs
+          writes
           (do (expect (true? (.await started 1 TimeUnit/SECONDS)))
-              (vec (doall (map (fn [i]
-                                 (future (try (persistance/db-log! s
-                                                                   {:level :info
-                                                                    :event (str "stress." i)})
+              (vec (doall (map (fn [_]
+                                 (future (try (h/store-session! s {:channel :cli})
                                               nil
                                               (catch Throwable t t))))
                                (range 20)))))]
 
       (.countDown done)
       (expect (nil? @worker))
-      (doseq [f logs]
+      (doseq [f writes]
         (expect (nil? @f)))
-      (expect (= 20 (raw-count s :log)))
+      (expect (= 21 (raw-count s :session_soul)))
       (expect (= 1 (count (persistance/db-list-session-turn-iterations s tid))))))
   (it "retries a whole SQLite write operation after a busy snapshot failure"
       (let [attempts
@@ -4045,47 +4043,27 @@
           (expect (= "(+ 1 1)" (:code iteration)))
           (expect (= "2\n" (:stdout form)))))))
 
+(defn- log-schema-names
+  "Names of the `log` table and its indexes in the store's schema."
+  [store]
+  (mapv :name (raw-query store {:select [:name] :from :sqlite_master :where [:= :tbl_name "log"]})))
+
 (defdescribe
-  log-test
-  (it "inserts into log table with FK scope"
+  log-table-drop-test
+  (it "creates no log table in a new store" (expect (= [] (log-schema-names (h/store)))))
+  (it "drops the log table and its indexes that an older store kept"
       (let [s
             (h/store)
 
-            cid
-            (h/store-session! s {:channel :tui})]
+            ds
+            (:datasource s)]
 
-        (persistance/db-log!
-          s
-          {:level :info :event "test.event" :data "{\"k\":1}" :session-soul-id cid})
-        (expect (= 1 (raw-count s :log)))
-        (let [row (first (raw-query s {:select [:*] :from :log}))]
-          (expect (= "info" (:level row)))
-          (expect (= "test.event" (:event row)))
-          (expect (= (str cid) (:session_soul_id row))))))
-  (it "deletes a few rows older than the log retention with each insert"
-      (let [s
-            (h/store)
-
-            aged
-            (- (System/currentTimeMillis) (* 15 86400000))
-
-            aged-count
-            #(count (raw-query s
-                               {:select [:id]
-                                :from :log
-                                :where [:< :created_at
-                                        (- (System/currentTimeMillis) (* 14 86400000))]}))]
-
-        (doseq [i (range 6)]
-          (jdbc/execute!
-            (:datasource s)
-            ["INSERT INTO log (id, level, event, created_at) VALUES (?, 'info', 'old', ?)"
-             (str "old-" i) aged]))
-        (persistance/db-log! s {:level :info :event "new.1"})
-        (expect (= 2 (aged-count)))
-        (persistance/db-log! s {:level :info :event "new.2"})
-        (expect (zero? (aged-count)))
-        (expect (= 2 (raw-count s :log))))))
+        (jdbc/execute! ds ["CREATE TABLE log (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)"])
+        (jdbc/execute! ds ["CREATE INDEX idx_log_created ON log(created_at)"])
+        (jdbc/execute! ds ["PRAGMA user_version = 2"])
+        (rewrite-older-store! ds)
+        (expect (= 3 (user-version s)))
+        (expect (= [] (log-schema-names s))))))
 
 ;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 

@@ -44,6 +44,7 @@
     [com.blockether.vis.tui.paths :as vis-paths]
     [com.blockether.vis.tui.workspace :as workspace]
     [com.blockether.vis.tui.prompt-templates :as prompt-templates]
+    [com.blockether.vis.tui.tty :as tty]
     [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
            [com.googlecode.lanterna.gui2 Direction ScrollBar ScrollBar$DragResult
@@ -9950,11 +9951,13 @@
   []
   (vis-paths/set-log-role! :tui)
   (tel/remove-handler! :default/console)
-  (let [log-path
-        (vis-paths/log-file)
+  ;; A stream that reopens the path follows the log rotation. A FileOutputStream
+  ;; would keep writing to the rotated part after the rotation deletes it.
+  (let [log-stream
+        (tty/log-output-stream (vis-paths/log-file))
 
         log-ps
-        (java.io.PrintStream. (java.io.FileOutputStream. ^String log-path true) true)
+        (java.io.PrintStream. ^java.io.OutputStream log-stream true "UTF-8")
 
         log-w
         (java.io.OutputStreamWriter. log-ps)]

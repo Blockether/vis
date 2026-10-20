@@ -12,8 +12,7 @@
      session_soul, session_state,
      session_turn_soul, session_turn_state,
      session_turn_iteration, llm_routing_event,
-     extension_aggregate,
-     log
+     extension_aggregate
 
    Connection lifecycle:
      (db-open! db-spec)   -> {:datasource ds :path ...}
@@ -465,10 +464,23 @@
                                        (jdbc/execute-batch! ps (vec changed))))))
           (recur (:row_id (peek rows))))))))
 
+(defn- drop-log-table!
+  "Drop the `log` table of older stores. Diagnostics go only to the log files in
+   `~/.vis/logs/`. Each index is dropped in its own statement, so that no one write
+   holds the database lock for long."
+  [^DataSource ds]
+  (doseq [{:keys [name]} (jdbc/execute!
+                           ds
+                           [(str "SELECT name FROM sqlite_master"
+                                 " WHERE type = 'index' AND tbl_name = 'log' AND sql IS NOT NULL")]
+                           {:builder-fn rs/as-unqualified-lower-maps})]
+    (jdbc/execute! ds [(str "DROP INDEX IF EXISTS \"" name "\"")]))
+  (jdbc/execute! ds ["DROP TABLE IF EXISTS log"]))
+
 (def ^:private store-rewrites
   "One-time data rewrites of older stores, in order. `PRAGMA user_version` counts the
    rewrites that a store has already done. Append new rewrites; never reorder them."
-  [rewrite-activity-search-text! drop-stored-activity-rows!])
+  [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table!])
 
 (defn- rewrite-older-store!
   "Run each store rewrite that this store has not done yet, and record each one.
@@ -757,10 +769,7 @@
         (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet ^AtomicLong pool-counter)))]
 
     (try (with-migration-lock! path #(install-schema! pool))
-         (maintenance/vacuum-async! pool
-                                    file
-                                    {:before #(do (maintenance/prune-log! pool)
-                                                  (rewrite-older-store! pool))})
+         (maintenance/vacuum-async! pool file {:before #(rewrite-older-store! pool)})
          pool
          (catch Throwable t (try (.close pool) (catch Throwable _ nil)) (throw t)))))
 
@@ -1088,53 +1097,6 @@
               (if (and (sqlite-busy? t) (seq delays))
                 (do (Thread/sleep (long (first delays))) (recur (inc attempt) (rest delays)))
                 (throw t)))))))))
-
-;; Logging - log table
-
-(def ^:private ^:const log-steady-prune-rows
-  "Aged `log` rows that one `db-log!` also deletes. More than one insert, so a store that
-   never restarts stays inside `maintenance/log-retention-days`."
-  4)
-
-(defn db-log!
-  "Insert one diagnostic row and delete a few rows older than the log retention."
-  [db-info entry]
-  (when (ds db-info)
-    (sqlite-write-tx!
-      db-info
-      (fn [tx-info]
-        (let [now (now-ms)]
-          (execute! tx-info
-                    {:insert-into :log
-                     :values
-                     [(cond-> {:id (new-id)
-                               :level (->kw (:level entry))
-                               :event (str (:event entry))
-                               :created_at now}
-                        (:data entry)
-                        (assoc :data (:data entry))
-
-                        (:session-soul-id entry)
-                        (assoc :session_soul_id (->id (:session-soul-id entry)))
-
-                        (:session-state-id entry)
-                        (assoc :session_state_id (->id (:session-state-id entry)))
-
-                        (:session-turn-soul-id entry)
-                        (assoc :session_turn_soul_id (->id (:session-turn-soul-id entry)))
-
-                        (:session-turn-state-id entry)
-                        (assoc :session_turn_state_id (->id (:session-turn-state-id entry)))
-
-                        (:iteration-id entry)
-                        (assoc :session_turn_iteration_id (->id (:iteration-id entry))))]})
-          (execute! tx-info
-                    {:delete-from :log
-                     :where [:in :rowid
-                             {:select [:rowid]
-                              :from :log
-                              :where [:< :created_at (maintenance/log-cutoff-ms now)]
-                              :limit log-steady-prune-rows}]}))))))
 
 ;; Workspace - trunk-native work units
 

@@ -27,10 +27,7 @@
    the last successful vacuum) and the cross-process mutex (an exclusive
    `FileLock` held for the rewrite). It is created only when a vacuum is
    actually attempted and deleted again when one fails, so a store that never
-   needed reclaiming carries no marker and stays due.
-
-   `prune-log!` keeps the `log` table inside `log-retention-days`. It runs before the
-   reclaim, so the pages of old diagnostics are part of the freelist that it checks."
+   needed reclaiming carries no marker and stays due."
   (:require [com.blockether.vis.internal.util :as util])
   (:import (java.io File RandomAccessFile)
            (java.nio.channels FileLock OverlappingFileLockException)
@@ -212,52 +209,3 @@
      (.setDaemon true)
      (.setPriority Thread/MIN_PRIORITY)
      (.start))))
-
-(def log-retention-days
-  "Days that the `log` table keeps a diagnostic row. It is the same fortnight as
-   `foundation.housekeeping/default-retention-days` for the log files on disk."
-  14)
-
-(def ^:private ^:const log-prune-batch-rows
-  "Rows that one `prune-log!` delete removes. Small batches keep each write lock short."
-  5000)
-
-(def ^:private log-prune-sql
-  "Delete at most `?` `log` rows older than the cutoff. `idx_log_created` finds them."
-  "DELETE FROM log WHERE rowid IN (SELECT rowid FROM log WHERE created_at < ? LIMIT ?)")
-
-(defn log-cutoff-ms
-  "The time before which a `log` row is older than `log-retention-days`."
-  ^long [^long now-ms]
-  (- now-ms (* (long log-retention-days) (long day-ms))))
-
-(defn prune-log!
-  "Delete the `log` rows older than `log-retention-days`, one committed batch at a time.
-   An interrupted prune continues at the next open. Returns `{:deleted n}` and never
-   throws. Options, all for tests: `:now-ms` and `:batch-rows`."
-  ([^DataSource ds] (prune-log! ds nil))
-  ([^DataSource ds {:keys [now-ms batch-rows]}]
-   (let [cutoff
-         (log-cutoff-ms (long (or now-ms (util/now-ms))))
-
-         batch
-         (long (or batch-rows log-prune-batch-rows))
-
-         deleted
-         (volatile! 0)]
-
-     (try (with-open [conn
-                      (.getConnection ds)
-
-                      ps
-                      (.prepareStatement conn log-prune-sql)]
-
-            (.setLong ps 1 cutoff)
-            (.setLong ps 2 batch)
-            (loop []
-
-              (let [n (long (.executeUpdate ps))]
-                (vswap! deleted #(+ (long %) n))
-                (when (and (= n batch) (not (.isInterrupted (Thread/currentThread)))) (recur))))
-            {:deleted @deleted})
-          (catch Throwable t {:deleted @deleted :error (ex-message t)})))))

@@ -19,6 +19,8 @@ A hang report uses its capture date.
   error](#find-a-provider-error) by its session, turn or request ID.
 - **You are about to attach logs to a bug report.** [Review them
   first](#review-before-sharing). Logs can contain anything a command printed.
+- **You know a session, turn or request ID and need every line about it.** [Search
+  the logs](#search-the-logs), including the compressed parts.
 - **You want to know how long logs are kept.** See [Rotation and
   retention](#rotation-and-retention).
 
@@ -52,20 +54,46 @@ Shell results expose their exact `log_path`. It stays the same after midnight or
 a gateway restart. Hang warnings also include the report path. Ordinary process
 logs use a start timestamp such as `20260914T153000Z` to distinguish runs.
 
+## Search the logs
+
+A process log rotates every day and when it reaches its size limit. Vis compresses
+each rotated part with gzip. The active file is `<name>.log`. The rotated parts are
+`<name>.log-<YYYY-MM-DD>d.<N>.gz`, and part `1` is the newest.
+
+Use `zgrep`, not `grep`. `zgrep` reads plain and compressed files, and `grep` does not
+find text inside the `.gz` parts. Put `*` after `.log` so that the search includes
+the rotated parts. Search all date directories, because a process keeps the directory
+of its start date.
+
+To find every gateway log entry of one session, run this command:
+
+```bash
+zgrep -h -B 2 '<session-id>' ~/.vis/logs/*/gateway-*.log*
+```
+
+A text entry starts with a line that has the UTC time, the level and the signal
+name. A `data:` line and a `ctx:` line can follow it. The `ctx:` line holds the
+session and turn IDs, so `-B 2` also prints the first two lines of the entry.
+
+To read one compressed part, run `zless <file>.gz`.
+
 ## Find a provider error
 
 A provider error is a failure of the model call: a rate limit, a rejected credential, an
-HTTP error or a closed stream. Vis records each warning and error of one turn in three
+HTTP error or a closed stream. Vis records each warning and error of one turn in two
 places. Look in this order:
 
 1. The error card in the chat names the provider, the HTTP status and the request ID.
 2. The problem log keeps every warning and error of the process as JSON lines.
-3. The session database keeps the same signals in its `log` table.
+
+The text log of the process also keeps the `info` entries before and after the failure.
+To read them, [search the logs](#search-the-logs) for the turn ID.
 
 ### Problem log
 
 Each process writes `<role>-<UTC-start>-pid<PID>.problems.jsonl` next to its text log.
-`<role>` is `gateway`, `tui` or `vis`. Each line is one JSON object, for example:
+`<role>` is `gateway`, `tui` or `vis`. The problem log rotates in the same way as the
+text log, so search it with `zgrep`. Each line is one JSON object, for example:
 
 ```json
 {"ts":"2026-10-12T03:28:07.499Z","level":"warn","id":"com.blockether.svar.internal.llm/retry-declined","msg":"not retrying provider failure","session_id":"36c4556d-f07e-4a40-851a-62dc18cc8caf","turn_id":"7e28b0fb-3349-405c-9d98-4cace35baed7","turn":3,"iteration":1,"query_id":"fcbaf266-5119-45a4-b7e7-8505e38886fe","request_id":"req_42","status":429,"category":"quota-exhausted","error":"Exceptional status code: 429"}
@@ -86,32 +114,17 @@ The main fields are:
 To list the problems of one session, run this command:
 
 ```bash
-grep -h '"session_id":"<session-id>"' ~/.vis/logs/*/*.problems.jsonl
+zgrep -h '"session_id":"<session-id>"' ~/.vis/logs/*/*.problems.jsonl*
 ```
 
 The error card in the TUI and in the Companion app shows a `Log id`. It is the
 `query_id` of the failed call. To find its lines, run this command:
 
 ```bash
-grep -h '"query_id":"<log-id>"' ~/.vis/logs/*/*.problems.jsonl
+zgrep -h '"query_id":"<log-id>"' ~/.vis/logs/*/*.problems.jsonl*
 ```
 Vis redacts labelled credentials, such as `api_key` or `Authorization` values, and limits
 each text value to 2,000 characters. Review the lines before you share them.
-
-### Session database
-
-The `log` table in `~/.vis/vis.mdb/vis.db` keeps the `info`, `warn` and `error` signals
-of each session. Its `data` column holds the same message and details as JSON. Open the
-database read-only, so that a running gateway is not changed:
-
-```bash
-sqlite3 -readonly ~/.vis/vis.mdb/vis.db \
-  "select datetime(created_at/1000,'unixepoch'), level, event, data from log
-   where session_soul_id = '<session-id>' and level in ('warn','error')
-   order by created_at"
-```
-
-`session_turn_soul_id` and `session_turn_iteration_id` filter one turn or one step.
 
 ### From inside a session
 
@@ -162,8 +175,8 @@ tries. If the JVM has already accepted a dump, stopping the helper does not canc
   shell and Python worker output, rotated logs, hang reports, JFR recordings and heap dumps. A
   running process continues to write to its original date directory. Cleanup uses file age, not
   folder date.
-- Ordinary process logs rotate monthly or at 4,000,000 bytes. Rotated parts use
-  gzip. The handler limits them to eight parts per interval and six intervals.
+- Ordinary process logs and problem logs rotate every day, and also at 8,000,000 bytes.
+  Rotated parts use gzip. The handler keeps eight parts for each day and 14 days.
   The 14-day age policy also applies to these files.
 - Hang-report cleanup keeps the ten newest completed reports across all dates.
   It runs after a report completes. Incomplete captures remain subject to the

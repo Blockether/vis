@@ -118,38 +118,3 @@
              (expect (true? (:is-vacuumed report)))
              (expect (zero? (long (:freelist-count (maintenance/free-space ds))))))
            (finally (cleanup! path))))))
-
-(defdescribe
-  prune-log-test
-  (it "deletes only the log rows older than the retention, in batches"
-      (let [[path ds]
-            (temp-store)
-
-            now
-            (System/currentTimeMillis)
-
-            aged
-            (- now (* (long maintenance/log-retention-days) (long day-ms)) 1000)]
-
-        (try (exec! ds "CREATE TABLE log (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)")
-             (exec! ds "CREATE INDEX idx_log_created ON log(created_at)")
-             (dotimes [i 7]
-               (exec! ds (str "INSERT INTO log VALUES ('old-" i "', " aged ")")))
-             (exec! ds (str "INSERT INTO log VALUES ('new', " now ")"))
-             (expect (= {:deleted 7} (maintenance/prune-log! ds {:now-ms now :batch-rows 3})))
-             (with-open [conn
-                         (.getConnection ds)
-
-                         rs
-                         (.executeQuery (.createStatement conn) "SELECT id FROM log")]
-
-               (expect (.next rs))
-               (expect (= "new" (.getString rs 1)))
-               (expect (not (.next rs))))
-             (finally (cleanup! path)))))
-  (it "reports a missing table as an error and never throws"
-      (let [[path ds] (temp-store)]
-        (try (let [report (maintenance/prune-log! ds)]
-               (expect (zero? (long (:deleted report))))
-               (expect (string? (:error report))))
-             (finally (cleanup! path))))))
