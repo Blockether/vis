@@ -87,9 +87,69 @@ Acceptance criteria:
 - Each new route validates its body against `agents.json` before any state change.
 - Each route returns the same record shape as the model tool.
 
-## 3. SDK
+## 3. Model catalog and selection
 
-Rationale: the SDK is the typed reference implementation. Extensions reuse it in phase 4.
+Rationale: a caller must see which models it can use, with prices and limits, and then choose one.
+
+Current state:
+
+- `GET /v1/models` returns provider ids and model names only.
+- svar already resolves model metadata from models.dev, provider overlays and the `tokens.pricing` setting. `provider/catalog.clj` uses the same rates for the cost estimate of a turn.
+- `GET`/`PATCH /v1/sessions/:sid/model` read and pin the session model. `council.spawn` takes `provider`, `model` and `allowed_models`.
+
+Data:
+
+- `GET /v1/models` returns one object for each model in `catalog[].models`, not a name:
+  - `provider`, `name`, `label`, `family`.
+  - `pricing`: `input`, `output`, `cache_read`, `cache_write` and `tiers`, in USD for 1M tokens. `pricing_source` is `catalog`, `provider` or `config`.
+  - `billing`: `metered` or `subscription`. A subscription model shows its rates, but a turn costs nothing extra.
+  - `context`, `input_limit`, `output_limit`.
+  - `is_reasoning`, `reasoning_options`, `is_tool_call`, `is_image_input`, `modalities`.
+  - `knowledge_cutoff`, `release_date`.
+  - `is_available`: the provider is authenticated and serves the model.
+  - `is_default`: the router default for new sessions.
+- The schema lives in `packages/vis-contract` (`models.json`). Update the TUI, Companion and SDK consumers in the same change. Do not keep the old name list.
+- The listed rates are the rates of the cost estimate. Both read one function.
+- An unknown price is `null`, never 0.
+- `GET /v1/providers/:provider-id/limits` stays the source for quotas and resets.
+
+SDK:
+
+- `ExecutionLayer.models(*, provider=None, is_available=None) -> tuple[Model, ...]`. `Model` is a frozen dataclass from the schema.
+- `ExecutionLayer.provider_limits(provider) -> ProviderLimits`.
+- `create_session(provider=..., model=...)` pins the model at creation.
+- `Session.model() -> SessionModel` (the pin and the default) and `Session.set_model(provider, model)`. `set_model(None, None)` clears the pin.
+- `Council.spawn`, `Council.run` task dicts and `Council.route` take the same `provider` and `model`.
+
+Extension:
+
+- `vis.models.list(provider=None, is_available=None)`, `vis.models.get(provider, name)` and `vis.models.limits(provider)`.
+- In an extension, each `Model` also has `is_allowed` for the bound session. An inherited `allowed_models` list or a human model lock sets it to false.
+- `HostLayer` allows `GET /v1/models` and `GET /v1/providers/:provider-id/limits`. It refuses provider authentication, configuration and router changes.
+
+Model sandbox:
+
+- No change in this plan. The subagent prompt tells the model to choose a model only when the user or project names one.
+
+Validation:
+
+- An unknown provider or model fails with `unknown-model` before any session, child or pin is written.
+- A model outside the bound session's `allowed_models` fails with `model-not-allowed`.
+- A human model lock wins over `set_model` and `route`, as today.
+
+Acceptance criteria:
+
+- `models()` lists every model that the TUI and Companion pickers show, with the same names.
+- For a metered model, the listed rates give the cost of a finished turn from its token counts, within rounding to 1e-6 USD.
+- A session created with `provider` and `model` runs its first turn on that pair, as the turn usage shows.
+
+Unknowns:
+
+- The source of `tiers` for providers with long-context prices, for example `input-over-272k` in svar.
+
+## 4. SDK
+
+Rationale: the SDK is the typed reference implementation. Extensions reuse it in phase 5.
 
 Data:
 
@@ -107,7 +167,7 @@ Acceptance criteria:
 - Pyright CI stays green.
 - No remaining reference to `publish_spawn` in code, docs or examples.
 
-## 4. Extension API through `HostLayer`
+## 5. Extension API through `HostLayer`
 
 Rationale: extensions get the SDK interface without credentials and without a second implementation.
 
@@ -145,7 +205,7 @@ Acceptance criteria:
 - `apropos("sessions.create")` and `apropos(r"^vis\.run")` find nothing in the model sandbox.
 - Activity tests cover registration and the running, success, failure and empty states.
 
-## 5. Session snapshots
+## 6. Session snapshots
 
 Rationale: you can save a session tree, close a stdio engine or restart a gateway, then continue.
 
@@ -166,7 +226,7 @@ Routes and calls:
 
 - `GET /v1/sessions/:sid/snapshot` returns the artifact. `POST /v1/sessions/import` takes it.
 - SDK: `Session.export() -> bytes` and `ExecutionLayer.restore_session(data, *, root=None, group_id=None, key=None) -> Session`.
-- Extension: `vis.sessions.export` and `vis.sessions.restore` (phase 4).
+- Extension: `vis.sessions.export` and `vis.sessions.restore` (phase 5).
 
 Restore rules:
 
@@ -186,7 +246,7 @@ Unknowns:
 
 - The default size limit. Start with 1 GiB and make it a setting.
 
-## 6. Documentation
+## 7. Documentation
 
 Data:
 
@@ -194,6 +254,7 @@ Data:
 - `council-api.md`: the managed-child operations with the new names.
 - `extension-api.md`: `vis.sessions`, `vis.run`, `vis.council` and the execution-context table.
 - `http-api.md`: the new routes.
+- `sessions-api.md` and `extension-api.md`: `models()`, prices, limits and model selection.
 - Give each example as a Python block, then as an HTTP block (`PAIRED VARIANTS` in `docs/core.clj`).
 - Document spawn idempotency, reconciliation after an uncertain write, the budget after `resume`, and that a cancel request does not prove that a child stopped.
 
@@ -201,7 +262,7 @@ Acceptance criteria:
 
 - `docs-page-canon-test`, `docs-modules-test` and `test_api_guides.py` pass.
 
-## 7. End-to-end validation on a separate server
+## 8. End-to-end validation on a separate server
 
 Rationale: JVM tests and a native build do not prove that the shipped binary works.
 
@@ -233,10 +294,13 @@ Scenarios. Each one must pass on the server:
 | E14 | stdio: export from `LocalEngine`, `close`, restore in a new `LocalEngine`, continue | Answer uses the earlier context |
 | E15 | Restore the same file twice without `key`, then twice with `key` | Two trees, then one tree |
 | E16 | An automation runs a prompt that calls the `e2e-sessions` tool | Automation run succeeds; child and independent session exist |
+| E17 | SDK and extension call `models()` | Same list as the TUI picker; a metered model has `pricing`; an unauthenticated provider has `is_available = false` |
+| E18 | Create a session and spawn a child with explicit `provider` and `model`, run one turn each | Turn usage shows that pair; turn cost equals tokens times the listed rates |
+| E19 | Create a session with an unknown model; spawn a child with a model outside `allowed_models` | `unknown-model` and `model-not-allowed`; no session or child exists |
 
 Acceptance criteria:
 
-- All of E1 to E16 pass on the candidate build, with the session ids and commit recorded in the plan state.
+- All of E1 to E19 pass on the candidate build, with the session ids and commit recorded in the plan state.
 - The `test-native/` suite covers E3, E7, E8 and E12 against the built image (`-M:test-native`).
 - A grep of the server logs and every artifact finds no gateway token, provider key or lease secret.
 
@@ -290,13 +354,23 @@ Snapshots:
 - Unicode titles and content, including 4-byte characters, survive the round trip (unit).
 - Restore by another user or on another machine: no credential is needed and none is restored (E12, E14).
 
+Models:
+
+- A model without a known price: `pricing` fields are `null`, and the cost estimate says "unknown" (unit).
+- A subscription model: rates shown, `billing = "subscription"`, no extra cost (unit).
+- The same model name under two providers: two entries, selected by the pair (unit).
+- A pinned model disappears from the live provider catalog: the next turn fails clearly or falls back by router policy, as today, and `models()` no longer lists it (unit).
+- A catalog refresh runs during `models()`: the call returns the last complete catalog (unit).
+- A provider loses authentication: its models stay listed with `is_available = false` (unit).
+- `set_model` during a running turn: the change applies at the next request boundary (unit).
+
 ## Checks
 
 - Clojure: `clj.run_tests` for the affected namespaces, `clj.lint_code` and `clj.format_code`.
 - Python: `vis-agent python -m pytest packages/vis-agent/tests`, ruff and pyright.
 - Contract: schema tests in `packages/vis-contract`.
 - Native: `-M:test-native` on the built image for the cases above.
-- End to end: phase 7 on the separate server.
+- End to end: phase 8 on the separate server.
 
 ## Plan state
 
@@ -306,4 +380,5 @@ Snapshots:
 - Phase 4: not started.
 - Phase 5: not started.
 - Phase 6: not started.
-- Phase 7: not started. The server is reachable through `uplink`; it has `vis-agent` and Java, but no `vis` binary yet.
+- Phase 7: not started.
+- Phase 8: not started. The server is reachable through `uplink`; it has `vis-agent` and Java, but no `vis` binary yet.
