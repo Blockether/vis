@@ -1,0 +1,32 @@
+{
+  "want": {
+    "inventory.py": [
+      "DEFAULT_TIMEOUT = 10",
+      "raise ValueError(\"qty must be positive\")",
+      "{\"total\": sum(stock.values()), \"skus\": len(stock)}",
+      "{data['total']} units",
+      "report(stock)[\"total\"] < LOW_STOCK",
+      "report(stock)['total']",
+      "stats = {\"count\": len(batch)}"
+    ],
+    "README.md": [
+      "returns `total`",
+      "10 seconds"
+    ]
+  },
+  "wantnot": {
+    "inventory.py": [
+      "DEFAULT_TIMEOUT = 30",
+      "legacy_export",
+      "data['count']",
+      "report(stock)[\"count\"]",
+      "report(stock)['count']",
+      "{\"count\": sum"
+    ],
+    "README.md": [
+      "30 seconds",
+      "returns `count`"
+    ]
+  },
+  "max_patch_calls_per_file": 1
+}

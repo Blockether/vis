@@ -881,7 +881,9 @@
       ;; 12.2k → 12.35k: `ls` pages long listings, so the rule names `limit` and `offset`.
       ;; One rule states the paging that `ls` and `grep` share. It lands at 12 339.
       ;; 12.35k → 12.4k: an eval showed that `r.all()` includes the current page. It lands at 12 378.
-      (expect (< (count text) 12400))
+      ;; 12.4k → 12.45k: in 357 session turns, 31% of patch calls patched a file again. One rule
+      ;; asks to find every change of a file first. It lands at 12 431.
+      (expect (< (count text) 12450))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows"
                          "`patch(path, edits, version)`"])]
@@ -1656,6 +1658,9 @@
         ;; Several hits in ONE file are ONE patch call now, so there is no
         ;; order left for the caller to compute.
         (expect (not (str/includes? text "bottom-up")))
+        ;; Sessions split the planned edits of one file over several patch calls,
+        ;; one step each. Finding every change first lets one call carry them.
+        (expect (str/includes? text "Find every change of a file first and read its regions in one block"))
         (expect (str/includes? text "Use one `patch(path, edits, version)` call for each file"))
         (expect (str/includes? text "keep the version and line numbers of the read that showed its lines"))
         ;; User reports: recent sessions copied the primary grep example without

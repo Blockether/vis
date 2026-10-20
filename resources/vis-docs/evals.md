@@ -137,10 +137,11 @@ A trial passes only when all its checks pass. These are the checks that most tas
 | `want_json_files` | Each named file is JSON Lines with exactly these rows, in this order. |
 | `want_tools` | The agent used each named tool. |
 | `forbid_tools` | The agent did not use any named tool. |
+| `max_patch_calls_per_file` | The agent changed each file with at most this number of successful `patch` calls. |
 | `max_total_output_chars` | The tool output of the run stayed below this size. |
 
 The grader always checks that the agent finished without an error. The `e2e/` folder of the Vis
-repository has 40 tasks that use these checks. Read them for more examples.
+repository has 41 tasks that use these checks. Read them for more examples.
 
 To test a project with its own test suite, write a standard Harbor verifier instead. Read the
 Harbor guide [Create a task](https://docs.harborframework.com/tutorials/create-a-task).
