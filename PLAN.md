@@ -297,7 +297,7 @@ Scenarios. Each one must pass on the server:
 | E10 | Extension calls `HostLayer` on `/v1/settings` | Refused with `forbidden-route` |
 | E11 | Extension mutates a session that another extension created | Refused |
 | E12 | Snapshot of a parent with two children, `systemctl restart` of the gateway, `restore`, then a follow-up turn that needs earlier context | Answer uses the earlier context; tree shape and new ids are correct |
-| E13 | Snapshot taken while a child runs | Restored child is `interrupted`; `council.resume` completes it |
+| E13 | Snapshot taken while a child runs | Restored child is `failed` and its running turn `interrupted`; `council.resume` from an active parent completes it |
 | E14 | stdio: export from `LocalEngine`, `close`, restore in a new `LocalEngine`, continue | Answer uses the earlier context |
 | E15 | Restore the same file twice without `key`, then twice with `key` | Two trees, then one tree |
 | E16 | An automation runs a prompt that calls the `e2e-sessions` tool | Automation run succeeds; child and independent session exist |
@@ -388,4 +388,10 @@ Models:
 - Phase 5: done. The host door `__vis_host_request__`, `HostLayer`, the `Sessions` facade (`create`, `get`, `list`), `vis.run`, `vis.session`, `vis.council` and the session `origin`. The `extension` field of each route in `gateway.json` sets the access. A new session starts in the bound session root. Each change through the door has an Activity from `host-activities`; reads have none, because a turn wait polls them. Phase 6 adds `export` and `restore` to `Sessions`.
 - Phase 6: implemented and tested at the store, gateway, SDK and extension levels (`session_snapshot_test`, `test_client.py`, `extension-session-api-boundary-test`). The setting `session_snapshot_limit` (256 MiB, 512 MiB or 1 GiB) limits the file size. The `LocalEngine` and gateway-restart round trips of the acceptance criteria run in phase 8.
 - Phase 7: done. `sessions-api.md` documents `models()`, prices, limits, `set_model`, `Session.run`, `Session.fork`, `export`, `restore` and `snapshot_info`. `extension-api.md` documents `vis.sessions`, `vis.run`, `vis.session`, `vis.council` and the access table. Subagent operations stay out of the published manual: `experimental-feature-docs-test` forbids them while Subagents is experimental. `http-api.md` has no route list, so it needs no change.
-- Phase 8: not started. The server is reachable through `uplink`; it has `vis-agent` and Java, but no `vis` binary yet.
+- Phase 8: run on the beta build of `672089ca8` (0.2.53) with a new database, route `openai-codex` / `gpt-5.6-luna`. The run found two bugs, fixed in `b8ddeef11` (a new gateway listed signed-in providers as unavailable) and `ab34021ca` (`deny` and `extend` refused a child request with `inactive-session`).
+  - Pass, with the session id: E1 `78cecc9e`, E2 `fee47c43`, E3 `e90d1231`, E4 `f86a9cc9`, E5 `d7f0b018`, E6 `5dac4944`, E7 `d8788499`, E9 `325a0d8d`, E10 `46c171f2`, E11 `c6b832c1`, E12 `c39885e0`, E13 `a848eb84`, E14 `5d82e7c3`, E15 `74c722d1`, E16 `5977f8d4`, E17 `161e6912`, E18 `e4f31596`.
+  - E8: `test-native/` covers it against the built image; the server run did not repeat it.
+  - E4 and E16 passed on the second run. On the first run the model answered "Acknowledged" without the task. E9 passed alone; in parallel, another test added a session to its count.
+  - E13: the SDK `council.resume` on an idle restored parent gives `inactive-session`. The resume works from a turn of the parent, like `spawn`.
+  - E19 is open: `model-not-allowed` works, but `create_session` with an unknown model creates the session. `server_test` keeps the model name free for the live catalog. Decide between the plan and that test.
+  - No secret value from the auth files, the gateway token or the registry is in the journals, logs or snapshots.
