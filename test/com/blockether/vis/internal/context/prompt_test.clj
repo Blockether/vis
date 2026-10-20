@@ -878,9 +878,9 @@
       ;; `ls` gains `is_ignored`, which lists gitignored entries. It lands at 12 183.
       ;; User report: the style rule named ASD-STE100 (Simplified Technical English), and Claude
       ;; Opus 5.5 wrote English and German notes in Polish turns. §7 names no standard now.
-      ;; 12.2k → 12.45k: `ls` pages long listings, so the rule names `limit` and `offset`
-      ;; and how to continue a capped page.
-      (expect (< (count text) 12450))
+      ;; 12.2k → 12.35k: `ls` pages long listings, so the rule names `limit` and `offset`.
+      ;; One rule states the paging that `ls` and `grep` share. It lands at 12 339.
+      (expect (< (count text) 12350))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows"
                          "`patch(path, edits, version)`"])]
@@ -1724,7 +1724,7 @@
          [(str
             "ls(paths='.', depth=1, is_hidden=False, *, hidden=None, is_ignored=False, pattern=None, "
             "as_paths=False, limit=250, offset=0)")
-          "A capped page names its next offset: `next(r)` continues, `r.all()` gives the rest and `limit=None` lists everything"
+          "`ls` and `grep` page a long result the same way"
           "`pattern` is a case-sensitive basename glob, not a regex"
           "It applies at each depth and keeps ancestors; a per-path spec overrides it"
           "takes a str, a Path or a list"
