@@ -1594,6 +1594,107 @@
                                                     v))))))))))
 
 (defdescribe
+  patch-shown-lines-test
+  ;; Regression: an edit named the newest version with line numbers from an older read.
+  ;; The lines had moved, so the edit wrote other lines without a refusal.
+  (it "refuses lines of a new version that its patch result did not show"
+      (let [rel
+            (write-temp! "patch/stale-lines.txt" "a\nb\nc\nd\ne\n")
+
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
+
+            after
+            (version-in (:result
+                          ((private-fn "patch-file!") rel [{"from" 2 "replace" "B1\nB2"}] shown)))
+
+            thrown
+            (refusal #((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] after))]
+
+        (expect (= :lines-not-shown (:reason (ex-data thrown))))
+        (expect (string/includes?
+                  (ex-message thrown)
+                  (str "no cat, grep or patch result showed lines 4..4 of @" after ".")))
+        (expect (= "a\nB1\nB2\nc\nd\ne\n" (slurp rel)))))
+  (it "keeps the written lines and the lines before the change usable at the new version"
+      (let [rel
+            (write-temp! "patch/kept-lines.txt" "a\nb\nc\nd\ne\n")
+
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
+
+            after
+            (version-in (:result
+                          ((private-fn "patch-file!") rel [{"from" 3 "replace" "C1\nC2"}] shown)))]
+
+        ((private-fn "patch-file!") rel [{"from" 1 "replace" "A"} {"from" 4 "replace" "C2!"}] after)
+        (expect (= "A\nb\nC1\nC2!\nd\ne\n" (slurp rel)))))
+  (it "keeps the old version usable: its lines move through the diff"
+      (let [rel
+            (write-temp! "patch/old-version.txt" "a\nb\nc\nd\ne\n")
+
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))]
+
+        ((private-fn "patch-file!") rel [{"from" 2 "replace" "B1\nB2"}] shown)
+        ((private-fn "patch-file!") rel [{"from" 4 "replace" "D"}] shown)
+        (expect (= "a\nB1\nB2\nc\nD\ne\n" (slurp rel)))))
+  (it "refuses lines outside the cat window of that version"
+      (let [rel
+            (write-temp! "patch/window.txt" "a\nb\nc\nd\n")
+
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel 1 2))
+
+            thrown
+            (refusal #((private-fn "patch-file!") rel [{"from" 2 "to" 3 "replace" "x"}] shown))]
+
+        (expect (= :lines-not-shown (:reason (ex-data thrown))))
+        ((private-fn "patch-file!") rel [{"from" 2 "replace" "B"}] shown)
+        (expect (= "a\nB\nc\nd\n" (slurp rel)))))
+  (it "limits a remapped patch result to its written lines"
+      (let [rel
+            (write-temp! "patch/remapped.txt" "a\nb\nc\nd\n")
+
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
+
+            _
+            (spit rel "new\na\nb\nc\nd\n")
+
+            after
+            (version-in (:result
+                          ((private-fn "patch-file!") rel [{"from" 2 "replace" "B"}] shown)))]
+
+        (expect (= :lines-not-shown
+                   (:reason (ex-data (refusal #((private-fn "patch-file!")
+                                                  rel
+                                                  [{"from" 4 "replace" "D"}]
+                                                  after))))))
+        (expect (= "new\na\nB\nc\nd\n" (slurp rel)))))
+  (it "applies concurrent patches of one file one after another, so no edit is lost"
+      (let [n
+            8
+
+            rel
+            (write-temp! "patch/concurrent.txt" (apply str (map #(str "line " % "\n") (range n))))
+
+            shown
+            (version-in ((comp :result (private-fn "cat-tool")) rel))
+
+            runs
+            (mapv (fn [i]
+                    (future (try ((private-fn "patch-file!")
+                                   rel
+                                   [{"from" (inc i) "replace" (str "LINE " i)}]
+                                   shown)
+                                 (catch Exception e e))))
+                  (range n))]
+
+        (expect (not-any? #(instance? Exception %) (map deref runs)))
+        (expect (= (apply str (map #(str "LINE " % "\n") (range n))) (slurp rel))))))
+
+(defdescribe
   patch-compact-refusal-test
   (it
     "reports argument and range failures without examples or echoed payloads"
@@ -2242,11 +2343,10 @@
         (expect (some? (line-at text 1)))
         (expect (= (version/content-version content) (version-in text)))
         (expect (not (string/includes? text "changed while grep ran")))
-        (expect (string/starts-with? (:result ((private-fn "patch-tool")
-                                                rel
-                                                [{"from" 2 "replace" "done"}]
-                                                (version-in text)))
-                                     "patched ")))))
+        (expect (string/starts-with?
+                  (:result
+                    ((private-fn "patch-tool") rel [{"from" 2 "replace" "done"}] (version-in text)))
+                  "patched ")))))
 
 (defdescribe read-activity-snapshot-test
              (it "keeps the read Activity summary-only without altering the numbered tool result"

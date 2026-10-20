@@ -54,6 +54,11 @@
      (str "patch refused — edits 1 and 2 overlap; nothing was written.\n"
           "  src/app.py: lines 10..14 and 12..18.")
 
+     unshown-refusal
+     (str "patch refused at edit 1 of 1 — nothing was written.\n"
+          "  src/app.py: no cat, grep or patch result showed lines 40..42 of @3f9a1c2b. "
+          "The file is now @3f9a1c2b.\n" "  cat(\"src/app.py\", 37, 45)")
+
      shape-refusal
      (str "patch refused — nothing was written.\n" "  src/app.py: edit 1/2 missing `replace`.")]
 
@@ -62,6 +67,10 @@
         (expect (str/includes? (advice :patch-lines-changed) "current version"))
         (expect (= :patch-version-invalid (classify unknown-refusal)))
         (expect (str/includes? (advice :patch-version-invalid) "`@` value")))
+    (it "classifies lines that the named version never showed"
+        (expect (= :patch-lines-not-shown (classify unshown-refusal)))
+        (expect (str/includes? (advice :patch-lines-not-shown)
+                               "version of the read that showed the lines")))
     ;; https://github.com/Blockether/vis/issues/265 - every refusal shares the
     ;; `patch refused` head, so the cause line under it picks the advice.
     (it "separates overlapping edits and unusable edit shapes from changed lines"

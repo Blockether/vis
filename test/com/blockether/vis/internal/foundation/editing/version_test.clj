@@ -85,3 +85,19 @@
             (version/edit-span content 2 3 "")]
 
         (expect (= "a\n" (str (subs content 0 start) replacement (subs content end)))))))
+
+(defdescribe shown-lines-test
+             (it "merges overlapping and adjacent ranges of one version"
+                 (version/forget-all!)
+                 (version/note-shown! "/tmp/shown.txt" "0000000a" [[5 7] [1 2] [3 4] [9 9]])
+                 (expect (= [[1 7] [9 9]] (version/shown-ranges "/tmp/shown.txt" "0000000a")))
+                 (expect (nil? (version/shown-ranges "/tmp/shown.txt" "0000000b"))))
+             (it "covers a span only when one range holds all of its lines"
+                 (expect (version/covers? [[1 7] [9 9]] 2 7))
+                 (expect (not (version/covers? [[1 7] [9 9]] 7 9)))
+                 (expect (not (version/covers? [] 1 1))))
+             (it "ignores empty and inverted ranges, and forget-all! drops the record"
+                 (version/note-shown! "/tmp/shown.txt" "0000000c" [[0 0] [3 2]])
+                 (expect (nil? (version/shown-ranges "/tmp/shown.txt" "0000000c")))
+                 (version/forget-all!)
+                 (expect (nil? (version/shown-ranges "/tmp/shown.txt" "0000000a")))))

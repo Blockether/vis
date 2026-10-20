@@ -448,6 +448,11 @@
   [^File f ^String content]
   (version/remember! (str (canonical-path f)) content))
 
+(defn- shown-lines!
+  "Record the inclusive `[from to]` line `ranges` of `version` of `f` that a result showed."
+  [^File f version ranges]
+  (version/note-shown! (str (canonical-path f)) version ranges))
+
 (defn- workspace-dir?
   "True when `f` lies inside the primary cwd or a real draft-clone mapping.
 
@@ -2493,11 +2498,19 @@
                     (try (safe-path path) (catch Exception _ nil))
 
                     content
-                    (when f (try (slurp f) (catch Exception _ nil)))]
+                    (when f (try (slurp f) (catch Exception _ nil)))
+
+                    tuples
+                    (grep-hit-tuples file-map)]
 
                 (cond (nil? content) acc
-                      (shows-content? (grep-hit-tuples file-map) content)
-                      (assoc-in acc [:versions path] (shown-version! f content))
+                      (shows-content? tuples content) (let [v (shown-version! f content)]
+                                                        (shown-lines! f
+                                                                      v
+                                                                      (map (fn [[ln]]
+                                                                             [ln ln])
+                                                                           tuples))
+                                                        (assoc-in acc [:versions path] v))
                       :else (update acc :changed conj path))))
             {:versions {} :changed []}
             (get out "matches"))))
@@ -3580,8 +3593,11 @@
         rel
         (rel-path f)
 
+        ver
+        (shown-version! f content)
+
         head
-        (version/header rel (shown-version! f content))
+        (version/header rel ver)
 
         lines
         (version/split-content-lines content)
@@ -3658,7 +3674,10 @@
                     (recur (inc i) next-total (conj acc row))))))
 
             shown
-            (count rendered)]
+            (count rendered)
+
+            _
+            (when (pos? shown) (shown-lines! f ver [[from-line (+ from-line shown -1)]]))]
 
         (if (zero? shown)
           (str "cat: line " from-line
@@ -3997,6 +4016,9 @@
                                       current-version
                                       (:from (first batch)))))
 
+        seen
+        (version/shown-ranges (str (canonical-path f)) shown-version)
+
         shown-lines
         (version/split-content-lines shown)
 
@@ -4008,6 +4030,20 @@
         (mapv
           (fn [{:keys [index from to replace] :as edit}]
             (patch-line-range! rel edit total (count shown-lines) shown-version)
+            (when (and seen (not (version/covers? seen from to)))
+              (patch-version-refusal! rel
+                                      :lines-not-shown
+                                      (str "no cat, grep or patch result showed lines "
+                                           from
+                                           ".."
+                                           to
+                                           " of @"
+                                           shown-version
+                                           ".")
+                                      current-version
+                                      from
+                                      index
+                                      total))
             (let [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
                   ^String new-text
                   (escapes/decode-unicode-escapes (str replace))
@@ -4077,7 +4113,8 @@
        :original original
        :resolved resolved
        :updated updated
-       :moved-from moved-from})))
+       :moved-from moved-from
+       :current-version current-version})))
 
 (defn- patch-output-rows
   "Locate each edit in the output, including the line delta from earlier edits."
@@ -4157,6 +4194,65 @@
                                (preview-for args (mapv meta args)))
                  :op/repair repair))))))
 
+(def ^:private patch-locks
+  "Striped monitors for `patch-file!`. Two patches of one file never both pass the check
+   before the write, so the second one plans over the result of the first one."
+  (vec (repeatedly 64 #(Object.))))
+
+(defn- patch-lock
+  "The monitor of `path`, chosen through its canonical path when the path resolves."
+  ^Object [path]
+  (let [k (try (str (canonical-path (safe-path path))) (catch Exception _ (str path)))]
+    (nth patch-locks (mod (hash k) (count patch-locks)))))
+
+(defn- patch-shown-ranges
+  "The lines that a patch result shows of the version that it writes: the written lines
+   of each edit, and the lines of `seen` that keep their number. A line after a change
+   of the line count moves, so the result does not show it at the new version."
+  [seen applied]
+  (let [written
+        (keep (fn [{:keys [new-from written]}]
+                (when (pos? (long written)) [new-from (+ (long new-from) (dec (long written)))]))
+              applied)
+
+        still
+        (loop [[{:keys [from-line to-line written]} & more :as rows]
+               (sort-by :from-line applied)
+
+               start
+               1
+
+               delta
+               0
+
+               acc
+               []]
+
+          (if (empty? rows)
+            (if (zero? delta) (conj acc [start Long/MAX_VALUE]) acc)
+            (recur more
+                   (inc (long to-line))
+                   (+ delta (- (long written) (inc (- (long to-line) (long from-line)))))
+                   (if (and (zero? delta) (< start (long from-line)))
+                     (conj acc [start (dec (long from-line))])
+                     acc))))]
+
+    (concat written
+            (for [[a b]
+                  seen
+
+                  [c d]
+                  still
+
+                  :let [lo
+                        (max (long a) (long c))
+
+                        hi
+                        (min (long b) (long d))]
+                  :when (<= lo hi)]
+
+              [lo hi]))))
+
 (defn- patch-file!
   "Every edit for ONE file, resolved against ONE read and applied in ONE
    write. Atomic for the FILE: every span resolves and every shape is checked
@@ -4167,79 +4263,75 @@
    move mid-batch. The answer is the status line with the new version and one row
    per edit with its lines AFTER the write."
   [path edits version]
-  (let [{^File f :file :keys [rel total original resolved updated repair-notes moved-from]}
-        (patch-plan path edits version)
+  (let [lock (patch-lock path)]
+    (locking lock
+      (let [{^File f :file
+             :keys [rel total original resolved updated repair-notes moved-from current-version]}
+            (patch-plan path edits version)
+            applied (patch-output-rows original resolved)
+            ;; What actually reaches disk. Every version, count and diff below is taken
+            ;; from THIS.
+            ^String written-content updated
+            ;; `cat`'s gutter is an ADDRESS, not text. A replacement that carries one is a
+            ;; copied read, and it lands in the file verbatim — say so on the status line
+            ;; rather than refuse, because our own docs quote sample `cat` output.
+            gutter-clause (when (some (fn [{:keys [new-text]}]
+                                        (some (fn [l]
+                                                (re-find #"^\s*\d+│ " (str l)))
+                                              (version/split-content-lines new-text)))
+                                      resolved)
+                            "  note: a replacement carries a `line│ ` gutter, written verbatim")
+            moved-clause (when moved-from
+                           (str "  note: moved from @" moved-from " over changes elsewhere"))
+            _ (when-not (= original (slurp f))
+                (patch-refusal!
+                  rel
+                  {:reason :source-changed}
+                  ["The file changed before the write. Read it again before retrying."]))
+            failure (atomic-replace! f rel written-content)]
 
-        applied
-        (patch-output-rows original resolved)
+        (if failure
+          (throw (ex-info (str "patch refused — nothing was written.\n  " (:message failure))
+                          {:type :ext.foundation.editing/patch-refused
+                           :reason (:reason failure)
+                           :path rel}))
+          (let [_ (fff-index/note-fs-write! f)
+                new-lines (version/split-content-lines written-content)
+                new-version (shown-version! f written-content)
+                ;; Without a record, the read showed all lines, as before a restart. A remap
+                ;; or a repair shows only the written lines.
+                seen (if (and current-version (not moved-from))
+                       (or (version/shown-ranges (str (canonical-path f)) current-version)
+                           [[1 Long/MAX_VALUE]])
+                       [])
+                _ (shown-lines! f new-version (patch-shown-ranges seen applied))]
 
-        ;; What actually reaches disk. Every version, count and diff below is taken
-        ;; from THIS.
-        ^String written-content
-        updated
-
-        ;; `cat`'s gutter is an ADDRESS, not text. A replacement that carries one is a
-        ;; copied read, and it lands in the file verbatim — say so on the status line
-        ;; rather than refuse, because our own docs quote sample `cat` output.
-        gutter-clause
-        (when (some (fn [{:keys [new-text]}]
-                      (some (fn [l]
-                              (re-find #"^\s*\d+│ " (str l)))
-                            (version/split-content-lines new-text)))
-                    resolved)
-          "  note: a replacement carries a `line│ ` gutter, written verbatim")
-
-        moved-clause
-        (when moved-from (str "  note: moved from @" moved-from " over changes elsewhere"))
-
-        _
-        (when-not (= original (slurp f))
-          (patch-refusal! rel
-                          {:reason :source-changed}
-                          ["The file changed before the write. Read it again before retrying."]))
-
-        failure
-        (atomic-replace! f rel written-content)]
-
-    (if failure
-      (throw (ex-info
-               (str "patch refused — nothing was written.\n  " (:message failure))
-               {:type :ext.foundation.editing/patch-refused :reason (:reason failure) :path rel}))
-      (let [_
-            (fff-index/note-fs-write! f)
-
-            new-lines
-            (version/split-content-lines written-content)
-
-            new-version
-            (shown-version! f written-content)]
-
-        (tool-success
-          {:op :patch
-           :path rel
-           :kind :file
-           :result (str (patch-status-line rel
-                                           new-version
-                                           total
-                                           (count (version/split-content-lines original))
-                                           (count new-lines)
-                                           (str moved-clause gutter-clause))
-                        "\n"
-                        (str/join "\n" (patch-edit-rows applied))
-                        (when (seq repair-notes)
-                          (str "\nAuto-repair: " (str/join " " repair-notes))))
-           ;; The unified diff is METADATA, not payload: the human channel can
-           ;; render the write in full while the model pays only for the new
-           ;; version and lines it will actually spend.
-           :metadata {:mode :patch
-                      :file-count 1
-                      :changed-count (if (= original written-content) 0 1)
-                      :edit-count total
-                      :from-line (reduce min (map :from-line resolved))
-                      :to-line (reduce max (map :to-line resolved))
-                      :diff (diff/unified-diff-text original written-content)
-                      :lines (diff/line-change-counts original written-content)
-                      :file-befores [{:path rel :before original}]}})))))
+            (tool-success
+              {:op :patch
+               :path rel
+               :kind :file
+               :result (str (patch-status-line rel
+                                               new-version
+                                               total
+                                               (count (version/split-content-lines original))
+                                               (count new-lines)
+                                               (str moved-clause gutter-clause))
+                            "\n"
+                            (str/join "\n" (patch-edit-rows applied))
+                            (when (seq repair-notes)
+                              (str "\nAuto-repair: " (str/join " " repair-notes))))
+               ;; The unified diff is METADATA, not payload: the human channel can
+               ;; render the write in full while the model pays only for the new
+               ;; version and lines it will actually spend.
+               :metadata {:mode :patch
+                          :file-count 1
+                          :changed-count (if (= original written-content) 0 1)
+                          :edit-count total
+                          :from-line (reduce min (map :from-line resolved))
+                          :to-line (reduce max (map :to-line resolved))
+                          :diff (diff/unified-diff-text original written-content)
+                          :lines (diff/line-change-counts original written-content)
+                          :file-befores [{:path rel :before original}]}})))))))
 
 (defn- patch-tool
   "patch — every edit for ONE file, applied atomically in ONE write.
@@ -4295,8 +4387,9 @@
      (str
        "A plain string. The first line gives the path, its NEW version, the edit count and the line "
        "count before → after. Then comes one row per edit: the lines it replaced and the lines it "
-       "fills after the write. The next patch of this file can use the new version and those lines "
-       "without a cat.")
+        "fills after the write. The next patch of this file can use the new version with those lines. "
+        "Lines above the first change of the line count keep their numbers too. For other lines, use "
+        "the version of your read or read again.")
      :description
      (str
        "Apply all edits for one file in one atomic write. Use it to replace lines, rewrite a "
@@ -4308,7 +4401,8 @@
        "one-line edit, and `replace: \"\"` deletes the lines. You can list the edits in any order, "
        "because they all apply to one read. Do not repeat the text that you replace.\n\n"
        "If the file changed elsewhere after your read, patch moves each edit to its new lines. If "
-       "the lines of an edit changed, patch refuses. The write is atomic: a refused edit or an "
+       "the lines of an edit changed, patch refuses. It also refuses lines that no `cat`, `grep` or "
+       "`patch` result of that version showed. The write is atomic: a refused edit or an "
        "overlap refuses the WHOLE batch and writes NOTHING. The refusal gives the current version "
        "and a `cat` window to read again.")
      :call {:pos ["path" "edits" "version"]}

@@ -11,6 +11,7 @@
      content-version / parse-version             text -> version, input -> version
      render-numbered-block / header              [[ln text]…] -> `N│ text` rows
      remember! / recall                          bounded cache of shown versions
+     note-shown! / shown-ranges / covers?        the lines that each version showed
      edit-span                                   line span -> char span
 
    Everything is pure except the cache. The cache holds the text of each version
@@ -146,9 +147,70 @@
   [path version]
   (get-in @store [:texts (store-key path version)]))
 
+;; The lines that each version showed
+
+(def ^:private ^:const shown-max-keys
+  "File versions whose shown lines the cache keeps before it drops the oldest."
+  4096)
+
+(defonce ^:private shown-store (atom {:lines {} :order clojure.lang.PersistentQueue/EMPTY}))
+
+(defn- merge-ranges
+  "Sorted, disjoint inclusive `[from to]` ranges that cover `ranges`. Adjacent ranges join."
+  [ranges]
+  (reduce (fn [acc [from to]]
+            (let [[prev-from prev-to] (peek acc)]
+              (if (and prev-to (<= (long from) (inc (long prev-to))))
+                (conj (pop acc) [prev-from (max (long prev-to) (long to))])
+                (conj acc [(long from) (long to)]))))
+          []
+          (sort-by first ranges)))
+
+(defn note-shown!
+  "Record that a `cat`, `grep` or `patch` result showed `ranges` (inclusive `[from to]`
+   line pairs) of `version` of the file at canonical `path`. The record is for the
+   whole process, like the text cache."
+  [path version ranges]
+  (let [ranges
+        (filter (fn [[from to]]
+                  (<= 1 (long from) (long to)))
+                ranges)
+
+        k
+        (store-key path version)]
+
+    (when (seq ranges)
+      (swap! shown-store (fn [{:keys [lines] :as state}]
+                           (let [state
+                                 (if (contains? lines k)
+                                   (update-in state [:lines k] #(merge-ranges (concat % ranges)))
+                                   (-> state
+                                       (assoc-in [:lines k] (merge-ranges ranges))
+                                       (update :order conj k)))]
+                             (if (> (count (:order state)) (long shown-max-keys))
+                               (-> state
+                                   (update :lines dissoc (peek (:order state)))
+                                   (update :order pop))
+                               state)))))
+    nil))
+
+(defn shown-ranges
+  "The merged line ranges that results showed of `version` of the file at canonical
+   `path`, or nil when no result recorded one."
+  [path version]
+  (get-in @shown-store [:lines (store-key path version)]))
+
+(defn covers?
+  "Whether merged `ranges` hold every line of `from`..`to`."
+  [ranges from to]
+  (boolean (some (fn [[a b]]
+                   (<= (long a) (long from) (long to) (long b)))
+                 ranges)))
+
 (defn forget-all!
-  "Empty the cache. Tests use it to model a version that the host no longer knows."
+  "Empty the caches. Tests use it to model a version that the host no longer knows."
   []
+  (reset! shown-store {:lines {} :order clojure.lang.PersistentQueue/EMPTY})
   (reset! store {:texts {} :order clojure.lang.PersistentQueue/EMPTY :chars 0}))
 
 ;; Line span -> char span
