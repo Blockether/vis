@@ -2100,7 +2100,48 @@
         @holder
         (expect (nil? @writer)))
       (expect (= {:provider "fixture" :model "large"}
-                 (persistance/db-get-session-model-pref s sid))))))
+                 (persistance/db-get-session-model-pref s sid)))))
+  ;; Regression: a second environment over an open memory store read without the
+  ;; statement lock. A read that met a running write failed with SQLITE_LOCKED, and
+  ;; read_session showed a running turn without iterations.
+  (it
+    "makes a read through a wrapped memory store wait for a running Vis write"
+    (let [s
+          (h/store)
+
+          wrapped
+          (persistance/db-create-connection! s)
+
+          sid
+          (str (h/store-session! s {:channel :cli}))
+
+          write-tx!
+          (private-core-fn "sqlite-write-tx!")
+
+          held
+          (CountDownLatch. 1)
+
+          release
+          (CountDownLatch. 1)
+
+          holder
+          (future (write-tx! s
+                             (fn [tx]
+                               (jdbc/execute! (:datasource tx)
+                                              (sql/format {:update :session_state
+                                                           :set {:title "held"}
+                                                           :where [:= :session_soul_id sid]}))
+                               (.countDown held)
+                               (.await release 5 TimeUnit/SECONDS))))]
+
+      (expect (true? (.await held 5 TimeUnit/SECONDS)))
+      (let [reader (future (try (:title (persistance/db-get-session wrapped sid))
+                                (catch Throwable t t)))]
+        ;; Give the reader time to meet the held store before the holder commits.
+        (Thread/sleep 200)
+        (.countDown release)
+        @holder
+        (expect (= "held" @reader))))))
 
 ;; Session
 

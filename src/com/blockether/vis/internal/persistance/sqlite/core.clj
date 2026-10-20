@@ -949,16 +949,18 @@
                                                       :owned? true
                                                       :mode :persistent))
           (map? db-spec)
-          (cond (or (:datasource db-spec) (:conn db-spec)) (let [ds (or (:datasource db-spec)
-                                                                        (:conn db-spec))]
-                                                             (install-schema! ds)
-                                                             {:datasource ds
-                                                              :conn ds
-                                                              :path nil
-                                                              :db-file nil
-                                                              :backend :sqlite
-                                                              :owned? false
-                                                              :mode :external})
+          (cond (or (:datasource db-spec) (:conn db-spec))
+                (let [ds (or (:datasource db-spec) (:conn db-spec))]
+                  (install-schema! ds)
+                  {:datasource ds
+                   :conn ds
+                   :path nil
+                   :db-file nil
+                   :backend :sqlite
+                   :owned? false
+                   ;; A wrapped shared-cache memory store keeps its
+                   ;; mode, so its reads take the statement lock too.
+                   :mode (if (= :memory (:mode db-spec)) :memory :external)})
                 (:path db-spec) (with-file-key-snapshot (assoc (open-sqlite-at-dir (:path db-spec))
                                                           :owned? true
                                                           :mode :persistent))
