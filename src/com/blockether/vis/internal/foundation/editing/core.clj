@@ -2461,17 +2461,62 @@
                     (get out "hint")
                     (conj (get out "hint"))))))))
 
+(defn- shows-content?
+  "True when every numbered row that grep shows for one file is that line of
+   `content`. A CR is compared away: rows render without it."
+  [tuples ^String content]
+  (let [lines
+        (version/split-content-lines content)
+
+        bare
+        #(str/replace (str %) #"\r$" "")]
+
+    (every? (fn [[ln text]]
+              (let [i (dec (long ln))]
+                (and (< -1 i (count lines)) (= (bare text) (bare (nth lines i))))))
+            tuples)))
+
 (defn- grep-versions
-  "`{path version}` for each file whose lines a grep page shows. The text is read
-   again here and remembered, so a later `patch` can name that version."
+  "`{path version}` for each file whose lines a grep page shows, and the paths that
+   changed while grep ran. The text is read again here and remembered, so a later
+   `patch` can name that version. A file whose shown rows differ from that text
+   changed after the search: it gets no version, because a patch on the new version
+   with the old line numbers would edit other lines."
   [out]
-  (when-not (get out "is_files_only")
-    (into {}
-          (keep (fn [path]
-                  (try (let [f (safe-path path)]
-                         [path (shown-version! f (slurp f))])
-                       (catch Exception _ nil))))
-          (map str (keys (get out "matches"))))))
+  (if (get out "is_files_only")
+    {:versions {} :changed []}
+    (reduce (fn [acc [path file-map]]
+              (let [path
+                    (str path)
+
+                    f
+                    (try (safe-path path) (catch Exception _ nil))
+
+                    content
+                    (when f (try (slurp f) (catch Exception _ nil)))]
+
+                (cond (nil? content) acc
+                      (shows-content? (grep-hit-tuples file-map) content)
+                      (assoc-in acc [:versions path] (shown-version! f content))
+                      :else (update acc :changed conj path))))
+            {:versions {} :changed []}
+            (get out "matches"))))
+
+(defn- with-grep-versions
+  "`out` with the versions of its shown files, and a hint for each file that
+   changed while grep ran."
+  [out]
+  (let [{:keys [versions changed]}
+        (grep-versions out)
+
+        note
+        (when (seq changed)
+          (str (str/join ", " changed)
+               " changed while grep ran, so its rows have no version. `cat` it before `patch`."))]
+
+    (cond-> (assoc out "versions" versions)
+      note
+      (assoc "hint" (str/join " " (remove str/blank? [note (get out "hint")]))))))
 
 (defn- grep-tool
   "grep — literal smart-case CONTENT search plus fuzzy file-NAME matching, in ONE
@@ -2498,7 +2543,7 @@
     (tool-success {:op :grep
                    :path (first searched_paths)
                    :kind :dir
-                   :result (render-grep-text (assoc out "versions" (grep-versions out)))
+                   :result (render-grep-text (with-grep-versions out))
                    :metadata {:query (get out "query")
                               :paths searched_paths
                               :limit (get out "limit")

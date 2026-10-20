@@ -2119,85 +2119,134 @@
                      " \"is_files_only\": True for every file with its hit count")
                    head)))))
 
-(defdescribe a-grep-hit-feeds-patch-test
-             ;; The point of the whole scheme: search, then edit, with NO read between.
-             (it "a hit's line number and its header version feed patch directly"
-                 (let [d
-                       (temp-dir-path "grepline")
+(defdescribe
+  a-grep-hit-feeds-patch-test
+  ;; The point of the whole scheme: search, then edit, with NO read between.
+  (it "a hit's line number and its header version feed patch directly"
+      (let [d
+            (temp-dir-path "grepline")
 
+            rel
+            (write-temp! "grepline/target.txt" "keep\nZZHITZZ line\nkeep\n")
+
+            grep-out
+            (:result ((private-fn "grep-tool") {"query" "ZZHITZZ" "paths" [d]}))
+
+            hit-row
+            (->> (string/split-lines grep-out)
+                 ;; Default context rows are numbered too; select the hit itself.
+                 (filter #(string/includes? % "│ ZZHITZZ line"))
+                 first)
+
+            line
+            (parse-long (string/trim (first (string/split hit-row #"│ "))))
+
+            out
+            (:result ((private-fn "patch-tool")
                        rel
-                       (write-temp! "grepline/target.txt" "keep\nZZHITZZ line\nkeep\n")
+                       [{"from" line "replace" "replaced"}]
+                       (version-in grep-out)))]
 
-                       grep-out
-                       (:result ((private-fn "grep-tool") {"query" "ZZHITZZ" "paths" [d]}))
+        (expect (= 2 line))
+        (expect (= (version/content-version "keep\nZZHITZZ line\nkeep\n") (version-in grep-out)))
+        (expect (string/starts-with? out "patched "))
+        (expect (= "keep\nreplaced\nkeep\n" (slurp rel)))))
+  (it "a grep version still lands after an edit elsewhere in the file"
+      (let [d
+            (temp-dir-path "greplinemoved")
 
-                       hit-row
-                       (->> (string/split-lines grep-out)
-                            ;; Default context rows are numbered too; select the hit itself.
-                            (filter #(string/includes? % "│ ZZHITZZ line"))
-                            first)
+            rel
+            (write-temp! "greplinemoved/target.txt" "keep\nZZMOVEZZ line\nkeep\n")
 
-                       line
-                       (parse-long (string/trim (first (string/split hit-row #"│ "))))
+            grep-out
+            (:result ((private-fn "grep-tool") {"query" "ZZMOVEZZ" "paths" [d]}))
 
-                       out
-                       (:result ((private-fn "patch-tool")
-                                  rel
-                                  [{"from" line "replace" "replaced"}]
-                                  (version-in grep-out)))]
+            _
+            (spit rel (str "added\n" (slurp rel)))
 
-                   (expect (= 2 line))
-                   (expect (= (version/content-version "keep\nZZHITZZ line\nkeep\n")
-                              (version-in grep-out)))
-                   (expect (string/starts-with? out "patched "))
-                   (expect (= "keep\nreplaced\nkeep\n" (slurp rel)))))
-             (it "a grep version still lands after an edit elsewhere in the file"
-                 (let [d
-                       (temp-dir-path "greplinemoved")
-
+            out
+            (:result ((private-fn "patch-tool")
                        rel
-                       (write-temp! "greplinemoved/target.txt" "keep\nZZMOVEZZ line\nkeep\n")
+                       [{"from" 2 "replace" "replaced"}]
+                       (version-in grep-out)))]
 
-                       grep-out
-                       (:result ((private-fn "grep-tool") {"query" "ZZMOVEZZ" "paths" [d]}))
+        (expect (string/includes? out "moved from @"))
+        (expect (= "added\nkeep\nreplaced\nkeep\n" (slurp rel)))))
+  ;; Regression (session fbb1093f): a row pasted WHOLE — the form these tools
+  ;; print — was refused. The line number at its start is the address.
+  (it "a whole hit row — indent, gutter, text and all — feeds patch too"
+      (let [d
+            (temp-dir-path "greplinewhole")
 
-                       _
-                       (spit rel (str "added\n" (slurp rel)))
+            rel
+            (write-temp! "greplinewhole/target.txt" "keep\nZZWHOLEZZ LINE\nkeep\n")
 
-                       out
-                       (:result ((private-fn "patch-tool")
-                                  rel
-                                  [{"from" 2 "replace" "replaced"}]
-                                  (version-in grep-out)))]
+            grep-out
+            (:result ((private-fn "grep-tool") {"query" "ZZWHOLEZZ" "paths" [d]}))
 
-                   (expect (string/includes? out "moved from @"))
-                   (expect (= "added\nkeep\nreplaced\nkeep\n" (slurp rel)))))
-             ;; Regression (session fbb1093f): a row pasted WHOLE — the form these tools
-             ;; print — was refused. The line number at its start is the address.
-             (it "a whole hit row — indent, gutter, text and all — feeds patch too"
-                 (let [d
-                       (temp-dir-path "greplinewhole")
+            hit-row
+            (->> (string/split-lines grep-out)
+                 (filter #(string/includes? % "│ ZZWHOLEZZ LINE"))
+                 first)
 
+            out
+            (:result ((private-fn "patch-tool")
                        rel
-                       (write-temp! "greplinewhole/target.txt" "keep\nZZWHOLEZZ LINE\nkeep\n")
+                       [{"from" hit-row "to" hit-row "replace" "replaced"}]
+                       (version-in grep-out)))]
 
-                       grep-out
-                       (:result ((private-fn "grep-tool") {"query" "ZZWHOLEZZ" "paths" [d]}))
+        (expect (string/includes? hit-row "│ ZZWHOLEZZ LINE"))
+        (expect (string/starts-with? out "patched "))
+        (expect (= "keep\nreplaced\nkeep\n" (slurp rel)))))
+  ;; A write between the search and the version read must not pair the new
+  ;; version with the old rows: patch trusts an unchanged version and would
+  ;; edit the wrong line without a word.
+  (it "a file that changes during the search gets no version"
+      (let [d
+            (temp-dir-path "greplinerace")
 
-                       hit-row
-                       (->> (string/split-lines grep-out)
-                            (filter #(string/includes? % "│ ZZWHOLEZZ LINE"))
-                            first)
+            rel
+            (write-temp! "greplinerace/target.txt" "keep\nZZRACEZZ line\nkeep\n")
 
-                       out
-                       (:result ((private-fn "patch-tool")
-                                  rel
-                                  [{"from" hit-row "to" hit-row "replace" "replaced"}]
-                                  (version-in grep-out)))]
+            search
+            (private-fn "grep-data")
 
-                   (expect (string/includes? hit-row "│ ZZWHOLEZZ LINE"))
-                   (expect (string/starts-with? out "patched "))
-                   (expect (= "keep\nreplaced\nkeep\n" (slurp rel))))))
+            grep-out
+            (with-redefs-fn {(private-var "grep-data") (fn [& args]
+                                                         (let [out (apply search args)]
+                                                           (spit rel (str "inserted\n" (slurp rel)))
+                                                           out))}
+              #((private-fn "grep-tool") {"query" "ZZRACEZZ" "paths" [d]}))
+
+            text
+            (:result grep-out)]
+
+        (expect (some? (line-at text 2)))
+        (expect (nil? (version-in text)))
+        (expect (string/includes? text "changed while grep ran"))))
+  ;; The row check compares lines without their CR: a CRLF file that did not change
+  ;; keeps its version, with context rows on both sides of the hit.
+  (it "an unchanged CRLF file keeps its version"
+      (let [d
+            (temp-dir-path "greplinecrlf")
+
+            content
+            "keep\r\nZZCRLFZZ line\r\nkeep\r\n"
+
+            rel
+            (write-temp! "greplinecrlf/target.txt" content)
+
+            text
+            (:result ((private-fn "grep-tool") {"query" "ZZCRLFZZ" "paths" [d] "context" 1}))]
+
+        (expect (some? (line-at text 1)))
+        (expect (= (version/content-version content) (version-in text)))
+        (expect (not (string/includes? text "changed while grep ran")))
+        (expect (string/starts-with? (:result ((private-fn "patch-tool")
+                                                rel
+                                                [{"from" 2 "replace" "done"}]
+                                                (version-in text)))
+                                     "patched ")))))
 
 (defdescribe read-activity-snapshot-test
              (it "keeps the read Activity summary-only without altering the numbered tool result"
