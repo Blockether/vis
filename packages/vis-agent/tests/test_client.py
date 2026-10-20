@@ -703,13 +703,18 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         "pending_input": False,
         "usage": None,
     }
+    record = {"session_id": "child", "status": "completed", "answer": "Done"}
 
     def council_response(method, path, _body):
         route = path.split("?")[0]
         if route.endswith("/council"):
             return 200, {"default_group_id": "G", "activation_id": "active"}
         if "/agents" in route:
-            return 200, [child] if method == "GET" else child
+            if method == "GET":
+                return 200, [child]
+            if route.endswith("/agents") or route.endswith("/route"):
+                return 200, child
+            return 200, [record]
         if route.endswith("/members"):
             return 200, []
         if route.endswith("/1") or method == "POST":
@@ -724,9 +729,15 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.get(1)
         council.publish("Entry", kind="informational")
         council.wake("Finished", kind="informational")
-        council.publish_spawn("Check the contract")
+        council.spawn("Check the contract")
         council.subagents()
+        council.run(["Check the contract"], timeout_secs=1)
+        council.wait(["child"], timeout_secs=1)
         council.cancel("child")
+        council.resume("child", "Check again", timeout_secs=1)
+        council.extend("child", 5)
+        council.deny("child", "Not now")
+        council.grant("child", {"read_only": ["/tmp/x"]})
         council.route("small", provider="fixture")
         seen.update(
             (

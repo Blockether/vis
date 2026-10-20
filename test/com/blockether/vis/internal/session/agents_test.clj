@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.session.agents-test
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.session.agents :as agents]
@@ -829,6 +830,12 @@
                                                          (assoc opts :task "Different task"))
                               nil
                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+              ;; #405: a caller key names one delegation across parent turns.
+              (ps/db-store-session-turn!
+                db
+                {:parent-session-id leader :user-request "Next parent task" :status :running})
+              (expect (= sid (:session_id (gateway/agents-operation! leader :spawn opts))))
+              (expect (= [sid] @launches))
               ;; A child on any model gets the handoff, and the spawn takes no context option.
               (let [other {:task "Review on another model" :provider "p" :model "large"}
                     task-child (:session_id (gateway/agents-operation! leader :spawn other))]
@@ -850,10 +857,12 @@
                   (expect (nil? (:read_only files)))
                   ;; council.grant adds rules, keeps the old ones and replaces the live jail.
                   (pj/own-grants! owner ::live-env)
-                  (try (let [granted (gateway/agents-operation! leader
-                                                                :grant
-                                                                {:session_id owner
-                                                                 :files {:write ["docs/**"]}})]
+                  (try (let [granted (-> (gateway/agents-operation! leader
+                                                                    :grant
+                                                                    {:session_id owner
+                                                                     :files {:write ["docs/**"]}})
+                                         first
+                                         walk/keywordize-keys)]
                          (expect (= [(first (:write files))
                                      (str/replace (first (:write files)) "src/owner/**" "docs/**")]
                                     (get-in granted [:files :write])))
@@ -927,7 +936,8 @@
 
                   (expect (= 3 (count (filter #(str/includes? % hint) delegated))))))
               (expect (= "cancelled"
-                         (:status (gateway/agents-operation! leader :cancel {:session_id sid}))))
+                         (get (first (gateway/agents-operation! leader :cancel {:session_id sid}))
+                              "status")))
               (expect (not (agents/claim-iteration! {:db-info db :session-id sid})))
               (expect (= "cancelled" (:status (agents/info db sid))))
               (expect (= "Subagent stopped: it is cancelled."

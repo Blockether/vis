@@ -559,7 +559,7 @@
 
       (try
         (with-redefs
-          [agents/operation!
+          [agents/runtime-op!
            (fn [host op opts]
              (swap! calls conj [(:session-id host) op opts])
              {:session_id (str "child-" (count @calls))})
@@ -598,7 +598,7 @@
                        (atom 0)]
 
                    (try
-                     (with-redefs [agents/operation!
+                     (with-redefs [agents/runtime-op!
                                    (fn [host _ _]
                                      (swap! routes conj (:route (ctx-loop/read-turn-state host)))
                                      {:session_id "child-1"})

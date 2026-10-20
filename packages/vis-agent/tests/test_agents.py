@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from blockether.vis.engine import Council, GatewayClient, Subagent
+from blockether.vis.engine import Council, GatewayClient, Subagent, SubagentRecord
 from test_client import compatible, endpoint
 
 CHILD = {
@@ -37,11 +37,22 @@ def test_council_is_the_only_public_team_api():
     assert "Agents" not in engine.__all__
     assert not hasattr(engine, "Agents")
     assert not hasattr(engine.Session, "agents")
-    assert not hasattr(Council, "spawn")
+    assert not hasattr(Council, "publish_spawn")
     assert not hasattr(Council, "list")
     assert all(
         callable(getattr(Council, operation))
-        for operation in ("publish_spawn", "subagents", "cancel", "route")
+        for operation in (
+            "spawn",
+            "subagents",
+            "run",
+            "wait",
+            "cancel",
+            "resume",
+            "extend",
+            "deny",
+            "grant",
+            "route",
+        )
     )
 
 
@@ -51,12 +62,12 @@ def test_managed_team_transport():
             return result
         if path.endswith("/agents"):
             return 200, [CHILD] if method == "GET" else CHILD
-        return 200, {"session_id": "child", "status": "cancelled"}
+        return 200, [{"session_id": "child", "status": "cancelled"}]
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         team = client.session("leader").council()
         assert isinstance(team, Council)
-        child = team.publish_spawn(
+        child = team.spawn(
             "Check the contract",
             provider="p",
             model="small",
@@ -70,7 +81,7 @@ def test_managed_team_transport():
         assert child.pending_input and child.usage == {"cost_usd": 0.02}
         assert team.subagents() == (child,)
         team.route("small", provider="p", session_id=child.session_id)
-        assert team.cancel(child.session_id)["status"] == "cancelled"
+        assert team.cancel(child.session_id).status == "cancelled"
         requests = [
             (method, path, json.loads(body) if body else None)
             for method, path, _, body in calls
@@ -100,6 +111,82 @@ def test_managed_team_transport():
         ]
 
 
+def test_child_controls_answer_records_and_wait_longer_than_the_gateway():
+    asking = {
+        "session_id": "child",
+        "status": "asking",
+        "question": "May I write docs?",
+        "question_entry_id": 7,
+        "files_request": {"files": {"write": ["docs/**"]}, "reason": "Docs"},
+        "iteration_budget": 4,
+        "iterations_used": 2,
+    }
+
+    def respond(method, path, body):
+        if result := council_compatible(method, path, body):
+            return result
+        return 200, [asking]
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        session = client.session("leader")
+        timeouts = []
+        request = client._request
+
+        def spy(*args, **kwargs):
+            timeouts.append(kwargs.get("timeout"))
+            return request(*args, **kwargs)
+
+        client._request = spy
+        team = session.council()
+        timeouts.clear()
+        records = team.run(["Check", {"task": "Docs", "files": {"write": ["docs/**"]}}])
+        assert records == (SubagentRecord.from_wire(asking),)
+        assert records[0].files_request["reason"] == "Docs"
+        assert team.wait(["child"], timeout_secs=5)[0].status == "asking"
+        assert team.wait()[0].question_entry_id == 7
+        assert team.resume("child", "More", timeout_secs=60).session_id == "child"
+        assert isinstance(team.extend("child", 5), SubagentRecord)
+        assert team.deny("child", "Not now").status == "asking"
+        assert team.grant("child", {"write": ["docs/**"]}).iterations_used == 2
+        assert timeouts == [270, 35, 270, 90, None, None, None]
+        requests = [
+            (path.removeprefix("/v1/sessions/leader/agents"), json.loads(body))
+            for method, path, _, body in calls
+            if "/agents" in path
+        ]
+        assert requests == [
+            (
+                "/run",
+                {
+                    "tasks": [
+                        "Check",
+                        {"task": "Docs", "files": {"write": ["docs/**"]}},
+                    ],
+                    "timeout_secs": 240,
+                },
+            ),
+            ("/wait", {"session_ids": ["child"], "timeout_secs": 5}),
+            ("/wait", {"timeout_secs": 240}),
+            ("/resume", {"session_id": "child", "task": "More", "timeout_secs": 60}),
+            ("/extend", {"session_id": "child", "iterations": 5}),
+            ("/deny", {"session_id": "child", "reason": "Not now"}),
+            ("/grant", {"session_id": "child", "files": {"write": ["docs/**"]}}),
+        ]
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"status": "completed"},
+        {"session_id": "child", "status": "invented"},
+        {"session_id": "child", "status": "completed", "future_field": 1},
+    ],
+)
+def test_child_record_response_is_validated(record):
+    with pytest.raises(ValueError):
+        SubagentRecord.from_wire(record)
+
+
 @pytest.mark.parametrize("code", ["disabled", "group-not-found"])
 def test_unavailable_council_binding_does_not_block_team_controls(code):
     from blockether.vis.engine import GatewayError
@@ -111,14 +198,14 @@ def test_unavailable_council_binding_does_not_block_team_controls(code):
             return 403, {"error": {"type": code, "message": "Unavailable binding"}}
         if path.endswith("/agents"):
             return 200, [CHILD] if method == "GET" else CHILD
-        return 200, {"session_id": "child", "status": "cancelled"}
+        return 200, [{"session_id": "child", "status": "cancelled"}]
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         team = client.session("leader").council()
         assert team.subagents() == (Subagent.from_wire(CHILD),)
         team.cancel("child")
         team.route("small", provider="p")
-        team.publish_spawn("Check the contract")
+        team.spawn("Check the contract")
         for communicate in (
             lambda: team.group_id,
             team.members,
@@ -176,7 +263,7 @@ def test_group_members_are_not_the_managed_team():
 def test_spawn_rejects_invalid_input_before_http(opts):
     with endpoint(council_compatible) as (url, calls), GatewayClient(url) as client:
         with pytest.raises(ValueError):
-            client.session("leader").council().publish_spawn(**opts)
+            client.session("leader").council().spawn(**opts)
         assert not any("/agents" in path for _, path, _, _ in calls)
 
 
@@ -208,12 +295,22 @@ def test_team_and_child_fields_are_frozen():
         ("route", {"model": "", "provider": "p"}),
         ("route", {"model": "small", "provider": ""}),
         ("route", {"model": "small", "provider": "p", "session_id": ""}),
-        ("publish_spawn", {"task": "x", "provider": "p"}),
-        ("publish_spawn", {"task": "x", "iteration_budget": True}),
-        ("publish_spawn", {"task": "x", "key": ""}),
-        ("publish_spawn", {"task": "x", "allowed_models": [{"model": "small"}]}),
+        ("run", {"tasks": []}),
+        ("run", {"tasks": ["x"], "timeout_secs": 0}),
+        ("run", {"tasks": [{"task": "x", "key": "k"}]}),
+        ("wait", {"session_ids": ["a", "a"]}),
+        ("wait", {"timeout_secs": 1801}),
+        ("resume", {"session_id": "child", "task": " "}),
+        ("extend", {"session_id": "child", "iterations": 0}),
+        ("extend", {"session_id": "child", "iterations": 601}),
+        ("deny", {"session_id": "child", "reason": ""}),
+        ("grant", {"session_id": "child", "files": {}}),
+        ("spawn", {"task": "x", "provider": "p"}),
+        ("spawn", {"task": "x", "iteration_budget": True}),
+        ("spawn", {"task": "x", "key": ""}),
+        ("spawn", {"task": "x", "allowed_models": [{"model": "small"}]}),
         (
-            "publish_spawn",
+            "spawn",
             {"task": "x", "allowed_models": [{"provider": "p", "model": "small"}] * 2},
         ),
     ],
@@ -228,10 +325,10 @@ def test_team_operations_validate_before_http(operation, kwargs):
 @pytest.mark.parametrize(
     "operation,kwargs,code",
     [
-        ("publish_spawn", {"task": "Check the contract"}, "inactive-session"),
-        ("publish_spawn", {"task": "Check the contract"}, "no-checkpoint"),
+        ("spawn", {"task": "Check the contract"}, "inactive-session"),
+        ("spawn", {"task": "Check the contract"}, "no-checkpoint"),
         (
-            "publish_spawn",
+            "spawn",
             {"task": "Check the contract", "key": "retry"},
             "idempotency-conflict",
         ),
@@ -271,7 +368,7 @@ def test_empty_team_and_default_spawn_and_self_route():
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         team = client.session("leader").council()
         assert team.subagents() == ()
-        team.publish_spawn("Check the contract")
+        team.spawn("Check the contract")
         assert team.route("small", provider="p")["effective"] == "next_request"
         bodies = [
             json.loads(body)
@@ -319,7 +416,7 @@ def test_managed_team_recipe(capsys):
 
     with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         team = client.session("leader").council()
-        child = team.publish_spawn(
+        child = team.spawn(
             "Check the SDK contract; report test evidence and remaining risks",
             iteration_budget=16,
             key="sdk-contract",

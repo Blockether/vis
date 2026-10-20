@@ -78,8 +78,9 @@ Rationale: the SDK and `HostLayer` need one route for each operation.
 
 Data:
 
-- Add `POST /v1/sessions/:sid/agents/wait`, `/resume`, `/extend`, `/deny` and `/grant` to the gateway contract route table and `gateway/server/council.clj`.
-- `wait` is a long poll. The server caps `timeout_secs` at 300. On timeout it returns the current records with each `status` unchanged.
+- Add `POST /v1/sessions/:sid/agents/run`, `/wait`, `/resume`, `/extend`, `/deny` and `/grant` to the gateway contract route table and `gateway/server/council.clj`.
+- `wait` is a long poll. `timeout_secs` is 1 to 1800, default 240, as for the model tool. On timeout it returns the current records with each `status` unchanged.
+- `run` and `resume` need an active execution of the parent, like `spawn`.
 - Map errors as `agents-handler` does today: `invalid-request` 400, `session-not-found` 404, others 409.
 
 Acceptance criteria:
@@ -111,19 +112,22 @@ Data:
 - The schema lives in `packages/vis-contract` (`models.json`). Update the TUI, Companion and SDK consumers in the same change. Do not keep the old name list.
 - The listed rates are the rates of the cost estimate. Both read one function.
 - An unknown price is `null`, never 0.
-- `GET /v1/providers/:provider-id/limits` stays the source for quotas and resets.
+- Each model has `limits`: the report of its provider (quotas, use and resets) from `provider/limits.clj`. Models of one provider share one report.
+- The catalog reads each provider report once and caches it for 60 s. A failed report is `limits = {error}`, and the model stays listed.
+- `GET /v1/providers/:provider-id/limits` stays for a fresh read of one provider.
 
 SDK:
 
 - `ExecutionLayer.models(*, provider=None, is_available=None) -> tuple[Model, ...]`. `Model` is a frozen dataclass from the schema.
-- `ExecutionLayer.provider_limits(provider) -> ProviderLimits`.
+- `ExecutionLayer.model_limits(provider) -> ProviderLimits` reads the limits again without the catalog.
 - `create_session(provider=..., model=...)` pins the model at creation.
 - `Session.model() -> SessionModel` (the pin and the default) and `Session.set_model(provider, model)`. `set_model(None, None)` clears the pin.
 - `Council.spawn`, `Council.run` task dicts and `Council.route` take the same `provider` and `model`.
 
 Extension:
 
-- `vis.models.list(provider=None, is_available=None)`, `vis.models.get(provider, name)` and `vis.models.limits(provider)`.
+- `vis.models.list(provider=None, is_available=None)` and `vis.models.get(provider, name)`. Each `Model` carries `limits`.
+- `vis.models.limits(provider)` reads the limits again without the catalog.
 - In an extension, each `Model` also has `is_allowed` for the bound session. An inherited `allowed_models` list or a human model lock sets it to false.
 - `HostLayer` allows `GET /v1/models` and `GET /v1/providers/:provider-id/limits`. It refuses provider authentication, configuration and router changes.
 
@@ -154,8 +158,10 @@ Rationale: the SDK is the typed reference implementation. Extensions reuse it in
 Data:
 
 - `Council.spawn(task, *, provider, model, iteration_budget, allowed_models, files, key) -> Subagent` (renamed from `publish_spawn`).
-- `Council.run(tasks, *, timeout) -> tuple[SubagentRecord, ...]`: spawn all, then wait.
-- `Council.wait(session_ids=None, *, timeout)`, `resume(session_id, task, *, timeout)`, `extend(session_id, iterations)`, `deny(session_id, reason)`, `grant(session_id, files)`.
+- `Council.run(tasks, *, timeout_secs=240) -> tuple[SubagentRecord, ...]`: spawn all, then wait.
+- `Council.wait(session_ids=None, *, timeout_secs=240) -> tuple[SubagentRecord, ...]`.
+- `resume(session_id, task, *, timeout_secs=240)`, `cancel(session_id)`, `extend(session_id, iterations)`, `deny(session_id, reason)` and `grant(session_id, files)` return one `SubagentRecord`.
+- The HTTP read timeout of a waiting call is `timeout_secs` plus 30 seconds.
 - `Council.subagents`, `cancel` and `route` stay.
 - `Session.run(request, *, response_model=None, timeout=None)`. `Agent.run` calls it.
 - `Session.fork(through_turn_id=None) -> Session` over `POST /v1/sessions/:sid/forks`.
@@ -294,7 +300,7 @@ Scenarios. Each one must pass on the server:
 | E14 | stdio: export from `LocalEngine`, `close`, restore in a new `LocalEngine`, continue | Answer uses the earlier context |
 | E15 | Restore the same file twice without `key`, then twice with `key` | Two trees, then one tree |
 | E16 | An automation runs a prompt that calls the `e2e-sessions` tool | Automation run succeeds; child and independent session exist |
-| E17 | SDK and extension call `models()` | Same list as the TUI picker; a metered model has `pricing`; an unauthenticated provider has `is_available = false` |
+| E17 | SDK and extension call `models()` | Same list as the TUI picker; a metered model has `pricing`; each model has its provider `limits`; an unauthenticated provider has `is_available = false` |
 | E18 | Create a session and spawn a child with explicit `provider` and `model`, run one turn each | Turn usage shows that pair; turn cost equals tokens times the listed rates |
 | E19 | Create a session with an unknown model; spawn a child with a model outside `allowed_models` | `unknown-model` and `model-not-allowed`; no session or child exists |
 
@@ -318,9 +324,9 @@ Council and spawn:
 - An empty `tasks` list for `run`: `invalid-request` (unit).
 - The same `key` with different input: `idempotency-conflict` (unit).
 - `wait`, `resume`, `extend`, `deny` or `grant` on a session that is not an owned child: refused (unit).
-- `wait` with an unknown id: `invalid-request`, no partial wait (unit).
-- `wait` with a timeout above 300 s: capped at 300 s (unit).
-- `resume` on a running child: refused; `resume` on a cancelled child: allowed and recorded (unit).
+- `wait` with an id that is not an owned child: that record has status `unknown`; the other records still answer (unit).
+- `wait` with `timeout_secs` 0 or above 1800: `invalid-request` (unit).
+- `resume` on a running or a cancelled child: refused (unit).
 - `cancel` on a finished child: returns its record unchanged (unit).
 - `cancel` cascades to grandchildren (unit, E6).
 - The parent is cancelled while an extension waits on a child: `wait` returns, the child is cancelled (unit).
@@ -374,10 +380,10 @@ Models:
 
 ## Plan state
 
-- Phase 1: not started.
-- Phase 2: not started.
+- Phase 1: done. `agents/operation!` is the one entry; it does not need the model tool registry.
+- Phase 2: done. Routes for `run`, `wait`, `resume`, `extend`, `deny` and `grant`.
 - Phase 3: not started.
-- Phase 4: not started.
+- Phase 4: in progress. `Council` agent methods and `SubagentRecord` are done; they stay experimental and hidden from the API reference.
 - Phase 5: not started.
 - Phase 6: not started.
 - Phase 7: not started.

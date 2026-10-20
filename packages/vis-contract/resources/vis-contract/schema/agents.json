@@ -60,6 +60,81 @@
       },
       "additionalProperties": false
     },
+    "run": {
+      "type": "object",
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/spawn/properties/task"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "task": {
+                    "$ref": "#/$defs/spawn/properties/task"
+                  },
+                  "model": {
+                    "$ref": "#/$defs/spawn/properties/model"
+                  },
+                  "provider": {
+                    "$ref": "#/$defs/spawn/properties/provider"
+                  },
+                  "iteration_budget": {
+                    "$ref": "#/$defs/spawn/properties/iteration_budget"
+                  },
+                  "files": {
+                    "$ref": "#/$defs/spawn/properties/files"
+                  }
+                },
+                "required": [
+                  "task"
+                ],
+                "dependentRequired": {
+                  "model": [
+                    "provider"
+                  ],
+                  "provider": [
+                    "model"
+                  ]
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "timeout_secs": {
+          "$ref": "#/$defs/wait/properties/timeout_secs"
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "additionalProperties": false
+    },
+    "wait": {
+      "type": "object",
+      "properties": {
+        "session_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "timeout_secs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800,
+          "default": 240
+        }
+      },
+      "additionalProperties": false
+    },
     "list": {
       "type": "object",
       "additionalProperties": false
@@ -162,6 +237,9 @@
         },
         "task": {
           "$ref": "#/$defs/spawn/properties/task"
+        },
+        "timeout_secs": {
+          "$ref": "#/$defs/wait/properties/timeout_secs"
         }
       },
       "required": [
@@ -322,6 +400,101 @@
         "iterations_used"
       ],
       "additionalProperties": true
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "asking",
+            "completed",
+            "failed",
+            "cancelled",
+            "budget_limited",
+            "lost",
+            "unknown"
+          ]
+        },
+        "answer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question_entry_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "budget_request": {
+          "type": "object",
+          "properties": {
+            "iterations": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "iterations"
+          ],
+          "additionalProperties": false
+        },
+        "files_request": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "$ref": "#/$defs/files"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "files"
+          ],
+          "additionalProperties": false
+        },
+        "files": {
+          "$ref": "#/$defs/files"
+        },
+        "iteration_budget": {
+          "$ref": "#/$defs/spawn/properties/iteration_budget"
+        },
+        "iterations_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warning": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
     }
   }
 }

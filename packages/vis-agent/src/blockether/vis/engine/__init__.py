@@ -5,7 +5,7 @@ For installation, workflows and lifecycle choices, use the
 """
 
 from ._agent import Agent, StructuredOutputError
-from ._agents import Subagent
+from ._agents import Subagent, SubagentRecord
 from ._client import (
     Event,
     Events,
@@ -39,6 +39,7 @@ from ._local import LocalEngine
 __all__ = [
     "Agent",
     "Subagent",
+    "SubagentRecord",
     "Council",
     "CouncilEntry",
     "CouncilKind",

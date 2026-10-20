@@ -742,7 +742,67 @@
           "response": "json"
         }
       },
+      "path": "/v1/sessions/:sid/agents/deny"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/extend"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/grant"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/resume"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
       "path": "/v1/sessions/:sid/agents/route"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/run"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json"
+        }
+      },
+      "path": "/v1/sessions/:sid/agents/wait"
     },
     {
       "audience": "sdk",

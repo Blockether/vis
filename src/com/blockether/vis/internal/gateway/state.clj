@@ -6334,8 +6334,12 @@
           fingerprint
           (util/sha256-hex (pr-str (into (sorted-map) opts)))
 
+          ;; Without a key, a retry in the same parent turn finds the same child. A caller key
+          ;; names one delegation of this parent for that caller, across turns and restarts.
           key
-          (str through ":" (or (:key opts) fingerprint))
+          (if-let [k (:key opts)]
+            (str "key:" (or (:agent-caller env) "sdk") ":" k)
+            (str through ":" fingerprint))
 
           previous
           (some #(when (and (= sid (:parent_id %)) (= key (:spawn_key %))) %) children)]
@@ -6494,11 +6498,12 @@
 
     (when-not (persistance/db-get-session db sid)
       (agents/fail! :session-not-found "Unknown session"))
-    (when (= :spawn operation) (agents/require-enabled! db sid))
+    (when (contains? #{:spawn :run} operation) (agents/require-enabled! db sid))
     ;; Reads and controls need durable state, not a newly bootstrapped interpreter.
-    ;; Only spawn consumes the running parent's safe model checkpoint. Spawn and grant check
-    ;; the parent's security policy.
-    (agents/operation! (assoc (when (contains? #{:spawn :grant} operation) (live-env sid))
+    ;; Spawn consumes the running parent's safe model checkpoint, resume publishes in its
+    ;; active execution, and spawn and grant check its security policy.
+    (agents/operation! (assoc (when (contains? #{:spawn :run :grant :resume} operation)
+                                (live-env sid))
                          :db-info db
                          :session-id sid)
                        operation

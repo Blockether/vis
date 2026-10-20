@@ -4,15 +4,22 @@
 {% macro is_public(doc) %}
     {% set experimental = [
         "blockether.vis.engine.Subagent",
-        "blockether.vis.engine.Council.publish_spawn",
+        "blockether.vis.engine.SubagentRecord",
+        "blockether.vis.engine.Council.spawn",
         "blockether.vis.engine.Council.subagents",
+        "blockether.vis.engine.Council.run",
+        "blockether.vis.engine.Council.wait",
         "blockether.vis.engine.Council.cancel",
+        "blockether.vis.engine.Council.resume",
+        "blockether.vis.engine.Council.extend",
+        "blockether.vis.engine.Council.deny",
+        "blockether.vis.engine.Council.grant",
         "blockether.vis.engine.Council.route",
         "blockether.vis.engine.Council.wake",
         "blockether.vis.extension.Host.council_wake",
         "blockether.vis.extension.council",
     ] %}
-    {% if doc.fullname not in experimental and not doc.fullname.startswith("blockether.vis.engine.Subagent.") %}
+    {% if doc.fullname not in experimental and not doc.fullname.startswith(("blockether.vis.engine.Subagent.", "blockether.vis.engine.SubagentRecord.")) %}
         {{ default_is_public(doc) }}
     {% endif %}
 {% endmacro %}

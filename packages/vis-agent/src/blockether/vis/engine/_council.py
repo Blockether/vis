@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from blockether.vis._contracts import validate
 
-from ._agents import Subagent
+from ._agents import Subagent, SubagentRecord
 
 CouncilKind = Literal["complain", "coordination", "informational"]
 
@@ -227,7 +227,7 @@ class Council:
         validate("council", "publish", body)
         return CouncilEntry.from_wire(self._call("POST", "/entries", body=body))
 
-    def publish_spawn(
+    def spawn(
         self,
         task: str,
         *,
@@ -276,11 +276,77 @@ class Council:
             Subagent.from_wire(row) for row in self._session._call("GET", "/agents")
         )
 
-    def cancel(self, session_id: str) -> dict[str, Any]:
+    def _records(self, suffix, body, definition, timeout_secs=None):
+        validate("agents", definition, body)
+        kwargs = {}
+        if timeout_secs is not None:
+            # The gateway waits up to timeout_secs; the HTTP read waits a little longer.
+            kwargs["timeout"] = timeout_secs + 30
+        return SubagentRecord.many(
+            self._session._call("POST", "/agents" + suffix, body=body, **kwargs)
+        )
+
+    def run(
+        self, tasks: list[str | dict[str, Any]], *, timeout_secs: int = 240
+    ) -> tuple[SubagentRecord, ...]:
+        """Spawn one subagent for each task, wait for all of them and return their records.
+
+        A task is a string, or a dict with ``task`` and optional ``model``, ``provider``,
+        ``iteration_budget`` and ``files``. The wait ends when every child answers, asks
+        or stops, or after ``timeout_secs`` (at most 1800). A running child stays running.
+        """
+        body = {"tasks": tasks, "timeout_secs": timeout_secs}
+        return self._records("/run", body, "run", timeout_secs)
+
+    def wait(
+        self, session_ids: list[str] | None = None, *, timeout_secs: int = 240
+    ) -> tuple[SubagentRecord, ...]:
+        """Wait for owned subagents, or for all active ones, and return their records.
+
+        The wait ends when each child answers, asks or stops, or after ``timeout_secs``
+        (at most 1800). A session that is not your subagent has status ``unknown``.
+        """
+        body: dict[str, Any] = {"timeout_secs": timeout_secs}
+        if session_ids is not None:
+            body["session_ids"] = session_ids
+        return self._records("/wait", body, "wait", timeout_secs)
+
+    def cancel(self, session_id: str) -> SubagentRecord:
         """Cancel an owned child and its descendants, including queued work."""
-        body = {"session_id": session_id}
-        validate("agents", "cancel", body)
-        return self._session._call("POST", "/agents/cancel", body=body)
+        return self._records("/cancel", {"session_id": session_id}, "cancel")[0]
+
+    def resume(
+        self, session_id: str, task: str, *, timeout_secs: int = 240
+    ) -> SubagentRecord:
+        """Give a finished subagent a follow-up task in its own session, then wait for it.
+
+        The child keeps its whole context. A child without iterations left needs
+        ``extend`` first. A running child needs ``wait``.
+        """
+        body = {"session_id": session_id, "task": task, "timeout_secs": timeout_secs}
+        return self._records("/resume", body, "resume", timeout_secs)[0]
+
+    def extend(self, session_id: str, iterations: int) -> SubagentRecord:
+        """Give a subagent more model iterations; the budget stays at most 600.
+
+        Use it to answer a budget request, or before ``resume`` of a budget-limited child.
+        """
+        body = {"session_id": session_id, "iterations": iterations}
+        return self._records("/extend", body, "extend")[0]
+
+    def deny(self, session_id: str, reason: str) -> SubagentRecord:
+        """Refuse the open budget or file request of a subagent, with a short reason."""
+        body = {"session_id": session_id, "reason": reason}
+        return self._records("/deny", body, "deny")[0]
+
+    def grant(self, session_id: str, files: dict[str, list[str]]) -> SubagentRecord:
+        """Add ``write``, ``read_only`` or ``deny`` file rules to the grant of a subagent.
+
+        A grant gives at most your own access. The record has a ``warning`` when an
+        active sibling can write the same files.
+        """
+        body = {"session_id": session_id, "files": files}
+        return self._records("/grant", body, "grant")[0]
 
     def route(
         self, model: str, *, provider: str, session_id: str | None = None

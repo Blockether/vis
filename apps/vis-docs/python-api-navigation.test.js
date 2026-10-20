@@ -155,7 +155,8 @@ print(json.dumps(methods))
     const document = dom.window.document;
     expect(methods).toContain('Events.close');
     expect(methods).toContain('GatewayClient.create_session');
-    const experimental = /^Subagent\.|^Council\.(?:publish_spawn|subagents|cancel|route|wake)$/;
+    const experimental =
+      /^Subagent(?:Record)?\.|^Council\.(?:spawn|subagents|run|wait|cancel|resume|extend|deny|grant|route|wake)$/;
     for (const name of methods.filter((name) => !experimental.test(name)))
       expect(document.getElementById(name), name).not.toBeNull();
     for (const name of [

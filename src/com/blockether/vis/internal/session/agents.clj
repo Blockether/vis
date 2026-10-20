@@ -380,7 +380,8 @@
         (fail! :not-owner "This session does not own that subagent")))
     opts))
 
-(defn operation!
+(defn runtime-op!
+  "Validate `opts` and run one gateway runtime operation: :spawn, :list, :cancel, :route or :grant."
   [env operation opts]
   (let [opts (checked env operation opts)]
     (if-let [f (get @runtime operation)]
@@ -529,6 +530,45 @@
                               [:task :model :provider :iteration_budget :files])
         :else (fail! :invalid-request "Each task must be a string or a dict with task")))
 
+(defn- run-records
+  "Spawn a subagent for each task, wait for all of them and answer their records."
+  [env tasks opts]
+  (let [opts
+        (walk/keywordize-keys opts)
+
+        specs
+        (mapv task-spec (if (or (string? tasks) (map? tasks)) [tasks] tasks))
+
+        _
+        (when (empty? specs) (fail! :invalid-request "tasks must not be empty"))
+
+        timeout
+        (wait-timeout opts 240)
+
+        started
+        (util/now-ms)
+
+        spawn
+        (fn [spec]
+          (loop []
+
+            (let [r (try (str (:session_id (runtime-op! env :spawn spec)))
+                         (catch clojure.lang.ExceptionInfo e
+                           ;; A full team admits the next child when an earlier one ends.
+                           (if (and (= :agent-limit (:error (ex-data e)))
+                                    (< (- (util/now-ms) started) (* 1000 (long timeout))))
+                             ::full
+                             (throw e))))]
+              (if (= ::full r) (do (Thread/sleep 1000) (recur)) r))))
+
+        ids
+        (mapv spawn specs)
+
+        left
+        (max 1 (- (long timeout) (quot (- (util/now-ms) started) 1000)))]
+
+    (wait-records env ids left)))
+
 (defn run
   "Run each task in its own subagent and wait for all of them. A task is a string or a dict with
    task and optional model, provider, iteration_budget and files. iteration_budget defaults to
@@ -549,62 +589,36 @@
    needs council.grant or council.deny. budget_limited needs council.extend before council.resume,
    and it stays budget_limited until council.resume."
   ([env tasks] (run env tasks {}))
-  ([env tasks opts]
-   (let [opts
-         (walk/keywordize-keys opts)
+  ([env tasks opts] (result :council.run (run-records env tasks opts))))
 
-         specs
-         (mapv task-spec (if (or (string? tasks) (map? tasks)) [tasks] tasks))
+(defn- wait-records-for
+  "Wait for the subagents `ids`, or for all children, and answer their records."
+  [env ids opts]
+  (let [opts
+        (walk/keywordize-keys opts)
 
-         _
-         (when (empty? specs) (fail! :invalid-request "tasks must not be empty"))
+        ids
+        (if (string? ids) [ids] ids)]
 
-         timeout
-         (wait-timeout opts 240)
-
-         started
-         (util/now-ms)
-
-         spawn
-         (fn [spec]
-           (loop []
-
-             (let [r (try (str (:session_id (operation! env :spawn spec)))
-                          (catch clojure.lang.ExceptionInfo e
-                            ;; A full team admits the next child when an earlier one ends.
-                            (if (and (= :agent-limit (:error (ex-data e)))
-                                     (< (- (util/now-ms) started) (* 1000 (long timeout))))
-                              ::full
-                              (throw e))))]
-               (if (= ::full r) (do (Thread/sleep 1000) (recur)) r))))
-
-         ids
-         (mapv spawn specs)
-
-         left
-         (max 1 (- (long timeout) (quot (- (util/now-ms) started) 1000)))]
-
-     (result :council.run (wait-records env ids left)))))
+    (wait-records env ids (wait-timeout opts 240))))
 
 (defn wait-agents
   "Wait again for subagents by session_ids (default: all your children). Same records and timeout as council.run."
   ([env] (wait-agents env nil {}))
   ([env ids-or-opts]
    (if (map? ids-or-opts) (wait-agents env nil ids-or-opts) (wait-agents env ids-or-opts {})))
-  ([env ids opts]
-   (let [opts
-         (walk/keywordize-keys opts)
+  ([env ids opts] (result :council.wait (wait-records-for env ids opts))))
 
-         ids
-         (if (string? ids) [ids] ids)]
-
-     (result :council.wait (wait-records env ids (wait-timeout opts 240))))))
+(defn- cancel-records
+  "Cancel a subagent and answer its record."
+  [env session-id]
+  (runtime-op! env :cancel {:session_id session-id})
+  (wait-records env [session-id] 5))
 
 (defn cancel-agent
   "Cancel a subagent, including its queued work. Returns its record."
   [env session-id]
-  (operation! env :cancel {:session_id session-id})
-  (result :council.cancel (wait-records env [session-id] 5)))
+  (result :council.cancel (cancel-records env session-id)))
 
 (defn- parent-reply!
   "Publish `question` to the parent of the calling child and wait for the reply text. Answers
@@ -795,10 +809,8 @@
   [env sid]
   [(record (:db-info env) (runtime-fn :live?) (util/now-ms) (info (:db-info env) sid))])
 
-(defn extend-agent
-  "Give a subagent more model iterations. Use it to answer a budget request (status asking with
-   budget_request), or before council.resume of a budget_limited child. A budget stays at most
-   600. Returns the record."
+(defn- extend-records
+  "Add iterations to the budget of a subagent and answer its record."
   [env session-id iterations]
   (let [{:keys [session_id iterations]}
         (checked env :extend {:session_id session-id :iterations iterations})
@@ -823,7 +835,14 @@
         session_id
         :budget
         (str "Granted " iterations " more iterations. New budget: " (:iteration_budget row) ".")))
-    (result :council.extend (current-record env session_id))))
+    (current-record env session_id)))
+
+(defn extend-agent
+  "Give a subagent more model iterations. Use it to answer a budget request (status asking with
+   budget_request), or before council.resume of a budget_limited child. A budget stays at most
+   600. Returns the record."
+  [env session-id iterations]
+  (result :council.extend (extend-records env session-id iterations)))
 
 (defn- sentence
   "`text` trimmed, with a final period when it ends without punctuation."
@@ -831,9 +850,8 @@
   (let [t (str/trim (str text))]
     (if (re-find #"[.!?]$" t) t (str t "."))))
 
-(defn deny-agent
-  "Refuse the open budget or file request of a subagent, with a short reason. The child keeps its
-   budget and its files. Returns the record."
+(defn- deny-records
+  "Refuse the open request of a subagent and answer its record."
   [env session-id reason]
   (let [{:keys [session_id reason]} (checked env :deny {:session_id session-id :reason reason})]
     (when-not (or (answer-request!
@@ -849,7 +867,13 @@
                     :files
                     (str "Denied: " (sentence reason) " Continue without these files.")))
       (fail! :invalid-request "That subagent has no open budget or file request"))
-    (result :council.deny (current-record env session_id))))
+    (current-record env session_id)))
+
+(defn deny-agent
+  "Refuse the open budget or file request of a subagent, with a short reason. The child keeps its
+   budget and its files. Returns the record."
+  [env session-id reason]
+  (result :council.deny (deny-records env session-id reason)))
 
 (defn- overlaps?
   "True when the write rules `a` and `b` can name one file: one rule root covers the other."
@@ -866,15 +890,8 @@
                          b))
                  a)))
 
-(defn grant-files
-  "Add file rules to the grant of a subagent. Use it to answer a file request (status asking with
-   files_request), or before council.resume. files holds write, read_only and deny rules, like a
-   task dict. Returns the record, with a warning when an active sibling can write the same files.
-
-   A grant gives at most your own access. A write rule outside your writable roots or under your
-   deny rules fails, and your deny rules stay closed to the child. A child without write rules
-   writes only the granted rules after a write grant. The child gets the new access at its next
-   block."
+(defn- grant-records
+  "Add file rules to the grant of a subagent and answer its record."
   [env session-id files]
   (let [{:keys [session_id files]}
         (checked env :grant {:session_id session-id :files files})
@@ -913,13 +930,24 @@
         [record]
         (current-record env session_id)]
 
-    (result :council.grant
-            [(cond-> record
-               (seq siblings)
-               (assoc :warning
-                 (str "Active subagents can also write these files: "
-                      (str/join ", " siblings)
-                      ". Give each child its own files.")))])))
+    [(cond-> record
+       (seq siblings)
+       (assoc :warning
+         (str "Active subagents can also write these files: "
+              (str/join ", " siblings)
+              ". Give each child its own files.")))]))
+
+(defn grant-files
+  "Add file rules to the grant of a subagent. Use it to answer a file request (status asking with
+   files_request), or before council.resume. files holds write, read_only and deny rules, like a
+   task dict. Returns the record, with a warning when an active sibling can write the same files.
+
+   A grant gives at most your own access. A write rule outside your writable roots or under your
+   deny rules fails, and your deny rules stay closed to the child. A child without write rules
+   writes only the granted rules after a write grant. The child gets the new access at its next
+   block."
+  [env session-id files]
+  (result :council.grant (grant-records env session-id files)))
 
 (defn queue-turn!
   "Queue subagent `sid` for a follow-up turn. A Council ping and council.resume both use it, so
@@ -932,63 +960,108 @@
           (ps/db-agent-resume! db sid (count (ps/db-list-session-turns db sid)) (util/now-ms))
           #(ps/db-agent-update! db sid (select-keys child [:status :resumed_turns :resumed_at])))))
 
+(defn- resume-records
+  "Queue a follow-up task for a finished subagent, wait for it and answer its records."
+  [env session-id task opts]
+  (let [{:keys [session_id task]}
+        (checked env :resume {:session_id session-id :task task})
+
+        timeout
+        (wait-timeout (walk/keywordize-keys opts) 240)
+
+        db
+        (:db-info env)
+
+        live?
+        (runtime-fn :live?)
+
+        refuse!
+        (fn [child]
+          (cond (or (live? session_id) (contains? #{"queued" "running"} (:status child)))
+                (fail! :invalid-request "The subagent still runs. Call council.wait.")
+                (= "cancelled" (:status child)) (fail! :invalid-request
+                                                       "A cancelled subagent cannot resume")
+                (>= (long (:iterations_used child)) (long (:iteration_budget child)))
+                (fail! :budget-exceeded
+                       (str "The subagent has no iterations left. Call "
+                            "council.extend(session_id, iterations) first."))
+                :else (fail! :invalid-request "The subagent cannot resume now")))
+
+        child
+        (info db session_id)]
+
+    (when (= (str (:session-id env)) session_id)
+      (fail! :not-owner "A subagent cannot resume itself"))
+    (when (or (live? session_id) (contains? #{"queued" "running"} (:status child))) (refuse! child))
+    ;; The store checks the status and the budget and marks the child queued in one
+    ;; transaction. A Council ping wake uses the same step.
+    (let [restore!
+          (or (queue-turn! db session_id) (refuse! (info db session_id)))
+
+          entry
+          (try ((runtime-fn :publish)
+                 env
+                 {:kind "coordination"
+                  :title "Follow-up task"
+                  :content task
+                  :ping [session_id]
+                  :reply_required true})
+               (catch Throwable t (restore!) (throw t)))]
+
+      (when (= "unavailable" (get-in entry [:replies 0 :state]))
+        (restore!)
+        (fail! :unavailable "The subagent could not start its follow-up task")))
+    (wait-records env [session_id] timeout)))
+
 (defn resume-agent
   "Give a finished subagent a follow-up task in its own session, with its whole context. Then
    wait like council.run and return the records. A Council ping continues the child the same way,
    without the wait. A child without iterations left needs council.extend first. A running child
    needs council.wait. timeout_secs defaults to 240 (max 1800)."
   ([env session-id task] (resume-agent env session-id task {}))
-  ([env session-id task opts]
-   (let [{:keys [session_id task]}
-         (checked env :resume {:session_id session-id :task task})
+  ([env session-id task opts] (result :council.resume (resume-records env session-id task opts))))
 
-         timeout
-         (wait-timeout (walk/keywordize-keys opts) 240)
+(defn operation!
+  "Run one managed-subagent operation for the calling session and answer its plain result.
+   Gateway routes and extensions call this entry point; model tools call the same functions.
+   `operation` is :spawn, :list, :route, :run, :wait, :cancel, :resume, :extend, :deny or
+   :grant. Records answer in their wire form."
+  [env operation opts]
+  (let [opts
+        (walk/keywordize-keys (or opts {}))
 
-         db
-         (:db-info env)
+        timeout
+        (select-keys opts [:timeout_secs])]
 
-         live?
-         (runtime-fn :live?)
+    (when (and (contains? #{:run :wait} operation)
+               (not (document/valid-json? "agents" (name operation) (wire/->wire opts))))
+      (fail! :invalid-request (str "Invalid subagent " (name operation) " arguments")))
+    (if (contains? #{:spawn :list :route} operation)
+      (runtime-op! env operation opts)
+      (wire/->wire
+        (case operation
+          :run
+          (run-records env (:tasks opts) timeout)
 
-         refuse!
-         (fn [child]
-           (cond (or (live? session_id) (contains? #{"queued" "running"} (:status child)))
-                 (fail! :invalid-request "The subagent still runs. Call council.wait.")
-                 (= "cancelled" (:status child)) (fail! :invalid-request
-                                                        "A cancelled subagent cannot resume")
-                 (>= (long (:iterations_used child)) (long (:iteration_budget child)))
-                 (fail! :budget-exceeded
-                        (str "The subagent has no iterations left. Call "
-                             "council.extend(session_id, iterations) first."))
-                 :else (fail! :invalid-request "The subagent cannot resume now")))
+          :wait
+          (wait-records-for env (:session_ids opts) timeout)
 
-         child
-         (info db session_id)]
+          :cancel
+          (cancel-records env (:session_id opts))
 
-     (when (= (str (:session-id env)) session_id)
-       (fail! :not-owner "A subagent cannot resume itself"))
-     (when (or (live? session_id) (contains? #{"queued" "running"} (:status child)))
-       (refuse! child))
-     ;; The store checks the status and the budget and marks the child queued in one
-     ;; transaction. A Council ping wake uses the same step.
-     (let [restore!
-           (or (queue-turn! db session_id) (refuse! (info db session_id)))
+          :resume
+          (resume-records env (:session_id opts) (:task opts) timeout)
 
-           entry
-           (try ((runtime-fn :publish)
-                  env
-                  {:kind "coordination"
-                   :title "Follow-up task"
-                   :content task
-                   :ping [session_id]
-                   :reply_required true})
-                (catch Throwable t (restore!) (throw t)))]
+          :extend
+          (extend-records env (:session_id opts) (:iterations opts))
 
-       (when (= "unavailable" (get-in entry [:replies 0 :state]))
-         (restore!)
-         (fail! :unavailable "The subagent could not start its follow-up task")))
-     (result :council.resume (wait-records env [session_id] timeout)))))
+          :deny
+          (deny-records env (:session_id opts) (:reason opts))
+
+          :grant
+          (grant-records env (:session_id opts) (:files opts))
+
+          (fail! :invalid-request (str "Unknown subagent operation " (name operation))))))))
 
 (def symbols
   (mapv

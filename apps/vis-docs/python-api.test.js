@@ -65,7 +65,8 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
   try {
     const document = dom.window.document;
     expect(exports).toContain('Subagent');
-    for (const name of exports.filter((name) => name !== 'Subagent'))
+    expect(exports).toContain('SubagentRecord');
+    for (const name of exports.filter((name) => !['Subagent', 'SubagentRecord'].includes(name)))
       expect(document.getElementById(name), name).not.toBeNull();
     for (const name of [
       'Agent.run',
@@ -89,7 +90,7 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
 
 test('experimental APIs stay out of generated pages, navigation and search', () => {
   const experimental =
-    /\bSubagent\b|publish_spawn|subagents|council_wake|Council\.(?:cancel|route|wake)/i;
+    /\bSubagent(?:Record)?\b|council\.spawn|subagents|council_wake|Council\.(?:spawn|run|wait|cancel|resume|extend|deny|grant|route|wake)/i;
   for (const name of files) expect(experimental.test(read(prefix + name)), name).toBe(false);
   expect(experimental.test(read(prefix + 'search.js')), 'search index').toBe(false);
   const dom = new JSDOM(read(prefix + 'blockether/vis/extension.html'));
