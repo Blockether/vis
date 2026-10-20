@@ -35,6 +35,7 @@ from ._council import (
 )
 from ._install import InstallError, ensure_installed, install
 from ._local import LocalEngine
+from ._models import Model
 
 __all__ = [
     "Agent",
@@ -58,6 +59,7 @@ __all__ = [
     "JobEvents",
     "JSONValue",
     "LocalEngine",
+    "Model",
     "ProtocolError",
     "Query",
     "Response",

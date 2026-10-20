@@ -5,6 +5,7 @@
     [clojure.java.io :as io]
     [clojure.string :as str]
     [com.blockether.vis.contract.gateway :as gateway-contract]
+    [com.blockether.vis.contract.provider :as provider-contract]
     [com.blockether.vis.internal.attachment.audio-transcribe :as audio-transcribe]
     [com.blockether.vis.internal.attachment.core :as attachments]
     [com.blockether.vis.internal.config.core :as config]
@@ -2972,6 +2973,72 @@
               (wire/parse-json (:body resp))]
 
           (expect (= 0 (get body "hidden_count"))))))))
+
+(defdescribe
+  models-handler-lists-the-catalog-with-price-and-limits
+  (it
+    "GET /v1/models lists each picker model with the rates of the cost estimate and its provider limits"
+    (let [rates
+          {"alpha-large"
+           {:input 3.0 :output 15.0 :cache-read 0.3 :input-over-200k 6.0 :output-over-200k 22.5}}
+
+          report
+          (fn [id]
+            {:provider-id id :status :ok :fetched-at-ms 1 :static {} :dynamic {:limits []}})]
+
+      (with-redefs-fn
+        {#'providers/picker-fleet (constantly [{:id :alpha
+                                                :models [{:name "alpha-large"
+                                                          :display-name "Alpha Large"
+                                                          :reasoning? true
+                                                          :reasoning-effort-options [:low :high]
+                                                          :tool-call? true
+                                                          :context 400000
+                                                          :modalities {:input #{:text :image}
+                                                                       :output #{:text}}}]}
+                                               {:id :beta :models [{:name "beta-local"}]}])
+         #'providers/default-selection (constantly {:provider-id :alpha :model "alpha-large"})
+         #'providers/provider-status-cached (fn [provider]
+                                              {:is-authenticated (= :alpha (:id provider))})
+         #'providers/provider-limits-safe (fn [provider]
+                                            (report (:id provider)))
+         #'providers/auth-kind (fn [id _]
+                                 (if (= :alpha id) :api-key :none))
+         #'providers-api/normalized-models :models
+         #'loop-router/model-rates (fn [_ model]
+                                     (when-let [found (get rates model)]
+                                       {:rates found :source "provider"}))}
+        (fn []
+          (let [resp
+                (#'providers-api/models-handler {})
+
+                models
+                (get (wire/parse-json (:body resp)) "models")
+
+                [alpha beta]
+                models
+
+                cost
+                (loop-router/estimate-token-cost "alpha-large" 1000000 0 {:provider :alpha})]
+
+            (expect (= 200 (:status resp)))
+            (expect (every? provider-contract/model-valid? models))
+            (expect (= [["alpha" "alpha-large"] ["beta" "beta-local"]]
+                       (mapv (juxt #(get % "provider") #(get % "name")) models)))
+            (expect (= [true false] (mapv #(get % "is_default") models)))
+            (expect (= [true false] (mapv #(get % "is_available") models)))
+            (expect (= ["metered" "local"] (mapv #(get % "billing") models)))
+            (expect (= ["alpha" "beta"] (mapv #(get-in % ["limits" "provider_id"]) models)))
+            (expect (= {"input" 3.0
+                        "output" 15.0
+                        "cache_read" 0.3
+                        "tiers" [{"input" 6.0 "output" 22.5 "above_tokens" 200000}]}
+                       (get alpha "pricing")))
+            (expect (= "provider" (get alpha "pricing_source")))
+            (expect (= ["image" "text"] (get-in alpha ["modalities" "input"])))
+            (expect (true? (get alpha "is_image_input")))
+            (expect (nil? (get beta "pricing")))
+            (expect (= (get-in alpha ["pricing" "tiers" 0 "input"]) (get cost "input_cost")))))))))
 
 (defdescribe
   set-session-model-handler-validates-against-the-gateway-fleet

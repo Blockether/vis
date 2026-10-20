@@ -12,6 +12,8 @@
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.vendor.github-copilot :as github-copilot]
             [com.blockether.vis.internal.provider.service :as providers]
+            [com.blockether.vis.contract.provider :as provider-contract]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.extension.registry :as registry]
@@ -1307,6 +1309,7 @@
         (expect (= :error (:status (:value outcome))))
         (expect (str/includes? (str (get-in outcome [:value :error :message])) "timed out"))
         (expect (= [] (get-in outcome [:value :dynamic :limits])))
+        (expect (provider-contract/report-valid? (wire/->wire (:value outcome))))
         (expect (< (long (:elapsed-ms outcome)) 1000)))))
 
 ;; Regression, issue #113: bounding the probe moved the callback onto a bare

@@ -24,6 +24,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from blockether.vis._contracts import definition, schema, validate
 from blockether.vis.activity import ActivityProjection
+from blockether.vis.engine._models import Model
 from blockether.vis.views import InputView, LiveView, ViewEvent
 
 JSONValue: TypeAlias = (
@@ -872,6 +873,48 @@ class ExecutionLayer(ABC):
             "GET", "/v1/models", path={}, query=query, timeout=timeout
         )
         return response.json()
+
+    def models(
+        self,
+        *,
+        provider: str | None = None,
+        is_available: bool | None = None,
+        timeout: float | None = None,
+    ) -> tuple[Model, ...]:
+        """Return the models that the gateway pickers show, in picker order.
+
+        Args:
+            provider: Optional provider ID. Only its models are returned.
+            is_available: Optional filter. True keeps models of signed-in
+                providers. False keeps the others.
+            timeout: Optional timeout in seconds for this request.
+
+        Each `Model` carries its price, billing, capabilities and the limits
+        report of its provider. The gateway reads provider limits in parallel
+        and bounds each read, so a slow provider gives an error report.
+        """
+        data = self.get_models(timeout=timeout)
+        return tuple(
+            model
+            for model in Model.many(_field(data, "models", list))
+            if (provider is None or model.provider == provider)
+            and (is_available is None or model.is_available is is_available)
+        )
+
+    def model_limits(
+        self, provider: str, *, timeout: float | None = None
+    ) -> dict[str, JSONValue]:
+        """Return the current limits report of one provider.
+
+        Use it to refresh the `Model.limits` of that provider's models. The
+        report follows the provider limits schema. A failed read gives an
+        error report, not an exception.
+        """
+        report = self.get_provider_limits(provider, timeout=timeout)
+        if not isinstance(report, dict):
+            raise ProtocolError("provider limits must be an object")
+        validate("provider", "report", report)
+        return report
 
     def get_projects(
         self, *, query: Query | None = None, timeout: float | None = None

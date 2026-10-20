@@ -5,26 +5,138 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.gateway.server.http :as http]
+            [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.provider.auth :as provider-auth]
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.provider.limits :as provider-limits]
             [com.blockether.vis.internal.provider.service :as providers]))
 
+(defn- normalized-models
+  "The models of `provider` with svar metadata, without credentials or a provider probe."
+  [provider]
+  (when (seq (:models provider))
+    (catalog/normalize-models 0
+                              {:id (:id provider)
+                               :base-url (config/provider-base-url provider)
+                               :api-style (config/effective-api-style
+                                            {:declared (config/provider-api-style provider)
+                                             :responses-path (:responses-path provider)})
+                               :models (into [] (keep config/->svar-model) (:models provider))})))
+
+(def ^:private rate-keys
+  "Catalog rate names and the svar keys for each, in order of preference."
+  [[:input [:input]] [:output [:output]] [:cache-read [:cache-read :cached-input]]
+   [:cache-write [:cache-write]]])
+
+(defn- listed-pricing
+  "The rates of the cost estimate for one model, in USD for 1M tokens, or nil without an input
+   and output price. A long-context rate such as `:input-over-272k` becomes a tier above that
+   token count. A missing rate is left out, not listed as nil."
+  [rates]
+  (when (and (map? rates) (number? (:input rates)) (number? (:output rates)))
+    (let [base
+          (fn [suffix]
+            (into {}
+                  (keep (fn [[to froms]]
+                          (when-let [rate (some #(get rates (keyword (str (name %) suffix))) froms)]
+                            [to (double rate)])))
+                  rate-keys))
+
+          tiers
+          (->> (keys rates)
+               (keep #(some-> (re-find #"-over-(\d+)k$" (name %))
+                              second
+                              parse-long))
+               distinct
+               sort
+               (mapv (fn [k]
+                       (assoc (base (str "-over-" k "k")) :above-tokens (* 1000 (long k))))))]
+
+      (assoc (base "") :tiers tiers))))
+
+(defn- billing
+  "`local` for a provider without credentials, `subscription` for an account sign-in and
+   `metered` for API keys. A subscription model still lists its rates."
+  [provider]
+  (case (providers/auth-kind (:id provider) provider)
+    :none
+    "local"
+
+    :oauth
+    "subscription"
+
+    "metered"))
+
+(defn- model-object
+  "One model of `provider` as the catalog lists it."
+  [provider model {:keys [is-available primary limits]}]
+  (let [id
+        (:id provider)
+
+        n
+        (str (:name model))
+
+        {:keys [rates source]}
+        (loop-router/model-rates id n)
+
+        modality
+        (fn [k]
+          (into [] (map name) (sort (get-in model [:modalities k]))))]
+
+    {:provider (name id)
+     :name n
+     :label (or (:display-name model) n)
+     :family (some-> (:family model)
+                     name)
+     :pricing (listed-pricing rates)
+     :pricing-source source
+     :billing (billing provider)
+     :context (:context model)
+     :input-limit (:input-limit model)
+     :output-limit (:output-limit model)
+     :is-reasoning (boolean (:reasoning? model))
+     :reasoning-options (vec (:reasoning-effort-options model))
+     :is-tool-call (boolean (:tool-call? model))
+     :is-image-input (contains? (get-in model [:modalities :input]) :image)
+     :modalities {:input (modality :input) :output (modality :output)}
+     :knowledge-cutoff (some-> (:knowledge-cutoff model)
+                               str)
+     :release-date (some-> (:release-date model)
+                           str)
+     :is-available is-available
+     :is-default (and (= id (:provider-id primary)) (= n (str (:model primary))))
+     :limits limits}))
+
+(defn catalog-models
+  "Every model that the pickers show, in fleet order, with price, limits and capabilities.
+   Each model carries the limits report of its provider; one report serves all its models.
+   The limits probes run in parallel, and each probe has its own time bound."
+  []
+  (let [fleet
+        (providers/picker-fleet)
+
+        primary
+        (providers/default-selection fleet)
+
+        limits
+        (mapv #(future (providers/provider-limits-safe %)) fleet)]
+
+    (vec (mapcat (fn [provider limits]
+                   (let [opts {:is-available (true? (:is-authenticated
+                                                      (providers/provider-status-cached provider)))
+                               :primary primary
+                               :limits @limits}]
+                     (mapv #(model-object provider % opts) (normalized-models provider))))
+                 fleet
+                 limits))))
+
 (defn- models-handler
   [_]
-  (http/json-response
-    {:providers (mapv (fn [{:provider/keys [id doc]}]
-                        {:id (name id) :doc doc})
-                      (registry/registered-providers))
-     ;; Configured fleet with per-provider model names — the same source every
-     ;; channel's model picker renders (`configured-providers`), so no channel
-     ;; needs its own catalog route.
-     :catalog (into []
-                    (keep (fn [{:keys [id models]}]
-                            (let [names (into [] (keep :name) models)]
-                              (when (seq names)
-                                {:id (name id) :label (config/display-label id) :models names}))))
-                    (providers/configured-providers))}))
+  (http/json-response {:providers (mapv (fn [{:provider/keys [id doc]}]
+                                          {:id (name id) :doc doc})
+                                        (registry/registered-providers))
+                       ;; The fleet that every channel's model picker renders, as one object for each model.
+                       :models (catalog-models)}))
 
 (defn- configured-provider
   [provider-id]
@@ -233,17 +345,9 @@
         is-fallback
         (= id (:provider-id fallback))
 
-        ;; Normalize metadata without resolving credentials or probing a provider.
         ;; The TUI gates controls on these Svar facts, not on provider/model names.
         models
-        (when (seq (:models provider))
-          (catalog/normalize-models
-            0
-            {:id id
-             :base-url (config/provider-base-url provider)
-             :api-style (config/effective-api-style {:declared (config/provider-api-style provider)
-                                                     :responses-path (:responses-path provider)})
-             :models (into [] (keep config/->svar-model) (:models provider))}))]
+        (normalized-models provider)]
 
     {:id (name id)
      :label (config/display-label id)

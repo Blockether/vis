@@ -364,9 +364,10 @@
   [provider-id message]
   {:provider-id provider-id
    :status :error
+   :fetched-at-ms (System/currentTimeMillis)
    :static {}
    :dynamic {:limits []}
-   :error {:message message}})
+   :error {:type :vis/limits-unavailable :message message}})
 
 (defn provider-limits-safe
   "Normalized limits report for a provider id; an error report instead

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/provider.json",
-  "title": "Provider limits contract",
-  "description": "The portable limits vocabulary every SDK renders: what a report may say, what one row is measured against, what it counts, how its window is anchored, and how exactly and from where its numbers are known.",
+  "title": "Provider limits and model catalog contract",
+  "description": "The portable provider vocabulary every SDK renders: the limits report with its rows, windows and sources, and the model catalog with price, billing, capabilities and the limits of each model's provider.",
   "$ref": "#/$defs/report",
   "$defs": {
     "window": {
@@ -242,6 +242,245 @@
         "static",
         "dynamic"
       ]
+    },
+    "pricing_tier": {
+      "description": "USD rates per million tokens that apply when a request uses more than above_tokens input tokens.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cache_read": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cache_write": {
+          "type": "number",
+          "minimum": 0
+        },
+        "above_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "above_tokens"
+      ]
+    },
+    "pricing": {
+      "description": "USD rates per million tokens. Cost estimates use the same rates.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cache_read": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cache_write": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tiers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pricing_tier"
+          }
+        }
+      },
+      "required": [
+        "input",
+        "output"
+      ]
+    },
+    "model": {
+      "description": "One model that the pickers show, with price, billing, capabilities and the limits report of its provider.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "provider": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "name": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "label": {
+          "$ref": "common.json#/$defs/non_blank_string"
+        },
+        "family": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          ]
+        },
+        "pricing": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/pricing"
+            }
+          ]
+        },
+        "pricing_source": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": [
+                "catalog",
+                "provider"
+              ]
+            }
+          ]
+        },
+        "billing": {
+          "enum": [
+            "local",
+            "metered",
+            "subscription"
+          ]
+        },
+        "context": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "input_limit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "output_limit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "is_reasoning": {
+          "type": "boolean"
+        },
+        "reasoning_options": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/non_blank_string"
+          }
+        },
+        "is_tool_call": {
+          "type": "boolean"
+        },
+        "is_image_input": {
+          "type": "boolean"
+        },
+        "modalities": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            },
+            "output": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/non_blank_string"
+              }
+            }
+          },
+          "required": [
+            "input",
+            "output"
+          ]
+        },
+        "knowledge_cutoff": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          ]
+        },
+        "release_date": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "common.json#/$defs/non_blank_string"
+            }
+          ]
+        },
+        "is_available": {
+          "type": "boolean"
+        },
+        "is_default": {
+          "type": "boolean"
+        },
+        "limits": {
+          "$ref": "#/$defs/report"
+        }
+      },
+      "required": [
+        "provider",
+        "name",
+        "label",
+        "pricing",
+        "billing",
+        "is_reasoning",
+        "reasoning_options",
+        "is_tool_call",
+        "is_image_input",
+        "modalities",
+        "is_available",
+        "is_default",
+        "limits"
+      ]
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/model"
+      }
     }
   }
 }

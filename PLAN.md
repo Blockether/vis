@@ -102,24 +102,24 @@ Data:
 
 - `GET /v1/models` returns one object for each model in `catalog[].models`, not a name:
   - `provider`, `name`, `label`, `family`.
-  - `pricing`: `input`, `output`, `cache_read`, `cache_write` and `tiers`, in USD for 1M tokens. `pricing_source` is `catalog`, `provider` or `config`.
-  - `billing`: `metered` or `subscription`. A subscription model shows its rates, but a turn costs nothing extra.
+  - `pricing`: `input`, `output`, the optional `cache_read` and `cache_write`, and `tiers`, in USD for 1M tokens. A tier applies above `above_tokens` input tokens. `pricing_source` is `provider` (rates that the provider declares) or `catalog` (svar with the `tokens.pricing` setting).
+  - `billing`: `metered` (API key), `subscription` (account sign-in) or `local` (no credentials). A subscription model shows its rates, but a turn costs nothing extra.
   - `context`, `input_limit`, `output_limit`.
   - `is_reasoning`, `reasoning_options`, `is_tool_call`, `is_image_input`, `modalities`.
   - `knowledge_cutoff`, `release_date`.
   - `is_available`: the provider is authenticated and serves the model.
   - `is_default`: the router default for new sessions.
-- The schema lives in `packages/vis-contract` (`models.json`). Update the TUI, Companion and SDK consumers in the same change. Do not keep the old name list.
+- The schema is `$defs/model` in `packages/vis-contract/.../schema/provider.json`, next to the limits `report`. No client used the old name list, so it is removed.
 - The listed rates are the rates of the cost estimate. Both read one function.
 - An unknown price is `null`, never 0.
 - Each model has `limits`: the report of its provider (quotas, use and resets) from `provider/limits.clj`. Models of one provider share one report.
-- The catalog reads each provider report once and caches it for 60 s. A failed report is `limits = {error}`, and the model stays listed.
+- The catalog reads the provider reports in parallel through the existing limits cache and its time bound. A failed report is an error report, and the model stays listed.
 - `GET /v1/providers/:provider-id/limits` stays for a fresh read of one provider.
 
 SDK:
 
 - `ExecutionLayer.models(*, provider=None, is_available=None) -> tuple[Model, ...]`. `Model` is a frozen dataclass from the schema.
-- `ExecutionLayer.model_limits(provider) -> ProviderLimits` reads the limits again without the catalog.
+- `ExecutionLayer.model_limits(provider) -> dict` reads the limits again without the catalog and validates the report schema.
 - `create_session(provider=..., model=...)` pins the model at creation.
 - `Session.model() -> SessionModel` (the pin and the default) and `Session.set_model(provider, model)`. `set_model(None, None)` clears the pin.
 - `Council.spawn`, `Council.run` task dicts and `Council.route` take the same `provider` and `model`.
@@ -382,7 +382,7 @@ Models:
 
 - Phase 1: done. `agents/operation!` is the one entry; it does not need the model tool registry.
 - Phase 2: done. Routes for `run`, `wait`, `resume`, `extend`, `deny` and `grant`.
-- Phase 3: not started.
+- Phase 3: done. `GET /v1/models` lists model objects; `loop.router/model-rates` gives the listed rates and the cost estimate. SDK `models()`, `model_limits()` and `Model`.
 - Phase 4: in progress. `Council` agent methods and `SubagentRecord` are done; they stay experimental and hidden from the API reference.
 - Phase 5: not started.
 - Phase 6: not started.

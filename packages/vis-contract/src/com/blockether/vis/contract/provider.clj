@@ -1,5 +1,5 @@
 (ns com.blockether.vis.contract.provider
-  "Provider limits vocabulary and report validation from JSON Schema."
+  "Provider limits, model catalog and report validation from JSON Schema."
   (:require [com.blockether.vis.contract.document :as document]))
 
 (defn report-valid?
@@ -16,3 +16,13 @@
   "True when `value` satisfies the provider limit-row schema."
   [value]
   (document/valid? "provider" "limit_row" value))
+
+(defn model-valid?
+  "True when `value` satisfies the catalog model schema."
+  [value]
+  (document/valid? "provider" "model" value))
+
+(defn explain-model
+  "JSON Schema errors for an invalid catalog model, or nil."
+  [value]
+  (document/explain "provider" "model" value))

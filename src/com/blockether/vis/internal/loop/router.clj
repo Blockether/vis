@@ -1718,6 +1718,17 @@
                   lookup)
           (some lookup (vals routers))))))
 
+(defn model-rates
+  "The rates that the cost estimate uses for `model` on `provider-id`, in USD for 1M tokens, as
+   `{:rates map :source \"provider\" | \"catalog\"}`, or nil when the model has no price.
+   Rates that the provider declared win over the svar catalog. The model catalog lists these
+   rates, so a listed price and a turn cost always agree."
+  [provider-id model]
+  (if-let [declared (declared-model-pricing provider-id model)]
+    {:rates declared :source "provider"}
+    (when-let [rates (catalog/model-pricing model)]
+      {:rates rates :source "catalog"})))
+
 (defn estimate-token-cost
   "Estimate cost from provider usage while preserving cached/non-cached input split.
      `:cost-multiplier` scales every monetary component after svar prices the
@@ -1732,7 +1743,7 @@
               (double (or (:cost-multiplier opts) 1.0))
 
               declared
-              (declared-model-pricing (:provider opts) model)
+              (:rates (model-rates (:provider opts) model))
 
               cost-map
               (wire/canonical (catalog/estimate-cost
