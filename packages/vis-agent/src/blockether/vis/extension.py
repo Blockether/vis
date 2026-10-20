@@ -197,6 +197,7 @@ _LAYER: list[Any] = []
 def _host_layer() -> Any:
     """Return this extension's session layer through the host, created on first use."""
     if not _LAYER:
+        request = _host.request
         try:
             from blockether.vis.engine._host import HostLayer
         except ModuleNotFoundError as missing:
@@ -204,7 +205,7 @@ def _host_layer() -> Any:
                 f"vis.sessions needs the Python package {missing.name!r}. "
                 "Add vis-agent to the dependencies of the extension project."
             ) from None
-        _LAYER.append(HostLayer(_host.request))
+        _LAYER.append(HostLayer(request))
     return _LAYER[0]
 
 
@@ -213,7 +214,7 @@ class Sessions:
 
     Each method returns `blockether.vis.engine.Session` handles that use the host. The
     host records this extension as the origin of each session that it creates. An
-    extension can change only its bound session, its subagents and its own sessions.
+    extension can change only its bound session, its child sessions and its own sessions.
     """
 
     def create(

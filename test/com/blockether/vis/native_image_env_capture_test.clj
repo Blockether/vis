@@ -279,11 +279,19 @@
         (expect (not (forces-deferred? (strip-lazy prose) file))))))
 
 (defn- with-home
+  "Run `f` with `home` as `user.home` and without the test alias' `vis.logs.dir`."
   [home f]
-  (let [original (System/getProperty "user.home")]
+  (let [original
+        (System/getProperty "user.home")
+
+        logs-dir
+        (System/getProperty "vis.logs.dir")]
+
     (try (System/setProperty "user.home" home)
+         (System/clearProperty "vis.logs.dir")
          (f)
-         (finally (System/setProperty "user.home" original)))))
+         (finally (System/setProperty "user.home" original)
+                  (when logs-dir (System/setProperty "vis.logs.dir" logs-dir))))))
 
 (defdescribe
   runtime-paths-follow-this-process-test

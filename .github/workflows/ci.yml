@@ -131,6 +131,11 @@ jobs:
           clojure -X:deps prep
           clojure -M -e "(require '[com.blockether.vis.internal.speech.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
           clojure -M -e "(require '[com.blockether.vis.internal.python.runtime :as python-runtime]) (prn (python-runtime/ensure-library!))"
+      # Extension fixtures import the vis-agent SDK, which needs its schema packages.
+      # Install them into the shared sandbox packages before the guarded suite.
+      - name: Provision vis-agent packages for extension tests
+        run: |
+          clojure -M -e "(require '[com.blockether.vis.internal.python.runtime :as python-runtime]) (let [r (python-runtime/pip-install! [\"jsonschema>=4.23,<5\" \"pydantic==2.14.1\" \"referencing>=0.28.4\"])] (println (:out r)) (System/exit (int (:exit r))))"
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.9.2"
