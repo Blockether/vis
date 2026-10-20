@@ -1657,7 +1657,7 @@
         ;; order left for the caller to compute.
         (expect (not (str/includes? text "bottom-up")))
         (expect (str/includes? text "Use one `patch(path, edits, version)` call for each file"))
-        (expect (str/includes? text "use the version and lines of the last `patch` result"))
+        (expect (str/includes? text "keep the version and line numbers of the read that showed its lines"))
         ;; User reports: recent sessions copied the primary grep example without
         ;; context even though nearby lines often answered the question outright.
         ;; Naming the default was still ambiguous: context is counted independently
@@ -1707,7 +1707,9 @@
     (let [text (prompt/build-system-prompt {})]
       (doseq
         [rule
-         ["use the version and lines of the last `patch` result, or read the target again"
+         ;; Regression: after a patch that added lines, models shifted the next line numbers
+         ;; at the new version, and patch refused lines that no result showed.
+         ["keep the version and line numbers of the read that showed its lines"
           "A refused patch writes nothing"
           "For changed lines, read only the window that the error names"
           "Confirm the target before you try again with the current version"
