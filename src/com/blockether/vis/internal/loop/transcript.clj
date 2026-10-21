@@ -2444,20 +2444,20 @@
 (defn resolved-prompt-cache-context
   "Ask Svar for the opaque fixed-prefix/cache-namespace identity of one pinned route."
   [environment resolved-model routing extra-body]
-  (svar/prompt-cache-context
-    (:router environment)
-    (cond-> {:routing (model-accounting-routing routing resolved-model)
-             ;; There is exactly ONE model-facing tool. Sandbox capabilities alter
-             ;; this Python schema, so they alter the context id rather than being
-             ;; mistaken for an append-only provider prefix.
-             :tools (model-facing-tools (:sandbox-caps environment))
-             :tool-choice :auto
-             :prompt-cache-policy (prompt-cache-policy (:provider resolved-model))}
-      (:session-id environment)
-      (assoc :cache-key (agents/leader-id (:db-info environment) (:session-id environment)))
+  (svar/prompt-cache-context (:router environment)
+                             (cond-> {:routing (model-accounting-routing routing resolved-model)
+                                      ;; There is exactly ONE model-facing tool. Sandbox capabilities alter
+                                      ;; this Python schema, so they alter the context id rather than being
+                                      ;; mistaken for an append-only provider prefix.
+                                      :tools (model-facing-tools (:sandbox-caps environment))
+                                      :tool-choice :auto
+                                      :prompt-cache-policy (prompt-cache-policy (:provider
+                                                                                  resolved-model))}
+                               (:session-id environment)
+                               (assoc :cache-key (agents/prompt-cache-key environment))
 
-      extra-body
-      (assoc :extra-body extra-body))))
+                               extra-body
+                               (assoc :extra-body extra-body))))
 
 (defn prose-beyond-code
   "The assistant `prose` (a model `:content` string streamed ALONGSIDE a tool

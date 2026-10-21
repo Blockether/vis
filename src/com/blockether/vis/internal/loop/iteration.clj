@@ -625,11 +625,11 @@
                           (assoc provider-watchdog-timeouts
                             :resend-limits (loop-router/provider-resend-limits provider-network)))))
           provider-start-ns (System/nanoTime)
-          ;; An explicit session cache key preserves sticky routing across prompt changes.
-          ;; A subagent starts from its leader's prefix, so it uses the leader's key: the
-          ;; first child request then reaches the leader's warm OpenAI cache.
-          ;; Anthropic ignores the field, so setting it unconditionally is harmless.
-          session-cache-key (agents/leader-id (:db-info environment) (:session-id environment))
+          ;; One cache key for each workspace: a new session and a subagent start from the
+          ;; same core and project prefix, so their first request reaches the warm OpenAI
+          ;; cache of earlier sessions. Anthropic ignores the field, so setting it
+          ;; unconditionally is harmless.
+          prompt-cache-key (agents/prompt-cache-key environment)
           ;; Prepared turns opt into the cross-provider fleet. Direct callers that
           ;; omit a policy stay on a warm provider; disabling `provider_fallback`
           ;; pins the resolved model below.
@@ -697,8 +697,8 @@
                          (swap! empty-reply-resend-events conj (:event chunk))
                          (reset-stream-state!)
                          (when on-chunk (on-chunk chunk))))}
-              session-cache-key
-              (assoc :cache-key session-cache-key)
+              prompt-cache-key
+              (assoc :cache-key prompt-cache-key)
 
               refusal-fallbacks
               (assoc :refusal-fallbacks

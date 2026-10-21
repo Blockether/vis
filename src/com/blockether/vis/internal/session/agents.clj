@@ -24,6 +24,18 @@
   (some-> (or (:leader_id (info db sid)) sid)
           str))
 
+(defn prompt-cache-key
+  "The provider prompt-cache key of `environment`: a short hash of its workspace root.
+   Sessions of one workspace share the core and project prefix. A new session and a
+   subagent then reach the warm cache of earlier requests. Without a workspace root, the
+   leader id keeps one key for each team. The raw path never leaves the host."
+  [environment]
+  (if-let [root (some-> (:workspace/root environment)
+                        str
+                        not-empty)]
+    (str "vis-ws-" (subs (util/sha256-hex root) 0 32))
+    (leader-id (:db-info environment) (:session-id environment))))
+
 (defn enabled?
   "Whether session `sid` can use managed subagents. A new session starts without the session
    settings of its source, so a managed child reads the setting of its leader. Without such a

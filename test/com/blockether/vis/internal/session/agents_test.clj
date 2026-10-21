@@ -164,6 +164,50 @@
                            "An independent session keeps its own key")
                    (expect (nil? (agents/leader-id db nil))))))
 
+;; ctb edits2-vis (openai, 20 trials): every first request read 0 of about 4.4k prefix
+;; tokens from the cache, because each one-shot session sent its own key. A workspace key
+;; lets a new session reach the warm cache of earlier sessions in the same workspace.
+(defdescribe
+  workspace-prompt-cache-key-test
+  (it "gives every session of one workspace the same opaque key"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            other
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {})
+
+            key-of
+            (fn [sid root]
+              (agents/prompt-cache-key {:db-info db :session-id sid :workspace/root root}))
+
+            k
+            (key-of leader "/work/app")]
+
+        (expect (str/starts-with? k "vis-ws-"))
+        (expect (= 39 (count k)))
+        (expect (not (str/includes? k "work")) "The raw path never leaves the host")
+        (expect (= k (key-of other "/work/app") (key-of child "/work/app")))
+        (expect (not= k (key-of leader "/work/other")))))
+  (it "falls back to the leader id without a workspace root"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {})]
+
+        (expect (= leader (agents/prompt-cache-key {:db-info db :session-id child})))
+        (expect (= leader
+                   (agents/prompt-cache-key {:db-info db :session-id child :workspace/root ""}))))))
+
 (defdescribe
   durable-budget-cancellation-and-router-test
   (it
