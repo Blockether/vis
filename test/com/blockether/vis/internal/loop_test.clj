@@ -2621,7 +2621,40 @@
          {:messages [{:role "user" :content "back"}]})
         (expect (= 1 (count @opened)))
         (expect (= ::fresh (first @asked)))
-        (expect (= ::fresh (:session @session-atom)))))))
+        (expect (= ::fresh (:session @session-atom))))))
+  (it "opens Codex without prewarm and sends the prompt-cache key as the session header"
+      ;; ChatGPT routes cache affinity by `session-id`; a prewarm made the first inference
+      ;; report no cached tokens. Probes on 2026-10-21 hit 3/3 only without prewarm.
+      (let [opened
+            (atom nil)
+
+            asked
+            (atom nil)]
+
+        (with-redefs [svar/open-session
+                      (fn [_ opts]
+                        (reset! opened opts)
+                        ::fresh)
+
+                      svar/session-history
+                      (fn [_]
+                        [])
+
+                      svar/ask!
+                      (fn [_ opts]
+                        (reset! asked opts)
+                        {:stop-reason :end})]
+
+          (#'transcript/ask-code-with-session!
+           {:router ::router :llm-session-atom (atom nil)}
+           {:provider :openai-codex :name "gpt-5.6"}
+           {:messages [{:role "user" :content "go"}]
+            :cache-key "vis-ws-abc"
+            :llm-headers {"chatgpt-account-id" "acct"}})
+          (doseq [opts [@opened @asked]]
+            (expect (false? (:websocket-prewarm? opts)))
+            (expect (= {"chatgpt-account-id" "acct" "session-id" "vis-ws-abc"}
+                       (:llm-headers opts))))))))
 
 (defdescribe
   environment-lifecycle-test

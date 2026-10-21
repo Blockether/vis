@@ -2968,6 +2968,17 @@
                :provider provider
                :model model)))
 
+(defn- session-opts
+  "Pin a server-continuation turn and connect as the Codex client does. The ChatGPT
+   backend routes cache affinity by the `session-id` header, not by `prompt_cache_key`, so
+   the header carries the prompt-cache key and a new session reaches the warm prefix of
+   earlier sessions. Prewarm stays off: its `generate=false` request runs directly before
+   the first inference, saves no time and makes that inference report no cached tokens."
+  [opts provider model]
+  (cond-> (assoc (pin-session-route opts provider model) :websocket-prewarm? false)
+    (:cache-key opts)
+    (update :llm-headers assoc "session-id" (:cache-key opts))))
+
 (defn ask-code-with-session!
   "Keep one opaque Svar session per effective router for a provider whose prompt
    cache is a server continuation; other providers stay one-shot."
@@ -3002,7 +3013,7 @@
                   (svar/open-session router
                                      (-> ask-opts
                                          (dissoc :messages)
-                                         (pin-session-route provider model))))
+                                         (session-opts provider model))))
 
               _
               (when-not current
@@ -3023,7 +3034,7 @@
                     (dissoc :messages)
                     (assoc :history messages)))]
 
-          (svar/ask! session (pin-session-route turn-opts provider model))))
+          (svar/ask! session (session-opts turn-opts provider model))))
       (do (when (and session-atom @session-atom)
             (locking session-atom (close-llm-session! session-atom)))
           (svar/ask-code! (:router environment)
