@@ -710,19 +710,19 @@
         (expect (str/includes? text "Report progress in prose"))
         (expect (str/includes? text "text next to a `python_execution` call reaches the user"))
         (expect (str/includes? text "it must stand alone without the progress notes"))))
-  ;; #303: §7 owns when, where and how progress notes appear, so a project need not copy that
-  ;; policy into AGENTS.md. The style rule names no standard: "ASD-STE100" is Simplified
-  ;; Technical English, and the name drew Claude Opus 5.5 into English and German notes in
-  ;; Polish turns.
-  (it "owns progress-note timing and style"
+  ;; #303: §7 owns when and where progress notes appear, so a project need not copy that
+  ;; policy into AGENTS.md. User decision: the prompt sets no prose style. The removed style
+  ;; rule ("short sentences", "a clear actor") added tokens to every request, and a named
+  ;; standard drew Claude Opus 5.5 into English and German notes in Polish turns.
+  (it "owns progress-note timing without a prose style rule"
       (let [text (str/replace (var-get #'prompt/CORE_SYSTEM_PROMPT) #"\s+" " ")]
-        (expect (not (str/includes? text "ASD-STE100")))
+        (doseq [banned ["ASD-STE100" "Simplified" "another style" "short sentences" "a clear actor"
+                        "one name for each thing"]]
+          (expect (not (str/includes? text banned)) banned))
         (doseq [rule ["Before large work, say the first step. Before an edit, say the change"
                       "when a finding, decision or blocker changes the next step"
                       "one or two sentences of facts" "Group related steps"
-                      "Routine reads, searches and repeated code need no note"
-                      "Unless the user or project asks for another style" "short sentences"
-                      "one action for each step" "a clear actor" "one name for each thing"]]
+                      "Routine reads, searches and repeated code need no note"]]
           (expect (str/includes? text rule) rule))))
   ;; User reports: Claude Opus 5.5 wrote German, then Russian, notes in Polish conversations.
   ;; After the first fix, 934 of 1 084 mid-turn notes in Polish turns were still English. The
@@ -893,6 +893,7 @@
       ;; `ls` gains `is_ignored`, which lists gitignored entries. It lands at 12 183.
       ;; User report: the style rule named ASD-STE100 (Simplified Technical English), and Claude
       ;; Opus 5.5 wrote English and German notes in Polish turns. §7 names no standard now.
+      ;; User decision: §7 drops the prose style rule. It lands about 150 characters lower.
       ;; 12.2k → 12.35k: `ls` pages long listings, so the rule names `limit` and `offset`.
       ;; One rule states the paging that `ls` and `grep` share. It lands at 12 339.
       ;; 12.35k → 12.4k: an eval showed that `r.all()` includes the current page. It lands at 12 378.
