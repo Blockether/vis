@@ -65,6 +65,9 @@ ARG MAVEN_VERSION=3.9.16
 ARG MAVEN_SHA512=831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6
 ARG PARAKEET_MODEL=sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
 ARG PARAKEET_RELEASE=asr-models
+# Node.js comes from the official image, not Debian: bookworm ships an EOL 18.x.
+# Move this pin to the newest LTS patch when Node.js publishes a security release.
+ARG NODE_VERSION=24.22.1
 
 # The container ships the same public wrapper as every other distribution and
 # runs the same native runtime a release publishes (see the runtime stage), with
@@ -234,6 +237,11 @@ RUN set -eux; \
     done; \
     du -sh "/opt/vis/models/${PARAKEET_MODEL}"
 
+# ── Stage: node ──────────────────────────────────────────────────────────────
+# The official Node.js build for the same Debian release as the runtime stage.
+# The runtime copies only the node binary and its global modules (npm, corepack).
+FROM node:${NODE_VERSION}-bookworm-slim AS node
+
 # ── Stage: runtime ───────────────────────────────────────────────────────────
 FROM ${BASE_IMAGE} AS runtime
 ARG CLOJURE_VERSION
@@ -267,9 +275,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         bash git openssh-client curl wget gnupg ripgrep jq unzip xz-utils less procps tini \
         ffmpeg \
         python3 python3-pip python3-venv python3-dev python-is-python3 pipx \
-        nodejs npm \
         rlwrap build-essential \
     && rm -rf /var/lib/apt/lists/*
+
+# Node.js and npm from the pinned node stage. The symlinks match the layout of
+# the official image, so `npm`, `npx` and `corepack` resolve on PATH.
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN set -eux; \
+    ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm; \
+    ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx; \
+    ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack; \
+    node --version; npm --version
 
 # github.com's SSH host keys, pinned into the system known_hosts at build time.
 # A fresh container has an empty ~/.ssh, so the first `git fetch git@github.com:`
@@ -393,7 +410,7 @@ ENV HOME=/home/vis \
 # drives target/vis, not to one container packaging of it.
 RUN set -eux; \
     java -version; clojure --version; mvn -v | head -1; \
-    python3 --version; node --version; \
+    python3 --version; node --version; npm --version; \
     ffmpeg -version | head -1; git --version; ssh -V; \
     vis-agent --version; \
     test "$(od -An -tx1 -N4 /opt/vis/agent/vis-agent-native | tr -d ' \n')" = '7f454c46'; \
