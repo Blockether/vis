@@ -655,7 +655,8 @@
    lists that you need; an empty list adds no rules. Each rule is a path or a glob, relative to
    your workspace root, ~ or absolute, and also covers files that do not exist yet. With write,
    the child can change only the files that its rules match. deny wins over read_only, and
-   read_only wins over write. Without files, the child writes where you write.
+   read_only wins over write. Without files, the child writes where you write. With the jail off,
+   only host file tools follow all rules: Python follows only write, and shell follows none.
 
    A child gets the system prompt, your requests, notes and answers, and its task. It does not get
    your tool calls or their output. Children share the checkout. Only a leader starts subagents.
@@ -1231,7 +1232,7 @@
 - Do small tasks, single-file edits, one search or one check yourself. A child costs more time than a few tool calls.
 - Give each large independent part one child, usually two to four in total. Do not split one small task into many children.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.
-- To enforce that split, give a task dict files, for example files={\"write\": [\"src/a/**\"]}. Add read_only or deny only when you need them: deny wins over read_only, and read_only wins over write. With write rules, the child writes only there. Rules are paths or globs, also for files that do not exist yet.
+- To enforce that split, give a task dict files, for example files={\"write\": [\"src/a/**\"]}. Add read_only or deny only when you need them: deny wins over read_only, and read_only wins over write. With write rules, the child writes only there. Rules are paths or globs, also for files that do not exist yet. With the jail off, only host file tools follow all rules, and shell commands follow none.
 - Write each task as a brief for a peer: the goal, what you already know or ruled out, and the output that you need. For an independent review, give the child the code, not your conclusion.
 - A child gets 120 iterations by default (maximum 600). For a large or multi-step task, set a larger iteration_budget in its task dict at the start.
 - A child sees the system prompt, your requests, notes and answers, and its task, but not your tool calls or their output. Give it sufficient context in the brief: the goal, the facts that your tools found, what you ruled out, exact paths and symbols. A child reads your whole session only when its brief is ambiguous, so do not rely on that. Set model and provider only when the user or project names a model for that work.
