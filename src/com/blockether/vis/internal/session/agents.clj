@@ -402,6 +402,12 @@
   [k]
   (or (get @runtime k) (fail! :unavailable "Managed subagents require the gateway runtime")))
 
+(defn- held-fn
+  "The runtime check for a held queue. Only the gateway holds queues; another runtime has no
+   held child."
+  []
+  (or (get @runtime :held?) (constantly false)))
+
 (defn- final-answer
   "The prose answer of the last turn of child `row`, or nil. After council.resume, only a turn
    of the follow-up task counts: `resumed_turns` in the row is the turn count before it."
@@ -415,8 +421,9 @@
                not-empty))))
 
 (defn- record
-  "One wait record. A queued or running child without a live turn after 30 s is lost."
-  [db live? now row]
+  "One wait record. A queued or running child without a live turn after 30 s is lost. A queued
+   child whose queue a human holds is held."
+  [db live? held? now row]
   (let [sid
         (str (:session_id row))
 
@@ -442,7 +449,9 @@
         (when open? (get @questions sid))]
 
     (cond-> {:session_id sid
-             :status (if question "asking" status)
+             :status (cond question "asking"
+                           (and (= "queued" status) (held? sid)) "held"
+                           :else status)
              :answer (when (terminal-statuses status) (final-answer db row))
              :question (:question question)
              :question_entry_id (:entry_id question)}
@@ -462,14 +471,17 @@
       (assoc :files (:files row)))))
 
 (defn- wait-records
-  "Poll until every child ends, one child asks, or the timeout ends. A completed child gets 5 s to
-   store its answer."
+  "Poll until every child ends, one child asks or is held, or the timeout ends. A completed
+   child gets 5 s to store its answer."
   [env ids timeout-secs]
   (let [list-fn
         (runtime-fn :list)
 
         live?
         (runtime-fn :live?)
+
+        held?
+        (held-fn)
 
         db
         (:db-info env)
@@ -512,7 +524,7 @@
                        (util/now-ms)
 
                        recs
-                       (mapv #(record db live? now %) (pick))
+                       (mapv #(record db live? held? now %) (pick))
 
                        done?
                        (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
@@ -521,7 +533,7 @@
                        (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
 
                    (when (and done? (nil? @done-at)) (vreset! done-at now))
-                   (if (or (some #(= "asking" (:status %)) recs)
+                   (if (or (some #(contains? #{"asking" "held"} (:status %)) recs)
                            (and done? (or answered? (> now (+ (long @done-at) 5000)))))
                      (reduced recs)
                      recs))))))
@@ -805,7 +817,7 @@
 (defn- current-record
   "A list with the one current record of child `sid`."
   [env sid]
-  [(record (:db-info env) (runtime-fn :live?) (util/now-ms) (info (:db-info env) sid))])
+  [(record (:db-info env) (runtime-fn :live?) (held-fn) (util/now-ms) (info (:db-info env) sid))])
 
 (defn- extend-records
   "Add iterations to the budget of a subagent and answer its record."

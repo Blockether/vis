@@ -413,6 +413,7 @@
             "queued",
             "running",
             "asking",
+            "held",
             "completed",
             "failed",
             "cancelled",

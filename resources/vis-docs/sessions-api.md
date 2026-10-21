@@ -1020,6 +1020,7 @@ machine exports or restores. The choices are `256_mib`, `512_mib` and `1_gib`. T
 | Status | Code | Meaning |
 |---|---|---|
 | 400 | `invalid-snapshot` | The file is not a Vis session snapshot, or it is damaged. |
+| 400 | `unsupported-version` | A newer version of Vis made the snapshot. Update Vis on this machine. |
 | 409 | `snapshot-incomplete` | The export cannot read an attachment of the session. |
 | 413 | `snapshot-too-large` | The snapshot is larger than the size limit. |
 

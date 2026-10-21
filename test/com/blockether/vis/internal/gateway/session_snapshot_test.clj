@@ -344,3 +344,211 @@
                         (with-redefs [snapshot/max-bytes (constantly 64)]
                           (expect (= :session/snapshot-too-large
                                      (error-type #(state/export-session sid)))))))))))
+
+(defrecord Foreign [a])
+
+(defn- recoded
+  "Snapshot `data` again with its tree changed by `f`."
+  [data f]
+  (snapshot/encode (f (:tree (snapshot/decode data))) {:vis-version "test" :now 1}))
+
+(defn- session-count [store] (count (rows store ["SELECT id FROM session_soul"])))
+
+(defdescribe
+  session-snapshot-edge-test
+  (describe
+    "refusals before any write"
+    (it "refuses a newer format version with unsupported-version"
+        (with-store (fn [store]
+                      (let [sid (session! store "Trunk talk")]
+                        (turn! store sid "ask" :success)
+                        (let [^bytes data (state/export-session sid)]
+                          (aset-byte data 11 (byte 2))
+                          (expect (= :session/unsupported-version
+                                     (error-type #(state/import-session! data {}))))
+                          (expect (= 1 (session-count store))))))))
+    (it "refuses a record or a Java class that Nippy does not allow"
+        (with-store
+          (fn [store]
+            (let [sid
+                  (session! store "Trunk talk")
+
+                  _
+                  (turn! store sid "ask" :success)
+
+                  data
+                  (state/export-session sid)]
+
+              (doseq [value [(->Foreign 1) (java.util.concurrent.atomic.AtomicLong. 5)]]
+                (expect (= :session/invalid-snapshot
+                           (error-type #(state/import-session! (recoded data
+                                                                        (fn [tree]
+                                                                          (assoc tree
+                                                                            :extra value)))
+                                                               {})))))
+              (expect (= 1 (session-count store)))))))
+    (it
+      "refuses a repeated session, a cycle and a root with a parent"
+      (with-store
+        (fn [store]
+          (let [sid
+                (session! store "Leader")
+
+                team
+                (turn! store sid "spawn" :success)
+
+                cid
+                (child! store sid team "completed")
+
+                data
+                (state/export-session sid)
+
+                broken
+                [#(update %
+                          :sessions
+                          (fn [ss]
+                            (conj (vec ss) (first ss))))
+                 #(update %
+                          :sessions
+                          (fn [ss]
+                            (mapv (fn [s]
+                                    (if (= cid (:id (:soul s))) (assoc s :parent-id cid) s))
+                                  ss))) #(update-in % [:sessions 0] assoc :parent-id cid)]]
+
+            (doseq [f broken]
+              (expect (= :session/invalid-snapshot
+                         (error-type #(state/import-session! (recoded
+                                                               data
+                                                               (comp f
+                                                                     (fn [t]
+                                                                       (update t :sessions vec))))
+                                                             {})))))
+            (expect (= 2 (session-count store)))))))
+    (it "writes nothing when the restore fails in the middle"
+        (with-store (fn [store]
+                      (let [sid
+                            (session! store "Trunk talk")
+
+                            tid
+                            (turn! store sid "ask" :success)]
+
+                        (attach! store tid (.getBytes "png-bytes" "UTF-8"))
+                        (let [data (recoded (state/export-session sid) #(assoc % :blobs {}))]
+                          (expect (= :session/invalid-snapshot
+                                     (error-type #(state/import-session! data {}))))
+                          (expect (= 1 (session-count store)))))))))
+  (describe
+    "session shapes"
+    (it "restores a session without turns with its settings"
+        (with-store
+          (fn [store]
+            (let [sid (session! store "Empty")]
+              (jdbc/execute!
+                (:datasource store)
+                ["INSERT INTO session_setting (owner_id, setting_id, value) VALUES (?,?,?)" sid
+                 "verbosity" "\"short\""])
+              (let [new-id (get (state/import-session! (state/export-session sid) {}) "id")]
+                (expect (= [] (vec (ps/db-list-session-turns store new-id))))
+                (expect (= [{:setting_id "verbosity" :value "\"short\""}]
+                           (rows store
+                                 ["SELECT setting_id, value FROM session_setting WHERE owner_id = ?"
+                                  new-id]))))))))
+    (it "restores a child alone as an independent session"
+        (with-store
+          (fn [store]
+            (let [sid
+                  (session! store "Leader")
+
+                  team
+                  (turn! store sid "spawn" :success)
+
+                  cid
+                  (child! store sid team "completed")]
+
+              (turn! store cid "child work" :success)
+              (let [data
+                    (state/export-session cid)
+
+                    new-id
+                    (get (state/import-session! data {}) "id")]
+
+                (expect (= 1 (get-in (snapshot/info data) ["counts" "sessions"])))
+                (expect (nil? (get-in (snapshot/info data) ["sessions" 0 "parent_id"])))
+                (expect (= []
+                           (rows store
+                                 ["SELECT session_id FROM session_agent WHERE session_id = ?"
+                                  new-id])))
+                (expect (= [{:parent_state_id nil}]
+                           (rows store
+                                 ["SELECT parent_state_id FROM session_soul WHERE id = ?"
+                                  new-id]))))))))
+    (it
+      "stores a shared attachment once and restores it to each turn"
+      (with-store
+        (fn [store]
+          (let [sid
+                (session! store "Trunk talk")
+
+                image
+                (.getBytes "same-png-bytes" "UTF-8")]
+
+            (attach! store (turn! store sid "first" :success) image)
+            (attach! store (turn! store sid "second" :success) image)
+            (let [data
+                  (state/export-session sid)
+
+                  manifest
+                  (snapshot/info data)
+
+                  new-id
+                  (get (state/import-session! data {}) "id")]
+
+              (expect (= 2 (get-in manifest ["counts" "attachments"])))
+              (expect (= (alength image) (get-in manifest ["sizes" "attachment_bytes"])))
+              (expect
+                (=
+                  [(seq image) (seq image)]
+                  (mapv
+                    (comp seq :bytes)
+                    (rows
+                      store
+                      ["SELECT a.bytes FROM session_attachment a JOIN session_turn_soul t ON t.id = a.session_turn_soul_id JOIN session_state s ON s.id = t.session_state_id WHERE s.session_soul_id = ?"
+                       new-id])))))))))
+    (it "keeps a model preference whose provider this machine does not configure"
+        (with-store
+          (fn [store]
+            (let [sid (session! store "Pinned")]
+              (jdbc/execute!
+                (:datasource store)
+                ["UPDATE session_soul SET llm_pref_provider = ?, llm_pref_model = ? WHERE id = ?"
+                 "provider-not-here" "model-not-here" sid])
+              (let [new-id (get (state/import-session! (state/export-session sid) {}) "id")]
+                (expect
+                  (= [{:llm_pref_provider "provider-not-here" :llm_pref_model "model-not-here"}]
+                     (rows
+                       store
+                       ["SELECT llm_pref_provider, llm_pref_model FROM session_soul WHERE id = ?"
+                        new-id]))))))))
+    (it "keeps 4-byte Unicode in titles and content"
+        (with-store
+          (fn [store]
+            (let [title
+                  "Zażółć 🎉 𝄞"
+
+                  sid
+                  (session! store title)]
+
+              (turn! store sid "Ask 😀 about 𝔘𝔫𝔦𝔠𝔬𝔡𝔢" :success)
+              (let [data
+                    (state/export-session sid)
+
+                    new-id
+                    (get (state/import-session! data {}) "id")]
+
+                (expect (= title (get-in (snapshot/info data) ["sessions" 0 "title"])))
+                (expect (= ["Ask 😀 about 𝔘𝔫𝔦𝔠𝔬𝔡𝔢"]
+                           (mapv :user-request (ps/db-list-session-turns store new-id))))
+                (expect (= [{:title title}]
+                           (rows store
+                                 ["SELECT title FROM session_state WHERE session_soul_id = ?"
+                                  new-id]))))))))))

@@ -877,6 +877,9 @@
     :session/invalid-snapshot
     (http/error-response 400 :session/invalid-snapshot (ex-message e))
 
+    :session/unsupported-version
+    (http/error-response 400 :session/unsupported-version (ex-message e))
+
     :session/snapshot-too-large
     (http/error-response 413 :session/snapshot-too-large (ex-message e))
 

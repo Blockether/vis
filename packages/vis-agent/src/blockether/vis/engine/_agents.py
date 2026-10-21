@@ -38,7 +38,8 @@ class SubagentRecord:
     """The state of one subagent after a control: answer, open question or request.
 
     ``status`` is ``asking`` when the child waits for its parent. Then ``question``,
-    ``budget_request`` or ``files_request`` tells what it needs. ``unknown`` names a
+    ``budget_request`` or ``files_request`` tells what it needs. ``held`` means that a
+    human holds the queue of the child; only a person can release it. ``unknown`` names a
     session that is not a subagent of the caller. ``warning`` reports a file overlap.
     """
 

@@ -1311,3 +1311,47 @@
                        (doseq [operation [:extend :deny :wait :list]]
                          (gateway/agents-operation! "parent" operation {}))
                        (expect (= [[:extend true] [:deny true] [:wait nil] [:list nil]] @seen)))))))
+
+;; Regression for #405: a cancel of a finished child must keep its outcome.
+(defdescribe cancel-of-a-finished-child-test
+             (it "answers a finished child unchanged and cancels nothing"
+                 (let [db
+                       (h/store)
+
+                       leader
+                       (str (h/store-session! db {:channel :api}))
+
+                       env
+                       {:db-info db :session-id leader}]
+
+                   (doseq [status ["completed" "failed" "cancelled"]]
+                     (let [child (child! db leader {})]
+                       (agents/finish! db child status)
+                       (with-redefs [lp/db-info (constantly db)]
+                         (expect (= {:session_id child :status status :cancelled []}
+                                    (#'gateway/agent-cancel env {:session_id child}))
+                                 status))
+                       (expect (= status (:status (agents/info db child))) status))))))
+
+;; Regression for #405: a human hold of a child's queue ends the wait with status held.
+(defdescribe wait-reports-a-held-child-test
+             (it "reports held for a queued child whose queue a human holds"
+                 (let [db
+                       (h/store)
+
+                       leader
+                       (str (h/store-session! db {:channel :api}))
+
+                       child
+                       (child! db leader {:status "queued"})]
+
+                   (with-redefs [lp/db-info (constantly db)]
+                     (try (#'gateway/put-session!
+                           child
+                           {:next-seq 0 :queue-paused true :turns {"t1" {:status "queued"}}})
+                          (let [record (first (:result (agents/wait-agents {:db-info db
+                                                                            :session-id leader}
+                                                                           [child]
+                                                                           {:timeout_secs 5})))]
+                            (expect (= "held" (get record "status")) (pr-str record)))
+                          (finally (#'gateway/drop-session! child)))))))

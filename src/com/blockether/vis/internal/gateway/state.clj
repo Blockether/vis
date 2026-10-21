@@ -6200,22 +6200,27 @@
         sid
         (str (:session_id opts))
 
-        _
+        child
         (or (agents/info db sid)
             (agents/fail! :not-owner "Only a managed subagent can be cancelled here"))
 
         ids
         [sid]]
 
-    (doseq [id ids]
-      ;; Persist before cancelling: delayed pings and queued work cannot resume it.
-      (persistance/db-agent-update! db id {:status "cancelled"})
-      (doseq [[tid turn] (:turns (session-entry id))
-              :when (= "queued" (:status turn))]
+    ;; A finished child keeps its outcome: there is nothing left to cancel (#405).
+    (if (and (contains? #{"completed" "failed" "cancelled"} (:status child))
+             (not-any? #(contains? #{"queued" "running"} (:status %))
+                       (vals (:turns (session-entry sid)))))
+      {:session_id sid :status (:status child) :cancelled []}
+      (do (doseq [id ids]
+            ;; Persist before cancelling: delayed pings and queued work cannot resume it.
+            (persistance/db-agent-update! db id {:status "cancelled"})
+            (doseq [[tid turn] (:turns (session-entry id))
+                    :when (= "queued" (:status turn))]
 
-        (delete-queued-turn! id tid))
-      (cancel-session-turns! id :agent-cancel))
-    {:session_id sid :status "cancelled" :cancelled ids}))
+              (delete-queued-turn! id tid))
+            (cancel-session-turns! id :agent-cancel))
+          {:session_id sid :status "cancelled" :cancelled ids}))))
 
 (defn- agent-files
   "Resolve and check the file grant `grant` of the calling parent `env`. Rules resolve against
@@ -6474,6 +6479,11 @@
   (boolean (some #(contains? #{"queued" "running"} (:status %))
                  (vals (:turns (session-entry (str sid)))))))
 
+(defn- agent-held?
+  "True when a human holds the queue of `sid`."
+  [sid]
+  (boolean (:queue-paused (session-entry (str sid)))))
+
 (defn- agent-publish
   "Publish a Council entry as the calling session in its active turn."
   [env opts]
@@ -6494,6 +6504,7 @@
    :route #'agent-route
    :grant #'agent-grant
    :live? #'agent-live?
+   :held? #'agent-held?
    :publish #'agent-publish})
 
 (defn agents-operation!
@@ -6589,7 +6600,8 @@
    root (#405). Each session gets a new id and a trunk workspace at `root`; without it, the
    folder of the project of `group-id`, else the gateway folder. The restorer's policy gives
    the permissions. With `key`, a second restore answers the root of the first one. Throws
-   `ex-info` with `:type` `:session/invalid-snapshot` or `:session/snapshot-too-large`."
+   `ex-info` with `:type` `:session/invalid-snapshot`, `:session/unsupported-version` or
+   `:session/snapshot-too-large`."
   [^bytes data {:keys [root group-id key]}]
   (let [db
         (lp/db-info)

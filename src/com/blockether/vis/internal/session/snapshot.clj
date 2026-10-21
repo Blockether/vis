@@ -111,6 +111,9 @@
         length
         (.getInt buffer 12)]
 
+    (when (> version (long format-version))
+      (throw (ex-info (str "This session snapshot needs a newer Vis: format version " version)
+                      {:type :session/unsupported-version :format-version version})))
     (when-not (= format-version version)
       (invalid! (str "Unsupported session snapshot format version " version)))
     (when (or (neg? length)
@@ -126,10 +129,49 @@
   [^bytes data]
   (:manifest (parts data)))
 
+(defn- foreign?
+  "True for a value that a snapshot never holds: a record, or a class that Nippy quarantined."
+  [x]
+  (or (record? x) (and (map? x) (contains? x :nippy/unthawable))))
+
+(defn- check-tree!
+  "Throw unless `tree` holds sessions with distinct ids, the first one as the only root, and
+   a chain of fork or child links from each other session to that root."
+  [tree]
+  (let [sessions
+        (when (map? tree) (:sessions tree))
+
+        ids
+        (mapv (comp :id :soul) sessions)
+
+        parent
+        (zipmap ids (map #(or (:parent-id %) (get-in % [:agent :parent_id])) sessions))
+
+        root
+        (first ids)
+
+        reaches-root?
+        (fn [id]
+          (loop [id
+                 id
+
+                 steps
+                 (count ids)]
+
+            (cond (= id root) true
+                  (or (nil? id) (zero? steps)) false
+                  :else (recur (get parent id) (dec steps)))))]
+
+    (when (empty? sessions) (invalid! "The session snapshot has no sessions"))
+    (when-not (apply distinct? ids) (invalid! "The session snapshot repeats a session"))
+    (when-not (and (every? string? ids) (nil? (get parent root)) (every? reaches-root? ids))
+      (invalid! "The session snapshot tree is damaged"))))
+
 (defn decode
   "The manifest and the session tree of snapshot `data`. Throws `:session/invalid-snapshot`
-   for a damaged file or a digest that does not match, and `:session/snapshot-too-large`
-   past [[max-bytes]]."
+   for a damaged file, a digest that does not match, a value of an unknown type or a broken
+   session tree. Throws `:session/unsupported-version` for a newer format and
+   `:session/snapshot-too-large` past [[max-bytes]]."
   [^bytes data]
   (when (> (alength data) (long (max-bytes)))
     (throw (ex-info "The session snapshot exceeds the size limit"
@@ -142,8 +184,10 @@
 
     (when-not (= (get manifest "payload_sha256") (util/sha256-hex payload))
       (invalid! "The session snapshot payload does not match its digest"))
-    (let [tree (try (nippy/thaw payload)
-                    (catch Exception _ (invalid! "The session snapshot payload is damaged")))]
-      (when-not (and (map? tree) (seq (:sessions tree)))
-        (invalid! "The session snapshot has no sessions"))
+    (let [tree (binding [nippy/*thaw-serializable-allowlist* #{}]
+                 (try (nippy/thaw payload)
+                      (catch Exception _ (invalid! "The session snapshot payload is damaged"))))]
+      (when (some foreign? (tree-seq coll? seq tree))
+        (invalid! "The session snapshot holds a value of an unknown type"))
+      (check-tree! tree)
       {:manifest manifest :tree tree})))
