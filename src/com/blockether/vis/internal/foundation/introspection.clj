@@ -823,7 +823,7 @@
 
         (contains? classes :patch-lines-changed)
         (conj
-          "Read only the window the patch refusal names and use the current version it gives; put every edit for one file in ONE patch(path, edits, version) call.")))))
+          "Read only the window the patch refusal names and use the current version it gives; put every edit for one file in ONE patch(path, edits) call.")))))
 
 (def ^:private STALE_RUNNING_TURN_MS
   "A running turn with no new iteration for this long is a suspected hang."

@@ -3522,10 +3522,12 @@
    there is one edit of the batch."
   [op v]
   (when (map? v)
-    (throw (ex-info (if (= op :cat)
-                      "cat: use cat(path, start?, end?); not an options map."
-                      "patch: use patch(path, edits, version); see doc(\"patch\") for edit keys.")
-                    {:type :ext.foundation.editing/positional-only :op op})))
+    (throw
+      (ex-info
+        (if (= op :cat)
+          "cat: use cat(path, start?, end?); not an options map."
+          "patch: use patch(path, edits) or patch(path, edits, version); see doc(\"patch\") for edit keys.")
+        {:type :ext.foundation.editing/positional-only :op op})))
   v)
 
 (defn- readable-file-content
@@ -3849,8 +3851,9 @@
               (patch-refusal! rel
                               {:reason :edit-not-a-map :edit-index i}
                               [(str at "must be a map.")]))
-            (let [unknown (remove #{"from" "to" "replace"} (keys entry))
+            (let [unknown (remove #{"from" "to" "replace" "old" "all"} (keys entry))
                   from (get entry "from")
+                  old (get entry "old")
                   replacement (get entry "replace")]
 
               (when (seq unknown)
@@ -3860,11 +3863,19 @@
                   [(str at
                         "unknown keys: "
                         (str/join ", " (map pr-str unknown))
-                        "; allowed: from, to, replace.")]))
-              (when (nil? from)
+                        "; allowed: from, to, replace, or old, replace, all.")]))
+              (when (and (some? old) (or (some? from) (some? (get entry "to"))))
+                (patch-refusal! rel
+                                {:reason :edit-mixed-address :edit-index i}
+                                [(str at "use either `old` or `from`/`to`, not both.")]))
+              (when (and (some? old) (not (and (string? old) (seq old))))
+                (patch-refusal! rel
+                                {:reason :text-malformed :edit-index i}
+                                [(str at "`old` must be non-empty text.")]))
+              (when (and (nil? old) (nil? from))
                 (patch-refusal! rel
                                 {:reason :line-missing :edit-index i}
-                                [(str at "missing `from`.")]))
+                                [(str at "missing `from` or `old`.")]))
               (when (nil? replacement)
                 (patch-refusal! rel
                                 {:reason :replacement-missing :edit-index i}
@@ -3886,10 +3897,12 @@
                                                     shown
                                                     (str "a value of " (count shown) " chars")))
                                                 ".")])))]
-                {:index i
-                 :from (line-of "from" from)
-                 :to (line-of "to" (or (get entry "to") from))
-                 :replace replacement}))))
+                (if (some? old)
+                  {:index i :old old :all? (true? (get entry "all")) :replace replacement}
+                  {:index i
+                   :from (line-of "from" from)
+                   :to (line-of "to" (or (get entry "to") from))
+                   :replace replacement})))))
         batch))))
 
 (defn- patch-overlap!
@@ -3898,8 +3911,11 @@
    refusal IS the feature: it names both edits with their resolved ranges, and
    nothing is written."
   [rel resolved]
-  (doseq [[a b] (partition 2 1 (sort-by :from-line resolved))]
-    (when (>= (long (:to-line a)) (long (:from-line b)))
+  (doseq [[a b] (partition 2 1 (sort-by (juxt :start :end) resolved))]
+    (when (if (or (:text? a) (:text? b))
+            ;; A text edit owns chars, not lines: two words of one line are separate.
+            (or (= (:start a) (:start b)) (< (long (:start b)) (long (:end a))))
+            (>= (long (:to-line a)) (long (:from-line b))))
       (let [i (inc (long (:index a)))
             j (inc (long (:index b)))]
 
@@ -3993,6 +4009,99 @@
           (str "patch refused at edit " (inc (long index)) " of " total " — nothing was written.")))
       (patch-version-refusal! rel :lines-not-shown message current-version from index total))))
 
+(defn- patch-text-spans!
+  "Resolve ONE text edit against the CURRENT file: one char span for each exact match
+   of `old`. The text is its own address, so it needs no version and no earlier read.
+   Refuse a missing match, and more than one match without `all`. On a CRLF file, an
+   `old` or `replace` with bare LF line ends gets CRLF line ends."
+  [rel ^String content {:keys [index old all? replace]} total]
+  (let [crlf?
+        (str/includes? content "\r\n")
+
+        crlf
+        (fn [^String s]
+          (if (and crlf? (not (str/includes? s "\r\n"))) (str/replace s "\n" "\r\n") s))
+
+        ^String needle
+        (crlf (escapes/decode-unicode-escapes (str old)))
+
+        ^String new-text
+        (crlf (escapes/decode-unicode-escapes (str replace)))
+
+        starts
+        (loop [from
+               0
+
+               acc
+               []]
+
+          (let [i (.indexOf content needle (int from))]
+            (if (neg? i) acc (recur (+ i (.length needle)) (conj acc i)))))
+
+        line-at
+        (fn [^long offset]
+          (loop [from
+                 0
+
+                 n
+                 1]
+
+            (let [j (.indexOf content "\n" (int from))]
+              (if (or (neg? j) (>= j offset)) n (recur (inc j) (inc n))))))
+
+        at
+        (str "  " rel ": edit " (inc (long index)) "/" total " ")]
+
+    (cond (empty? starts)
+          (let [lines
+                (version/split-content-lines needle)
+
+                gutter?
+                (some #(re-find #"^\s*\d+(?::[0-9a-f]+)?│ " %) lines)
+
+                head
+                (some #(not-empty (str/trim %)) lines)
+
+                near
+                (when head
+                  (->> (version/split-content-lines content)
+                       (keep-indexed (fn [i l]
+                                       (when (str/includes? l head) (inc (long i)))))
+                       (take 5)
+                       vec))]
+
+            (patch-refusal!
+              rel
+              {:reason :text-not-found :edit-index index}
+              [(str at
+                    "`old` is not in the file. "
+                    (cond gutter? "Remove the `line│ ` gutters from `old`."
+                          (seq near) (str "Its first line occurs at line(s) "
+                                          (str/join ", " near)
+                                          ": copy the next lines exactly, with their whitespace.")
+                          :else "Read the file and copy the text exactly."))]))
+          (and (next starts) (not all?))
+          (patch-refusal!
+            rel
+            {:reason :text-ambiguous :edit-index index :match-count (count starts)}
+            [(str at
+                  "`old` matches "
+                  (count starts)
+                  " times, at lines "
+                  (str/join ", " (map line-at (take 8 starts)))
+                  ". Add nearby lines to `old`, or set `all: true` to replace every match.")])
+          :else (mapv (fn [s]
+                        (let [e (+ (long s) (.length needle))]
+                          {:index index
+                           :text? true
+                           :start s
+                           :end e
+                           :replacement new-text
+                           :new-text new-text
+                           :from-line (line-at s)
+                           :to-line (line-at (max (long s) (dec e)))}))
+                      starts))))
+
 (defn- patch-plan
   "Resolve every edit of ONE `patch` call against ONE read of its file, and write
    nothing. Each edit names lines of `version`, the version a read showed. When the
@@ -4027,29 +4136,34 @@
                             {:reason :source-changed}
                             ["The file changed during repair. Read it again before retrying."])))
 
+        line-batch
+        (filterv :from batch)
+
+        ;; Only line edits need the read that numbered their lines.
         shown-version
-        (or (version/parse-version version)
-            (patch-version-refusal! rel
-                                    :version-malformed
-                                    (str
-                                      "version must be the `@` value of a cat or grep header, got "
-                                      (pr-str version)
-                                      ".")
-                                    current-version
-                                    (:from (first batch))))
+        (when (seq line-batch)
+          (or (version/parse-version version)
+              (patch-version-refusal!
+                rel
+                :version-malformed
+                (str "version must be the `@` value of a cat or grep header, got "
+                     (pr-str version)
+                     ".")
+                current-version
+                (:from (first line-batch)))))
 
         shown
-        (if (= shown-version current-version)
+        (if (or (nil? shown-version) (= shown-version current-version))
           original
           (or (version/recall (str (canonical-path f)) shown-version)
               (patch-version-refusal! rel
                                       :version-unknown
                                       (str "version @" shown-version " is not known here.")
                                       current-version
-                                      (:from (first batch)))))
+                                      (:from (first line-batch)))))
 
         seen
-        (version/shown-ranges (str (canonical-path f)) shown-version)
+        (when shown-version (version/shown-ranges (str (canonical-path f)) shown-version))
 
         shown-lines
         (version/split-content-lines shown)
@@ -4059,44 +4173,60 @@
 
         ;; Resolve all character spans against the same source before changing content.
         resolved
-        (mapv
-          (fn [{:keys [index from to replace] :as edit}]
-            (patch-line-range! rel edit total (count shown-lines) shown-version)
-            (when (and seen (not (version/covers? seen from to)))
-              (patch-unshown-refusal! f rel edit total shown-version current-version current-lines))
-            (let [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
-                  ^String new-text
-                  (escapes/decode-unicode-escapes (str replace))
+        (into
+          []
+          (mapcat
+            (fn [{:keys [index from to replace old] :as edit}]
+              (if old
+                (patch-text-spans! rel original edit total)
+                [(do (patch-line-range! rel edit total (count shown-lines) shown-version)
+                     (when (and seen (not (version/covers? seen from to)))
+                       (patch-unshown-refusal! f
+                                               rel
+                                               edit
+                                               total
+                                               shown-version
+                                               current-version
+                                               current-lines))
+                     (let [;; A drifted `\uXXXX` otherwise reaches disk as six literal characters.
+                           ^String new-text
+                           (escapes/decode-unicode-escapes (str replace))
 
-                  moved
-                  (if (identical? shown original)
-                    {:from from :to to}
-                    (diff/remap-line-span shown-lines current-lines from to))]
+                           moved
+                           (if (identical? shown original)
+                             {:from from :to to}
+                             (diff/remap-line-span shown-lines current-lines from to))]
 
-              (case (:error moved)
-                :span-changed
-                (patch-version-refusal!
-                  rel
-                  :lines-changed
-                  (str "lines " from ".." to " of @" shown-version " changed since that read.")
-                  current-version
-                  from
-                  index
-                  total)
+                       (case (:error moved)
+                         :span-changed
+                         (patch-version-refusal! rel
+                                                 :lines-changed
+                                                 (str "lines "
+                                                      from
+                                                      ".."
+                                                      to
+                                                      " of @"
+                                                      shown-version
+                                                      " changed since that read.")
+                                                 current-version
+                                                 from
+                                                 index
+                                                 total)
 
-                :too-many-changes
-                (patch-version-refusal!
-                  rel
-                  :version-diverged
-                  (str "the file changed too much since @" shown-version " to move this edit.")
-                  current-version
-                  from
-                  index
-                  total)
+                         :too-many-changes
+                         (patch-version-refusal! rel
+                                                 :version-diverged
+                                                 (str "the file changed too much since @"
+                                                      shown-version
+                                                      " to move this edit.")
+                                                 current-version
+                                                 from
+                                                 index
+                                                 total)
 
-                (assoc (version/edit-span original (:from moved) (:to moved) new-text)
-                  :index index
-                  :new-text new-text))))
+                         (assoc (version/edit-span original (:from moved) (:to moved) new-text)
+                           :index index
+                           :new-text new-text))))])))
           batch)
 
         _
@@ -4111,7 +4241,7 @@
                 (sort-by :start #(compare %2 %1) resolved))
 
         moved-from
-        (when-not (= shown-version current-version) shown-version)]
+        (when (and shown-version (not= shown-version current-version)) shown-version)]
 
     (if-let [{:keys [after notes]} (::repair (meta edits))]
       {:file f
@@ -4356,20 +4486,21 @@
 (defn- patch-tool
   "patch — every edit for ONE file, applied atomically in ONE write.
 
-     patch(path, [{\"from\": 41, \"replace\": new}], \"3f9a1c2b\")             ONE line
-     patch(path, [{\"from\": 41, \"to\": 48, \"replace\": new}], version)    a span
-     patch(path, [{\"from\": 41, \"replace\": \"\"}], version)               delete
+     patch(path, [{\"old\": text, \"replace\": new}])                      exact text
+     patch(path, [{\"old\": text, \"replace\": new, \"all\": true}])        every match
+     patch(path, [{\"from\": 41, \"to\": 48, \"replace\": new}], version)    a line span
 
-   `version` is the `@` value of the cat or grep header that showed the lines, and
-   `from`/`to` are line numbers of that version. A span is the canonical input; `to`
-   defaults to `from` only for one line. `replace` is required — an absent one is
-   refused, never read as a deletion. When the file changed after that read, each
-   span moves through a diff and is refused only when its own lines changed. Every
-   span resolves against ONE read, so edits may be listed in ANY order; overlapping
+   A TEXT edit addresses the current file by its exact text: it needs no read and no
+   version, and it is refused unless `old` matches exactly once (or `all` is true).
+   A LINE edit uses line numbers of `version`, the `@` value of the cat or grep header
+   that showed them; `to` defaults to `from`. When the file changed after that read,
+   each span moves through a diff and is refused only when its own lines changed.
+   `replace` is required — an absent one is refused, never read as a deletion. Every
+   edit resolves against ONE read, so edits may be listed in ANY order; overlapping
    edits are refused. Success returns the new version and each edit's lines after
    the write. One file per call; a refusal writes NOTHING."
-  [path edits version]
-  (patch-file! path edits version))
+  ([path edits] (patch-file! path edits nil))
+  ([path edits version] (patch-file! path edits version)))
 
 (def cat-symbol
   (extension/symbol
@@ -4412,21 +4543,23 @@
        "the version of your read or read again.")
      :description
      (str
-       "Apply all edits for one file in one atomic write. Use it to replace lines, rewrite a "
-       "docstring, swap a function body or rename an identifier, in any language. Call "
+       "Apply all edits for one file in one atomic write, in any language. Each edit has one of "
+       "two forms:\n"
+       "- Text: `{\"old\": exact_text, \"replace\": new}`. `old` must match the current file exactly "
+       "once. Add nearby lines to make it unique, or set `\"all\": true` to replace every match. A "
+       "text edit needs no read and no version, so you can edit in the same block as a search.\n"
+       "- Lines: `{\"from\": 12, \"to\": 14, \"replace\": new}` with the `version` argument, the `@` "
+       "value of the `cat` or `grep` result that showed the lines. `to` defaults to `from`. Use it "
+       "for a long span, so you do not repeat its text.\n\n"
+       "Call `patch(path, [{\"old\": \"x = 1\", \"replace\": \"x = 2\"}])` or "
        "`patch(path, [{\"from\": 12, \"replace\": new}, {\"from\": 30, \"to\": 34, \"replace\": \"\"}], "
-       "version)`.\n\n"
-       "`version` is the `@` value from the header of the `cat` or `grep` result that showed the "
-       "lines. `from` and `to` are line numbers of that version. `to` defaults to `from` for a "
-       "one-line edit, and `replace: \"\"` deletes the lines. You can list the edits in any order, "
-       "because they all apply to one read. Do not repeat the text that you replace.\n\n"
-       "If the file changed elsewhere after your read, patch moves each edit to its new lines. If "
-       "the lines of an edit changed, patch refuses. It also refuses lines that no `cat`, `grep` or "
-       "`patch` result of that version showed. The write is atomic: a refused edit or an "
-       "overlap refuses the WHOLE batch and writes NOTHING. The refusal gives the current version "
-       "and a `cat` window to read again. If it shows the lines instead, check them and send the "
-       "edit again.")
-     :call {:pos ["path" "edits" "version"]}
+       "version)`. `replace: \"\"` deletes. You can list the edits in any order, because they all "
+       "apply to one read.\n\n"
+       "If the file changed elsewhere after your read, patch moves each line edit to its new lines. "
+       "If the lines of an edit changed, patch refuses. It also refuses lines that no `cat`, `grep` "
+       "or `patch` result of that version showed. The write is atomic: a refused edit or an overlap "
+       "refuses the WHOLE batch and writes NOTHING. The refusal says why and what to read again.")
+     :call {:pos ["path" "edits"] :opt-pos ["version"]}
      :before-fn (previewing-before-fn (fs-access-before-fn :patch :file "file-write" read-arg-paths)
                                       patch-preview
                                       repair-patch-args)

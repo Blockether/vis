@@ -1142,21 +1142,21 @@
     ;; INSIDE the text instead cost `patch` fourteen ranks on its own ask, because
     ;; a document's first line is one of the three scored fields.
     (it "opens every wired tool page with its call line and names its required keys once"
-        (let [out (run
-                    (str
-                      "import json\n"
-                      "bad = []\n"
-                      "wired = set(["
-                      (str/join ", " (map pr-str native))
-                      "])\n"
-                      "keyed = []\n" "for item in apropos():\n"
-                      "    if item.type != 'tool' or item.name not in wired: continue\n"
-                      "    L = doc(item).splitlines()\n"
-                      "    if len(L) < 3 or (item.name + '(') not in L[2]: bad.append(item.name)\n"
-                      "    if len(L) > 3 and L[3].startswith('Keys:'): keyed.append(item.name)\n"
-                      "print('NOCALL='+json.dumps(bad))\n" "print('KEYED='+str(len(keyed) > 8))\n"
-                      "print('REQUIRED='+str(any('(REQUIRED)' in doc(n) for n in wired)))\n"
-                      "print('ONCE='+str(doc('patch').count('patch(path, edits, version)')))"))]
+        (let [out
+              (run (str
+                     "import json\n"
+                     "bad = []\n"
+                     "wired = set(["
+                     (str/join ", " (map pr-str native))
+                     "])\n"
+                     "keyed = []\n" "for item in apropos():\n"
+                     "    if item.type != 'tool' or item.name not in wired: continue\n"
+                     "    L = doc(item).splitlines()\n"
+                     "    if len(L) < 3 or (item.name + '(') not in L[2]: bad.append(item.name)\n"
+                     "    if len(L) > 3 and L[3].startswith('Keys:'): keyed.append(item.name)\n"
+                     "print('NOCALL='+json.dumps(bad))\n" "print('KEYED='+str(len(keyed) > 8))\n"
+                     "print('REQUIRED='+str(any('(REQUIRED)' in doc(n) for n in wired)))\n"
+                     "print('ONCE='+str(doc('patch').count('patch(path, edits, version=None)')))"))]
           (expect (re-find #"NOCALL=\[\]" out) out)
           (expect (str/includes? out "KEYED=True"))
           (expect (str/includes? out "REQUIRED=True"))

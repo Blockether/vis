@@ -13,19 +13,21 @@
     "compact tool refusals"
     (tpc/with-own
       [ctx (extension/builtin-sandbox-bindings (constantly {}))]
-      (doseq [[code expected]
-              [["cat({})" "cat: use cat(path, start?, end?); not an options map."]
-               ["patch({})" "patch: wrong number of arguments; see doc(\"patch\")."]
-               ["patch({}, [], '00000000')" "patch: use patch(path, edits, version); see doc(\"patch\") for edit keys."]
-               ["grep({'query': 'x', 'paths': ['resources'], 'wat': True})"
-                "grep: unknown keys: wat. See doc(\"grep\")."]
-               ["await shell('')" "shell: command required; use shell(command)."]
-               ["await _shell_logs('missing-handle')"
-                "shell: unknown id 'missing-handle'; use the handle returned by shell()."]
-               ["await draft_approve('test')"
-                "draft_approve(): not in a draft; use draft_create(\"name\") first."]
-               ["await council.read()"
-                "Council requires a persisted session with a project or workspace"]]]
+      (doseq
+        [[code expected]
+         [["cat({})" "cat: use cat(path, start?, end?); not an options map."]
+          ["patch({})" "patch: wrong number of arguments; see doc(\"patch\")."]
+          ["patch({}, [], '00000000')"
+           "patch: use patch(path, edits) or patch(path, edits, version); see doc(\"patch\") for edit keys."]
+          ["grep({'query': 'x', 'paths': ['resources'], 'wat': True})"
+           "grep: unknown keys: wat. See doc(\"grep\")."]
+          ["await shell('')" "shell: command required; use shell(command)."]
+          ["await _shell_logs('missing-handle')"
+           "shell: unknown id 'missing-handle'; use the handle returned by shell()."]
+          ["await draft_approve('test')"
+           "draft_approve(): not in a draft; use draft_create(\"name\") first."]
+          ["await council.read()"
+           "Council requires a persisted session with a project or workspace"]]]
         (let [out (ep/run-python-block ctx (str code "\nprint('unreachable')") "t1/i1")]
           (expect (= expected (get-in out [:error :message])) code)
           (expect (= :python/host (get-in out [:error :data :phase])) code)

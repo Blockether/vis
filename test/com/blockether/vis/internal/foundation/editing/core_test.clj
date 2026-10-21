@@ -5062,14 +5062,14 @@
           (ep/run-python-block
             ctx
             (str "import inspect\n"
-                 "p = "
-                 (pr-str rel)
-                 "\n"
-                 "print(inspect.signature(cat))\n" "print(inspect.signature(patch))\n"
-                 "text = cat(p)\n" "print(text)\n"
-                 "w = cat(p, start=2, end=3)\n" "print('window:', ' | '.join(w.splitlines()))\n"
+                 "p = " (pr-str rel)
+                 "\n" "print(inspect.signature(cat))\n"
+                 "print(inspect.signature(patch))\n" "text = cat(p)\n"
+                 "print(text)\n" "w = cat(p, start=2, end=3)\n"
+                 "print('window:', ' | '.join(w.splitlines()))\n"
                  "head, row = text.splitlines()[0], text.splitlines()[2]\n"
-                 "print(patch(p, [{'from': row, 'replace': 'BETA'}], head.split(' @')[1]))\n")
+                 "print(patch(p, [{'from': row, 'replace': 'BETA'}], head.split(' @')[1]))\n"
+                 "print(patch(p, [{'old': 'gamma', 'replace': 'GAMMA'}]))\n")
             "t1/i2")
 
           out
@@ -5077,7 +5077,7 @@
 
       (expect (nil? (:error result)))
       (expect (string/includes? out "(path, start=None, end=None)"))
-      (expect (string/includes? out "(path, edits, version)"))
+      (expect (string/includes? out "(path, edits, version=None)"))
       (expect (re-find #"(?m)^\S*cat/sandbox\.txt @[0-9a-f]{8}$" out))
       (expect (re-find #"(?m)^1│ alpha$" out))
       ;; Issue #274: the keyword bounds a block writes reach the same window
@@ -5086,7 +5086,8 @@
       (expect (re-find #"(?m)^window: \S*cat/sandbox\.txt @[0-9a-f]{8} \| 2│ beta \| 3│ gamma$"
                        out))
       (expect (string/includes? out "→ 1 line"))
-      (expect (= "alpha\nBETA\ngamma\n" (slurp rel))))))
+      ;; A text edit needs no version, so a block can patch without a read first.
+      (expect (= "alpha\nBETA\nGAMMA\n" (slurp rel))))))
 
 ;; =============================================================================
 ;; `ls` ORDERING, and the two sources allowed to answer a listing.
@@ -5686,3 +5687,69 @@
                           nil
                           (catch clojure.lang.ExceptionInfo e (ex-message e)))]
           (expect (string/includes? (str caught) "does not compile"))))))
+
+(defdescribe
+  patch-text-edit-test
+  (describe
+    "a text edit addresses the file by its exact text"
+    (it "replaces one exact match without a version or a read"
+        (let [rel
+              (write-temp! "patch/text-one.py" "def f(x):\n    return x + 1\n")
+
+              out
+              ((private-fn "patch-tool") rel [{"old" "x + 1" "replace" "x + 2"}])]
+
+          (expect (= "def f(x):\n    return x + 2\n" (slurp rel)))
+          (expect (string/includes? (:result out) (current-version rel)))))
+    (it "refuses an ambiguous match and names its lines, then `all` replaces every match"
+        (let [rel
+              (write-temp! "patch/text-all.py" "print(1)\nx = 0\nprint(1)\n")
+
+              e
+              (refusal #((private-fn "patch-tool") rel [{"old" "print(1)" "replace" "print(2)"}]))]
+
+          (expect (= :text-ambiguous (:reason (ex-data e))))
+          (expect (string/includes? (ex-message e) "lines 1, 3"))
+          (expect (= "print(1)\nx = 0\nprint(1)\n" (slurp rel)))
+          ((private-fn "patch-tool") rel [{"old" "print(1)" "replace" "print(2)" "all" true}])
+          (expect (= "print(2)\nx = 0\nprint(2)\n" (slurp rel)))))
+    (it "refuses text that is not in the file and points at its first line"
+        (let [rel
+              (write-temp! "patch/text-miss.py" "def f():\n    return 1\n")
+
+              e
+              (refusal
+                #((private-fn "patch-tool") rel [{"old" "def f():\n  return 1" "replace" "x"}]))]
+
+          (expect (= :text-not-found (:reason (ex-data e))))
+          (expect (string/includes? (ex-message e) "line(s) 1"))
+          (expect (= "def f():\n    return 1\n" (slurp rel)))))
+    (it "applies two text edits on one line, and refuses overlapping text"
+        (let [rel (write-temp! "patch/text-line.py" "a = b + c\n")]
+          ((private-fn "patch-tool") rel [{"old" "a =" "replace" "z ="} {"old" "c" "replace" "d"}])
+          (expect (= "z = b + d\n" (slurp rel)))
+          (expect (= :edits-overlap
+                     (:reason (ex-data (refusal #((private-fn "patch-tool")
+                                                    rel
+                                                    [{"old" "z = b" "replace" "q"}
+                                                     {"old" "b + d" "replace" "r"}]))))))))
+    (it "mixes a text edit with a line edit of the read version"
+        (let [rel (write-temp! "patch/text-mixed.txt" "one\ntwo\nthree\n")]
+          (patch-now rel [{"old" "one" "replace" "1"} {"from" 3 "replace" "3"}])
+          (expect (= "1\ntwo\n3\n" (slurp rel)))))
+    (it "keeps CRLF line ends when `old` and `replace` use LF"
+        (let [rel (write-temp! "patch/text-crlf.txt" "a\r\nb\r\nc\r\n")]
+          ((private-fn "patch-tool") rel [{"old" "a\nb" "replace" "x\ny"}])
+          (expect (= "x\r\ny\r\nc\r\n" (slurp rel)))))
+    (it "refuses `old` together with `from`, an empty `old`, and a line edit without version"
+        (let [rel
+              (write-temp! "patch/text-shape.txt" "a\n")
+
+              reason
+              #(:reason (ex-data (refusal (fn []
+                                            (apply (private-fn "patch-tool") rel %)))))]
+
+          (expect (= :edit-mixed-address (reason [[{"old" "a" "from" 1 "replace" "b"}]])))
+          (expect (= :text-malformed (reason [[{"old" "" "replace" "b"}]])))
+          (expect (= :version-malformed (reason [[{"from" 1 "replace" "b"}]])))
+          (expect (= "a\n" (slurp rel)))))))

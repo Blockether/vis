@@ -71,14 +71,13 @@
              (ep/run-python-block
                ctx
                (str
-                 "import inspect\n"
-                 "import re\n" "observed = {}\n"
+                 "import inspect\n" "import re\n"
+                 "observed = {}\n"
                  ;; The runtime resolves typing and collections.abc names and prints their module.
                  "def bare(text):\n"
                  "    return re.sub(r'\\b(?:collections\\.abc|typing)\\.', '', text)\n"
                  "for name, probe in signature_probes.items():\n"
-                 "    fn = globals()[probe['binding']]\n"
-                 "    actual = inspect.signature(fn)\n"
+                 "    fn = globals()[probe['binding']]\n" "    actual = inspect.signature(fn)\n"
                  "    expected = re.sub(r'(=\\s*)\\.\\.\\.(?=\\s*[,)])', r'\\1Ellipsis', probe['signature'])\n"
                  "    assert bare(str(actual)) == bare(expected), (name, str(actual), expected)\n"
                  "    observed[name] = actual.parameters\n"
@@ -90,7 +89,8 @@
                  "assert observed['grep']['paths'].default is Ellipsis\n"
                  "assert not observed['main-agent-instructions']\n"
                  "assert list(observed['patch']) == ['path', 'edits', 'version']\n"
-                 "assert all(p.default is inspect.Parameter.empty for p in observed['patch'].values())\n"
+                 "assert observed['patch']['edits'].default is inspect.Parameter.empty\n"
+                 "assert observed['patch']['version'].default is None\n"
                  "assert list(observed['council.wait']) == ['session_ids', 'timeout_secs', 'kwargs']\n"
                  "assert list(observed['council.cancel']) == ['session_id']\n"
                  "tuple_probe = observed['signature.tuple-probe']\n"

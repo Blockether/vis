@@ -632,7 +632,7 @@
       (let [text (var-get #'prompt/CORE_SYSTEM_PROMPT)]
         (doseq [rule ["plural arguments first" "then `await gather(...)`"
                       "Keep results in variables and reuse them" "Print only the fields you need"
-                      "End the block, then decide in the next block"]]
+                      "End the block when the next step depends on a result"]]
           (expect (str/includes? text rule) rule))))
   ;; Regression, user report: the handle line named the ops and not the ONE map they
   ;; answer, so a session wrote `sh.wait(60).out` and read AttributeError, not `r["out"]`.
@@ -885,8 +885,7 @@
       ;; asks to find every change of a file first. It lands at 12 431.
       (expect (< (count text) 12450))
       (let [steps (mapv #(str/index-of text %)
-                        ["`grep` locates unknown code" "`N│ text` rows"
-                         "`patch(path, edits, version)`"])]
+                        ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
       ;; User report: a model asked the user a question in a progress note and kept working.
@@ -899,8 +898,8 @@
       ;; Every code verb §3 names carries its literal call shape, and the options-dict ones
       ;; name the keys inside it — the shape is read, never remembered or looked up.
       (doseq [shape ["`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"
-                     "`cat(path, start, end)`" "`patch(path, edits, version)`"
-                     "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
+                     "`cat(path, start, end)`" "`patch(path, edits)`"
+                     "`{\"from\": a, \"to\": b, \"replace\": text}`"]]
         (expect (str/includes? text shape)))
       (expect (str/includes? text
                              "Answer questions without code. Use tools only to get missing facts."))
@@ -1632,15 +1631,17 @@
   (it "names both versioned verbs and the address they speak"
       (let [text (prompt/build-system-prompt {})]
         (expect (str/includes? text "cat(path, start, end)"))
-        (expect (str/includes? text "patch(path, edits, version)"))
+        (expect (str/includes? text "patch(path, edits)"))
         (expect (str/includes? text "\"replace\""))
         (expect (str/includes? text "a `path @version` line, then `N│ text` lines"))
-        (expect (str/includes? text "refuses it when its lines changed"))))
+        (expect (str/includes?
+                  text
+                  "It needs no read, so a search, the patch and a check can share one block"))))
   (it "never tells the model to write a text EDIT in plain Python"
       (let [text (prompt/build-system-prompt {})]
         (expect (not (str/includes? text "CHANGING the tree is plain Python")))
         (expect (not (str/includes? text "are edited in plain Python")))
-        (expect (str/includes? text "Use one `patch(path, edits, version)` call for each file"))))
+        (expect (str/includes? text "Use one `patch(path, edits)` call for each file"))))
   ;; Regression: `cat` grew a negative endpoint and the prompt kept quiet, so
   ;; the tail of a file still cost a line count first and then a read.
   (it "says a negative `start` counts from the end"
@@ -1650,38 +1651,38 @@
   ;; Regression: after grep started answering ONE numbered TEXT block the
   ;; prompt still said only "hits arrive ANCHORED", never WHAT arrives, so the
   ;; model kept treating the answer as a keyed map.
-  (it "says grep answers numbered TEXT, models context, and spends several hits at once"
-      (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text
-                               "It returns a string: `path @version` headers and `N│ text` rows"))
-        (expect (not (str/includes? text "returns a MAP")))
-        ;; Several hits in ONE file are ONE patch call now, so there is no
-        ;; order left for the caller to compute.
-        (expect (not (str/includes? text "bottom-up")))
-        ;; Sessions split the planned edits of one file over several patch calls,
-        ;; one step each. Finding every change first lets one call carry them.
-        (expect (str/includes? text "Find every change of a file first and read its regions in one block"))
-        (expect (str/includes? text "Use one `patch(path, edits, version)` call for each file"))
-        (expect (str/includes? text "keep the version and line numbers of the read that showed its lines"))
-        ;; User reports: recent sessions copied the primary grep example without
-        ;; context even though nearby lines often answered the question outright.
-        ;; Naming the default was still ambiguous: context is counted independently
-        ;; above and below every match, not split between the two sides.
-        (expect (str/includes?
-                  text
-                  "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
-        (expect (str/includes? text "`context` sets the lines on each side (default 3)"))
-        ;; User report: §3 taught the grep call and stopped — a capped page and a
-        ;; query that matches everywhere had no next step, so the same search ran
-        ;; again instead of paging or asking WHICH files match.
-        (expect (str/includes? text "`next(r)` continues a capped page"))
-        (expect (str/includes?
-                  text
-                  "`is_files_only: True` returns one row for each matching file, with its count"))
-        ;; Regression, user report: a capped page taught `offset` and stopped
-        ;; there, so the next call carried that offset onto a DIFFERENT query
-        ;; and read the empty page as proof the symbol does not exist.
-        (expect (str/includes? text "`offset` continues only the same query, never a new one"))))
+  (it
+    "says grep answers numbered TEXT, models context, and spends several hits at once"
+    (let [text (prompt/build-system-prompt {})]
+      (expect (str/includes? text
+                             "It returns a string: `path @version` headers and `N│ text` rows"))
+      (expect (not (str/includes? text "returns a MAP")))
+      ;; Several hits in ONE file are ONE patch call now, so there is no
+      ;; order left for the caller to compute.
+      (expect (not (str/includes? text "bottom-up")))
+      ;; Sessions split the planned edits of one file over several patch calls,
+      ;; one step each. Finding every change first lets one call carry them.
+      (expect (str/includes? text "Find every change of a file first"))
+      (expect (str/includes? text "Use one `patch(path, edits)` call for each file"))
+      (expect (str/includes? text "For a later line edit, keep the version and line numbers"))
+      ;; User reports: recent sessions copied the primary grep example without
+      ;; context even though nearby lines often answered the question outright.
+      ;; Naming the default was still ambiguous: context is counted independently
+      ;; above and below every match, not split between the two sides.
+      (expect (str/includes? text
+                             "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
+      (expect (str/includes? text "`context` sets the lines on each side (default 3)"))
+      ;; User report: §3 taught the grep call and stopped — a capped page and a
+      ;; query that matches everywhere had no next step, so the same search ran
+      ;; again instead of paging or asking WHICH files match.
+      (expect (str/includes? text "`next(r)` continues a capped page"))
+      (expect (str/includes?
+                text
+                "`is_files_only: True` returns one row for each matching file, with its count"))
+      ;; Regression, user report: a capped page taught `offset` and stopped
+      ;; there, so the next call carried that offset onto a DIFFERENT query
+      ;; and read the empty page as proof the symbol does not exist.
+      (expect (str/includes? text "`offset` continues only the same query, never a new one"))))
   ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
   ;; prompt named the method with no arguments at all, so a watcher still
   ;; paged bytes to answer "what did it just print".
@@ -1696,15 +1697,14 @@
   (it "waits for an observed version before generating a dependent patch"
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule
-                ["End the block, then decide in the next block"
+                ["End the block when the next step depends on a result"
                  "`version` is the `@` value of the `cat` or `grep` header that showed the lines"
-                 "Vis moves an edit over other changes"]]
+                 "`old` must match once"]]
           (expect (str/includes? text rule) rule))))
   ;; Editing e2e used source text instead of the address that a read printed.
   (it "defines both endpoints as line numbers of the version that a read showed"
       (let [text (prompt/build-system-prompt {})]
-        (doseq [rule ["Use `Path.read_text` to process a whole file"
-                      "`from` and `to` are its line numbers"
+        (doseq [rule ["Use `Path.read_text` to process a whole file" "Use it for long spans"
                       "`replace` is new file text without `N│ ` gutters"]]
           (expect (str/includes? text rule) rule))))
   (it
@@ -1714,7 +1714,7 @@
         [rule
          ;; Regression: after a patch that added lines, models shifted the next line numbers
          ;; at the new version, and patch refused lines that no result showed.
-         ["keep the version and line numbers of the read that showed its lines"
+         ["For a later line edit, keep the version and line numbers"
           "A refused patch writes nothing"
           "For changed lines, read only the window that the error names"
           "Confirm the target before you try again with the current version"
@@ -1751,34 +1751,32 @@
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule ["Before you add a helper, search `defs(pattern=\"...\")`"
                       "Improve an existing helper under its stable name"
-                      "`defs(name, details=True)` shows the" "and if each is present"]]
+                      "Its one-line docstring gives its `defs()` summary"]]
           (expect (str/includes? text rule) rule))))
   ;; User report: the goal-form rewrite left only a rule to REUSE helpers, so blocks
   ;; retyped the same steps and `defs()` stayed empty. Keep the rule that creates one.
   (it "factors a repeated block into a named helper on its second occurrence"
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule ["When you write a loop or block a second time"
-                      "make it a small named helper and call it"
-                      "Reuse helpers; do not type their steps again" "`defs()` lists helpers"]]
+                      "make it a small named helper and call it" "Reuse helpers"
+                      "`defs()` lists helpers"]]
           (expect (str/includes? text rule) rule))))
   ;; User report: no rule said whether redefining or deleting a helper changes the
   ;; saved definitions, so the model had to read the host to answer that.
   (it "states that the saved set follows redefinition and explicit deletion"
       (let [text (prompt/build-system-prompt {})]
         (doseq [rule ["Helpers and variables stay across blocks and turns"
-                      "A new definition replaces the saved copy"
-                      "`del name` removes it permanently and frees its memory"
-                      "Delete it only when no caller, alias or captured default uses it"]]
+                      "A new definition replaces the saved copy" "`del name` removes it permanently"
+                      "delete it only when nothing uses it"]]
           (expect (str/includes? text rule) rule))))
   ;; #305: a recycle lost every variable while the transcript still showed it,
   ;; and nothing told the model that its sandbox had restarted.
   (it "states what a restart keeps and how it announces itself"
       (let [text (prompt/build-system-prompt {})]
-        (doseq [rule
-                ["(1 MiB each, 4 MiB total)" "`defs()` lists both and marks what it could not save"
-                 "a memory limit or a gateway restart, Vis builds a new sandbox from the snapshot"
-                 "`[Sandbox restarted]` notice"
-                 "Create open files, handles, generators and processes again"]]
+        (doseq [rule ["(1 MiB each, 4 MiB total)"
+                      "a snapshot saves helper source and picklable variables"
+                      "`[Sandbox restarted]` notice names what came back from the snapshot"
+                      "Create open files, handles, generators and processes again"]]
           (expect (str/includes? text rule) rule))))
   ;; User report: three of seven helper lines described source fingerprints and
   ;; Improve proposals, a rare workflow paid for in every request. That contract
@@ -1823,7 +1821,7 @@
         ;; silently emptied the sandbox the transcript still described.
         (expect (str/includes? text "Helpers and variables stay across blocks and turns"))
         (expect (str/includes? text "gateway restart"))
-        (expect (str/includes? text "builds a new sandbox from the snapshot"))
+        (expect (str/includes? text "names what came back from the snapshot"))
         (expect (str/includes?
                   text
                   "builds `session` again before each block, so your writes to it are lost"))
