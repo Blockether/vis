@@ -454,12 +454,24 @@
     "- Detach from external and user-owned resources.\n"
     "- Get confirmation before a destructive action.\n"))
 
+(def ^:private CLI_DROPPED_RULE_PREFIXES
+  "Core rules that a one-shot `:cli` run never uses: prior turns, helpers kept across
+   turns, snapshots, sandbox restarts and a question to a person. Each prefix starts one
+   rule line of `CORE_SYSTEM_PROMPT`; `cli-autonomous-rules` forbids waiting for input."
+  ["  Prior-turn context |" "- When you write a loop or block a second time"
+   "- Helpers and variables stay" "- After an idle timeout" "- Ask one question only"])
+
 (def ^:private CLI_CORE_SYSTEM_PROMPT
-  "Core prompt for the one-shot `:cli` channel: sections 1-5 only. The
-   `cli-autonomous` block replaces the answer rules of section 7, and a short
-   run seldom needs the fold rules of section 6. Each request then sends about
-   650 fewer uncached tokens."
-  (subs CORE_SYSTEM_PROMPT 0 (inc (long (str/index-of CORE_SYSTEM_PROMPT "\n## 6.")))))
+  "Core prompt for the one-shot `:cli` channel: sections 1-5 without
+   `CLI_DROPPED_RULE_PREFIXES`. The `cli-autonomous` block replaces the answer rules of
+   section 7, and a short run seldom needs the fold rules of section 6. Codex never
+   caches the first request of a run, so every rule here is paid in full once."
+  (str (->> (str/split-lines (subs CORE_SYSTEM_PROMPT
+                                   0
+                                   (inc (long (str/index-of CORE_SYSTEM_PROMPT "\n## 6.")))))
+            (remove (fn [line] (some #(str/starts-with? line %) CLI_DROPPED_RULE_PREFIXES)))
+            (str/join "\n"))
+       "\n"))
 
 (defn- config-system-prompt
   "Read the optional string-keyed `system-prompt` YAML setting.

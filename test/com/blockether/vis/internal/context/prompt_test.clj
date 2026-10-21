@@ -468,7 +468,22 @@
         (expect (not (str/includes? (text-for :cli) "## 7. Answer and finish")))
         (doseq [ch [:tui :web nil]]
           (expect (str/includes? (text-for ch) "## 6. Context budget") (str ch))
-          (expect (str/includes? (text-for ch) "## 7. Answer and finish") (str ch))))))
+          (expect (str/includes? (text-for ch) "## 7. Answer and finish") (str ch)))))
+  ;; ctb vis-edits: Codex never caches the first request, so every CLI prompt token is paid
+  ;; in full once per run. These rules serve long interactive sessions only.
+  (it "drops core rules that a one-shot run never uses"
+      (let [core
+            (var-get #'prompt/CORE_SYSTEM_PROMPT)
+
+            cli
+            (var-get #'prompt/CLI_CORE_SYSTEM_PROMPT)]
+
+        (doseq [prefix (var-get #'prompt/CLI_DROPPED_RULE_PREFIXES)]
+          ;; A prefix that no longer starts a core line would silently drop nothing.
+          (expect (str/includes? core (str "\n" prefix)) prefix)
+          (expect (not (str/includes? cli (str "\n" prefix))) prefix))
+        (expect (str/includes? cli "- Put independent work in one block"))
+        (expect (str/ends-with? cli "\n")))))
 
 (defdescribe
   core-prompt-project-style-test
