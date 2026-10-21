@@ -55,9 +55,11 @@
                                     "spawn"
                                     {"task" "Edit one owner"
                                      "files" {"write" ["src/a/**"] "deny" [".env"]}}))
-      (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {}})))
+      (expect (document/valid-json? "agents" "spawn" {"task" "x" "files" {}}))
       (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {"exec" ["a"]}})))
-      (expect (not (document/valid-json? "agents" "spawn" {"task" "x" "files" {"write" []}})))
+      (expect (document/valid-json? "agents"
+                                    "spawn"
+                                    {"task" "x" "files" {"write" ["a"] "read_only" [] "deny" []}}))
       (expect (document/valid-json? "agents" "grant" {"session_id" "c" "files" {"write" ["a"]}}))
       (expect (not (document/valid-json? "agents" "grant" {"session_id" "c"})))
       (expect (document/valid-json? "agents" "ask_files" {"files" {"write" ["a"]} "reason" "Fix"}))
@@ -1450,7 +1452,7 @@
 
             tasks
             [{"task" "Compute a hash" "iteration_budget" 20}
-             {"task" "Write a file" "files" {"write" ["/tmp/out.txt"] "read_only" [] "deny" []}}]
+             {"task" "Write a file" "files" {"write" ["/tmp/out.txt"] "exec" ["/tmp/run"]}}]
 
             error
             (with-redefs [agents/runtime-op! (fn [_ _ _]
@@ -1463,9 +1465,8 @@
         (expect (= 0 @spawned) "No child starts before every task is valid")
         (expect (= :invalid-request (:error (ex-data error))))
         (expect (str/includes? (ex-message error)
-                               "tasks[1].files.read_only: the array has 0 items"))
-        (expect (str/includes? (ex-message error) "tasks[1].files.deny"))
-        (expect (str/includes? (ex-message error) "Omit a file rule list that has no rules."))
+                               "tasks[1].files: additional property \"exec\" is not allowed"))
+        (expect (str/includes? (ex-message error) "No subagent started."))
         (expect (not (str/includes? (ex-message error) "anyOf")))))
   (it "names an unknown task key and the missing task"
       (let [error (try (agents/run {:db-info (h/store) :session-id "leader"}
@@ -1474,3 +1475,32 @@
                        (catch clojure.lang.ExceptionInfo e e))]
         (expect (str/includes? (ex-message error) "tasks[0]: additional property \"question\""))
         (expect (str/includes? (ex-message error) "missing required property \"task\"")))))
+
+;; Council complaint #7930: a model gave "read_only": [] and "deny": [], and the schema refused them.
+(defdescribe file-grants-accept-empty-rule-lists-test
+             (it "drops empty lists from a task grant and refuses a grant or request without rules"
+                 (let [db
+                       (h/store)
+
+                       leader
+                       (str (h/store-session! db {:channel :api}))
+
+                       env
+                       {:db-info db :session-id leader}
+
+                       spawn
+                       (fn [files]
+                         (#'agents/checked env :spawn {"task" "Write a file" "files" files}))]
+
+                   (expect (= {:write ["out.txt"]}
+                              (:files (spawn {"write" ["out.txt"] "read_only" [] "deny" []}))))
+                   (expect (not (contains? (spawn {"write" [] "read_only" []}) :files)))
+                   (expect (not (contains? (spawn {}) :files)))
+                   (doseq [[operation opts] [[:grant {"session_id" "child" "files" {"write" []}}]
+                                             [:ask_files
+                                              {"files" {"deny" []} "reason" "Need a file"}]]]
+                     (expect (= "Give at least one write, read_only or deny rule in files."
+                                (try (#'agents/checked env operation opts)
+                                     nil
+                                     (catch clojure.lang.ExceptionInfo e (ex-message e))))
+                             (name operation))))))

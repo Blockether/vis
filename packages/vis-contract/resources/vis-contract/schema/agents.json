@@ -289,7 +289,7 @@
       "additionalProperties": false
     },
     "files": {
-      "$comment": "A subagent file grant. Each rule is a path or a glob, absolute, ~ or relative to the parent's workspace root. Rules also cover files that do not exist yet.",
+      "$comment": "A subagent file grant. Each rule is a path or a glob, absolute, ~ or relative to the parent's workspace root. Rules also cover files that do not exist yet. deny wins over read_only, and read_only wins over write. With write rules, the child writes only there. An empty or missing list adds no rules.",
       "type": "object",
       "properties": {
         "write": {
@@ -302,7 +302,6 @@
           "$ref": "#/$defs/file_rules"
         }
       },
-      "minProperties": 1,
       "additionalProperties": false
     },
     "file_rules": {
@@ -313,7 +312,6 @@
         "maxLength": 4096,
         "pattern": "\\S"
       },
-      "minItems": 1,
       "maxItems": 64,
       "uniqueItems": true
     },

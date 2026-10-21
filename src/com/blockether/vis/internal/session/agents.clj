@@ -380,25 +380,36 @@
           problems (distinct (for [e errors
                                    :let [field (problem-field (:instanceLocation e))]]
 
-                               (str (when (seq field) (str field ": ")) (:error e))))
-          empty-rules? (some #(and (= "minItems" (:keyword %))
-                                   (str/includes? (str (:instanceLocation %)) "files/"))
-                             errors)]
+                               (str (when (seq field) (str field ": ")) (:error e))))]
 
       (fail! :invalid-request
-             (str "Invalid subagent "
-                  (name operation)
-                  " arguments: "
-                  (str/join "; " problems)
-                  "."
-                  (when empty-rules? " Omit a file rule list that has no rules.")
-                  " No subagent started.")))))
+             (str "Invalid subagent " (name operation)
+                  " arguments: " (str/join "; " problems)
+                  "." " No subagent started.")))))
 
 (defn require-enabled!
   "Refuse new managed work before bootstrapping a session or consuming a checkpoint."
   [db sid]
   (when-not (enabled? db sid)
     (fail! :feature-disabled "Subagents are disabled. Enable Subagents in Experimental settings.")))
+
+(defn- grant-text
+  "One line that names the rules of a file grant `files`."
+  [files]
+  (str/join "; "
+            (for [k
+                  [:write :read_only :deny]
+
+                  :let [rules
+                        (get files k (get files (name k)))]
+                  :when (seq rules)]
+
+              (str (name k) " " (str/join ", " rules)))))
+
+(defn- clean-files
+  "The file grant `files` without empty rule lists, or nil when no rule is left."
+  [files]
+  (not-empty (into {} (remove (comp empty? val)) files)))
 
 (defn- checked
   "Validate `opts` for `operation` and the ownership of its target session. Answers the
@@ -419,10 +430,16 @@
     (check-arguments! operation (wire/->wire opts))
     (when (and (:task opts) (str/blank? (:task opts)))
       (fail! :invalid-request "A subagent needs a nonblank delegated task"))
+    (when (and (contains? #{:grant :ask_files} operation) (str/blank? (grant-text (:files opts))))
+      (fail! :invalid-request "Give at least one write, read_only or deny rule in files."))
     (when-let [target (:session_id opts)]
       (when-not (controls? (:db-info env) (:session-id env) target)
         (fail! :not-owner "This session does not own that subagent")))
-    opts))
+    (if (contains? opts :files)
+      (if-let [files (clean-files (:files opts))]
+        (assoc opts :files files)
+        (dissoc opts :files))
+      opts)))
 
 (defn runtime-op!
   "Validate `opts` and run one gateway runtime operation: :spawn, :list, :cancel, :route or :grant."
@@ -634,9 +651,11 @@
    task and optional model, provider, iteration_budget and files. iteration_budget defaults to
    120 (max 600). Give a large task more at the start.
 
-   files is a file grant: {\"write\": [...], \"read_only\": [...], \"deny\": [...]}. Each rule is a
-   path or a glob, relative to your workspace root, ~ or absolute, and also covers files that do
-   not exist yet. With write, the child can change only the files that its rules match.
+   files is a file grant: {\"write\": [...], \"read_only\": [...], \"deny\": [...]}. Give only the
+   lists that you need; an empty list adds no rules. Each rule is a path or a glob, relative to
+   your workspace root, ~ or absolute, and also covers files that do not exist yet. With write,
+   the child can change only the files that its rules match. deny wins over read_only, and
+   read_only wins over write. Without files, the child writes where you write.
 
    A child gets the system prompt, your requests, notes and answers, and its task. It does not get
    your tool calls or their output. Children share the checkout. Only a leader starts subagents.
@@ -788,23 +807,10 @@
        :council.ask_budget
        {:granted (max 0 (- (long after) (long before))) :iteration_budget after :reply reply}))))
 
-(defn- grant-text
-  "One line that names the rules of a file grant `files`."
-  [files]
-  (str/join "; "
-            (for [k
-                  [:write :read_only :deny]
-
-                  :let [rules
-                        (get files k (get files (name k)))]
-                  :when (seq rules)]
-
-              (str (name k) " " (str/join ", " rules)))))
-
 (defn ask-files
   "As a subagent, ask your parent for file access and wait for the answer. files holds write,
    read_only and deny rules: paths or globs, absolute, ~ or relative to the parent's workspace
-   root. Returns a dict with granted, files (your grant now), missing and reply. granted is True
+   root. Give at least one rule. deny wins over read_only, and read_only wins over write. Returns a dict with granted, files (your grant now), missing and reply. granted is True
    only when the grant covers every write rule that you asked for. missing lists the others. reply
    is None when the parent is not running or does not answer within timeout_secs (default 600).
 
@@ -997,7 +1003,7 @@
 (defn grant-files
   "Add file rules to the grant of a subagent. Use it to answer a file request (status asking with
    files_request), or before council.resume. files holds write, read_only and deny rules, like a
-   task dict. Returns the record, with a warning when an active sibling can write the same files.
+   task dict. Give at least one rule. deny wins over read_only, and read_only wins over write. Returns the record, with a warning when an active sibling can write the same files.
 
    A grant gives at most your own access. A write rule outside your writable roots or under your
    deny rules fails, and your deny rules stay closed to the child. A child without write rules
@@ -1225,7 +1231,7 @@
 - Do small tasks, single-file edits, one search or one check yourself. A child costs more time than a few tool calls.
 - Give each large independent part one child, usually two to four in total. Do not split one small task into many children.
 - For independent parallel work, call council.run([task, ...]). Each task must name its files, scope and done condition. Children share the checkout: give each its own files.
-- To enforce that split, give a task dict files={\"write\": [...], \"read_only\": [...], \"deny\": [...]}. Rules are paths or globs, also for files that do not exist yet.
+- To enforce that split, give a task dict files, for example files={\"write\": [\"src/a/**\"]}. Add read_only or deny only when you need them: deny wins over read_only, and read_only wins over write. With write rules, the child writes only there. Rules are paths or globs, also for files that do not exist yet.
 - Write each task as a brief for a peer: the goal, what you already know or ruled out, and the output that you need. For an independent review, give the child the code, not your conclusion.
 - A child gets 120 iterations by default (maximum 600). For a large or multi-step task, set a larger iteration_budget in its task dict at the start.
 - A child sees the system prompt, your requests, notes and answers, and its task, but not your tool calls or their output. Give it sufficient context in the brief: the goal, the facts that your tools found, what you ruled out, exact paths and symbols. A child reads your whole session only when its brief is ambiguous, so do not rely on that. Set model and provider only when the user or project names a model for that work.

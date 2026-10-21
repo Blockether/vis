@@ -556,7 +556,34 @@
           ;; The host file tools ask the same rules, so a grant never opens a closed path.
           (expect (some? (process-jail/deny-refusal env "file-write" (str root "/src/secret/key"))))
           (expect (some? (process-jail/deny-refusal env "file-read" (str root "/.env"))))
-          (expect (nil? (process-jail/deny-refusal env "file-write" (str root "/src/ok.txt")))))))))
+          (expect (nil? (process-jail/deny-refusal env "file-write" (str root "/src/ok.txt"))))))))
+  ;; Council complaint #7930: the docs state this order, so this test pins it.
+  (it "deny wins over read_only, read_only wins over write, and empty lists add no rules"
+      (let [root
+            (.getCanonicalPath (doto (File. (System/getProperty "java.io.tmpdir")
+                                            (str "visgrant-" (System/nanoTime)))
+                                 (.mkdirs)))
+
+            base
+            (policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+                              "jail" {"enabled" true}}
+                             {:base-dir root})
+
+            env
+            {:security-policy (policy/restrict
+                                base
+                                {:write ["src/**"] :read_only ["src/vendor"] :deny ["src/secret"]})}
+
+            refused?
+            (fn [op path]
+              (some? (process-jail/deny-refusal env op (str root path))))]
+
+        (expect (= base (policy/restrict base {:write [] :read_only [] :deny []})))
+        (expect (not (refused? "file-write" "/src/ok.txt")))
+        (expect (refused? "file-write" "/src/vendor/lib.clj") "read_only wins over write")
+        (expect (not (refused? "file-read" "/src/vendor/lib.clj")))
+        (expect (refused? "file-write" "/src/secret/key") "deny wins over write")
+        (expect (refused? "file-read" "/src/secret/key") "deny closes reads too"))))
 
 ;; Regression, issue #394: an extension grant is a toolchain path, never a whole tree
 ;; that holds the user's files or the Vis credentials.
