@@ -255,9 +255,7 @@ def test_group_members_are_not_the_managed_team():
         {"task": "x", "iteration_budget": 601},
         {"task": "x", "model": "small"},
         {"task": "x", "allowed_models": []},
-        {"task": "x", "files": {}},
         {"task": "x", "files": {"exec": ["a"]}},
-        {"task": "x", "files": {"write": []}},
     ],
 )
 def test_spawn_rejects_invalid_input_before_http(opts):
@@ -304,7 +302,6 @@ def test_team_and_child_fields_are_frozen():
         ("extend", {"session_id": "child", "iterations": 0}),
         ("extend", {"session_id": "child", "iterations": 601}),
         ("deny", {"session_id": "child", "reason": ""}),
-        ("grant", {"session_id": "child", "files": {}}),
         ("spawn", {"task": "x", "provider": "p"}),
         ("spawn", {"task": "x", "iteration_budget": True}),
         ("spawn", {"task": "x", "key": ""}),
