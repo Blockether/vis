@@ -361,6 +361,39 @@
 
 (defn fail! [error message] (throw (ex-info message {:error error})))
 
+(defn- problem-field
+  "The argument path of a JSON Schema instance location, such as tasks[0].files.read_only."
+  [location]
+  (-> (str location)
+      (str/replace #"^/" "")
+      (str/replace #"/(\d+)" "[$1]")
+      (str/replace "/" ".")))
+
+(defn- check-arguments!
+  "Refuse `value` when it breaks the agents schema of `operation`. The message names each field and
+   its rule, so a model can fix the call. An anyOf task keeps only its object branch."
+  [operation value]
+  (when-let [errors (seq (:errors (document/explain-json "agents" (name operation) value)))]
+    (let [errors (remove #(or (= "anyOf" (:keyword %))
+                              (str/includes? (str (:keywordLocation %)) "/anyOf/0/"))
+                   errors)
+          problems (distinct (for [e errors
+                                   :let [field (problem-field (:instanceLocation e))]]
+
+                               (str (when (seq field) (str field ": ")) (:error e))))
+          empty-rules? (some #(and (= "minItems" (:keyword %))
+                                   (str/includes? (str (:instanceLocation %)) "files/"))
+                             errors)]
+
+      (fail! :invalid-request
+             (str "Invalid subagent "
+                  (name operation)
+                  " arguments: "
+                  (str/join "; " problems)
+                  "."
+                  (when empty-rules? " Omit a file rule list that has no rules.")
+                  " No subagent started.")))))
+
 (defn require-enabled!
   "Refuse new managed work before bootstrapping a session or consuming a checkpoint."
   [db sid]
@@ -383,8 +416,7 @@
       (fail! :not-allowed
              (str "A subagent cannot start subagents. End your turn with an answer that asks your "
                   "parent for them: name each part, its files and its done condition.")))
-    (when-not (document/valid-json? "agents" (name operation) (wire/->wire opts))
-      (fail! :invalid-request (str "Invalid subagent " (name operation) " arguments")))
+    (check-arguments! operation (wire/->wire opts))
     (when (and (:task opts) (str/blank? (:task opts)))
       (fail! :invalid-request "A subagent needs a nonblank delegated task"))
     (when-let [target (:session_id opts)]
@@ -560,8 +592,7 @@
 (defn- task-spec
   [t]
   (cond (string? t) {:task t}
-        (map? t) (select-keys (walk/keywordize-keys t)
-                              [:task :model :provider :iteration_budget :files])
+        (map? t) (walk/keywordize-keys t)
         :else (fail! :invalid-request "Each task must be a string or a dict with task")))
 
 (defn- run-records
@@ -575,6 +606,10 @@
 
         _
         (when (empty? specs) (fail! :invalid-request "tasks must not be empty"))
+
+        ;; Check every task before the first spawn, so a bad task starts no child.
+        _
+        (check-arguments! :run (wire/->wire {:tasks specs}))
 
         deadline
         (util/deadline-ms (wait-timeout opts 240))
@@ -1083,9 +1118,7 @@
         timeout
         (select-keys opts [:timeout_secs])]
 
-    (when (and (contains? #{:run :wait} operation)
-               (not (document/valid-json? "agents" (name operation) (wire/->wire opts))))
-      (fail! :invalid-request (str "Invalid subagent " (name operation) " arguments")))
+    (when (contains? #{:run :wait} operation) (check-arguments! operation (wire/->wire opts)))
     (if (contains? #{:spawn :list :route} operation)
       (runtime-op! env operation opts)
       (wire/->wire

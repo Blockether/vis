@@ -1433,3 +1433,44 @@
             (expect (= {:status status :resumed_turns 0}
                        (select-keys (agents/info db child) [:status :resumed_turns]))
                     status))))))
+
+;; Regression for Council complaint #7930: council.run spawned four children, then refused the
+;; fifth task for empty file rule lists. The error named no field, so the model guessed again.
+(defdescribe
+  run-checks-every-task-before-the-first-spawn-test
+  (it "starts no child for a bad task and names the field and its rule"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            spawned
+            (atom 0)
+
+            tasks
+            [{"task" "Compute a hash" "iteration_budget" 20}
+             {"task" "Write a file" "files" {"write" ["/tmp/out.txt"] "read_only" [] "deny" []}}]
+
+            error
+            (with-redefs [agents/runtime-op! (fn [_ _ _]
+                                               (swap! spawned inc)
+                                               {:session_id "child"})]
+              (try (agents/run {:db-info db :session-id leader} tasks)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e)))]
+
+        (expect (= 0 @spawned) "No child starts before every task is valid")
+        (expect (= :invalid-request (:error (ex-data error))))
+        (expect (str/includes? (ex-message error)
+                               "tasks[1].files.read_only: the array has 0 items"))
+        (expect (str/includes? (ex-message error) "tasks[1].files.deny"))
+        (expect (str/includes? (ex-message error) "Omit a file rule list that has no rules."))
+        (expect (not (str/includes? (ex-message error) "anyOf")))))
+  (it "names an unknown task key and the missing task"
+      (let [error (try (agents/run {:db-info (h/store) :session-id "leader"}
+                                   [{"question" "Count files"}])
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (expect (str/includes? (ex-message error) "tasks[0]: additional property \"question\""))
+        (expect (str/includes? (ex-message error) "missing required property \"task\"")))))
