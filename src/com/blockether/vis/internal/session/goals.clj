@@ -25,10 +25,16 @@
 
 (defn active-goal
   "The goal that still directs the model, or nil. Model context shows only an active goal.
-   The goal rules stay in the cached system prompt, so a status change keeps the prefix cache."
+   The goal rules stay in the cached system prompt, so a status change keeps the prefix cache.
+   The view drops bookkeeping that changes at each iteration, because each change costs a
+   context delta line. `iterations_used` stays only when a budget limits it."
   [env]
   (let [goal (check-goal env)]
-    (when (= "active" (get goal "status")) goal)))
+    (when (= "active" (get goal "status"))
+      (select-keys goal
+                   (cond-> ["id" "version" "status" "objective" "iteration_budget" "reason"]
+                     (get goal "iteration_budget")
+                     (conj "iterations_used"))))))
 
 (defn- fail! [message] (throw (ex-info message {:type :goal/invalid})))
 
@@ -307,9 +313,7 @@ iterations_used counts each model response and its tools, including prose and em
 Provider retries within one request are not separate iterations. After update_goal completes
 or blocks the goal, the current iteration's tools finish and its reason is returned as the
 final reply without another model request. The final allowed iteration may execute its tools
-and update_goal; no next request starts at the limit. Tokens are statistics only.
-time_used_ms records active wall time through updated_at, including tool execution.
-Inactive goals stop the clock. Resume preserves usage.
+and update_goal; no next request starts at the limit.
 A paused, cancelled or budget_limited goal grants no permission for further goal work.
 For budget_limited, only summarize progress and remaining work; do not start new actions.
 Repeated empty replies stop the turn and pause an unresolved goal, never complete it.

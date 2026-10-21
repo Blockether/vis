@@ -316,8 +316,7 @@
                      (throw (AssertionError. "Unexpected goal continuation"))))]
                 (let [result (turn/run-turn! env "Use this new information and continue" {})
                       resumed (first @snapshots)
-                      preserved ["id" "objective" "iteration_budget" "iterations_used" "tokens_used"
-                                 "time_used_ms" "created_at"]]
+                      preserved ["id" "objective" "iteration_budget" "iterations_used"]]
 
                   (expect (= "Goal complete: All acceptance criteria verified."
                              (get-in result [:answer :answer])))
@@ -325,7 +324,7 @@
                   (expect (= "active" (get resumed "status")))
                   (expect (nil? (get resumed "reason")))
                   (expect (= (inc (get before "version")) (get resumed "version")))
-                  (expect (= (inc (get before "revision")) (get resumed "revision")))
+                  (expect (not (contains? resumed "revision")))
                   (expect (= (select-keys before preserved) (select-keys resumed preserved)))
                   (expect (= "complete" (get (goals/check-goal env) "status")))
                   (expect (= 3 (get (goals/check-goal env) "iterations_used")))))))

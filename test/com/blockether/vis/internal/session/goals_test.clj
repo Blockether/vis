@@ -36,6 +36,19 @@
             (expect (= 2 (get done "revision")))
             (expect (= 2 (get done "version"))))))))
 
+(defdescribe active-goal-view-test
+             (it "shows the model only stable goal fields and usage that a budget limits"
+                 ;; Each changed field adds a context delta line at every iteration of a goal run.
+                 (let [{:keys [db-info session-id] :as env} (environment)]
+                   (goals/set-goal! db-info session-id "No budget" nil)
+                   (expect (= #{"id" "version" "status" "objective" "iteration_budget" "reason"}
+                              (set (keys (goals/active-goal env)))))
+                   (goals/set-goal! db-info session-id "With budget" 5)
+                   (expect (= 0 (get (goals/active-goal env) "iterations_used")))
+                   (expect (not-any? #(contains? (goals/active-goal env) %)
+                                     ["tokens_used" "time_used_ms" "revision" "updated_at"
+                                      "created_at"])))))
+
 (defdescribe
   goal-objective-length-test
   (it "accepts objectives up to 44000 characters and rejects longer ones"
