@@ -996,6 +996,16 @@
 ;; `internal/toggles.clj` and its visibility follows svar's `:verbosity-style`
 ;; capability instead of this provider's id.
 
+(defn- session-provider-kickoff-headers
+  "Send the Vis session id as the Codex `session_id` header, as the Codex CLI sends its
+   conversation id. The ChatGPT backend keeps one session on one cache route with it. A
+   key shared by parallel sessions made them compete and lowered the cached share."
+  [{:keys [environment provider]}]
+  (when (= :openai-codex (:id provider))
+    (when-let [session-id (not-empty (some-> (:session-id environment)
+                                             str))]
+      {:llm-headers {"session_id" session-id}})))
+
 (defn register!
   []
   (extension/register-extension!
@@ -1006,6 +1016,10 @@
        :ext/author "Blockether"
        :ext/owner "vis"
        :ext/license "Apache-2.0"
+       :ext/hooks [{:id :openai-codex/session-header
+                    :doc "Send the prompt-cache key as the Codex session header."
+                    :phase :session_provider_kickoff
+                    :fn session-provider-kickoff-headers}]
        :ext/providers
        [{:provider/id :openai-codex
          :provider/label "OpenAI Codex (ChatGPT OAuth)"
