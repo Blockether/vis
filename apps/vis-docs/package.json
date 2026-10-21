@@ -19,8 +19,8 @@
     "jsdom": "29.1.1",
     "miniflare": "5.20261001.0-alpha",
     "sharp": "0.35.5",
-    "vite": "8.3.2",
-    "vitest": "4.1.11",
+    "vite": "8.3.5",
+    "vitest": "4.1.12",
     "wrangler": "4.147.0"
   },
   "dependencies": {
