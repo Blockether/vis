@@ -456,7 +456,19 @@
         ;; interactive / card-bearing channels keep the approval flow
         (expect (not (str/includes? (text-for :tui) marker)))
         (expect (not (str/includes? (text-for :web) marker)))
-        (expect (not (str/includes? (text-for nil) marker))))))
+        (expect (not (str/includes? (text-for nil) marker)))))
+  (it "sends only core sections 1-5 to the one-shot :cli channel"
+      (let [text-for (fn [ch]
+                       (-> (prompt/assemble-stable-prompt-messages {:channel ch}
+                                                                   {:active-extensions []})
+                           prompt/stable-prompt-text))]
+        ;; The cli-autonomous block owns the answer rules; a short run seldom folds.
+        (expect (str/includes? (text-for :cli) "## 5. Act on your own"))
+        (expect (not (str/includes? (text-for :cli) "## 6. Context budget")))
+        (expect (not (str/includes? (text-for :cli) "## 7. Answer and finish")))
+        (doseq [ch [:tui :web nil]]
+          (expect (str/includes? (text-for ch) "## 6. Context budget") (str ch))
+          (expect (str/includes? (text-for ch) "## 7. Answer and finish") (str ch))))))
 
 (defdescribe
   core-prompt-project-style-test

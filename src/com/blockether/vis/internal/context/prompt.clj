@@ -457,6 +457,13 @@
     "- Detach from external and user-owned resources.\n"
     "- Get confirmation before a destructive action.\n"))
 
+(def ^:private CLI_CORE_SYSTEM_PROMPT
+  "Core prompt for the one-shot `:cli` channel: sections 1-5 only. The
+   `cli-autonomous` block replaces the answer rules of section 7, and a short
+   run seldom needs the fold rules of section 6. Each request then sends about
+   650 fewer uncached tokens."
+  (subs CORE_SYSTEM_PROMPT 0 (inc (long (str/index-of CORE_SYSTEM_PROMPT "\n## 6.")))))
+
 (defn- config-system-prompt
   "Read the optional string-keyed `system-prompt` YAML setting.
    Returns an internal `{:text ... :is-replace ...}` map or nil."
@@ -518,7 +525,7 @@
    config replaced it, and the custom blocks appended after it.
    `build-system-prompt` joins them; the context breakdown attributes the base
    and the additions as separate rows."
-  [{:keys [system-prompt workspace-root]}]
+  [{:keys [system-prompt workspace-root channel]}]
   (binding [workspace/*workspace-root* (or workspace-root workspace/*workspace-root*)]
     (let [addendum (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
           cfg (config-system-prompt)
@@ -530,7 +537,7 @@
                    (when cfg-replace? (:text cfg))
                    (str "You are "
                         (if workspace-root (config/agent-name workspace-root) (config/agent-name))
-                        ". " CORE_SYSTEM_PROMPT))
+                        ". " (if (= :cli channel) CLI_CORE_SYSTEM_PROMPT CORE_SYSTEM_PROMPT)))
           extras (into []
                        (comp (filter string?) (remove str/blank?))
                        (into [addendum cfg-prompt] (:appends files)))]
@@ -973,7 +980,8 @@
                     {:type :vis/missing-active-extensions})))
   (let [core-blocks
         (system-prompt-blocks {:system-prompt system-prompt
-                               :workspace-root (get-in environment [:workspace :root])})
+                               :workspace-root (get-in environment [:workspace :root])
+                               :channel (:channel environment)})
 
         core-content
         (str/join "\n\n" (into [(:base core-blocks)] (:extras core-blocks)))
