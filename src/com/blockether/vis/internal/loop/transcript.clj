@@ -2979,21 +2979,6 @@
     (:cache-key opts)
     (update :llm-headers assoc "session-id" (:cache-key opts))))
 
-(defn- continuation-input-layout
-  "Send the session context as the first input message, as Codex sends its environment
-   context. Svar joins every system message into the Responses `instructions`, and the
-   ChatGPT backend reuses no cache when `instructions` differ at all. The session block
-   names this session, so in `instructions` it made the first request of each new task
-   miss the warm prefix of the workspace."
-  [messages]
-  (mapv #(if (and (= "system"
-                     (some-> (:role %)
-                             name))
-                  (session-context-message? %))
-           (assoc % :role "user")
-           %)
-        messages))
-
 (defn ask-code-with-session!
   "Keep one opaque Svar session per effective router for a provider whose prompt
    cache is a server continuation; other providers stay one-shot."
@@ -3008,17 +2993,9 @@
         (:router environment)
 
         session-atom
-        (:llm-session-atom environment)
+        (:llm-session-atom environment)]
 
-        continuation?
-        (= :server-continuation (:strategy (provider-prompt-cache provider)))
-
-        ask-opts
-        (cond-> ask-opts
-          continuation?
-          (update :messages continuation-input-layout))]
-
-    (if (and continuation? session-atom)
+    (if (and (= :server-continuation (:strategy (provider-prompt-cache provider))) session-atom)
       (locking session-atom
         (let [entry
               @session-atom

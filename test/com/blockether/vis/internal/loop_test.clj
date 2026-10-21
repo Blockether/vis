@@ -16,7 +16,6 @@
     [com.blockether.vis.internal.content :as content]
     [com.blockether.vis.internal.context.agents :as agents]
     [com.blockether.vis.internal.context.loop :as ctx-loop]
-    [com.blockether.vis.internal.context.renderer :as ctx-renderer]
     [com.blockether.vis.internal.extension.core :as extension]
     [com.blockether.vis.internal.channel.form :as form]
     [com.blockether.vis.internal.gateway.state :as gateway-state]
@@ -2655,43 +2654,7 @@
           (doseq [opts [@opened @asked]]
             (expect (false? (:websocket-prewarm? opts)))
             (expect (= {"chatgpt-account-id" "acct" "session-id" "vis-ws-abc"}
-                       (:llm-headers opts)))))))
-  (it "sends the session context as user input to Codex and keeps it as system elsewhere"
-      ;; The ChatGPT backend reuses no cache when `instructions` differ. The session block
-      ;; named each new session, so the first request of a new task had 0 cached tokens.
-      (let [asked
-            (atom [])
-
-            messages
-            [{:role "system" :content "rules"}
-             {:role "system" :content (str ctx-renderer/SESSION_CONTEXT_HEADER "session = {}\n```")}
-             {:role "user" :content "task"}]]
-
-        (with-redefs [svar/open-session
-                      (fn [_ _]
-                        ::fresh)
-
-                      svar/session-history
-                      (fn [_]
-                        [])
-
-                      svar/ask!
-                      (fn [_ opts]
-                        (swap! asked conj (mapv :role (or (:messages opts) (:history opts))))
-                        {:stop-reason :end})
-
-                      svar/ask-code!
-                      (fn [_ opts]
-                        (swap! asked conj (mapv :role (:messages opts)))
-                        {:stop-reason :end})]
-
-          (doseq [model [{:provider :openai-codex :name "gpt-5.6"}
-                         {:provider :anthropic :name "claude"}]]
-            (#'transcript/ask-code-with-session!
-             {:router ::router :llm-session-atom (atom nil)}
-             model
-             {:messages messages}))
-          (expect (= [["system" "user" "user"] ["system" "system" "user"]] @asked))))))
+                       (:llm-headers opts))))))))
 
 (defdescribe
   environment-lifecycle-test

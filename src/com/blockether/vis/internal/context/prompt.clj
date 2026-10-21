@@ -1021,13 +1021,24 @@
                           (assoc :path path))))))
         messages))
 
+(defn- capped-rows
+  "Cap labelled rows in order by `budget`; return the kept rows and the unused budget."
+  [budget rows]
+  (reduce (fn [[kept left] row]
+            (let [tokens (min (long left) (max 0 (long (:tokens row))))]
+              [(cond-> kept
+                 (pos? tokens)
+                 (conj (assoc row :tokens tokens))) (- (long left) tokens)]))
+          [[] (long budget)]
+          rows))
+
 (defn- prepared-request-parts
   "Project Svar's content-free components into UI labels without rescaling them.
-   Svar reports ONE `:instructions` total for every system message, so it is split
-   across their labelled parts — core prompt, each injected guidance file, runtime
-   and extension prompts, session context — using isolated Svar content counts.
-   Rows are capped by the reported total, and the unattributed remainder (message
-   framing plus anything unlabelled) stays one explicit `System instructions` row."
+   Svar sends the first system message as Responses `instructions` and each later one
+   as an input message. Both totals are split across their labelled parts — core prompt,
+   each injected guidance file, runtime and extension prompts, session context — using
+   isolated Svar content counts. Rows are capped by the reported totals. The unattributed
+   remainders stay explicit `System instructions` and conversation rows."
   [model messages {:keys [source projection input-tokens components] :as accounting}]
   (when-not (and (= :svar-estimate source)
                  (= :prepared-request projection)
@@ -1037,27 +1048,32 @@
                  (every? #(and (integer? %) (not (neg? (long %)))) (vals components))
                  (= input-tokens (reduce + 0 (vals components))))
     (throw (ex-info "Prepared request accounting unavailable" {})))
-  (let [instructions
-        (long (or (:instructions components) 0))
+  (let [[first-system later]
+        (let [i (first (keep-indexed #(when (= "system" (:role %2)) %1) messages))]
+          (if i
+            [[(nth messages i)] (into (subvec (vec messages) 0 i) (subvec (vec messages) (inc i)))]
+            [[] messages]))
 
-        [attributed remainder]
-        (reduce (fn [[rows left] row]
-                  (let [tokens (min (long left) (max 0 (long (:tokens row))))]
-                    [(cond-> rows
-                       (pos? tokens)
-                       (conj (assoc row :tokens tokens))) (- (long left) tokens)]))
-                [[] instructions]
-                (if (pos? instructions) (instruction-attribution model messages) []))
+        [instruction-rows instruction-rest]
+        (capped-rows (or (:instructions components) 0) (instruction-attribution model first-system))
+
+        [input-rows input-rest]
+        (capped-rows (or (:messages components) 0) (instruction-attribution model later))
 
         parts
-        (into (cond-> attributed
-                (pos? (long remainder))
-                (conj {:label "System instructions" :tokens remainder}))
-              (keep (fn [[key label]]
-                      (when-let [tokens (get components key)]
-                        (when (pos? tokens) {:label label :tokens tokens}))))
-              [[:messages "Conversation and tool results"] [:tools "Tool declarations"]
-               [:output-format "Output format"] [:reply-priming "Reply framing"]])]
+        (-> instruction-rows
+            (cond->
+              (pos? (long instruction-rest))
+              (conj {:label "System instructions" :tokens instruction-rest}))
+            (into input-rows)
+            (cond->
+              (pos? (long input-rest))
+              (conj {:label "Conversation and tool results" :tokens input-rest}))
+            (into (keep (fn [[key label]]
+                          (when-let [tokens (get components key)]
+                            (when (pos? tokens) {:label label :tokens tokens}))))
+                  [[:tools "Tool declarations"] [:output-format "Output format"]
+                   [:reply-priming "Reply framing"]]))]
 
     (when-not (= input-tokens (reduce + 0 (map :tokens parts)))
       (throw (ex-info "Prepared request components unavailable" {})))
@@ -1093,8 +1109,8 @@
    Neither estimate replaces same-request provider usage for utilization. Root
    guidance is disk-only; logical metadata attributes guidance without rereading it.
    An optional iteration-local message counter shares exact logical estimates with
-   budgeting; prepared accounting never invokes it, splitting its single
-   instructions total across the same labelled parts with the shared tokenizer."
+   budgeting; prepared accounting never invokes it, splitting its instructions and
+   input totals across the same labelled parts with the shared tokenizer."
   [environment messages tools & [model accounting message-token-counter]]
   (try
     (let [model
