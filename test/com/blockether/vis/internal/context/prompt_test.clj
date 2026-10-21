@@ -437,7 +437,10 @@
 (defdescribe one-system-prompt-test
              ;; ctb vis-edits: a separate CLI prompt split the cached prefix by channel. One prompt
              ;; serves every channel; `session["agent"]["interactive"]` carries the difference.
-             (it "sends the same stable prompt to every channel"
+             ;; User decision: a one-shot `:cli` run has no reader for progress notes. With only the
+             ;; interactive flag, GPT still wrote 2.7 notes per task in ctb edits11, so the `:cli`
+             ;; prompt leaves out the progress-note rules and nothing else.
+             (it "sends one stable prompt to every channel, without progress-note rules for :cli"
                  (let [text-for
                        (fn [ch]
                          (-> (prompt/assemble-stable-prompt-messages {:channel ch}
@@ -445,13 +448,22 @@
                              prompt/stable-prompt-text))
 
                        text
+                       (text-for :tui)
+
+                       cli
                        (text-for :cli)]
 
-                   (doseq [ch [:tui :web nil]]
+                   (doseq [ch [:web nil]]
                      (expect (= text (text-for ch)) (str ch)))
-                   (expect (str/includes? text "## 7. Answer and finish"))
-                   (expect (str/includes? text "`session[\"agent\"][\"interactive\"]` is False"))
-                   (expect (not (str/includes? text "NON-INTERACTIVE ONE-SHOT RUN"))))))
+                   (expect (= cli (str/replace text (var-get #'prompt/PROGRESS_NOTE_RULES) "")))
+                   (expect (str/includes? text "Report progress in prose"))
+                   (doseq [rule ["Report progress in prose" "Before an edit, say the change"
+                                 "when a finding, decision or blocker changes the next step"
+                                 "share a short plan when you know enough"]]
+                     (expect (not (str/includes? cli rule)) rule))
+                   (expect (str/includes? cli "## 7. Answer and finish\n- Start with the answer"))
+                   (expect (str/includes? cli "`session[\"agent\"][\"interactive\"]` is False"))
+                   (expect (not (str/includes? cli "NON-INTERACTIVE ONE-SHOT RUN"))))))
 
 (defdescribe
   core-prompt-project-style-test

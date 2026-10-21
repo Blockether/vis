@@ -290,6 +290,16 @@
          {::parts (when user-block [{:label "User requests" :content user-block}])})]
       [])))
 
+(def ^:private PROGRESS_NOTE_RULES
+  "The section 7 rules that ask for progress prose. A one-shot `:cli` run has no
+   reader for that prose, so its prompt leaves these rules out."
+  (str
+    "- Report progress in prose; text next to a `python_execution` call reaches the user while you work. Before "
+    "large work, say the first step. Before an edit, say the change.\n"
+    "- Write also when a finding, decision or blocker changes the next step: one or two sentences of facts. Group "
+    "related steps. Routine reads, searches and repeated code need no note.\n"
+    "- For large work, share a short plan when you know enough.\n"))
+
 (def ^:private CORE_SYSTEM_PROMPT
   "Cross-tool contract for an autonomous agent. `python_execution` is the only
    call; registered callable signatures own call shape and `doc(name)` owns semantics."
@@ -431,11 +441,7 @@
     "and symbols, decisive evidence, checks, edit and test state, and dirty files. Omit raw outputs and full files "
     "or tests. Check the reported reduction.\n"
     "\n" "## 7. Answer and finish\n"
-    "- Report progress in prose; text next to a `python_execution` call reaches the user while you work. Before "
-    "large work, say the first step. Before an edit, say the change.\n"
-    "- Write also when a finding, decision or blocker changes the next step: one or two sentences of facts. Group "
-    "related steps. Routine reads, searches and repeated code need no note.\n"
-    "- For large work, share a short plan when you know enough.\n"
+    PROGRESS_NOTE_RULES
     "- Start with the answer; it must stand alone without the progress notes. Be short; add depth only when it "
     "helps.\n" "- Unless the user asks for another language, "
     "the reply language is the language of the user's latest request. "
@@ -507,12 +513,18 @@
                           (when proj-dir
                             (read-prompt-file (io/file proj-dir "APPEND_SYSTEM.md")))]))}))
 
+(defn- core-system-prompt
+  "The core rules. A non-interactive run gets them without the progress-note rules."
+  [interactive?]
+  (if interactive? CORE_SYSTEM_PROMPT (str/replace CORE_SYSTEM_PROMPT PROGRESS_NOTE_RULES "")))
+
 (defn- system-prompt-blocks
   "Send-order pieces of the system prompt: the base text, whether a user file or
    config replaced it, and the custom blocks appended after it.
    `build-system-prompt` joins them; the context breakdown attributes the base
-   and the additions as separate rows."
-  [{:keys [system-prompt workspace-root]}]
+   and the additions as separate rows. `:interactive? false` removes the
+   progress-note rules from the core text."
+  [{:keys [system-prompt workspace-root interactive?] :or {interactive? true}}]
   (binding [workspace/*workspace-root* (or workspace-root workspace/*workspace-root*)]
     (let [addendum (when (string? system-prompt) (extension/normalize-prompt-text system-prompt))
           cfg (config-system-prompt)
@@ -524,7 +536,7 @@
                    (when cfg-replace? (:text cfg))
                    (str "You are "
                         (if workspace-root (config/agent-name workspace-root) (config/agent-name))
-                        ". " CORE_SYSTEM_PROMPT))
+                        ". " (core-system-prompt interactive?)))
           extras (into []
                        (comp (filter string?) (remove str/blank?))
                        (into [addendum cfg-prompt] (:appends files)))]
@@ -952,7 +964,9 @@
                     {:type :vis/missing-active-extensions})))
   (let [core-blocks
         (system-prompt-blocks {:system-prompt system-prompt
-                               :workspace-root (get-in environment [:workspace :root])})
+                               :workspace-root (get-in environment [:workspace :root])
+                               ;; A one-shot `:cli` run is not interactive (see `session.agents`).
+                               :interactive? (not= :cli (:channel environment))})
 
         core-content
         (str/join "\n\n" (into [(:base core-blocks)] (:extras core-blocks)))
