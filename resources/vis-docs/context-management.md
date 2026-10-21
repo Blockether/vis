@@ -149,10 +149,11 @@ print(defs("summarize_rows"))
 print(defs("summarize_rows", details=True))
 ```
 
-- `defs()` lists up to 20 helpers alphabetically, with origin, source length
-  and a docstring gist. Call hints are at most 120 characters, omit annotations
-  and show only a default's type (`=<int>`), not its value. Hints are not source.
-  Your variables follow, with type, size and save status. `defs()` never shows values.
+- `defs()` lists up to 20 helpers alphabetically, with a call hint and a docstring
+  gist. Call hints are at most 120 characters, omit annotations and show only a
+  default's type (`=<int>`), not its value. Hints are not source. Your variables
+  follow, with type and size but never values. A row marks a restored helper and a
+  value that is not saved. Match counts appear only when a pattern or a page hides rows.
 - `defs(pattern="summar|count", limit=10, offset=0)` matches names, first-line docstring gists
   and variable types with a case-sensitive regex. `limit` is 1–100, and `offset` is nonnegative.
   For more results, increase the offset or narrow the pattern.

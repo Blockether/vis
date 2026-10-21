@@ -1698,9 +1698,9 @@ Follow every fixture step without truncation."}]))
              ctx
              "hits = apropos('rewrite a kebab-case identifier')\nprint('found=' + str(any(i.name == 'kebab_to_snake' for i in hits)))\nnames = [i.name for i in apropos('')]\nprint('listed=' + str('kebab_to_snake' in names or 'quiet' in names))\nprint('page=' + str('Splits on the hyphen' in doc('kebab_to_snake')))"))]
 
-        ;; The listing previews the first line, and counts what is still missing.
+        ;; The listing previews the first line; a bare helper is its call hint only.
         (expect (str/includes? listed "Rewrite a kebab-case identifier as snake_case."))
-        (expect (str/includes? listed "1 has no docstring"))
+        (expect (some #{"  quiet(x)"} (str/split-lines listed)))
         ;; The page is the call line and the WHOLE docstring, like any tool's.
         (expect (str/includes? page "kebab_to_snake(text)"))
         (expect (str/includes? page "Splits on the hyphen"))
