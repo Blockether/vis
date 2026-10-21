@@ -655,11 +655,12 @@
    120 (max 600). Give a large task more at the start.
 
    files is a file grant: {\"write\": [...], \"read_only\": [...], \"deny\": [...]}. Give only the
-   lists that you need; an empty list adds no rules. Each rule is a path or a glob, relative to
-   your workspace root, ~ or absolute, and also covers files that do not exist yet. With write,
-   the child can change only the files that its rules match. deny wins over read_only, and
-   read_only wins over write. Without files, the child writes where you write. With the jail off,
-   only host file tools follow all rules: Python follows only write, and shell follows none.
+   lists that you need. An empty list adds no rules. Each rule is a path or a glob, relative to
+   your workspace root, ~ or absolute, and also covers files that do not exist yet.
+
+   With write, the child can change only the files that its rules match. deny wins over read_only,
+   and read_only wins over write. Without files, the child writes where you write. With the jail
+   off, only host file tools follow all rules: Python follows only write, and shell follows none.
 
    A child gets the system prompt, your requests, notes and answers, and its task. It does not get
    your tool calls or their output. Children share the checkout. Only a leader starts subagents.
@@ -814,7 +815,9 @@
 (defn ask-files
   "As a subagent, ask your parent for file access and wait for the answer. files holds write,
    read_only and deny rules: paths or globs, absolute, ~ or relative to the parent's workspace
-   root. Give at least one rule. deny wins over read_only, and read_only wins over write. Returns a dict with granted, files (your grant now), missing and reply. granted is True
+   root. Give at least one rule. deny wins over read_only, and read_only wins over write.
+
+   Returns a dict with granted, files (your grant now), missing and reply. granted is True
    only when the grant covers every write rule that you asked for. missing lists the others. reply
    is None when the parent is not running or does not answer within timeout_secs (default 600).
 

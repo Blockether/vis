@@ -1831,9 +1831,9 @@
                   (expect (= "running" (:state active)))
                   (expect (true? (:wake? active)))
                   (let [wake-request (nth (first @launched) 2)]
-                    (expect (< (count wake-request) 360))
-                    (expect (str/includes? wake-request
-                                           (str "council.get(" (:entry_id entry) ")"))))
+                    ;; 42ab268: a parent's ping gives its child the task as the instruction.
+                    (expect (str/includes? wake-request (str "Council entry #" (:entry_id entry))))
+                    (expect (str/includes? wake-request "What did you learn about the parser?")))
                   (expect (= (:content entry) (:display-request (nth (first @launched) 3))))
                   (expect (= [(:entry_id entry)]
                              (mapv :entry_id
