@@ -125,6 +125,10 @@
       (expect (= leader (:parent_id metadata)))
       (expect (= "subagent" (get (agents/context env) "role")))
       (expect (= "leader" (get (agents/context {:db-info db :session-id other}) "role")))
+      ;; One system prompt serves every channel; this flag tells the model nobody answers.
+      (expect (true? (get (agents/context {:db-info db :session-id other}) "interactive")))
+      (expect (false? (get (agents/context {:db-info db :session-id other :channel :cli})
+                           "interactive")))
       (expect (agents/wake-allowed? db leader child))
       (expect (agents/wake-allowed? db child leader))
       (expect (agents/wake-allowed? db child child))

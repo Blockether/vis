@@ -142,12 +142,15 @@
         child
         (info (:db-info env) sid)]
 
-    (wire/->wire (cond-> (merge
-                           {:role (if child "subagent" "leader") :session_id sid :leader_id sid}
-                           (select-keys child
-                                        [:parent_id :leader_id :team_id :task :iteration_budget
-                                         :iterations_used :status :allowed_models :files])
-                           {:routing_locked (ps/db-routing-locked? (:db-info env) sid)})
+    (wire/->wire (cond-> (merge {:role (if child "subagent" "leader")
+                                 :session_id sid
+                                 :leader_id sid
+                                 ;; A one-shot `:cli` run has nobody to answer or approve.
+                                 :interactive (not= :cli (:channel env))}
+                                (select-keys child
+                                             [:parent_id :leader_id :team_id :task :iteration_budget
+                                              :iterations_used :status :allowed_models :files])
+                                {:routing_locked (ps/db-routing-locked? (:db-info env) sid)})
                    (budget-notice child)
                    (assoc :budget_notice (budget-notice child))))))
 

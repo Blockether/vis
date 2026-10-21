@@ -434,56 +434,24 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "`is_regex: True`")))))
 
-(defdescribe
-  cli-autonomous-override-test
-  (it "drops the candidate approval STOP for the non-interactive :cli channel only"
-      (let [text-for
-            (fn [ch]
-              (-> (prompt/assemble-stable-prompt-messages {:channel ch} {:active-extensions []})
-                  prompt/stable-prompt-text))
+(defdescribe one-system-prompt-test
+             ;; ctb vis-edits: a separate CLI prompt split the cached prefix by channel. One prompt
+             ;; serves every channel; `session["agent"]["interactive"]` carries the difference.
+             (it "sends the same stable prompt to every channel"
+                 (let [text-for
+                       (fn [ch]
+                         (-> (prompt/assemble-stable-prompt-messages {:channel ch}
+                                                                     {:active-extensions []})
+                             prompt/stable-prompt-text))
 
-            marker
-            "NON-INTERACTIVE ONE-SHOT RUN"]
+                       text
+                       (text-for :cli)]
 
-        ;; :cli (headless one-shot — no approver) gets the override
-        (expect (str/includes? (text-for :cli) marker))
-        (expect (str/includes? (text-for :cli) "Keep working to a finished prose answer"))
-        ;; One-shot runs have no reader during the run: progress notes are only output cost.
-        (expect (str/includes? (text-for :cli) "Write no progress notes"))
-        (expect (str/includes? (text-for :cli) "Keep the final answer short"))
-        (expect (str/includes? (text-for :cli) "Leave destructive or irreversible work"))
-        (expect (not (str/includes? (text-for :cli) "big, risky")))
-        ;; interactive / card-bearing channels keep the approval flow
-        (expect (not (str/includes? (text-for :tui) marker)))
-        (expect (not (str/includes? (text-for :web) marker)))
-        (expect (not (str/includes? (text-for nil) marker)))))
-  (it "sends only core sections 1-5 to the one-shot :cli channel"
-      (let [text-for (fn [ch]
-                       (-> (prompt/assemble-stable-prompt-messages {:channel ch}
-                                                                   {:active-extensions []})
-                           prompt/stable-prompt-text))]
-        ;; The cli-autonomous block owns the answer rules; a short run seldom folds.
-        (expect (str/includes? (text-for :cli) "## 5. Act on your own"))
-        (expect (not (str/includes? (text-for :cli) "## 6. Context budget")))
-        (expect (not (str/includes? (text-for :cli) "## 7. Answer and finish")))
-        (doseq [ch [:tui :web nil]]
-          (expect (str/includes? (text-for ch) "## 6. Context budget") (str ch))
-          (expect (str/includes? (text-for ch) "## 7. Answer and finish") (str ch)))))
-  ;; ctb vis-edits: Codex never caches the first request, so every CLI prompt token is paid
-  ;; in full once per run. These rules serve long interactive sessions only.
-  (it "drops core rules that a one-shot run never uses"
-      (let [core
-            (var-get #'prompt/CORE_SYSTEM_PROMPT)
-
-            cli
-            (var-get #'prompt/CLI_CORE_SYSTEM_PROMPT)]
-
-        (doseq [prefix (var-get #'prompt/CLI_DROPPED_RULE_PREFIXES)]
-          ;; A prefix that no longer starts a core line would silently drop nothing.
-          (expect (str/includes? core (str "\n" prefix)) prefix)
-          (expect (not (str/includes? cli (str "\n" prefix))) prefix))
-        (expect (str/includes? cli "- Put independent work in one block"))
-        (expect (str/ends-with? cli "\n")))))
+                   (doseq [ch [:tui :web nil]]
+                     (expect (= text (text-for ch)) (str ch)))
+                   (expect (str/includes? text "## 7. Answer and finish"))
+                   (expect (str/includes? text "`session[\"agent\"][\"interactive\"]` is False"))
+                   (expect (not (str/includes? text "NON-INTERACTIVE ONE-SHOT RUN"))))))
 
 (defdescribe
   core-prompt-project-style-test
@@ -914,6 +882,8 @@
       ;; 12.35k → 12.4k: an eval showed that `r.all()` includes the current page. It lands at 12 378.
       ;; 12.4k → 12.45k: in 357 session turns, 31% of patch calls patched a file again. One rule
       ;; asks to find every change of a file first. It lands at 12 431.
+      ;; One system prompt for every channel: §5 tells a non-interactive run not to ask, and the
+      ;; CLI-only prompt is gone. It lands at 12 448.
       (expect (< (count text) 12450))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]

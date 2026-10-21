@@ -2732,7 +2732,7 @@
                  (reset! session-id (:session-id first-env))
                  (reset! persisted-entry entry)
                  (reset! first-stable stable)
-                 (expect (some #(str/includes? (:content %) "NON-INTERACTIVE ONE-SHOT RUN") stable))
+                 (expect (some #(str/includes? (:content %) "## 7. Answer and finish") stable))
                  (persistance/db-set-session-prompt-cache-state!
                    (:db-info first-env)
                    (:session/state-id first-env)
