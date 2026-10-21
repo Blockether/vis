@@ -2771,11 +2771,19 @@ async def call_async():
     return _outcomes()
 
 
+def wait_large():
+    \"\"\"Wait for a large team through the host door.\"\"\"
+    records = vis.council.wait()
+    return {'count': len(records), 'last': records[-1].session_id,
+            'answer': len(records[-1].answer)}
+
+
 vis.register_extension(vis.Extension(
     name='session-boundary', alias='boundary', description='Session API boundary fixture.',
     symbols=[
         vis.Symbol(call_sync, activity=vis.Activity(label='Call sync', show_start=False)),
         vis.Symbol(call_async, activity=vis.Activity(label='Call async', show_start=False)),
+        vis.Symbol(wait_large, activity=vis.Activity(label='Wait large', show_start=False)),
     ],
 ))
 "}
@@ -2847,6 +2855,20 @@ vis.register_extension(vis.Extension(
                    (expect (= (zipmap (keys expected) (repeat "fixture")) (:result outcome))
                            (pr-str callback outcome))
                    (expect (every? (set @frames) (vals expected)) (pr-str callback @frames))))
+               ;; #405: a large response crosses the door whole: 1000 records of 4000 characters.
+               (pyx/install-host-exchange!
+                 (fn [frame extra]
+                   (if (= (str "/v1/sessions/" sid "/agents/wait") (get frame "route"))
+                     (envelope 200
+                               (vec (for [i (range 1000)]
+                                      {"session_id" (str "child-" i)
+                                       "status" "completed"
+                                       "answer" (apply str (repeat 4000 "x"))})))
+                     (exchange frame extra))))
+               (expect (= {"count" 1000 "last" "child-999" "answer" 4000}
+                          (:result (binding [extension/*current-environment* {:session-id sid
+                                                                              :db-info store}]
+                                     ((symbol-fn ext 'wait_large))))))
                (finally (pyx/install-host-exchange! previous))))))))
 
 (defdescribe

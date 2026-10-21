@@ -3041,6 +3041,45 @@
             (expect (nil? (get beta "pricing")))
             (expect (= (get-in alpha ["pricing" "tiers" 0 "input"]) (get cost "input_cost")))))))))
 
+;; #405: the catalog names a model by its provider pair and reads the current fleet each call.
+(defdescribe
+  models-handler-lists-each-provider-pair
+  (it
+    "lists one entry for each provider and model, with subscription billing, from the current fleet"
+    (let [fleet
+          (atom [{:id :alpha :models [{:name "shared"}]}
+                 {:id :gamma :models [{:name "shared"} {:name "pinned"}]}])
+
+          listed
+          (fn []
+            (mapv (juxt #(get % "provider") #(get % "name") #(get % "billing"))
+                  (get (wire/parse-json (:body (#'providers-api/models-handler {}))) "models")))]
+
+      (with-redefs-fn {#'providers/picker-fleet (fn [& _]
+                                                  @fleet)
+                       #'providers/default-selection (constantly {:provider-id :alpha
+                                                                  :model "shared"})
+                       #'providers/provider-status-current? (constantly true)
+                       #'providers/provider-status-cached (constantly {:is-authenticated true})
+                       #'providers/provider-limits-safe (fn [provider]
+                                                          {:provider-id (:id provider)
+                                                           :status :ok
+                                                           :fetched-at-ms 1
+                                                           :static {}
+                                                           :dynamic {:limits []}})
+                       #'providers/auth-kind (fn [id _]
+                                               (if (= :alpha id) :oauth :api-key))
+                       #'providers-api/normalized-models :models
+                       #'loop-router/model-rates (constantly nil)}
+        (fn []
+          (expect (= [["alpha" "shared" "subscription"] ["gamma" "shared" "metered"]
+                      ["gamma" "pinned" "metered"]]
+                     (listed)))
+          ;; A model that leaves the live provider catalog leaves the list too.
+          (swap! fleet assoc-in [1 :models] [{:name "shared"}])
+          (expect (= [["alpha" "shared" "subscription"] ["gamma" "shared" "metered"]]
+                     (listed))))))))
+
 ;; Regression, issue #405: a fresh headless gateway had no live verdict yet, so
 ;; `GET /v1/models` listed a signed-in OAuth provider with `is_available` false.
 (defdescribe

@@ -49,6 +49,7 @@
       (expect (= agents/max-active-children (get schema "x-vis-max-active-children") 16))
       (expect (document/valid? "agents" agent))
       (expect (not (document/valid? "agents" (assoc agent "iteration_budget" 601))))
+      (expect (not (document/valid? "agents" (assoc agent "iteration_budget" -1))))
       (expect (document/valid-json? "agents" "spawn" {"task" (apply str (repeat 8192 "x"))}))
       (expect (document/valid-json? "agents"
                                     "spawn"
@@ -830,6 +831,19 @@
                                                          (assoc opts :task "Different task"))
                               nil
                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+              ;; #405: a spawn outside its own model allowlist starts no child.
+              (expect (= :model-not-allowed
+                         (try (gateway/agents-operation! leader
+                                                         :spawn
+                                                         {:task "Review on the large model"
+                                                          :key "outside"
+                                                          :provider "p"
+                                                          :model "large"
+                                                          :allowed_models [{:provider "p"
+                                                                            :model "small"}]})
+                              nil
+                              (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+              (expect (= [sid] @launches))
               ;; #405: a caller key names one delegation across parent turns.
               (ps/db-store-session-turn!
                 db
@@ -1355,3 +1369,23 @@
                                                                            {:timeout_secs 5})))]
                             (expect (= "held" (get record "status")) (pr-str record)))
                           (finally (#'gateway/drop-session! child)))))))
+
+;; Regression for #405: only a finished child with iterations left can resume.
+(defdescribe
+  resume-of-a-running-or-cancelled-child-test
+  (it "refuses a running and a cancelled child and queues no turn"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            env
+            {:db-info db :session-id leader}]
+
+        (doseq [status ["running" "cancelled"]]
+          (let [child (child! db leader {:status status})]
+            (expect (= :invalid-request (outcome #(agents/resume-agent env child "Next"))) status)
+            (expect (= {:status status :resumed_turns 0}
+                       (select-keys (agents/info db child) [:status :resumed_turns]))
+                    status))))))
