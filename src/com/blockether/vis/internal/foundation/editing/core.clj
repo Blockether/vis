@@ -3851,7 +3851,7 @@
               (patch-refusal! rel
                               {:reason :edit-not-a-map :edit-index i}
                               [(str at "must be a map.")]))
-            (let [unknown (remove #{"from" "to" "replace" "old" "all"} (keys entry))
+            (let [unknown (remove #{"from" "to" "replace" "old" "all" "line"} (keys entry))
                   from (get entry "from")
                   old (get entry "old")
                   replacement (get entry "replace")]
@@ -3863,11 +3863,15 @@
                   [(str at
                         "unknown keys: "
                         (str/join ", " (map pr-str unknown))
-                        "; allowed: from, to, replace, or old, replace, all.")]))
+                        "; allowed: from, to, replace, or old, replace, all, line.")]))
               (when (and (some? old) (or (some? from) (some? (get entry "to"))))
                 (patch-refusal! rel
                                 {:reason :edit-mixed-address :edit-index i}
                                 [(str at "use either `old` or `from`/`to`, not both.")]))
+              (when (and (some? (get entry "line")) (nil? old))
+                (patch-refusal! rel
+                                {:reason :edit-mixed-address :edit-index i}
+                                [(str at "use `line` only with `old`.")]))
               (when (and (some? old) (not (and (string? old) (seq old))))
                 (patch-refusal! rel
                                 {:reason :text-malformed :edit-index i}
@@ -3898,7 +3902,12 @@
                                                     (str "a value of " (count shown) " chars")))
                                                 ".")])))]
                 (if (some? old)
-                  {:index i :old old :all? (true? (get entry "all")) :replace replacement}
+                  {:index i
+                   :old old
+                   :all? (true? (get entry "all"))
+                   :line (some->> (get entry "line")
+                                  (line-of "line"))
+                   :replace replacement}
                   {:index i
                    :from (line-of "from" from)
                    :to (line-of "to" (or (get entry "to") from))
@@ -4012,9 +4021,10 @@
 (defn- patch-text-spans!
   "Resolve ONE text edit against the CURRENT file: one char span for each exact match
    of `old`. The text is its own address, so it needs no version and no earlier read.
-   Refuse a missing match, and more than one match without `all`. On a CRLF file, an
-   `old` or `replace` with bare LF line ends gets CRLF line ends."
-  [rel ^String content {:keys [index old all? replace]} total]
+   A `line` keeps only the matches that cover that line. Refuse a missing match, and
+   more than one match without `all`. On a CRLF file, an `old` or `replace` with bare
+   LF line ends gets CRLF line ends."
+  [rel ^String content {:keys [index old all? line replace]} total]
   (let [crlf?
         (str/includes? content "\r\n")
 
@@ -4050,7 +4060,15 @@
               (if (or (neg? j) (>= j offset)) n (recur (inc j) (inc n))))))
 
         at
-        (str "  " rel ": edit " (inc (long index)) "/" total " ")]
+        (str "  " rel ": edit " (inc (long index)) "/" total " ")
+
+        picked
+        (if line
+          (filterv (fn [s]
+                     (let [e (+ (long s) (.length needle))]
+                       (<= (long (line-at s)) (long line) (long (line-at (max (long s) (dec e)))))))
+            starts)
+          starts)]
 
     (cond (empty? starts)
           (let [lines
@@ -4080,16 +4098,24 @@
                                           (str/join ", " near)
                                           ": copy the next lines exactly, with their whitespace.")
                           :else "Read the file and copy the text exactly."))]))
-          (and (next starts) (not all?))
-          (patch-refusal!
-            rel
-            {:reason :text-ambiguous :edit-index index :match-count (count starts)}
-            [(str at
-                  "`old` matches "
-                  (count starts)
-                  " times, at lines "
-                  (str/join ", " (map line-at (take 8 starts)))
-                  ". Add nearby lines to `old`, or set `all: true` to replace every match.")])
+          (empty? picked) (patch-refusal! rel
+                                          {:reason :text-line-mismatch
+                                           :edit-index index
+                                           :match-count (count starts)}
+                                          [(str at
+                                                "`old` is not at line "
+                                                line
+                                                ". It matches at lines "
+                                                (str/join ", " (map line-at (take 8 starts)))
+                                                ".")])
+          (and (next picked) (not all?))
+          (patch-refusal! rel
+                          {:reason :text-ambiguous :edit-index index :match-count (count picked)}
+                          [(str at
+                                "`old` matches " (count picked)
+                                " times, at lines " (str/join ", " (map line-at (take 8 picked)))
+                                ". Add nearby lines to `old`, set `line` to one of these lines, "
+                                "or set `all: true` to replace every match.")])
           :else (mapv (fn [s]
                         (let [e (+ (long s) (.length needle))]
                           {:index index
@@ -4100,7 +4126,7 @@
                            :new-text new-text
                            :from-line (line-at s)
                            :to-line (line-at (max (long s) (dec e)))}))
-                      starts))))
+                      picked))))
 
 (defn- patch-plan
   "Resolve every edit of ONE `patch` call against ONE read of its file, and write
@@ -4492,6 +4518,7 @@
 
    A TEXT edit addresses the current file by its exact text: it needs no read and no
    version, and it is refused unless `old` matches exactly once (or `all` is true).
+   A `line` selects the match that covers that line.
    A LINE edit uses line numbers of `version`, the `@` value of the cat or grep header
    that showed them; `to` defaults to `from`. When the file changed after that read,
    each span moves through a diff and is refused only when its own lines changed.
@@ -4546,7 +4573,8 @@
        "Apply all edits for one file in one atomic write, in any language. Each edit has one of "
        "two forms:\n"
        "- Text: `{\"old\": exact_text, \"replace\": new}`. `old` must match the current file exactly "
-       "once. Add nearby lines to make it unique, or set `\"all\": true` to replace every match. A "
+       "once. Add nearby lines to make it unique, set `\"line\": n` to the line of one match, or set "
+       "`\"all\": true` to replace every match. A "
        "text edit needs no read and no version, so you can edit in the same block as a search.\n"
        "- Lines: `{\"from\": 12, \"to\": 14, \"replace\": new}` with the `version` argument, the `@` "
        "value of the `cat` or `grep` result that showed the lines. `to` defaults to `from`. Use it "

@@ -932,12 +932,15 @@
    `bin/vis-agent '<task>'` one-shot runs). No human is in the loop, so the model
    must never wait for input — it makes reasonable assumptions and drives the
    work to a finished prose answer."
-  (str "NON-INTERACTIVE ONE-SHOT RUN: nobody watches, answers questions or approves steps.\n"
-       "- Keep working to a finished prose answer.\n"
-       "- If a detail is unclear, state one reasonable assumption and complete the work.\n"
-       "- Leave destructive or irreversible work that needs confirmation to a human. "
-       "Take a safe, reversible path. If none exists, finish with the exact blocked action "
-       "and the confirmation it needs.\n"))
+  (str
+    "NON-INTERACTIVE ONE-SHOT RUN: nobody watches, answers questions or approves steps.\n"
+    "- Keep working to a finished prose answer.\n"
+    "- Write no progress notes: nobody reads them before the end. Write prose only in the final answer.\n"
+    "- Keep the final answer short: the result, then the checks that ran or could not run.\n"
+    "- If a detail is unclear, state one reasonable assumption and complete the work.\n"
+    "- Leave destructive or irreversible work that needs confirmation to a human. "
+    "Take a safe, reversible path. If none exists, finish with the exact blocked action "
+    "and the confirmation it needs.\n"))
 
 (defn assemble-stable-prompt-messages
   "Assemble provider-prefix messages.

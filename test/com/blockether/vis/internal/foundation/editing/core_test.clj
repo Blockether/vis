@@ -5710,9 +5710,35 @@
 
           (expect (= :text-ambiguous (:reason (ex-data e))))
           (expect (string/includes? (ex-message e) "lines 1, 3"))
+          (expect (string/includes? (ex-message e) "set `line`"))
           (expect (= "print(1)\nx = 0\nprint(1)\n" (slurp rel)))
           ((private-fn "patch-tool") rel [{"old" "print(1)" "replace" "print(2)" "all" true}])
           (expect (= "print(2)\nx = 0\nprint(2)\n" (slurp rel)))))
+    ;; ctb edits3-vis thread-timeout: a repeated call text cost a refusal, a read and a
+    ;; version-addressed retry. `line` picks one match without a read.
+    (it "selects one of several matches by `line` and refuses a line that no match covers"
+        (let [rel
+              (write-temp! "patch/text-line.py" "print(1)\nx = 0\nprint(1)\n")
+
+              e
+              (refusal #((private-fn "patch-tool")
+                           rel
+                           [{"old" "print(1)" "replace" "print(2)" "line" 2}]))]
+
+          (expect (= :text-line-mismatch (:reason (ex-data e))))
+          (expect (string/includes? (ex-message e) "lines 1, 3"))
+          (expect (string/includes? (ex-message e) "not at line 2"))
+          ((private-fn "patch-tool") rel [{"old" "print(1)" "replace" "print(2)" "line" 3}])
+          (expect (= "print(1)\nx = 0\nprint(2)\n" (slurp rel)))))
+    (it "refuses `line` without `old`"
+        (let [rel
+              (write-temp! "patch/text-line-mixed.py" "a\n")
+
+              e
+              (refusal #((private-fn "patch-tool") rel [{"from" 1 "replace" "b" "line" 1}]))]
+
+          (expect (= :edit-mixed-address (:reason (ex-data e))))
+          (expect (= "a\n" (slurp rel)))))
     (it "refuses text that is not in the file and points at its first line"
         (let [rel
               (write-temp! "patch/text-miss.py" "def f():\n    return 1\n")

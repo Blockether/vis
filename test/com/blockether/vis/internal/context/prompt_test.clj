@@ -448,6 +448,9 @@
         ;; :cli (headless one-shot — no approver) gets the override
         (expect (str/includes? (text-for :cli) marker))
         (expect (str/includes? (text-for :cli) "Keep working to a finished prose answer"))
+        ;; One-shot runs have no reader during the run: progress notes are only output cost.
+        (expect (str/includes? (text-for :cli) "Write no progress notes"))
+        (expect (str/includes? (text-for :cli) "Keep the final answer short"))
         (expect (str/includes? (text-for :cli) "Leave destructive or irreversible work"))
         (expect (not (str/includes? (text-for :cli) "big, risky")))
         ;; interactive / card-bearing channels keep the approval flow
