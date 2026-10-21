@@ -5201,27 +5201,29 @@
             (throw (ex-info "Subagent cannot take a follow-up turn" {:error :invalid-recipient})))
 
         result
-        (try (submit-turn!
-               sid
-               {:request
-                (str
-                  "Council notification #" (:entry_id entry)
-                  ". Read the attributed Council input; if missing or truncated, use council.get("
-                  (:entry_id entry)
-                  ")." (when (:reply_required entry)
-                         (str " Reply before ending this turn with await council.publish(content, "
-                              "kind=\"informational\", reply_to="
-                              (:entry_id entry)
-                              ").")))
-                :display-request (:content entry)
-                :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
-                :idempotency-key (when (rooms/selected-room db sid)
-                                   (str "room:" (:group_id entry) ":" (:entry_id entry)))
-                :council-ping {:db db
-                               :entry-id (:entry_id entry)
-                               :entry entry
-                               :remote? (boolean (rooms/selected-room db sid))}})
-             (catch Throwable t (restore!) (throw t)))]
+        (try
+          (submit-turn!
+            sid
+            {:request
+             (or (agents/task-request db sid entry)
+                 (str
+                   "Council notification #" (:entry_id entry)
+                   ". Read the attributed Council input; if missing or truncated, use council.get("
+                   (:entry_id entry)
+                   ")." (when (:reply_required entry)
+                          (str " Reply before ending this turn with await council.publish(content, "
+                               "kind=\"informational\", reply_to="
+                               (:entry_id entry)
+                               ")."))))
+             :display-request (:content entry)
+             :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
+             :idempotency-key (when (rooms/selected-room db sid)
+                                (str "room:" (:group_id entry) ":" (:entry_id entry)))
+             :council-ping {:db db
+                            :entry-id (:entry_id entry)
+                            :entry entry
+                            :remote? (boolean (rooms/selected-room db sid))}})
+          (catch Throwable t (restore!) (throw t)))]
 
     (when (:error result)
       (restore!)

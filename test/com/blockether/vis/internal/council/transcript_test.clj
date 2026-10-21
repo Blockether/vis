@@ -170,7 +170,7 @@
 
 (defdescribe
   council-wake-keeps-display-content-out-of-the-short-instruction
-  (it "council wake keeps display content out of the short instruction"
+  (it "council wake keeps peer content out of the short instruction"
       (let [{:keys [db sid entry]}
             (managed-fixture "coordination")
 
@@ -178,7 +178,11 @@
             (atom nil)
 
             wake!
-            state/council-wake!]
+            state/council-wake!
+
+            ;; The child itself is a peer author, not its parent.
+            peer
+            (assoc entry :author_session_id sid)]
 
         (doseq [required? [false true]]
           (with-redefs-fn {#'toggles/enabled? (constantly true)
@@ -186,7 +190,7 @@
                            #'state/submit-turn! (fn [_ opts]
                                                   (reset! submitted opts)
                                                   {:turn {}})}
-            #(wake! db sid (assoc entry :reply_required required?)))
+            #(wake! db sid (assoc peer :reply_required required?)))
           (expect (= (:content entry) (:display-request @submitted)))
           (expect (= :council (get-in @submitted [:engine-opts :request-kind])))
           (expect (= (:entry_id entry) (get-in @submitted [:engine-opts :council-entry-id])))
@@ -194,6 +198,36 @@
           (expect (str/includes? (:request @submitted) (str "council.get(" (:entry_id entry) ")")))
           (expect (= required? (str/includes? (:request @submitted) "before ending this turn")))
           (expect (not (str/includes? (:request @submitted) (:content entry))))))))
+
+;; Regression for Council complaint #7930: a small model took its parent's task as a notification.
+;; It replied and did no work, or did the work and ended with "Done." as its whole answer.
+(defdescribe
+  council-wake-gives-a-parent-task-as-the-instruction
+  (it "gives the parent's entry as the child's task and asks for the whole result"
+      (let [{:keys [db sid entry]}
+            (managed-fixture "coordination")
+
+            submitted
+            (atom nil)]
+
+        (doseq [required? [false true]]
+          (with-redefs-fn {#'toggles/enabled? (constantly true)
+                           #'state/council-wake-eligible? (constantly true)
+                           #'state/submit-turn! (fn [_ opts]
+                                                  (reset! submitted opts)
+                                                  {:turn {}})}
+            #(state/council-wake! db sid (assoc entry :reply_required required?)))
+          (let [request (:request @submitted)]
+            (expect (= (:content entry) (:display-request @submitted)))
+            (expect (str/includes? request (str "Your parent session " (:author_session_id entry))))
+            (expect (str/includes? request "It is your own task, not peer data."))
+            (expect (str/includes? request (str "Task:\n" (:content entry))))
+            (expect (str/includes? request "complete result as your final answer"))
+            (expect (not (str/includes? request "Council notification")))
+            (expect (= required?
+                       (str/includes? request (str "reply_to=" (:entry_id entry) ")")))))))
+      (let [{:keys [db sid entry]} (fixture "coordination")]
+        (expect (nil? (agents/task-request db sid entry)) "An independent session gets no task"))))
 
 ;; A ping to a finished subagent is a follow-up task, the same store step as council.resume.
 (defdescribe
