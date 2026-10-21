@@ -479,7 +479,8 @@
             edit-section
             (second (re-find #"(?s)## 4\. Edit and check\n(.*?)\n## 5\." text))]
 
-        (doseq [rule ["Keep unrelated work and formatting" "Cover changed behavior with tests"
+        (doseq [rule ["Keep unrelated work and formatting"
+                      "Run the nearest tests first, then wider ones"
                       "Run the applicable format and lint checks"
                       "Review the final diff and its edit boundaries"]]
           (let [pattern (re-pattern (java.util.regex.Pattern/quote rule))
@@ -956,8 +957,8 @@
                ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
                ;; "print only what the answer needs" a contract instead of cost advice.
                "`print()` is the one channel back" "you get only what you print"
-               "For an unknown shape" "Keep the reproduction as a suite test"
-               "run it again after the fix" "Cover changed behavior with tests"
+               "For an unknown shape" "Reproduce a bug before you edit and again after the fix"
+               "never in a project without tests" "Name unrelated failures; do not fix them"
                "Write only the files that the task needs" "Commit and push"
                "Treat context as a budget"
                ;; The model must know this is the latest available provider measurement,

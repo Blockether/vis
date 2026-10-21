@@ -22,7 +22,7 @@ meaning. Use the [ASD-STE100](https://www.asd-ste100.org/) writing rules, not it
 - Finish the requested behavior, not only a first implementation.
 - If you are blocked, report the blocker and the remaining work. Do not substitute an adjacent fix or claim an unverified result.
 - Choose checks for the changed files and behavior. Code needs the affected tests, formatting and lint, with reflection for Clojure. Documentation-only changes need content, link and diff checks, not a full application build.
-- Reproduce a reported bug before you fix it. If an issue exists, reference it in the regression-test comment.
+- Reproduce a reported bug before you fix it. Run the same reproduction again after the fix. If you add a regression test for an issue, name the issue in its comment.
 - Use the existing test infrastructure, not ad-hoc demos.
 - If a full build fails outside your diff, you can still deliver when the affected tests and checks pass. Report that failure separately.
 - If affected checks, hooks or a safe push are blocked, report the blocker and the remaining action. Never bypass checks or hooks.
@@ -85,14 +85,13 @@ own explicit request. Report every commit, push and release in the final reply.
 - Set start visibility at the binding. Quick local reads, patches and lookups show only the end (`show_start=False` in Python, `:show-start false` in Clojure). Slow work shows running progress.
 - Internal lifecycle tracking always keeps timing, failures and cancellation.
 - Keep errors, meaningful counts and diffs. Never replace them with a generic result preview.
-- Follow `resources/vis-docs/extension-api.md#activity-presentation`. Test registration and the running, success, failure and empty states.
+- Follow `resources/vis-docs/extension-api.md#activity-presentation`.
 
 ### Folds
 
 - In TUI lists and trees, ← folds the selected row and → unfolds it. This includes the project sidebar (projects, Groups, groups and Sessions) and Settings sections.
 - On a row inside a fold, ← selects that fold row and folds it. Enter and a click also toggle a fold.
 - Show the fold state with ▸ (folded) or ▾ (open). List the arrow keys in that surface's help.
-- Test the arrow keys of each new fold.
 
 ### Code
 
@@ -207,12 +206,12 @@ included:
 - Use `lazytest.core/set-ns-context!` and `around-each`, not `use-fixtures`.
 - Run the affected namespaces in a clean JVM with `clojure -M:test`, optionally with `--namespace my.ns-test` or `--var my.ns-test/my-test`.
 - Run the full suite with `clojure -M:test:test-parallel`. It runs the namespaces in separate worker JVMs, so a test can change process-wide state.
-- Passing JVM tests or a successful native build do not prove that the binary runs. Interop changes need the relevant `test-native/` coverage against the built image (`-M:test-native`).
+- Passing JVM tests or a successful native build do not prove that the binary runs. Check interop changes with the relevant `test-native/` tests against the built image (`-M:test-native`).
 - Reachability metadata is inside jars under `META-INF/native-image/`; `native_reachability_test` pins the engine metadata.
 - Read `.graalvm-version` before you change the locked GraalVM CE pin, and use `bin/require-graalvm` for setup. Never substitute Oracle GraalVM. Companion Android Gradle uses stock JDK 21.
 - `harbor run --path e2e` with the SDK agent `blockether.vis.evals.agent:VisAgent` makes paid model calls. Use it for editing tools and workflows, not for routine docs.
 - Delimiter (Parinfer) repair fixes syntax only.
-- A host, bootstrap or extension boundary change needs coverage across that boundary. Do not drop required keys or validation because one consumer ignores them.
+- Check a host, bootstrap or extension boundary change across that boundary. Do not drop required keys or validation because one consumer ignores them.
 
 ## Skills and plans
 
