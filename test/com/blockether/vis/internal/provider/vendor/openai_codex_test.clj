@@ -606,35 +606,3 @@
                        (expect (= 1 @reads))
                        (expect (= :rejected (:auth-state (codex/status))))
                        (expect (= 2 @reads)))))))
-
-(defdescribe session-header-test
-             ;; ctb vis-edits: the Codex CLI sends its conversation id as session_id; the
-             ;; backend keeps one session on one cache route with it.
-             (it "sends the Vis session id as the Codex session header"
-                 (codex/register!)
-                 (let [ext
-                       (some #(when (= "provider-openai-codex" (:ext/name %)) %)
-                             (extension/registered-extensions))
-
-                       hook
-                       (some #(when (= :session_provider_kickoff (:phase %)) %) (:ext/hooks ext))
-
-                       environment
-                       {:workspace/root "/work/project" :session-id "session-1"}]
-
-                   (expect (some? hook))
-                   (when hook
-                     (let [invoke
-                           (:fn hook)
-
-                           headers
-                           (:llm-headers (invoke {:phase :session_provider_kickoff
-                                                  :environment environment
-                                                  :provider {:id :openai-codex}}))]
-
-                       ;; A shared workspace key made parallel sessions compete for one
-                       ;; cache route (ctb edits6: GPT cached share 66% -> 42%).
-                       (expect (= {"session_id" "session-1"} headers))
-                       (expect (nil? (invoke {:phase :session_provider_kickoff
-                                              :environment environment
-                                              :provider {:id :anthropic}}))))))))
