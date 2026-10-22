@@ -71,21 +71,38 @@
                        (expect (str/includes? (str diagnostics) "UV_TAIL_MARKER"))
                        (expect (<= (count diagnostics) 16384)))))))
 
-(defdescribe installer-timeout-keeps-partial-output-test
-             (it "installer timeout keeps partial output"
-                 (with-uv-fixture
-                   "printf 'UV_PARTIAL_MARKER: waiting for registry' >&2\n/bin/sleep 30\n"
-                   (fn [dir uv]
-                     (let [e
-                           (failure #(#'python-runtime/run-uv! dir [uv "lock"] {:timeout-ms 2000}))
+(defdescribe
+  installer-timeout-keeps-partial-output-test
+  (it "installer timeout keeps partial output"
+      ;; macOS CI can start a new script after the timeout, so kill only after the marker.
+      (with-uv-fixture
+        (str "printf 'UV_PARTIAL_MARKER: waiting for registry' >&2\n"
+             ": > \"$(dirname \"$0\")/printed\"\n/bin/sleep 30\n")
+        (fn [dir uv]
+          (let [kill!
+                @#'python-runtime/kill-installer!
 
-                           data
-                           (ex-data e)]
+                printed
+                (io/file dir "printed")
 
-                       (expect (= :lock (:phase data)))
-                       (expect (true? (:timeout? data)))
-                       (expect (str/includes? (str (:diagnostics data)) "UV_PARTIAL_MARKER")
-                               (pr-str data)))))))
+                e
+                (with-redefs-fn {#'python-runtime/kill-installer!
+                                 (fn [process]
+                                   (loop [attempts 0]
+                                     (when (and (not (.exists printed)) (< attempts 3000))
+                                       (Thread/sleep 10)
+                                       (recur (inc attempts))))
+                                   (kill! process))}
+                  #(failure (fn []
+                              (#'python-runtime/run-uv! dir [uv "lock"] {:timeout-ms 200}))))
+
+                data
+                (ex-data e)]
+
+            (expect (= :lock (:phase data)))
+            (expect (true? (:timeout? data)))
+            (expect (str/includes? (str (:diagnostics data)) "UV_PARTIAL_MARKER")
+                    (pr-str data)))))))
 
 (defdescribe automatic-preparation-preserves-safe-cause-test
              (it "automatic preparation preserves safe cause"
