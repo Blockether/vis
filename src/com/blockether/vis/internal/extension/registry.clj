@@ -98,15 +98,13 @@
   (and (util/non-blank-string? s) (try (some? (re-pattern s)) (catch Exception _ false))))
 
 (defn- provider-policy?
-  "Routing policy a provider owns, so the turn loop, the prompt cache, titling and
+  "Routing policy a provider owns, so the turn loop, titling and
   the Add-provider picker read capabilities instead of branching on provider ids.
   Every key is optional; an absent key means the generic default.
 
     :preset-rank                position in the Add-provider picker, lowest first
     :title-rank                 preference for the auto-title side channel, lowest
                                 first; unranked providers are not preferred
-    :prompt-cache               {:strategy :explicit-breakpoints | :server-continuation
-                                 :ttl :5m | :1h}
     :initiator-header           request header telling the provider whether a person
                                 (\"user\") or Vis (\"agent\") started the call
     :adaptive-reasoning-models  regex source: matching models choose their own
@@ -114,19 +112,12 @@
     :refusal-fallback           {:models regex-source :fallbacks [model-name ...]}:
                                 models that can decline a request, and the models
                                 on the same provider to retry it on, in order
-    :fast-mode                  {:turn-feature id :service-tier tier
-                                 :cost-multiplier n}: the turn feature that asks for
-                                a faster service tier and how that tier is billed"
+    :fast-mode                  {:turn-feature id}: the turn feature that asks for the
+                                faster service tier; Svar owns the tier and its pricing"
   [x]
   (and (map? x)
        (optional-valid? x :preset-rank int?)
        (optional-valid? x :title-rank int?)
-       (optional-valid?
-         x
-         :prompt-cache
-         #(and (map? %)
-               (optional-valid? % :strategy #{:explicit-breakpoints :server-continuation})
-               (optional-valid? % :ttl #{:5m :1h})))
        (optional-valid? x :initiator-header util/non-blank-string?)
        (optional-valid? x :adaptive-reasoning-models regex-source?)
        (optional-valid? x
@@ -136,13 +127,7 @@
                               (vector? (:fallbacks %))
                               (seq (:fallbacks %))
                               (every? util/non-blank-string? (:fallbacks %))))
-       (optional-valid? x
-                        :fast-mode
-                        #(and (map? %)
-                              (util/non-blank-string? (:turn-feature %))
-                              (util/non-blank-string? (:service-tier %))
-                              (number? (:cost-multiplier %))
-                              (pos? (:cost-multiplier %))))))
+       (optional-valid? x :fast-mode #(and (map? %) (util/non-blank-string? (:turn-feature %))))))
 
 (defn provider?
   [x]

@@ -11,16 +11,9 @@
 (def first-party
   "`{provider-id policy}` exactly as the first-party vendors declare it."
   {:openai {:preset-rank 0}
-   :anthropic {:preset-rank 1 :prompt-cache {:ttl :1h} :refusal-fallback claude-5-refusal-fallback}
-   :anthropic-coding-plan {:preset-rank 2
-                           :title-rank 3
-                           :prompt-cache {:ttl :1h}
-                           :refusal-fallback claude-5-refusal-fallback}
-   :openai-codex {:preset-rank 3
-                  :title-rank 2
-                  :prompt-cache {:strategy :server-continuation}
-                  :fast-mode
-                  {:turn-feature "codex_fast_mode" :service-tier "priority" :cost-multiplier 2.0}}
+   :anthropic {:preset-rank 1 :refusal-fallback claude-5-refusal-fallback}
+   :anthropic-coding-plan {:preset-rank 2 :title-rank 3 :refusal-fallback claude-5-refusal-fallback}
+   :openai-codex {:preset-rank 3 :title-rank 2 :fast-mode {:turn-feature "codex_fast_mode"}}
    :github-copilot {:preset-rank 4
                     :title-rank 4
                     :initiator-header "X-Initiator"

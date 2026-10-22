@@ -1006,29 +1006,23 @@
        :ext/author "Blockether"
        :ext/owner "vis"
        :ext/license "Apache-2.0"
-       :ext/providers
-       [{:provider/id :openai-codex
-         :provider/label "OpenAI Codex (ChatGPT OAuth)"
-         :provider/preset {:default-models (distinct (concat (svar/provider-default-models
-                                                               :openai-codex)
-                                                             ["gpt-5.6-terra"]))}
-         :provider/policy
-         {:preset-rank 3
-          :title-rank 2
-          ;; The Responses WebSocket keeps the conversation on the
-          ;; server: the turn continues one svar session per router
-          ;; instead of placing cache breakpoints.
-          :prompt-cache {:strategy :server-continuation}
-          ;; Fast mode is Priority processing, billed at 2x Standard
-          ;; for input, cached input, cache writes and output.
-          :fast-mode {:turn-feature fast-mode-toggle :service-tier "priority" :cost-multiplier 2.0}}
-         :provider/status-fn #'status
-         :provider/logout-fn #'logout!
-         :provider/detect-fn #'detect-credentials
-         :provider/auth-fn #'login!
-         :provider/auth-start-fn #'auth-start
-         :provider/auth-await-fn #'auth-await
-         :provider/get-token-fn #'get-openai-codex-token!
-         :provider/refresh-token-fn #'force-refresh-token!
-         :provider/limits-fn #'limits
-         :provider/consume-reset-credit-fn #'consume-reset-credit!}]})))
+       :ext/providers [{:provider/id :openai-codex
+                        :provider/label "OpenAI Codex (ChatGPT OAuth)"
+                        :provider/preset {:default-models (distinct (concat
+                                                                      (svar/provider-default-models
+                                                                        :openai-codex)
+                                                                      ["gpt-5.6-terra"]))}
+                        :provider/policy {:preset-rank 3
+                                          :title-rank 2
+                                          ;; Fast mode is Priority processing; Svar declares its tier and price.
+                                          :fast-mode {:turn-feature fast-mode-toggle}}
+                        :provider/status-fn #'status
+                        :provider/logout-fn #'logout!
+                        :provider/detect-fn #'detect-credentials
+                        :provider/auth-fn #'login!
+                        :provider/auth-start-fn #'auth-start
+                        :provider/auth-await-fn #'auth-await
+                        :provider/get-token-fn #'get-openai-codex-token!
+                        :provider/refresh-token-fn #'force-refresh-token!
+                        :provider/limits-fn #'limits
+                        :provider/consume-reset-credit-fn #'consume-reset-credit!}]})))

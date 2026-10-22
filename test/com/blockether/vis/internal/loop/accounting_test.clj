@@ -4,7 +4,7 @@
             [com.blockether.vis.test-provider-policies :as policies]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
 
-;; Fast-mode pricing comes from provider policy; route through the first-party
+;; The fast-mode turn feature comes from provider policy; route through the first-party
 ;; declarations, as a booted engine does.
 (set-ns-context! [(around-each [f] (policies/with-policies f))])
 

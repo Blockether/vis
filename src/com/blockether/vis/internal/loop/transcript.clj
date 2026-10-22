@@ -2303,73 +2303,6 @@
                 "Provider repeated tool-call ids in one response; every call still runs"))
     (mapv #(update % :input normalize-tool-input) calls)))
 
-;; Use Anthropic's four cache breakpoints on the final system message and last three
-;; transcript messages. This keeps the standing context and prior write anchors reusable;
-;; explicit placement disables svar's automatic marker.
-(def ^:private TRANSCRIPT_CACHE_BREAKPOINTS
-  "Trailing transcript messages that carry a breakpoint. Anthropic's cap is four
-   per call and the frozen system prefix always takes the first slot."
-  3)
-
-(defn- provider-prompt-cache
-  "The prompt cache `provider` asks for in its policy (`:prompt-cache`), over
-  the defaults every other provider gets: explicit breakpoints on the 5-minute
-  tier. A 1-hour tier also widens [[prompt-cache-window-ms]], so only a provider
-  whose live route honours it may claim it."
-  [provider]
-  (merge {:strategy :explicit-breakpoints :ttl :5m} (:prompt-cache (catalog/policy provider))))
-
-(defn prompt-cache-policy
-  "Static descriptor shared with Svar's cache-context fingerprint. It describes the
-   placement [[apply-cache-breakpoints]] owns; Vis exposes one provider tool,
-   `python_execution`, whose final wire schema is fingerprinted separately by Svar."
-  [provider]
-  (let [{:keys [strategy ttl]} (provider-prompt-cache provider)]
-    {:version 2
-     :strategy strategy
-     :system-anchor :last-shared-system
-     :transcript-anchors TRANSCRIPT_CACHE_BREAKPOINTS
-     :ttl ttl}))
-
-(def ^:private UNCACHEABLE_BLOCK_TYPES
-  "Content-block types that refuse a `cache_control` marker: preserved thinking is
-   signed reasoning, not a cache anchor."
-  #{"thinking" "redacted_thinking"})
-
-(defn- cacheable-block-index
-  "Index of the LAST block of `content` that may carry a breakpoint, or nil when
-   every block refuses one."
-  [content]
-  (last (keep-indexed (fn [i blk]
-                        (when-not (and (map? blk) (contains? UNCACHEABLE_BLOCK_TYPES (:type blk)))
-                          i))
-                      content)))
-
-(defn- tag-block-cached
-  "Mark the last CACHEABLE content block of message `m` with `:svar/cache true`,
-   asking for `ttl` (`:1h`, or nil for the provider's 5-minute default). Coerces a
-   bare-string `:content` into a text block first; leaves other shapes — and a
-   message with nothing cacheable in it — untouched."
-  [m ttl]
-  (let [mark
-        (fn [blk]
-          (cond-> (assoc blk :svar/cache true)
-            ttl
-            (assoc :svar/cache-ttl ttl)))
-
-        content
-        (:content m)]
-
-    (cond (string? content) (assoc m :content [(mark {:type "text" :text content})])
-          (and (vector? content) (seq content))
-          (if-let [i (cacheable-block-index content)]
-            (let [blk (nth content i)
-                  blk (if (map? blk) (mark blk) (mark {:type "text" :text (str blk)}))]
-
-              (assoc m :content (assoc content i blk)))
-            m)
-          :else m)))
-
 (defn- session-context-message?
   "True for a message that carries the rendered `session = {…}` block. That block
    names this session and workspace, so no other session can reuse a prefix through it."
@@ -2380,57 +2313,18 @@
                                               (:text (first content))))))
 
 (defn- cache-breakpoint-indexes
-  "Ordered message indexes marked by [[apply-cache-breakpoints]]."
+  "Message indexes that [[apply-cache-breakpoints]] marks. Svar owns the placement;
+   Vis only names its session-scoped system message."
   [messages]
-  (let [messages
-        (vec messages)
-
-        n
-        (count messages)
-
-        system-indexes
-        (keep-indexed (fn [i message]
-                        (when (= "system"
-                                 (some-> (:role message)
-                                         name))
-                          i))
-                      messages)
-
-        last-system
-        (last system-indexes)
-
-        ;; Tools and the system text before the session context are the same for
-        ;; every session with one configuration, so their anchor serves them all.
-        ;; The transcript anchors after it also cover the session context.
-        system-anchor
-        (last (remove #(session-context-message? (nth messages %)) system-indexes))
-
-        transcript-from
-        (max (long (if last-system (inc (long last-system)) 0))
-             (- (long n) (long TRANSCRIPT_CACHE_BREAKPOINTS)))]
-
-    (vec (cond->> (range transcript-from n)
-           system-anchor
-           (cons system-anchor)))))
+  (svar/prompt-cache-breakpoint-indexes messages {:session-scoped? session-context-message?}))
 
 (defn- apply-cache-breakpoints
-  "Place the four prompt-cache breakpoints on `messages` for `provider`: the last
-   system-role message before the session context (the prefix that sessions share)
-   plus the last [[TRANSCRIPT_CACHE_BREAKPOINTS]] messages after the system messages
-   (moving recency and the previous request's write anchor). Anchors COLLAPSE instead
-   of overlapping, so a system-only first call marks exactly one. No-op on empty."
+  "Place Svar's rolling prompt-cache breakpoints on `messages` for `provider`. The
+   system message with the session context is never the shared system anchor."
   [messages provider]
-  (let [messages
-        (vec messages)
-
-        ttl
-        (let [ttl (:ttl (provider-prompt-cache provider))]
-          (when-not (= :5m ttl) ttl))]
-
-    (reduce (fn [ms i]
-              (update ms i tag-block-cached ttl))
-            messages
-            (cache-breakpoint-indexes messages))))
+  (svar/place-prompt-cache-breakpoints messages
+                                       provider
+                                       {:session-scoped? session-context-message?}))
 
 (defn model-accounting-routing
   "Inspect this resolved route, even when inference is allowed to fall back elsewhere."
@@ -2451,8 +2345,8 @@
                                       ;; mistaken for an append-only provider prefix.
                                       :tools (model-facing-tools (:sandbox-caps environment))
                                       :tool-choice :auto
-                                      :prompt-cache-policy (prompt-cache-policy (:provider
-                                                                                  resolved-model))}
+                                      :prompt-cache-policy (svar/prompt-cache-placement
+                                                             (:provider resolved-model))}
                                (:session-id environment)
                                (assoc :cache-key (agents/prompt-cache-key environment))
 
@@ -2531,39 +2425,11 @@
                       :msg "Could not close the stateful provider session"}))))
   (reset! session-atom nil))
 
-(defn- session-message-suffix
-  "Return the unsent suffix when history is an exact prefix, else nil."
-  [history messages]
-  (let [history
-        (vec history)
-
-        messages
-        (vec messages)
-
-        n
-        (count history)]
-
-    (when (and (<= n (count messages)) (= history (subvec messages 0 n))) (subvec messages n))))
-
-(def ^:private PROMPT_CACHE_REUSE_FRESH_MS
-  "How long a same-route prefix is expected to remain resident in the provider
-   cache on the DEFAULT 5-minute tier. It gates exact cross-turn restoration and
-   labels continuity samples; a stale request falls back to the canonical
-   conversation instead of replaying a large cold prefix."
-  300000)
-
-(def ^:private EXTENDED_PROMPT_CACHE_REUSE_FRESH_MS
-  "The same window for a route whose provider policy asks for the 1-hour tier,
-   whose breakpoints are written with `:svar/cache-ttl :1h`."
-  3600000)
-
 (defn- prompt-cache-window-ms
-  "How long `provider`'s prefix is assumed to outlive the request that wrote it —
-   the tier [[apply-cache-breakpoints]] asked THAT provider for, nothing else."
+  "How long `provider`'s prefix is assumed to outlive the request that wrote it: the
+   TTL of the tier that Svar's prompt-cache policy asks THAT provider for."
   ^long [provider]
-  (if (= :1h (:ttl (provider-prompt-cache provider)))
-    (long EXTENDED_PROMPT_CACHE_REUSE_FRESH_MS)
-    (long PROMPT_CACHE_REUSE_FRESH_MS)))
+  (long (:ttl-ms (svar/provider-prompt-cache provider))))
 
 (defn- valid-prompt-cache-context?
   "True for Svar's persisted opaque cache-context contract."
@@ -2968,17 +2834,6 @@
                :provider provider
                :model model)))
 
-(defn- session-opts
-  "Pin a server-continuation turn and connect as the Codex client does. The ChatGPT
-   backend routes cache affinity by the `session-id` header, not by `prompt_cache_key`, so
-   the header carries the prompt-cache key and a new session reaches the warm prefix of
-   earlier sessions. Prewarm stays off: its `generate=false` request runs directly before
-   the first inference, saves no time and makes that inference report no cached tokens."
-  [opts provider model]
-  (cond-> (assoc (pin-session-route opts provider model) :websocket-prewarm? false)
-    (:cache-key opts)
-    (update :llm-headers assoc "session-id" (:cache-key opts))))
-
 (defn ask-code-with-session!
   "Keep one opaque Svar session per effective router for a provider whose prompt
    cache is a server continuation; other providers stay one-shot."
@@ -2995,7 +2850,8 @@
         session-atom
         (:llm-session-atom environment)]
 
-    (if (and (= :server-continuation (:strategy (provider-prompt-cache provider))) session-atom)
+    (if (and (= :server-continuation (:strategy (svar/provider-prompt-cache provider)))
+             session-atom)
       (locking session-atom
         (let [entry
               @session-atom
@@ -3013,28 +2869,19 @@
                   (svar/open-session router
                                      (-> ask-opts
                                          (dissoc :messages)
-                                         (session-opts provider model))))
+                                         (pin-session-route provider model))))
 
               _
               (when-not current
-                (reset! session-atom {:provider provider :router router :session session}))
+                (reset! session-atom {:provider provider :router router :session session}))]
 
-              messages
-              (vec (:messages ask-opts))
-
-              suffix
-              (session-message-suffix (svar/session-history session) messages)
-
-              turn-opts
-              (if (some? suffix)
-                (assoc ask-opts :messages suffix)
-                ;; Mutable context tails and compaction can rewrite canonical history.
-                ;; Reset only the logical response chain; the physical socket stays hot.
-                (-> ask-opts
-                    (dissoc :messages)
-                    (assoc :history messages)))]
-
-          (svar/ask! session (session-opts turn-opts provider model))))
+          ;; Svar sends only the unsent suffix. A rewritten history, for example after
+          ;; compaction, resets only the logical response chain; the socket stays hot.
+          (svar/ask! session
+                     (-> ask-opts
+                         (dissoc :messages)
+                         (assoc :conversation (vec (:messages ask-opts)))
+                         (pin-session-route provider model)))))
       (do (when (and session-atom @session-atom)
             (locking session-atom (close-llm-session! session-atom)))
           (svar/ask-code! (:router environment)
@@ -3045,16 +2892,8 @@
    can extend it, or nil. Only explicit cache breakpoints have a TTL that a cache
    read refreshes; a server continuation keeps its own state."
   [provider]
-  (let [{:keys [strategy ttl]} (provider-prompt-cache provider)]
-    (when (= :explicit-breakpoints strategy)
-      (case ttl
-        :1h
-        3600000
-
-        :5m
-        300000
-
-        nil))))
+  (let [{:keys [strategy ttl-ms]} (svar/provider-prompt-cache provider)]
+    (when (= :explicit-breakpoints strategy) ttl-ms)))
 
 (defn warm-prompt-cache!
   "Sends the last request again with a minimal output budget, so that the prompt

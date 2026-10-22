@@ -18,13 +18,10 @@
       (expect (registry/provider? {:provider/id :policy-test :provider/label "Policy Test"}))
       (expect (registry/provider? (descriptor {}))))
   (it "rejects a malformed policy before registration"
-      (doseq [policy [[:preset-rank 1] {:preset-rank "1"} {:title-rank 1.5}
-                      {:prompt-cache {:strategy :unknown}} {:prompt-cache {:ttl :24h}}
-                      {:initiator-header ""} {:adaptive-reasoning-models "(unclosed"}
+      (doseq [policy [[:preset-rank 1] {:preset-rank "1"} {:title-rank 1.5} {:initiator-header ""}
+                      {:adaptive-reasoning-models "(unclosed"}
                       {:refusal-fallback {:models "(?i)claude" :fallbacks []}}
                       {:refusal-fallback {:models "(?i)claude" :fallbacks '("claude-opus-4-8")}}
-                      {:fast-mode
-                       {:turn-feature "fast" :service-tier "priority" :cost-multiplier 0}}
-                      {:fast-mode {:turn-feature "fast" :cost-multiplier 2.0}}]]
+                      {:fast-mode {:turn-feature ""}} {:fast-mode "fast"}]]
         (expect (not (registry/provider? (descriptor policy))) (pr-str policy))
         (expect (throws? clojure.lang.ExceptionInfo #(registry/provider (descriptor policy)))))))

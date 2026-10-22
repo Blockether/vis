@@ -161,6 +161,13 @@
                             keyword)]
     (:network (some #(when (= provider-id (:id %)) %) (:providers router)))))
 
+(defn provider-resend-limits
+  "Svar's own deadlines for one provider attempt, as positive milliseconds:
+   Vis's runtime defaults and the provider policy over Svar's package defaults.
+   The gateway counts down to the next one in its provider wait notice."
+  [provider-network]
+  (svar/watchdog-limits (rt/with-default-ask-code-idle-timeout {} provider-network)))
+
 (def ^:private PROVIDER_BACKSTOP_MARGIN_MS
   "Room the gateway backstop leaves above Svar's deadlines for one provider
    attempt: Svar's own abort, its announced re-send wait and the engine unwind."
@@ -175,13 +182,12 @@
    whole-request `:timeout-ms` caps both. Svar announces each re-send, and the
    gateway starts a new attempt window there."
   [provider-network]
-  (let [effective
-        (rt/with-default-ask-code-idle-timeout {} provider-network)
+  (let [limits
+        (provider-resend-limits provider-network)
 
         limit-ms
         (fn [k]
-          (let [v (get effective k)]
-            (if (and (number? v) (pos? (long v))) (long v) 0)))
+          (long (get limits k 0)))
 
         longest-ms
         (fn [ks]
@@ -206,61 +212,6 @@
     {:first-output-timeout-ms (backstop
                                 (if (and (pos? ttft-ms) (pos? body-ms)) (+ ttft-ms body-ms) 0))
      :stall-timeout-ms (backstop (longest-ms [:idle-timeout-ms :semantic-timeout-ms]))}))
-
-(defn provider-resend-limits
-  "Svar's own deadlines for one provider attempt, as positive milliseconds.
-   The gateway counts down to the next one in its provider wait notice. A key
-   is absent when Vis sets no limit for it, so Svar's own default applies."
-  [provider-network]
-  (let [effective (rt/with-default-ask-code-idle-timeout {} provider-network)]
-    (into {}
-          (keep (fn [k]
-                  (let [v (get effective k)]
-                    (when (and (number? v) (pos? (long v))) [k (long v)]))))
-          [:ttft-timeout-ms :first-byte-timeout-ms :idle-timeout-ms :semantic-timeout-ms
-           :timeout-ms])))
-
-(defn provider-resend-deadline-ms
-  "Wall-clock ms when Svar's next watchdog closes this provider attempt, or nil.
-
-   `attempt` has `:started-ms`, the last stream event `:byte-ms`, the last model
-   output `:output-ms` and the last keepalive of hidden thinking `:thinking-ms`; the
-   last three are nil until they occur. Before the first stream event Svar waits for
-   the response headers, then for the first body byte. After it, Svar closes on
-   transport silence (idle) or on model silence (semantic). A keepalive inside a
-   thinking block is model progress. Channels see parsed events only, not SSE
-   comments, so an idle estimate that passed gives way to the next deadline that has
-   not passed."
-  [limits {:keys [started-ms byte-ms output-ms thinking-ms]} now-ms]
-  (when started-ms
-    (let [{:keys [ttft-timeout-ms first-byte-timeout-ms idle-timeout-ms semantic-timeout-ms
-                  timeout-ms]}
-          limits
-
-          shortest
-          (fn [vs]
-            (some->> vs
-                     (remove nil?)
-                     seq
-                     (apply min)))
-
-          candidates
-          (if byte-ms
-            [(some-> idle-timeout-ms
-                     (+ (long byte-ms)))
-             (some-> semantic-timeout-ms
-                     (+ (max (long (or output-ms started-ms)) (long (or thinking-ms 0)))))]
-            ;; Without Svar's own first-byte default, idle is the upper bound.
-            (let [headers-ms
-                  (some-> (shortest [ttft-timeout-ms timeout-ms])
-                          (+ (long started-ms)))
-
-                  body-ms
-                  (shortest [first-byte-timeout-ms idle-timeout-ms])]
-
-              [headers-ms (when (and headers-ms body-ms) (+ (long headers-ms) (long body-ms)))]))]
-
-      (shortest (filter #(and % (> (long %) (long now-ms))) candidates)))))
 
 (defn- with-provider-network-defaults
   [router opts]
@@ -1622,10 +1573,12 @@
           str/lower-case))
 
 (defn- fast-mode
-  "The fast mode `provider`'s policy declares, or nil. `provider` is a keyword
-  or string id."
+  "The fast mode of `provider`, a keyword or string id, or nil: Svar's service tier
+   and cost multiplier, with the turn feature that the provider's policy names."
   [provider]
-  (:fast-mode (catalog/policy provider)))
+  (when provider
+    (when-let [fm (svar/provider-fast-mode (keyword provider))]
+      (merge fm (select-keys (:fast-mode (catalog/policy provider)) [:turn-feature])))))
 
 (defn- fast-mode-requested?
   "True when this turn asks for `fast-mode`: the provider's own turn feature is
@@ -1638,22 +1591,11 @@
 
 (defn fast-mode-router
   "Put a requested fast service tier only on the router entry of the provider
-  that declares it, so Svar fallback cannot carry it to another provider. The
-  router's request bodies are Svar's, spelled with keyword keys."
+   that declares it, so Svar fallback cannot carry it to another provider."
   [router extra-body turn-features]
-  (let [tier-for (fn [provider]
-                   (let [fm (fast-mode (:id provider))]
-                     (when (fast-mode-requested? fm extra-body turn-features) (:service-tier fm))))]
-    (if-not (some tier-for (:providers router))
-      router
-      (update router
-              :providers
-              (fn [providers]
-                (mapv (fn [provider]
-                        (if-let [tier (tier-for provider)]
-                          (assoc-in provider [:extra-body :service_tier] tier)
-                          provider))
-                      providers))))))
+  (svar/fast-mode-router router
+                         (filter #(fast-mode-requested? (fast-mode %) extra-body turn-features)
+                                 (map :id (:providers router)))))
 
 (defn provider-extra-body
   "Remove every fast service tier a provider declares from caller-level options
@@ -1661,11 +1603,10 @@
   tiers and unrelated fields remain."
   [extra-body]
   (let [fast-tiers (into #{}
-                         (keep #(some-> %
-                                        :fast-mode
+                         (keep #(some-> (fast-mode %)
                                         :service-tier
                                         str/lower-case))
-                         (vals (catalog/policies)))]
+                         (keys (catalog/policies)))]
     (not-empty (cond-> extra-body
                  (contains? fast-tiers (service-tier extra-body))
                  (dissoc "service_tier")))))

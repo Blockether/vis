@@ -667,10 +667,9 @@
                      :tools provider-tools
                      :tool-choice :auto
                      ;; four prompt-cache breakpoints: the frozen system prefix
-                     ;; plus the trailing transcript. See apply-cache-breakpoints.
+                     ;; plus the trailing transcript. See svar/place-prompt-cache-breakpoints.
                      :messages (vec messages)
-                     :prompt-cache-policy (transcript/prompt-cache-policy (:provider
-                                                                            resolved-model))
+                     :prompt-cache-policy (svar/prompt-cache-placement (:provider resolved-model))
                      :routing (assoc sticky-routing
                                 :refresh-credentials (loop-router/credential-refresher environment))
                      :check-context? true

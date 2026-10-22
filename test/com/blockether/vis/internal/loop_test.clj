@@ -2256,12 +2256,9 @@
 (defdescribe
   codex-stateful-session-test
   (it
-    "sends only the new canonical suffix over one sticky Codex session"
+    "sends the canonical conversation over one sticky Codex session"
     (let [session-atom
           (atom nil)
-
-          history
-          (atom [])
 
           opened
           (atom 0)
@@ -2297,14 +2294,9 @@
                       (swap! opened inc)
                       ::session)
 
-                    svar/session-history
-                    (fn [_]
-                      @history)
-
                     svar/ask!
                     (fn [session opts]
-                      (swap! turns conj [session (:messages opts)])
-                      (reset! history (into @history (concat (:messages opts) [assistant])))
+                      (swap! turns conj [session (:conversation opts)])
                       {:stop-reason :tool-calls :assistant-message assistant})
 
                     svar/close-session!
@@ -2317,7 +2309,7 @@
          resolved
          {:messages [system user assistant result]})
         (expect (= 1 @opened))
-        (expect (= [[::session [system user]] [::session [result]]] @turns))
+        (expect (= [[::session [system user]] [::session [system user assistant result]]] @turns))
         (expect (= [] @closed)))))
   ;; Regression, issue 9cc1d0a0-2836-4518-b504-bc9f70eae7c4: the real Codex
   ;; credential hydration adds the token, endpoint, and account header to its bare
@@ -2421,9 +2413,6 @@
           router
           (Object.)
 
-          history
-          (atom [])
-
           opened
           (atom [])
 
@@ -2453,15 +2442,10 @@
                       (swap! opened conj [actual-router opts])
                       ::session)
 
-                    svar/session-history
-                    (fn [_]
-                      @history)
-
                     svar/ask!
                     (fn [session opts]
                       (let [assistant (if (empty? @turns) first-assistant second-assistant)]
-                        (swap! turns conj [session (:messages opts) (:routing opts)])
-                        (reset! history (into @history (concat (:messages opts) [assistant])))
+                        (swap! turns conj [session (:conversation opts) (:routing opts)])
                         {:assistant-message assistant}))
 
                     svar/close-session!
@@ -2478,7 +2462,8 @@
          {:messages [system first-user first-assistant second-user]})
         (expect (= 1 (count @opened)))
         (expect (= [[::session [system first-user] {:provider :openai-codex :model "gpt-5.6-luna"}]
-                    [::session [second-user] {:provider :openai-codex :model "gpt-5.6-terra"}]]
+                    [::session [system first-user first-assistant second-user]
+                     {:provider :openai-codex :model "gpt-5.6-terra"}]]
                    @turns))
         (expect (= [] @closed)))))
   (it
@@ -2530,7 +2515,7 @@
         (expect (identical? new-router (ffirst @opened)))
         (expect (= ::fresh (first @asked))))))
   (it
-    "replays divergent canonical history without replacing the Codex session"
+    "sends divergent canonical history without replacing the Codex session"
     (let [session-atom
           (atom {:provider :openai-codex :router ::router :session ::sticky})
 
@@ -2546,11 +2531,7 @@
           messages
           [{:role "system" :content "rebased"} {:role "user" :content "continue"}]]
 
-      (with-redefs [svar/session-history
-                    (fn [_]
-                      [{:role "system" :content "old"}])
-
-                    svar/open-session
+      (with-redefs [svar/open-session
                     (fn [_ opts]
                       (swap! opened conj opts)
                       ::fresh)
@@ -2561,7 +2542,7 @@
 
                     svar/ask!
                     (fn [session opts]
-                      (reset! sent [session (:history opts) (:messages opts)])
+                      (reset! sent [session (:conversation opts) (:messages opts)])
                       {:stop-reason :end})]
 
         (#'transcript/ask-code-with-session!
@@ -2599,10 +2580,6 @@
                       (swap! opened conj [router opts])
                       ::fresh)
 
-                    svar/session-history
-                    (fn [_]
-                      [])
-
                     svar/ask!
                     (fn [session opts]
                       (reset! asked [session opts])
@@ -2622,28 +2599,14 @@
         (expect (= 1 (count @opened)))
         (expect (= ::fresh (first @asked)))
         (expect (= ::fresh (:session @session-atom))))))
-  (it "opens Codex without prewarm and sends the prompt-cache key as the session header"
-      ;; ChatGPT routes cache affinity by `session-id`; a prewarm made the first inference
-      ;; report no cached tokens. Probes on 2026-10-21 hit 3/3 only without prewarm.
-      (let [opened
-            (atom nil)
-
-            asked
-            (atom nil)]
-
-        (with-redefs [svar/open-session
-                      (fn [_ opts]
-                        (reset! opened opts)
-                        ::fresh)
-
-                      svar/session-history
-                      (fn [_]
-                        [])
-
-                      svar/ask!
-                      (fn [_ opts]
-                        (reset! asked opts)
-                        {:stop-reason :end})]
+  (it "passes the prompt-cache key and caller headers to the Codex session"
+      ;; Svar adds the `session-id` affinity header and keeps prewarm off.
+      (let [opened (atom nil)]
+        (with-redefs [svar/open-session (fn [_ opts]
+                                          (reset! opened opts)
+                                          ::fresh)
+                      svar/ask! (fn [_ _]
+                                  {:stop-reason :end})]
 
           (#'transcript/ask-code-with-session!
            {:router ::router :llm-session-atom (atom nil)}
@@ -2651,10 +2614,9 @@
            {:messages [{:role "user" :content "go"}]
             :cache-key "vis-ws-abc"
             :llm-headers {"chatgpt-account-id" "acct"}})
-          (doseq [opts [@opened @asked]]
-            (expect (false? (:websocket-prewarm? opts)))
-            (expect (= {"chatgpt-account-id" "acct" "session-id" "vis-ws-abc"}
-                       (:llm-headers opts))))))))
+          (expect (= "vis-ws-abc" (:cache-key @opened)))
+          (expect (= {"chatgpt-account-id" "acct"} (:llm-headers @opened)))
+          (expect (not (contains? @opened :websocket-prewarm?)))))))
 
 (defdescribe
   environment-lifecycle-test
@@ -3308,7 +3270,10 @@
     (it "hands the gateway the limits at which Svar re-sends the call"
         (let [call (first (filter #(= :provider-call (:phase %))
                                   (chunks-of (fn [_on-chunk]))))]
-          (expect (= {:ttft-timeout-ms 200000 :idle-timeout-ms 300000 :semantic-timeout-ms 240000}
+          (expect (= {:ttft-timeout-ms 200000
+                      :first-byte-timeout-ms 120000
+                      :idle-timeout-ms 300000
+                      :semantic-timeout-ms 240000}
                      (:resend-limits call)))))))
 
 ;; Regression, issue #120: every provider request looked identical in the TUI, so a
@@ -12432,54 +12397,20 @@
 
 (defdescribe
   provider-resend-deadline-test
-  (it
-    "counts down to the deadline at which Svar re-sends the attempt"
-    (let [limits (loop-router/provider-resend-limits nil)]
-      ;; Vis defaults. Svar keeps its own first-byte default, so idle bounds it.
-      (expect (= {:ttft-timeout-ms 200000 :idle-timeout-ms 300000 :semantic-timeout-ms 240000}
-                 limits))
-      ;; Before the first stream event: the headers, then the first body byte.
-      (expect (= 201000 (loop-router/provider-resend-deadline-ms limits {:started-ms 1000} 21000)))
-      (expect (= 501000 (loop-router/provider-resend-deadline-ms limits {:started-ms 1000} 202000)))
-      ;; After it: transport silence or model silence, whichever comes first.
-      (expect (= 241000
-                 (loop-router/provider-resend-deadline-ms limits
-                                                          {:started-ms 1000 :byte-ms 30000}
-                                                          31000)))
-      (expect (= 300000
-                 (loop-router/provider-resend-deadline-ms
-                   limits
-                   {:started-ms 1000 :byte-ms 60000 :output-ms 60000}
-                   61000)))
-      ;; SSE comments keep the transport alive but never reach Vis, so an idle
-      ;; estimate that passed gives way to the next deadline that has not.
-      (expect (= 302000
-                 (loop-router/provider-resend-deadline-ms limits
-                                                          {:started-ms 1000 :byte-ms 2000}
-                                                          250000)))
-      (expect (nil? (loop-router/provider-resend-deadline-ms limits
-                                                             {:started-ms 1000 :byte-ms 2000}
-                                                             400000)))
-      (expect (nil? (loop-router/provider-resend-deadline-ms limits {} 1000)))
-      ;; Svar counts a keepalive inside a thinking block as model progress.
-      (expect (= 440000
-                 (loop-router/provider-resend-deadline-ms
-                   limits
-                   {:started-ms 1000 :byte-ms 200000 :thinking-ms 200000}
-                   201000)))))
+  (it "applies the Vis runtime defaults over Svar's own watchdog defaults"
+      ;; Svar keeps its own first-byte default; Vis sets the other stream limits.
+      (expect (= {:ttft-timeout-ms 200000
+                  :first-byte-timeout-ms 120000
+                  :idle-timeout-ms 300000
+                  :semantic-timeout-ms 240000}
+                 (loop-router/provider-resend-limits nil))))
   (it "follows the provider policy and an explicit nil that turns a watchdog off"
       (let [limits (loop-router/provider-resend-limits {:idle-timeout-ms 45000
                                                         :semantic-timeout-ms nil})]
-        (expect (= {:ttft-timeout-ms 200000 :idle-timeout-ms 45000} limits))
+        (expect (= {:ttft-timeout-ms 200000 :first-byte-timeout-ms 120000 :idle-timeout-ms 45000}
+                   limits))
         (expect (= 75000
-                   (loop-router/provider-resend-deadline-ms limits
-                                                            {:started-ms 1000 :byte-ms 30000}
-                                                            31000))))
-      ;; A whole-request cap bounds the header wait.
-      (expect (= 101000
-                 (loop-router/provider-resend-deadline-ms {:timeout-ms 100000}
-                                                          {:started-ms 1000}
-                                                          2000)))))
+                   (svar/watchdog-deadline-ms limits {:started-ms 1000 :byte-ms 30000} 31000))))))
 
 ;; Regression: `list_attachments()` located a TOOL artifact by its iteration
 ;; alone, so a descriptor for anything the model produced carried no turn id at

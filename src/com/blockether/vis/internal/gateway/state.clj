@@ -3427,7 +3427,7 @@
                silent-ms
                (>= (long silent-ms) (long PROVIDER_WAIT_NOTICE_MS)))
       (let [deadline
-            (loop-router/provider-resend-deadline-ms resend-limits attempt now)
+            (svar/watchdog-deadline-ms resend-limits attempt now)
 
             alive?
             (and byte-ms
