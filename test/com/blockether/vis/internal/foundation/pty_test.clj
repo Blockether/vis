@@ -84,3 +84,14 @@
                                 "the pty lost what the child printed just before it exited")
                         (expect (zero? (long ((:wait child)))))
                         (finally (unsubscribe) ((:destroy child) true))))))
+
+;; Regression: AWS Lambda has no /dev/ptmx, so every shell command failed to spawn.
+(defdescribe pty-missing-device-test
+             (it "falls back to pipes when the host has no pty device"
+                 (with-redefs [pty/pty-device "/nonexistent/ptmx"]
+                   (let [child (pty/spawn! {:command [(sh-binary) "-c"
+                                                      "printf piped; printf err >&2"]
+                                            :env {"PATH" "/usr/bin:/bin"}})]
+                     (try (expect (= "pipederr" (slurp (:in child))))
+                          (expect (zero? (long ((:wait child)))))
+                          (finally ((:destroy child) true)))))))

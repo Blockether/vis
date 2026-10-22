@@ -36,17 +36,25 @@
                        (catch Throwable _ nil))))))
     input))
 
+(def ^:private pty-device
+  "A host without this device (AWS Lambda has no /dev/ptmx) gets plain pipes."
+  "/dev/ptmx")
+
 (defn spawn!
-  "Spawn `command` under a real pseudo-terminal. Options are `:dir`, a COMPLETE
-   `:env`, `:cols`, `:rows`, and an optional process-jail `:policy`. Returns
+  "Spawn `command` under a real pseudo-terminal, or under plain pipes on a host
+   without one. Options are `:dir`, a COMPLETE `:env`, `:cols`, `:rows`, and an
+   optional process-jail `:policy`. Returns
    `{:pid :in :send :wait :alive? :destroy :add-listener}`."
   [{:keys [command dir env cols rows policy] :or {cols 120 rows 40}}]
   (let [^Process process
-        (process-jail/spawn!
-          command
-          dir
-          policy
-          {:environment env :pty? true :merge-stderr? true :columns cols :rows rows})
+        (process-jail/spawn! command
+                             dir
+                             policy
+                             {:environment env
+                              :pty? (.exists (java.io.File. ^String pty-device))
+                              :merge-stderr? true
+                              :columns cols
+                              :rows rows})
 
         ^java.io.OutputStream input
         (.getOutputStream process)
