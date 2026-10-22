@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.3.2] - 2026-10-22
+
+### Changed
+- A new extension installation compiles its Python bytecode into the embedded Python cache. Workers then import the extension without a compile, also from a read-only directory (#407).
+- The AWS Lambda example image holds the Parakeet speech-to-text model and precompiled Python bytecode. Its worker saves a changed home folder within 15 s, and only after a change.
+
+### Fixed
+- A gateway that a native client starts uses the home folder of that client. A container user without a home folder in its user database no longer gets a gateway that fails on a read-only directory.
+
 ## [v0.3.1] - 2026-10-22
 
 ### Fixed
