@@ -661,10 +661,13 @@ export function ProjectStatusCounts({
 /**
  * A segmented control of machine identities: one track, one segment for each machine.
  * The gaps show the track, so two quiet machines never read as one. Overflow scrolls.
+ *
+ * The track's inset rides OUT into the row's padding (`-my-0.75`): the row keeps the
+ * height of its segments, so the desk strip still ends on the session header's edge.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-w-0 shrink items-center gap-0.75 overflow-x-auto bg-machine-track p-0.75">
+    <div className="-my-0.75 flex min-w-0 shrink items-center gap-0.75 overflow-x-auto bg-machine-track p-0.75">
       {children}
     </div>
   );

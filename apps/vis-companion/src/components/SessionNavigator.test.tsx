@@ -187,6 +187,9 @@ describe('machine bar', () => {
       </MachineSwitcher>,
     );
     expect(container.firstElementChild).toHaveClass('bg-machine-track', 'p-0.75', 'gap-0.75');
+    // The track's inset rides into the row's padding, so the desk strip keeps the session
+    // header's 52px height and both edges stay on one line.
+    expect(container.firstElementChild).toHaveClass('-my-0.75');
     const idle = screen.getByRole('button', { name: 'mini' });
     expect(idle).toHaveClass('bg-level-project');
     expect(idle).not.toHaveClass('bg-ink');
