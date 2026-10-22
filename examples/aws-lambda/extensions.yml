@@ -1,0 +1,24 @@
+# Extensions that the image installs and prepares at build time.
+# `version: latest` takes the newest approved stable release at each build.
+# Remove an entry to leave the extension out. Deploy again to update all of them.
+extensions:
+  vis-lang-interface:
+    source: https://github.com/Blockether/vis-lang-interface
+    version: latest
+  vis-lang-clojure:
+    source: https://github.com/Blockether/vis-lang-clojure
+    subdirectory: extension
+    version: latest
+  vis-lang-python:
+    source: https://github.com/Blockether/vis-lang-python
+    version: latest
+  vis-graphify:
+    source: https://github.com/Blockether/vis-graphify
+    version: latest
+  vis-optmem:
+    source: https://github.com/Blockether/vis-optmem
+    version: latest
+  vis-spel:
+    source: https://github.com/Blockether/spel
+    subdirectory: extensions/vis-spel
+    version: latest

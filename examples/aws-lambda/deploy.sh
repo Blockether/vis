@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the image, push it to ECR and deploy the vis-lambda stack.
 # Usage: AWS_PROFILE=vis-deployer [VIS_RELEASE=<release tag>] [VIS_WEB_DIR=<web build>] ./deploy.sh
+# Without VIS_RELEASE, the script uses the newest Vis release.
 # VIS_WEB_DIR replaces the release web app with a local `npm run build:web` output.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -9,11 +10,14 @@ cli="${CONTAINER_CLI:-podman}"
 account="$(aws sts get-caller-identity --query Account --output text)"
 registry="$account.dkr.ecr.$region.amazonaws.com"
 image="$registry/vis-lambda:$(date +%Y%m%d%H%M%S)"
+release="${VIS_RELEASE:-$(curl -fsSL https://api.github.com/repos/Blockether/vis/releases/latest |
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["tag_name"])')}"
+echo "deploy.sh: Vis $release"
 
 aws ecr describe-repositories --repository-names vis-lambda >/dev/null 2>&1 ||
   aws ecr create-repository --repository-name vis-lambda >/dev/null
 aws ecr get-login-password | "$cli" login --username AWS --password-stdin "$registry"
-"$cli" build --platform linux/arm64 ${VIS_RELEASE:+--build-arg VIS_RELEASE="$VIS_RELEASE"} -t "$image" .
+"$cli" build --platform linux/arm64 --build-arg VIS_RELEASE="$release" -t "$image" .
 if [[ -n "${VIS_WEB_DIR:-}" ]]; then
   [[ -f "$VIS_WEB_DIR/index.html" ]] || { echo "deploy.sh: no index.html in $VIS_WEB_DIR" >&2; exit 1; }
   printf 'FROM %s\nRUN rm -rf /opt/vis-web\nCOPY . /opt/vis-web/\n' "$image" |
@@ -31,7 +35,6 @@ bucket="$(aws cloudformation describe-stacks --stack-name vis-lambda \
   --query "Stacks[0].Outputs[?OutputKey=='Bucket'].OutputValue" --output text)"
 aws s3 sync seed "s3://$bucket/seed/.vis/"
 
-release="${VIS_RELEASE:-$(sed -n 's/^ARG VIS_RELEASE=//p' Dockerfile)}"
 web="$(mktemp -d)"
 if [[ -n "${VIS_WEB_DIR:-}" ]]; then
   mkdir "$web/vis-web" && cp -R "$VIS_WEB_DIR/." "$web/vis-web/"

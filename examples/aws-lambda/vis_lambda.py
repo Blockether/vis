@@ -51,6 +51,8 @@ IDLE_S = int(ENV.get("VIS_IDLE_S", "600"))
 STREAM_S = int(ENV.get("VIS_STREAM_S", "600"))
 HOME, WEB, VIS = "/tmp/home", "/opt/vis-web", "/opt/vis"
 LEASE, STATE, LEASE_TTL = "lease.json", "state/home.tar.gz", 90
+# Logs and download caches stay out of the saved state; tools fetch them again.
+UNSAVED = {HOME + p for p in ("/.vis/logs", "/.m2", "/.gitlibs", "/.cache")}
 PORT = 7890
 HOP = {"connection", "content-length", "transfer-encoding", "host", "keep-alive"}
 s3, sqs, lam = boto3.client("s3"), boto3.client("sqs"), boto3.client("lambda")
@@ -341,7 +343,7 @@ def save(lease_obj):
     out = "/tmp/home.tar.gz"
     with tarfile.open(out, "w:gz") as t:
         for root, dirs, files in os.walk(HOME):
-            dirs[:] = [d for d in dirs if os.path.join(root, d) != HOME + "/.vis/logs"]
+            dirs[:] = [d for d in dirs if os.path.join(root, d) not in UNSAVED]
             for f in files:
                 path = os.path.join(root, f)
                 name = os.path.relpath(path, HOME)

@@ -5,6 +5,7 @@
 - You want Vis in the cloud without a server that runs all the time: see [How it works](#how-it-works).
 - You want to use Vis from a phone or another computer through a browser: see [Connect](#connect).
 - You want to try this example in your own AWS account: see [Deploy](#deploy).
+- You want other extensions or another Vis version in the image: see [Extensions and versions](#extensions-and-versions).
 - You want to remove everything again: see [Remove the stack](#remove-the-stack).
 
 For a gateway on your own computer or server, read the *Running a gateway* page of the manual.
@@ -29,7 +30,8 @@ A worker gives its work to a new worker before the 15-minute Lambda limit.
 | File | Purpose |
 |---|---|
 | `template.yaml` | The CloudFormation stack: functions, roles, bucket, queue, schedule and CloudFront |
-| `Dockerfile` | The Lambda image: native Vis, the web app, the Lambda Web Adapter and the relay |
+| `Dockerfile` | The Lambda image: native Vis, the web app, the extensions, the Lambda Web Adapter and the relay |
+| `extensions.yml` | The extensions that the image installs and prepares |
 | `vis_lambda.py` | The front relay and the worker lease, handoff and state sync |
 | `login.html` | The password page |
 | `deploy.sh` | Builds and pushes the image, deploys the stack and uploads the web app |
@@ -69,8 +71,8 @@ You need an AWS account where you can create IAM roles.
 
 ```bash
 cd examples/aws-lambda
-AWS_PROFILE=vis-deployer ./deploy.sh
-AWS_PROFILE=vis-deployer VIS_RELEASE=v0.2.54 ./deploy.sh   # another Vis release
+AWS_PROFILE=vis-deployer ./deploy.sh                       # the newest Vis release
+AWS_PROFILE=vis-deployer VIS_RELEASE=v0.2.55 ./deploy.sh   # a fixed Vis release
 AWS_PROFILE=vis-deployer VIS_WEB_DIR=../../apps/vis-companion/dist-web ./deploy.sh   # a local web build
 ```
 
@@ -107,6 +109,27 @@ Function environment values:
 | `VIS_HANDOFF_MARGIN_S` | 90 | Time before the timeout for the handoff |
 | `VIS_IDLE_S` | 600 | Idle time before the worker stops; keep it below the lifetime |
 | `VIS_STREAM_S` | 600 | Length of one relayed event stream; the client then reconnects |
+
+### Extensions and versions
+
+Each deployment builds the image again with the newest Vis release, unless you set `VIS_RELEASE`.
+The build also installs the newest approved release of each extension in `extensions.yml`:
+
+| Extension | Tools |
+|---|---|
+| `vis-lang-interface` | The shared result types of the language extensions |
+| `vis-lang-clojure` | `clj`: format, lint, tests and a REPL. The image has Java 21 and the Clojure CLI |
+| `vis-lang-python` | `py`: ruff format and lint, pytest and a REPL |
+| `vis-graphify` | `graphify`: the code graph of the workspace |
+| `vis-optmem` | `memo`: memory that lasts across sessions |
+| `vis-spel` | `spel`: browser automation. The image has no browser |
+
+To add or remove an extension, edit `extensions.yml` and deploy again.
+Lambda can write only `/tmp`, so the build prepares each extension and its Python environment in
+`/opt/vis-extensions`. You cannot install or update an extension in the running gateway.
+
+The clj extension downloads Maven dependencies at first use. The saved state leaves out `~/.m2`,
+`~/.gitlibs` and `~/.cache`, so a new worker downloads them again.
 
 ### Provider sign-in
 
