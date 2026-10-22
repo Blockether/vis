@@ -320,10 +320,11 @@
 (defn base-argv
   "Prefix argv that re-launches vis in a fresh process: the native binary as-is,
    or `java -cp … clojure.main -m com.blockether.vis.core` on the JVM (mirrors the
-   self-restart trick)."
+   self-restart trick). A native binary does not read `user.home` from HOME, so the
+   prefix passes this process's home on; a container user without a passwd home needs it."
   []
   (if (util/native-image?)
-    [(self-executable)]
+    [(self-executable) (str "-Duser.home=" (System/getProperty "user.home"))]
     (vec (concat [(java-bin)]
                  (.getInputArguments (ManagementFactory/getRuntimeMXBean))
                  ["-cp" (System/getProperty "java.class.path") "clojure.main" "-m"

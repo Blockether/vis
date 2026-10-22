@@ -6,7 +6,8 @@
             [clojure.string :as str]
             [lazytest.core :as lt :refer [defdescribe expect it]]
             [com.blockether.vis.internal.gateway.discovery :as disco]
-            [com.blockether.vis.internal.paths :as paths]))
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util]))
 
 (def ^:dynamic *tmp* nil)
 
@@ -122,6 +123,14 @@
                  ;; require-token? adds the boolean flag
                  (expect (some #{"--require-token"}
                                (disco/spawn-argv {:db "/x.db" :require-token? true :base ["v"]})))))
+
+;; A native daemon resolved user.home from passwd, not from the client's HOME, and
+;; failed in a container whose user has no writable passwd home.
+(defdescribe native-base-argv-keeps-the-home
+             (it "native base argv keeps the home"
+                 (with-redefs [util/native-image? (constantly true)]
+                   (expect (= (str "-Duser.home=" (System/getProperty "user.home"))
+                              (second (disco/base-argv)))))))
 
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: a managed
 ;; gateway inherited terminal stop signals and froze with its WSL TUI parent.
