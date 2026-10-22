@@ -1788,6 +1788,7 @@ export function Switch({
   label,
   isOn,
   isBusy,
+  density = 'default',
   className = '',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -1795,7 +1796,17 @@ export function Switch({
   label: string;
   isOn: boolean;
   isBusy?: boolean;
+  /** `compact` is 36x20 on touch and 32x18 under a pointer, for switches inside a form card. */
+  density?: 'default' | 'compact';
 }) {
+  const isCompact = density === 'compact';
+  const track = isCompact
+    ? 'h-5 w-9 after:-top-3 after:-bottom-3 mouse:h-[1.125rem] mouse:w-8 mouse:after:-top-[7px] mouse:after:-bottom-[7px]'
+    : 'h-7 w-[2.875rem] after:-top-2 after:-bottom-2 mouse:h-6 mouse:w-10 mouse:after:-top-1 mouse:after:-bottom-1';
+  const knob = isCompact ? 'size-3.5 mouse:size-3' : 'size-[1.375rem] mouse:size-[1.125rem]';
+  const onShift = isCompact
+    ? 'translate-x-4 mouse:translate-x-3.5'
+    : 'translate-x-[1.125rem] mouse:translate-x-4';
   return (
     <button
       type="button"
@@ -1803,16 +1814,16 @@ export function Switch({
       aria-label={`${label}: ${isOn ? 'on' : 'off'}`}
       aria-checked={isOn}
       aria-busy={isBusy}
-      className={`relative inline-flex h-7 w-[2.875rem] shrink-0 items-center rounded-none border p-0.5 transition-colors duration-150 ease-out after:absolute after:inset-x-0 after:-top-2 after:-bottom-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:h-6 mouse:w-10 mouse:after:-top-1 mouse:after:-bottom-1 ${
+      className={`relative inline-flex shrink-0 items-center rounded-none border p-0.5 transition-colors duration-150 ease-out after:absolute after:inset-x-0 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none ${track} ${
         isOn ? 'border-white bg-accent' : 'border-white bg-transparent'
       } ${className}`}
       {...props}
     >
       <span
         aria-hidden
-        className={`size-[1.375rem] rounded-none transition-transform duration-150 ease-out mouse:size-[1.125rem] ${
+        className={`rounded-none transition-transform duration-150 ease-out ${knob} ${
           isOn
-            ? 'translate-x-[1.125rem] bg-accent-foreground mouse:translate-x-4'
+            ? `${onShift} bg-accent-foreground`
             : 'translate-x-0 bg-dialog-hint'
         } ${isBusy ? 'animate-pulse motion-reduce:animate-none' : ''}`}
       />

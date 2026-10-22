@@ -793,6 +793,14 @@ describe('a setting is picked and switched by one control each', () => {
     );
   });
 
+  it('keeps a compact switch smaller without losing its touch reach', () => {
+    render(<Switch label="Optional root 1" isOn density="compact" />);
+    const control = screen.getByRole('switch', { name: 'Optional root 1: on' });
+    expect(control.className).toContain('h-5 w-9');
+    expect(control.className).toContain('after:-top-3');
+    expect(control.className).not.toContain('h-7');
+  });
+
   it('pulses the knob while a round trip is in flight', () => {
     render(<Switch label="Web search" isOn isBusy />);
     expect(screen.getByRole('switch')).toHaveAttribute('aria-busy', 'true');

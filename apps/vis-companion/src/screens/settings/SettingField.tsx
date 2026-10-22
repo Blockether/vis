@@ -198,12 +198,14 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
             <div className="flex flex-wrap items-center gap-3">
               <Text variant="description">Search this root</Text>
               <Switch
+                density="compact"
                 label={`Search root ${index + 1}`}
                 isOn={row.search !== false}
                 onClick={() => update(index, 'search', row.search === false)}
               />
               <Text variant="description">Optional</Text>
               <Switch
+                density="compact"
                 label={`Optional root ${index + 1}`}
                 isOn={row.optional === true}
                 onClick={() => update(index, 'optional', row.optional !== true)}
@@ -420,6 +422,7 @@ export function SettingField(props: FieldProps) {
         <div className="flex items-center gap-3">
           <Text variant="label">Private network access</Text>
           <Switch
+            density="compact"
             label="Private network access"
             isOn={object.allow_private === true}
             disabled={disabled}
