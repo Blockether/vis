@@ -101,6 +101,11 @@ it('removes a workspace root with a named icon action', () => {
     [docs, code],
   );
   expect(screen.queryByText(/Remove root/)).toBeNull();
+  expect(screen.getAllByText('Skip when missing')).toHaveLength(2);
+  expect(screen.queryByText('Optional')).toBeNull();
+  expect(screen.getAllByRole('combobox', { name: 'Root draft mode 1' })[0]).toHaveTextContent(
+    'Edit the real folder',
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Remove root 1' }));
   expect(onChange).toHaveBeenLastCalledWith([code]);
 });
@@ -223,6 +228,13 @@ it.each(['Root access 1', 'Root draft mode 1', 'Rule access 1'])(
   },
 );
 
+const rootAccessLabel: Record<string, string> = { 'read-only': 'Read only', 'read-write': 'Read and write' };
+const ruleAccessLabel: Record<string, string> = {
+  'read-only': 'Read only',
+  'read-write': 'All methods',
+  none: 'Blocked',
+};
+
 const accessAliases: [string, string][] = [
   ['read-only', 'read-only'],
   ['readonly', 'read-only'],
@@ -239,15 +251,15 @@ it.each(accessAliases)('shows unique workspace access choices for %s', async (ac
     [entry],
   );
   const select = screen.getByRole('combobox', { name: 'Root access 1' });
-  expect(select).toHaveTextContent(canonical);
+  expect(select).toHaveTextContent(rootAccessLabel[canonical]);
   expect(onChange).not.toHaveBeenCalled();
   await userEvent.click(select);
   expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-    'read-only',
-    'read-write',
+    'Read only',
+    'Read and write',
   ]);
   const next = canonical === 'read-only' ? 'read-write' : 'read-only';
-  await userEvent.click(screen.getByRole('option', { name: next }));
+  await userEvent.click(screen.getByRole('option', { name: rootAccessLabel[next] }));
   expect(onChange).toHaveBeenLastCalledWith([{ ...entry, access: next }]);
 });
 
@@ -265,16 +277,16 @@ it.each([
     { allowed_domains: ['gateway.example.com'], rules: [entry] },
   );
   const select = screen.getByRole('combobox', { name: 'Rule access 1' });
-  expect(select).toHaveTextContent(canonical);
+  expect(select).toHaveTextContent(ruleAccessLabel[canonical]);
   expect(onChange).not.toHaveBeenCalled();
   await userEvent.click(select);
   expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-    'read-only',
-    'read-write',
-    'none',
+    'Read only',
+    'All methods',
+    'Blocked',
   ]);
   const next = canonical === 'read-only' ? 'read-write' : 'read-only';
-  await userEvent.click(screen.getByRole('option', { name: next }));
+  await userEvent.click(screen.getByRole('option', { name: ruleAccessLabel[next] }));
   expect(onChange).toHaveBeenLastCalledWith({
     allowed_domains: ['gateway.example.com'],
     rules: [{ ...entry, access: next }],

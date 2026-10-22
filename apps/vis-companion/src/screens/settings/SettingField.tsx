@@ -1,5 +1,6 @@
 import { IconButton, Input, Select, Switch, Text } from '../../components/ui';
 import type { ReactNode } from 'react';
+import { FormLabel } from './SettingsLayout';
 import { PlusIcon, TrashIcon } from '../../components/icons';
 import type { SettingValue, Toggle } from '../../lib/types';
 import configSchema from '../../../../../packages/vis-contract/resources/vis-contract/schema/config.json';
@@ -48,8 +49,10 @@ function ListHeader({
   children: ReactNode;
 }) {
   return (
-    <legend className="mb-1 flex w-full items-center justify-between gap-2 text-sm">
-      <span className="min-w-0 truncate">{children}</span>
+    <legend className="mb-1 flex w-full items-center justify-between gap-2">
+      <Text variant="label" className="min-w-0 truncate">
+        {children}
+      </Text>
       <IconButton variant="quiet" label={label} title={label} onClick={onAdd}>
         <PlusIcon className="size-4" />
       </IconButton>
@@ -74,6 +77,7 @@ function Entry({ index, count, children }: { index: number; count: number; child
 function StringList({
   label,
   name = label,
+  hint,
   value,
   onChange,
   disabled,
@@ -81,6 +85,8 @@ function StringList({
 }: {
   /** The visible legend. */
   label: string;
+  /** One sentence on what the list does. */
+  hint?: string;
   /** The accessible prefix; it keeps nested control names unique. */
   name?: string;
   value: SettingValue | null | undefined;
@@ -94,6 +100,11 @@ function StringList({
       <ListHeader label={`Add ${name.toLowerCase()}`} onAdd={() => onChange([...rows, numbers ? 0 : ''])}>
         {label}
       </ListHeader>
+      {hint && (
+        <Text as="p" variant="description">
+          {hint}
+        </Text>
+      )}
       {rows.map((entry, index) => (
         <div key={index} className="flex min-w-0 items-center gap-2">
           <Input
@@ -126,6 +137,91 @@ function StringList({
     </fieldset>
   );
 }
+const ROOT_ACCESS: Record<string, string> = { 'read-write': 'Read and write', 'read-only': 'Read only' };
+const ROOT_DRAFT: Record<string, string> = {
+  shared: 'Edit the real folder',
+  'copy-and-apply': 'Edit a copy, apply on approval',
+  'copy-only': 'Edit a copy, never apply',
+  'not-allowed': 'Block the folder',
+};
+const RULE_ACCESS_HINT: Record<string, string> = {
+  'read-only': 'Only GET, HEAD and OPTIONS requests.',
+  'read-write': 'Every HTTP method.',
+  none: 'No requests to this host.',
+};
+const RULE_ACCESS: Record<string, string> = {
+  'read-only': 'Read only',
+  'read-write': 'All methods',
+  none: 'Blocked',
+};
+function labelled(options: { value: string; label: string }[], labels: Record<string, string>) {
+  return options.map((option) => ({ ...option, label: labels[option.value] ?? option.label }));
+}
+
+/** A field in a card, with the card's trash on the same row when it is the first field. */
+function CardField({
+  label,
+  hint,
+  onRemove,
+  removeLabel,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  onRemove?: () => void;
+  removeLabel?: string;
+  children: ReactNode;
+}) {
+  const field = (
+    <FormLabel label={label} hint={hint}>
+      {children}
+    </FormLabel>
+  );
+  if (!onRemove) return field;
+  return (
+    <div className="flex min-w-0 items-end gap-2">
+      <div className="min-w-0 flex-1">{field}</div>
+      <span className="flex shrink-0">
+        <IconButton label={removeLabel ?? 'Remove'} variant="remove" onClick={onRemove}>
+          <TrashIcon className="size-3.5" />
+        </IconButton>
+      </span>
+    </div>
+  );
+}
+
+/** A switch on the right with its name and effect on the left. */
+function ToggleRow({
+  label,
+  hint,
+  name,
+  isOn,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  /** The accessible name; it keeps the switch unique among cards. */
+  name: string;
+  isOn: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <div className="min-w-0 flex-1">
+        <Text variant="label" className="block">
+          {label}
+        </Text>
+        <Text variant="description" className="block">
+          {hint}
+        </Text>
+      </div>
+      <Switch density="compact" label={name} isOn={isOn} disabled={disabled} onClick={onClick} />
+    </div>
+  );
+}
+
 function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
   const rows = Array.isArray(value) ? value : [];
   const update = (index: number, key: string, next: SettingValue) =>
@@ -137,80 +233,96 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
     }));
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-3">
-      <ListHeader label="Add workspace root" onAdd={() => onChange([...rows, { id: '', path: '', access: 'read-write' }])}>
+      <ListHeader
+        label="Add workspace root"
+        onAdd={() => onChange([...rows, { id: '', path: '', access: 'read-write' }])}
+      >
         Workspace roots
       </ListHeader>
+      <Text as="p" variant="description">
+        Folders that Vis can use besides the current project.
+      </Text>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
+        const access = String(row.access ?? 'read-write');
         return (
           <Entry key={index} index={index} count={rows.length}>
-            <div className="flex min-w-0 items-center gap-2">
+            <CardField
+              label="Name"
+              removeLabel={`Remove root ${index + 1}`}
+              onRemove={() => onChange(rows.filter((_, i) => i !== index))}
+            >
               <Input
-                className="min-w-0 flex-1"
                 aria-label={`Root name ${index + 1}`}
-                placeholder="Root name"
+                placeholder="docs"
                 value={String(row.id ?? '')}
                 onChange={(event) => update(index, 'id', event.target.value)}
               />
-              <IconButton
-                label={`Remove root ${index + 1}`}
-                variant="remove"
-                onClick={() => onChange(rows.filter((_, i) => i !== index))}
-              >
-                <TrashIcon className="size-3.5" />
-              </IconButton>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
+            </CardField>
+            <CardField label="Folder">
               <Input
                 aria-label={`Root path ${index + 1}`}
-                placeholder="Absolute path or ~/path"
+                placeholder="~/docs"
                 value={String(row.path ?? '')}
                 onChange={(event) => update(index, 'path', event.target.value)}
               />
-              <Select
-                aria-label={`Root access ${index + 1}`}
-                value={enumValue(workspaceProperties.access, String(row.access ?? 'read-write'))}
-                options={enumOptions(workspaceProperties.access, String(row.access ?? 'read-write'))}
-                onValueChange={(next) => update(index, 'access', next)}
-              />
-              <Input
-                aria-label={`Python name ${index + 1}`}
-                placeholder="Python name (optional)"
-                value={String(row.python_name ?? '')}
-                onChange={(event) => update(index, 'python_name', event.target.value)}
-              />
+            </CardField>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <CardField label="Access">
+                <Select
+                  aria-label={`Root access ${index + 1}`}
+                  className="w-full"
+                  value={enumValue(workspaceProperties.access, access)}
+                  options={labelled(enumOptions(workspaceProperties.access, access), ROOT_ACCESS)}
+                  onValueChange={(next) => update(index, 'access', next)}
+                />
+              </CardField>
+              <CardField label="In a draft session" hint="A draft works on copies that you approve.">
+                <Select
+                  aria-label={`Root draft mode ${index + 1}`}
+                  className="w-full"
+                  value={String(row.draft ?? 'shared')}
+                  options={workspaceProperties.draft.enum.map((value) => ({
+                    value,
+                    label: ROOT_DRAFT[value] ?? value,
+                  }))}
+                  onValueChange={(next) => update(index, 'draft', next)}
+                />
+              </CardField>
+            </div>
+            <CardField label="Description" hint="Optional. Tells the agent what the folder holds.">
               <Input
                 aria-label={`Root description ${index + 1}`}
-                placeholder="Description (optional)"
+                placeholder="Project notes"
                 value={String(row.description ?? '')}
                 onChange={(event) => update(index, 'description', event.target.value)}
               />
-              <Select
-                aria-label={`Root draft mode ${index + 1}`}
-                value={String(row.draft ?? 'shared')}
-                options={workspaceProperties.draft.enum.map((value) => ({
-                  value,
-                  label: value,
-                }))}
-                onValueChange={(next) => update(index, 'draft', next)}
+            </CardField>
+            <CardField
+              label="Python variable"
+              hint="Optional. Without it, a docs folder becomes docs_path."
+            >
+              <Input
+                aria-label={`Python name ${index + 1}`}
+                placeholder="docs_path"
+                value={String(row.python_name ?? '')}
+                onChange={(event) => update(index, 'python_name', event.target.value)}
               />
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Text variant="description">Search this root</Text>
-              <Switch
-                density="compact"
-                label={`Search root ${index + 1}`}
-                isOn={row.search !== false}
-                onClick={() => update(index, 'search', row.search === false)}
-              />
-              <Text variant="description">Optional</Text>
-              <Switch
-                density="compact"
-                label={`Optional root ${index + 1}`}
-                isOn={row.optional === true}
-                onClick={() => update(index, 'optional', row.optional !== true)}
-              />
-            </div>
+            </CardField>
+            <ToggleRow
+              label="Include in search"
+              hint="A search without a folder also looks here."
+              name={`Search root ${index + 1}`}
+              isOn={row.search !== false}
+              onClick={() => update(index, 'search', row.search === false)}
+            />
+            <ToggleRow
+              label="Skip when missing"
+              hint="A machine without this folder ignores it, with no error."
+              name={`Optional root ${index + 1}`}
+              isOn={row.optional === true}
+              onClick={() => update(index, 'optional', row.optional !== true)}
+            />
           </Entry>
         );
       })}
@@ -244,6 +356,9 @@ function RequestRules({
       <ListHeader label={`Add allowed request to rule ${rule}`} onAdd={() => onChange([...rows, { method: 'GET' }])}>
         Allowed requests
       </ListHeader>
+      <Text as="p" variant="description">
+        Method and path exceptions, for example POST /v1/issues/**.
+      </Text>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
@@ -298,32 +413,36 @@ function NetworkRules({
       </ListHeader>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
+        const ruleAccess = enumValue(networkRuleProperties.access, String(row.access ?? 'read-write'));
         return (
           <Entry key={index} index={index} count={rows.length}>
-            <div className="flex min-w-0 items-center gap-2">
+            <CardField
+              label="Host"
+              removeLabel={`Remove host rule ${index + 1}`}
+              onRemove={() => onChange(rows.filter((_, i) => i !== index))}
+            >
               <Input
-                className="min-w-0 flex-1"
                 aria-label={`Rule host ${index + 1}`}
-                placeholder="gateway.example.com"
+                placeholder="api.example.com"
                 value={String(row.host ?? '')}
                 onChange={(event) => update(index, 'host', event.target.value)}
               />
+            </CardField>
+            <CardField label="Access" hint={RULE_ACCESS_HINT[ruleAccess]}>
               <Select
                 aria-label={`Rule access ${index + 1}`}
-                value={enumValue(networkRuleProperties.access, String(row.access ?? 'read-write'))}
-                options={enumOptions(networkRuleProperties.access, String(row.access ?? 'read-write'))}
+                className="w-full"
+                value={ruleAccess}
+                options={labelled(
+                  enumOptions(networkRuleProperties.access, String(row.access ?? 'read-write')),
+                  RULE_ACCESS,
+                )}
                 onValueChange={(next) => update(index, 'access', next)}
               />
-              <IconButton
-                label={`Remove host rule ${index + 1}`}
-                variant="remove"
-                onClick={() => onChange(rows.filter((_, i) => i !== index))}
-              >
-                <TrashIcon className="size-3.5" />
-              </IconButton>
-            </div>
+            </CardField>
             <StringList
               label="Methods"
+              hint="Optional. Only these HTTP methods, for example POST."
               name={`Rule ${index + 1} methods`}
               value={row.methods}
               disabled={disabled}
@@ -331,6 +450,7 @@ function NetworkRules({
             />
             <StringList
               label="Ports"
+              hint="Optional. Only these ports, for example 443."
               name={`Rule ${index + 1} ports`}
               numbers
               value={row.ports}
@@ -387,13 +507,14 @@ export function SettingField(props: FieldProps) {
     return (
       <div className="space-y-3">
         {[
-          ['allow', 'Allowed paths'],
-          ['deny_read', 'Blocked read paths'],
-          ['deny_write', 'Blocked write paths'],
-        ].map(([key, label]) => (
+          ['allow', 'Allowed paths', 'Workspace roots or folders that sandboxed commands can use.'],
+          ['deny_read', 'Blocked read paths', 'No command can read these, for example **/.env*.'],
+          ['deny_write', 'Blocked write paths', 'No command can change these.'],
+        ].map(([key, label, hint]) => (
           <StringList
             key={key}
             label={label}
+            hint={hint}
             value={object[key]}
             disabled={disabled}
             onChange={(next) => onChange({ ...object, [key]: next })}
@@ -407,30 +528,30 @@ export function SettingField(props: FieldProps) {
     return (
       <div className="space-y-3">
         {[
-          ['allowed_domains', 'Allowed domains'],
-          ['denied_domains', 'Blocked domains'],
-          ['exclude_domains', 'Excluded domains'],
-        ].map(([key, label]) => (
+          ['allowed_domains', 'Allowed domains', 'Hosts that commands can reach. *.pypi.org also works.'],
+          ['denied_domains', 'Blocked domains', 'Blocked even when another list allows them.'],
+          ['exclude_domains', 'Excluded domains', 'No HTTPS inspection, for clients that pin certificates.'],
+        ].map(([key, label, hint]) => (
           <StringList
             key={key}
             label={label}
+            hint={hint}
             value={object[key]}
             disabled={disabled}
             onChange={(next) => onChange({ ...object, [key]: next })}
           />
         ))}
-        <div className="flex items-center gap-3">
-          <Text variant="label">Private network access</Text>
-          <Switch
-            density="compact"
-            label="Private network access"
-            isOn={object.allow_private === true}
-            disabled={disabled}
-            onClick={() => onChange({ ...object, allow_private: object.allow_private !== true })}
-          />
-        </div>
+        <ToggleRow
+          label="Private network access"
+          hint="Commands can reach private addresses, such as 10.0.0.5."
+          name="Private network access"
+          isOn={object.allow_private === true}
+          disabled={disabled}
+          onClick={() => onChange({ ...object, allow_private: object.allow_private !== true })}
+        />
         <StringList
           label="Inbound ports"
+          hint="Ports where a server in the sandbox accepts connections."
           value={object.inbound_ports}
           numbers
           disabled={disabled}
