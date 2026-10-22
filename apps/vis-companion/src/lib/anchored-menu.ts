@@ -21,12 +21,16 @@ export type AnchorBox = { top: number; bottom: number; right: number };
  * `maxHeight` appears only when neither side of the anchor has room for a whole
  * panel: the panel keeps its place against the control and gives up HEIGHT instead,
  * scrolling inside itself. Without it the panel wears the `70vh` cap it paints.
+ *
+ * `width` appears only for a panel that fills a frame (see `framedPosition`). Without
+ * it the panel paints the fixed width of its size.
  */
 export type MenuPosition = {
   left: number;
   top?: number;
   bottom?: number;
   maxHeight?: number;
+  width?: number;
 };
 
 /** Air between the anchor and the menu it drops. */
@@ -149,4 +153,29 @@ export function pointerAnchor(
   const rightward = point.x + width;
   const fits = viewport.width <= 0 || rightward <= viewport.width - EDGE_MARGIN;
   return { top: point.y, bottom: point.y, right: fits ? rightward : point.x };
+}
+
+/** The part of a `DOMRect` that a framed panel takes its column from. */
+export type FrameBox = { left: number; width: number };
+
+/**
+ * A panel that drops from `anchor` but fills the column of `frame`: same left edge,
+ * same width. Use it for a picker that belongs to one form field, so the panel stays
+ * inside that field instead of a fixed-width box that hangs past it.
+ *
+ * The vertical placement is the `menuPosition` one. The width never passes the screen
+ * margins.
+ */
+export function framedPosition(
+  anchor: AnchorBox,
+  frame: FrameBox,
+  viewport: Viewport = currentViewport(),
+  panelHeight?: number,
+): MenuPosition {
+  const width = Math.round(
+    viewport.width <= 0 ? frame.width : Math.min(frame.width, viewport.width - 2 * EDGE_MARGIN),
+  );
+  // A live anchor always yields a position, so the cast only narrows the type.
+  const place = menuPosition({ ...anchor, right: frame.left + width }, width, viewport, panelHeight) as MenuPosition;
+  return { ...place, width };
 }

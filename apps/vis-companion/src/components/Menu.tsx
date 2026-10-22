@@ -102,11 +102,13 @@ export function AnchoredPanel({
         role={role}
         aria-modal={role === 'dialog' ? true : undefined}
         aria-label={label}
-        className={`absolute bottom-[var(--menu-bottom,auto)] left-[var(--menu-left)] top-[var(--menu-top,auto)] flex max-h-[min(var(--menu-max-height,70vh),calc(100vh-var(--menu-keyboard,0px)-var(--menu-top,0px)-24px))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${PANEL_SIZES[size].className}`}
+        className={`absolute bottom-[var(--menu-bottom,auto)] left-[var(--menu-left)] top-[var(--menu-top,auto)] flex max-h-[min(var(--menu-max-height,70vh),calc(100vh-var(--menu-keyboard,0px)-var(--menu-top,0px)-24px))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${place.width === undefined ? PANEL_SIZES[size].className : 'w-[var(--menu-width)]'}`}
         style={
           {
             '--menu-keyboard': `${keyboardInset}px`,
             '--menu-left': `${place.left}px`,
+            // A framed panel takes the width of the field it belongs to.
+            ...(place.width === undefined ? {} : { '--menu-width': `${place.width}px` }),
             // ONE vertical edge is pinned, and which one says where the panel
             // hangs: a head under the anchor, or a foot standing on top of it. A
             // panel with room for neither keeps its place and wears a tighter cap.

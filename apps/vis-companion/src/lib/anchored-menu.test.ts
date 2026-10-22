@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { menuPosition, pointerAnchor } from './anchored-menu';
+import { framedPosition, menuPosition, pointerAnchor } from './anchored-menu';
 
 /** A desktop window with room to drop a 70vh panel under a header. */
 const DESKTOP = { width: 1440, height: 900 };
@@ -208,6 +208,27 @@ describe('pointerAnchor', () => {
       top: 300,
       bottom: 300,
       right: 720,
+    });
+  });
+});
+
+describe('framedPosition', () => {
+  it('drops the panel from its anchor across the whole column of its frame', () => {
+    const plus = { top: 100, bottom: 128, right: 380 };
+    expect(framedPosition(plus, { left: 24, width: 342 }, DESKTOP, 300)).toEqual({
+      top: 134,
+      left: 24,
+      width: 342,
+    });
+  });
+
+  it('never paints a frame wider than the screen margins allow', () => {
+    const phone = { width: 390, height: 844 };
+    const plus = { top: 100, bottom: 128, right: 380 };
+    expect(framedPosition(plus, { left: 0, width: 390 }, phone, 300)).toEqual({
+      top: 134,
+      left: 12,
+      width: 366,
     });
   });
 });

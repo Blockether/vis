@@ -1,10 +1,10 @@
 import { IconButton, Input, Select, Switch, Text } from '../../components/ui';
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
 import { FormLabel } from './SettingsLayout';
 import { PlusIcon, ProjectsIcon, TrashIcon } from '../../components/icons';
 import { ProjectFolderSheet } from '../../components/ProjectFolderSheet';
 import { PANEL_SIZES } from '../../components/Menu';
-import { menuPosition, type MenuPosition } from '../../lib/anchored-menu';
+import { framedPosition, type MenuPosition } from '../../lib/anchored-menu';
 import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, Toggle } from '../../lib/types';
 import configSchema from '../../../../../packages/vis-contract/resources/vis-contract/schema/config.json';
@@ -248,10 +248,18 @@ function ToggleRow({
 
 function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
   const machine = useContext(SettingMachine);
-  // The root that the folder sheet fills (an index, or `'new'`) and the button it hangs from.
+  // The root that the folder sheet fills (an index, or `'new'`) and where the sheet hangs.
   const [picking, setPicking] = useState<{ target: number | 'new'; at: MenuPosition | null } | null>(null);
+  // The sheet drops from the pressed button but keeps to this field's column.
+  const frame = useRef<HTMLFieldSetElement>(null);
   const pick = (target: number | 'new', anchor: HTMLElement) =>
-    setPicking({ target, at: menuPosition(anchor.getBoundingClientRect(), PANEL_SIZES.browse.width) });
+    setPicking({
+      target,
+      at: framedPosition(
+        anchor.getBoundingClientRect(),
+        frame.current?.getBoundingClientRect() ?? { left: 0, width: PANEL_SIZES.browse.width },
+      ),
+    });
   const rows = Array.isArray(value) ? value : [];
   const update = (index: number, key: string, next: SettingValue) =>
     onChange(rows.map((row, i) => {
@@ -275,7 +283,7 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
     setPicking(null);
   };
   return (
-    <fieldset disabled={disabled} className="min-w-0 space-y-3">
+    <fieldset ref={frame} disabled={disabled} className="min-w-0 space-y-3">
       <ListHeader
         label="Add workspace root"
         onAdd={(anchor) =>

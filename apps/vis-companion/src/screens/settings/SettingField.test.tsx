@@ -161,10 +161,18 @@ it('adds a workspace root from a folder chosen on the machine', async () => {
       />
     </SettingMachine.Provider>,
   );
+  // The field's column on the page: the sheet must keep to it.
+  const column = vi
+    .spyOn(HTMLFieldSetElement.prototype, 'getBoundingClientRect')
+    .mockReturnValue({ left: 40, width: 300, top: 0, bottom: 0, right: 340, height: 0, x: 40, y: 0 } as DOMRect);
   await userEvent.click(screen.getByRole('button', { name: 'Add workspace root' }));
-  // The sheet hangs from the pressed button, not from the top corner of the screen.
+  column.mockRestore();
+  // The sheet hangs from the pressed button, inside the field and as wide as it.
   const sheet = await screen.findByRole('dialog', { name: 'Choose folder on tower' });
   expect(sheet.style.getPropertyValue('--menu-top')).not.toBe('');
+  expect(sheet.style.getPropertyValue('--menu-left')).toBe('40px');
+  expect(sheet.style.getPropertyValue('--menu-width')).toBe('300px');
+  expect(sheet.className).toContain('w-[var(--menu-width)]');
   // The field already says what the sheet is for, so the sheet shows no title band.
   expect(screen.queryByText('Choose folder')).toBeNull();
   await userEvent.click(await screen.findByText('notes/'));
