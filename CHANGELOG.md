@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.3.1] - 2026-10-22
+
+### Fixed
+- Extensions in a read-only environment, such as a container image, load again. A failed readiness stamp no longer fails their preparation.
+- The AWS Lambda example image lets the Lambda user read its prepared extensions.
+
 ## [v0.3.0] - 2026-10-22
 
 ### Added
