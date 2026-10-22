@@ -1,4 +1,5 @@
 import { memo, useEffect, useState, type ReactNode } from 'react';
+import { canvasPngBlob } from '../lib/image-file';
 import { CopyChip } from './ui';
 
 // A `mermaid` fence is a PICTURE, and both surfaces paint it as one: the TUI
@@ -12,6 +13,39 @@ import { CopyChip } from './ui';
 // paints the text when its renderer does not own the diagram.
 
 type Rendered = { status: 'pending' } | { status: 'ready'; svg: string } | { status: 'failed' };
+
+/** Pixels per diagram unit in a copied picture: sharp on a Retina paste target. */
+const PICTURE_SCALE = 2;
+/** iOS refuses a canvas above about 16.7 million pixels; stay under it. */
+const PICTURE_MAX_PIXELS = 16_000_000;
+
+/**
+ * The drawn diagram as a PNG on the transcript's paper. The SVG gets the size of
+ * its own viewBox, because mermaid sizes it to the column; an image without a
+ * size draws at 0x0 in WebKit.
+ */
+async function diagramPng(svg: string, paper: string): Promise<Blob> {
+  const root = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
+  const box = (root.getAttribute('viewBox') ?? '').split(/[\s,]+/u).map(Number);
+  const width = box[2] > 0 ? box[2] : Number.parseFloat(root.getAttribute('width') ?? '') || 800;
+  const height = box[3] > 0 ? box[3] : Number.parseFloat(root.getAttribute('height') ?? '') || 600;
+  root.setAttribute('width', String(width));
+  root.setAttribute('height', String(height));
+  root.removeAttribute('style');
+  const image = new Image();
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(root))}`;
+  await image.decode();
+  const scale = Math.min(PICTURE_SCALE, Math.sqrt(PICTURE_MAX_PIXELS / (width * height)));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Could not prepare the picture.');
+  context.fillStyle = paper;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvasPngBlob(canvas);
+}
 
 /** Each render needs an id of its own: mermaid looks the element up by it. */
 let sequence = 0;
@@ -135,8 +169,13 @@ export const MermaidBlock = memo(function MermaidBlock({
     >
       {!frameless && (
         <div
-          className={`absolute right-0 z-10 bg-code pr-2 ${compact ? 'top-0 mouse:top-0.5' : 'top-0.5 mouse:top-1'}`}
+          className={`absolute right-0 z-10 flex bg-code pr-2 ${compact ? 'top-0 mouse:top-0.5' : 'top-0.5 mouse:top-1'}`}
         >
+          <CopyChip
+            type="image/png"
+            value={() => diagramPng(rendered.svg, paletteColor('--code-bg', '#f2ebdf'))}
+            label="Copy diagram as image"
+          />
           <CopyChip value={source} label="Copy diagram source" />
         </div>
       )}

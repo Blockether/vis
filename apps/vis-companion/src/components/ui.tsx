@@ -57,7 +57,15 @@ import viewSchema from '../../../../packages/vis-contract/resources/vis-contract
 import { EDGE_MARGIN, menuPosition } from '../lib/anchored-menu';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
 import { isKeyboardInputElement, useKeyboardReserve } from '../lib/viewport';
-import { AlertIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, SidebarIcon } from './icons';
+import {
+  AlertIcon,
+  CheckIcon,
+  ChevronIcon,
+  CloseIcon,
+  CopyIcon,
+  ImageIcon,
+  SidebarIcon,
+} from './icons';
 
 /**
  * Shared reading roles for settings, lists and forms. Size, weight and quiet ink
@@ -399,6 +407,17 @@ export function LoadMore({
   );
 }
 
+/** A Capacitor app, not a browser: read off the injected global so no plugin loads here. */
+function isNativeShell(): boolean {
+  const capacitor = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return capacitor?.isNativePlatform?.() === true;
+}
+
+/** Clipboard bytes of the declared type, from either a text or a ready blob. */
+function clipboardBlob(result: string | Blob, type: string): Blob {
+  return typeof result === 'string' ? new Blob([result], { type }) : result;
+}
+
 /**
  * Copies a value without activating the surrounding header or disclosure.
  * Without children, uses the app's quiet icon button and a checkmark on success.
@@ -406,6 +425,7 @@ export function LoadMore({
  */
 export function CopyChip({
   value,
+  type = 'text/plain',
   label,
   title,
   onError,
@@ -415,7 +435,9 @@ export function CopyChip({
   children,
 }: {
   /** Text to copy, or a lazy source cancelled when the control unmounts. */
-  value: string | ((signal: AbortSignal) => Promise<string>);
+  value: string | ((signal: AbortSignal) => Promise<string | Blob>);
+  /** What lands on the clipboard: text, or a PNG picture from a lazy source. */
+  type?: 'text/plain' | 'image/png';
   /** What the control is called: "Copy code", "Copy session id". */
   label: string;
   /** Hover text, when there is more to say than the label — the full id. */
@@ -461,21 +483,28 @@ export function CopyChip({
     try {
       if (typeof value === 'string') {
         await navigator.clipboard.writeText(value);
+      } else if (type === 'image/png' && isNativeShell()) {
+        // A native WebView cannot put a picture on the system clipboard; the plugin can.
+        const picture = await value(controller.signal);
+        controller.signal.throwIfAborted();
+        const { copyImage } = await import('../lib/image-share');
+        await copyImage(clipboardBlob(picture, type), label);
       } else {
         if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
           // WebKit needs write() during the press, before retained history finishes loading.
           const blob = Promise.resolve().then(async () => {
             const result = await value(controller.signal);
             controller.signal.throwIfAborted();
-            return new Blob([result], { type: 'text/plain' });
+            return clipboardBlob(result, type);
           });
-          const write = async () =>
-            navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+          const write = async () => navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
           await Promise.all([blob, write()]);
+        } else if (type !== 'text/plain') {
+          throw new Error('Image copying is not supported by this browser.');
         } else {
-          const text = await value(controller.signal);
+          const result = await value(controller.signal);
           controller.signal.throwIfAborted();
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(typeof result === 'string' ? result : await result.text());
         }
       }
       if (controller.signal.aborted) return;
@@ -517,6 +546,8 @@ export function CopyChip({
       <CheckIcon className="size-3 text-ok" />
     ) : error ? (
       <AlertIcon className="size-3 text-err-ink" />
+    ) : type === 'image/png' ? (
+      <ImageIcon className="size-3" />
     ) : (
       <CopyIcon className="size-3" />
     );

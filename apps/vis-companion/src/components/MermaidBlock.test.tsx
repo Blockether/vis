@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { MermaidBlock } from './MermaidBlock';
@@ -106,5 +106,68 @@ describe('a mermaid fence', () => {
     );
 
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe('copying a diagram as a picture', () => {
+  // User request (paraphrased: a mermaid diagram cannot be copied as an image).
+  it('puts a PNG of the drawing on the clipboard, sized from its viewBox', async () => {
+    mermaid.render.mockResolvedValue({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120" width="100%" style="max-width: 300px"><g></g></svg>',
+    });
+    const sources: string[] = [];
+    vi.stubGlobal(
+      'Image',
+      class {
+        src = '';
+        decode() {
+          sources.push(this.src);
+          return Promise.resolve();
+        }
+      },
+    );
+    const paint = { fillRect: vi.fn(), drawImage: vi.fn(), fillStyle: '' };
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+      paint as unknown as CanvasRenderingContext2D,
+    );
+    const sizes: Array<[number, number]> = [];
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function (
+      this: HTMLCanvasElement,
+      done: BlobCallback,
+    ) {
+      sizes.push([this.width, this.height]);
+      done(new Blob(['png'], { type: 'image/png' }));
+    });
+    let copied: Blob | undefined;
+    vi.stubGlobal(
+      'ClipboardItem',
+      class {
+        readonly data: Record<string, Promise<Blob>>;
+        constructor(data: Record<string, Promise<Blob>>) {
+          this.data = data;
+        }
+      },
+    );
+    const write = vi.fn(async (items: Array<{ data: Record<string, Promise<Blob>> }>) => {
+      copied = await items[0].data['image/png'];
+    });
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { write } });
+
+    try {
+      render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
+      fireEvent.click(await screen.findByRole('button', { name: 'Copy diagram as image' }));
+
+      await waitFor(() => expect(copied?.type).toBe('image/png'));
+      expect(sizes).toEqual([[600, 240]]);
+      const drawn = decodeURIComponent(sources[0].replace(/^data:image\/svg\+xml;charset=utf-8,/u, ''));
+      expect(drawn).toContain('width="300"');
+      expect(drawn).toContain('height="120"');
+      expect(drawn).not.toContain('max-width');
+      expect(paint.fillRect).toHaveBeenCalledWith(0, 0, 600, 240);
+      expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
   });
 });
