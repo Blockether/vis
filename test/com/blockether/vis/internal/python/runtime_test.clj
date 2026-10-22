@@ -550,7 +550,39 @@
                                    ["sync" (str "--project=" (.getPath project))])
                                   (prepare!)))
                            "a successful vis-agent python uv sync stamps the project"))))
-             (finally (#'python-runtime/delete-tree! project))))))
+             (finally (#'python-runtime/delete-tree! project)))))
+  ;; A container image holds a prepared, read-only `.venv`; a failed stamp must not fail it.
+  (it "prepares a read-only environment with the uv check alone"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-read-only-project")
+
+            environment
+            (io/file project ".venv")
+
+            site
+            (io/file environment "lib" "python3.14" "site-packages")
+
+            calls
+            (atom [])]
+
+        (try (spit (io/file project "pyproject.toml") "[project]\nname = \"read-only\"\n")
+             (spit (io/file project "uv.lock") "version = 1\n")
+             (.mkdirs site)
+             (spit (io/file environment "pyvenv.cfg") "home = /embedded/bin\n")
+             (.setWritable environment false false)
+             (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                         (swap! calls conj (second args)))
+                              #'python-runtime/shared-project? (constantly false)
+                              #'python-runtime/runtime-environment? (constantly true)
+                              #'python-runtime/project-packages (fn [_]
+                                                                  (.getCanonicalFile site))}
+               (fn []
+                 (expect (= (.getCanonicalFile site) (python-runtime/ensure-project! project)))
+                 (expect (= ["sync"] @calls) "only the offline check runs")
+                 (expect (not (.exists (io/file environment ".vis-prepared.edn"))))))
+             (finally (.setWritable environment true false)
+                      (#'python-runtime/delete-tree! project))))))
 
 (defdescribe
   automatic-project-preparation-replaces-an-environment-from-another-python

@@ -604,7 +604,8 @@
 
 (defn- stamp-prepared!
   "Record a verified preparation in the project's own `.venv` and return `packages`.
-   An environment elsewhere, such as a workspace member's, keeps the uv check."
+   An environment elsewhere, such as a workspace member's, keeps the uv check.
+   A read-only `.venv`, such as one in a container image, keeps the uv check too."
   ^File [^File project ^File packages]
   (let [environment
         (.getCanonicalFile (io/file project ".venv"))
@@ -615,19 +616,20 @@
     (when (and inputs
                (str/starts-with? (.getCanonicalPath packages)
                                  (str (.getPath environment) File/separator)))
-      (let [staging (Files/createTempFile (.toPath environment)
-                                          prepared-stamp
-                                          ".tmp"
-                                          (make-array java.nio.file.attribute.FileAttribute 0))]
-        (try (spit (.toFile staging)
-                   (pr-str {:inputs inputs :packages (.getCanonicalPath packages)}))
-             (Files/move staging
-                         (.toPath (io/file environment prepared-stamp))
-                         (into-array CopyOption
-                                     [StandardCopyOption/REPLACE_EXISTING
-                                      StandardCopyOption/ATOMIC_MOVE]))
-             (catch java.io.IOException _ nil)
-             (finally (Files/deleteIfExists staging))))))
+      (try (let [staging (Files/createTempFile (.toPath environment)
+                                               prepared-stamp
+                                               ".tmp"
+                                               (make-array java.nio.file.attribute.FileAttribute
+                                                           0))]
+             (try (spit (.toFile staging)
+                        (pr-str {:inputs inputs :packages (.getCanonicalPath packages)}))
+                  (Files/move staging
+                              (.toPath (io/file environment prepared-stamp))
+                              (into-array CopyOption
+                                          [StandardCopyOption/REPLACE_EXISTING
+                                           StandardCopyOption/ATOMIC_MOVE]))
+                  (finally (Files/deleteIfExists staging))))
+           (catch java.io.IOException _ nil))))
   packages)
 
 (defn- preparation-failure
