@@ -220,9 +220,9 @@ export const NAME_MAX = DEFS.name.maxLength;
 export const TRIGGERS_MAX = DEFS.automation_input.properties.triggers.maxItems;
 
 const KIND_LABELS: Record<string, string> = {
-  cron: 'Cron schedule',
+  cron: 'Schedule',
   every: 'Interval',
-  once: 'Once',
+  once: 'One time',
   webhook: 'Webhook',
 };
 
@@ -546,6 +546,10 @@ function triggerProblem(draft: TriggerDraft, now: number): string | null {
 /** The wizard steps that hold fields, in the order of `draftProblem`. */
 export type AutomationStep = 'task' | 'when' | 'place' | 'answer';
 
+/** Trigger cards show no number, so a problem names the trigger by its place. */
+const ORDINALS = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth'];
+const triggerName = (index: number) =>
+  index < ORDINALS.length ? `${ORDINALS[index]} trigger` : `Trigger ${index + 1}`;
 /** The first reason why the gateway would refuse the fields of one step, or null. */
 export function stepProblem(
   step: AutomationStep,
@@ -566,7 +570,7 @@ export function stepProblem(
       for (const [index, trigger] of draft.triggers.entries()) {
         const problem = triggerProblem(trigger, now);
         if (problem)
-          return draft.triggers.length > 1 ? `Trigger ${index + 1}: ${problem}` : problem;
+          return draft.triggers.length > 1 ? `${triggerName(index)}: ${problem}` : problem;
       }
       return null;
     case 'place':

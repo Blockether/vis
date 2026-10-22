@@ -18,16 +18,20 @@ import {
   type AutomationSecret,
   type AutomationSecretKind,
 } from '../lib/automations';
-import { Banner, Button, CopyChip, ListRow, Text } from '../components/ui';
+import { Banner, Button, CopyChip, IconButton, ListRow, Text } from '../components/ui';
 import {
   AutomationsIcon,
+  ChevronIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  FastIcon,
   PauseIcon,
+  PencilIcon,
+  PlayIcon,
 } from '../components/icons';
 import { AutomationForm } from './AutomationForm';
 
@@ -143,6 +147,14 @@ export function AutomationsWorkspace({
       }
       refresh();
     });
+  const remove = (automation: Automation) =>
+    void run(async () => {
+      await client.deleteAutomation(automation.id);
+      onForm(null);
+      setSelectedId(null);
+      setNotice('Automation deleted.');
+      refresh();
+    });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -166,6 +178,7 @@ export function AutomationsWorkspace({
             setError(null);
           }}
           onSave={save}
+          onDelete={editing ? () => remove(editing) : undefined}
         />
       ) : selected ? (
         <AutomationDetail
@@ -180,11 +193,6 @@ export function AutomationsWorkspace({
           onEdit={() => edit(selected.id)}
           onChanged={refresh}
           onNotice={setNotice}
-          onDeleted={() => {
-            setSelectedId(null);
-            setNotice('Automation deleted.');
-            refresh();
-          }}
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto" aria-busy={!list && !error}>
@@ -265,7 +273,6 @@ function AutomationDetail({
   onEdit,
   onChanged,
   onNotice,
-  onDeleted,
 }: {
   automation: Automation;
   client: AutomationsClient;
@@ -277,11 +284,10 @@ function AutomationDetail({
   onEdit: () => void;
   onChanged: () => void;
   onNotice: (text: string) => void;
-  onDeleted: () => void;
 }) {
   const [runs, setRuns] = useState<AutomationRun[] | null>(null);
   const [runsError, setRunsError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<'delete' | AutomationSecretKind | null>(null);
+  const [replacing, setReplacing] = useState<AutomationSecretKind | null>(null);
   const [secret, setSecret] = useState<AutomationSecret | null>(null);
 
   useEffect(() => {
@@ -306,77 +312,61 @@ function AutomationDetail({
   const createSecret = (kind: AutomationSecretKind) =>
     void run(async () => {
       setSecret(await client.createAutomationSecret(automation.id, kind));
-      setConfirm(null);
+      setReplacing(null);
       onChanged();
     });
-  const replacing = confirm === 'webhook' || confirm === 'callback' ? confirm : null;
   const webhookUrl = automation.webhook
     ? `${gatewayUrl?.replace(/\/+$/, '') ?? ''}${automation.webhook.path}`
     : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-dialog-edge p-3">
-        <Button variant="secondary" onClick={onBack} disabled={busy}>
-          Back to automations
-        </Button>
-        <Button
-          disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              await client.runAutomation(automation.id);
-              onNotice('Run started. The answer goes to the target session.');
-              onChanged();
-            })
-          }
-        >
-          Run now
-        </Button>
-        <Button variant="secondary" disabled={busy} onClick={onEdit}>
-          Edit
-        </Button>
-        <Button
-          variant="secondary"
-          disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              await client.updateAutomation(automation.id, { enabled: !automation.enabled });
-              onNotice(automation.enabled ? 'Automation paused.' : 'Automation resumed.');
-              onChanged();
-            })
-          }
-        >
-          {automation.enabled ? 'Pause' : 'Resume'}
-        </Button>
-        <Button variant="danger" disabled={busy} onClick={() => setConfirm('delete')}>
-          Delete
-        </Button>
-      </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
-        {confirm === 'delete' && (
-          <div className="space-y-3">
-            <Banner kind="warn">
-              Delete {automation.name}? Its schedule and webhook stop at once. You cannot undo this.
-            </Banner>
-            <div className="flex flex-wrap gap-3">
-              <Button
-                variant="danger"
-                disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    await client.deleteAutomation(automation.id);
-                    onDeleted();
-                  })
-                }
-              >
-                Delete automation
-              </Button>
-              <Button variant="secondary" disabled={busy} onClick={() => setConfirm(null)}>
-                Keep automation
-              </Button>
-            </div>
+        <div className="flex items-start gap-2">
+          <IconButton label="Back to automations" variant="secondary" disabled={busy} onClick={onBack}>
+            <ChevronIcon back className="size-3.5" />
+          </IconButton>
+          <div className="min-w-0 flex-1 space-y-1 pt-1.5 mouse:pt-1">
+            <p className="font-mono text-ui text-dialog-hint">
+              {automation.enabled ? 'On' : 'Paused'} · {automation.id}
+            </p>
+            <h2 className="break-words font-mono text-body font-semibold text-white">
+              {automation.name}
+            </h2>
           </div>
-        )}
+          <div role="group" aria-label="Automation actions" className="flex shrink-0 items-center gap-2 mouse:gap-1">
+            <IconButton
+              label="Run now"
+              variant="primary"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await client.runAutomation(automation.id);
+                  onNotice('Run started. The answer goes to the target session.');
+                  onChanged();
+                })
+              }
+            >
+              <FastIcon />
+            </IconButton>
+            <IconButton label="Edit" disabled={busy} onClick={onEdit}>
+              <PencilIcon />
+            </IconButton>
+            <IconButton
+              label={automation.enabled ? 'Pause' : 'Resume'}
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await client.updateAutomation(automation.id, { enabled: !automation.enabled });
+                  onNotice(automation.enabled ? 'Automation paused.' : 'Automation resumed.');
+                  onChanged();
+                })
+              }
+            >
+              {automation.enabled ? <PauseIcon /> : <PlayIcon />}
+            </IconButton>
+          </div>
+        </div>
         {replacing && (
           <div className="space-y-3">
             <Banner kind="warn">
@@ -386,7 +376,7 @@ function AutomationDetail({
               <Button variant="danger" disabled={busy} onClick={() => createSecret(replacing)}>
                 Replace {replacing} secret now
               </Button>
-              <Button variant="secondary" disabled={busy} onClick={() => setConfirm(null)}>
+              <Button variant="secondary" disabled={busy} onClick={() => setReplacing(null)}>
                 Keep current secret
               </Button>
             </div>
@@ -408,14 +398,6 @@ function AutomationDetail({
             </Button>
           </div>
         )}
-        <div className="space-y-2">
-          <p className="font-mono text-ui text-dialog-hint">
-            {automation.enabled ? 'On' : 'Paused'} · {automation.id}
-          </p>
-          <h2 className="break-words font-mono text-title font-bold text-white">
-            {automation.name}
-          </h2>
-        </div>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 font-mono text-ui">
           <Fact label="Triggers">
             {automation.triggers.map((trigger) => triggerLabel(trigger)).join(', ')}
@@ -449,7 +431,7 @@ function AutomationDetail({
                 key={kind}
                 variant="secondary"
                 disabled={busy}
-                onClick={() => (automation.secrets[kind] ? setConfirm(kind) : createSecret(kind))}
+                onClick={() => (automation.secrets[kind] ? setReplacing(kind) : createSecret(kind))}
               >
                 {automation.secrets[kind] ? 'Replace' : 'Create'} {kind} secret
               </Button>

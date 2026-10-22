@@ -7,9 +7,11 @@ import {
   ChoiceCell,
   CloseButton,
   ConfirmRow,
+  IconButton,
   Input,
   Select,
 } from '../components/ui';
+import { TrashIcon } from '../components/icons';
 import { FormLabel } from './settings/SettingsLayout';
 import {
   ANSWER_OPTIONS,
@@ -83,8 +85,9 @@ function TriggerFields({
   onRemove,
 }: {
   trigger: TriggerDraft;
+  /** The accessible name of the group; the card shows no visible title. */
   label: string;
-  /** The first trigger takes its kind from the first step. */
+  /** A lone trigger takes its kind from the first step. */
   isKindShown: boolean;
   /** Another trigger is the one webhook trigger of this automation. */
   isWebhookTaken: boolean;
@@ -96,18 +99,52 @@ function TriggerFields({
   const filters = trigger.kind === 'webhook' ? (saved?.filters?.length ?? 0) : 0;
   return (
     <div role="group" aria-label={label} className="space-y-3 border border-dialog-edge p-3">
-      <p className="font-mono text-ui text-dialog-hint">{label}</p>
-      {isKindShown && (
-        <Select
-          aria-label={`${label} kind`}
-          value={trigger.kind}
-          disabled={busy}
-          onValueChange={(kind) => onChange({ kind })}
-          options={TRIGGER_KIND_OPTIONS.map((option) => ({
-            ...option,
-            disabled: option.value === 'webhook' && isWebhookTaken,
-          }))}
-        />
+      {(isKindShown || onRemove) && (
+        // The kind is the card's own head: one segmented strip across the full width.
+        <div className="-mx-3 -mt-3 flex items-stretch border-b border-dialog-edge">
+          {isKindShown && (
+            <div
+              role="radiogroup"
+              aria-label={`${label} kind`}
+              className="flex min-w-0 flex-1 font-mono text-ui"
+            >
+              {TRIGGER_KIND_OPTIONS.map((option, index) => {
+                const isOn = trigger.kind === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={isOn}
+                    disabled={busy || (option.value === 'webhook' && isWebhookTaken)}
+                    onClick={() => !isOn && onChange({ kind: option.value })}
+                    className={`min-h-8 min-w-0 flex-1 truncate px-1 transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:min-h-7 ${
+                      index > 0 ? 'border-l border-dialog-edge' : ''
+                    } ${
+                      isOn
+                        ? 'bg-accent font-bold text-accent-foreground'
+                        : 'text-dialog-hint enabled:hover:text-white'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {onRemove && (
+            <span className="ml-auto grid w-9 shrink-0 place-items-center border-l border-dialog-edge mouse:w-8">
+              <IconButton
+                label={`Remove ${label.toLowerCase()}`}
+                variant="remove"
+                disabled={busy}
+                onClick={onRemove}
+              >
+                <TrashIcon className="size-3.5" />
+              </IconButton>
+            </span>
+          )}
+        </div>
       )}
       {trigger.kind === 'every' && (
         <div className="flex items-center gap-2 font-mono text-ui">
@@ -203,11 +240,6 @@ function TriggerFields({
           </p>
         </>
       )}
-      {onRemove && (
-        <Button type="button" variant="secondary" disabled={busy} onClick={onRemove}>
-          Remove {label.toLowerCase()}
-        </Button>
-      )}
     </div>
   );
 }
@@ -257,12 +289,15 @@ export function AutomationForm({
   busy,
   onCancel,
   onSave,
+  onDelete,
 }: {
   /** Null for a new automation. */
   automation: Automation | null;
   busy: boolean;
   onCancel: () => void;
   onSave: (draft: AutomationDraft) => void;
+  /** Present for a saved automation. The review step then ends with a delete action. */
+  onDelete?: () => void;
 }) {
   const isNew = !automation;
   const [initial] = useState(() => automationDraft(automation, Date.now(), deviceTimeZone()));
@@ -273,6 +308,7 @@ export function AutomationForm({
   const [reached, setReached] = useState(isNew ? 0 : LAST);
   const [problem, setProblem] = useState<string | null>(null);
   const [isCancelAsked, setIsCancelAsked] = useState(false);
+  const [isDeleteAsked, setIsDeleteAsked] = useState(false);
   const step = STEPS[at];
   const change = (fields: Partial<AutomationDraft>) =>
     setDraft((current) => ({ ...current, ...fields }));
@@ -328,12 +364,12 @@ export function AutomationForm({
       }}
     >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-dialog-edge px-3 py-2">
-        <h2 className="min-w-0 break-words font-mono text-title font-bold text-white">{title}</h2>
+        <h2 className="min-w-0 break-words font-mono text-body font-semibold text-white">{title}</h2>
         <CloseButton label="Cancel" disabled={busy} onClick={cancel} />
       </div>
       <ol
         aria-label="Steps"
-        className="flex shrink-0 flex-wrap gap-x-4 gap-y-1 border-b border-dialog-edge px-3 py-2 font-mono text-ui"
+        className="flex shrink-0 justify-between gap-x-2.5 overflow-x-auto whitespace-nowrap border-b border-dialog-edge px-3 font-mono text-meta [scrollbar-width:none]"
       >
         {STEPS.map((item, index) => (
           <li key={item.id}>
@@ -342,7 +378,7 @@ export function AutomationForm({
               aria-current={index === at ? 'step' : undefined}
               disabled={busy || index > reached}
               onClick={() => go(index)}
-              className={`min-h-8 transition-colors duration-150 disabled:opacity-45 motion-reduce:transition-none ${
+              className={`min-h-7 transition-colors duration-150 disabled:opacity-45 motion-reduce:transition-none mouse:min-h-6 ${
                 index === at
                   ? 'font-bold text-accent-ink'
                   : 'text-dialog-hint enabled:hover:text-white'
@@ -375,22 +411,38 @@ export function AutomationForm({
         )}
         {step.id === 'when' && (
           <>
-            {draft.triggers.map((trigger, index) => (
-              <TriggerFields
-                key={index}
-                trigger={trigger}
-                label={draft.triggers.length > 1 ? `Trigger ${index + 1}` : 'Trigger'}
-                isKindShown={index > 0}
-                isWebhookTaken={webhookAt >= 0 && webhookAt !== index}
-                busy={busy}
-                onChange={(fields) => changeTrigger(index, fields)}
-                onRemove={
-                  index > 0
-                    ? () => change({ triggers: draft.triggers.filter((_, place) => place !== index) })
-                    : undefined
-                }
-              />
-            ))}
+            {draft.triggers.map((trigger, index) => {
+              const isMany = draft.triggers.length > 1;
+              const card = (
+                <TriggerFields
+                  key={index}
+                  trigger={trigger}
+                  label={isMany ? `Trigger ${index + 1}` : 'Trigger'}
+                  // Several triggers each name their own kind; any one of them can go.
+                  isKindShown={isMany}
+                  isWebhookTaken={webhookAt >= 0 && webhookAt !== index}
+                  busy={busy}
+                  onChange={(fields) => changeTrigger(index, fields)}
+                  onRemove={
+                    isMany
+                      ? () => change({ triggers: draft.triggers.filter((_, place) => place !== index) })
+                      : undefined
+                  }
+                />
+              );
+              // Several cards read as an ordered list: a small caption over each card's
+              // top-left corner keeps both edges of the cards in line.
+              return isMany ? (
+                <div key={index} className="space-y-1">
+                  <p aria-hidden className="font-mono text-meta font-bold text-dialog-hint">
+                    {index + 1} / {draft.triggers.length}
+                  </p>
+                  {card}
+                </div>
+              ) : (
+                card
+              );
+            })}
             {draft.triggers.length < TRIGGERS_MAX && (
               <Button
                 type="button"
@@ -557,6 +609,29 @@ export function AutomationForm({
             </ReviewRow>
           </dl>
         )}
+        {input && automation && onDelete &&
+          (isDeleteAsked ? (
+            <div className="border-x border-err-edge">
+              <ConfirmRow
+                question={`Delete ${automation.name}?`}
+                keepLabel="Keep automation"
+                confirmLabel={busy ? 'Deleting...' : 'Delete'}
+                isBusy={busy}
+                onKeep={() => setIsDeleteAsked(false)}
+                onConfirm={onDelete}
+              />
+            </div>
+          ) : (
+            <Button
+              type="button"
+              variant="danger"
+              className="w-full"
+              disabled={busy}
+              onClick={() => setIsDeleteAsked(true)}
+            >
+              Delete automation
+            </Button>
+          ))}
       </div>
       {isCancelAsked ? (
         <ConfirmRow

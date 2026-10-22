@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AutomationsPanel } from './settings/AutomationsPanel';
 import { storyAutomationsClient } from '../dev/story-data';
@@ -52,6 +52,21 @@ describe('Automations workspace', () => {
     expect(await screen.findByText(/^Queued · Manual · /)).toBeVisible();
   });
 
+  it('puts icon actions inside the card header and keeps Delete out of the detail', async () => {
+    await openAutomation('Morning summary');
+    const heading = screen.getByRole('heading', { name: 'Morning summary' });
+    const header = heading.parentElement!.parentElement!;
+    const actions = screen.getByRole('group', { name: 'Automation actions' });
+    expect(header).toContainElement(screen.getByRole('button', { name: 'Back to automations' }));
+    expect(header).toContainElement(actions);
+    for (const name of ['Run now', 'Edit', 'Pause']) {
+      const action = screen.getByRole('button', { name });
+      expect(actions).toContainElement(action);
+      expect(action).toHaveTextContent('');
+    }
+    expect(screen.queryByRole('button', { name: /^Delete/ })).toBeNull();
+  });
+
   it('shows the webhook address and failed runs with their reason', async () => {
     await openAutomation('Review new pull requests');
     expect(screen.getByText('http://gateway.example.com/v1/hooks/auto-review')).toBeVisible();
@@ -86,14 +101,21 @@ describe('Automations workspace', () => {
     expect(await screen.findByRole('button', { name: 'Replace callback secret' })).toBeEnabled();
   });
 
-  it('deletes an automation only after confirmation', async () => {
+  it('deletes an automation from its edit form only after confirmation', async () => {
     const client = await openAutomation('Morning summary');
     const remove = vi.spyOn(client, 'deleteAutomation');
-    click('Delete');
+    click('Edit');
+    click('Delete automation');
+    // The question replaces the delete action inline; the step footer stays.
+    const question = screen.getByRole('group', { name: 'Delete Morning summary?' });
+    expect(question).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Delete automation' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Step actions' })).not.toContainElement(question);
+    expect(screen.getByRole('button', { name: 'Save automation' })).toBeVisible();
     click('Keep automation');
     expect(remove).not.toHaveBeenCalled();
-    click('Delete');
     click('Delete automation');
+    click('Delete');
     expect(await screen.findByText('Automation deleted.')).toBeVisible();
     expect(remove).toHaveBeenCalledWith('auto-standup');
     expect(await screen.findByText('Review new pull requests')).toBeVisible();
@@ -171,7 +193,7 @@ describe('Automations workspace', () => {
     expect(signatures).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: /^Token/ }));
     expect(screen.getByRole('button', { name: /^Token/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByRole('combobox', { name: 'Trigger kind' })).toBeNull();
+    expect(screen.queryByRole('radiogroup', { name: /kind$/ })).toBeNull();
   });
 
   it('puts Back and the next step in the footer and asks before it drops changes', async () => {
@@ -257,9 +279,31 @@ describe('Automations workspace', () => {
     expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();
     click('Add trigger');
     expect(screen.getByRole('group', { name: 'Trigger 2' })).toBeVisible();
-    click('Remove trigger 2');
+    // The cards name their kind; only a caption above each card gives its place.
+    expect(screen.queryByText(/^Trigger \d/)).toBeNull();
+    expect(screen.getByText('1 / 2')).toBeVisible();
+    expect(screen.getByText('2 / 2')).toBeVisible();
+    const kinds = screen.getByRole('radiogroup', { name: 'Trigger 2 kind' });
+    expect(within(kinds).getByRole('radio', { name: 'Interval' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(within(kinds).getByRole('radio', { name: 'One time' }));
+    expect(within(kinds).getByRole('radio', { name: 'One time' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByRole('combobox', { name: /kind$/ })).toBeNull();
+    const remove = screen.getByRole('button', { name: 'Remove trigger 2' });
+    expect(remove).toHaveTextContent('');
+    fireEvent.click(remove);
     expect(screen.getByRole('group', { name: 'Trigger' })).toBeVisible();
     expect(screen.queryByRole('button', { name: /^Remove trigger/ })).toBeNull();
+  });
+
+  it('removes the first trigger when another one stays', async () => {
+    renderBand();
+    expect(await screen.findByText('Morning summary')).toBeVisible();
+    click('New automation');
+    fireEvent.click(screen.getByRole('button', { name: /^Run at set times/ }));
+    click('Add trigger');
+    click('Remove trigger 1');
+    expect(screen.getByRole('group', { name: 'Trigger' })).toBeVisible();
+    expect(screen.queryByRole('textbox', { name: /^Cron expression/ })).toBeNull();
   });
 
   it('saves only the changed fields of an automation', async () => {

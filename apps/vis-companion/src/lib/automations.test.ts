@@ -278,7 +278,7 @@ describe('automation form', () => {
         { ...valid, triggers: [trigger, { ...trigger, kind: 'cron', expression: ' ' }] },
         NOW,
       ),
-    ).toBe('Trigger 2: Give a cron expression, for example 0 9 * * 1-5.');
+    ).toBe('Second trigger: Give a cron expression, for example 0 9 * * 1-5.');
     expect(
       draftProblem(
         {
