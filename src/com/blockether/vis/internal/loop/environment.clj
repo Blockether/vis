@@ -555,18 +555,29 @@
                            compaction)
             ;; Security configuration is resolved exactly once per environment; it never
             ;; re-reads model-writable vis.yml mid-life. `/reload` bumps
-            ;; `policy-reload-epoch`, so each live env recycles at its next turn and
-            ;; rebuilds this snapshot. The snapshot holds the subagent file grants of the store, so
+            ;; `policy-reload-epoch` and reads the policy of each live env again. Only an env
+            ;; whose policy changed recycles at its next turn and rebuilds this snapshot (#408).
+            ;; The snapshot holds the subagent file grants of the store, so
             ;; this env takes over the live grant of its session.
             grant-owner (Object.)
             _ (process-jail/own-grants! session-id grant-owner)
-            security-config (binding [workspace/*workspace-root* (or (:root active-workspace)
-                                                                     workspace/*workspace-root*)]
-                              (security-config-snapshot db-info session-id))
-            toggle-values (binding [workspace/*workspace-root* (or (:root active-workspace)
-                                                                   workspace/*workspace-root*)]
-                            (atom (merge (scoped/values db-info session-id)
-                                         toggles/*invocation-overrides*)))
+            policy-root (or (:root active-workspace) workspace/*workspace-root*)
+            invocation-overrides toggles/*invocation-overrides*
+            read-policy (fn []
+                          (binding [workspace/*workspace-root* policy-root]
+                            (let [security-config (security-config-snapshot db-info session-id)
+                                  values (merge (scoped/values db-info session-id)
+                                                invocation-overrides)]
+
+                              ;; The turn binds the session snapshot (project vis.yml, group and
+                              ;; session settings), so the draft policy must come from the same values.
+                              {:security-config security-config
+                               :toggle-values values
+                               :draft-required? (binding [toggles/*overrides* values]
+                                                  (not= :off (workspace/draft-backend-setting)))})))
+            policy (read-policy)
+            security-config (:security-config policy)
+            toggle-values (atom (:toggle-values policy))
             configured-rw-roots (security-policy/read-write-roots security-config)
             ;; Engine substrate: embedded CPython (env/create-python-context builds a
             ;; deny-by-default Python session, wires the Clojure tools as Python
@@ -606,10 +617,7 @@
                                    live-roots (when ws [(:root ws)])]
 
                                (security-policy/access-view security-config live-roots)))
-            ;; The turn binds the session snapshot (project vis.yml, group and session
-            ;; settings), so the draft policy must come from the same values.
-            draft-required? (binding [toggles/*overrides* @toggle-values]
-                              (not= :off (workspace/draft-backend-setting)))
+            draft-required? (:draft-required? policy)
             draft-home (when draft-required?
                          (let [directory (io/file (workspace/session-drafts-home session-id))]
                            (.mkdirs directory)
@@ -822,6 +830,13 @@
                   ;; A timed-out block renews the sandbox within its turn; any other
                   ;; retirement makes the next turn abandon this environment.
                   :python-context-retired-atom (atom false)
+                  ;; A reload keeps this env when its policy reads the same again (#408).
+                  ;; Other settings values do not decide the sandbox policy.
+                  :policy-current? (fn []
+                                     (= (dissoc policy :toggle-values)
+                                        (dissoc (read-policy) :toggle-values)))
+                  ;; A policy change of this env alone marks it stale, without a reload of others.
+                  :policy-stale (java.util.concurrent.atomic.AtomicBoolean. false)
                   ;; Long-lived per-env LRU map: `{var-name-string →
                   ;; last-used-turn-pos}`. Merged from each iteration's
                   ;; `:lru` after eval.
@@ -907,8 +922,41 @@
 
 (defn policy-stale?
   [entry]
-  (when-let [^java.util.concurrent.atomic.AtomicLong epoch (:policy-epoch entry)]
-    (< (.get epoch) (long @python-exec/policy-reload-epoch))))
+  (boolean (or (some-> ^java.util.concurrent.atomic.AtomicBoolean
+                       (:policy-stale (:environment entry))
+                       .get)
+               (when-let [^java.util.concurrent.atomic.AtomicLong epoch (:policy-epoch entry)]
+                 (< (.get epoch) (long @python-exec/policy-reload-epoch))))))
+
+(defn- policy-unchanged?
+  "True when the reloaded configuration gives `entry` the same sandbox policy. An env
+   without a policy check, or a check that fails, counts as changed (#408)."
+  [entry]
+  (let [environment
+        (:environment entry)
+
+        current?
+        (:policy-current? environment)]
+
+    (and (some? current?)
+         (not (some-> ^java.util.concurrent.atomic.AtomicBoolean (:policy-stale environment)
+                      .get))
+         (try (boolean (current?))
+              (catch Throwable t
+                (tel/log! :warn
+                          ["gateway: reload could not read a session policy"
+                           (str (:session-id environment)) (ex-message t)])
+                false)))))
+
+(defn- advance-policy-epoch!
+  "Move `entry` to `epoch`, but never back past a later reload."
+  [entry epoch]
+  (when-let [^java.util.concurrent.atomic.AtomicLong stamp (:policy-epoch entry)]
+    (loop []
+
+      (let [current (.get stamp)]
+        (when (and (< current (long epoch)) (not (.compareAndSet stamp current (long epoch))))
+          (recur))))))
 
 (def ^:private settings-change-detail
   "Restart reason of a sandbox that a settings reload replaced."
@@ -932,13 +980,17 @@
            (finally (.unlock lock))))))
 
 (defn mark-policy-reload!
-  "Invalidate every cached env's policy and close idle Python workers now.
-   Busy sessions close their stale sandbox after the current turn releases its
-   lock. The next turn rebuilds the environment from the reloaded configuration."
+  "Read the policy of every cached env again after a reload. An env with the same
+   policy takes the new epoch and keeps its sandbox (#408). Close idle workers whose
+   policy changed now. Busy sessions close their stale sandbox after the current turn
+   releases its lock. The next turn rebuilds the environment from the reloaded
+   configuration."
   []
-  (swap! python-exec/policy-reload-epoch inc)
-  (doseq [k (keys @cache)]
-    (dispose-reloaded-sandbox! k))
+  (let [epoch (swap! python-exec/policy-reload-epoch inc)]
+    (doseq [[k entry] @cache]
+      (if (policy-unchanged? entry)
+        (advance-policy-epoch! entry epoch)
+        (dispose-reloaded-sandbox! k))))
   nil)
 
 ;; Run after config reload; keep the Var so namespace reloads retain live wiring.

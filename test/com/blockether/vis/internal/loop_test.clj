@@ -10170,6 +10170,65 @@
                      (expect (not (realized? @(:python-sandbox environment))))
                      (expect @(:python-context-retired-atom environment))))))
 
+;; #408: `/reload` in one session retired the Python sandbox of every other session,
+;; also when their security policy did not change.
+(defdescribe
+  reload-policy-scope-test
+  (it "keeps the sandbox of a session whose policy the reload did not change"
+      (with-redefs [loop-env/cache
+                    (atom {})
+
+                    python-exec/policy-reload-epoch
+                    (atom 0)]
+
+        (let [environments
+              (repeatedly 2 #(loop-env/create-environment ::router {:db :memory}))
+
+              entries
+              (mapv new-cache-entry environments)
+
+              disposed
+              (atom [])]
+
+          (try (doseq [entry entries]
+                 (swap! loop-env/cache assoc (java.util.UUID/randomUUID) entry))
+               (with-redefs [env/dispose-sandbox! #(swap! disposed conj (:session-id %))]
+                 (loop-env/mark-policy-reload!))
+               (expect (= 0 (count @disposed)))
+               (expect (= [false false] (mapv (comp boolean loop-env/policy-stale?) entries)))
+               (finally (run! loop-env/dispose-environment! environments))))))
+  (it "retires only the sandbox whose policy changed or cannot be checked"
+      (with-redefs [loop-env/cache
+                    (atom {})
+
+                    python-exec/policy-reload-epoch
+                    (atom 0)
+
+                    env/context-enterable?
+                    (constantly true)]
+
+        (let [kept
+              (new-cache-entry {:marker :kept :policy-current? (constantly true)})
+
+              changed
+              (new-cache-entry {:marker :changed :policy-current? (constantly false)})
+
+              failing
+              (new-cache-entry {:marker :failing
+                                :policy-current? #(throw (ex-info "unreadable policy" {}))})
+
+              disposed
+              (atom [])]
+
+          (doseq [entry [kept changed failing]]
+            (swap! loop-env/cache assoc (java.util.UUID/randomUUID) entry))
+          (with-redefs [env/dispose-sandbox! #(swap! disposed conj (:marker %))]
+            (loop-env/mark-policy-reload!))
+          (expect (= #{:changed :failing} (set @disposed)))
+          (expect (not (loop-env/policy-stale? kept)))
+          (expect (loop-env/policy-stale? changed))
+          (expect (loop-env/policy-stale? failing))))))
+
 ;; Regression, issue #106: a Settings flip only reached live tool bindings when it
 ;; arrived through the gateway HTTP handler, which called
 ;; `sync-cached-extension-symbols!` inline. A flip made anywhere else — the TUI

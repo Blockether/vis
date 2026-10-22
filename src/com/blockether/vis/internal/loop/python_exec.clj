@@ -4,8 +4,8 @@
 
    Rejects blocks that are not code, runs a block with timing and Activity
    reporting, interrupts and unwinds a runaway block, and retires a worker that
-   does not unwind. `policy-reload-epoch` counts `/reload`s; environments built
-   under an older epoch are replaced."
+   does not unwind. `policy-reload-epoch` counts `/reload`s; an environment built
+   under an older epoch is replaced unless the reload left its policy unchanged."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.activity.block :as activity-block]
             [com.blockether.vis.internal.attachment.core :as attachments]
@@ -771,14 +771,21 @@
 (defonce
   ^{:doc
     "Monotonic `/reload` epoch. Every `/reload` bumps it (via a reload hook).
-   Stale idle sandboxes close immediately; busy ones close after their turn.
-   The next turn rebuilds the immutable security-policy snapshot from the
-   freshly-reloaded vis.yml. This is the sanctioned way `/reload` replaces the
-   frozen network-domain / filesystem-root policy: the snapshot drives the
-   Python session, egress proxy, and process jail at env-creation time, so it
-   can only change by rebuilding the env — never by an in-place reseat."}
+   The hook reads the policy of each live env again. An env with the same policy
+   takes the new epoch and keeps its sandbox (#408). For the other envs, stale idle
+   sandboxes close immediately and busy ones close after their turn. The next turn
+   rebuilds the immutable security-policy snapshot from the freshly-reloaded vis.yml.
+   The snapshot drives the Python session, egress proxy, and process jail at
+   env-creation time, so it can only change by rebuilding the env, never by an
+   in-place reseat."}
   policy-reload-epoch
   (atom 0))
+
+(defn- retire-policy!
+  "Mark only this environment's policy stale, so its next turn rebuilds it (#408)."
+  [environment]
+  (some-> ^java.util.concurrent.atomic.AtomicBoolean (:policy-stale environment)
+          (.set true)))
 
 (defn execute-code
   "Run a single :code block through the Python sandbox.
@@ -794,14 +801,14 @@
   [environment code & {:keys [timeout-ms tool-event-fn]}]
   (let [opts (get-in environment [:sandbox-caps :network])]
     (when (process-jail/draft-policy-expanded? environment)
-      (swap! policy-reload-epoch inc)
+      (retire-policy! environment)
       (throw
         (ex-info
           "A newly discovered repository needs a stricter worker policy. Start the next turn to rebuild the Python context before selecting or editing it; existing handles cannot be safely migrated."
           {:type :draft/policy-expanded})))
     (when (and (contains? opts :draft-required?)
                (not= (:draft-required? opts) (not= :off (workspace/draft-backend-setting))))
-      (swap! policy-reload-epoch inc)
+      (retire-policy! environment)
       (throw
         (ex-info
           "Draft policy changed. Start the next turn to rebuild the Python context safely; existing variables are not silently migrated."

@@ -391,8 +391,11 @@
                              "held_cache_file.write('escaped'); held_cache_file.flush()\n")
                             nil
                             (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+            ;; #408: only this environment turns stale; the global reload epoch stays.
+            (expect (= epoch @python-exec/policy-reload-epoch))
             (expect (#'loop-env/policy-stale?
-                     {:policy-epoch (java.util.concurrent.atomic.AtomicLong. epoch)}))
+                     {:environment environment
+                      :policy-epoch (java.util.concurrent.atomic.AtomicLong. epoch)}))
             (expect (= "original" (slurp (io/file cache "source.txt"))))
             (ep/run-python-block context "held_cache_file.close()\n"))))))
 
