@@ -18,10 +18,12 @@ RUN base=https://github.com/Blockether/vis/releases/download/${VIS_RELEASE} \
  && curl -fsSL "$base/vis-agent-linux-arm64.tar.gz" | tar xz -C /opt/vis \
  && curl -fsSL "$base/vis-web.tar.gz" | tar xz -C /opt \
  && /opt/vis/vis-agent --version
-# Lambda can write only /tmp. Install the extensions and their Python environments in the image.
+# Lambda can write only /tmp and runs as a user without root. Install the extensions and
+# their Python environments in the image, and let every user read them.
 ENV VIS_EXTENSIONS_DIR=/opt/vis-extensions
 COPY extensions.yml /opt/vis-build/.vis/config.yml
 RUN HOME=/opt/vis-build /opt/vis/vis-agent extension sync --global --trust \
+ && chmod -R a+rX "$VIS_EXTENSIONS_DIR" \
  && rm -rf /opt/vis-build
 COPY vis_lambda.py login.html /opt/
 ENV AWS_LWA_INVOKE_MODE=response_stream AWS_LWA_PORT=8080 AWS_LWA_READINESS_CHECK_PATH=/ \
