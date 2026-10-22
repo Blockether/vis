@@ -7,6 +7,8 @@ import { filterSettings, flattenSettings } from '../../lib/setting-tree';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
 import { McpServersPanel, SettingRow, settingTree } from './MachineSettings';
 import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
+import { SettingMachine } from './SettingField';
+import { hostOf } from '../../lib/endpoints';
 import { SettingsBandsOpen, SettingsLoading, SettingsPanel, SettingsSection } from './SettingsLayout';
 
 type ScopedSettingsProps = {
@@ -23,6 +25,8 @@ export function ScopedSettingsDialog(props: ScopedSettingsProps) {
 function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps) {
   const { scope, target_id, label } = target;
   const owner = useMemo(() => ({ scope, target_id }), [scope, target_id]);
+  const machineHost = hostOf(client.base);
+  const settingMachine = useMemo(() => ({ client, label: machineHost }), [client, machineHost]);
   const [data, setData] = useState<SettingsResponse | null>(() => client.cachedSettings(owner));
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +124,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
 
   return (
     // `split` holds one height on a phone, so a late answer or a search cannot move the sheet.
+    <SettingMachine.Provider value={settingMachine}>
     <Modal size="split" onDismiss={onClose}>
       <DialogFrame title={`${scope[0].toUpperCase()}${scope.slice(1)} settings`} subtitle={label ?? data?.label ?? target_id} onClose={onClose}>
         <div className="min-h-0 overflow-y-auto">
@@ -190,5 +195,6 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
         </div>
       </DialogFrame>
     </Modal>
+    </SettingMachine.Provider>
   );
 }

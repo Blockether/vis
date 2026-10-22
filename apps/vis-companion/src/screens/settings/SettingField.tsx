@@ -1,7 +1,9 @@
 import { IconButton, Input, Select, Switch, Text } from '../../components/ui';
-import type { ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { FormLabel } from './SettingsLayout';
-import { PlusIcon, TrashIcon } from '../../components/icons';
+import { PlusIcon, ProjectsIcon, TrashIcon } from '../../components/icons';
+import { ProjectFolderSheet } from '../../components/ProjectFolderSheet';
+import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, Toggle } from '../../lib/types';
 import configSchema from '../../../../../packages/vis-contract/resources/vis-contract/schema/config.json';
 
@@ -36,6 +38,25 @@ function numericSchema(pointer?: string): NumericSchema {
     node = (node as Record<string, unknown>)[key.replace(/~1/g, '/').replace(/~0/g, '~')];
   }
   return node && typeof node === 'object' && pointer ? (node as NumericSchema) : {};
+}
+
+/** The machine whose settings these are, so a folder field can browse its disk. */
+export const SettingMachine = createContext<{ client: GatewayClient; label: string } | null>(null);
+
+const HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE'];
+function methodOptions(extra: string[] = []) {
+  return [...new Set([...HTTP_METHODS, ...extra.filter(Boolean)])].map((value) => ({ value, label: value }));
+}
+
+/** The last folder of a path, the default name of a root. */
+function folderName(path: string): string {
+  return path.replace(/\/+$/, '').split('/').pop()?.replace(/^~$/, 'home') ?? '';
+}
+
+/** The Python variable that the engine gives a root without `python_name`. */
+function defaultPythonName(path: string): string {
+  const base = folderName(path).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return base ? `${/^[a-z]/.test(base) ? '' : 'root_'}${base}_path` : 'docs_path';
 }
 
 /** A list legend with its add action on the same trailing rail as each row's trash. */
@@ -223,6 +244,9 @@ function ToggleRow({
 }
 
 function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
+  const machine = useContext(SettingMachine);
+  // The root that the folder sheet fills: an index, `'new'` for a new root, or closed.
+  const [picking, setPicking] = useState<number | 'new' | null>(null);
   const rows = Array.isArray(value) ? value : [];
   const update = (index: number, key: string, next: SettingValue) =>
     onChange(rows.map((row, i) => {
@@ -231,11 +255,27 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
       if ((key === 'python_name' || key === 'description') && next === '') delete updated[key];
       return updated;
     }));
+  // The name follows the folder until someone types a different one.
+  const setPath = (index: number, path: string) =>
+    onChange(rows.map((row, i) => {
+      if (i !== index) return row;
+      const old = objectValue(row);
+      const id = String(old.id ?? '');
+      const isNameDerived = !id || id === folderName(String(old.path ?? ''));
+      return { ...old, path, ...(isNameDerived ? { id: folderName(path) } : {}) };
+    }));
+  const choose = (path: string) => {
+    if (picking === 'new') onChange([...rows, { id: folderName(path), path, access: 'read-write' }]);
+    else if (picking !== null) setPath(picking, path);
+    setPicking(null);
+  };
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-3">
       <ListHeader
         label="Add workspace root"
-        onAdd={() => onChange([...rows, { id: '', path: '', access: 'read-write' }])}
+        onAdd={() =>
+          machine ? setPicking('new') : onChange([...rows, { id: '', path: '', access: 'read-write' }])
+        }
       >
         Workspace roots
       </ListHeader>
@@ -245,26 +285,39 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         const access = String(row.access ?? 'read-write');
+        const path = String(row.path ?? '');
         return (
           <Entry key={index} index={index} count={rows.length}>
             <CardField
-              label="Name"
+              label="Folder"
               removeLabel={`Remove root ${index + 1}`}
               onRemove={() => onChange(rows.filter((_, i) => i !== index))}
             >
+              <span className="flex min-w-0 items-center gap-2">
+                <Input
+                  className="min-w-0 flex-1"
+                  aria-label={`Root path ${index + 1}`}
+                  placeholder="~/docs"
+                  value={path}
+                  onChange={(event) => setPath(index, event.target.value)}
+                />
+                {machine && (
+                  <IconButton
+                    label={`Choose folder for root ${index + 1}`}
+                    title="Choose folder"
+                    onClick={() => setPicking(index)}
+                  >
+                    <ProjectsIcon className="size-4" />
+                  </IconButton>
+                )}
+              </span>
+            </CardField>
+            <CardField label="Name" hint="Filled in from the folder. Change it only if two roots share a name.">
               <Input
                 aria-label={`Root name ${index + 1}`}
-                placeholder="docs"
+                placeholder={folderName(path) || 'docs'}
                 value={String(row.id ?? '')}
                 onChange={(event) => update(index, 'id', event.target.value)}
-              />
-            </CardField>
-            <CardField label="Folder">
-              <Input
-                aria-label={`Root path ${index + 1}`}
-                placeholder="~/docs"
-                value={String(row.path ?? '')}
-                onChange={(event) => update(index, 'path', event.target.value)}
               />
             </CardField>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -298,13 +351,10 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
                 onChange={(event) => update(index, 'description', event.target.value)}
               />
             </CardField>
-            <CardField
-              label="Python variable"
-              hint="Optional. Without it, a docs folder becomes docs_path."
-            >
+            <CardField label="Python variable" hint="Optional. Leave it empty to use the name shown.">
               <Input
                 aria-label={`Python name ${index + 1}`}
-                placeholder="docs_path"
+                placeholder={defaultPythonName(path)}
                 value={String(row.python_name ?? '')}
                 onChange={(event) => update(index, 'python_name', event.target.value)}
               />
@@ -326,9 +376,22 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
           </Entry>
         );
       })}
+      {machine && picking !== null && (
+        <ProjectFolderSheet
+          label={machine.label}
+          mode="pick"
+          at={null}
+          client={machine.client}
+          startAt={picking === 'new' ? null : String(objectValue(rows[picking]).path ?? '') || null}
+          knownRoots={new Set()}
+          onCancel={() => setPicking(null)}
+          onChoose={choose}
+        />
+      )}
     </fieldset>
   );
 }
+
 function RequestRules({
   rule,
   value,
@@ -357,24 +420,25 @@ function RequestRules({
         Allowed requests
       </ListHeader>
       <Text as="p" variant="description">
-        Method and path exceptions, for example POST /v1/issues/**.
+        Requests allowed beyond the access level, for example POST to /v1/issues/**.
       </Text>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
           <div key={index} className="flex min-w-0 items-center gap-2">
-            <div className="w-20 shrink-0">
-              <Input
+            <div className="w-28 shrink-0">
+              <Select
                 aria-label={`Rule ${rule} request ${index + 1} method`}
-                placeholder="GET"
-                value={String(row.method ?? '')}
-                onChange={(event) => update(index, 'method', event.target.value)}
+                className="w-full"
+                value={String(row.method ?? 'GET')}
+                options={methodOptions([String(row.method ?? '')])}
+                onValueChange={(next) => update(index, 'method', next)}
               />
             </div>
             <Input
               className="min-w-0 flex-1"
               aria-label={`Rule ${rule} request ${index + 1} path`}
-              placeholder="/api/* (optional)"
+              placeholder="Any path, or /v1/issues/**"
               value={String(row.path ?? '')}
               onChange={(event) => update(index, 'path', event.target.value)}
             />
@@ -440,14 +504,16 @@ function NetworkRules({
                 onValueChange={(next) => update(index, 'access', next)}
               />
             </CardField>
-            <StringList
-              label="Methods"
-              hint="Optional. Only these HTTP methods, for example POST."
-              name={`Rule ${index + 1} methods`}
-              value={row.methods}
-              disabled={disabled}
-              onChange={(next) => update(index, 'methods', next)}
-            />
+            <CardField label="Methods" hint="Optional. Pick methods to replace the access level.">
+              <Select
+                aria-label={`Rule ${index + 1} methods`}
+                className="w-full"
+                values={Array.isArray(row.methods) ? row.methods.map(String) : []}
+                noneLabel="As the access allows"
+                options={methodOptions(Array.isArray(row.methods) ? row.methods.map(String) : [])}
+                onValuesChange={(next) => update(index, 'methods', next)}
+              />
+            </CardField>
             <StringList
               label="Ports"
               hint="Optional. Only these ports, for example 443."

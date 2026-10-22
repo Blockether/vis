@@ -57,7 +57,8 @@ import { NotificationsPanel } from './NotificationSettings';
 import { SpeechEnginesPanel, type SaveSpeechPrefs } from './SpeechSettings';
 import { FormLabel, SettingsLoading, SettingsPanel, SettingsSection } from './SettingsLayout';
 import { ExtensionsPanel, isExtensionGroup, type SettingHead } from './ExtensionSettings';
-import { SettingField } from './SettingField';
+import { SettingField, SettingMachine } from './SettingField';
+import { machineLabel } from '../../lib/fleet';
 import { CouncilRooms } from './CouncilRooms';
 import { AutomationsPanel } from './AutomationsPanel';
 import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
@@ -429,6 +430,8 @@ export function MachineSettings({
     () => new GatewayClient({ url: gateway.url, token: gateway.token }),
     [gateway.url, gateway.token],
   );
+  const machineTitle = machineLabel(gateway);
+  const settingMachine = useMemo(() => ({ client, label: machineTitle }), [client, machineTitle]);
   // Reopening the dialog paints the gateway's last known toggles immediately;
   // `load` below refreshes them (and `setSetting` patches the cache in place).
   const [groups, setGroups] = useState<ToggleGroup[] | null>(
@@ -568,6 +571,7 @@ export function MachineSettings({
     // `divide-y` draws only BETWEEN groups, so the first band opened straight onto
     // the machine row that owns it with nothing between them, and Providers read as
     // part of that row instead of the first thing under it.
+    <SettingMachine.Provider value={settingMachine}>
     <div className="min-w-0 touch-pan-y divide-y divide-dialog-edge overflow-x-hidden border-t border-dialog-edge">
       {err && (
         <div className="p-3 sm:p-4">
@@ -667,6 +671,7 @@ export function MachineSettings({
         </>
       )}
     </div>
+    </SettingMachine.Provider>
   );
 }
 

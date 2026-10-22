@@ -2,8 +2,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, Toggle } from '../../lib/types';
-import { SettingField } from './SettingField';
+import { SettingField, SettingMachine } from './SettingField';
 
 afterEach(cleanup);
 
@@ -86,11 +87,8 @@ it('removes many host rules with named icon actions, not numbered text buttons',
   fireEvent.click(screen.getByRole('button', { name: 'Add host rule' }));
   expect(onChange).toHaveBeenLastCalledWith({ rules: [docs, api, { host: '', access: 'read-only' }] });
   expect(screen.getAllByText('Methods')).toHaveLength(2);
-  expect(screen.getByRole('textbox', { name: 'Rule 1 methods 1' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Remove host rule 2' }));
   expect(onChange).toHaveBeenLastCalledWith({ rules: [docs] });
-  fireEvent.click(screen.getByRole('button', { name: 'Remove Rule 1 methods 1' }));
-  expect(onChange).toHaveBeenLastCalledWith({ rules: [{ ...docs, methods: [] }, api] });
 });
 
 it('removes a workspace root with a named icon action', () => {
@@ -108,6 +106,70 @@ it('removes a workspace root with a named icon action', () => {
   );
   fireEvent.click(screen.getByRole('button', { name: 'Remove root 1' }));
   expect(onChange).toHaveBeenLastCalledWith([code]);
+});
+
+it('picks request methods from a list instead of typed text', async () => {
+  const docs = { host: 'gateway.example.com', access: 'read-only', allow: [{ method: 'GET' }] };
+  const { onChange } = renderField(
+    { id: 'network', label: 'Network', type: 'object', editor: 'network' },
+    { rules: [docs] },
+  );
+  expect(screen.queryByRole('textbox', { name: 'Rule 1 request 1 method' })).toBeNull();
+  await userEvent.click(screen.getByRole('combobox', { name: 'Rule 1 request 1 method' }));
+  await userEvent.click(screen.getByRole('option', { name: 'POST' }));
+  expect(onChange).toHaveBeenLastCalledWith({ rules: [{ ...docs, allow: [{ method: 'POST' }] }] });
+  await userEvent.click(screen.getByRole('combobox', { name: 'Rule 1 methods' }));
+  await userEvent.click(screen.getByRole('option', { name: 'PUT' }));
+  expect(onChange).toHaveBeenLastCalledWith({ rules: [{ ...docs, methods: ['PUT'] }] });
+});
+
+it('fills the root name from the folder until someone types another name', () => {
+  const docs = { id: 'docs', path: '~/docs', access: 'read-only' };
+  const named = { id: 'notes', path: '~/docs', access: 'read-only' };
+  const { onChange } = renderField(
+    { id: 'workspaces', label: 'Workspace roots', type: 'array', editor: 'paths' },
+    [docs, named],
+  );
+  fireEvent.change(screen.getByRole('textbox', { name: 'Root path 1' }), { target: { value: '~/code/vis' } });
+  expect(onChange).toHaveBeenLastCalledWith([{ ...docs, id: 'vis', path: '~/code/vis' }, named]);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Root path 2' }), { target: { value: '~/code/vis' } });
+  expect(onChange).toHaveBeenLastCalledWith([docs, { ...named, path: '~/code/vis' }]);
+  expect(screen.getByRole('textbox', { name: 'Python name 1' })).toHaveAttribute('placeholder', 'docs_path');
+});
+
+it('adds a workspace root from a folder chosen on the machine', async () => {
+  const browse = vi.fn(async (asked?: string) => {
+    const path = !asked || asked === '~' ? '/Users/me' : asked;
+    return {
+      path,
+      parent: path === '/Users/me' ? '/Users' : '/Users/me',
+      home: '/Users/me',
+      is_truncated: false,
+      entries:
+        path === '/Users/me' ? [{ name: 'notes', path: '/Users/me/notes', entry_count: 3, is_repo: false }] : [],
+    };
+  });
+  const onChange = vi.fn();
+  render(
+    <SettingMachine.Provider value={{ client: { browse } as unknown as GatewayClient, label: 'tower' }}>
+      <SettingField
+        setting={{ id: 'workspaces', label: 'Workspace roots', type: 'array', editor: 'paths' }}
+        value={[]}
+        disabled={false}
+        onChange={onChange}
+        onRawChange={vi.fn()}
+      />
+    </SettingMachine.Provider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Add workspace root' }));
+  expect(await screen.findByRole('dialog', { name: 'Choose folder on tower' })).toBeInTheDocument();
+  await userEvent.click(await screen.findByText('notes/'));
+  await userEvent.click(await screen.findByRole('button', { name: /^Use folder/ }));
+  await waitFor(() =>
+    expect(onChange).toHaveBeenLastCalledWith([
+      { id: 'notes', path: '/Users/me/notes', access: 'read-write' },
+    ]),
+  );
 });
 it('limits numbers by the setting schema and keeps invalid text local', () => {
   const { onChange, onRawChange } = renderField(

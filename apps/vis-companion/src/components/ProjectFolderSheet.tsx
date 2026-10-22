@@ -150,6 +150,7 @@ export function projectPlaces(knownRoots: Set<string>, here: string): [string, n
 const WORDS = {
   add: { title: 'New project', close: 'new project', use: 'Use project', create: 'Create project' },
   move: { title: 'Change folder', close: 'change folder', use: 'Move here', create: 'Create and move' },
+  pick: { title: 'Choose folder', close: 'choose folder', use: 'Use folder', create: 'Create folder' },
 } as const;
 
 export function ProjectFolderSheet({
@@ -164,8 +165,11 @@ export function ProjectFolderSheet({
 }: {
   /** The machine whose files these are — the title says it, so no row has to. */
   label: string;
-  /** `add` makes the chosen folder a project; `move` gives an existing project that folder. */
-  mode: 'add' | 'move';
+  /**
+   * `add` makes the chosen folder a project; `move` gives an existing project that folder.
+   * `pick` only answers a folder, for a settings field such as a workspace root.
+   */
+  mode: 'add' | 'move' | 'pick';
   /** Where the panel hangs from `sm:` up — the control that opened it. */
   at: MenuPosition | null;
   client: GatewayClient;
