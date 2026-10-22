@@ -82,6 +82,9 @@ it('removes many host rules with named icon actions, not numbered text buttons',
     { rules: [docs, api] },
   );
   expect(screen.queryByText(/Remove host rule/)).toBeNull();
+  expect(screen.queryByRole('button', { name: /^Add$/ })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add host rule' }));
+  expect(onChange).toHaveBeenLastCalledWith({ rules: [docs, api, { host: '', access: 'read-only' }] });
   expect(screen.getAllByText('Methods')).toHaveLength(2);
   expect(screen.getByRole('textbox', { name: 'Rule 1 methods 1' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Remove host rule 2' }));

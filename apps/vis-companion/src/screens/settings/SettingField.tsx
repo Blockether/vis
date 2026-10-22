@@ -1,6 +1,6 @@
-import { Button, IconButton, Input, Select, Switch, Text } from '../../components/ui';
+import { IconButton, Input, Select, Switch, Text } from '../../components/ui';
 import type { ReactNode } from 'react';
-import { TrashIcon } from '../../components/icons';
+import { PlusIcon, TrashIcon } from '../../components/icons';
 import type { SettingValue, Toggle } from '../../lib/types';
 import configSchema from '../../../../../packages/vis-contract/resources/vis-contract/schema/config.json';
 
@@ -37,6 +37,26 @@ function numericSchema(pointer?: string): NumericSchema {
   return node && typeof node === 'object' && pointer ? (node as NumericSchema) : {};
 }
 
+/** A list legend with its add action on the same trailing rail as each row's trash. */
+function ListHeader({
+  label,
+  onAdd,
+  children,
+}: {
+  label: string;
+  onAdd: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <legend className="mb-1 flex w-full items-center justify-between gap-2 text-sm">
+      <span className="min-w-0 truncate">{children}</span>
+      <IconButton variant="quiet" label={label} title={label} onClick={onAdd}>
+        <PlusIcon className="size-4" />
+      </IconButton>
+    </legend>
+  );
+}
+
 /** One card of a repeated editor: a small `n / total` caption only when there are several. */
 function Entry({ index, count, children }: { index: number; count: number; children: ReactNode }) {
   return (
@@ -71,7 +91,9 @@ function StringList({
   const rows = Array.isArray(value) ? value : [];
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-2">
-      <legend className="mb-1 text-sm">{label}</legend>
+      <ListHeader label={`Add ${name.toLowerCase()}`} onAdd={() => onChange([...rows, numbers ? 0 : ''])}>
+        {label}
+      </ListHeader>
       {rows.map((entry, index) => (
         <div key={index} className="flex min-w-0 items-center gap-2">
           <Input
@@ -101,14 +123,6 @@ function StringList({
           No entries
         </Text>
       )}
-      <Button
-        variant="secondary"
-        density="panel"
-        aria-label={`Add ${name.toLowerCase()}`}
-        onClick={() => onChange([...rows, numbers ? 0 : ''])}
-      >
-        Add
-      </Button>
     </fieldset>
   );
 }
@@ -123,7 +137,9 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
     }));
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-3">
-      <legend className="mb-2 text-sm">Workspace roots</legend>
+      <ListHeader label="Add workspace root" onAdd={() => onChange([...rows, { id: '', path: '', access: 'read-write' }])}>
+        Workspace roots
+      </ListHeader>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
@@ -196,13 +212,6 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
           </Entry>
         );
       })}
-      <Button
-        variant="secondary"
-        density="panel"
-        onClick={() => onChange([...rows, { id: '', path: '', access: 'read-write' }])}
-      >
-        Add workspace root
-      </Button>
     </fieldset>
   );
 }
@@ -230,7 +239,9 @@ function RequestRules({
     );
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-2">
-      <legend className="mb-1 text-sm">Allowed requests</legend>
+      <ListHeader label={`Add allowed request to rule ${rule}`} onAdd={() => onChange([...rows, { method: 'GET' }])}>
+        Allowed requests
+      </ListHeader>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
@@ -260,14 +271,6 @@ function RequestRules({
           </div>
         );
       })}
-      <Button
-        variant="secondary"
-        density="panel"
-        aria-label={`Add allowed request to rule ${rule}`}
-        onClick={() => onChange([...rows, { method: 'GET' }])}
-      >
-        Add allowed request
-      </Button>
     </fieldset>
   );
 }
@@ -288,7 +291,9 @@ function NetworkRules({
     );
   return (
     <fieldset disabled={disabled} className="space-y-3">
-      <legend className="mb-2 text-sm">Host rules</legend>
+      <ListHeader label="Add host rule" onAdd={() => onChange([...rows, { host: '', access: 'read-only' }])}>
+        Host rules
+      </ListHeader>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
@@ -339,13 +344,6 @@ function NetworkRules({
           </Entry>
         );
       })}
-      <Button
-        variant="secondary"
-        density="panel"
-        onClick={() => onChange([...rows, { host: '', access: 'read-only' }])}
-      >
-        Add host rule
-      </Button>
     </fieldset>
   );
 }
