@@ -173,6 +173,7 @@ it('adds a workspace root from a folder chosen on the machine', async () => {
   expect(sheet.style.getPropertyValue('--menu-left')).toBe('40px');
   expect(sheet.style.getPropertyValue('--menu-width')).toBe('300px');
   expect(sheet.className).toContain('w-[var(--menu-width)]');
+  expect(sheet.className).not.toContain('shadow-float');
   // When the page scrolls, the sheet moves with its button and stays below it.
   const moved = vi
     .spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect')

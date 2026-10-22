@@ -1,8 +1,7 @@
-import { useState } from 'react';
+import { useState, type ContextType } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, within } from 'storybook/test';
 import type { SettingValue, Toggle } from '../../lib/types';
-import type { GatewayClient } from '../../lib/gateway';
 import { SettingField, SettingMachine } from './SettingField';
 
 const HOME = '/Users/me';
@@ -29,7 +28,7 @@ const machine = {
         })),
       };
     },
-  } as unknown as GatewayClient,
+  } as unknown as NonNullable<ContextType<typeof SettingMachine>>['client'],
 };
 
 /**

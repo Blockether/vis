@@ -102,7 +102,8 @@ export function AnchoredPanel({
         role={role}
         aria-modal={role === 'dialog' ? true : undefined}
         aria-label={label}
-        className={`absolute bottom-[var(--menu-bottom,auto)] left-[var(--menu-left)] top-[var(--menu-top,auto)] flex max-h-[min(var(--menu-max-height,70vh),calc(100vh-var(--menu-keyboard,0px)-var(--menu-top,0px)-24px))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel shadow-float transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${place.width === undefined ? PANEL_SIZES[size].className : 'w-[var(--menu-width)]'}`}
+        // A framed panel sits inside its field, so it drops the float shadow of a free panel.
+        className={`absolute bottom-[var(--menu-bottom,auto)] left-[var(--menu-left)] top-[var(--menu-top,auto)] flex max-h-[min(var(--menu-max-height,70vh),calc(100vh-var(--menu-keyboard,0px)-var(--menu-top,0px)-24px))] flex-col overflow-hidden rounded-none border border-dialog-edge bg-panel transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${place.width === undefined ? `shadow-float ${PANEL_SIZES[size].className}` : 'w-[var(--menu-width)]'}`}
         style={
           {
             '--menu-keyboard': `${keyboardInset}px`,
