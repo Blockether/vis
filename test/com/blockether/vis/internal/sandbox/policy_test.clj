@@ -601,6 +601,64 @@
               (expect (= (str root "/service/.env") (policy/deny-overlap [nested] root)))
               (expect (= [(str root "/service") root] @starts))))))))
 
+(defn- with-link-tree
+  "A temp tree with `.env` files beside, before and below other entries."
+  [f]
+  (let [root
+        (.toRealPath (Files/createTempDirectory "vis-link-walk"
+                                                (make-array java.nio.file.attribute.FileAttribute
+                                                            0))
+                     (make-array java.nio.file.LinkOption 0))
+
+        directory
+        (.toFile root)]
+
+    (try (doseq [path ["a/deep/er" "b" "c"]]
+           (.mkdirs (File. directory ^String path)))
+         (doseq [path ["f1" "f2" "f3" ".env" "a/f1" "a/f2" "a/deep/er/.env" "b/f1" "b/.env"]]
+           (spit (File. directory ^String path) "x"))
+         (f (.toString root))
+         (finally (doseq [^File file (reverse (file-seq directory))]
+                    (.delete file))))))
+
+(defdescribe
+  link-count-walk-test
+  ;; Issue #396: a cold Linux walk spent half its time on a status call for each file.
+  (let [expected
+        (fn [root]
+          ;; A Java glob `**/` needs one directory, so the root `.env` is not a match.
+          (mapv #(str root %) ["/a/deep/er/.env" "/b/.env"]))
+
+        matches
+        (fn [root]
+          (get (#'policy/glob-matches root [(str root "/**/.env")]) (str root "/**/.env")))]
+
+    (it "finds every match when a reliable link count skips the files after the last subdirectory"
+        (with-link-tree
+          (fn [root]
+            (let [calls
+                  (atom 0)
+
+                  ;; A file system with exact link counts, as on ext4, XFS and tmpfs.
+                  exact
+                  (fn [^Path path _]
+                    (swap! calls inc)
+                    (when (Files/isDirectory path (make-array java.nio.file.LinkOption 0))
+                      (with-open [entries (Files/newDirectoryStream path)]
+                        (count (filter #(Files/isDirectory %
+                                                           (make-array java.nio.file.LinkOption 0))
+                                       entries)))))]
+
+              (with-redefs [policy/subdirectory-count exact]
+                (expect (= (expected root) (matches root))))
+              ;; 14 entries and the start, but no call for a file after the last subdirectory
+              ;; or in a directory without subdirectories.
+              (expect (<= @calls 12))))))
+    (it "finds every match with the link counts of the real file system"
+        (with-link-tree (fn [root]
+                          (with-redefs [policy/link-count-reliable? (constantly true)]
+                            (expect (= (expected root) (matches root)))))))))
+
 (defdescribe
   subagent-file-grant-narrows-a-snapshot
   (it

@@ -11,8 +11,10 @@
   (:import [java.io File]
            [java.nio.file DirectoryStream FileSystems Files LinkOption Path PathMatcher Paths]
            [java.util ArrayList Collection]
-           [java.util.concurrent ConcurrentLinkedQueue ForkJoinPool RecursiveAction]
-           [java.util.concurrent.atomic AtomicBoolean AtomicReference]))
+           [java.util.concurrent ConcurrentHashMap ConcurrentLinkedQueue ForkJoinPool
+            RecursiveAction]
+           [java.util.concurrent.atomic AtomicBoolean AtomicReference]
+           [java.util.function Function]))
 
 (def ^:private no-link-options (make-array LinkOption 0))
 
@@ -118,10 +120,45 @@
 
     [(if (str/blank? root) "/" root) (str/join "/" (drop (count literal) segments))]))
 
+(def ^:private reliable-link-stores
+  "File systems where a directory has 2 links plus one link for each subdirectory."
+  #{"ext2" "ext3" "ext4" "xfs" "tmpfs"})
+
+(defn- link-count-reliable?
+  "True when the file system of `directory` counts its subdirectories in its link count."
+  [^Path directory]
+  (try (contains? reliable-link-stores (.type (Files/getFileStore directory)))
+       (catch Exception _ false)))
+
+(defn- subdirectory-count
+  "The number of subdirectories of the directory `path`, or -1 when its file system does not
+   give a reliable count. `reliable` caches the answer for each device. Nil when `path` is not
+   a directory, or is a link."
+  [^Path path ^ConcurrentHashMap reliable]
+  (try (let [^java.util.Map attributes (Files/readAttributes path
+                                                             "unix:mode,nlink,dev"
+                                                             ^"[Ljava.nio.file.LinkOption;"
+                                                             nofollow-options)]
+         (when (= 0040000 (bit-and (long (.get attributes "mode")) 0170000))
+           (let [links (long (.get attributes "nlink"))]
+             (if (and (>= links 2)
+                      (.computeIfAbsent reliable
+                                        (.get attributes "dev")
+                                        (reify
+                                          Function
+                                            (apply [_ _] (link-count-reliable? path)))))
+               (- links 2)
+               -1))))
+       (catch UnsupportedOperationException _ (when (Files/isDirectory path nofollow-options) -1))
+       (catch IllegalArgumentException _ (when (Files/isDirectory path nofollow-options) -1))
+       (catch Exception _ nil)))
+
 (defn- walk-entries
   "Call `visit` on each entry below `start`, down to `depth` levels, with parallel directory
    reads. The walk stops when `visit` returns a true value. Links are not followed and an
-   unreadable directory is skipped."
+   unreadable directory is skipped. A file system with reliable link counts tells how many
+   subdirectories a directory has. After the last one, the other entries need no status
+   call. This halves a cold walk on Linux (#396)."
   [^Path start depth visit]
   (let [depth
         (long depth)
@@ -129,27 +166,34 @@
         stop
         (AtomicBoolean.)
 
+        reliable
+        (ConcurrentHashMap.)
+
         pool
         (ForkJoinPool.)
 
         task
-        (fn task [^Path dir ^long level]
+        (fn task [^Path dir ^long level ^long subdirectories]
           (proxy [RecursiveAction] []
             (compute []
               (let [children (ArrayList.)]
                 (when-not (.get stop)
                   (try (with-open [^DirectoryStream entries (Files/newDirectoryStream dir)]
                          (let [iterator (.iterator entries)]
-                           (while (and (not (.get stop)) (.hasNext iterator))
-                             (let [^Path entry (.next iterator)]
-                               (when (visit entry) (.set stop true))
-                               (when (and (< level depth)
-                                          (Files/isDirectory entry nofollow-options))
-                                 (.add children (task entry (inc level))))))))
+                           (loop [remaining subdirectories]
+                             (when (and (not (.get stop)) (.hasNext iterator))
+                               (let [^Path entry (.next iterator)]
+                                 (when (visit entry) (.set stop true))
+                                 (if-let [links (when (and (< level depth) (not (zero? remaining)))
+                                                  (subdirectory-count entry reliable))]
+                                   (do (.add children (task entry (inc level) links))
+                                       (recur (if (pos? remaining) (dec remaining) remaining)))
+                                   (recur remaining)))))))
                        (catch Exception _ nil)))
                 (RecursiveAction/invokeAll ^Collection children)))))]
 
-    (try (.invoke pool ^RecursiveAction (task start 1)) (finally (.shutdown pool)))))
+    (try (.invoke pool ^RecursiveAction (task start 1 (or (subdirectory-count start reliable) -1)))
+         (finally (.shutdown pool)))))
 
 (defn- glob? [rule] (boolean (re-find glob-characters rule)))
 
