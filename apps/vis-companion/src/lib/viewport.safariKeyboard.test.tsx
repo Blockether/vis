@@ -111,3 +111,49 @@ describe('focusing a field in iOS Safari', () => {
     expect(shell.style.height).toBe('480px');
   });
 });
+
+describe('Safari reveal scroll after the keyboard is up', () => {
+  // Regression, device trace from the user report (paraphrased: entering the input
+  // still jumps a little before it settles): Safari scrolled the page 172 px about
+  // 200 ms after the keyboard, the shell followed one painted frame late, and a
+  // reset at 350 ms left an empty band above the header for several frames.
+  it('follows the scroll in the same event and does not undo it', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('navigator', { ...navigator, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)', maxTouchPoints: 5 });
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
+    const flush = () => frames.splice(0).forEach((callback) => callback(0));
+    const scrollTo = vi.fn();
+    vi.stubGlobal('scrollTo', scrollTo);
+    viewport({ offsetTop: 0, pageTop: 0, scrollY: 0 });
+    Object.assign(window.visualViewport!, { height: 474 });
+    window.innerHeight = 796;
+    render(<ViewportProbe />);
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+    act(() => {
+      composer.focus();
+      flush();
+    });
+    expect(shell.style.height).toBe('474px');
+
+    Object.assign(window.visualViewport!, { offsetTop: 172, pageTop: 172 });
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 172 });
+    act(() => window.dispatchEvent(new Event('scroll')));
+    expect(shell.style.transform).toBe('translateY(172px)');
+
+    act(() => {
+      vi.advanceTimersByTime(400);
+      flush();
+    });
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(shell.style.transform).toBe('translateY(172px)');
+    vi.useRealTimers();
+  });
+});

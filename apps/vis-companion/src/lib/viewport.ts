@@ -870,7 +870,10 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     const revealFocusedEditor = (el: Element) => {
       if (document.activeElement !== el) return;
       el.scrollIntoView?.({ block: 'nearest' });
-      resetLayoutScroll();
+      // iOS Safari: the shell follows Safari's own reveal scroll (`pageTop`). A reset
+      // here moved the page back while `pageTop` still reported the old scroll, which
+      // left an empty band above the header for several frames (device trace).
+      if (!webKeyboard) resetLayoutScroll();
       sync();
     };
     const onFocusIn = (event: FocusEvent) => {
@@ -900,6 +903,15 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         );
     };
 
+    // iOS Safari scrolls the page about 200 ms after the keyboard is up, even when
+    // the field is already visible. Follow it in the scroll event itself: the next
+    // animation frame is one painted frame late, and the header jumps up and back.
+    const onPageScroll = () => {
+      if (webKeyboard && currentBox && vv.pageTop !== undefined)
+        setBox({ height: currentBox.height, top: Math.round(vv.pageTop) });
+      sync();
+    };
+
     sync();
     vv.addEventListener('resize', sync);
     vv.addEventListener('scroll', sync);
@@ -913,7 +925,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // native iOS, Keyboard.setScroll and WKWebView scrolling are disabled; a
     // capture listener there would only intercept transcript scrolling at 60 Hz
     // and force useless viewport reads.
-    if (!nativeKeyboard) window.addEventListener('scroll', sync, true);
+    if (!nativeKeyboard) window.addEventListener('scroll', onPageScroll, true);
 
     // Rotation, not a wake: `start` drops the stale pin in the frame the flip
     // happens, the settles re-check cheaply, and only the end pays for a full
@@ -1225,7 +1237,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       window.removeEventListener('focus', onVisible);
       window.removeEventListener('resize', sync);
       document.removeEventListener('focusin', onFocusIn);
-      window.removeEventListener('scroll', sync, true);
+      window.removeEventListener('scroll', onPageScroll, true);
       stopRotation();
       disposeNative();
       disposeKeyboard();
