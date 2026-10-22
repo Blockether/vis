@@ -13682,13 +13682,18 @@
           (fn [^String path]
             (let [dir (java.io.File. home path)]
               (.mkdirs dir)
-              (.getCanonicalPath dir)))]
+              (.getCanonicalPath dir)))
 
+          prepared
+          (atom [])]
+
+      ;; #407: project metadata must not prepare dependency environments or import
+      ;; extensions; the first session in the project does that.
       (with-redefs [config/resolve-db-spec
                     (constantly (str home "/vis.db"))
 
                     python-extensions/prepare-project!
-                    (constantly nil)]
+                    #(swap! prepared conj %)]
 
         (let [old
               (dir! "old/vis")
@@ -13715,9 +13720,18 @@
                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
           (expect (= "vis" (:name project)))
+          (expect (= "direct"
+                     (:name (lp/create-project! {:name "direct" :workspace-root (dir! "direct")}))))
+          (doseq [create! [#(lp/create-project! {:name "missing" :workspace-root %})
+                           lp/ensure-project-for-root!]]
+            (expect (= :project/not-a-directory
+                       (try (create! (str home "/missing"))
+                            nil
+                            (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
           (expect (= :project/not-a-directory (failure (str home "/missing"))))
           (expect (= :project/root-taken (failure taken)))
           (let [moved (lp/update-project! (:id project) {:workspace-root new})]
             (expect (= new (:workspace-root moved)))
             (expect (= "vis" (:name moved)))
-            (expect (= new (:root (persistance/db-workspace-get (lp/db-info) (:id trunk)))))))))))
+            (expect (= new (:root (persistance/db-workspace-get (lp/db-info) (:id trunk))))))
+          (expect (= [] @prepared)))))))

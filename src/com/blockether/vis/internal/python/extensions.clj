@@ -3754,7 +3754,7 @@
 
 (defn prepare-project!
   "Prepare a project's declared packages, dependencies and isolated extension catalog.
-   Adding or opening a project admits its configured code; reload adopts later edits."
+   Opening a session in a project admits its configured code; reload adopts later edits."
   [root]
   (let [directory (io/file root)]
     (when-not (.isDirectory directory)

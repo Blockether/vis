@@ -12,7 +12,6 @@
             [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
-            [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.session.titling :as titling]
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
@@ -122,10 +121,18 @@
 
 (defn get-project [project-id] (persistance/db-get-project (db-info) project-id))
 
+(defn- assert-project-directory!
+  "Reject a project root that is not an existing directory."
+  [root]
+  (when-not (.isDirectory (java.io.File. (str root)))
+    (throw (ex-info (str "Not a directory: " root) {:type :project/not-a-directory :path root}))))
+
+;; Project metadata never prepares packages or imports extensions. The first session in
+;; the project does that before it selects tools (#407).
 (defn create-project!
   [opts]
   (when-let [root (:workspace-root opts)]
-    (python-extensions/prepare-project! root))
+    (assert-project-directory! root))
   (persistance/db-create-project! (db-info) opts))
 
 (defn get-project-by-root
@@ -147,7 +154,7 @@
    project (falls back to the folder name)."
   ([root] (ensure-project-for-root! "local" root nil))
   ([owner-id root name]
-   (python-extensions/prepare-project! root)
+   (assert-project-directory! root)
    (or (get-project-by-root owner-id root)
        (try (create-project! {:name (or (not-empty (str name)) (folder-name root))
                               :owner-id (or owner-id "local")
@@ -182,7 +189,6 @@
         (throw (ex-info (str "Another project already uses " root)
                         {:type :project/root-taken :path root :project-id (:id holder)})))
       (when project
-        (python-extensions/prepare-project! root)
         (persistance/db-update-project! (db-info)
                                         project-id
                                         (assoc opts

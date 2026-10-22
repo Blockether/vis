@@ -902,7 +902,7 @@
 (defdescribe
   configured-project-sessions-test
   (it
-    "installs on project addition and isolates real sessions, resume, config and dependencies"
+    "installs on the first project session and isolates real sessions, resume, config and dependencies"
     (with-shared-packages
       (fn [_]
         (let [home
@@ -950,15 +950,18 @@
 
                  (pyx/reload-python-extensions! {:dirs []})
                  (doseq [root roots]
-                   ;; This is the API called by the gateway's project-add route.
+                   ;; This is the API called by the gateway's project-add route. Adding a
+                   ;; project only saves it; its first session prepares the extensions (#407).
                    (let [project (try (lp/ensure-project-for-root! root)
                                       (catch clojure.lang.ExceptionInfo error
                                         (throw (ex-info (pr-str (ex-data error)) {} error))))]
                      (expect (:id project)))
                    (binding [workspace/*workspace-root* root]
-                     (expect (registered "vis-project-fixture")))
+                     (expect (nil? (registered "vis-project-fixture"))))
                    (let [ws (workspace/create-trunk-at! db root)]
-                     (swap! opened conj (loop-env/open-env! nil {:workspace-id (:id ws)}))))
+                     (swap! opened conj (loop-env/open-env! nil {:workspace-id (:id ws)})))
+                   (binding [workspace/*workspace-root* root]
+                     (expect (registered "vis-project-fixture"))))
                  (expect (= roots @router-roots))
                  ;; Calls overlap across independently imported versions of the same package.
                  (doseq [worker (mapv (fn [[environment value]]

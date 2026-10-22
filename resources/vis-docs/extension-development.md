@@ -240,8 +240,8 @@ missing, the call fails. It does not fall back to shared installations. Preparin
 does not install the project into the model sandbox. Vis still supplies its bundled extension SDK.
 Install the other dependencies of your extension in its project.
 
-When an extension declares a uv project or has its own `pyproject.toml`, adding or
-opening its Vis project prepares the missing environment before registration.
+When an extension declares a uv project or has its own `pyproject.toml`, the first session
+in its Vis project prepares the missing environment before registration.
 `/reload` prepares dependency changes. A preparation failure is reported. Vis does
 not silently use shared packages instead. Extensions without a declared project
 use `~/.vis/python/packages` and the [shared sync workflow](#install-a-project-into-shared-packages).
