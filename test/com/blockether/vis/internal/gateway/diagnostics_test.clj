@@ -237,6 +237,50 @@
           (expect (await-value #(not-any? (fn [^Thread thread]
                                             (= "virtual-worker-fixture" (.getName thread)))
                                           (cancellation/virtual-workers))))))))
+  ;; CI on c51b8e2ff had more than 256 platform threads and the report lost every virtual worker.
+  (it
+    "keeps virtual workers when platform threads fill the thread limit"
+    (with-logs
+      (fn [_]
+        (let [gate
+              (CountDownLatch. 1)
+
+              parked
+              (CountDownLatch. 300)
+
+              fillers
+              (mapv (fn [i]
+                      (doto (Thread. ^Runnable #(do (.countDown parked) (.await gate))
+                                     (str "platform-filler-" i))
+                        (.setDaemon true)
+                        (.start)))
+                    (range 300))
+
+              ready
+              (promise)
+
+              worker
+              (cancellation/worker-future "virtual-limit-fixture"
+                                          #(do (deliver ready true) (.await gate)))]
+
+          (try (expect (.await parked 5 TimeUnit/SECONDS))
+               (expect (true? (deref ready 2000 false)))
+               (let [report
+                     (wire/parse-json (slurp (:path (diagnostics/capture! {:session-id "session"
+                                                                           :turn-id "limit"
+                                                                           :reason :turn-stall}))
+                                             :encoding
+                                             "UTF-8"))
+
+                     threads
+                     (get report "threads")]
+
+                 (expect (= 256 (count threads)))
+                 (expect (<= 128 (count (remove #(get % "virtual") threads))))
+                 (expect (some #(= "virtual-limit-fixture" (get % "name")) threads)))
+               (finally (.countDown gate)
+                        (deref worker 2000 nil)
+                        (run! #(.join ^Thread % 2000) fillers)))))))
   (it "returns the saved hang reports of one session, newest first"
       (with-logs (fn [_]
                    (diagnostics/capture!

@@ -180,6 +180,35 @@
                                 (.getStackTrace thread)))))
         (cancellation/virtual-workers)))
 
+(defn- bounded-threads
+  "The target turn thread first, then platform and virtual threads by id. Each
+   kind keeps at least half of the free MAX_THREADS slots, so many platform
+   threads never hide every virtual worker."
+  [target-name threads]
+  (let [{targets true others false}
+        (group-by #(= target-name (:name %)) threads)
+
+        by-id
+        (fn [entries]
+          (sort-by #(or (:id %) 0) entries))
+
+        platform
+        (by-id (remove :virtual others))
+
+        virtual
+        (by-id (filter :virtual others))
+
+        slots
+        (max 0 (- MAX_THREADS (count targets)))
+
+        platform-slots
+        (min (count platform) (max (quot slots 2) (- slots (count virtual))))]
+
+    (vec (take MAX_THREADS
+               (concat (by-id targets)
+                       (take platform-slots platform)
+                       (take (- slots platform-slots) virtual))))))
+
 (defn- write-snapshot!
   [context]
   (let [dir
@@ -202,11 +231,7 @@
               :coverage (if dumped :platform-and-virtual-threads :platform-and-worker-threads)
               :thread-count (count threads)
               :virtual-thread-count (count (filter :virtual threads))
-              :threads (vec (take MAX_THREADS
-                                  (sort-by (fn [thread]
-                                             [(not= target-name (:name thread))
-                                              (boolean (:virtual thread)) (or (:id thread) 0)])
-                                           threads)))}))))
+              :threads (bounded-threads target-name threads)}))))
 
 (defn capture!
   "Save private, bounded thread stacks before a gateway watchdog tears down a
