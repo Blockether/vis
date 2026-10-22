@@ -231,4 +231,21 @@ describe('framedPosition', () => {
       width: 366,
     });
   });
+
+  it('stays below its anchor and gets shorter where the room there is short', () => {
+    const phone = { width: 390, height: 844 };
+    const plus = { top: 500, bottom: 528, right: 380 };
+    expect(framedPosition(plus, { left: 12, width: 366 }, phone)).toEqual({
+      top: 534,
+      left: 12,
+      width: 366,
+      maxHeight: 298,
+    });
+  });
+
+  it('flips above its anchor only when almost no room is left below', () => {
+    const phone = { width: 390, height: 844 };
+    const plus = { top: 760, bottom: 788, right: 380 };
+    expect(framedPosition(plus, { left: 12, width: 366 }, phone)).toMatchObject({ bottom: 90, width: 366 });
+  });
 });

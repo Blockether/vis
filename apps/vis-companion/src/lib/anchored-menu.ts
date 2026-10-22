@@ -158,13 +158,26 @@ export function pointerAnchor(
 /** The part of a `DOMRect` that a framed panel takes its column from. */
 export type FrameBox = { left: number; width: number };
 
+/** Room below its anchor that a framed panel wants, enough for a short folder list. */
+export const FRAMED_ROOM = 360;
+
+/** Least room below its anchor that a framed panel still uses before it flips above. */
+const FRAMED_MIN_ROOM = 200;
+
+/** The room between the foot of `anchor` and the bottom margin of the screen. */
+export function roomBelow(anchor: AnchorBox, viewport: Viewport = currentViewport()): number {
+  return viewport.height - EDGE_MARGIN - (anchor.bottom + ANCHOR_GAP);
+}
+
 /**
  * A panel that drops from `anchor` but fills the column of `frame`: same left edge,
  * same width. Use it for a picker that belongs to one form field, so the panel stays
  * inside that field instead of a fixed-width box that hangs past it.
  *
- * The vertical placement is the `menuPosition` one. The width never passes the screen
- * margins.
+ * The panel stays BELOW the control that it changes. If the room there is short, the
+ * panel gets shorter and scrolls inside. It flips above only when less than
+ * `FRAMED_MIN_ROOM` is left. Bring the control up first (see `FRAMED_ROOM`) to prevent that.
+ * The width never passes the screen margins.
  */
 export function framedPosition(
   anchor: AnchorBox,
@@ -177,5 +190,9 @@ export function framedPosition(
   );
   // A live anchor always yields a position, so the cast only narrows the type.
   const place = menuPosition({ ...anchor, right: frame.left + width }, width, viewport, panelHeight) as MenuPosition;
-  return { ...place, width };
+  const below = roomBelow(anchor, viewport);
+  if (viewport.height <= 0 || below < FRAMED_MIN_ROOM) return { ...place, width };
+  const top = Math.round(anchor.bottom + ANCHOR_GAP);
+  const fits = below >= Math.min(panelHeight ?? Infinity, viewport.height * MAX_HEIGHT_FRACTION);
+  return { left: place.left, top, width, ...(fits ? {} : { maxHeight: Math.round(below) }) };
 }

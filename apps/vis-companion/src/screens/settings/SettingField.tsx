@@ -1,10 +1,10 @@
 import { IconButton, Input, Select, Switch, Text } from '../../components/ui';
-import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { FormLabel } from './SettingsLayout';
 import { PlusIcon, ProjectsIcon, TrashIcon } from '../../components/icons';
 import { ProjectFolderSheet } from '../../components/ProjectFolderSheet';
 import { PANEL_SIZES } from '../../components/Menu';
-import { framedPosition, type MenuPosition } from '../../lib/anchored-menu';
+import { FRAMED_ROOM, framedPosition, roomBelow, type MenuPosition } from '../../lib/anchored-menu';
 import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, Toggle } from '../../lib/types';
 import configSchema from '../../../../../packages/vis-contract/resources/vis-contract/schema/config.json';
@@ -248,18 +248,36 @@ function ToggleRow({
 
 function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
   const machine = useContext(SettingMachine);
-  // The root that the folder sheet fills (an index, or `'new'`) and where the sheet hangs.
-  const [picking, setPicking] = useState<{ target: number | 'new'; at: MenuPosition | null } | null>(null);
+  // The root that the folder sheet fills (an index, or `'new'`), the button and the place.
+  const [picking, setPicking] = useState<
+    { target: number | 'new'; anchor: HTMLElement; at: MenuPosition } | null
+  >(null);
   // The sheet drops from the pressed button but keeps to this field's column.
   const frame = useRef<HTMLFieldSetElement>(null);
-  const pick = (target: number | 'new', anchor: HTMLElement) =>
-    setPicking({
-      target,
-      at: framedPosition(
-        anchor.getBoundingClientRect(),
-        frame.current?.getBoundingClientRect() ?? { left: 0, width: PANEL_SIZES.browse.width },
-      ),
-    });
+  const place = (anchor: HTMLElement) =>
+    framedPosition(
+      anchor.getBoundingClientRect(),
+      frame.current?.getBoundingClientRect() ?? { left: 0, width: PANEL_SIZES.browse.width },
+    );
+  const pick = (target: number | 'new', anchor: HTMLElement) => {
+    // Bring a button near the foot of the screen up, so the sheet opens below it.
+    if (roomBelow(anchor.getBoundingClientRect()) < FRAMED_ROOM) {
+      anchor.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+    setPicking({ target, anchor, at: place(anchor) });
+  };
+  // The sheet stays under its button when the page scrolls or the window changes size.
+  const pickedAnchor = picking?.anchor;
+  useEffect(() => {
+    if (!pickedAnchor) return;
+    const follow = () => setPicking((held) => held && { ...held, at: place(held.anchor) });
+    window.addEventListener('resize', follow);
+    document.addEventListener('scroll', follow, true);
+    return () => {
+      window.removeEventListener('resize', follow);
+      document.removeEventListener('scroll', follow, true);
+    };
+  }, [pickedAnchor]);
   const rows = Array.isArray(value) ? value : [];
   const update = (index: number, key: string, next: SettingValue) =>
     onChange(rows.map((row, i) => {

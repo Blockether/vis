@@ -173,6 +173,13 @@ it('adds a workspace root from a folder chosen on the machine', async () => {
   expect(sheet.style.getPropertyValue('--menu-left')).toBe('40px');
   expect(sheet.style.getPropertyValue('--menu-width')).toBe('300px');
   expect(sheet.className).toContain('w-[var(--menu-width)]');
+  // When the page scrolls, the sheet moves with its button and stays below it.
+  const moved = vi
+    .spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect')
+    .mockReturnValue({ left: 300, width: 28, top: 200, bottom: 228, right: 328, height: 28, x: 300, y: 200 } as DOMRect);
+  fireEvent.scroll(document);
+  moved.mockRestore();
+  await waitFor(() => expect(sheet.style.getPropertyValue('--menu-top')).toBe('234px'));
   // The field already says what the sheet is for, so the sheet shows no title band.
   expect(screen.queryByText('Choose folder')).toBeNull();
   await userEvent.click(await screen.findByText('notes/'));
