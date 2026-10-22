@@ -198,8 +198,11 @@
           (concat (get-in policy [:process-jail :deny-read-rules])
                   (get-in policy [:process-jail :deny-write-rules]))
 
+          ;; The literal deny paths need no walk, so they stay in the plain overlap test.
           restricted
-          (concat (get-in policy [:process-jail :deny-exec])
+          (concat (get-in policy [:process-jail :deny-read])
+                  (get-in policy [:process-jail :deny-write])
+                  (get-in policy [:process-jail :deny-exec])
                   (keep (fn [[path policy]]
                           (when (contains? #{:copy-only :not-allowed}
                                            (workspace/draft-policy-id policy))
