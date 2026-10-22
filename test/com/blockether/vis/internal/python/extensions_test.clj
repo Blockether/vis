@@ -1265,6 +1265,10 @@
       (let [root (get (pyx/host-doors nil "test" nil) "__vis_host_workspace_root__")]
         (expect (= :session-not-bound
                    (try (root) (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
+  (it "refuses a workspace listing without an owning session"
+      (let [files (get (pyx/host-doors nil "test" nil) "__vis_host_workspace_files__")]
+        (expect (= :session-not-bound
+                   (try (files) (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))))
   ;; Regression, #379: py tools read `python.environment` to choose the shared interpreter.
   (it "answers the project's python.environment through vis.python_environment"
       (let [environment (get (pyx/host-doors nil "test" nil) "__vis_host_python_environment__")]

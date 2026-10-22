@@ -1111,6 +1111,25 @@ project does. A `toggles:` value in `repositories/api/vis.yml` wins over the wor
 A value that you set for the session or its group wins over the project files. A `vis run --toggles`
 value wins over all of them.
 
+## List workspace files
+
+Call `vis.workspace_files()` when your extension needs the files of the session working copy. For
+example, a language check can watch every source file that a block can change. The function returns
+the paths that Git sees under `vis.workspace_root()`: tracked files and untracked files that Git does
+not ignore.
+
+```python
+import blockether.vis.extension as vis
+
+files = vis.workspace_files() or []
+sources = [path for path in files if path.suffix == ".py"]
+```
+
+The host lists the working copy once and gives the same list to each extension that asks within two
+seconds. This is faster than a `git` child process in each extension, also when the jail is on. The
+function returns None when the workspace is not in a Git working tree. Outside a Vis process, it
+lists the process working directory.
+
 ## Python environment
 
 Call `vis.python_environment()` before your extension starts project Python, such as a test

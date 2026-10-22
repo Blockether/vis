@@ -1015,6 +1015,56 @@
   (let [{:keys [exit out]} (git* dir args)]
     (if (= 0 exit) (into [] (remove str/blank?) (str/split-lines (str out))) [])))
 
+(def ^:private workspace-files-ttl-ms
+  "How long one listing of a root answers later callers. The language guards of a
+   session list the same root at the start of the same block, so they share one."
+  2000)
+
+(defonce ^:private workspace-file-listings
+  ;; canonical root -> {:at epoch-ms :files (delay [absolute-path ...] or nil)}
+  (atom {}))
+
+(defn- listed-files
+  "Absolute paths of the files that git sees under `root`, or nil without git."
+  [^String root]
+  (let [{:keys [exit out]} (git* (io/file root)
+                                 ["ls-files" "-z" "--cached" "--others" "--exclude-standard"])]
+    (when (= 0 exit)
+      ;; git* merges stderr into stdout; a warning line never is a NUL-separated name.
+      (into []
+            (comp (remove str/blank?)
+                  (remove #(str/includes? % "\n"))
+                  (map #(str root File/separator %)))
+            (str/split (str out) #"\u0000")))))
+
+(defn workspace-files
+  "Absolute paths of the files under `root` that git sees: tracked or untracked,
+   never ignored. nil when `root` is not in a Git working tree or git fails.
+
+   One listing answers every caller of the same root for `workspace-files-ttl-ms`,
+   and concurrent callers wait for the same listing. This is the one place where
+   extensions list a workspace, instead of a child process for each extension."
+  [root]
+  (let [root
+        (.getAbsolutePath (io/file (str root)))
+
+        now
+        (System/currentTimeMillis)
+
+        fresh?
+        #(and % (< (- now (long (:at %))) (long workspace-files-ttl-ms)))
+
+        listings
+        (swap! workspace-file-listings (fn [m]
+                                         (if (fresh? (clojure.core/get m root))
+                                           m
+                                           (-> (into {} (filter (comp fresh? val)) m)
+                                               (assoc root {:at now
+                                                            :files (delay (listed-files
+                                                                            root))})))))]
+
+    @(:files (clojure.core/get listings root))))
+
 (defn git-managed?
   "True when `root` is the top of a Git working tree, reading exactly the fact
    Rift reads: a `.git` directory, or the link file of a linked worktree.

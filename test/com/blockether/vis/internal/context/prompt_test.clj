@@ -327,11 +327,15 @@
           (expect (= (svar/count-messages model selected) (counter model selected))))))
   (it
     "reuses complete content across counters and separates model changes"
-    (let [message
-          {:role "user" :content "Stable request"}
+    ;; The message cache is process-wide, so content that other tests count must not hit it.
+    (let [nonce
+          (random-uuid)
+
+          message
+          {:role "user" :content (str "Stable request " nonce)}
 
           changed
-          (assoc message :content "Changed request")
+          (assoc message :content (str "Changed request " nonce))
 
           count-messages
           svar/count-messages

@@ -889,6 +889,11 @@
           (fn []
             (session-root "vis.workspace_root")))
     (put! g
+          "__vis_host_workspace_files__"
+          (fn []
+            ;; #396: one host listing that every language guard of the session shares.
+            (workspace/workspace-files (session-root "vis.workspace_files"))))
+    (put! g
           "__vis_host_project_root__"
           (fn []
             (project-root-in (session-root "vis.project_root") project-path)))

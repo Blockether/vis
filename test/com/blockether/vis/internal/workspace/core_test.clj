@@ -240,6 +240,28 @@
                (git! (io/file dir) "add" "-f" "pinned.env")
                (expect (= #{".gitignore" "src.txt" "pinned.env"}
                           (set (ws/changed-paths dir fork-ms)))))
+             (finally (delete-tree! dir)))))
+  ;; #396: the language guards of a session share one host listing, also under a jail.
+  (it "lists what git sees once for every caller of the same root"
+      (let [dir (temp-dir "vis-workspace-files")]
+        (try (git! (io/file dir) "init" "-q")
+             (spit (io/file dir ".gitignore") "dist/\n")
+             (.mkdirs (io/file dir "dist"))
+             (spit (io/file dir "dist" "bundle.js") "generated\n")
+             (.mkdirs (io/file dir "src"))
+             (spit (io/file dir "src" "core.clj") "(ns core)\n")
+             (let [listed (ws/workspace-files dir)
+                   root (.getAbsolutePath (io/file dir))]
+
+               (expect (= #{(str root "/.gitignore") (str root "/src/core.clj")} (set listed)))
+               ;; A file written right after the listing waits for the next one.
+               (spit (io/file dir "src" "late.clj") "(ns late)\n")
+               (expect (= listed (ws/workspace-files dir))))
+             (finally (delete-tree! dir)))))
+  (it "answers nil outside a Git working tree"
+      (let [dir (temp-dir "vis-workspace-files-plain")]
+        (try (spit (io/file dir "a.clj") "(ns a)\n")
+             (expect (nil? (ws/workspace-files dir)))
              (finally (delete-tree! dir))))))
 
 (defdescribe

@@ -65,6 +65,10 @@ class Host(Protocol):
         """Read the project's `python.environment`: `project` or `shared`."""
         ...
 
+    def workspace_files(self) -> list[str] | None:
+        """List the files that Git sees in the working copy, or None without Git."""
+        ...
+
     def setting_declaration(self, spec: Mapping[str, Any]) -> Mapping[str, Any]:
         """Validate a declaration and fill defaults from the contract schema."""
         ...
@@ -3495,6 +3499,19 @@ def project_root() -> Path:
     session fails, like `workspace_root()`.
     """
     return Path(_host.project_root())
+
+
+def workspace_files() -> list[Path] | None:
+    """Return the files under `workspace_root()` that Git sees.
+
+    The list holds tracked files and untracked files that Git does not ignore.
+    The host lists the working copy once and gives the same list to each
+    extension that asks within a short time. Use it instead of a child process
+    for each extension. The result is None when the workspace is not in a Git
+    working tree. Outside Vis, it lists the process directory.
+    """
+    files = _host.workspace_files()
+    return None if files is None else [Path(name) for name in files]
 
 
 def python_environment() -> Literal["project", "shared"]:

@@ -111,6 +111,25 @@ def workspace_root():
     return str(Path.cwd())
 
 
+def workspace_files():
+    """List the files that Git sees under the process directory, or None."""
+    root = Path.cwd()
+    try:
+        done = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=root,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    names = done.stdout.decode("utf-8", "surrogateescape").split("\0")
+    return [str(root / name) for name in names if name]
+
+
 def python_environment():
     """Use the project environment when no Vis session owns this call."""
     return "project"
@@ -1443,6 +1462,7 @@ _IMPLEMENTATIONS = {
     "workspace_root": workspace_root,
     "project_root": workspace_root,
     "python_environment": python_environment,
+    "workspace_files": workspace_files,
     "setting_declaration": setting_declaration,
     "setting": setting,
     "state_get": state_get,
