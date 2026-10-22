@@ -173,3 +173,92 @@ describe('Safari reveal scroll after the keyboard is up', () => {
     vi.useRealTimers();
   });
 });
+
+describe('focusing a field in iOS Safari without a reveal pan', () => {
+  // Regression, user report (paraphrased: the session header still moves down when
+  // the keyboard opens): Safari pans the page to reveal a tapped field, and script
+  // cannot follow the animated pan. The device trace showed pans up to 322 px.
+  const iosSafari = () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('navigator', { ...navigator, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X)', maxTouchPoints: 5 });
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    // A real phone keeps `screen` fixed while Safari changes `innerHeight`.
+    vi.spyOn(window.screen, 'width', 'get').mockReturnValue(390);
+    vi.spyOn(window.screen, 'height', 'get').mockReturnValue(844);
+    viewport({ offsetTop: 0, pageTop: 0, scrollY: 0 });
+    Object.assign(window.visualViewport!, { height: 796 });
+    window.innerHeight = 796;
+    render(<ViewportProbe />);
+    return screen.getByRole('textbox', { name: 'Message' });
+  };
+  const touch = (target: Element, type: 'touchstart' | 'touchend', y: number) => {
+    const point = { clientX: 100, clientY: y, target } as unknown as Touch;
+    const event = new TouchEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      touches: type === 'touchstart' ? [point] : [],
+      changedTouches: [point],
+    });
+    target.dispatchEvent(event);
+    return event;
+  };
+
+  it('focuses a tapped field itself, without a browser scroll', () => {
+    const composer = iosSafari();
+    const focus = vi.spyOn(composer, 'focus');
+    touch(composer, 'touchstart', 700);
+    const tap = touch(composer, 'touchend', 702);
+    expect(tap.defaultPrevented).toBe(true);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(document.activeElement).toBe(composer);
+
+    // A tap on the focused field keeps the native caret placement.
+    touch(composer, 'touchstart', 700);
+    expect(touch(composer, 'touchend', 700).defaultPrevented).toBe(false);
+    act(() => {
+      composer.blur();
+      vi.advanceTimersByTime(0);
+    });
+
+    // A drag that starts on the field is a scroll, not a tap.
+    touch(composer, 'touchstart', 700);
+    expect(touch(composer, 'touchend', 640).defaultPrevented).toBe(false);
+    expect(document.activeElement).not.toBe(composer);
+    vi.useRealTimers();
+  });
+
+  it('learns the whole keyboard while Safari shortens innerHeight', () => {
+    const composer = iosSafari();
+    const shell = screen.getByTestId('shell');
+    act(() => composer.focus());
+
+    // Safari also shortens `innerHeight` while the keys are up; the learned height
+    // must still be the whole keyboard.
+    Object.assign(window.visualViewport!, { height: 474 });
+    window.innerHeight = 624;
+    act(() => listeners.get('resize')?.());
+    expect(shell.style.height).toBe('474px');
+
+    act(() => {
+      composer.blur();
+      vi.advanceTimersByTime(0);
+    });
+    expect(shell.style.height).toBe('');
+
+    Object.assign(window.visualViewport!, { height: 796 });
+    window.innerHeight = 796;
+    act(() => listeners.get('resize')?.());
+    act(() => composer.focus());
+    expect(shell.style.height).toBe('474px');
+    vi.useRealTimers();
+  });
+});

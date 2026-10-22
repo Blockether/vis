@@ -39,6 +39,17 @@ export function isKeyboardInputElement(element: Element | null): element is HTML
   );
 }
 
+/** The keyboard editor that holds `target`, if any. */
+function editorAt(target: Element): HTMLElement | null {
+  for (let el: Element | null = target; el; el = el.parentElement) {
+    if (isKeyboardInputElement(el)) {
+      const disabled = (el as HTMLInputElement).disabled || (el as HTMLInputElement).readOnly;
+      return disabled ? null : el;
+    }
+  }
+  return null;
+}
+
 // iPadOS Safari reports a Mac platform; only its touch points tell it apart.
 function isIosBrowser(): boolean {
   const nav = globalThis.navigator;
@@ -654,6 +665,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // keyboard twice.
     const nativeKeyboard = Capacitor.getPlatform() === 'ios';
     let currentBox: Box | null = null;
+    const webKeyboard = !nativeKeyboard && isIosBrowser();
     // Geometry is latency-sensitive: a React state update costs a render and a
     // frame after focus. Mutate only this root's inline geometry synchronously;
     // none of its thousands of descendants has to render for a keyboard frame.
@@ -739,13 +751,14 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // The visual viewport reports that only after the slide, so the shell jumped
     // twice. A focus therefore shortens the shell by the predicted keyboard height
     // first: the field is already above the keys and Safari has nothing to reveal.
-    const webKeyboard = !nativeKeyboard && isIosBrowser();
     let webPrepinHeight: number | null = null;
+    let webFullHeight = 0;
     const prepinWebKeyboard = () => {
       if (!webKeyboard || hasHardwarePointer() || isViewportRotating()) return false;
       const metrics = readViewportMetrics();
       if (isKeyboardCovering(metrics)) return false;
       const fullHeight = layoutHeight(metrics);
+      webFullHeight = fullHeight;
       webPrepinHeight = clampShellHeight(fullHeight - keyboardHeightForPrepin(fullHeight), metrics);
       pinnedShellHeight = webPrepinHeight;
       setSafeBottom(SAFE_BOTTOM_KEYBOARD);
@@ -820,9 +833,11 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
           if (!covered && isKeyboardInputElement(document.activeElement)) return;
           webPrepinHeight = null;
         }
-        if (webKeyboard && covered) {
-          const keys = layoutHeight(metrics) - vv.height;
-          if (isPlausibleKeyboardHeight(keys, layoutHeight(metrics))) rememberKeyboardHeight(keys);
+        // Safari shortens `innerHeight` while the keyboard is up, so measure the keys
+        // against the height that the focus saw.
+        if (webKeyboard && covered && webFullHeight > 0) {
+          const keys = webFullHeight - vv.height;
+          if (isPlausibleKeyboardHeight(keys, webFullHeight)) rememberKeyboardHeight(keys);
         }
         // Keyboard down means the layout viewport belongs at its origin again.
         if (!covered) resetLayoutScroll();
@@ -918,6 +933,27 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       sync();
     };
 
+    // iOS Safari pans the page to reveal a field that a tap focuses, also when the
+    // field is already above the keys. The pan is animated and script sees only its
+    // end, so the header slid down and back (device and simulator traces). A tap
+    // that focuses the field itself with `preventScroll` gets no pan. A drag stays
+    // a scroll, and a tap on a focused field keeps its native caret placement.
+    let tapStart: { x: number; y: number } | null = null;
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      tapStart = event.touches.length === 1 && touch ? { x: touch.clientX, y: touch.clientY } : null;
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      const start = tapStart;
+      tapStart = null;
+      const touch = event.changedTouches[0];
+      if (!start || !touch || Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) return;
+      const el = event.target instanceof Element ? editorAt(event.target) : null;
+      if (!el || el === document.activeElement || hasHardwarePointer()) return;
+      event.preventDefault();
+      el.focus({ preventScroll: true });
+    };
+
     // iOS Safari: when the last editor loses focus, the keyboard slides down over the
     // page. Give the shell its full height at the origin at once. A shell that waits
     // for the late viewport events hangs 172 px down with a band below it (trace).
@@ -942,6 +978,10 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     window.addEventListener('resize', sync);
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
+    if (webKeyboard) {
+      document.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+      document.addEventListener('touchend', onTouchEnd, { capture: true, passive: false });
+    }
     // A layout-viewport scroll moves the document-rooted shell but fires no
     // visual-viewport event, so the browser fallback watches it explicitly. On
     // native iOS, Keyboard.setScroll and WKWebView scrolling are disabled; a
@@ -1260,6 +1300,8 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       window.removeEventListener('resize', sync);
       document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('focusout', onFocusOut);
+      document.removeEventListener('touchstart', onTouchStart, true);
+      document.removeEventListener('touchend', onTouchEnd, true);
       window.removeEventListener('scroll', onPageScroll, true);
       stopRotation();
       disposeNative();
