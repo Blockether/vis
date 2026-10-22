@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.gateway.state :as gateway]
             [com.blockether.vis.internal.loop :as lp]
@@ -255,6 +256,72 @@
       (expect (ps/db-routing-locked? db leader))
       (smodel/set-model! db leader nil nil)
       (expect (not (ps/db-routing-locked? db leader))))))
+
+(defdescribe
+  rate-limited-child-test
+  (it
+    "a 429 ends the child turn and its record names the working routes"
+    (let [db
+          (h/store)
+
+          leader
+          (h/store-session! db {:channel :api})
+
+          child
+          (child! db leader {})
+
+          router
+          {:rate-limit {:same-provider-delays-ms [2000]}
+           :providers [{:id :busy :root "large" :models [{:name "large"}]}
+                       {:id :spare :root "small" :models [{:name "small"}]}]}
+
+          turn
+          {:created-at (java.util.Date.)
+           :duration-ms 10
+           :provider :busy
+           :model "large"
+           :content [{"type" "error"
+                      "code" "provider_rate_limit"
+                      "title" "Provider rate-limited"
+                      "provider" "busy"}]}
+
+          refusal
+          (fn [opts]
+            (try (#'agents/check-route! {:router router} opts) nil (catch Exception e e)))]
+
+      (expect (= {:same-provider-delays-ms [2000] :fail-fast? true :fallback-provider? false}
+                 (:rate-limit (agents/restrict-router {:db-info db :session-id child} router)))
+              "A child gets no same-provider retry and no automatic fallback")
+      (reset! @#'agents/rate-limited {})
+      (try (with-redefs [ps/db-list-session-turns
+                         (fn [_ _]
+                           [turn])
+
+                         auth-health/cooled
+                         (fn []
+                           #{})]
+
+             (let [rec (#'agents/record
+                        db
+                        router
+                        (constantly true)
+                        (constantly false)
+                        (System/currentTimeMillis)
+                        {:session_id child :status "failed"})]
+               (expect (= {:code "rate_limited"
+                           :message "Provider rate-limited"
+                           :provider "busy"
+                           :model "large"}
+                          (:error rec)))
+               (expect (= [{:provider "spare" :model "small"}] (:alternatives rec)))
+               (expect (document/valid-json? "agents"
+                                             "record"
+                                             (walk/stringify-keys
+                                               (into {} (remove (comp nil? val)) rec)))))
+             (expect (= :rate-limited (:error (ex-data (refusal {:provider "busy"})))))
+             (expect (str/includes? (ex-message (refusal {:provider "busy"})) "spare/small"))
+             (expect (nil? (refusal {:provider "spare"}))))
+           (finally (reset! @#'agents/rate-limited {}))))))
 
 (defn- with-fake-runtime
   "Call `(f entries)` with a runtime whose Council lives in memory. A reply to an entry is

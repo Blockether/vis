@@ -40,7 +40,9 @@ class SubagentRecord:
     ``status`` is ``asking`` when the child waits for its parent. Then ``question``,
     ``budget_request`` or ``files_request`` tells what it needs. ``held`` means that a
     human holds the queue of the child; only a person can release it. ``unknown`` names a
-    session that is not a subagent of the caller. ``warning`` reports a file overlap.
+    session that is not a subagent of the caller. ``warning`` reports a file overlap. A child
+    that a 429 stopped is ``failed`` with ``error`` (code ``rate_limited``) and ``alternatives``:
+    the working provider and model routes for a new child.
     """
 
     session_id: str
@@ -54,6 +56,8 @@ class SubagentRecord:
     iteration_budget: int | None = None
     iterations_used: int | None = None
     warning: str | None = None
+    error: dict[str, Any] | None = None
+    alternatives: list[dict[str, str]] | None = None
 
     @classmethod
     def from_wire(cls, value: dict[str, Any]) -> SubagentRecord:

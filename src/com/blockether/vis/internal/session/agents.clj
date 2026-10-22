@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.core :as ps]
+            [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.session.model :as smodel]
@@ -414,6 +415,98 @@
   [files]
   (not-empty (into {} (remove (comp empty? val)) files)))
 
+(def ^:private RATE_LIMIT_COOLDOWN_MS
+  "How long a provider that refused a subagent with 429 stays out of new subagent routes."
+  60000)
+
+;; Providers that refused a subagent with 429, as {provider-name until-ms}. A restart forgets them:
+;; the window is short, and the next refusal records the provider again.
+(defonce ^:private rate-limited (atom {}))
+
+(defn- rate-limit-failure
+  "The 429 failure that ended the last turn of child `row`, as {:code \"rate_limited\" :message
+   :provider :model}, or nil. It also starts the cooldown of that provider. A child turn ends at
+   its first 429 (see [[restrict-router]]), so its parent chooses the next route."
+  [db row]
+  (let [turn
+        (last (ps/db-list-session-turns db (:session_id row)))
+
+        block
+        (some #(when (= "provider_rate_limit" (get % "code")) %) (:content turn))
+
+        provider
+        (or (get block "provider")
+            (some-> (:provider turn)
+                    name))]
+
+    (when block
+      (when provider
+        (swap! rate-limited update
+          provider
+          (fnil max 0)
+          (+ (long (or (some-> (:created-at turn)
+                               inst-ms
+                               (+ (long (or (:duration-ms turn) 0))))
+                       (util/now-ms)))
+             (long RATE_LIMIT_COOLDOWN_MS))))
+      (cond-> {:code "rate_limited" :message (or (get block "title") "Provider rate-limited")}
+        provider
+        (assoc :provider provider)
+
+        (:model turn)
+        (assoc :model (str (:model turn)))))))
+
+(defn- cooled-providers
+  "Provider names that a new subagent must not use now: a recent 429 or an auth cooldown."
+  []
+  (let [now (util/now-ms)]
+    (into (into #{}
+                (keep (fn [[provider until]]
+                        (when (> (long until) now) provider)))
+                @rate-limited)
+          (map name)
+          (auth-health/cooled))))
+
+(defn- route-alternatives
+  "One working {:provider :model} route for each provider on `router` outside a cooldown, with
+   the root model of that provider."
+  [router]
+  (let [cooled (cooled-providers)]
+    (into []
+          (keep (fn [provider]
+                  (let [pid (name (:id provider))
+                        model (or (:root provider)
+                                  (let [m (first (:models provider))]
+                                    (if (map? m) (:name m) m)))]
+
+                    (when (and model (not (contains? cooled pid)))
+                      {:provider pid :model (str model)}))))
+          (:providers router))))
+
+(defn- inherited-provider
+  "The provider that a new child of `env` gets without an explicit provider."
+  [env]
+  (or (some-> (when (:turn-state-atom env) (ctx-loop/read-turn-state env))
+              :route
+              :provider)
+      (:provider (smodel/model-of (:db-info env) (str (:session-id env))))))
+
+(defn- check-route!
+  "Refuse a new subagent on a provider in a cooldown. The message names the working routes."
+  [env opts]
+  (when-let [provider (some-> (or (:provider opts) (inherited-provider env))
+                              name)]
+    (when (contains? (cooled-providers) provider)
+      (fail! :rate-limited
+             (str "Provider "
+                  provider
+                  " refused a subagent with 429 or rejects its credentials now. Give the task "
+                  "another provider and model"
+                  (when-let [routes (seq (route-alternatives (:router env)))]
+                    (str ", for example: "
+                         (str/join ", " (map #(str (:provider %) "/" (:model %)) routes))))
+                  ".")))))
+
 (defn- checked
   "Validate `opts` for `operation` and the ownership of its target session. Answers the
    keywordized opts."
@@ -431,6 +524,7 @@
              (str "A subagent cannot start subagents. End your turn with an answer that asks your "
                   "parent for them: name each part, its files and its done condition.")))
     (check-arguments! operation (wire/->wire opts))
+    (when (= :spawn operation) (check-route! env opts))
     (when (and (:task opts) (str/blank? (:task opts)))
       (fail! :invalid-request "A subagent needs a nonblank delegated task"))
     (when (and (contains? #{:grant :ask_files} operation) (str/blank? (grant-text (:files opts))))
@@ -486,8 +580,9 @@
 
 (defn- record
   "One wait record. A queued or running child without a live turn after 30 s is lost. A queued
-   child whose queue a human holds is held."
-  [db live? held? now row]
+   child whose queue a human holds is held. A child that a 429 stopped gets error and the working
+   routes of `router` in alternatives."
+  [db router live? held? now row]
   (let [sid
         (str (:session_id row))
 
@@ -510,7 +605,10 @@
         (contains? #{"queued" "running"} status)
 
         question
-        (when open? (get @questions sid))]
+        (when open? (get @questions sid))
+
+        failure
+        (when (= "failed" status) (rate-limit-failure db row))]
 
     (cond-> {:session_id sid
              :status (cond question "asking"
@@ -532,7 +630,12 @@
       (assoc :iterations_used (:iterations_used row))
 
       (:files row)
-      (assoc :files (:files row)))))
+      (assoc :files (:files row))
+
+      failure
+      (assoc :error
+        failure :alternatives
+        (route-alternatives router)))))
 
 (defn- wait-records
   "Poll until every child ends, one child asks or is held, or the timeout ends. A completed
@@ -588,7 +691,7 @@
                        (util/now-ms)
 
                        recs
-                       (mapv #(record db live? held? now %) (pick))
+                       (mapv #(record db (:router env) live? held? now %) (pick))
 
                        done?
                        (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
@@ -630,6 +733,9 @@
         ;; Check every task before the first spawn, so a bad task starts no child.
         _
         (check-arguments! :run (wire/->wire {:tasks specs}))
+
+        _
+        (run! #(check-route! env %) specs)
 
         deadline
         (util/deadline-ms (wait-timeout opts 240))
@@ -877,7 +983,12 @@
 (defn- current-record
   "A list with the one current record of child `sid`."
   [env sid]
-  [(record (:db-info env) (runtime-fn :live?) (held-fn) (util/now-ms) (info (:db-info env) sid))])
+  [(record (:db-info env)
+           (:router env)
+           (runtime-fn :live?)
+           (held-fn)
+           (util/now-ms)
+           (info (:db-info env) sid))])
 
 (defn- extend-records
   "Add iterations to the budget of a subagent and answer its record."
@@ -1205,27 +1316,30 @@
       {:preference (select-keys command [:provider :model]) :command command})))
 
 (defn restrict-router
-  "Apply an inherited allowlist to every request and retry, including automatic fallback."
+  "Apply the routing limits of a subagent to every request and retry, including automatic
+   fallback. An inherited allowlist narrows the providers. A 429 ends the request at once, without
+   a wait or another provider: the parent chooses the next route from the record of the child."
   [env router]
-  (if-let [allowed (seq (:allowed_models (info (:db-info env) (:session-id env))))]
-    (assoc router
-      :providers
-      (into []
-            (keep (fn [provider]
-                    (let [models (filterv (fn [model]
-                                            (some
-                                              #(and (= (name (:id provider)) (:provider %))
-                                                    (= (if (map? model) (:name model) (str model))
-                                                       (:model %)))
-                                              allowed))
-                                   (:models provider))]
-                      (when (seq models)
-                        (assoc provider
-                          :models models
-                          :root (if (some #(= (:root provider) (:name %)) models)
-                                  (:root provider)
-                                  (:name (first models))))))))
-            (:providers router)))
+  (if-let [child (info (:db-info env) (:session-id env))]
+    (cond-> (update router :rate-limit assoc :fail-fast? true :fallback-provider? false)
+      (seq (:allowed_models child))
+      (assoc :providers
+        (into []
+              (keep (fn [provider]
+                      (let [models (filterv (fn [model]
+                                              (some
+                                                #(and (= (name (:id provider)) (:provider %))
+                                                      (= (if (map? model) (:name model) (str model))
+                                                         (:model %)))
+                                                (:allowed_models child)))
+                                     (:models provider))]
+                        (when (seq models)
+                          (assoc provider
+                            :models models
+                            :root (if (some #(= (:root provider) (:name %)) models)
+                                    (:root provider)
+                                    (:name (first models))))))))
+              (:providers router))))
     router))
 
 (defn prompt
@@ -1243,6 +1357,7 @@
 - A child gets 120 iterations by default (maximum 600). For a large or multi-step task, set a larger iteration_budget in its task dict at the start.
 - A child sees the system prompt, your requests, notes and answers, and its task, but not your tool calls or their output. Give it sufficient context in the brief: the goal, the facts that your tools found, what you ruled out, exact paths and symbols. A child reads your whole session only when its brief is ambiguous, so do not rely on that. Set model and provider only when the user or project names a model for that work.
 - Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer.
+- A child stops at its first 429. Then its record has status failed, error with code rate_limited, and alternatives: the working provider/model routes. Run the task again with council.run and a provider and model from alternatives. Tell the new child what the failed child already changed. Without alternatives, do the task yourself.
 - While children run, do other work that they do not do. Do not do their work again. Before you use an answer, check its changed files and test results.
 - Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead. If it has files_request, answer with council.grant(session_id, files) or council.deny(session_id, reason). Grant only files that no other active child writes. A child cannot start subagents. When its answer asks for them, decide yourself: call council.run for the parts or do them, then council.resume the child if it must combine the results.
 - Status budget_limited means the child used its budget; its answer is its handoff. To continue it, call council.extend, then council.resume. The status stays budget_limited until the child continues.

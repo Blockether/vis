@@ -180,11 +180,34 @@ def test_child_controls_answer_records_and_wait_longer_than_the_gateway():
         {"status": "completed"},
         {"session_id": "child", "status": "invented"},
         {"session_id": "child", "status": "completed", "future_field": 1},
+        {
+            "session_id": "child",
+            "status": "failed",
+            "error": {"code": "other", "message": "x"},
+        },
     ],
 )
 def test_child_record_response_is_validated(record):
     with pytest.raises(ValueError):
         SubagentRecord.from_wire(record)
+
+
+def test_rate_limited_child_record_names_working_routes():
+    record = SubagentRecord.from_wire(
+        {
+            "session_id": "child",
+            "status": "failed",
+            "error": {
+                "code": "rate_limited",
+                "message": "Provider rate-limited",
+                "provider": "busy",
+                "model": "large",
+            },
+            "alternatives": [{"provider": "spare", "model": "small"}],
+        }
+    )
+    assert record.error["code"] == "rate_limited"
+    assert record.alternatives == [{"provider": "spare", "model": "small"}]
 
 
 @pytest.mark.parametrize("code", ["disabled", "group-not-found"])

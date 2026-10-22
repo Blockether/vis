@@ -481,6 +481,40 @@
         },
         "warning": {
           "type": "string"
+        },
+        "error": {
+          "description": "Why a failed child stopped. Code rate_limited means a 429 from its provider.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "enum": [
+                "rate_limited"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string",
+              "minLength": 1
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        },
+        "alternatives": {
+          "description": "Working provider and model routes for a new child, outside a rate-limit or authentication cooldown.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/model_pair"
+          }
         }
       },
       "required": [
