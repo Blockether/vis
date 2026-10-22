@@ -463,14 +463,12 @@
       (with-secret-project
         (fn [root]
           (let [snapshot
-                ;; Only bubblewrap on Linux needs concrete paths (#396).
-                (with-redefs [policy/os-binds-deny-paths? (constantly true)]
-                  (policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" root}]}
-                                    "jail" {"enabled" true
-                                            "filesystem" {"allow" ["project"]
-                                                          "deny_read" [".env" "**/.env"]
-                                                          "deny_write" ["service"]}}}
-                                   {:base-dir root}))
+                (policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+                                  "jail" {"enabled" true
+                                          "filesystem" {"allow" ["project"]
+                                                        "deny_read" [".env" "**/.env"]
+                                                        "deny_write" ["service"]}}}
+                                 {:base-dir root})
 
                 jail
                 (:process-jail snapshot)]
@@ -479,9 +477,13 @@
             ;; created after startup is still refused by `cat`.
             (expect (= [(str root "/.env") (str root "/**/.env")] (:deny-read-rules jail)))
             (expect (= [(str root "/service")] (:deny-write-rules jail)))
-            ;; A jail that binds paths can only name concrete paths, so the glob is expanded.
-            (expect (= [(str root "/.env") (str root "/service/.env")] (:deny-read jail)))
+            ;; The snapshot keeps the literal rules only, so it never walks the tree (#396).
+            (expect (= [(str root "/.env")] (:deny-read jail)))
             (expect (= [(str root "/service")] (:deny-write jail)))
+            ;; A jail that binds paths can only name concrete paths, so the spawn expands the glob.
+            (expect (some #{(str root "/service/.env")}
+                          (with-redefs [policy/os-binds-deny-paths? (constantly true)]
+                            (:deny-read (process-jail/runtime-policy jail)))))
             ;; Diagnostics show the rules an operator wrote, never file contents.
             (expect (= [(str root "/.env") (str root "/**/.env")]
                        (get-in (policy/access-view snapshot []) ["filesystem" "deny_read"])))
@@ -528,29 +530,76 @@
                   (expect
                     (some? (process-jail/deny-refusal env "file-write" (str root "/README.md")))))))
             (expect (= 0 @walks))))))
-  (it "expands every deny list with one walk when the OS jail binds paths"
+  (it
+    "starts one shared background walk for every deny list when the OS jail binds paths"
+    (with-secret-project
+      (fn [root]
+        (let [walks
+              (atom 0)
+
+              release
+              (promise)
+
+              finished
+              (atom false)
+
+              walk
+              @#'policy/walk-entries]
+
+          (with-redefs [policy/os-binds-deny-paths?
+                        (constantly true)
+
+                        policy/walk-entries
+                        (fn [& args]
+                          (swap! walks inc)
+                          (deref release 5000 nil)
+                          (apply walk args)
+                          (reset! finished true))]
+
+            ;; The snapshot only starts the walk, so a new session does not wait for it.
+            (let [jail (:process-jail (deny-snapshot root true))]
+              (expect (false? @finished))
+              (expect (= [(str root "/.env")] (:deny-read jail)))
+              (deliver release true)
+              (let [sent (process-jail/runtime-policy jail)]
+                ;; A glob without a separator matches a directory too.
+                (expect (every? (set (:deny-read sent))
+                                [(str root "/.env") (str root "/service/.env")
+                                 (str root "/service")]))
+                (expect (some #{(str root "/README.md")} (:deny-write sent))))
+              ;; A later spawn reuses the walk.
+              (process-jail/runtime-policy jail)
+              (expect (= 1 @walks)))))))))
+
+(defdescribe
+  deny-overlap-test
+  ;; Issue #396: the draft root check expanded each glob over the whole workspace.
+  (it "tests ancestors without a walk and walks only below the selected root"
       (with-secret-project
         (fn [root]
-          (let [walks
-                (atom 0)
+          (let [starts
+                (atom [])
 
                 walk
-                @#'policy/walk-entries]
+                @#'policy/walk-entries
 
-            (with-redefs [policy/os-binds-deny-paths?
-                          (constantly true)
+                nested
+                (str root "/**/.env")]
 
-                          policy/walk-entries
-                          (fn [& args]
-                            (swap! walks inc)
-                            (apply walk args))]
-
-              (let [jail (:process-jail (deny-snapshot root true))]
-                (expect (= 1 @walks))
-                ;; A glob without a separator matches a directory too.
-                (expect (= [(str root "/.env") (str root "/service/.env") (str root "/service")]
-                           (:deny-read jail)))
-                (expect (= [(str root "/README.md")] (:deny-write jail))))))))))
+            (with-redefs [policy/walk-entries (fn [start & args]
+                                                (swap! starts conj (str start))
+                                                (apply walk start args))]
+              (expect (= (str root "/secret.txt")
+                         (policy/deny-overlap [nested (str root "/secret.txt")] root)))
+              (expect (= (str root "/service")
+                         (policy/deny-overlap [(str root "/serv*")] (str root "/service"))))
+              (expect (nil? (policy/deny-overlap [(str root "/*.md")] (str root "/service"))))
+              (expect (nil? (policy/deny-overlap [nested] (str root "-elsewhere"))))
+              (expect (= [] @starts))
+              (expect (= (str root "/service/.env")
+                         (policy/deny-overlap [nested] (str root "/service"))))
+              (expect (= (str root "/service/.env") (policy/deny-overlap [nested] root)))
+              (expect (= [(str root "/service") root] @starts))))))))
 
 (defdescribe
   subagent-file-grant-narrows-a-snapshot

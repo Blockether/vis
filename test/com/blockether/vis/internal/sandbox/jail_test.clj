@@ -513,69 +513,69 @@
             readable
             (io/file root "README.md")]
 
-        (try (.mkdirs (io/file root "service"))
-             (spit secret "TOKEN=secret")
-             (spit nested "TOKEN=secret")
-             (spit readable "ok")
-             ;; A jail that binds paths expands the glob, so the snapshot is built AFTER the
-             ;; files exist (#396).
-             (let [policy
-                   (assoc (:process-jail
-                            (with-redefs [security-policy/os-binds-deny-paths? (constantly true)]
-                              (security-policy/snapshot
-                                {"workspace" {"filesystem" [{"id" "project" "path" root}]}
-                                 "jail" {"enabled" true
-                                         "filesystem" {"allow" ["project"]
-                                                       "deny_read" [".env" "**/.env"]}}}
-                                {:base-dir root})))
-                     :roots-fn (constantly [root])
-                     :net-enabled? false)
+        (try
+          (.mkdirs (io/file root "service"))
+          (spit secret "TOKEN=secret")
+          (spit nested "TOKEN=secret")
+          (spit readable "ok")
+          (let [policy
+                (assoc (:process-jail (security-policy/snapshot
+                                        {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+                                         "jail" {"enabled" true
+                                                 "filesystem" {"allow" ["project"]
+                                                               "deny_read" [".env" "**/.env"]}}}
+                                        {:base-dir root}))
+                  :roots-fn (constantly [root])
+                  :net-enabled? false)
 
-                   denied
-                   [(.getPath secret) (.getPath nested)]]
+                denied
+                [(.getPath secret) (.getPath nested)]]
 
-               ;; every managed child is handed the expanded paths and the rules
-               (with-redefs [runtime/jailed?
-                             (constantly false)
+            ;; every managed child is handed the expanded paths and the rules. Only a jail
+            ;; that binds paths gets the glob expanded, at spawn (#396).
+            (with-redefs [runtime/jailed?
+                          (constantly false)
 
-                             runtime/spawn-process!
-                             (fn [_ options]
-                               options)]
+                          security-policy/os-binds-deny-paths?
+                          (constantly true)
 
-                 (doseq [child [policy
-                                (pj/python-worker-policy policy "/run" "/run/control.sock" [])]]
-                   (let [sent (:deny-read (:policy
-                                            (pj/spawn! ["/bin/true"] nil child {:environment {}})))]
-                     (expect (every? (set sent) denied))
-                     ;; #263: the rule travels as written too. Expanding it names only the
-                     ;; files that existed when the snapshot was built.
-                     (expect (some #(str/includes? % "**/.env") sent)))))
-               ;; and a host that can enforce stops the child itself
-               (when (sandbox-applicable?)
-                 (let [read-file
-                       (fn [^java.io.File file]
-                         (run-process ["/bin/sh" "-c" (str "cat " (.getPath file))]
-                                      (io/file root)
-                                      policy))
+                          runtime/spawn-process!
+                          (fn [_ options]
+                            options)]
 
-                       late
-                       (io/file root "late" ".env")]
+              (doseq [child [policy (pj/python-worker-policy policy "/run" "/run/control.sock" [])]]
+                (let [sent (:deny-read (:policy
+                                         (pj/spawn! ["/bin/true"] nil child {:environment {}})))]
+                  (expect (every? (set sent) denied))
+                  ;; #263: the rule travels as written too. Expanding it names only the
+                  ;; files that existed when the snapshot was built.
+                  (expect (some #(str/includes? % "**/.env") sent)))))
+            ;; and a host that can enforce stops the child itself
+            (when (sandbox-applicable?)
+              (let [read-file
+                    (fn [^java.io.File file]
+                      (run-process ["/bin/sh" "-c" (str "cat " (.getPath file))]
+                                   (io/file root)
+                                   policy))
 
-                   (expect (not (zero? (:exit (read-file secret)))))
-                   (expect (not (zero? (:exit (read-file nested)))))
-                   (expect (= {:exit 0 :out "ok"} (select-keys (read-file readable) [:exit :out])))
-                   ;; #263: this one appears AFTER the policy was built, so only the rule
-                   ;; itself can cover it — reading it here is the leak the issue reported.
-                   ;; Only a pattern-enforcing host answers for it; elsewhere the child keeps
-                   ;; exactly the paths the snapshot expanded, and Vis' own tools hold the rule.
-                   (when (pattern-enforcing-host?)
-                     (.mkdirs (io/file root "late"))
-                     (spit late "TOKEN=secret")
-                     (let [late-read (read-file late)]
-                       (expect (not (zero? (:exit late-read))))
-                       (expect (not (str/includes? (:out late-read) "TOKEN=secret"))))))))
-             (finally (doseq [file (reverse (file-seq (io/file root)))]
-                        (io/delete-file file true)))))))
+                    late
+                    (io/file root "late" ".env")]
+
+                (expect (not (zero? (:exit (read-file secret)))))
+                (expect (not (zero? (:exit (read-file nested)))))
+                (expect (= {:exit 0 :out "ok"} (select-keys (read-file readable) [:exit :out])))
+                ;; #263: this one appears AFTER the policy was built, so only the rule
+                ;; itself can cover it — reading it here is the leak the issue reported.
+                ;; Only a pattern-enforcing host answers for it; elsewhere the child keeps
+                ;; exactly the paths that its spawn expanded, and Vis' own tools hold the rule.
+                (when (pattern-enforcing-host?)
+                  (.mkdirs (io/file root "late"))
+                  (spit late "TOKEN=secret")
+                  (let [late-read (read-file late)]
+                    (expect (not (zero? (:exit late-read))))
+                    (expect (not (str/includes? (:out late-read) "TOKEN=secret"))))))))
+          (finally (doseq [file (reverse (file-seq (io/file root)))]
+                     (io/delete-file file true)))))))
 
 (defdescribe
   subagent-file-grant-limits-host-writes

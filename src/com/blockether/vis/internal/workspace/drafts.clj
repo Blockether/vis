@@ -192,25 +192,26 @@
           policy
           (:security-policy env)
 
-          ;; A snapshot keeps glob deny rules unexpanded (#396), so expand them for this one
-          ;; explicit root selection.
-          restricted
-          (concat
-            (policy/deny-target-paths (concat (get-in policy [:process-jail :deny-read-rules])
-                                              (get-in policy [:process-jail :deny-write-rules]))
-                                      (:base-dir policy)
-                                      (:home policy))
-            (get-in policy [:process-jail :deny-exec])
-            (keep (fn [[path policy]]
-                    (when (contains? #{:copy-only :not-allowed} (workspace/draft-policy-id policy))
-                      path))
-                  (:draft-policies policy)))]
+          ;; A snapshot keeps glob deny rules unexpanded (#396). The overlap check tests the root
+          ;; and its ancestors, and walks below the root only until the first hit.
+          rules
+          (concat (get-in policy [:process-jail :deny-read-rules])
+                  (get-in policy [:process-jail :deny-write-rules]))
 
-      (when (some (fn [path]
-                    (let [^java.nio.file.Path denied (.toPath (io/file (workspace/normalize-root
-                                                                         path)))]
-                      (or (.startsWith selected denied) (.startsWith denied selected))))
-                  restricted)
+          restricted
+          (concat (get-in policy [:process-jail :deny-exec])
+                  (keep (fn [[path policy]]
+                          (when (contains? #{:copy-only :not-allowed}
+                                           (workspace/draft-policy-id policy))
+                            path))
+                        (:draft-policies policy)))]
+
+      (when (or (some (fn [path]
+                        (let [^java.nio.file.Path denied (.toPath (io/file (workspace/normalize-root
+                                                                             path)))]
+                          (or (.startsWith selected denied) (.startsWith denied selected))))
+                      restricted)
+                (policy/deny-overlap rules root))
         (throw
           (ex-info
             "This root overlaps a filesystem restriction or a copy-only/not-allowed draft policy."

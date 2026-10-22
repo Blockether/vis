@@ -10,7 +10,8 @@
    remote links, code examples and images are not republished. Failed local links
    become plain text with a recovery action; no host exception or file bytes leak."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [com.blockether.vis.internal.sandbox.jail :as process-jail])
   (:import [java.nio.channels Channels]
            [java.nio.file Files LinkOption Path SecureDirectoryStream StandardOpenOption]
            [java.nio.file.attribute BasicFileAttributeView FileAttribute]
@@ -95,9 +96,9 @@
         media-type
         (get report-types (str/lower-case (last (str/split (or filename "") #"\."))))
 
+        ;; Deny rules stay patterns (#396), so ask the live rule check, like the file tools.
         exclusions
-        (concat (get-in environment [:security-policy :process-jail :deny-read])
-                (get-in environment [:security-policy :process-jail :no-search]))]
+        (get-in environment [:security-policy :process-jail :no-search])]
 
     (when (or (not (.startsWith target workspace))
               (empty? parts)
@@ -105,7 +106,8 @@
               (some #(or (str/starts-with? % ".")
                          (re-find #"(?i)(credential|password|secret|token|private[-_]?key)" %))
                     parts)
-              (some #(.startsWith target (.toPath (io/file %))) exclusions))
+              (some #(.startsWith target (.toPath (io/file %))) exclusions)
+              (process-jail/deny-refusal environment "file-read" (str target)))
       (refuse!))
     (with-open [directory (Files/newDirectoryStream (.getRoot workspace))]
       (when-not (instance? SecureDirectoryStream directory) (refuse!))

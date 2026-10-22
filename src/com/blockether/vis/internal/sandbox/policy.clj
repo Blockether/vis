@@ -11,7 +11,8 @@
   (:import [java.io File]
            [java.nio.file DirectoryStream FileSystems Files LinkOption Path PathMatcher Paths]
            [java.util ArrayList Collection]
-           [java.util.concurrent ConcurrentLinkedQueue ForkJoinPool RecursiveAction]))
+           [java.util.concurrent ConcurrentLinkedQueue ForkJoinPool RecursiveAction]
+           [java.util.concurrent.atomic AtomicBoolean AtomicReference]))
 
 (def ^:private no-link-options (make-array LinkOption 0))
 
@@ -119,10 +120,14 @@
 
 (defn- walk-entries
   "Call `visit` on each entry below `start`, down to `depth` levels, with parallel directory
-   reads. Links are not followed and an unreadable directory is skipped."
+   reads. The walk stops when `visit` returns a true value. Links are not followed and an
+   unreadable directory is skipped."
   [^Path start depth visit]
   (let [depth
         (long depth)
+
+        stop
+        (AtomicBoolean.)
 
         pool
         (ForkJoinPool.)
@@ -132,12 +137,16 @@
           (proxy [RecursiveAction] []
             (compute []
               (let [children (ArrayList.)]
-                (try (with-open [^DirectoryStream entries (Files/newDirectoryStream dir)]
-                       (doseq [^Path entry entries]
-                         (visit entry)
-                         (when (and (< level depth) (Files/isDirectory entry nofollow-options))
-                           (.add children (task entry (inc level))))))
-                     (catch Exception _ nil))
+                (when-not (.get stop)
+                  (try (with-open [^DirectoryStream entries (Files/newDirectoryStream dir)]
+                         (let [iterator (.iterator entries)]
+                           (while (and (not (.get stop)) (.hasNext iterator))
+                             (let [^Path entry (.next iterator)]
+                               (when (visit entry) (.set stop true))
+                               (when (and (< level depth)
+                                          (Files/isDirectory entry nofollow-options))
+                                 (.add children (task entry (inc level))))))))
+                       (catch Exception _ nil)))
                 (RecursiveAction/invokeAll ^Collection children)))))]
 
     (try (.invoke pool ^RecursiveAction (task start 1)) (finally (.shutdown pool)))))
@@ -202,11 +211,75 @@
                                               [pattern]))
                                           patterns)))))))
 
-(defn deny-target-paths
-  "The concrete paths that an OS sandbox profile can deny for `patterns`. This walks the
-   tree below each glob, so call it only for an explicit action."
-  [patterns base-dir home]
-  (:paths (expand-deny-lists {:paths patterns} base-dir home)))
+(defn- literal-rules [patterns] (vec (distinct (remove glob? patterns))))
+
+(defn- glob-matcher
+  ^PathMatcher [pattern]
+  (try (.getPathMatcher (FileSystems/getDefault) (str "glob:" pattern)) (catch Throwable _ nil)))
+
+(defn- crosses-directories?
+  [pattern]
+  (let [remainder (second (glob-split pattern))]
+    (or (str/includes? remainder "/") (str/includes? remainder "**"))))
+
+(defn deny-overlap
+  "The first path that a rule of `patterns` covers and that is `root`, an ancestor of `root` or a
+   path below it, else nil. Literal rules and ancestors need no walk. Below `root`, a glob walks
+   only its part of the tree inside `root`, and the walk stops at the first hit (#396)."
+  [patterns root]
+  (let [^Path selected
+        (Paths/get (str root) (make-array String 0))
+
+        under?
+        (fn [^Path path ^Path parent]
+          (.startsWith path parent))
+
+        globs
+        (keep (fn [pattern]
+                (when-let [matcher (glob-matcher pattern)]
+                  [pattern matcher]))
+              (filter glob? patterns))
+
+        walks
+        (reduce (fn [walks [pattern matcher]]
+                  (let [literal
+                        (Paths/get ^String (first (glob-split pattern)) (make-array String 0))
+
+                        crosses?
+                        (crosses-directories? pattern)
+
+                        start
+                        (cond (under? literal selected) literal
+                              (and crosses? (under? selected literal)) selected)]
+
+                    (cond-> walks
+                      start
+                      (update start
+                              (fn [[depth matchers]]
+                                [(max (long (or depth 0)) (if crosses? Long/MAX_VALUE 1))
+                                 (conj (or matchers []) matcher)])))))
+                {}
+                globs)]
+
+    (or (some (fn [rule]
+                (let [denied (Paths/get ^String rule (make-array String 0))]
+                  (when (or (under? selected denied) (under? denied selected)) rule)))
+              (literal-rules patterns))
+        (some (fn [[_ ^PathMatcher matcher]]
+                (loop [^Path candidate selected]
+                  (cond (nil? candidate) nil
+                        (.matches matcher candidate) (str candidate)
+                        :else (recur (.getParent candidate)))))
+              globs)
+        (some (fn [[start [depth matchers]]]
+                (let [found (AtomicReference.)]
+                  (walk-entries start
+                                depth
+                                (fn [^Path path]
+                                  (when (some #(.matches ^PathMatcher % path) matchers)
+                                    (.compareAndSet found nil (str path)))))
+                  (.get found)))
+              walks))))
 
 (defn- os-binds-deny-paths?
   "True when the OS jail of this host denies only concrete paths. The Linux jail binds
@@ -214,16 +287,50 @@
   []
   (str/starts-with? (str/lower-case (str (System/getProperty "os.name"))) "linux"))
 
-(defn- jail-deny-lists
-  "The deny paths that the OS jail of `jail` gets beside the patterns, for each list of
-   `lists`. Only an enabled jail that binds paths needs the walk. A disabled jail and the
-   macOS jail get the literal rules alone, so a snapshot does not walk the tree (#396)."
-  [jail lists base-dir home]
-  (if (and (not (:disabled? jail)) (os-binds-deny-paths?))
-    (expand-deny-lists lists base-dir home)
-    (update-vals lists
-                 (fn [patterns]
-                   (vec (distinct (remove glob? patterns)))))))
+(def ^:private deny-walk-refresh-nanos
+  "A shared deny walk older than this starts a new one in the background."
+  (* 5 1000 1000 1000))
+
+;; Shared deny walks, by deny lists: {lists {:paths … :started nanos :pending future}}.
+(defonce ^:private deny-walks (atom {}))
+
+(defn- deny-walk!
+  "The shared walk entry of `lists`. Start a background walk when none runs and the last
+   one started more than [[deny-walk-refresh-nanos]] ago."
+  [lists]
+  (locking deny-walks
+    (let [{:keys [pending started] :as entry} (get @deny-walks lists)]
+      (if (or pending
+              (and started (< (- (System/nanoTime) (long started)) (long deny-walk-refresh-nanos))))
+        entry
+        (let [now (System/nanoTime)
+              walk (future (try (let [paths (expand-deny-lists lists
+                                                               (System/getProperty "user.dir")
+                                                               (System/getProperty "user.home"))]
+                                  (locking deny-walks
+                                    (swap! deny-walks assoc lists {:paths paths :started now}))
+                                  paths)
+                                (catch Throwable t
+                                  (locking deny-walks
+                                    (swap! deny-walks update lists dissoc :pending))
+                                  (throw t))))]
+
+          (get (swap! deny-walks assoc-in [lists :pending] walk) lists))))))
+
+(defn jail-deny-paths
+  "Concrete paths for each list of `lists`, `{key [pattern …]}`, when the OS jail of this
+   host denies only concrete paths, else nil. Sessions with the same rules share one walk. A
+   walk older than 5 s is renewed in the background, so only the first call waits (#396)."
+  [lists]
+  (when (and (os-binds-deny-paths?) (some glob? (mapcat val lists)))
+    (let [{:keys [paths pending]} (deny-walk! lists)]
+      (or paths @pending))))
+
+(defn- warm-jail-deny-paths!
+  "Start the walk of [[jail-deny-paths]] for `lists` in the background, without a wait."
+  [lists]
+  (when (and (os-binds-deny-paths?) (some glob? (mapcat val lists))) (deny-walk! lists))
+  nil)
 
 (defn- stable-value
   [value]
@@ -367,15 +474,19 @@
                  path-keys)
 
          ;; A deny rule stays a PATTERN for the host tools, the OS jail and the diagnostics
-         ;; view, which match it live. Only a jail that binds paths needs it expanded.
+         ;; view, which match it live. The snapshot never walks the tree (#396). A jail that
+         ;; binds paths expands the globs at spawn, from one shared background walk.
          jail
          (-> jail
              (assoc :deny-read-rules (:deny-read jail)
                     :deny-write-rules (:deny-write jail))
-             (merge (jail-deny-lists jail
-                                     {:deny-read (:deny-read jail) :deny-write (:deny-write jail)}
-                                     base-dir
-                                     home)))
+             (update :deny-read literal-rules)
+             (update :deny-write literal-rules))
+
+         _
+         (when-not (:disabled? jail)
+           (warm-jail-deny-paths! {:deny-read (:deny-read-rules jail)
+                                   :deny-write (:deny-write-rules jail)}))
 
          ;; (language caches now live in the workspace catalog and resolve through the
          ;;  path-keys reduce above; no separate cache-resolution pass.)
@@ -444,15 +555,11 @@
   (if (re-find glob-characters rule) (first (glob-split rule)) rule))
 
 (defn- add-rules
-  [jail rules-key paths-key rules base-dir home]
+  [jail rules-key paths-key rules]
   (cond-> jail
     (seq rules)
     (-> (update rules-key #(vec (distinct (concat % rules))))
-        (update paths-key
-                #(vec (distinct (concat
-                                  %
-                                  (paths-key
-                                    (jail-deny-lists jail {paths-key rules} base-dir home)))))))))
+        (update paths-key #(vec (distinct (concat % (literal-rules rules))))))))
 
 (defn outside-write-rules
   "The resolved write rules that `policy` cannot grant: with the jail on, a rule whose
@@ -490,14 +597,9 @@
           (vec (remove (set (outside-write-rules policy requested [base-dir])) requested))
 
           jail
-          (->
-            (:process-jail policy)
-            (add-rules :deny-read-rules :deny-read (resolve-rules deny base-dir home) base-dir home)
-            (add-rules :deny-write-rules
-                       :deny-write
-                       (resolve-rules read_only base-dir home)
-                       base-dir
-                       home))
+          (-> (:process-jail policy)
+              (add-rules :deny-read-rules :deny-read (resolve-rules deny base-dir home))
+              (add-rules :deny-write-rules :deny-write (resolve-rules read_only base-dir home)))
 
           jail
           (cond-> jail

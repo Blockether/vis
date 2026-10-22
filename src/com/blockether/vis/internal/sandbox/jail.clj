@@ -48,6 +48,7 @@
             [com.blockether.vis.internal.python.runtime :as vis-python-runtime]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.sandbox.policy :as security-policy]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace])
   (:import (java.nio.file FileSystems Path PathMatcher Paths)
@@ -317,10 +318,10 @@
    `:inbound-ports`. Called per spawn, so each child gets the CURRENT live roots
    without re-reading model-writable config.
 
-   Each deny list is sent in both spellings: the concrete paths the snapshot
-   expanded, which also cover the symlinks it resolved, and the configured rules
-   themselves, so a pattern keeps closing files the session creates after the
-   snapshot (#263)."
+   Each deny list is sent in both spellings: the concrete paths, which also cover the
+   symlinks they resolve, and the configured rules themselves, so a pattern keeps closing
+   files the session creates later (#263). A jail that binds paths gets each glob expanded
+   from one shared walk, because it cannot compile a pattern (#396)."
   [{:keys [roots-fn net-enabled? allow-read-write allow-read deny-write deny-read deny-exec
            deny-read-rules deny-write-rules write-rules write-limited? proxy-port loopback-port
            keychain? unix-connect]
@@ -330,12 +331,15 @@
 
         ;; A subagent file grant keeps the session roots readable only.
         limited?
-        (boolean (or write-limited? (seq write-rules)))]
+        (boolean (or write-limited? (seq write-rules)))
+
+        expanded
+        (security-policy/jail-deny-paths {:deny-read deny-read-rules :deny-write deny-write-rules})]
 
     {:read-write (vec (if limited? allow-read-write (concat session-roots allow-read-write)))
      :read-only (vec (if limited? (concat allow-read session-roots) allow-read))
-     :deny-write (vec (distinct (concat deny-write deny-write-rules)))
-     :deny-read (vec (distinct (concat deny-read deny-read-rules)))
+     :deny-write (vec (distinct (concat deny-write (:deny-write expanded) deny-write-rules)))
+     :deny-read (vec (distinct (concat deny-read (:deny-read expanded) deny-read-rules)))
      :deny-exec (vec deny-exec)
      :unix-connect (vec unix-connect)
      :network (cond proxy-port {:proxy proxy-port}
