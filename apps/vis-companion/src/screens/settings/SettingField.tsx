@@ -3,6 +3,8 @@ import { createContext, useContext, useState, type ReactNode } from 'react';
 import { FormLabel } from './SettingsLayout';
 import { PlusIcon, ProjectsIcon, TrashIcon } from '../../components/icons';
 import { ProjectFolderSheet } from '../../components/ProjectFolderSheet';
+import { PANEL_SIZES } from '../../components/Menu';
+import { menuPosition, type MenuPosition } from '../../lib/anchored-menu';
 import type { GatewayClient } from '../../lib/gateway';
 import type { SettingValue, Toggle } from '../../lib/types';
 import configSchema from '../../../../../packages/vis-contract/resources/vis-contract/schema/config.json';
@@ -66,7 +68,8 @@ function ListHeader({
   children,
 }: {
   label: string;
-  onAdd: () => void;
+  /** Gets the pressed button, so a panel that it opens can hang from it. */
+  onAdd: (anchor: HTMLElement) => void;
   children: ReactNode;
 }) {
   return (
@@ -74,7 +77,7 @@ function ListHeader({
       <Text variant="label" className="min-w-0 truncate">
         {children}
       </Text>
-      <IconButton variant="quiet" label={label} title={label} onClick={onAdd}>
+      <IconButton variant="quiet" label={label} title={label} onClick={(event) => onAdd(event.currentTarget)}>
         <PlusIcon className="size-4" />
       </IconButton>
     </legend>
@@ -245,8 +248,10 @@ function ToggleRow({
 
 function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
   const machine = useContext(SettingMachine);
-  // The root that the folder sheet fills: an index, `'new'` for a new root, or closed.
-  const [picking, setPicking] = useState<number | 'new' | null>(null);
+  // The root that the folder sheet fills (an index, or `'new'`) and the button it hangs from.
+  const [picking, setPicking] = useState<{ target: number | 'new'; at: MenuPosition | null } | null>(null);
+  const pick = (target: number | 'new', anchor: HTMLElement) =>
+    setPicking({ target, at: menuPosition(anchor.getBoundingClientRect(), PANEL_SIZES.browse.width) });
   const rows = Array.isArray(value) ? value : [];
   const update = (index: number, key: string, next: SettingValue) =>
     onChange(rows.map((row, i) => {
@@ -265,16 +270,16 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
       return { ...old, path, ...(isNameDerived ? { id: folderName(path) } : {}) };
     }));
   const choose = (path: string) => {
-    if (picking === 'new') onChange([...rows, { id: folderName(path), path, access: 'read-write' }]);
-    else if (picking !== null) setPath(picking, path);
+    if (picking?.target === 'new') onChange([...rows, { id: folderName(path), path, access: 'read-write' }]);
+    else if (picking) setPath(picking.target, path);
     setPicking(null);
   };
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-3">
       <ListHeader
         label="Add workspace root"
-        onAdd={() =>
-          machine ? setPicking('new') : onChange([...rows, { id: '', path: '', access: 'read-write' }])
+        onAdd={(anchor) =>
+          machine ? pick('new', anchor) : onChange([...rows, { id: '', path: '', access: 'read-write' }])
         }
       >
         Workspace roots
@@ -305,7 +310,7 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
                   <IconButton
                     label={`Choose folder for root ${index + 1}`}
                     title="Choose folder"
-                    onClick={() => setPicking(index)}
+                    onClick={(event) => pick(index, event.currentTarget)}
                   >
                     <ProjectsIcon className="size-4" />
                   </IconButton>
@@ -376,13 +381,13 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
           </Entry>
         );
       })}
-      {machine && picking !== null && (
+      {machine && picking && (
         <ProjectFolderSheet
           label={machine.label}
           mode="pick"
-          at={null}
+          at={picking.at}
           client={machine.client}
-          startAt={picking === 'new' ? null : String(objectValue(rows[picking]).path ?? '') || null}
+          startAt={picking.target === 'new' ? null : String(objectValue(rows[picking.target]).path ?? '') || null}
           knownRoots={new Set()}
           onCancel={() => setPicking(null)}
           onChoose={choose}

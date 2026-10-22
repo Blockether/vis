@@ -162,7 +162,9 @@ it('adds a workspace root from a folder chosen on the machine', async () => {
     </SettingMachine.Provider>,
   );
   await userEvent.click(screen.getByRole('button', { name: 'Add workspace root' }));
-  expect(await screen.findByRole('dialog', { name: 'Choose folder on tower' })).toBeInTheDocument();
+  // The sheet hangs from the pressed button, not from the top corner of the screen.
+  const sheet = await screen.findByRole('dialog', { name: 'Choose folder on tower' });
+  expect(sheet.style.getPropertyValue('--menu-top')).not.toBe('');
   await userEvent.click(await screen.findByText('notes/'));
   await userEvent.click(await screen.findByRole('button', { name: /^Use folder/ }));
   await waitFor(() =>
