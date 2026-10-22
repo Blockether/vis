@@ -1,0 +1,10 @@
+artifacts = ["busy-calls.jsonl"]
+
+[metadata]
+lang = "python"
+
+[agent]
+timeout_sec = 900.0
+
+[verifier]
+timeout_sec = 300.0

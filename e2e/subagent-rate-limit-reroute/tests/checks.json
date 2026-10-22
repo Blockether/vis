@@ -1,0 +1,32 @@
+{
+  "want": {
+    "reroute.txt": [
+      "reroute-ok",
+      "subagent"
+    ]
+  },
+  "wantnot": {
+    "reroute.txt": [
+      "leader",
+      "busy"
+    ]
+  },
+  "want_answer": [
+    "reroute-done"
+  ],
+  "want_tools": [
+    "council.run"
+  ],
+  "want_json_files": {
+    "busy-calls.jsonl": [
+      {
+        "model": "busy-1",
+        "status": 429
+      }
+    ]
+  },
+  "forbid_tools": [
+    "patch"
+  ],
+  "want_requested_route": true
+}
