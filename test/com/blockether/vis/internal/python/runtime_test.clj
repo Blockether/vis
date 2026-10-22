@@ -582,7 +582,43 @@
                  (expect (= ["sync"] @calls) "only the offline check runs")
                  (expect (not (.exists (io/file environment ".vis-prepared.edn"))))))
              (finally (.setWritable environment true false)
-                      (#'python-runtime/delete-tree! project))))))
+                      (#'python-runtime/delete-tree! project)))))
+  ;; #407: a new installation compiles its bytecode, so a worker imports without a compile.
+  (it "compiles a new installation into the bytecode cache"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-compiled-project")
+
+            prefix
+            (temp-dir "vis-compiled-prefix")
+
+            site
+            (io/file project ".venv" "lib" "python3.14" "site-packages")]
+
+        (try (spit (io/file project "pyproject.toml") "[project]\nname = \"compiled\"\n")
+             (spit (io/file project "extension.py") "VALUE = 1\n")
+             (.mkdirs site)
+             (spit (io/file site "dependency.py") "VALUE = 2\n")
+             (spit (io/file project ".venv" "pyvenv.cfg") "home = /embedded/bin\n")
+             (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                         (when (some #{"--check"} args)
+                                                           (throw (ex-info "not ready" {}))))
+                              #'python-runtime/shared-project? (constantly false)
+                              #'python-runtime/runtime-environment? (constantly true)
+                              #'python-runtime/remove-environment-shell! (fn [_])
+                              #'python-runtime/pycache-prefix (constantly (str prefix))
+                              #'python-runtime/project-packages (fn [_]
+                                                                  (.getCanonicalFile site))}
+               (fn []
+                 (python-runtime/ensure-project! project)
+                 (let [compiled (->> (file-seq prefix)
+                                     (map #(.getName ^java.io.File %))
+                                     (filter #(str/ends-with? % ".pyc"))
+                                     set)]
+                   (expect (some #(str/starts-with? % "extension.") compiled))
+                   (expect (some #(str/starts-with? % "dependency.") compiled)))))
+             (finally (#'python-runtime/delete-tree! project)
+                      (#'python-runtime/delete-tree! prefix))))))
 
 (defdescribe
   automatic-project-preparation-replaces-an-environment-from-another-python

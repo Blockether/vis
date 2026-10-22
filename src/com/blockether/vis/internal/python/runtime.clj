@@ -218,6 +218,11 @@
         (.put environment "UV_DEFAULT_INDEX" index))))
   builder)
 
+(defn- pycache-prefix
+  "The bytecode cache of the embedded Python: `VIS_PYTHON_PYCACHE_PREFIX` or the Vis state."
+  []
+  (Locations/pycachePrefix))
+
 (defn- bytecode-cache!
   "Send the bytecode of uv's Python children to the runtime cache, not the shipped tree.
 
@@ -227,7 +232,7 @@
   [^ProcessBuilder builder]
   (let [environment (.environment builder)]
     (when-not (.containsKey environment "PYTHONPYCACHEPREFIX")
-      (.put environment "PYTHONPYCACHEPREFIX" (Locations/pycachePrefix))))
+      (.put environment "PYTHONPYCACHEPREFIX" (pycache-prefix))))
   builder)
 
 (def ^:private diagnostic-limit 16384)
@@ -632,6 +637,43 @@
            (catch java.io.IOException _ nil))))
   packages)
 
+(defn- compile-bytecode!
+  "Compile a newly installed project and its packages into the bytecode cache.
+   Workers then import them without a compile, also from a read-only tree (#407).
+   A failure costs only speed, because a worker compiles what it imports."
+  [^File project ^File packages]
+  (let [prefix
+        (pycache-prefix)
+
+        python
+        (Interpreter/pythonExecutable)
+
+        root
+        (.getCanonicalPath project)
+
+        site
+        (.getCanonicalPath packages)
+
+        roots
+        (cond-> [root]
+          (not (str/starts-with? site (str root File/separator)))
+          (conj site))]
+
+    (when (and prefix python)
+      (try (let [process (.start (doto (ProcessBuilder. ^java.util.List
+                                                        (into [python "-I" "-X"
+                                                               (str "pycache_prefix=" prefix) "-m"
+                                                               "compileall" "-q" "-j" "0"]
+                                                              roots))
+                                   (.directory project)
+                                   (.redirectErrorStream true)
+                                   (.redirectOutput ProcessBuilder$Redirect/DISCARD)))]
+             (when-not (.waitFor process 300 TimeUnit/SECONDS) (kill-installer! process)))
+           (catch java.io.IOException e
+             (tel/log! {:level :warn
+                        :id ::bytecode-compile-failed
+                        :data {:project root :error (.getMessage e)}}))))))
+
 (defn- preparation-failure
   "Record a failed preparation stage and wrap `t` as a credential-free preparation error."
   [^File project ^Throwable t]
@@ -653,7 +695,8 @@
    Source-only projects without dependencies beyond Vis use shared packages.
    Otherwise uv owns lock updates, dependency groups and its package cache.
    A ready private environment must pass uv's offline check and use the embedded Python.
-   A stamp of that check skips uv while the project, lock and environment are unchanged (#407)."
+   A stamp of that check skips uv while the project, lock and environment are unchanged (#407).
+   A new installation also compiles its bytecode into the embedded Python's cache."
   [^File project]
   (locking preparation-lock
     ;; #377: the readiness check and the shell cleanup share one workspace lookup.
@@ -679,7 +722,9 @@
                    (preparation-stage! project "installing")
                    (remove-environment-shell! project)
                    (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
-                 (let [packages (stamp-prepared! project (project-packages project))]
+                 (let [packages (project-packages project)]
+                   (when-not ready? (compile-bytecode! project packages))
+                   (stamp-prepared! project packages)
                    (preparation-stage! project (if ready? "cached" "ready"))
                    packages))))
            (catch Throwable t (throw (preparation-failure project t)))))))
