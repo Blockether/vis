@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.55] - 2026-10-22
+
+### Added
+- The `examples/aws-lambda/` example runs the native gateway and the web app on AWS Lambda, with S3 state and worker handoff. Its image installs the newest Vis release and the language, graphify, memory and Spel extensions.
+- The Companion draws Mermaid diagrams and copies them as images.
+- A subagent stops at its first 429 answer, and the parent chooses the next route.
+
+### Changed
+- Sessions start faster: extension workers and contexts start in parallel, deny globs no longer walk the tree, and stamped environments skip uv checks (#396, #407).
+- Projects prepare their extensions at the first session, not at load (#407).
+- Prompt caching, fast mode and watchdogs come from svar 0.7.212.
+
+### Fixed
+- Extensions load from a read-only directory, such as a container image, when a sync prepared them before.
+- On iOS Safari, the header stays at the top when the keyboard opens or closes, and a tapped field gets focus without a page jump.
+- A settings reload keeps unrelated sandboxes (#408).
+- Drafts again refuse roots under literal deny paths (#396).
+- Hang reports keep virtual threads.
+- The Companion centers the header logo and shows a list setting's label once.
+
 ## [v0.2.54] - 2026-10-22
 
 ### Added
