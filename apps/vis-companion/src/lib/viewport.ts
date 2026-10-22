@@ -805,7 +805,11 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         // would outlive the state it described.
         if (document.visibilityState === 'hidden') return;
         const metrics = readViewportMetrics();
-        const covered = isKeyboardCovering(metrics);
+        // iOS Safari raises its keyboard only for a focused editor. Without one, a
+        // short visual viewport is the keyboard still sliding down, not a keyboard.
+        const covered =
+          isKeyboardCovering(metrics) &&
+          !(webKeyboard && !isKeyboardInputElement(document.activeElement));
         // A resume can hand back a layout viewport TALLER than the device (see
         // `deviceHeightLimit`), and iOS announces nothing afterwards. An
         // unpinned full-height shell would then hang off the bottom with the tab
@@ -825,11 +829,13 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         // iOS can scroll the layout viewport to reveal a focused field even with
         // `html { overflow: hidden }`. A document-rooted shell moves with that
         // viewport, putting the header under the status bar, so pin it to the
-        // visual viewport's document position. `pageTop` is that position in every
-        // engine. `offsetTop + scrollY` is the same only where `scrollY` is the
-        // layout scroll: WebKit reports the visual scroll there, counts it twice and
-        // leaves an empty band above the header.
-        const top = Math.round(vv.pageTop ?? vv.offsetTop + layoutScroll());
+        // visual viewport's document position. `pageTop` is that position in most
+        // engines. iOS Safari updates `scrollY` in the scroll event but `pageTop`
+        // up to 500 ms later (device trace), so it reads `scrollY` there.
+        // `offsetTop + scrollY` counts the WebKit scroll twice.
+        const top = Math.round(
+          webKeyboard ? window.scrollY : (vv.pageTop ?? vv.offsetTop + layoutScroll()),
+        );
         const next: Box | null =
           vv.height > 0 && (covered || oversized || top > 1)
             ? { height: clampShellHeight(vv.height, metrics), top }
@@ -907,9 +913,24 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     // the field is already visible. Follow it in the scroll event itself: the next
     // animation frame is one painted frame late, and the header jumps up and back.
     const onPageScroll = () => {
-      if (webKeyboard && currentBox && vv.pageTop !== undefined)
-        setBox({ height: currentBox.height, top: Math.round(vv.pageTop) });
+      if (webKeyboard && currentBox)
+        setBox({ height: currentBox.height, top: Math.round(window.scrollY) });
       sync();
+    };
+
+    // iOS Safari: when the last editor loses focus, the keyboard slides down over the
+    // page. Give the shell its full height at the origin at once. A shell that waits
+    // for the late viewport events hangs 172 px down with a band below it (trace).
+    const onFocusOut = () => {
+      if (!webKeyboard) return;
+      window.setTimeout(() => {
+        if (isKeyboardInputElement(document.activeElement)) return;
+        webPrepinHeight = null;
+        pinnedShellHeight = null;
+        resetLayoutScroll();
+        setSafeBottom(SAFE_BOTTOM_DEFAULT);
+        setBox(null);
+      }, 0);
     };
 
     sync();
@@ -920,6 +941,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     window.addEventListener('focus', onVisible);
     window.addEventListener('resize', sync);
     document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
     // A layout-viewport scroll moves the document-rooted shell but fires no
     // visual-viewport event, so the browser fallback watches it explicitly. On
     // native iOS, Keyboard.setScroll and WKWebView scrolling are disabled; a
@@ -1237,6 +1259,7 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       window.removeEventListener('focus', onVisible);
       window.removeEventListener('resize', sync);
       document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
       window.removeEventListener('scroll', onPageScroll, true);
       stopRotation();
       disposeNative();

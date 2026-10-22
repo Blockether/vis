@@ -154,6 +154,22 @@ describe('Safari reveal scroll after the keyboard is up', () => {
     });
     expect(scrollTo).not.toHaveBeenCalled();
     expect(shell.style.transform).toBe('translateY(172px)');
+
+    // Keyboard down: Safari zeroes `scrollY` first and keeps the stale `pageTop`
+    // and visual height for about 500 ms. The header moved 172 px down meanwhile.
+    act(() => {
+      composer.blur();
+      vi.advanceTimersByTime(0);
+    });
+    expect(shell.style.transform).toBe('');
+    expect(shell.style.height).toBe('');
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 });
+    act(() => {
+      window.dispatchEvent(new Event('scroll'));
+      flush();
+    });
+    expect(shell.style.transform).toBe('');
+    expect(shell.style.height).toBe('');
     vi.useRealTimers();
   });
 });
