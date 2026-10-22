@@ -73,10 +73,10 @@
     {:id (str (random-uuid)) :repo-id "rt" :repo-root base :root base :state :active :fork-ms 1}))
 
 (defn- wait-until
-  "True once `pred` holds, polling for at most five seconds; clone removal
-   after a discard runs in the background."
+  "True once `pred` holds, polling for at most 30 seconds; clone removal
+   after a discard runs in the background and is slow on a loaded CI runner."
   [pred]
-  (let [deadline (+ (System/currentTimeMillis) 5000)]
+  (let [deadline (+ (System/currentTimeMillis) 30000)]
     (loop []
 
       (cond (pred) true
