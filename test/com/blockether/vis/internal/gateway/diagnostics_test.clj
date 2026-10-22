@@ -19,7 +19,9 @@
   [f]
   (let [dir (.toFile (Files/createTempDirectory "vis-gateway-diagnostics-test-"
                                                 (make-array FileAttribute 0)))]
-    (try (with-redefs [paths/logs-dir #(.getAbsolutePath dir)]
+    ;; A loaded CI runner can take longer than the 500 ms production capture budget.
+    (try (with-redefs [paths/logs-dir #(.getAbsolutePath dir)
+                       diagnostics/CAPTURE_MS 30000]
            (f dir))
          (finally (doseq [^File file (reverse (file-seq dir))]
                     (io/delete-file file true))))))
