@@ -187,6 +187,10 @@ example after a change outside these inputs.
 Vis does not run uv for an unchanged extension. For a changed extension, `uv sync --check` decides
 if its environment is ready. Editing existing editable Python source does not require another sync.
 
+After `vis-agent python uv sync` succeeds, Vis records the ready environment in its `.venv`. The
+next start then skips uv for that project. Vis checks uv again when `pyproject.toml`, `uv.lock`, a
+local path source or the installed packages change.
+
 Reload switches live sessions at the next turn boundary. Calls that are already running can finish
 with old code. A failed reload keeps the last good tools and docs and marks them stale. The reload
 result, doctor and assistant context show the source fingerprints and the failure reason. Fix that

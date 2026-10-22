@@ -504,6 +504,54 @@
              (finally (doseq [file (reverse (file-seq project))]
                         (io/delete-file file true)))))))
 
+;; Issue #407: a verified preparation skips uv until the project, lock or environment changes.
+(defdescribe
+  automatic-project-preparation-reuses-a-stamped-environment
+  (it "skips uv while the stamped inputs are unchanged"
+      (python-runtime/ensure-library!)
+      (let [project
+            (temp-dir "vis-stamped-project")
+
+            site
+            (io/file project ".venv" "lib" "python3.14" "site-packages")
+
+            calls
+            (atom [])]
+
+        (try (spit (io/file project "pyproject.toml") "[project]\nname = \"stamped\"\n")
+             (spit (io/file project "uv.lock") "version = 1\n")
+             (.mkdirs site)
+             (spit (io/file project ".venv" "pyvenv.cfg") "home = /embedded/bin\n")
+             (with-redefs-fn {#'python-runtime/run-uv! (fn [_ args]
+                                                         (swap! calls conj (second args)))
+                              #'python-runtime/shared-project? (constantly false)
+                              #'python-runtime/runtime-environment? (constantly true)
+                              #'python-runtime/project-packages (fn [_]
+                                                                  (.getCanonicalFile site))}
+               (fn []
+                 (let [packages
+                       (.getCanonicalFile site)
+
+                       prepare!
+                       #(do (reset! calls [])
+                            (expect (= packages (python-runtime/ensure-project! project)))
+                            @calls)]
+
+                   (expect (= ["sync"] (prepare!)) "the first preparation asks uv")
+                   (expect (= [] (prepare!)) "an unchanged project skips uv")
+                   (spit (io/file project "uv.lock") "version = 1\n# changed\n")
+                   (expect (= ["sync"] (prepare!)) "a changed lock asks uv again")
+                   (expect (= [] (prepare!)))
+                   (.setLastModified site (- (.lastModified site) 60000))
+                   (expect (= ["sync"] (prepare!)) "a changed environment asks uv again")
+                   (.delete (io/file project ".venv" ".vis-prepared.edn"))
+                   (expect (= []
+                              (do (#'python-runtime/stamp-synced-project!
+                                   ["sync" (str "--project=" (.getPath project))])
+                                  (prepare!)))
+                           "a successful vis-agent python uv sync stamps the project"))))
+             (finally (#'python-runtime/delete-tree! project))))))
+
 (defdescribe
   automatic-project-preparation-replaces-an-environment-from-another-python
   (it "automatic project preparation replaces an environment from another python"

@@ -166,7 +166,8 @@ selects a prerelease. `sync --dry-run` reports it as `would-sync`, because a dry
 network calls.
 
 Dependencies use `uv sync --check --offline` first. They fall back to normal `uv sync` only when
-preparation is needed. `uv` owns its lockfile, environment and download cache.
+preparation is needed. `uv` owns its lockfile, environment and download cache. A ready environment
+is recorded in its `.venv`, so the next start skips uv until the project, lock or packages change.
 
 When you remove a declaration, sync keeps its installation as `orphaned`. Preview removals with
 `sync --dry-run --prune`. Then use `sync --trust --prune` to unlink them. Sync can remove only

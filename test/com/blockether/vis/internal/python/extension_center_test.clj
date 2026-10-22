@@ -203,19 +203,18 @@
                     (expect (= 42 (invoke)))
                     (expect (.isFile (io/file source "uv.lock")))
                     (expect (.isDirectory (io/file source ".venv")))
-                    ;; Reload finds the environment; preparation checks that it uses the embedded Python.
+                    ;; Reload finds the environment. Issue #407: the stamp of the sync that
+                    ;; prepared it replaces uv's check while the project and lock are unchanged.
                     (expect
-                      (= (if declarative?
-                           ["workspace" "export" "workspace" "sync" "run"]
-                           ["export" "export" "workspace" "sync" "run"])
-                         (mapv second @calls))
-                      "Explicit cold preparation installs; an existing environment is checked")
+                      (=
+                        (if declarative? ["workspace"] ["export" "export" "workspace" "sync" "run"])
+                        (mapv second @calls))
+                      "Explicit cold preparation installs; a stamped environment is not checked again")
                     (reset! calls [])
                     (when declarative?
                       (expect (= ["cached"]
                                  (mapv #(get % "status") (pyx/sync-packages! {:trust true}))))
-                      (expect (= ["export" "workspace" "sync" "run"] (mapv second @calls)))
-                      (expect (= ["--check" "--offline"] (subvec (nth @calls 2) 2 4)))
+                      (expect (= [] (mapv second @calls)))
                       (reset! calls []))
                     (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
                     (expect (= [] (mapv second @calls))
@@ -227,8 +226,8 @@
                     (expect (= 42 (invoke)))
                     (expect (= 0 (:failed (pyx/reload-python-extensions! opts))))
                     (expect (= 43 (invoke)))
-                    (expect (= ["workspace" "export" "workspace" "sync" "run"]
-                               (mapv second @calls)))
+                    ;; Issue #407: a source edit keeps the stamped environment, so uv only locates it.
+                    (expect (= ["workspace"] (mapv second @calls)))
                     (spit (io/file source "extension.py") "raise ValueError('broken edit')\n")
                     (expect (= 1 (:failed (pyx/reload-python-extensions! opts))))
                     (expect (= 43 (invoke)))))

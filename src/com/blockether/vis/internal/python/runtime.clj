@@ -18,6 +18,7 @@
    execute bits that no jar or zip round-trips."
   (:require [babashka.http-client :as http]
             [charred.api :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis-python-runtime :as runtime]
@@ -553,6 +554,82 @@
       (.println config/original-stderr (str "[vis extensions] " name ": " stage))
       (.flush config/original-stderr))))
 
+(def ^:private prepared-stamp
+  "The file in a project's own `.venv` that records its last verified preparation."
+  ".vis-prepared.edn")
+
+(defn- path-sources
+  "Local path sources that `lock` installs, the project included, with their build metadata.
+   uv's check reads that metadata, so a stamp must change with it."
+  [^File project lock]
+  (vec (for [[_ path] (re-seq #"source = \{ (?:editable|directory|path|virtual) = \"([^\"]+)\" \}"
+                              (or lock ""))]
+         (let [source (let [file (io/file path)]
+                        (if (.isAbsolute file) file (io/file project path)))]
+           (if (.isDirectory source)
+             [path
+              (mapv #(let [file (io/file source %)] (when (.isFile file) (slurp file)))
+                    ["pyproject.toml" "setup.cfg" "setup.py"])]
+             [path (.lastModified source)])))))
+
+(defn- prepared-inputs
+  "Digest what uv's offline check reads, without uv: project and lock files, local path
+   sources, the environment and the embedded tools. Nil without an own `.venv`."
+  [^File project ^File packages]
+  (let [config
+        (io/file project ".venv" "pyvenv.cfg")
+
+        text
+        #(let [file (io/file project %)] (when (.isFile file) (slurp file)))
+
+        lock
+        (text "uv.lock")]
+
+    (when (and (.isFile config) (.isDirectory packages))
+      (util/sha256-hex (pr-str [(.getCanonicalPath project) (text "pyproject.toml") lock
+                                (path-sources project lock) (slurp config) (.lastModified packages)
+                                (Interpreter/pythonExecutable) (runtime/uv-executable)])))))
+
+(defn- stamped-packages
+  "The site-packages of the project's last verified preparation, while its inputs are unchanged."
+  ^File [^File project]
+  (let [stamp (io/file project ".venv" prepared-stamp)]
+    (when (.isFile stamp)
+      (try (let [{:keys [inputs packages]} (edn/read-string (slurp stamp))
+                 packages (io/file (str packages))]
+
+             (when (and (string? inputs) (= inputs (prepared-inputs project packages)))
+               (.getCanonicalFile packages)))
+           (catch Exception _ nil)))))
+
+(defn- stamp-prepared!
+  "Record a verified preparation in the project's own `.venv` and return `packages`.
+   An environment elsewhere, such as a workspace member's, keeps the uv check."
+  ^File [^File project ^File packages]
+  (let [environment
+        (.getCanonicalFile (io/file project ".venv"))
+
+        inputs
+        (prepared-inputs project packages)]
+
+    (when (and inputs
+               (str/starts-with? (.getCanonicalPath packages)
+                                 (str (.getPath environment) File/separator)))
+      (let [staging (Files/createTempFile (.toPath environment)
+                                          prepared-stamp
+                                          ".tmp"
+                                          (make-array java.nio.file.attribute.FileAttribute 0))]
+        (try (spit (.toFile staging)
+                   (pr-str {:inputs inputs :packages (.getCanonicalPath packages)}))
+             (Files/move staging
+                         (.toPath (io/file environment prepared-stamp))
+                         (into-array CopyOption
+                                     [StandardCopyOption/REPLACE_EXISTING
+                                      StandardCopyOption/ATOMIC_MOVE]))
+             (catch java.io.IOException _ nil)
+             (finally (Files/deleteIfExists staging))))))
+  packages)
+
 (defn- preparation-failure
   "Record a failed preparation stage and wrap `t` as a credential-free preparation error."
   [^File project ^Throwable t]
@@ -573,7 +650,8 @@
   "Prepare an extension with bundled uv and the embedded Python.
    Source-only projects without dependencies beyond Vis use shared packages.
    Otherwise uv owns lock updates, dependency groups and its package cache.
-   A ready private environment must pass uv's offline check and use the embedded Python."
+   A ready private environment must pass uv's offline check and use the embedded Python.
+   A stamp of that check skips uv while the project, lock and environment are unchanged (#407)."
   [^File project]
   (locking preparation-lock
     ;; #377: the readiness check and the shell cleanup share one workspace lookup.
@@ -583,22 +661,25 @@
               *workspace-dirs*
               (atom {})]
 
-      (try (if (shared-project? project true)
-             (do (preparation-stage! project "cached")
-                 (.getCanonicalFile (io/file (runtime/packages-dir))))
-             (let [ready? (try (and (runtime-environment? project)
-                                    (do (run-uv! project
-                                                 (into [(bundled-uv!) "sync" "--check" "--offline"]
-                                                       (embedded-python)))
-                                        true))
-                               (catch clojure.lang.ExceptionInfo _ false))]
-               (when-not ready?
-                 (preparation-stage! project "installing")
-                 (remove-environment-shell! project)
-                 (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
-               (let [packages (project-packages project)]
-                 (preparation-stage! project (if ready? "cached" "ready"))
-                 packages)))
+      (try (if-let [packages (stamped-packages project)]
+             (do (preparation-stage! project "cached") packages)
+             (if (shared-project? project true)
+               (do (preparation-stage! project "cached")
+                   (.getCanonicalFile (io/file (runtime/packages-dir))))
+               (let [ready? (try (and (runtime-environment? project)
+                                      (do (run-uv! project
+                                                   (into [(bundled-uv!) "sync" "--check"
+                                                          "--offline"]
+                                                         (embedded-python)))
+                                          true))
+                                 (catch clojure.lang.ExceptionInfo _ false))]
+                 (when-not ready?
+                   (preparation-stage! project "installing")
+                   (remove-environment-shell! project)
+                   (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
+                 (let [packages (stamp-prepared! project (project-packages project))]
+                   (preparation-stage! project (if ready? "cached" "ready"))
+                   packages))))
            (catch Throwable t (throw (preparation-failure project t)))))))
 
 (def ^:private shared-sync-selection-options
@@ -1024,17 +1105,63 @@
                       {:type ::project-sync-required})))
     (.getCanonicalFile (io/file (runtime/packages-dir)))))
 
+(defn- option-value
+  "The value of the long uv option `name` in `args`, from `--name value` or `--name=value`."
+  [args name]
+  (some (fn [[flag value]]
+          (cond (= name flag) value
+                (str/starts-with? (str flag) (str name "=")) (subs flag (inc (count name)))))
+        (partition 2 1 [nil] args)))
+
+(defn- sync-project
+  "The project that `uv sync` `args` select: --project, else --directory, else the current directory."
+  ^File [args]
+  (let [resolve
+        (fn [^File base path]
+          (let [file (io/file path)]
+            (if (.isAbsolute file) file (io/file base path))))
+
+        directory
+        (cond-> (io/file (System/getProperty "user.dir"))
+          (option-value args "--directory")
+          (resolve (option-value args "--directory")))
+
+        ^File project
+        (if-let [project (option-value args "--project")]
+          (resolve directory project)
+          directory)]
+
+    (.getCanonicalFile project)))
+
+(defn- stamp-synced-project!
+  "After a successful `uv sync`, run the check of automatic preparation and stamp a ready
+   project, so the next gateway start skips uv (#407). Another Python's environment gets no stamp."
+  [args]
+  (let [project (sync-project args)]
+    (try (binding [*extension-preparation?* true
+                   *workspace-dirs* (atom {})]
+
+           (when (and (.isFile (io/file project "pyproject.toml"))
+                      (not (shared-project? project false))
+                      (runtime-environment? project))
+             (run-uv! project (into [(bundled-uv!) "sync" "--check" "--offline"] (embedded-python)))
+             (stamp-prepared! project (project-packages project))))
+         (catch Exception _ nil))))
+
 (defn uv-command!
   "Run bundled upstream uv with unchanged arguments and stdio; return its exit code.
    Explicit :shared? opts select Vis's shared sync workflow, never a project venv.
    Vis's python.index_url supplies UV_DEFAULT_INDEX unless uv's index environment
-   is already set. Explicit uv CLI options retain upstream precedence."
+   is already set. Explicit uv CLI options retain upstream precedence.
+   A successful `sync` stamps a ready extension project for the next preparation."
   ([args]
-   (.waitFor (.start (doto (ProcessBuilder. ^java.util.List (into [(bundled-uv!)] args))
-                       (.directory (io/file (System/getProperty "user.dir")))
-                       uv-index!
-                       bytecode-cache!
-                       (.inheritIO)))))
+   (let [exit (.waitFor (.start (doto (ProcessBuilder. ^java.util.List (into [(bundled-uv!)] args))
+                                  (.directory (io/file (System/getProperty "user.dir")))
+                                  uv-index!
+                                  bytecode-cache!
+                                  (.inheritIO))))]
+     (when (and (zero? exit) (= "sync" (first args))) (stamp-synced-project! args))
+     exit))
   ([args {:keys [shared?]}] (if shared? (shared-uv-sync! args) (uv-command! args))))
 
 (defn pip-install!
