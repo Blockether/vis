@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [v0.2.55] - 2026-10-22
+## [v0.3.0] - 2026-10-22
 
 ### Added
 - The `examples/aws-lambda/` example runs the native gateway and the web app on AWS Lambda, with S3 state and worker handoff. Its image installs the newest Vis release and the language, graphify, memory and Spel extensions.
@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A settings reload keeps unrelated sandboxes (#408).
 - Drafts again refuse roots under literal deny paths (#396).
 - Hang reports keep virtual threads.
-- The Companion centers the header logo and shows a list setting's label once.
+- The Companion centers the header logo, keeps the machine strip on the session header line and shows a list setting's label once.
 
 ## [v0.2.54] - 2026-10-22
 
