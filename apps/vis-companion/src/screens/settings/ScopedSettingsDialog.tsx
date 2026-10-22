@@ -126,7 +126,9 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
     // `split` holds one height on a phone, so a late answer or a search cannot move the sheet.
     <SettingMachine.Provider value={settingMachine}>
     <Modal size="split" onDismiss={onClose}>
-      <DialogFrame title={`${scope[0].toUpperCase()}${scope.slice(1)} settings`} subtitle={label ?? data?.label ?? target_id} onClose={onClose}>
+      {/* Session settings open from their session, so its title would only repeat it. */}
+      <DialogFrame title={`${scope[0].toUpperCase()}${scope.slice(1)} settings`}
+        subtitle={scope === 'session' ? undefined : label ?? data?.label ?? target_id} onClose={onClose}>
         <div className="min-h-0 overflow-y-auto">
           <div className="sticky top-0 z-10 border-b border-dialog-edge bg-panel-2 px-3 py-3 sm:px-4">
             <Input

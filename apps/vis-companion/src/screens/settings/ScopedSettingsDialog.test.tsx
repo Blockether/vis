@@ -108,6 +108,9 @@ it.each(['session', 'group', 'project'] as const)(
     renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
 
     const dialog = screen.getByRole('dialog', { name: `${scope[0].toUpperCase()}${scope.slice(1)} settings` });
+    // Only a project or group names its owner under the heading.
+    if (scope === 'session') expect(screen.queryByText('Wallet work')).toBeNull();
+    else expect(screen.getByText('Wallet work')).toBeInTheDocument();
     // The box of application settings: the same width, and one height that neither
     // a late answer nor a search changes.
     expect(dialog.parentElement).toHaveClass('sm:max-w-4xl', 'mouse:max-w-6xl');
