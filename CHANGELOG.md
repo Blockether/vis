@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.2.54] - 2026-10-22
+
+### Added
+- You can export a session as a snapshot and restore it, also on another machine. The SDK and the gateway can pin session models, run and fork sessions, and list models with their prices and limits (#405).
+- Extensions get the session API through the host (#405).
+- Chats accept ZIP archives. The Companion shows the Markdown and CSV entries of an archive.
+- `patch` accepts exact-text edits, and edits address lines by file version.
+- `ls` pages long listings.
+- `vis-agent web` connects each browser to its own gateway (#397).
+- Extensions can load glob entries and read `project_root` (#399).
+- The Companion has Siri and Shortcuts actions, a new automation editor and list pickers for root folders and request methods.
+- The Companion shows machines as a segmented switch, with the unread news count and age on each tab.
+
+### Changed
+- Prompt caching is better for Codex and other providers, and one-shot CLI runs send a shorter prompt.
+- Provider warnings go to the logs as JSON lines, with less noise (#403).
+- The container image uses Node.js 24.22.1 LTS, and npm packages with audit advisories are updated.
+- Session settings in the Companion no longer repeat the session title under the heading.
+
+### Fixed
+- A failed provider call names its cause and route (#401, #402, #403).
+- A provider model's `api_style` is read correctly (#404).
+- Settings of a nested extension project load (#399).
+- Repeated `vis-agent web` launches stay on one machine (#397).
+- Snapshot restore, child waits and restored session order are more reliable (#405).
+- Shell commands work on hosts without `/dev/ptmx`.
+- Files written below gitignored index roots are found.
+- The Companion focuses the signed-out provider in settings (#406), and releases the iOS audio session after dictation.
+
 ## [v0.2.53] - 2026-10-19
 
 ### Added
