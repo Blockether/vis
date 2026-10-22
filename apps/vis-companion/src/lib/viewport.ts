@@ -791,10 +791,12 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         if (!covered) resetLayoutScroll();
         // iOS can scroll the layout viewport to reveal a focused field even with
         // `html { overflow: hidden }`. A document-rooted shell moves with that
-        // viewport, putting the header under the status bar. `offsetTop` alone
-        // never sees it because it is measured against the viewport that moved,
-        // so the pin has to add the layout scroll back.
-        const top = Math.round(vv.offsetTop + layoutScroll());
+        // viewport, putting the header under the status bar, so pin it to the
+        // visual viewport's document position. `pageTop` is that position in every
+        // engine. `offsetTop + scrollY` is the same only where `scrollY` is the
+        // layout scroll: WebKit reports the visual scroll there, counts it twice and
+        // leaves an empty band above the header.
+        const top = Math.round(vv.pageTop ?? vv.offsetTop + layoutScroll());
         const next: Box | null =
           vv.height > 0 && (covered || oversized || top > 1)
             ? { height: clampShellHeight(vv.height, metrics), top }
