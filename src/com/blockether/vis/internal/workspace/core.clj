@@ -1049,7 +1049,7 @@
         (.getAbsolutePath (io/file (str root)))
 
         now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         fresh?
         #(and % (< (- now (long (:at %))) (long workspace-files-ttl-ms)))
