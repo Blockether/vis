@@ -3368,9 +3368,9 @@
                               environment))]
                (expect (true? (:timeout? result)))
                ;; The guest is GONE: no EXTRA core is spinning after the timeout.
-               ;; Take the quieter of two samples so one unlucky GC/JIT burst
-               ;; cannot decide the verdict.
-               (expect (< (- (min (busy-cores 250) (busy-cores 250)) baseline) 0.75))
+               ;; Take the quietest of four samples: a spinner adds a core to each,
+               ;; but a loaded macOS CI runner gave 0.766 with the quieter of two.
+               (expect (< (- (apply min (repeatedly 4 #(busy-cores 250))) baseline) 0.75))
                ;; ...and the interrupt did not retire or poison the context.
                (expect (false? @retired))
                (expect (= "42"
