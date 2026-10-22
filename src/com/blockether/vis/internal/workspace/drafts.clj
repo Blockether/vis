@@ -13,6 +13,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.git :as git])
   (:import [java.io File]))
@@ -191,15 +192,19 @@
           policy
           (:security-policy env)
 
+          ;; A snapshot keeps glob deny rules unexpanded (#396), so expand them for this one
+          ;; explicit root selection.
           restricted
-          (concat (get-in policy [:process-jail :deny-read])
-                  (get-in policy [:process-jail :deny-write])
-                  (get-in policy [:process-jail :deny-exec])
-                  (keep (fn [[path policy]]
-                          (when (contains? #{:copy-only :not-allowed}
-                                           (workspace/draft-policy-id policy))
-                            path))
-                        (:draft-policies policy)))]
+          (concat
+            (policy/deny-target-paths (concat (get-in policy [:process-jail :deny-read-rules])
+                                              (get-in policy [:process-jail :deny-write-rules]))
+                                      (:base-dir policy)
+                                      (:home policy))
+            (get-in policy [:process-jail :deny-exec])
+            (keep (fn [[path policy]]
+                    (when (contains? #{:copy-only :not-allowed} (workspace/draft-policy-id policy))
+                      path))
+                  (:draft-policies policy)))]
 
       (when (some (fn [path]
                     (let [^java.nio.file.Path denied (.toPath (io/file (workspace/normalize-root

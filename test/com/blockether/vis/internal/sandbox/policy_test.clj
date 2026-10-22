@@ -463,12 +463,14 @@
       (with-secret-project
         (fn [root]
           (let [snapshot
-                (policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" root}]}
-                                  "jail" {"enabled" true
-                                          "filesystem" {"allow" ["project"]
-                                                        "deny_read" [".env" "**/.env"]
-                                                        "deny_write" ["service"]}}}
-                                 {:base-dir root})
+                ;; Only bubblewrap on Linux needs concrete paths (#396).
+                (with-redefs [policy/os-binds-deny-paths? (constantly true)]
+                  (policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+                                    "jail" {"enabled" true
+                                            "filesystem" {"allow" ["project"]
+                                                          "deny_read" [".env" "**/.env"]
+                                                          "deny_write" ["service"]}}}
+                                   {:base-dir root}))
 
                 jail
                 (:process-jail snapshot)]
@@ -477,7 +479,7 @@
             ;; created after startup is still refused by `cat`.
             (expect (= [(str root "/.env") (str root "/**/.env")] (:deny-read-rules jail)))
             (expect (= [(str root "/service")] (:deny-write-rules jail)))
-            ;; The OS profile can only name concrete paths, so the glob is expanded.
+            ;; A jail that binds paths can only name concrete paths, so the glob is expanded.
             (expect (= [(str root "/.env") (str root "/service/.env")] (:deny-read jail)))
             (expect (= [(str root "/service")] (:deny-write jail)))
             ;; Diagnostics show the rules an operator wrote, never file contents.
@@ -485,6 +487,70 @@
                        (get-in (policy/access-view snapshot []) ["filesystem" "deny_read"])))
             (expect (= [(str root "/service")]
                        (get-in (policy/access-view snapshot []) ["filesystem" "deny_write"]))))))))
+
+(defn- deny-snapshot
+  "A snapshot of a project with glob deny rules, with the jail on or off."
+  [root enabled?]
+  (policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" root}]}
+                    "jail" {"enabled" enabled?
+                            "filesystem" {"allow" ["project"]
+                                          "deny_read" [".env" "**/.env" "s*"]
+                                          "deny_write" ["*.md"]}}}
+                   {:base-dir root}))
+
+(defdescribe
+  deny-rule-expansion-cost-test
+  ;; Issue #396: each snapshot walked the whole workspace once for each glob deny rule, so a
+  ;; new session or a /reload took 10-20 s in a large workspace, with the jail on or off.
+  (it "walks nothing when the jail is off or when the OS jail compiles the patterns"
+      (with-secret-project
+        (fn [root]
+          (let [walks (atom 0)]
+            (with-redefs [policy/os-binds-deny-paths? (constantly false)
+                          policy/walk-entries (fn [& _]
+                                                (swap! walks inc))]
+
+              (doseq [enabled? [false true]]
+                (let [snapshot (deny-snapshot root enabled?)
+                      jail (:process-jail snapshot)
+                      env {:security-policy snapshot}]
+
+                  (expect (= [(str root "/.env")] (:deny-read jail)))
+                  (expect (= [] (:deny-write jail)))
+                  (expect (= [(str root "/.env") (str root "/**/.env") (str root "/s*")]
+                             (:deny-read-rules jail)))
+                  ;; Seatbelt gets each pattern and also denies files created later.
+                  (expect (some #{(str root "/**/.env")}
+                                (:deny-read (process-jail/runtime-policy jail))))
+                  ;; The host tools still match the rules live.
+                  (expect (some?
+                            (process-jail/deny-refusal env "file-read" (str root "/service/.env"))))
+                  (expect
+                    (some? (process-jail/deny-refusal env "file-write" (str root "/README.md")))))))
+            (expect (= 0 @walks))))))
+  (it "expands every deny list with one walk when the OS jail binds paths"
+      (with-secret-project
+        (fn [root]
+          (let [walks
+                (atom 0)
+
+                walk
+                @#'policy/walk-entries]
+
+            (with-redefs [policy/os-binds-deny-paths?
+                          (constantly true)
+
+                          policy/walk-entries
+                          (fn [& args]
+                            (swap! walks inc)
+                            (apply walk args))]
+
+              (let [jail (:process-jail (deny-snapshot root true))]
+                (expect (= 1 @walks))
+                ;; A glob without a separator matches a directory too.
+                (expect (= [(str root "/.env") (str root "/service/.env") (str root "/service")]
+                           (:deny-read jail)))
+                (expect (= [(str root "/README.md")] (:deny-write jail))))))))))
 
 (defdescribe
   subagent-file-grant-narrows-a-snapshot

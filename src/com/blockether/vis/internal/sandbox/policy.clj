@@ -4,15 +4,18 @@
    A snapshot is created once for a root environment, inherited unchanged by
    child environments, and replaced only by an explicit environment rebuild.
    Enforcement and context both derive from this value."
-  (:require [babashka.fs :as fs]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.vis.internal.config.validation :as config-validation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util])
   (:import [java.io File]
-           [java.nio.file Files LinkOption Path Paths]))
+           [java.nio.file DirectoryStream FileSystems Files LinkOption Path PathMatcher Paths]
+           [java.util ArrayList Collection]
+           [java.util.concurrent ConcurrentLinkedQueue ForkJoinPool RecursiveAction]))
 
 (def ^:private no-link-options (make-array LinkOption 0))
+
+(def ^:private nofollow-options (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 
 (defn- nearest-real-path
   "Resolve a configured path against `base-dir`, resolving every existing
@@ -101,8 +104,7 @@
 (def ^:private glob-characters "What makes a deny rule a PATTERN rather than one path." #"[*?\[{]")
 
 (defn- glob-split
-  "An absolute glob pattern as `[literal-ancestor-directory remainder]`, the two
-   halves `babashka.fs/glob` wants."
+  "An absolute glob pattern as `[literal-ancestor-directory remainder]`."
   [pattern]
   (let [segments
         (str/split pattern #"/")
@@ -115,21 +117,113 @@
 
     [(if (str/blank? root) "/" root) (str/join "/" (drop (count literal) segments))]))
 
-(defn- deny-target-paths
-  "The concrete paths an OS sandbox profile can deny for `patterns`. A literal
-   rule is denied by SPELLING, whether or not that file exists yet; a glob names
-   nothing the kernel understands, so it is expanded against the files present
-   when this snapshot is built. Hidden files are included — `.env` is the point."
+(defn- walk-entries
+  "Call `visit` on each entry below `start`, down to `depth` levels, with parallel directory
+   reads. Links are not followed and an unreadable directory is skipped."
+  [^Path start depth visit]
+  (let [depth
+        (long depth)
+
+        pool
+        (ForkJoinPool.)
+
+        task
+        (fn task [^Path dir ^long level]
+          (proxy [RecursiveAction] []
+            (compute []
+              (let [children (ArrayList.)]
+                (try (with-open [^DirectoryStream entries (Files/newDirectoryStream dir)]
+                       (doseq [^Path entry entries]
+                         (visit entry)
+                         (when (and (< level depth) (Files/isDirectory entry nofollow-options))
+                           (.add children (task entry (inc level))))))
+                     (catch Exception _ nil))
+                (RecursiveAction/invokeAll ^Collection children)))))]
+
+    (try (.invoke pool ^RecursiveAction (task start 1)) (finally (.shutdown pool)))))
+
+(defn- glob? [rule] (boolean (re-find glob-characters rule)))
+
+(defn- glob-matches
+  "`{pattern [path …]}`, sorted, for the absolute glob `patterns` that share the literal
+   ancestor `root`, from ONE walk. Hidden files count. The walk stays at the top level when
+   no pattern can cross a directory."
+  [^String root patterns]
+  (let [matchers
+        (into []
+              (keep (fn [pattern]
+                      (when-let [matcher (try (.getPathMatcher (FileSystems/getDefault)
+                                                               (str "glob:" pattern))
+                                              (catch Throwable _ nil))]
+                        [pattern matcher])))
+              patterns)
+
+        depth
+        (if (some #(let [remainder (second (glob-split %))] (or (str/includes? remainder "/")
+                                                                (str/includes? remainder "**")))
+                  patterns)
+          Long/MAX_VALUE
+          1)
+
+        ^Path start
+        (Paths/get root (make-array String 0))
+
+        found
+        (into {}
+              (map (fn [[pattern]]
+                     [pattern (ConcurrentLinkedQueue.)]))
+              matchers)]
+
+    (when (and (seq matchers) (Files/isDirectory start no-link-options))
+      (walk-entries start
+                    depth
+                    (fn [^Path path]
+                      (doseq [[pattern ^PathMatcher matcher] matchers]
+                        (when (.matches matcher path)
+                          (.add ^ConcurrentLinkedQueue (found pattern) (.toString path)))))))
+    (update-vals found #(vec (sort %)))))
+
+(defn- expand-deny-lists
+  "Expand each list of `lists`, `{key [pattern …]}`, to concrete paths. A literal rule is
+   denied by SPELLING, whether or not that file exists yet. A glob names nothing that the
+   kernel understands, so it expands to the files present now. Globs with the same literal
+   ancestor share one walk, in all lists. Hidden files are included, because `.env` is the point."
+  [lists base-dir home]
+  (let [hits (into {}
+                   (mapcat (fn [[root globs]]
+                             (glob-matches root globs)))
+                   (group-by (comp first glob-split) (distinct (filter glob? (mapcat val lists)))))]
+    (update-vals lists
+                 (fn [patterns]
+                   (vec (distinct (mapcat (fn [pattern]
+                                            (if (glob? pattern)
+                                              (keep #(nearest-real-path % base-dir home)
+                                                    (get hits pattern))
+                                              [pattern]))
+                                          patterns)))))))
+
+(defn deny-target-paths
+  "The concrete paths that an OS sandbox profile can deny for `patterns`. This walks the
+   tree below each glob, so call it only for an explicit action."
   [patterns base-dir home]
-  (vec (distinct (mapcat (fn [pattern]
-                           (if (re-find glob-characters pattern)
-                             (let [[root remainder] (glob-split pattern)]
-                               (keep #(nearest-real-path % base-dir home)
-                                     (try
-                                       (fs/glob root remainder {:hidden true :follow-links false})
-                                       (catch Throwable _ nil))))
-                             [pattern]))
-                         patterns))))
+  (:paths (expand-deny-lists {:paths patterns} base-dir home)))
+
+(defn- os-binds-deny-paths?
+  "True when the OS jail of this host denies only concrete paths. The Linux jail binds
+   paths. The macOS jail compiles each pattern itself."
+  []
+  (str/starts-with? (str/lower-case (str (System/getProperty "os.name"))) "linux"))
+
+(defn- jail-deny-lists
+  "The deny paths that the OS jail of `jail` gets beside the patterns, for each list of
+   `lists`. Only an enabled jail that binds paths needs the walk. A disabled jail and the
+   macOS jail get the literal rules alone, so a snapshot does not walk the tree (#396)."
+  [jail lists base-dir home]
+  (if (and (not (:disabled? jail)) (os-binds-deny-paths?))
+    (expand-deny-lists lists base-dir home)
+    (update-vals lists
+                 (fn [patterns]
+                   (vec (distinct (remove glob? patterns)))))))
 
 (defn- stable-value
   [value]
@@ -272,15 +366,16 @@
                  jail
                  path-keys)
 
-         ;; A deny rule stays a PATTERN for the host tools and the diagnostics view,
-         ;; which match it live. The OS sandbox profile can only name concrete
-         ;; paths, so the jail's copy is expanded here, once per snapshot.
+         ;; A deny rule stays a PATTERN for the host tools, the OS jail and the diagnostics
+         ;; view, which match it live. Only a jail that binds paths needs it expanded.
          jail
          (-> jail
              (assoc :deny-read-rules (:deny-read jail)
                     :deny-write-rules (:deny-write jail))
-             (update :deny-read deny-target-paths base-dir home)
-             (update :deny-write deny-target-paths base-dir home))
+             (merge (jail-deny-lists jail
+                                     {:deny-read (:deny-read jail) :deny-write (:deny-write jail)}
+                                     base-dir
+                                     home)))
 
          ;; (language caches now live in the workspace catalog and resolve through the
          ;;  path-keys reduce above; no separate cache-resolution pass.)
@@ -353,7 +448,11 @@
   (cond-> jail
     (seq rules)
     (-> (update rules-key #(vec (distinct (concat % rules))))
-        (update paths-key #(vec (distinct (concat % (deny-target-paths rules base-dir home))))))))
+        (update paths-key
+                #(vec (distinct (concat
+                                  %
+                                  (paths-key
+                                    (jail-deny-lists jail {paths-key rules} base-dir home)))))))))
 
 (defn outside-write-rules
   "The resolved write rules that `policy` cannot grant: with the jail on, a rule whose

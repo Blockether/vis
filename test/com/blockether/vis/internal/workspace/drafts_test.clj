@@ -7,6 +7,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.persistance.sqlite.core :as ps]
+            [com.blockether.vis.internal.sandbox.policy :as policy]
             [com.blockether.vis.internal.workspace.core :as ws]
             [com.blockether.vis.internal.workspace.drafts :as drafts]
             [com.blockether.vis.internal.workspace.git :as workspace-git]
@@ -1557,3 +1558,29 @@
                                            (local-state (:root %)))
                                   repos)))
                  (finally (extension/unregister-op-hooks-for-owner! :ext/sync-root-veto)))))))))
+
+(defdescribe draft-root-deny-rule-test
+             ;; Issue #396: a snapshot keeps glob deny rules unexpanded, so the draft root check
+             ;; expands them itself. A root that holds a denied file stays refused.
+             (it "refuses a selected root that holds a file of a glob deny rule"
+                 (let [base
+                       (temp-dir "vis-draft-deny")
+
+                       policy
+                       (fn []
+                         (policy/snapshot {"workspace" {"filesystem" [{"id" "project" "path" base}]}
+                                           "jail" {"enabled" false
+                                                   "filesystem" {"allow" ["project"]
+                                                                 "deny_read" ["**/.env"]}}}
+                                          {:base-dir base}))
+
+                       select
+                       (fn []
+                         (try (#'drafts/selected-root {:security-policy (policy)} {:root base} base)
+                              (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+                   (try (expect (= base (select)))
+                        (.mkdirs (io/file base "service"))
+                        (spit (io/file base "service/.env") "TOKEN=secret")
+                        (expect (= :draft/root-denied (select)))
+                        (finally (delete-tree! base))))))
