@@ -5,14 +5,12 @@ import { MermaidBlock } from './MermaidBlock';
 /**
  * A MERMAID FENCE IS A PICTURE.
  *
- * The TUI ranks and draws the same flowchart with box-drawing glyphs; here the
- * source goes to mermaid and the SVG is painted in the transcript's own code
- * palette. These stories run the REAL library in a browser, so they are also
- * where the drawing is checked against what the terminal paints.
+ * The TUI ranks and draws the same flowchart with box-drawing glyphs; here Pele
+ * draws the source as an SVG in the transcript's own code palette. Pele lays the
+ * diagram out without browser layout, so these stories also run in the test run.
  *
- * A fence mermaid will not draw — another diagram type, a half-typed line
- * arriving mid-stream — falls back to the source, which is what the `fallback`
- * argument paints.
+ * A fence Pele will not draw — a half-typed line arriving mid-stream — falls
+ * back to the source, which is what the `fallback` argument paints.
  */
 const FLOWCHART = ['flowchart TD', '  A[Start] --> B{Ready?}', '  B -->|yes| C[Ship it]', '  B -->|no| D[Fix]', '  D --> B'].join('\n');
 
@@ -39,9 +37,6 @@ type Story = StoryObj<typeof meta>;
 
 /** A decision with a retry edge: the shape the TUI draws with ├ and ▼. */
 export const Flowchart: Story = {
-  // Mermaid lays diagrams out in real browser layout, which the jsdom story run lacks: open
-  // this story in Storybook to play it.
-  tags: ['!test'],
   args: { source: FLOWCHART, fallback: fence(FLOWCHART) },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -55,9 +50,6 @@ export const Flowchart: Story = {
 
 /** Left to right, with a dotted and a thick link. */
 export const Pipeline: Story = {
-  // Mermaid lays diagrams out in real browser layout, which the jsdom story run lacks: open
-  // this story in Storybook to play it.
-  tags: ['!test'],
   args: { source: PIPELINE, fallback: fence(PIPELINE) },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -71,7 +63,7 @@ export const Frameless: Story = {
   args: { source: FLOWCHART, fallback: fence(FLOWCHART), compact: true, frameless: true },
 };
 
-/** A fence mermaid cannot draw keeps its source on screen. */
+/** A fence Pele cannot draw keeps its source on screen. */
 export const Unsupported: Story = {
   args: {
     source: 'flowchart TD\n  A[Start] -->',

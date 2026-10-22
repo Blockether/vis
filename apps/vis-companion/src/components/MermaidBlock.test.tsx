@@ -1,120 +1,116 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MermaidBlock } from './MermaidBlock';
 
-// The real library needs a laid-out browser to measure text, and it is loaded
-// lazily on purpose; the contract this component owns is what it asks mermaid
-// for and what it paints when mermaid cannot answer.
-const mermaid = vi.hoisted(() => ({
-  initialize: vi.fn(),
-  parse: vi.fn(),
-  render: vi.fn(),
-}));
-
-vi.mock('mermaid', () => ({ default: mermaid }));
+// These tests run the REAL renderer: Pele draws synchronously without browser
+// layout, so the contract is checked against the picture it actually produces.
 
 const SOURCE = 'flowchart TD\n  A[Start] --> B[Stop]';
 
 const fallback = <pre data-testid="fence">{SOURCE}</pre>;
 
-beforeEach(() => {
-  mermaid.initialize.mockReset();
-  mermaid.parse.mockReset().mockResolvedValue(true);
-  mermaid.render.mockReset().mockImplementation(async (id: string) => ({
-    svg: `<svg data-drawn="${id}"><g class="node"></g></svg>`,
-  }));
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   document.documentElement.removeAttribute('data-theme');
 });
 
-afterEach(cleanup);
-
 describe('a mermaid fence', () => {
-  it('is painted as the picture mermaid draws from it', async () => {
+  it('is painted as the picture Pele draws from it', async () => {
     render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
 
     const picture = await screen.findByRole('img', { name: 'Diagram' });
-    expect(picture.querySelector('svg')).toBeInTheDocument();
-    expect(mermaid.render).toHaveBeenCalledWith(expect.stringContaining('vis-diagram-'), SOURCE);
+    const svg = picture.querySelector('svg');
+    expect(svg).toHaveClass('pele');
+    expect(picture.textContent).toContain('Start');
+    expect(picture.textContent).toContain('Stop');
     expect(screen.queryByTestId('fence')).toBeNull();
   });
 
-  it('asks mermaid for the transcript palette and refuses HTML in the labels', async () => {
-    render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
-    await screen.findByRole('img', { name: 'Diagram' });
+  // Regression, user report (paraphrased: the diagram renders again from scratch
+  // every time it shows): each mount waited for the library and drew anew.
+  it('paints a drawn source in the first frame when it mounts again', async () => {
+    const first = render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
+    const drawn = (await screen.findByRole('img', { name: 'Diagram' })).innerHTML;
+    first.unmount();
 
-    expect(mermaid.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        startOnLoad: false,
-        securityLevel: 'strict',
-        theme: 'base',
-        flowchart: { htmlLabels: false, useMaxWidth: true },
-      }),
-    );
-    const [config] = mermaid.initialize.mock.calls[0] as [
-      { themeVariables: Record<string, string>; fontFamily: string },
-    ];
-    expect(config.fontFamily).toContain('JetBrains Mono');
-    expect(Object.keys(config.themeVariables)).toEqual(
-      expect.arrayContaining(['background', 'lineColor', 'nodeBorder', 'textColor']),
-    );
+    render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
+
+    expect(screen.getByRole('img', { name: 'Diagram' }).innerHTML).toBe(drawn);
   });
 
-  it('carries a copy control for the source, and drops it inside a card', async () => {
+  it('takes its colours from the code palette and keeps the drawing on a palette change', async () => {
+    render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
+    const picture = await screen.findByRole('img', { name: 'Diagram' });
+    const drawn = picture.innerHTML;
+    const block = picture.closest('[data-mermaid-block]');
+    expect(block?.className).toContain('[--pele-bg:var(--color-code)]');
+    expect(block?.className).toContain('[--pele-fg:var(--color-code-foreground)]');
+    expect(drawn).toContain('var(--pele-bg');
+
+    act(() => {
+      document.documentElement.dataset.theme = 'blockether-dark';
+    });
+
+    expect(screen.getByRole('img', { name: 'Diagram' }).innerHTML).toBe(drawn);
+  });
+
+  it('carries copy controls for the picture and the source, and drops them inside a card', async () => {
     const { unmount } = render(
       <MermaidBlock source={SOURCE} compact={false} fallback={fallback} />,
     );
     await screen.findByRole('img', { name: 'Diagram' });
+    expect(screen.getByRole('button', { name: 'Copy diagram as image' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy diagram source' })).toBeInTheDocument();
 
     unmount();
     render(<MermaidBlock source={SOURCE} compact fallback={fallback} frameless />);
     await screen.findByRole('img', { name: 'Diagram' });
-    expect(screen.queryByRole('button', { name: 'Copy diagram source' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Copy diagram/ })).toBeNull();
   });
 
-  it('draws the diagram again when the session changes palette', async () => {
-    render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
-    await screen.findByRole('img', { name: 'Diagram' });
-    expect(mermaid.render).toHaveBeenCalledTimes(1);
-
-    document.documentElement.dataset.theme = 'blockether-dark';
-
-    await waitFor(() => expect(mermaid.render).toHaveBeenCalledTimes(2));
-  });
-
-  it('shows the fence itself when mermaid rejects the source', async () => {
-    mermaid.parse.mockResolvedValue(false);
-    render(<MermaidBlock source={'flowchart TD\n  A[' } compact={false} fallback={fallback} />);
+  it('shows the fence itself when Pele rejects the source', async () => {
+    render(<MermaidBlock source={'flowchart TD\n  A[Start] -->'} compact={false} fallback={fallback} />);
 
     expect(await screen.findByTestId('fence')).toBeInTheDocument();
-    expect(mermaid.render).not.toHaveBeenCalled();
+    expect(screen.queryByRole('img', { name: 'Diagram' })).toBeNull();
+  });
+});
+
+describe('before the renderer is loaded', () => {
+  it('paints nothing while the library is still loading', async () => {
+    vi.resetModules();
+    vi.doMock('pele', () => new Promise(() => {}));
+    const { MermaidBlock: Fresh } = await import('./MermaidBlock');
+    try {
+      const { container } = render(<Fresh source={SOURCE} compact={false} fallback={fallback} />);
+      expect(container).toBeEmptyDOMElement();
+    } finally {
+      vi.doUnmock('pele');
+    }
   });
 
-  it('shows the fence itself when the drawing fails', async () => {
-    mermaid.render.mockRejectedValue(new Error('no layout'));
-    render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
-
-    expect(await screen.findByTestId('fence')).toBeInTheDocument();
-  });
-
-  it('paints nothing while the library is still loading', () => {
-    mermaid.parse.mockReturnValue(new Promise(() => {}));
-    const { container } = render(
-      <MermaidBlock source={SOURCE} compact={false} fallback={fallback} />,
-    );
-
-    expect(container).toBeEmptyDOMElement();
+  it('shows the fence itself when the library cannot load', async () => {
+    vi.resetModules();
+    vi.doMock('pele', () => {
+      throw new Error('chunk gone');
+    });
+    const { MermaidBlock: Fresh } = await import('./MermaidBlock');
+    try {
+      render(<Fresh source={SOURCE} compact={false} fallback={fallback} />);
+      expect(await screen.findByTestId('fence')).toBeInTheDocument();
+    } finally {
+      vi.doUnmock('pele');
+    }
   });
 });
 
 describe('copying a diagram as a picture', () => {
   // User request (paraphrased: a mermaid diagram cannot be copied as an image).
-  it('puts a PNG of the drawing on the clipboard, sized from its viewBox', async () => {
-    mermaid.render.mockResolvedValue({
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 120" width="100%" style="max-width: 300px"><g></g></svg>',
-    });
+  it('puts a PNG of the drawing on the clipboard, sized from its viewBox and with its colours baked in', async () => {
     const sources: string[] = [];
     vi.stubGlobal(
       'Image',
@@ -153,21 +149,17 @@ describe('copying a diagram as a picture', () => {
     });
     vi.stubGlobal('navigator', { ...navigator, clipboard: { write } });
 
-    try {
-      render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
-      fireEvent.click(await screen.findByRole('button', { name: 'Copy diagram as image' }));
+    render(<MermaidBlock source={SOURCE} compact={false} fallback={fallback} />);
+    const svg = (await screen.findByRole('img', { name: 'Diagram' })).querySelector('svg');
+    const [, , width, height] = (svg?.getAttribute('viewBox') ?? '').split(/\s+/u).map(Number);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy diagram as image' }));
 
-      await waitFor(() => expect(copied?.type).toBe('image/png'));
-      expect(sizes).toEqual([[600, 240]]);
-      const drawn = decodeURIComponent(sources[0].replace(/^data:image\/svg\+xml;charset=utf-8,/u, ''));
-      expect(drawn).toContain('width="300"');
-      expect(drawn).toContain('height="120"');
-      expect(drawn).not.toContain('max-width');
-      expect(paint.fillRect).toHaveBeenCalledWith(0, 0, 600, 240);
-      expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
-    } finally {
-      vi.unstubAllGlobals();
-      vi.restoreAllMocks();
-    }
+    await waitFor(() => expect(copied?.type).toBe('image/png'));
+    expect(sizes).toEqual([[Math.round(width * 2), Math.round(height * 2)]]);
+    const drawn = decodeURIComponent(sources[0].replace(/^data:image\/svg\+xml;charset=utf-8,/u, ''));
+    expect(drawn).toContain(`width="${width}"`);
+    expect(drawn).not.toContain('var(--pele-');
+    expect(paint.fillRect).toHaveBeenCalledWith(0, 0, Math.round(width * 2), Math.round(height * 2));
+    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
   });
 });

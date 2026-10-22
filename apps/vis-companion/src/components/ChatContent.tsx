@@ -795,8 +795,8 @@ export const Markdown = memo(function Markdown({
               return <DataTable body={stripMarks(raw)} compact={compact} frameless={nested} />;
             }
             // A `mermaid` fence is a PICTURE: the TUI draws it with box-drawing
-            // glyphs, this surface draws the same source as an SVG. Anything
-            // mermaid will not draw falls back to the fence text.
+            // glyphs, this surface draws the same source as an SVG with Pele.
+            // Anything Pele cannot draw falls back to the fence text.
             if (language === 'mermaid') {
               return (
                 <MermaidBlock

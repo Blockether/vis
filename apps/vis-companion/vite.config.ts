@@ -117,7 +117,7 @@ export default defineConfig(async ({ command, mode }) => {
         'prismjs/components/prism-yaml',
         // The diagram renderer is imported lazily, so dev would otherwise
         // discover it mid-session and reload the page under the reader.
-        'mermaid',
+        'pele',
       ],
     },
     server: {
