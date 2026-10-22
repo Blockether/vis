@@ -1410,6 +1410,35 @@ def _sync_one(name, spec, directory, current, refresh, vis_version):
     return {**result, "status": "updated" if exists else "installed"}
 
 
+def _sync_read_only(specs, directory):
+    """Reconcile a scope that cannot be written, without the sync lock or network.
+
+    A container image or a read-only mount holds packages that a writable sync prepared.
+    Ready packages stay cached, also with `latest`. A needed change fails and names the step.
+    """
+    records = _sync_records(directory)
+    results = []
+    for name in sorted(set(specs) | set(records)):
+        spec, current = specs.get(name), records.get(name)
+        if spec is None:
+            results.append({"name": name, "status": "orphaned"})
+        elif (
+            current is not None
+            and current["spec"] == spec
+            and _sync_owned(_destination(directory, name), current)
+        ):
+            results.append({**current["result"], "name": name, "status": "cached"})
+        else:
+            results.append(
+                {
+                    "name": name,
+                    "status": "failed",
+                    "error": f"{directory} is read-only. Run the sync where it is writable",
+                }
+            )
+    return results
+
+
 def sync(
     configured,
     directory,
@@ -1435,6 +1464,8 @@ def sync(
     directory = Path(directory).expanduser().resolve()
     if not directory.exists() and not specs:
         return []
+    if not dry_run and directory.is_dir() and not os.access(directory, os.W_OK):
+        return _sync_read_only(specs, directory)
     if not dry_run:
         directory.mkdir(parents=True, exist_ok=True)
     lock = directory / ".sync-lock"

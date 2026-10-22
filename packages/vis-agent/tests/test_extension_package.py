@@ -1022,6 +1022,28 @@ def test_sync_local_install_cache_and_explicit_prune(tmp_path):
     assert not (target / "vis-greeter/current").exists()
 
 
+# A read-only image holds prepared packages; loading them must not need the sync lock.
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_sync_reads_a_read_only_scope_without_lock_or_changes(tmp_path):
+    source = project(tmp_path / "source")
+    target = tmp_path / "extensions"
+    configured = {"vis-greeter": {"source": str(source)}}
+    installed = package.sync(configured, target, trust=True)[0]
+    target.chmod(0o555)
+    try:
+        cached = package.sync(configured, target, trust=True)[0]
+        assert cached["status"] == "cached"
+        assert cached["path"] == installed["path"]
+        assert package.sync({}, target, trust=True)[0]["status"] == "orphaned"
+        changed = {"vis-other": {"source": str(source)}}
+        failed = {r["name"]: r for r in package.sync(changed, target, trust=True)}
+        assert failed["vis-other"]["status"] == "failed"
+        assert "read-only" in failed["vis-other"]["error"]
+        assert not (target / ".sync-lock").exists()
+    finally:
+        target.chmod(0o755)
+
+
 def test_sync_github_warm_path_does_not_fetch_or_check_catalog(releases, monkeypatch):
     _, target, commands = releases
     configured = {
