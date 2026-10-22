@@ -13,7 +13,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.namespace.file :as ns-file]
-            [clojure.tools.namespace.find :as ns-find])
+            [clojure.tools.namespace.find :as ns-find]
+            [lazytest.hooks :as hooks])
   (:import [java.io BufferedReader File FileDescriptor FileOutputStream PrintStream Writer]
            [java.lang.management ManagementFactory]
            [java.util.concurrent LinkedBlockingQueue TimeUnit]))
@@ -35,6 +36,17 @@
   ["vis.drafts.dir" "vis.db.path" "vis.image-descriptions.dir" "vis.logs.dir"])
 
 ;;; Worker
+
+(defn- initialize-builtins!
+  "Register the built-in extensions first, as the engine does at startup. A test
+   that triggers the first registration inside a temporary registry loses it for
+   the whole process, because the manifest registers each entry only once."
+  []
+  ((requiring-resolve 'com.blockether.vis.internal.extension.manifest/initialize!)))
+
+(hooks/defhook builtins
+               "Register the built-in extensions before the serial `:test` run."
+               (pre-test-run [_config m] (initialize-builtins!) m))
 
 (defn- run-namespace
   "Load and run one test namespace. Return its summary."
@@ -60,10 +72,7 @@
 (defn- worker!
   "Read namespace names from stdin until it closes. Report each on the real stdout."
   []
-  ;; Register the built-in extensions first, as the engine does at startup. A test
-  ;; that triggers the first registration inside a temporary registry loses it for
-  ;; the whole process, because the manifest registers each entry only once.
-  ((requiring-resolve 'com.blockether.vis.internal.extension.manifest/initialize!))
+  (initialize-builtins!)
   (let [report (PrintStream. (FileOutputStream. FileDescriptor/out) true "UTF-8")]
     (doseq [ns-name (line-seq (BufferedReader. *in*))
             :when (seq ns-name)]
