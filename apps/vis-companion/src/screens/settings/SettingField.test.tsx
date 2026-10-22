@@ -165,6 +165,8 @@ it('adds a workspace root from a folder chosen on the machine', async () => {
   // The sheet hangs from the pressed button, not from the top corner of the screen.
   const sheet = await screen.findByRole('dialog', { name: 'Choose folder on tower' });
   expect(sheet.style.getPropertyValue('--menu-top')).not.toBe('');
+  // The field already says what the sheet is for, so the sheet shows no title band.
+  expect(screen.queryByText('Choose folder')).toBeNull();
   await userEvent.click(await screen.findByText('notes/'));
   await userEvent.click(await screen.findByRole('button', { name: /^Use folder/ }));
   await waitFor(() =>

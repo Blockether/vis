@@ -351,13 +351,16 @@ export function ProjectFolderSheet({
       onDismiss={onCancel}
     >
       {/* The band does NOT name the machine: the panel opens FROM that machine's rail.
-          The name stays in the panel's `aria-label` and the way out. */}
-      <MenuHeading
-        onClose={onCancel}
-        closeLabel={`Close ${words.close} on ${label}`}
-      >
-        {words.title}
-      </MenuHeading>
+          The name stays in the panel's `aria-label` and the way out. A `pick` hangs
+          from the field that it fills, so it needs no title: Escape and the scrim close it. */}
+      {mode !== 'pick' && (
+        <MenuHeading
+          onClose={onCancel}
+          closeLabel={`Close ${words.close} on ${label}`}
+        >
+          {words.title}
+        </MenuHeading>
+      )}
 
       <div className={`flex shrink-0 flex-col gap-2 border-b border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
         <div className={LOCATION_FIELD}>
