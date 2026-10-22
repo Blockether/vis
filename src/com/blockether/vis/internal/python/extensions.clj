@@ -1192,6 +1192,12 @@
        "), '<string>', 'exec', flags=__import__('__future__').annotations.compiler_flag,"
        " dont_inherit=True), globals())"))
 
+(defn- context-worker-key
+  "The trusted worker that holds the context of an extension frozen at `snap`.
+   Declared packages get a worker of their own; other extensions share `worker`."
+  [worker ^File snap packages]
+  (if packages (pyext/extension-worker-key [worker (.getCanonicalPath snap)] packages) worker))
+
 (defn- initialize-extension-context!
   "Evaluate admitted extension `source` in a trusted namespace of `worker`.
    `entry-path` is the canonical source entry file exposed through Python's
@@ -1199,10 +1205,7 @@
    touching the Clojure registry."
   [worker label ^File snap entry-path source packages bound-env]
   (let [ctx
-        (build-context (if packages
-                         (pyext/extension-worker-key [worker (.getCanonicalPath snap)] packages)
-                         worker)
-                       label)
+        (build-context (context-worker-key worker snap packages) label)
 
         frozen-home
         (.getCanonicalPath (.getParentFile snap))]
@@ -3473,14 +3476,22 @@
          (fn [k plan f]
            (when-let [error (:error plan)]
              (throw error))
-           (let [rk [(:roots plan) (:dependencies plan) (:project plan) (:automatic? plan)]]
-             (or (get-in @roots [rk k])
-                 (let [v (f plan)]
-                   (locking session-contexts
-                     (when (= k :frozen)
-                       (swap! loading-snapshots conj (.getCanonicalPath ^File (:dir v))))
-                     (swap! roots assoc-in [rk k] v))
-                   v))))
+           (let [rk
+                 [(:roots plan) (:dependencies plan) (:project plan) (:automatic? plan)]
+
+                 ;; A failure is kept too: one pass prepares each root once.
+                 v
+                 (or (get-in @roots [rk k])
+                     (let [v (try (f plan) (catch Throwable t {::failure t}))]
+                       (locking session-contexts
+                         (when (and (= k :frozen) (not (::failure v)))
+                           (swap! loading-snapshots conj (.getCanonicalPath ^File (:dir v))))
+                         (swap! roots assoc-in [rk k] v))
+                       v))]
+
+             (when-let [t (::failure v)]
+               (throw t))
+             v))
 
          fp
          (mapv (fn [^File f]
@@ -3555,12 +3566,33 @@
                                   (scanned opath)
                                   (or (glob-paths path) (glob-paths opath)))
                          opath))
-                     (scope-entries project-root)))]
+                     (scope-entries project-root)))
+
+             ;; Worker key -> the future that starts it ahead of the registration loop.
+             prestarts
+             (atom {})]
 
          (try
            (swap! failures #(vec (remove (fn [failure]
                                            (= project-root (:project-root failure)))
                                    %)))
+           ;; Each worker process takes tens of milliseconds to start. Start the
+           ;; workers of entries that always load again together; registration
+           ;; below still runs in file order and finds them ready.
+           (doseq [^File f
+                   files
+
+                   :let [path
+                         (.getCanonicalPath f)]
+                   :when (or all? (nil? (get @loaded [project-root path])) (failed-before path))]
+
+             (when-let [frozen (try (per-root :frozen (get plans f) prepare-root!)
+                                    (catch Throwable _ nil))]
+               (let [k (context-worker-key pyext/shared-key (:dir frozen) (:packages frozen))]
+                 (when-not (contains? @prestarts k)
+                   (swap! prestarts assoc
+                     k
+                     (future (try (pyext/start-worker! k) (catch Throwable _ nil))))))))
            ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
            ;; (its PREVIOUS context is closed only after the new one is live); a
            ;; file that FAILS keeps its last-good entry — still registered, context
@@ -3663,6 +3695,11 @@
             :failed (count (filter #(= project-root (:project-root %)) @failures))
             :changed? true}
            (finally
+             ;; A worker that no context uses after a failed load must not stay alive.
+             (doseq [[k started] @prestarts]
+               (deref started)
+               (when (and (not= k pyext/shared-key) (not-any? #{k} (vals @context-workers)))
+                 (pyext/stop-worker! k)))
              ;; A failed entry must not delete code still queued in this scan.
              ;; Release the scan's roots even if publication or retirement fails.
              (locking session-contexts

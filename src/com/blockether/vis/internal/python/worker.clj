@@ -627,6 +627,13 @@
               (swap! workers assoc k started)
               started))))))
 
+(defn start-worker!
+  "Start the worker for `k` before its first request, so that independent
+   workers can start in parallel. Never replaces a dead or retired worker."
+  [k]
+  (live k)
+  nil)
+
 (def ^:private INTERRUPT_REPLY_MS
   "Maximum wait for the whole interrupt exchange, including socket writes."
   1000)

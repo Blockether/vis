@@ -7946,6 +7946,72 @@ vis.register_extension(vis.Extension(
                         (finally (ep/dispose-python-context! ctx))))))))))))))
 
 (defdescribe
+  packaged-worker-prestart-test
+  ;; Issue #407: a load starts the workers of packaged extensions before registration.
+  ;; A failed load must not leave its started worker alive.
+  (it
+    "starts each package worker once and stops the worker of a failed load"
+    (with-shared-packages
+      (fn [shared]
+        (let [home
+              (.getParentFile shared)
+
+              started
+              (atom [])
+
+              start-worker!
+              worker/start-worker!
+
+              project
+              (fn [name body]
+                {(str name "/current/pyproject.toml")
+                 (str "[project]\nname='prestart-"
+                      name
+                      "'\nversion='1.0.0'\n"
+                      "description='Prestart probe'\nrequires-python='>=3.11'\n"
+                      "dependencies=['vis-agent>=0.1.0']\n[tool.vis]\ncategory='tools'\n")
+                 (str name "/current/.venv/pyvenv.cfg") "home = fixture\n"
+                 (str name "/current/extension.py") body})
+
+              sources
+              (merge (project "one"
+                              (str "import blockether.vis.extension as vis\n"
+                                   "def probe():\n" "    \"Answer one.\"\n"
+                                   "    return 1\n"
+                                   "vis.register_extension(vis.Extension(name='prestart-one',"
+                                   " description='Prestart probe', alias='prestart_one',"
+                                   " symbols=[vis.Symbol(probe)]))\n"))
+                     (project "two" "raise RuntimeError('prestart fixture failure')\n"))]
+
+          (doseq [name ["one" "two"]]
+            (.mkdirs (io/file home name)))
+          (with-redefs [python-runtime/ensure-project!
+                        (fn [project]
+                          (io/file home (.getName (.getParentFile ^java.io.File project))))
+
+                        worker/start-worker!
+                        (fn [k]
+                          (swap! started conj k)
+                          (start-worker! k))]
+
+            (with-fresh-loaded sources
+                               (fn [result _]
+                                 (let [packaged
+                                       (filterv #(not= worker/shared-key %) @started)
+
+                                       by-name
+                                       (fn [name]
+                                         (first (filter #(str/includes? (str (:packages %))
+                                                                        (str "/" name))
+                                                        packaged)))]
+
+                                   (expect (= 1 (:failed result)) (pr-str (pyx/load-failures)))
+                                   (expect (= 2 (count packaged)) (pr-str @started))
+                                   (expect (= (count packaged) (count (distinct packaged))))
+                                   (expect (worker/worker-live? (by-name "one")))
+                                   (expect (not (worker/worker-live? (by-name "two")))))))))))))
+
+(defdescribe
   pyproject-package-reload-test
   (it
     "prepares an existing pyproject environment and reloads source with last-good fallback"
