@@ -1,4 +1,6 @@
-import { Button, Input, Select, Switch, Text } from '../../components/ui';
+import { Button, IconButton, Input, Select, Switch, Text } from '../../components/ui';
+import type { ReactNode } from 'react';
+import { TrashIcon } from '../../components/icons';
 import type { SettingValue, Toggle } from '../../lib/types';
 import configSchema from '../../../../../packages/vis-contract/resources/vis-contract/schema/config.json';
 
@@ -35,14 +37,32 @@ function numericSchema(pointer?: string): NumericSchema {
   return node && typeof node === 'object' && pointer ? (node as NumericSchema) : {};
 }
 
+/** One card of a repeated editor: a small `n / total` caption only when there are several. */
+function Entry({ index, count, children }: { index: number; count: number; children: ReactNode }) {
+  return (
+    <div className="space-y-1">
+      {count > 1 && (
+        <p aria-hidden className="font-mono text-meta font-bold text-dialog-hint">
+          {index + 1} / {count}
+        </p>
+      )}
+      <div className="space-y-2 border border-dialog-edge p-3">{children}</div>
+    </div>
+  );
+}
+
 function StringList({
   label,
+  name = label,
   value,
   onChange,
   disabled,
   numbers = false,
 }: {
+  /** The visible legend. */
   label: string;
+  /** The accessible prefix; it keeps nested control names unique. */
+  name?: string;
   value: SettingValue | null | undefined;
   onChange: (value: SettingValue[]) => void;
   disabled: boolean;
@@ -53,10 +73,10 @@ function StringList({
     <fieldset disabled={disabled} className="min-w-0 space-y-2">
       <legend className="mb-1 text-sm">{label}</legend>
       {rows.map((entry, index) => (
-        <div key={index} className="flex min-w-0 gap-2">
+        <div key={index} className="flex min-w-0 items-center gap-2">
           <Input
             className="min-w-0 flex-1"
-            aria-label={`${label} ${index + 1}`}
+            aria-label={`${name} ${index + 1}`}
             type={numbers ? 'number' : 'text'}
             value={String(entry)}
             onChange={(event) =>
@@ -67,14 +87,13 @@ function StringList({
               )
             }
           />
-          <Button
-            variant="secondary"
-            density="panel"
-            aria-label={`Remove ${label} ${index + 1}`}
+          <IconButton
+            label={`Remove ${name} ${index + 1}`}
+            variant="remove"
             onClick={() => onChange(rows.filter((_, i) => i !== index))}
           >
-            Remove
-          </Button>
+            <TrashIcon className="size-3.5" />
+          </IconButton>
         </div>
       ))}
       {!rows.length && (
@@ -85,9 +104,10 @@ function StringList({
       <Button
         variant="secondary"
         density="panel"
+        aria-label={`Add ${name.toLowerCase()}`}
         onClick={() => onChange([...rows, numbers ? 0 : ''])}
       >
-        Add {label.toLowerCase()}
+        Add
       </Button>
     </fieldset>
   );
@@ -107,14 +127,24 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
-          <div key={index} className="space-y-2 border-l border-dialog-edge pl-3">
-            <div className="grid gap-2 sm:grid-cols-2">
+          <Entry key={index} index={index} count={rows.length}>
+            <div className="flex min-w-0 items-center gap-2">
               <Input
+                className="min-w-0 flex-1"
                 aria-label={`Root name ${index + 1}`}
                 placeholder="Root name"
                 value={String(row.id ?? '')}
                 onChange={(event) => update(index, 'id', event.target.value)}
               />
+              <IconButton
+                label={`Remove root ${index + 1}`}
+                variant="remove"
+                onClick={() => onChange(rows.filter((_, i) => i !== index))}
+              >
+                <TrashIcon className="size-3.5" />
+              </IconButton>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
               <Input
                 aria-label={`Root path ${index + 1}`}
                 placeholder="Absolute path or ~/path"
@@ -162,15 +192,8 @@ function WorkspaceEditor({ value, disabled, onChange }: FieldProps) {
                 isOn={row.optional === true}
                 onClick={() => update(index, 'optional', row.optional !== true)}
               />
-              <Button
-                variant="secondary"
-                density="panel"
-                onClick={() => onChange(rows.filter((_, i) => i !== index))}
-              >
-                Remove root {index + 1}
-              </Button>
             </div>
-          </div>
+          </Entry>
         );
       })}
       <Button
@@ -206,32 +229,34 @@ function RequestRules({
       }),
     );
   return (
-    <fieldset disabled={disabled} className="space-y-2">
+    <fieldset disabled={disabled} className="min-w-0 space-y-2">
       <legend className="mb-1 text-sm">Allowed requests</legend>
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
-          <div key={index} className="flex flex-wrap gap-2">
+          <div key={index} className="flex min-w-0 items-center gap-2">
+            <div className="w-20 shrink-0">
+              <Input
+                aria-label={`Rule ${rule} request ${index + 1} method`}
+                placeholder="GET"
+                value={String(row.method ?? '')}
+                onChange={(event) => update(index, 'method', event.target.value)}
+              />
+            </div>
             <Input
-              aria-label={`Rule ${rule} request ${index + 1} method`}
-              placeholder="GET"
-              value={String(row.method ?? '')}
-              onChange={(event) => update(index, 'method', event.target.value)}
-            />
-            <Input
+              className="min-w-0 flex-1"
               aria-label={`Rule ${rule} request ${index + 1} path`}
               placeholder="/api/* (optional)"
               value={String(row.path ?? '')}
               onChange={(event) => update(index, 'path', event.target.value)}
             />
-            <Button
-              variant="secondary"
-              density="panel"
-              aria-label={`Remove rule ${rule} request ${index + 1}`}
+            <IconButton
+              label={`Remove rule ${rule} request ${index + 1}`}
+              variant="remove"
               onClick={() => onChange(rows.filter((_, i) => i !== index))}
             >
-              Remove
-            </Button>
+              <TrashIcon className="size-3.5" />
+            </IconButton>
           </div>
         );
       })}
@@ -267,27 +292,39 @@ function NetworkRules({
       {rows.map((entry, index) => {
         const row = objectValue(entry);
         return (
-          <div key={index} className="space-y-2 border-l border-dialog-edge pl-3">
-            <Input
-              aria-label={`Rule host ${index + 1}`}
-              placeholder="gateway.example.com"
-              value={String(row.host ?? '')}
-              onChange={(event) => update(index, 'host', event.target.value)}
-            />
-            <Select
-              aria-label={`Rule access ${index + 1}`}
-              value={enumValue(networkRuleProperties.access, String(row.access ?? 'read-write'))}
-              options={enumOptions(networkRuleProperties.access, String(row.access ?? 'read-write'))}
-              onValueChange={(next) => update(index, 'access', next)}
-            />
+          <Entry key={index} index={index} count={rows.length}>
+            <div className="flex min-w-0 items-center gap-2">
+              <Input
+                className="min-w-0 flex-1"
+                aria-label={`Rule host ${index + 1}`}
+                placeholder="gateway.example.com"
+                value={String(row.host ?? '')}
+                onChange={(event) => update(index, 'host', event.target.value)}
+              />
+              <Select
+                aria-label={`Rule access ${index + 1}`}
+                value={enumValue(networkRuleProperties.access, String(row.access ?? 'read-write'))}
+                options={enumOptions(networkRuleProperties.access, String(row.access ?? 'read-write'))}
+                onValueChange={(next) => update(index, 'access', next)}
+              />
+              <IconButton
+                label={`Remove host rule ${index + 1}`}
+                variant="remove"
+                onClick={() => onChange(rows.filter((_, i) => i !== index))}
+              >
+                <TrashIcon className="size-3.5" />
+              </IconButton>
+            </div>
             <StringList
-              label={`Rule ${index + 1} methods`}
+              label="Methods"
+              name={`Rule ${index + 1} methods`}
               value={row.methods}
               disabled={disabled}
               onChange={(next) => update(index, 'methods', next)}
             />
             <StringList
-              label={`Rule ${index + 1} ports`}
+              label="Ports"
+              name={`Rule ${index + 1} ports`}
               numbers
               value={row.ports}
               disabled={disabled}
@@ -299,14 +336,7 @@ function NetworkRules({
               disabled={disabled}
               onChange={(next) => update(index, 'allow', next)}
             />
-            <Button
-              variant="secondary"
-              density="panel"
-              onClick={() => onChange(rows.filter((_, i) => i !== index))}
-            >
-              Remove host rule {index + 1}
-            </Button>
-          </div>
+          </Entry>
         );
       })}
       <Button

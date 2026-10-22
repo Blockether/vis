@@ -74,6 +74,33 @@ it('edits the allowed requests of one host rule and drops a cleared path', () =>
   expect(onChange).toHaveBeenLastCalledWith({ rules: [{ ...docs, allow: [] }, api] });
 });
 
+it('removes many host rules with named icon actions, not numbered text buttons', () => {
+  const docs = { host: 'gateway.example.com', access: 'read-only', methods: ['GET'] };
+  const api = { host: '10.0.0.5', access: 'read-write' };
+  const { onChange } = renderField(
+    { id: 'network', label: 'Network', type: 'object', editor: 'network' },
+    { rules: [docs, api] },
+  );
+  expect(screen.queryByText(/Remove host rule/)).toBeNull();
+  expect(screen.getAllByText('Methods')).toHaveLength(2);
+  expect(screen.getByRole('textbox', { name: 'Rule 1 methods 1' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Remove host rule 2' }));
+  expect(onChange).toHaveBeenLastCalledWith({ rules: [docs] });
+  fireEvent.click(screen.getByRole('button', { name: 'Remove Rule 1 methods 1' }));
+  expect(onChange).toHaveBeenLastCalledWith({ rules: [{ ...docs, methods: [] }, api] });
+});
+
+it('removes a workspace root with a named icon action', () => {
+  const docs = { id: 'docs', path: '~/docs', access: 'read-only' };
+  const code = { id: 'code', path: '~/code', access: 'read-write' };
+  const { onChange } = renderField(
+    { id: 'workspaces', label: 'Workspace roots', type: 'array', editor: 'paths' },
+    [docs, code],
+  );
+  expect(screen.queryByText(/Remove root/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Remove root 1' }));
+  expect(onChange).toHaveBeenLastCalledWith([code]);
+});
 it('limits numbers by the setting schema and keeps invalid text local', () => {
   const { onChange, onRawChange } = renderField(
     {
