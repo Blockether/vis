@@ -300,7 +300,33 @@
                        (extension/ctx-contributions {:workspace/root root} [ext])]
 
                    (expect (= root (get-in ctx [:project :ctx-root])))
-                   (expect (= root (get-in ctx [:project :cwd]))))))
+                   (expect (= root (get-in ctx [:project :cwd])))))
+             ;; #396: the first callback of a Python extension starts its worker.
+             (it "runs the callbacks in parallel and merges them in extension order"
+                 (let [root
+                       (.getCanonicalPath (java.io.File. "target/test-workspace-ctx"))
+
+                       both
+                       (java.util.concurrent.CountDownLatch. 2)
+
+                       meet
+                       (fn [_]
+                         (.countDown both)
+                         (.await both 5 java.util.concurrent.TimeUnit/SECONDS))
+
+                       ext
+                       (fn [n]
+                         {:ext/name (str "test.ctx-parallel-" n)
+                          :ext/ctx-fn
+                          (fn [env]
+                            {:met {n (meet env)} :root workspace/*workspace-root* :last n})})
+
+                       ctx
+                       (extension/ctx-contributions {:workspace/root root} [(ext 1) (ext 2)])]
+
+                   (expect (= {1 true 2 true} (:met ctx)))
+                   (expect (= root (:root ctx)))
+                   (expect (= 2 (:last ctx))))))
 
 (defdescribe
   session-provider-kickoff-hooks-test

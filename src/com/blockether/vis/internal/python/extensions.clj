@@ -1269,6 +1269,70 @@
                   @loaded))
           (distinct [root nil]))))
 
+(defonce ^:private context-builds
+  ;; `[sandbox-worker-key extension-name]` -> `{:done promise :closed? bool}` while one
+  ;; call builds that session context. Guarded by session-contexts.
+  (atom {}))
+
+(defn- usable-context
+  "The cached session context for `cache-key`, unless a reload replaced its source
+   and no call holds it. Call with `session-contexts` held."
+  [cache-key source-ctx]
+  (when-let [cached (get @session-contexts cache-key)]
+    (when (or (identical? source-ctx (:source-context cached))
+              (pos? (long (or (get-in @context-lifecycle [(:context cached) :calls]) 0))))
+      cached)))
+
+(defn- install-built-context!
+  "Publish a built `row` for `cache-key`, unless the session closed during the build."
+  [cache-key row]
+  (locking session-contexts
+    (let [closed?
+          (get-in @context-builds [cache-key :closed?])
+
+          old
+          (get @session-contexts cache-key)]
+
+      (swap! context-builds dissoc cache-key)
+      (when closed?
+        (discard-context! (:context row) false)
+        (throw (ex-info "Python extension session is no longer running" {:type ::session-closed})))
+      (swap! session-contexts assoc cache-key row)
+      (discard-context! (:context old))
+      row)))
+
+(defn- session-context!
+  "Answer the session context for `cache-key`, and call `build!` when it is missing.
+
+   The build starts a worker and loads the extension source. It runs outside
+   `session-contexts`, so the extensions of one session start in parallel (#396).
+   One build runs for each key. Other callers for that key wait for it."
+  [cache-key source-ctx build!]
+  (loop []
+
+    (let [[step value] (locking session-contexts
+                         (if-let [cached (usable-context cache-key source-ctx)]
+                           [:ready cached]
+                           (if-let [build (get @context-builds cache-key)]
+                             [:wait (:done build)]
+                             (let [done (promise)]
+                               (swap! context-builds assoc cache-key {:done done})
+                               [:build done]))))]
+      (case step
+        :ready
+        value
+
+        :wait
+        (do @value (recur))
+
+        :build
+        (try (let [row (try (assoc (build!) :source-context source-ctx)
+                            (catch Throwable t
+                              (locking session-contexts (swap! context-builds dissoc cache-key))
+                              (throw t)))]
+               (install-built-context! cache-key row))
+             (finally (deliver value true)))))))
+
 (defn- session-call-target
   "Resolve a registry callable to the invoking session's trusted extension
    worker, never its sandbox. Calls with no worker-backed session use the
@@ -1292,27 +1356,17 @@
       (if-let [entry (or (source-entry ext-name source-ctx)
                          (replacement-entry ext-name effective-env))]
         (let [source-ctx (:context entry)
-              cache-key [worker ext-name]
-              local (locking session-contexts
-                      (let [cached (get @session-contexts cache-key)]
-                        (if (or (identical? source-ctx (:source-context cached))
-                                (pos? (long (or (get-in @context-lifecycle
-                                                        [(:context cached) :calls])
-                                                0))))
-                          cached
-                          (let [fresh (initialize-extension-context!
-                                        (pyext/extension-worker-key worker)
-                                        (str ext-name)
-                                        (io/file (:snapshot entry))
-                                        (:path entry)
-                                        (:source entry)
-                                        (:packages entry)
-                                        (assoc effective-env ::project-path (:project-path entry)))
-                                row (assoc fresh :source-context source-ctx)]
-
-                            (swap! session-contexts assoc cache-key row)
-                            (discard-context! (:context cached))
-                            row))))
+              local (session-context! [worker ext-name]
+                                      source-ctx
+                                      #(initialize-extension-context!
+                                         (pyext/extension-worker-key worker)
+                                         (str ext-name)
+                                         (io/file (:snapshot entry))
+                                         (:path entry)
+                                         (:source entry)
+                                         (:packages entry)
+                                         (assoc effective-env
+                                           ::project-path (:project-path entry))))
               target-f (get-in (:registration local) path)]
 
           (when-not (fn? target-f)
@@ -1350,15 +1404,23 @@
         (or (not-empty env) extension/*current-environment*)
 
         [call-ctx call-f]
-        (locking session-contexts
-          (let [[target target-f] (session-call-target ext-name effective-env ctx f)]
-            (when (contains? *suspended-contexts* target)
-              (throw (ex-info (str "Extension `" ext-name
-                                   "` is waiting on this vis.tools call; "
-                                   "calling back into it would never return")
-                              {:type ::tool-call-cycle :extension ext-name})))
-            (acquire-context! target)
-            [target target-f]))]
+        (loop [attempt 1]
+          (let [[target target-f] (session-call-target ext-name effective-env ctx f)
+                leased (locking session-contexts
+                         (when (contains? *suspended-contexts* target)
+                           (throw (ex-info (str "Extension `" ext-name
+                                                "` is waiting on this vis.tools call; "
+                                                "calling back into it would never return")
+                                           {:type ::tool-call-cycle :extension ext-name})))
+                         ;; A reload can retire the target before this lease. Resolve it again.
+                         (try (acquire-context! target)
+                              [target target-f]
+                              (catch clojure.lang.ExceptionInfo e
+                                (when-not (and (< attempt 3)
+                                               (= ::context-retired (:type (ex-data e))))
+                                  (throw e)))))]
+
+            (or leased (recur (inc attempt)))))]
 
     ;; A hook belongs to its Python extension, not the tool it observes.
     (try (extension/with-context {:ext {:ext/name ext-name} :env effective-env}
@@ -3103,6 +3165,14 @@
    Teardown does not enter an interpreter that may be blocked in native code."
   [worker]
   (locking session-contexts
+    ;; A build in progress publishes nothing for a closed session.
+    (swap! context-builds (fn [builds]
+                            (reduce-kv (fn [acc k build]
+                                         (cond-> acc
+                                           (= worker (first k))
+                                           (assoc k (assoc build :closed? true))))
+                                       builds
+                                       builds)))
     (pyext/stop-worker! (pyext/extension-worker-key worker))
     (let [locals (into []
                        (filter (fn [[[k _] _]]

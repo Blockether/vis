@@ -1594,35 +1594,61 @@
         (expect (= 2 (poll 3)))
         (expect (= 10 (poll 4)))
         (expect (= 50 (poll 10)))
-        (expect (= 50 (poll 10000)))
-        ;; Confirming an exited child's log is quiet is charged to a command that is
-        ;; already done, so it is the shortest sleep in the loop.
-        (expect (< @#'shell/wait-drain-poll-ms (poll 10000)))))
-  ;; Regression, CI: a loaded macOS runner handed a PTY child's only line over
-  ;; tens of ms after the child was already gone, and the wait — which confirmed
-  ;; silence with ONE 5 ms read — reported that the command had printed nothing.
-  (it "keeps confirming an exited child's silence until the pump hands its bytes over"
+        (expect (= 50 (poll 10000)))))
+  ;; Issue #396: a silent command waited out 50 quiet reads, a quarter second,
+  ;; after it exited. The pump publishes the exit only after its last byte is on
+  ;; disk, so one read that starts after the exit is seen is complete.
+  (it "reads once more after the exit, then answers"
       (let [reads
             (atom 0)
 
-            ;; A pump that hands its ONE chunk over five reads after the exit is
-            ;; already visible, and has nothing more to give after that.
-            late-pump
+            ;; The read that first sees the exit took its chunk before the tail
+            ;; landed. The next read gets the tail.
+            tail-pump
             (fn [_env _id _opts]
               (let [n (swap! reads inc)]
-                {:result {"out" (if (= 6 n) "late-line" "")
+                {:result {"out" (if (= 2 n) "late-line" "")
                           "status" "exited"
                           "exit" 0
                           "is_eof" true
-                          "next_offset" (if (< n 6) 0 9)}}))]
+                          "next_offset" (if (< n 2) 0 9)}}))]
 
-        (with-redefs-fn {#'shell/shell-logs-impl late-pump}
+        (with-redefs-fn {#'shell/shell-logs-impl tail-pump}
           (fn []
             (let [w (:result (shell-wait* {} "late" {:seconds 5}))]
               (expect (= "late-line" (get w "out")))
               (expect (false? (get w "timed_out")))
-              ;; Confirming silence costs the drain window, never the budget.
-              (expect (< (long (get w "duration_ms")) 1000)))))))
+              (expect (= 2 @reads)))))))
+  (it "answers a silent exited command after one confirming read"
+      (let [reads
+            (atom 0)
+
+            silent
+            (fn [_env _id _opts]
+              (swap! reads inc)
+              {:result {"out" "" "status" "exited" "exit" 0 "is_eof" true "next_offset" 0}})]
+
+        (with-redefs-fn {#'shell/shell-logs-impl silent}
+          (fn []
+            (let [w (:result (shell-wait* {} "quiet" {:seconds 5}))]
+              (expect (= "" (get w "out")))
+              (expect (false? (get w "timed_out")))
+               (expect (= 2 @reads)))))))
+  ;; Issue #396: the idle sleep wakes when the command exits, not at the poll end.
+  (it "wakes from the idle sleep when the command exits"
+      (let [exit (atom nil)]
+        (with-redefs-fn {#'shell/bg-procs (atom {"s396" {"w" {:exit exit}}})}
+          (fn []
+            (let [t0 (System/currentTimeMillis)
+                  _ (future (Thread/sleep 50) (reset! exit 0))
+                  woke (#'shell/await-exit {:session-id "s396"} "w" 10000)]
+              (expect (true? woke))
+              (expect (< (- (System/currentTimeMillis) t0) 5000))
+              (expect (true? (#'shell/await-exit {:session-id "s396"} "w" 10000))))))))
+  (it "sleeps the poll and answers false without a live shell"
+      (with-redefs-fn {#'shell/bg-procs (atom {})}
+        (fn []
+          (expect (false? (#'shell/await-exit {:session-id "s396"} "none" 1))))))
   ;; Regression, gateway CPU audit: a JFR profile of a live gateway caught it
   ;; forking `/bin/ps` EIGHT times a second — 388 of 395 process spawns in a 46 s
   ;; window came from this one loop. Every poll asked [[bg-core]] for the tree's

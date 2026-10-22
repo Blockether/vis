@@ -6498,6 +6498,89 @@ vis.register_extension(vis.Extension(name='asker', description='asker', alias='a
                         (ep/dispose-python-context! a)
                         (ep/dispose-python-context! b))))))))
 
+(defdescribe
+  session-context-build-test
+  ;; #396: the extensions of one session start their workers in parallel.
+  (let [isolated
+        (fn [f]
+          (with-redefs-fn {#'pyx/session-contexts (atom {})
+                           #'pyx/context-builds (atom {})
+                           #'pyx/context-lifecycle (atom {})}
+            f))
+
+        context!
+        (fn [k build!]
+          (#'pyx/session-context! k ::source build!))]
+
+    (it "builds the contexts of two extensions at the same time"
+        (isolated
+          (fn []
+            (let [both
+                  (java.util.concurrent.CountDownLatch. 2)
+
+                  build
+                  (fn [n]
+                    (future (context! ["w-396" n]
+                                      (fn []
+                                        (.countDown both)
+                                        {:context n
+                                         :met
+                                         (.await both 5 java.util.concurrent.TimeUnit/SECONDS)}))))
+
+                  a
+                  (build "a")
+
+                  b
+                  (build "b")]
+
+              (expect (true? (:met (deref a 10000 nil))))
+              (expect (true? (:met (deref b 10000 nil))))))))
+    (it "builds one context once for callers of the same extension"
+        (isolated
+          (fn []
+            (let [builds
+                  (atom 0)
+
+                  gate
+                  (promise)
+
+                  build!
+                  (fn []
+                    (swap! builds inc)
+                    @gate
+                    {:context "one"})
+
+                  calls
+                  (doall (repeatedly 3 #(future (context! ["w-396" "one"] build!))))]
+
+              (Thread/sleep 100)
+              (deliver gate true)
+              (expect (= ["one" "one" "one"] (mapv #(:context (deref % 10000 nil)) calls)))
+              (expect (= 1 @builds))))))
+    (it "publishes nothing when the session closes during the build"
+        (isolated
+          (fn []
+            (let [started
+                  (promise)
+
+                  gate
+                  (promise)
+
+                  call
+                  (future (try (context! ["w-396" "late"]
+                                         (fn []
+                                           (deliver started true)
+                                           @gate
+                                           {:context "late"}))
+                               (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+
+              (expect (true? (deref started 10000 nil)))
+              (pyx/close-session-contexts! "w-396")
+              (deliver gate true)
+              (expect (= ::pyx/session-closed (deref call 10000 nil)))
+              (expect (empty? @@#'pyx/session-contexts))
+              (expect (empty? @@#'pyx/context-builds))))))))
+
 (defdescribe extension-cancelled-caller-lease-test
              ;; #192: cancellation of the host caller is not completion of guest execution.
              (it "defers retirement until the outstanding worker reply settles"

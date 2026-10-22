@@ -2140,20 +2140,16 @@
         (< idle 10) 10
         :else 50))
 
-(def ^:private wait-drain-poll-ms
-  "Sleep between the reads that confirm an EXITED child's log has gone quiet. It
-   only has to outlast the pump's handoff of bytes written just before the exit,
-   so it is short: every millisecond here is charged to a command that is already
-   finished."
-  5)
-
-(def ^:private wait-drain-quiet-reads
-  "Quiet reads that confirm an EXITED child really printed nothing, taken
-   [[wait-drain-poll-ms]] apart — a quarter second of silence in all. A wait that
-   has already captured bytes reports at the first quiet read; only a wait still
-   holding an empty log pays this, because the alternative is answering that a
-   command printed nothing when its output was merely still in flight."
-  50)
+(defn- await-exit
+  "Sleep up to `ms` while shell `id` runs, and wake when it exits (#396).
+   Answer true when the shell has exited."
+  [env id ms]
+  (if-let [exit (:exit (bg-entry (:session-id env) (str id)))]
+    (let [done (promise)
+          k (Object.)]
+      (add-watch exit k (fn [_ _ _ code] (when (some? code) (deliver done true))))
+      (try (or (some? @exit) (deref done (long ms) false)) (finally (remove-watch exit k))))
+    (do (Thread/sleep (long ms)) false)))
 
 (def ^:private wait-chunk-limit
   "Bytes one wait iteration reads. Large enough that a build's output is drained in
@@ -2239,13 +2235,11 @@
            idle
            0
 
-           quiet
-           0
-
-           ;; Whether THIS wait has captured anything at all. Having seen bytes, the
-           ;; pump is demonstrably handing them over; having seen none, an empty read
-           ;; cannot yet tell a silent command from a pump still on its first chunk.
-           seen
+           ;; Whether the exit was already seen when THIS read started. The pump
+           ;; publishes the exit only after the last byte is on disk, so such a read
+           ;; is complete. The read that first sees the exit took its chunk before it
+           ;; looked at the status, so it can still miss the tail.
+           exit-seen?
            false]
 
       (let [res
@@ -2269,26 +2263,17 @@
             (long (or (get res "next_offset") off))
 
             idle
-            (if (= "" text) idle 0)
-
-            seen
-            (or seen (not= "" text))]
+            (if (= "" text) idle 0)]
 
         ((:append! acc) text)
         (cond (>= (util/now-ms) deadline) (finish res nxt)
-              (not (get res "is_eof")) (recur nxt 0 0 seen)
-              (= "running" (get res "status")) (do (Thread/sleep (long (wait-idle-poll-ms idle)))
-                                                   (recur nxt (inc idle) 0 seen))
-              ;; Exited: confirm the log has gone quiet before reporting. One read
-              ;; is enough once bytes have arrived. Having captured NOTHING, keep
-              ;; confirming across the whole drain window: on a loaded runner a PTY
-              ;; child's only line is handed over tens of ms after the child is
-              ;; already gone, and reporting at the first quiet read turns a
-              ;; command that printed into one that did not.
-              (and (= "" text) (<= (long (if seen 1 wait-drain-quiet-reads)) (long quiet)))
-              (finish res nxt)
-              :else (do (Thread/sleep (long wait-drain-poll-ms))
-                        (recur nxt (inc idle) (if (= "" text) (inc quiet) 0) seen)))))))
+              (not (get res "is_eof")) (recur nxt 0 exit-seen?)
+              (= "running" (get res "status")) (recur nxt (inc idle) (await-exit env id (wait-idle-poll-ms idle)))
+              ;; Exited: one more read, with no sleep, unless this read already
+              ;; started after the exit. A silent command no longer waits out a
+              ;; drain window that only guessed when the pump was done.
+              exit-seen? (finish res nxt)
+              :else (recur nxt (inc idle) true))))))
 
 (def ^:private control-key-names
   "Human names for the control characters `send` writes into a PTY, so its factual

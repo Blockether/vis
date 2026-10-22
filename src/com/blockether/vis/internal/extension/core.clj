@@ -1583,6 +1583,17 @@
   (letfn [(merge-entry [a b] (if (and (map? a) (map? b)) (merge-with merge-entry a b) b))]
     (apply merge-with merge-entry maps)))
 
+(defn- ctx-contribution
+  "Run one extension's `:ext/ctx-fn`. Log a throw and answer nil."
+  [environment ext]
+  (try (with-context {:ext ext :env environment} ((:ext/ctx-fn ext) environment))
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::ctx-contribution-error
+                    :data {:ext (:ext/name ext) :error (ex-message t)}}
+                   "Extension :ext/ctx-fn fn threw")
+         nil)))
+
 (defn ctx-contributions
   "Return merged structured `ctx` contributions for active extensions.
 
@@ -1593,29 +1604,38 @@
    Python boundary as the model's `session` dict, which throws on any keyword
    key/value. This fn only aggregates (deep-merge); producers own the keys.
    Exceptions and non-map returns are logged and ignored so bad optional
-   context never blocks a turn."
+   context never blocks a turn.
+
+   The callbacks run in parallel, because the first one of a Python extension
+   starts its worker (#396). The merge keeps the extension order."
   [environment active-extensions]
-  (reduce (fn [acc ext]
-            (if-let [f (:ext/ctx-fn ext)]
-              (let [contribution (try (with-context {:ext ext :env environment} (f environment))
-                                      (catch Throwable t
-                                        (tel/log! {:level :warn
-                                                   :id ::ctx-contribution-error
-                                                   :data {:ext (:ext/name ext)
-                                                          :error (ex-message t)}}
-                                                  "Extension :ext/ctx-fn fn threw")
-                                        nil))]
-                (if (map? contribution)
-                  (deep-merge acc contribution)
-                  (do (when (some? contribution)
-                        (tel/log! {:level :warn
-                                   :id ::ctx-contribution-invalid
-                                   :data {:ext (:ext/name ext) :returned (type contribution)}}
-                                  "Extension :ext/ctx-fn fn returned non-map"))
-                      acc)))
-              acc))
-          {}
-          (or active-extensions [])))
+  (let [exts
+        (filterv :ext/ctx-fn active-extensions)
+
+        tasks
+        (if (< (count exts) 2)
+          (mapv (fn [ext]
+                  (delay (ctx-contribution environment ext)))
+                exts)
+          (mapv (fn [ext]
+                  (cancellation/worker-future "vis-ctx-contribution"
+                                              (bound-fn [] (ctx-contribution environment ext))
+                                              {:platform? true}))
+                exts))]
+
+    (try (reduce (fn [acc [ext task]]
+                   (let [contribution @task]
+                     (if (map? contribution)
+                       (deep-merge acc contribution)
+                       (do (when (some? contribution)
+                             (tel/log! {:level :warn
+                                        :id ::ctx-contribution-invalid
+                                        :data {:ext (:ext/name ext) :returned (type contribution)}}
+                                       "Extension :ext/ctx-fn fn returned non-map"))
+                           acc))))
+                 {}
+                 (map vector exts tasks))
+         (finally (run! #(when (future? %) (future-cancel %)) tasks)))))
 
 (defn- tool-result->public-value
   [result]
