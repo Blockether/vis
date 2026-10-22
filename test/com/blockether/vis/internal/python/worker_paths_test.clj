@@ -81,11 +81,14 @@
                             (expect (.isDirectory run-directory))
                             (.destroyForcibly process)
                             (.waitFor process)
+                            ;; The exit hook runs asynchronously; a loaded CI runner needed more than 2 s.
                             (loop [attempt 0]
-                              (when (and (< attempt 200) (.exists run-directory))
+                              (when (and (< attempt 1000) (.exists run-directory))
                                 (Thread/sleep 10)
                                 (recur (inc attempt))))
-                            (expect (not (.exists run-directory)))))
+                            (expect (not (.exists run-directory))
+                                    (pr-str (for [^File file (or (.listFiles run-directory) [])]
+                                              [(.getName file) (.length file)])))))
                         (finally (worker/stop-worker! key)
                                  (doseq [^File file (reverse (file-seq directory))]
                                    (Files/deleteIfExists (.toPath file))))))))
