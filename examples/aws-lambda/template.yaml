@@ -1,0 +1,232 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Vis gateway on AWS Lambda with S3 state, an SQS relay and an EventBridge tick.
+
+Parameters:
+  ImageUri:
+    Type: String
+  TokenParameter:
+    Type: String
+    Default: /vis/token
+  LifetimeSeconds:
+    Type: Number
+    Default: 900
+
+Resources:
+  StateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub vis-state-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration: {Status: Enabled}
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      LifecycleConfiguration:
+        Rules:
+          - {Id: relay, Status: Enabled, Prefix: relay/, ExpirationInDays: 1, NoncurrentVersionExpiration: {NoncurrentDays: 1}}
+          - {Id: history, Status: Enabled, NoncurrentVersionExpiration: {NoncurrentDays: 7}}
+
+  RelayQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: vis-relay
+      MessageRetentionPeriod: 300
+      VisibilityTimeout: 60
+
+  FrontLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: /aws/lambda/vis-front, RetentionInDays: 14}
+
+  WorkerLogs:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: /aws/lambda/vis-worker, RetentionInDays: 14}
+
+  FrontRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: vis-front
+      AssumeRolePolicyDocument:
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: relay
+          PolicyDocument:
+            Statement:
+              - {Effect: Allow, Action: [s3:GetObject, s3:PutObject], Resource: !Sub "${StateBucket.Arn}/relay/*"}
+              - {Effect: Allow, Action: s3:GetObject, Resource: !Sub "${StateBucket.Arn}/lease.json"}
+              - {Effect: Allow, Action: s3:ListBucket, Resource: !GetAtt StateBucket.Arn}
+              - {Effect: Allow, Action: sqs:SendMessage, Resource: !GetAtt RelayQueue.Arn}
+              - {Effect: Allow, Action: lambda:InvokeFunction, Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:vis-worker"}
+              - {Effect: Allow, Action: ssm:GetParameter, Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TokenParameter}"}
+
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: vis-worker
+      AssumeRolePolicyDocument:
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: state
+          PolicyDocument:
+            Statement:
+              - {Effect: Allow, Action: [s3:GetObject, s3:PutObject], Resource: !Sub "${StateBucket.Arn}/*"}
+              - {Effect: Allow, Action: s3:ListBucket, Resource: !GetAtt StateBucket.Arn}
+              - {Effect: Allow, Action: [sqs:ReceiveMessage, sqs:DeleteMessage], Resource: !GetAtt RelayQueue.Arn}
+              - {Effect: Allow, Action: lambda:InvokeFunction, Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:vis-worker"}
+              - {Effect: Allow, Action: ssm:GetParameter, Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TokenParameter}"}
+
+  WorkerFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: WorkerLogs
+    Properties:
+      FunctionName: vis-worker
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Architectures: [arm64]
+      MemorySize: 3008
+      EphemeralStorage: {Size: 4096}
+      Timeout: !Ref LifetimeSeconds
+      Role: !GetAtt WorkerRole.Arn
+      Environment:
+        Variables:
+          VIS_ROLE: worker
+          VIS_BUCKET: !Ref StateBucket
+          VIS_QUEUE_URL: !Ref RelayQueue
+          VIS_TOKEN_PARAMETER: !Ref TokenParameter
+          VIS_LIFETIME_S: !Ref LifetimeSeconds
+
+  WorkerInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref WorkerFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 0
+      MaximumEventAgeInSeconds: 600
+
+  FrontFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: FrontLogs
+    Properties:
+      FunctionName: vis-front
+      PackageType: Image
+      Code: {ImageUri: !Ref ImageUri}
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: !Ref LifetimeSeconds
+      Role: !GetAtt FrontRole.Arn
+      Environment:
+        Variables:
+          VIS_ROLE: front
+          VIS_BUCKET: !Ref StateBucket
+          VIS_QUEUE_URL: !Ref RelayQueue
+          VIS_TOKEN_PARAMETER: !Ref TokenParameter
+          VIS_LIFETIME_S: !Ref LifetimeSeconds
+          VIS_WORKER_FUNCTION: !Ref WorkerFunction
+
+  FrontUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt FrontFunction.Arn
+      AuthType: NONE
+      InvokeMode: RESPONSE_STREAM
+
+  FrontUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FrontFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  FrontInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref FrontFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  TickRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: vis-tick
+      AssumeRolePolicyDocument:
+        Statement: [{Effect: Allow, Principal: {Service: scheduler.amazonaws.com}, Action: sts:AssumeRole}]
+      Policies:
+        - PolicyName: invoke
+          PolicyDocument:
+            Statement: [{Effect: Allow, Action: lambda:InvokeFunction, Resource: !GetAtt WorkerFunction.Arn}]
+
+  TickGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties: {Name: vis}
+
+  Tick:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: vis-tick
+      GroupName: !Ref TickGroup
+      Description: Wake the Vis worker for due automations and interrupted turns.
+      ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow: {Mode: "OFF"}
+      Target:
+        Arn: !GetAtt WorkerFunction.Arn
+        RoleArn: !GetAtt TickRole.Arn
+        Input: '{"kind":"tick"}'
+        RetryPolicy: {MaximumRetryAttempts: 0}
+
+  WebAccess:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig: {Name: vis-web, OriginAccessControlOriginType: s3, SigningBehavior: always, SigningProtocol: sigv4}
+
+  # The CDN serves the web app files from S3. Only "/", /login and the API reach Lambda.
+  Web:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: vis
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: front
+            DomainName: !Select [2, !Split ["/", !GetAtt FrontUrl.FunctionUrl]]
+            CustomOriginConfig: {OriginProtocolPolicy: https-only, OriginReadTimeout: 60}
+          - Id: web
+            DomainName: !GetAtt StateBucket.RegionalDomainName
+            OriginPath: /web
+            OriginAccessControlId: !GetAtt WebAccess.Id
+            S3OriginConfig: {OriginAccessIdentity: ""}
+        DefaultCacheBehavior:
+          TargetOriginId: front
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # Managed-CachingDisabled
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac  # Managed-AllViewerExceptHostHeader
+        CacheBehaviors:
+          - PathPattern: /assets/*
+            TargetOriginId: web
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+
+  WebRead:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StateBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: s3:GetObject
+            Resource: !Sub "${StateBucket.Arn}/web/*"
+            Condition: {StringEquals: {"AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Web}"}}
+
+Outputs:
+  WebUrl:
+    Value: !Sub https://${Web.DomainName}
+  Url:
+    Value: !GetAtt FrontUrl.FunctionUrl
+  Bucket:
+    Value: !Ref StateBucket

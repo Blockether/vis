@@ -1,0 +1,127 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "Stack",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:*"
+      ],
+      "Resource": "arn:aws:cloudformation:*:ACCOUNT_ID:stack/vis-*/*"
+    },
+    {
+      "Sid": "StackRead",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ValidateTemplate",
+        "cloudformation:ListStacks",
+        "cloudformation:DescribeStacks",
+        "sts:GetCallerIdentity",
+        "ecr:GetAuthorizationToken",
+        "lambda:List*",
+        "lambda:GetAccountSettings",
+        "scheduler:List*",
+        "sqs:ListQueues",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Images",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:*"
+      ],
+      "Resource": "arn:aws:ecr:*:ACCOUNT_ID:repository/vis-*"
+    },
+    {
+      "Sid": "Functions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:*"
+      ],
+      "Resource": [
+        "arn:aws:lambda:*:ACCOUNT_ID:function:vis-*"
+      ]
+    },
+    {
+      "Sid": "Bucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:*"
+      ],
+      "Resource": [
+        "arn:aws:s3:::vis-*",
+        "arn:aws:s3:::vis-*/*"
+      ]
+    },
+    {
+      "Sid": "Queue",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:*"
+      ],
+      "Resource": "arn:aws:sqs:*:ACCOUNT_ID:vis-*"
+    },
+    {
+      "Sid": "Schedules",
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:*"
+      ],
+      "Resource": [
+        "arn:aws:scheduler:*:ACCOUNT_ID:schedule/vis*/*",
+        "arn:aws:scheduler:*:ACCOUNT_ID:schedule-group/vis*"
+      ]
+    },
+    {
+      "Sid": "Token",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:*"
+      ],
+      "Resource": "arn:aws:ssm:*:ACCOUNT_ID:parameter/vis/*"
+    },
+    {
+      "Sid": "Logs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:*"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:ACCOUNT_ID:log-group:/aws/lambda/vis-*",
+        "arn:aws:logs:*:ACCOUNT_ID:log-group:/aws/lambda/vis-*:*"
+      ]
+    },
+    {
+      "Sid": "Roles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:UpdateRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:PassRole",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/vis-*"
+    },
+    {
+      "Sid": "Cdn",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{:providers [{:id :openai-codex
+              :base-url "https://chatgpt.com/backend-api"
+              :api-style :openai-compatible-responses
+              :models [{:name "gpt-5.5"} {:name "gpt-5.4"}]}]
+ :toggles {:network/enabled true :shell/enabled true}}

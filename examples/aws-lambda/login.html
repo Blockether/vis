@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/png" href="/vis-logo.png">
+<title>Vis · Sign in</title>
+<style>
+  :root { --bg: #faf3eb; --box: #f2ebdf; --fg: #262626; --muted: #625d57; --line: #c8bfb0;
+          --button: #3f3f3f; --button-fg: #faf3eb; --accent: #f0ad00; --error: #c12121;
+          color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1117; --box: #161820; --fg: #f3f4f6; --muted: #9ca3af; --line: #464a54;
+            --button: #282b36; --button-fg: #f3f4f6; --accent: #ffc420; --error: #f87171;
+            color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  html { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
+  body { margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 24px;
+         background: var(--bg); color: var(--fg);
+         font: 14px/1.5 'JetBrains Mono Variable', 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace; }
+  main { width: min(360px, 100%); }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+  .brand img { width: 44px; height: 40px; object-fit: contain; }
+  .brand b { font-size: 22px; letter-spacing: .12em; }
+  h1 { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; color: var(--muted);
+       font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; }
+  h1::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  form { display: grid; gap: 12px; padding: 20px; border: 1px solid var(--line); border-radius: 10px;
+         background: var(--box); }
+  input, button { width: 100%; height: 42px; border-radius: 8px; font: inherit; }
+  input { font-size: 16px; padding: 0 12px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+  button { border: 0; background: var(--button); color: var(--button-fg); font-weight: 600;
+           letter-spacing: .06em; cursor: pointer; }
+  button:hover { box-shadow: inset 0 -2px 0 var(--accent); }
+  .error { margin: 0; color: var(--error); }
+  .error:empty { display: none; }
+  footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><img src="/vis-logo.png" alt=""><b>VIS</b></div>
+  <h1>Sign in</h1>
+  <form method="post" action="/login">
+    <input type="password" name="password" placeholder="Password" aria-label="Password"
+           autocomplete="current-password" autofocus required>
+    <p class="error"><!--error--></p>
+    <button>Sign in</button>
+  </form>
+  <footer>The first request after a pause wakes Vis. It takes about 30 seconds.</footer>
+</main>
+</body>
+</html>
