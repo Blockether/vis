@@ -39,6 +39,13 @@ export function isKeyboardInputElement(element: Element | null): element is HTML
   );
 }
 
+// iPadOS Safari reports a Mac platform; only its touch points tell it apart.
+function isIosBrowser(): boolean {
+  const nav = globalThis.navigator;
+  if (!nav) return false;
+  return /iP(?:hone|ad|od)/.test(nav.userAgent) || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1);
+}
+
 type KeyboardOrientation = 'portrait' | 'landscape';
 type KeyboardHeightCache = Record<string, number>;
 
@@ -728,6 +735,23 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     };
     reclaimShellForExternalNavigation = reclaimAfterExternalNavigation;
 
+    // iOS Safari scrolls the page to reveal a field while its keyboard slides up.
+    // The visual viewport reports that only after the slide, so the shell jumped
+    // twice. A focus therefore shortens the shell by the predicted keyboard height
+    // first: the field is already above the keys and Safari has nothing to reveal.
+    const webKeyboard = !nativeKeyboard && isIosBrowser();
+    let webPrepinHeight: number | null = null;
+    const prepinWebKeyboard = () => {
+      if (!webKeyboard || hasHardwarePointer() || isViewportRotating()) return false;
+      const metrics = readViewportMetrics();
+      if (isKeyboardCovering(metrics)) return false;
+      const fullHeight = layoutHeight(metrics);
+      webPrepinHeight = clampShellHeight(fullHeight - keyboardHeightForPrepin(fullHeight), metrics);
+      pinnedShellHeight = webPrepinHeight;
+      setSafeBottom(SAFE_BOTTOM_KEYBOARD);
+      setBox({ height: webPrepinHeight, top: 0 });
+      return true;
+    };
     const sync = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
@@ -787,6 +811,15 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         // unpinned full-height shell would then hang off the bottom with the tab
         // bar and composer below the fold, so pin it to the physical device.
         const oversized = isViewportOversized(metrics);
+        if (webPrepinHeight !== null) {
+          // Hold the predicted pin until the keyboard covers the page or focus leaves.
+          if (!covered && isKeyboardInputElement(document.activeElement)) return;
+          webPrepinHeight = null;
+        }
+        if (webKeyboard && covered) {
+          const keys = layoutHeight(metrics) - vv.height;
+          if (isPlausibleKeyboardHeight(keys, layoutHeight(metrics))) rememberKeyboardHeight(keys);
+        }
         // Keyboard down means the layout viewport belongs at its origin again.
         if (!covered) resetLayoutScroll();
         // iOS can scroll the layout viewport to reveal a focused field even with
@@ -853,8 +886,18 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         revealFocusedEditor(el);
         return;
       }
+      const prepinned = prepinWebKeyboard();
       resync();
       timers.push(window.setTimeout(() => revealFocusedEditor(el), 350));
+      // No keyboard came up (a hardware keyboard, or focus left early): drop the guess.
+      if (prepinned)
+        timers.push(
+          window.setTimeout(() => {
+            if (webPrepinHeight === null) return;
+            webPrepinHeight = null;
+            sync();
+          }, 1000),
+        );
     };
 
     sync();

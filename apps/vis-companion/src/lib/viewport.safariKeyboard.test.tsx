@@ -76,3 +76,38 @@ describe('a web browser keyboard that scrolls the page', () => {
     expect(screen.getByTestId('shell').style.transform).toBe('translateY(190px)');
   });
 });
+
+describe('focusing a field in iOS Safari', () => {
+  // Regression, user report (paraphrased: entering the input still jumps, smaller,
+  // before it settles): Safari scrolled the page while its keyboard slid up, and the
+  // shell followed only when the visual viewport reported the end of the slide.
+  it('shortens the shell in the focus frame, then keeps the measured keyboard', () => {
+    vi.stubGlobal('navigator', { ...navigator, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', maxTouchPoints: 5 });
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    viewport({ offsetTop: 0, pageTop: 0, scrollY: 0 });
+    Object.assign(window.visualViewport!, { height: 844 });
+    render(<ViewportProbe />);
+    const shell = screen.getByTestId('shell');
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+
+    act(() => composer.focus());
+    expect(shell.style.height).toBe('549px');
+
+    Object.assign(window.visualViewport!, { height: 480 });
+    act(() => listeners.get('resize')?.());
+    expect(shell.style.height).toBe('480px');
+
+    act(() => composer.blur());
+    Object.assign(window.visualViewport!, { height: 844 });
+    act(() => listeners.get('resize')?.());
+    expect(shell.style.height).toBe('');
+
+    act(() => composer.focus());
+    expect(shell.style.height).toBe('480px');
+  });
+});
