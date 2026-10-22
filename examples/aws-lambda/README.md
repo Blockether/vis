@@ -6,6 +6,7 @@
 - You want to use Vis from a phone or another computer through a browser: see [Connect](#connect).
 - You want to try this example in your own AWS account: see [Deploy](#deploy).
 - You want other extensions or another Vis version in the image: see [Extensions and versions](#extensions-and-versions).
+- You want to dictate into the web app: see [Speech to text](#speech-to-text).
 - You want to remove everything again: see [Remove the stack](#remove-the-stack).
 
 For a gateway on your own computer or server, read the *Running a gateway* page of the manual.
@@ -19,7 +20,7 @@ A worker gives its work to a new worker before the 15-minute Lambda limit.
 - The `vis-front` function answers `/`, `/login` and the API behind CloudFront. It checks the password.
   It sends each API call to the live worker through SQS and reads the answer from S3.
 - The `vis-worker` function holds `lease.json` in S3 and runs `vis-agent-native gateway`.
-  It restores `state/home.tar.gz`, and it saves the state every 60 s and before it stops.
+  It restores `state/home.tar.gz`. It saves a changed home folder within 15 s and before it stops.
 - At 810 s the worker saves the state, gives the lease away and starts a successor.
   The successor continues each turn that was running.
 - A provider that rotates its refresh token writes `~/.vis/*auth*.json`. The worker then saves the state at once.
@@ -109,6 +110,7 @@ Function environment values:
 | `VIS_HANDOFF_MARGIN_S` | 90 | Time before the timeout for the handoff |
 | `VIS_IDLE_S` | 600 | Idle time before the worker stops; keep it below the lifetime |
 | `VIS_STREAM_S` | 600 | Length of one relayed event stream; the client then reconnects |
+| `VIS_SAVE_S` | 15 | Longest time before the worker saves a change in the home folder |
 
 ### Extensions and versions
 
@@ -127,9 +129,20 @@ The build also installs the newest approved release of each extension in `extens
 To add or remove an extension, edit `extensions.yml` and deploy again.
 Lambda can write only `/tmp`, so the build prepares each extension and its Python environment in
 `/opt/vis-extensions`. You cannot install or update an extension in the running gateway.
+The build also compiles the Python bytecode of the extensions and the standard library into
+`/opt/vis-pycache`, so a cold start imports them without a compile.
 
 The clj extension downloads Maven dependencies at first use. The saved state leaves out `~/.m2`,
 `~/.gitlibs` and `~/.cache`, so a new worker downloads them again.
+
+### Speech to text
+
+The image holds the Parakeet speech-to-text model (NVIDIA Parakeet TDT 0.6B v3, CC BY 4.0).
+The build downloads it from the Vis asset pack (487 MB) and checks its SHA-256 sum.
+The worker links it into `~/.vis/models`, so dictation in the web app works without a download.
+
+Other speech models download at first use. The saved state leaves out `~/.vis/models`, so a new
+worker downloads them again.
 
 ### Provider sign-in
 
@@ -146,6 +159,7 @@ Two installations that share one token sign each other out at the next refresh.
   Request 1000 in Service Quotas (`L-B99A9384`).
 - A cold start of the worker takes about 25 s. The first request waits for it.
 - Lambda has no `/dev/ptmx`, so shell commands run without a terminal.
+- The worker saves only its home folder, `/tmp/home`. Keep your work in it, for example in `~/work`.
 
 ## Remove the stack
 

@@ -15,6 +15,7 @@ a consistent SQLite copy, lease.json names the one live worker.
 """
 
 import base64
+import hashlib
 import hmac
 import http.client
 import http.cookies
@@ -51,8 +52,14 @@ IDLE_S = int(ENV.get("VIS_IDLE_S", "600"))
 STREAM_S = int(ENV.get("VIS_STREAM_S", "600"))
 HOME, WEB, VIS = "/tmp/home", "/opt/vis-web", "/opt/vis"
 LEASE, STATE, LEASE_TTL = "lease.json", "state/home.tar.gz", 90
-# Logs and download caches stay out of the saved state; tools fetch them again.
-UNSAVED = {HOME + p for p in ("/.vis/logs", "/.m2", "/.gitlibs", "/.cache")}
+# Logs, download caches and models stay out of the saved state; tools fetch them again.
+UNSAVED = {
+    HOME + p for p in ("/.vis/logs", "/.vis/models", "/.m2", "/.gitlibs", "/.cache")
+}
+# The image holds the speech models in MODELS and the bytecode of the code under /tmp in PYCACHE.
+MODELS, PYCACHE = "/opt/vis-models", "/tmp/pycache"
+# A change in the home folder is saved after at most SAVE_S seconds.
+SAVE_S = int(ENV.get("VIS_SAVE_S", "15"))
 PORT = 7890
 HOP = {"connection", "content-length", "transfer-encoding", "host", "keep-alive"}
 s3, sqs, lam = boto3.client("s3"), boto3.client("sqs"), boto3.client("lambda")
@@ -309,14 +316,32 @@ def gateway(method, path, body=None):
 PROTOCOL = ["0"]
 
 
+def link_image():
+    """Use the models and the bytecode cache of the image from the new home."""
+    os.makedirs(PYCACHE, exist_ok=True)
+    models = os.path.join(HOME, ".vis", "models")
+    os.makedirs(models, exist_ok=True)
+    for name in os.listdir(MODELS) if os.path.isdir(MODELS) else []:
+        target = os.path.join(models, name)
+        if not os.path.lexists(target):
+            os.symlink(os.path.join(MODELS, name), target)
+
+
 def restore():
     shutil.rmtree(HOME, ignore_errors=True)
     os.makedirs(HOME + "/work", exist_ok=True)
-    raw, _ = get(STATE)
-    if raw:
-        with tarfile.open(fileobj=io.BytesIO(raw)) as t:
-            t.extractall(HOME, filter="data")
-        return log("restored state", len(raw))
+    try:
+        raw, _ = get(STATE)
+        if raw:
+            with tarfile.open(fileobj=io.BytesIO(raw)) as t:
+                t.extractall(HOME, filter="data")
+            return log("restored state", len(raw))
+        seed()
+    finally:
+        link_image()
+
+
+def seed():
     for page in s3.get_paginator("list_objects_v2").paginate(
         Bucket=BUCKET, Prefix="seed/"
     ):
@@ -335,6 +360,31 @@ def auth_changed(since):
     )
 
 
+def saved_files():
+    """Yield (path, name) of every file that the saved state holds."""
+    for root, dirs, files in os.walk(HOME):
+        dirs[:] = [d for d in dirs if os.path.join(root, d) not in UNSAVED]
+        for f in files:
+            path = os.path.join(root, f)
+            if f.endswith(("-wal", "-shm", ".lock")) or not os.path.isfile(path):
+                continue
+            yield path, os.path.relpath(path, HOME)
+
+
+def fingerprint():
+    """Digest the name, size and time of each saved file and SQLite journal."""
+    digest = hashlib.sha256()
+    for root, dirs, files in os.walk(HOME):
+        dirs[:] = [d for d in dirs if os.path.join(root, d) not in UNSAVED]
+        for f in sorted(files):
+            try:
+                st = os.lstat(os.path.join(root, f))
+            except OSError:
+                continue
+            digest.update(f"{root}/{f}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+    return digest.hexdigest()
+
+
 def save(lease_obj):
     """Upload the home folder with a consistent copy of every SQLite file."""
     lease_obj.write(
@@ -342,23 +392,17 @@ def save(lease_obj):
     )  # fence: fails when the lease was lost
     out = "/tmp/home.tar.gz"
     with tarfile.open(out, "w:gz") as t:
-        for root, dirs, files in os.walk(HOME):
-            dirs[:] = [d for d in dirs if os.path.join(root, d) not in UNSAVED]
-            for f in files:
-                path = os.path.join(root, f)
-                name = os.path.relpath(path, HOME)
-                if f.endswith(("-wal", "-shm", ".lock")) or not os.path.isfile(path):
-                    continue
-                if f.endswith(".db"):
-                    copy = "/tmp/snapshot.db"
-                    src, dst = sqlite3.connect(path), sqlite3.connect(copy)
-                    src.backup(dst)
-                    dst.close()
-                    src.close()
-                    t.add(copy, name)
-                    os.remove(copy)
-                else:
-                    t.add(path, name)
+        for path, name in saved_files():
+            if path.endswith(".db"):
+                copy = "/tmp/snapshot.db"
+                src, dst = sqlite3.connect(path), sqlite3.connect(copy)
+                src.backup(dst)
+                dst.close()
+                src.close()
+                t.add(copy, name)
+                os.remove(copy)
+            else:
+                t.add(path, name)
     with open(out, "rb") as f:
         put(STATE, f.read())
     log("saved state", os.path.getsize(out))
@@ -512,6 +556,7 @@ def worker(raw):
     resume(previous.get("running", []), held)
     relay, pool = Relay(), ThreadPoolExecutor(64)
     renewed = saved = time.time()
+    stored = None
     try:
         while True:
             for m in sqs.receive_message(
@@ -529,8 +574,12 @@ def worker(raw):
                     expires=now + LEASE_TTL, running=running, next_due=next_due()
                 )
                 renewed, relay.last = now, (now if running else relay.last)
-            if now - saved > 60 or auth_changed(saved):
-                save(held)
+            # Save a changed home within SAVE_S seconds, and a rotated token at once.
+            if now - saved >= SAVE_S or auth_changed(saved):
+                current = fingerprint()
+                if current != stored or auth_changed(saved):
+                    save(held)
+                    stored = current
                 saved = now
             due = held.data.get("next_due")
             handoff = now - started > LIFETIME
