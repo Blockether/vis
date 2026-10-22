@@ -36,10 +36,6 @@
   "Workspace host selectors."
   (set (get-in @schema ["$defs" "workspaceOs" "enum"])))
 
-(def jail-environment-values
-  "Sandbox environment modes."
-  (set (get-in @schema ["$defs" "jail" "properties" "environment" "enum"])))
-
 (def titling-modes
   "Session title modes."
   (set (get-in @schema ["$defs" "titling" "properties" "mode" "enum"])))

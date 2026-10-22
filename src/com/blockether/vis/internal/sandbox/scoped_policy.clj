@@ -37,14 +37,6 @@
     :default {}
     :type "object"
     :editor "network"}
-   {:id "jail_environment"
-    :section ["jail"]
-    :key "environment"
-    :label "Process environment"
-    :default "declared"
-    :type "enum"
-    :editor "select"
-    :choices ["declared" "inherit"]}
    {:id "jail_deny_exec"
     :section ["jail"]
     :key "deny_exec"
@@ -131,7 +123,6 @@
                       (every? #(covered? (concat (:allow-read h) (:allow-read-write h) [root]) %)
                               (:allow-read d))
                       (or (not (:keychain? d)) (:keychain? h))
-                      (or (not (:inherit-host-env? d)) (:inherit-host-env? h))
                       (subset? (:inbound-ports d) (:inbound-ports h))
                       (or (empty? (get hn "allowed_domains"))
                           (and (seq (get dn "allowed_domains"))

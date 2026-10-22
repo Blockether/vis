@@ -700,12 +700,6 @@
         "enabled": {
           "type": "boolean"
         },
-        "environment": {
-          "enum": [
-            "declared",
-            "inherit"
-          ]
-        },
         "filesystem": {
           "$ref": "#/$defs/jailFilesystem"
         },

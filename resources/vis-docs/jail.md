@@ -177,10 +177,8 @@ environment:
   BUILD_TOKEN: {keychain: vis-build}
 ```
 
-`jail.environment: inherit` passes the operator's ambient environment to confined
-children, including exported credentials. Filesystem and network rules still apply.
 Pre-exec injection variables such as `LD_*`, `DYLD_*`, `BASH_ENV`, and `PERL*` are
-refused in both modes because they could run before the jail is installed.
+refused because they could run before the jail is installed.
 
 When the jail is disabled, children inherit the host environment. Project
 values override it.

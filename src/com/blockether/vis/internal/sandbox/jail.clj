@@ -25,9 +25,7 @@
       :env-values       {<NAME> <value>}     ; RESOLVED project env (`.env` +
                                              ; `environment:`) with ONE call's own
                                              ; `env` delta merged on, per spawn
-      :env-removals     #{<NAME> …}          ; names THAT call asked to UNSET
-      :inherit-host-env? <bool>}             ; `jail.environment: inherit` — the child
-                                             ; also keeps the operator's ambient env
+      :env-removals     #{<NAME> …}}         ; names THAT call asked to UNSET
 
    The filesystem model mirrors Anthropic's sandbox-runtime:
      - WRITE is allow-only: denied everywhere except the session roots + tmp +
@@ -477,14 +475,11 @@
         jail-env))))
 
 (def ^:private env-passthrough-names
-  "Non-secret operator vars a confined child may inherit under the default
-   `jail.environment: declared`. Everything else in the operator environment —
-   API keys, tokens, credentials — is dropped; a variable a child legitimately
-   needs is DECLARED in `environment:` and arrives as a resolved value
-   (`:env-values`), not by widening this list. `jail.environment: inherit`
-   (`:inherit-host-env?`) hands the child the ambient environment WHOLE instead —
-   the operator's explicit choice to give up ambient secrecy, and the only thing
-   that widens this."
+  "Non-secret operator vars a confined child may inherit. Everything else in the
+   operator environment — API keys, tokens, credentials — is dropped; a variable
+   a child legitimately needs is DECLARED in `environment:` and arrives as a
+   resolved value (`:env-values`), not by widening this list. Only a disabled
+   jail hands a child the ambient environment whole."
   #{"PATH" "HOME" "USER" "LOGNAME" "SHELL" "LANG" "LANGUAGE" "TERM" "TERMINFO" "TZ" "TMPDIR" "PWD"
     "HOSTNAME" "COLORTERM" "DISPLAY"})
 
@@ -569,13 +564,6 @@
    `environment:` — and so is every [[pre-exec-hijack?]] name, which would run
    code in the unconfined launcher before the jail exists.
 
-   `jail.environment: inherit` (`:inherit-host-env?`) replaces the allowlist with
-   the operator's WHOLE ambient environment, secrets included: filesystem,
-   network, exec and Mach confinement are unchanged, but ambient secrecy is
-   given up on purpose. The [[pre-exec-hijack?]] scrub still applies — that one
-   is not confinement of the child, it is the jail's own installation. No mode
-   inherits [[ambient-env-drops]].
-
    Returns nil when the policy is not enforcing — the caller keeps the parent
    environment and merges [[child-env-additions]] instead (unjailed
    platforms/`jail.enabled: false`), so non-confined behavior is unchanged."
@@ -583,10 +571,8 @@
   (when (enforcing? policy)
     (let [inherited
           (into {}
-                (if (:inherit-host-env? policy)
-                  (map identity)
-                  (filter (fn [[k _]]
-                            (env-passthrough? k))))
+                (filter (fn [[k _]]
+                          (env-passthrough? k)))
                 (ambient-env))
 
           ;; A name ONE call asked to unset is simply never built into the map —

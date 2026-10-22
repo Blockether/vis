@@ -240,16 +240,15 @@
   (and (map? value) (every? string? (keys value)) (every? string? (vals value))))
 
 (def process-jail-config-keys
-  #{:disabled? :inherit-host-env? :allow-read-write :allow-read :deny-read :deny-write :deny-exec
-    :deny-read-rules :deny-write-rules :write-rules :write-limited? :no-search :inbound-ports
-    :path-descriptions :keychain?})
+  #{:disabled? :allow-read-write :allow-read :deny-read :deny-write :deny-exec :deny-read-rules
+    :deny-write-rules :write-rules :write-limited? :no-search :inbound-ports :path-descriptions
+    :keychain?})
 
 (defn- process-jail-config?
   [policy]
   (and (map? policy)
        (every? process-jail-config-keys (keys policy))
        (boolean? (:disabled? policy))
-       (boolean? (:inherit-host-env? policy))
        (every? rooted-path-list? ((juxt :allow-read-write :allow-read) policy))
        (every? deny-rule-list? ((juxt :deny-read :deny-write) policy))
        (deny-rule-list? (or (:deny-read-rules policy) []))
@@ -570,7 +569,6 @@
 
      (assert-process-jail-config!
        {:disabled? (not (true? (get jail "enabled")))
-        :inherit-host-env? (= "inherit" (get jail "environment"))
         :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
         :allow-read read-only
         :deny-read deny-read

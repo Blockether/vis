@@ -293,11 +293,10 @@
                                                       ["/x"])})))))
 
 (defdescribe
-  jail-environment-inherit-mode
+  jail-environment-follows-the-jail
   (it
-    "`jail.environment: inherit` (`:inherit-host-env?`) keeps the operator's
-            ambient environment in a confined child, while the default keeps only the
-            allowlist — everything else about the jail is unchanged"
+    "a confined child keeps only the allowlist and the declared values, while an
+            unconfined child keeps the operator's ambient environment"
     (let [ambient
           (into {} (System/getenv))
 
@@ -317,20 +316,21 @@
           declared-env
           (pj/jailed-child-env policy)
 
-          inherited-env
-          (pj/jailed-child-env (assoc policy :inherit-host-env? true))]
+          unconfined-env
+          (pj/process-environment (assoc policy :disabled? true))]
 
       (expect (some? outsider) "the host must export something outside the allowlist to test with")
       (expect (not (contains? declared-env outsider))
-              "the DEFAULT mode drops every ambient variable that is not a non-secret basic")
-      (expect (= (get ambient outsider) (get inherited-env outsider))
-              "`inherit` hands the confined child the ambient value verbatim")
-      (expect (= "from-dotenv" (get inherited-env "MY_DECLARED_TOKEN"))
-              "the project's own environment still applies on top under `inherit`")))
-  (it "a pre-exec hijack name is refused under `inherit` too — that scrub is the jail itself"
+              "a confined child drops every ambient variable that is not a non-secret basic")
+      (expect (= "from-dotenv" (get declared-env "MY_DECLARED_TOKEN"))
+              "a confined child keeps the project's declared environment")
+      (expect (= (get ambient outsider) (get unconfined-env outsider))
+              "an unconfined child keeps the ambient value verbatim")
+      (expect (= "from-dotenv" (get unconfined-env "MY_DECLARED_TOKEN"))
+              "the project's own environment still applies on top without the jail")))
+  (it "a pre-exec hijack name is refused in a confined child — that scrub is the jail itself"
       (let [env (pj/jailed-child-env {:roots-fn (constantly [])
                                       :net-enabled? false
-                                      :inherit-host-env? true
                                       :env-values {"LD_PRELOAD" "/tmp/x.so" "PERL5OPT" "-Mevil"}})]
         (expect (empty? (filter #'pj/pre-exec-hijack? (keys env)))))))
 
@@ -339,7 +339,7 @@
   ;; Regression for a user report: the gateway inherited NODE_OPTIONS from the terminal
   ;; that started it. The value named a `--require` preload in a temp folder, and the
   ;; terminal tool deleted that file. Every Node command in the sandbox then failed.
-  (it "drops the ambient NODE_OPTIONS from unconfined and `inherit` children"
+  (it "drops the ambient NODE_OPTIONS from unconfined children"
       (let [drop-ambient
             @#'pj/ambient-env
 
@@ -347,15 +347,9 @@
             {"PATH" "/usr/bin" "NODE_OPTIONS" "--require=/gone/preload.cjs"}]
 
         (with-redefs [pj/ambient-env (fn ([] (drop-ambient host)) ([env] (drop-ambient env)))]
-          (let [unconfined (pj/process-environment {:disabled? true})
-                inherited (pj/jailed-child-env {:roots-fn (constantly [])
-                                                :net-enabled? false
-                                                :inherit-host-env? true})]
-
+          (let [unconfined (pj/process-environment {:disabled? true})]
             (expect (= "/usr/bin" (get unconfined "PATH")))
-            (expect (not (contains? unconfined "NODE_OPTIONS")))
-            (expect (= "/usr/bin" (get inherited "PATH")))
-            (expect (not (contains? inherited "NODE_OPTIONS")))))))
+            (expect (not (contains? unconfined "NODE_OPTIONS")))))))
   (it "keeps the NODE_OPTIONS that the project declares"
       (let [env (pj/process-environment {:disabled? true
                                          :env-values {"NODE_OPTIONS" "--max-old-space-size=2048"}})]

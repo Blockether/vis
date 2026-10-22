@@ -437,8 +437,8 @@ Resolution order everywhere: `environment:` → `.env`, `.env.local` → the
 environment Vis was started from.
 
 With the jail enabled, the parent process environment is excluded.
-`{env: NAME}` explicitly includes a variable, while `jail.environment: inherit`
-includes the full environment. `LD_*`, `DYLD_*`, `PERL*` and `BASH_ENV` are
+`{env: NAME}` explicitly includes a variable. With the jail disabled, child
+processes keep the full environment. `LD_*`, `DYLD_*`, `PERL*` and `BASH_ENV` are
 always refused. Child processes never inherit `NODE_OPTIONS` from the environment
 Vis was started from. Declare it under `environment:` if a project needs it.
 

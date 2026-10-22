@@ -88,8 +88,6 @@
                  {"id" "gen" "path" "~/generated"}
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
    "jail" {"enabled" true
-           ;; Ambient-environment mode: `declared` (the default) or `inherit`.
-           "environment" "declared"
            "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
            ;; #90: the OS credential store stays closed unless opted in.
            "keychain" false
@@ -149,7 +147,6 @@
   (it
     "derives process-jail and network maps from the same string contract"
     (expect (= {:disabled? false
-                :inherit-host-env? false
                 :allow-read-write ["/opt/svar" "~/generated" "~/.m2" "~/.vis"]
                 :allow-read ["~/reference"]
                 :deny-read []
@@ -169,13 +166,6 @@
     ;; The jail is opt-in.
     (expect (true? (:disabled? (config-validation/process-jail-config
                                  (update full-config "jail" dissoc "enabled")))))
-    ;; A confined child receives only declared environment values by default.
-    (expect (false? (:inherit-host-env? (config-validation/process-jail-config full-config))))
-    (expect (false? (:inherit-host-env?
-                      (config-validation/process-jail-config
-                        (assoc-in full-config ["jail" "environment"] "declared")))))
-    (expect (true? (:inherit-host-env? (config-validation/process-jail-config
-                                         (assoc-in full-config ["jail" "environment"] "inherit")))))
     (expect (= {:allowed-domains ["github.com"]
                 :denied-domains ["example.invalid"]
                 :exclude-domains ["opaque.example"]
