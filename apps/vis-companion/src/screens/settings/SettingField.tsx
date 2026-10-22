@@ -64,19 +64,29 @@ function defaultPythonName(path: string): string {
 /** A list legend with its add action on the same trailing rail as each row's trash. */
 function ListHeader({
   label,
+  hint,
   onAdd,
   children,
 }: {
   label: string;
+  /** One sentence under the legend, beside the add action. */
+  hint?: string;
   /** Gets the pressed button, so a panel that it opens can hang from it. */
   onAdd: (anchor: HTMLElement) => void;
   children: ReactNode;
 }) {
   return (
     <legend className="mb-1 flex w-full items-center justify-between gap-2">
-      <Text variant="label" className="min-w-0 truncate">
-        {children}
-      </Text>
+      <span className="min-w-0">
+        <Text variant="label" className="block truncate">
+          {children}
+        </Text>
+        {hint && (
+          <Text variant="description" className="mt-0.5 block">
+            {hint}
+          </Text>
+        )}
+      </span>
       <IconButton variant="quiet" label={label} title={label} onClick={(event) => onAdd(event.currentTarget)}>
         <PlusIcon className="size-4" />
       </IconButton>
@@ -121,14 +131,9 @@ function StringList({
   const rows = Array.isArray(value) ? value : [];
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-2">
-      <ListHeader label={`Add ${name.toLowerCase()}`} onAdd={() => onChange([...rows, numbers ? 0 : ''])}>
+      <ListHeader label={`Add ${name.toLowerCase()}`} hint={hint} onAdd={() => onChange([...rows, numbers ? 0 : ''])}>
         {label}
       </ListHeader>
-      {hint && (
-        <Text as="p" variant="description">
-          {hint}
-        </Text>
-      )}
       {rows.map((entry, index) => (
         <div key={index} className="flex min-w-0 items-center gap-2">
           <Input
@@ -664,7 +669,13 @@ export function SettingField(props: FieldProps) {
   }
   if (setting.editor === 'list')
     return (
-      <StringList label={setting.label} value={value} disabled={disabled} onChange={onChange} />
+      <StringList
+        label={setting.label}
+        hint={setting.description}
+        value={value}
+        disabled={disabled}
+        onChange={onChange}
+      />
     );
   return (
     <Text as="p" variant="description">

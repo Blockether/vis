@@ -226,16 +226,19 @@ export function ValueSetting({
         if (!busy && !disabled && changed && error === undefined) void onSave(draft);
       }}
     >
-      <div>
-        <Text as="p" variant="label">
-          {toggle.label}
-        </Text>
-        {toggle.description && (
-          <Text as="p" variant="description" className="mt-0.5">
-            {toggle.description}
+      {/* A list's own legend holds the label, the description and its add action. */}
+      {toggle.editor !== 'list' && (
+        <div>
+          <Text as="p" variant="label">
+            {toggle.label}
           </Text>
-        )}
-      </div>
+          {toggle.description && (
+            <Text as="p" variant="description" className="mt-0.5">
+              {toggle.description}
+            </Text>
+          )}
+        </div>
+      )}
       <SettingField
         setting={toggle}
         value={draft}
