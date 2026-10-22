@@ -61,11 +61,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const open = (gateways: GatewayConn[], providerMachineUrl?: string) =>
+const open = (gateways: GatewayConn[], providerMachineUrl?: string, providerId?: string) =>
   render(
     <SettingsDialog
       gateways={gateways}
       providerMachineUrl={providerMachineUrl}
+      providerId={providerId}
       onAddMachine={async () => {}}
       onClose={() => {}}
     />,
@@ -125,6 +126,42 @@ describe('machine settings disclosures', () => {
     expect(first).toHaveAttribute('aria-expanded', 'false');
     expect(second).toHaveAttribute('aria-expanded', 'true');
     await waitFor(() => expect(screen.getByText('Providers')).toBeVisible());
+    view.unmount();
+  });
+
+  // Regression, issue #406: a provider's Sign in button in the model picker opened
+  // generic machine settings, so the user had to find that provider again.
+  it('focuses the provider whose Sign in button opened the settings', async () => {
+    const URL_C = 'http://10.0.0.9:7890';
+    const signedOut = (id: string, auth_kind: 'api-key' | 'oauth') => ({
+      id,
+      label: id.toUpperCase(),
+      is_managed: false,
+      auth_kind,
+      models: ['m1'],
+      is_default: false,
+      default_model: null,
+      is_fallback: false,
+      fallback_model: null,
+      status: { is_authenticated: false, auth_state: 'unverified' },
+    });
+    globalThis.fetch = vi.fn((input?: RequestInfo | URL) =>
+      input && new URL(String(input), URL_C).pathname === '/v1/router'
+        ? Promise.resolve(
+            new Response(
+              JSON.stringify({ providers: [signedOut('oauth-plan', 'oauth'), signedOut('token-plan', 'api-key')] }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+          )
+        : quiet(input),
+    ) as unknown as typeof fetch;
+    const view = open([{ url: URL_C, token: 't', id: 'de2c15686eaef0f4' }], URL_C, 'token-plan');
+
+    const token = await screen.findByRole('button', { name: /^TOKEN-PLAN/ });
+    const oauth = screen.getByRole('button', { name: /^OAUTH-PLAN/ });
+    await waitFor(() => expect(document.activeElement).toBe(token));
+    expect(token).toHaveAttribute('aria-current', 'true');
+    expect(oauth).not.toHaveAttribute('aria-current');
     view.unmount();
   });
   // Regression, issue #ea166d2d-d22f-4a89-b117-d058641b7422: a protocol refusal

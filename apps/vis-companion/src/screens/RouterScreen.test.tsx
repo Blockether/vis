@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 // The picker opens in `Modal`, which PORTALS into the document — there is no document
 // in the `node` environment. Each case renders the dialog and reads where it landed.
-import { cleanup, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
-import { STORY_ROUTER_CLIENT, STORY_SESSION } from '../dev/story-data';
+import { STORY_PROVIDERS, STORY_ROUTER_CLIENT, STORY_SESSION } from '../dev/story-data';
+import type { GatewayClient } from '../lib/gateway';
+import type { RouterProvider } from '../lib/types';
 import { ProviderRouterDialog } from './RouterScreen';
 
 const noop = () => {};
@@ -56,5 +58,65 @@ describe('the model picker stands in the session it pins', () => {
     } finally {
       shell.remove();
     }
+  });
+});
+
+// Regression, issue #406: every signed-out provider offered the same OAuth wording, and
+// its button opened machine settings without the provider it was pressed for.
+describe('a signed-out provider opens its own row in machine settings', () => {
+  const signedOut = (id: string, auth_kind: RouterProvider['auth_kind']): RouterProvider => ({
+    ...STORY_PROVIDERS[0],
+    id,
+    label: id.toUpperCase(),
+    is_default: false,
+    auth_kind,
+    status: { is_authenticated: false, auth_state: 'unverified' },
+  });
+  const fleet = [
+    signedOut('token-plan', 'api-key'),
+    signedOut('oauth-plan', 'oauth'),
+    signedOut('minted', 'command'),
+  ];
+  const client = {
+    ...STORY_ROUTER_CLIENT,
+    cachedRouter: () => fleet,
+    router: async () => fleet,
+  } as unknown as GatewayClient;
+
+  it.each([
+    ['token-plan', 'Enter API key — machine settings'],
+    ['oauth-plan', 'Sign in — machine settings'],
+    ['minted', 'Open in machine settings'],
+  ])('names the step of %s and passes its id', (id, label) => {
+    cleanup();
+    const onClose = vi.fn();
+    const onManageProviders = vi.fn();
+    render(
+      <ProviderRouterDialog
+        client={client}
+        sid={STORY_SESSION.id}
+        onClose={onClose}
+        onManageProviders={onManageProviders}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(id.toUpperCase()) }));
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(onManageProviders.mock.calls).toEqual([[id]]);
+  });
+
+  it('opens the whole fleet from the title band, without a provider', () => {
+    cleanup();
+    const onManageProviders = vi.fn();
+    render(
+      <ProviderRouterDialog
+        client={client}
+        sid={STORY_SESSION.id}
+        onClose={noop}
+        onManageProviders={onManageProviders}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Open provider settings' }));
+    expect(onManageProviders.mock.calls).toEqual([[undefined]]);
   });
 });

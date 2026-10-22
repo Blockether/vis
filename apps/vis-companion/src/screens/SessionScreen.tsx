@@ -749,8 +749,8 @@ export function SessionScreen({
   sid: string;
   onBack: () => void;
   onOpenSession: (sid: string, fresh?: boolean) => void;
-  /** Open this gateway's settings, where provider accounts and OAuth live. */
-  onManageProviders?: () => void;
+  /** Open this gateway's settings, where provider accounts and OAuth live; an id focuses one provider. */
+  onManageProviders?: (providerId?: string) => void;
   fresh?: boolean;
   /** The nonce of a Talk link (the Action Button). A new value arms voice conversation once. */
   talk?: string;

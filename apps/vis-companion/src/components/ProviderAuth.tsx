@@ -48,6 +48,23 @@ export function isProviderAuthed(provider: RouterProvider): boolean {
   return provider.status?.is_authenticated === true && providerAuthState(provider) !== 'rejected';
 }
 
+/**
+ * The verb that signs a signed-out provider in, from the auth kind the gateway reports.
+ * OAuth and API keys need a person; a minted, managed or local credential has no such
+ * step, so it gets null. An older gateway omits the kind and keeps the old Sign in.
+ */
+export function providerSignInVerb(provider: RouterProvider): string | null {
+  switch (provider.auth_kind) {
+    case undefined:
+    case 'oauth':
+      return 'Sign in';
+    case 'api-key':
+      return 'Enter API key';
+    default:
+      return null;
+  }
+}
+
 /** Present the explicit router default first without mutating the gateway fleet. */
 export function defaultFirstProviders(providers: RouterProvider[]): RouterProvider[] {
   return [
@@ -1357,8 +1374,11 @@ function ProviderThinkingMenu({
  *
  * Opening also asks the gateway for a fresh verdict and quota. A signed-out
  * row still goes straight to sign-in because it has no account report yet.
+ *
+ * `focusId` names the provider that a model picker Sign in button opened (#406).
+ * Its row scrolls into view once, takes keyboard focus and stays marked selected.
  */
-export function ProviderRows({ auth }: { auth: ProviderAuth }) {
+export function ProviderRows({ auth, focusId }: { auth: ProviderAuth; focusId?: string }) {
   const { providers, pending } = auth;
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [removing, setRemoving] = useState<string | null>(null);
@@ -1402,6 +1422,16 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
   // replaced whenever a status answers or a rank moves.
   const tagged = tagging ? (rows.find((row) => row.id === tagging.id) ?? null) : null;
   const thinkingRow = thinkingAt ? (rows.find((row) => row.id === thinkingAt.id) ?? null) : null;
+  const focusRef = useRef<HTMLButtonElement | null>(null);
+  const hasFocused = useRef(false);
+  const isFocusShown = rows.some((row) => row.id === focusId);
+  // The fleet can paint after this panel mounts, so the row moves into view when it exists.
+  useEffect(() => {
+    if (!isFocusShown || hasFocused.current) return;
+    hasFocused.current = true;
+    focusRef.current?.scrollIntoView?.({ block: 'center' });
+    focusRef.current?.focus({ preventScroll: true });
+  }, [isFocusShown]);
 
   return (
     <div className="divide-y divide-dialog-edge">
@@ -1493,6 +1523,9 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
             <SwipeActions label={provider.label} actions={actions} alignMenuWithHeader>
               <div className="min-w-0">
                 <ListRow
+                  ref={provider.id === focusId ? focusRef : undefined}
+                  isSelected={provider.id === focusId}
+                  aria-current={provider.id === focusId || undefined}
                   className="min-w-0 gap-3"
                   aria-expanded={authed ? isOpen : undefined}
                   aria-controls={authed && isOpen ? panelId : undefined}

@@ -401,6 +401,8 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   const [talkIntent, setTalkIntent] = useState<TalkLink | null>(null);
   const [settingsDestination, setSettingsDestination] = useState<{
     providerMachineUrl?: string;
+    /** The provider row that machine settings focus, from a Sign in button (#406). */
+    providerId?: string;
     machineUrl?: string;
   } | null>(null);
   // Settings of one project, group or session that another settings dialog opened (#373).
@@ -410,9 +412,11 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
   } | null>(null);
   // The app cog opens the fleet. The model picker already knows which machine owns
   // its providers, so its cog opens that machine instead of asking the question again.
+  // A provider's own Sign in button also names that provider, so its row is focused (#406).
   const openSettings = useCallback(() => setSettingsDestination({}), []);
   const openProviderSettings = useCallback(
-    () => setSettingsDestination(openTarget ? { providerMachineUrl: openTarget.conn.url } : {}),
+    (providerId?: string) =>
+      setSettingsDestination(openTarget ? { providerMachineUrl: openTarget.conn.url, providerId } : {}),
     [openTarget],
   );
   // A locked inherited setting opens the dialog that decides it, in place of its own (#373).
@@ -1525,6 +1529,7 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
               gateways={conns}
               primaryUrl={primary?.url}
               providerMachineUrl={settingsDestination.providerMachineUrl}
+              providerId={settingsDestination.providerId}
               machineUrl={settingsDestination.machineUrl}
               contextSession={openTarget ? { url: openTarget.conn.url, sid: openTarget.sid } : undefined}
               onAddMachine={addConnection}

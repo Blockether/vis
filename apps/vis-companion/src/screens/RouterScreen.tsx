@@ -8,6 +8,7 @@ import {
   isProviderAuthed,
   preferredModelFirst,
   providerLimitsLine,
+  providerSignInVerb,
   providerStatusMark,
   providerStatusLine,
   useProviderFleet,
@@ -19,8 +20,17 @@ interface Props {
   sid?: string;
   onClose: () => void;
   onPicked?: (pref: ModelPref) => void;
-  /** Jump to gateway settings, where provider accounts and OAuth live. */
-  onManageProviders?: () => void;
+  /**
+   * Jump to gateway settings, where provider accounts and OAuth live. A provider id
+   * focuses that provider's row there (#406).
+   */
+  onManageProviders?: (providerId?: string) => void;
+}
+
+/** The button of a signed-out provider names its own sign-in step, not OAuth for all (#406). */
+function signInLabel(provider: RouterProvider): string {
+  const verb = providerSignInVerb(provider);
+  return verb ? `${verb} — machine settings` : 'Open in machine settings';
 }
 
 /**
@@ -83,9 +93,9 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
     }
   }
 
-  function manageProviders() {
+  function manageProviders(providerId?: string) {
     onClose();
-    onManageProviders?.();
+    onManageProviders?.(providerId);
   }
 
   return (
@@ -120,7 +130,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
             <BandButton
               label="Open provider settings"
               title="Sign-in, OAuth and API keys live in machine settings"
-              onClick={manageProviders}
+              onClick={() => manageProviders()}
             >
               <SettingsIcon />
             </BandButton>
@@ -174,8 +184,8 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
                     </p>
 
                     {!authed && (
-                      <Button className="w-full" onClick={manageProviders}>
-                        Sign in — machine settings
+                      <Button className="w-full" onClick={() => manageProviders(provider.id)}>
+                        {signInLabel(provider)}
                       </Button>
                     )}
 

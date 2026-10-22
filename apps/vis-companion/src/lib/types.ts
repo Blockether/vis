@@ -619,6 +619,8 @@ export interface RouterProvider {
   label: string;
   /** The registering extension owns this provider; manual removal is not allowed. */
   is_managed: boolean;
+  /** How the gateway signs this provider in. An older gateway omits it. */
+  auth_kind?: ProviderPreset['auth_kind'] | 'managed';
   base_url?: string;
   models: string[];
   /** Missing metadata is unknown support, never permission to send a wire field. */

@@ -412,6 +412,7 @@ export function MachineSettings({
   onSpeechChange,
   contextSessionId,
   isProvidersOpen = false,
+  focusProviderId,
 }: {
   gateway: GatewayConn;
   speechPrefs: SpeechPrefs;
@@ -420,6 +421,8 @@ export function MachineSettings({
   contextSessionId?: string;
   /** Opens the Providers band, for a route from the model picker. */
   isProvidersOpen?: boolean;
+  /** Focuses this provider's row in the Providers band (#406). */
+  focusProviderId?: string;
 }) {
   // ONE CLIENT PER MACHINE, and the transport pair is its whole identity. A fresh
   // `new GatewayClient(...)` per render re-fired every panel's `load` on every
@@ -592,7 +595,7 @@ export function MachineSettings({
           </SettingsSection>
           {/* Only a route from the model picker opens the band; else the bands context decides. */}
           <SettingsSection title={providers?.title ?? 'Providers'} defaultOpen={isProvidersOpen || undefined}>
-            <ProvidersPanel client={client} />
+            <ProvidersPanel client={client} focusProviderId={focusProviderId} />
             {providers && providers.toggles.length > 0 && (
               <SettingsPanel title="Options">{settingRows(providers)}</SettingsPanel>
             )}
@@ -1460,7 +1463,7 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
  * and asks for verdicts, but never holds a token, verifier, or device code.
  * The exchange itself is `useProviderAuth`, shared with the router dialog.
  */
-function ProvidersPanel({ client }: { client: GatewayClient }) {
+function ProvidersPanel({ client, focusProviderId }: { client: GatewayClient; focusProviderId?: string }) {
   const auth = useProviderAuth(client);
   const { providers, err, note } = auth;
   const [isAdding, setIsAdding] = useState(false);
@@ -1507,7 +1510,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
         </p>
       )}
 
-      <ProviderRows auth={auth} />
+      <ProviderRows auth={auth} focusId={focusProviderId} />
     </SettingsPanel>
   );
 }

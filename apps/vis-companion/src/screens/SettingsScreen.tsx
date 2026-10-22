@@ -47,6 +47,7 @@ export function SettingsDialog({
   gateways,
   primaryUrl,
   providerMachineUrl,
+  providerId,
   machineUrl,
   onAddMachine,
   onMakePrimary,
@@ -60,6 +61,8 @@ export function SettingsDialog({
   primaryUrl?: string | null;
   /** Open this machine immediately; Providers is the first panel under its row. */
   providerMachineUrl?: string;
+  /** Focus this provider's row in the Providers panel of `providerMachineUrl` (#406). */
+  providerId?: string;
   /** Open this machine immediately, for example from a locked inherited setting (#373). */
   machineUrl?: string;
   /** Pairing is setup, and setup happens HERE — never by leaving this dialog. */
@@ -289,6 +292,7 @@ export function SettingsDialog({
                     onSpeechChange={changeSpeech}
                     contextSessionId={contextSession?.url === conn.url ? contextSession.sid : undefined}
                     isProvidersOpen={conn.url === providerMachineUrl}
+                    focusProviderId={conn.url === providerMachineUrl ? providerId : undefined}
                   />
                 )}
               />
