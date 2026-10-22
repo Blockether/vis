@@ -708,22 +708,99 @@
   [session sym contract]
   (set-python-binding-contracts! session {sym contract}))
 
+(defn remove-python-bindings!
+  "Remove `syms` from `session` entirely in one guest call, including dotted
+   namespace members and every discovery metadata table."
+  [session syms]
+  (let [names (vec (distinct (map sym->py-name syms)))]
+    (when (seq names)
+      (assert-unowned-bindings! session (map #(first (str/split % #"\." 2)) names))
+      (exec!
+        session
+        (str
+          "for __vis_n__ in " (py-json-literal names)
+          ":\n" "    if '.' in __vis_n__:\n"
+          "        __vis_remove_dotted_tool__(__vis_n__)\n" "    else:\n"
+          "        globals().pop(__vis_n__, None)\n"
+          "    for __vis_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__', '__vis_results__', '__vis_eager__'):\n"
+          "        globals().get(__vis_table__, {}).pop(__vis_n__, None)\n"
+          "del __vis_n__, __vis_table__")))
+    nil))
+
 (defn remove-python-binding!
   "Remove `sym` from `session` entirely, including dotted namespace members and
    every discovery metadata table."
   [session sym]
-  (let [names [(sym->py-name sym)]]
-    (assert-unowned-bindings! session (map #(first (str/split % #"\." 2)) names))
-    (exec!
-      session
-      (str
-        "for __vis_n__ in " (py-json-literal (vec names))
-        ":\n" "    if '.' in __vis_n__:\n"
-        "        __vis_remove_dotted_tool__(__vis_n__)\n" "    else:\n"
-        "        globals().pop(__vis_n__, None)\n"
-        "    for __vis_table__ in ('__vis_docs__', '__vis_sigs__', '__vis_keys__', '__vis_results__', '__vis_eager__'):\n"
-        "        globals().get(__vis_table__, {}).pop(__vis_n__, None)\n"
-        "del __vis_n__, __vis_table__"))
+  (remove-python-bindings! session [sym]))
+
+(defn set-python-bindings!
+  "Bind many symbols with their discovery metadata in a fixed number of guest calls.
+   Each entry is `{:sym :val :doc :signature :contract :keys :result}`. The result is
+   the same as [[set-python-binding!]] and the metadata setters for each entry.
+   One guest call per symbol and field made a sandbox build wait on hundreds of calls."
+  [session entries]
+  (let [entries
+        (into [] (keep #(when (:sym %) (assoc % :name (sym->py-name (:sym %))))) entries)
+
+        protected
+        (distinct (map #(first (str/split (:name %) #"\." 2)) entries))
+
+        table
+        (fn [k]
+          (into {}
+                (keep (fn [entry]
+                        (when (string? (get entry k)) [(:name entry) (get entry k)])))
+                entries))
+
+        sigs
+        (table :signature)
+
+        stamped
+        (into []
+              (comp (filter (fn [entry]
+                              (some #(string? (get entry %)) [:doc :signature :keys :result])))
+                    (map :name)
+                    (distinct))
+              entries)
+
+        tools
+        (into {}
+              (keep (fn [{:keys [name val]}]
+                      (when (fn? val) [name val])))
+              entries)]
+
+    (when (seq entries)
+      (assert-unowned-bindings! session protected)
+      (add-protected-names! session protected)
+      (when (seq tools) (python-host/install-tools! session tools (partial py-install-tool!)))
+      (doseq [{:keys [name val]}
+              entries
+
+              :when (not (fn? val))]
+
+        (exec! session (str "globals()[" (py-json-literal name) "] = " (py-json-literal val))))
+      (update-json! session "__vis_docs__" (table :doc))
+      (update-json! session "__vis_sigs__" sigs)
+      (update-json! session "__vis_keys__" (table :keys))
+      (update-json! session "__vis_results__" (table :result))
+      ;; A new signature drops the old inspection prototype, then one stamp covers every name.
+      (when (seq stamped)
+        (exec!
+          session
+          (str
+            "if '__vis_stamp_tools__' in globals():\n"
+            (when (seq sigs)
+              (str
+                "    for __vis_n__ in "
+                (py-json-literal (vec (keys sigs)))
+                ":\n"
+                "        __vis_fn__ = __vis_resolve_tool__(__vis_n__)\n"
+                "        if getattr(__vis_fn__, '__vis_is_tool__', False) and hasattr(__vis_fn__, '__wrapped__'):\n"
+                "            del __vis_fn__.__wrapped__\n" "    del __vis_n__, __vis_fn__\n"))
+            "    __vis_stamp_tools__("
+            (py-json-literal stamped)
+            ")")))
+      (set-python-binding-contracts! session (into {} (map (juxt :sym :contract)) entries)))
     nil))
 
 ;; The environment's sandbox — built on first entry, never before
@@ -1316,7 +1393,8 @@
    `custom-bindings` is `{symbol value}` — a function becomes a host tool, any
    other value crosses as data. `roots-fn` answers the directories the guest may
    read and write; without it the interpreter keeps whatever policy the process
-   already had. `network-opts` carries the egress rules. `stdin` is what the
+   already had. `network-opts` carries the egress rules. Its optional `:on-configured`
+   gets the session name once a worker session has its policy. `stdin` is what the
    guest reads from `sys.stdin`, or nil for none.
 
    The order matters and is the same order it has always been: the runtime
@@ -1341,7 +1419,10 @@
                                    (select-keys network-opts
                                                 [:proxy-port :proxy-token :ca-file]))))]
         (pyext/configure! session policy-fn)
-        (swap! session-workers assoc session session))
+        (swap! session-workers assoc session session)
+        ;; Work that needs only the session name, such as extension workers, starts here.
+        (when-let [on-configured (:on-configured network-opts)]
+          (on-configured session)))
       (ensure-interpreter!))
     (refresh-confinement! session
                           roots-fn
@@ -1430,6 +1511,11 @@
      name lets the loop refuse either stale environment before it enters Python."}
   disposed-sessions
   (atom #{}))
+
+(defn python-context-disposed?
+  "True when the host has dropped Python context `session`."
+  [session]
+  (contains? @disposed-sessions session))
 
 (def ^:private restore-reports
   "Python context -> what its restore brought back. `:notice` is the restart

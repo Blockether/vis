@@ -6579,7 +6579,64 @@ vis.register_extension(vis.Extension(name='asker', description='asker', alias='a
               (deliver gate true)
               (expect (= ::pyx/session-closed (deref call 10000 nil)))
               (expect (empty? @@#'pyx/session-contexts))
-              (expect (empty? @@#'pyx/context-builds))))))))
+              (expect (empty? @@#'pyx/context-builds))))))
+    (it "starts the contexts of active extensions with a context or a hook, before a call"
+        (isolated
+          (fn []
+            (let [built
+                  (atom #{})
+
+                  ready?
+                  #(= #{["w-396" "ctx"] ["w-396" "hooks"]} (set (keys @@#'pyx/session-contexts)))]
+
+              (with-redefs-fn {#'pyx/replacement-entry (fn [ext-name _]
+                                                         {:context ::source :ext-name ext-name})
+                               #'pyx/context-builder (fn [_ ext-name _ _]
+                                                       (fn []
+                                                         (swap! built conj ext-name)
+                                                         {:context ext-name}))}
+                (fn []
+                  (pyx/prewarm-session-contexts! "w-396"
+                                                 {}
+                                                 [{:ext/name "ctx" :ext/ctx-fn identity}
+                                                  {:ext/name "hooks" :ext/op-hooks [{}]}
+                                                  {:ext/name "plain"}])
+                  (loop [n 0]
+                    (when (and (not (ready?)) (< n 200)) (Thread/sleep 10) (recur (inc n))))
+                  (expect (ready?))
+                  (expect (= #{"ctx" "hooks"} @built))))))))
+    (it
+      "starts nothing for a closed session and stops a context built after it closed"
+      (isolated
+        (fn []
+          (let [built
+                (atom 0)
+
+                closed
+                (promise)
+
+                checks
+                (atom 0)]
+
+            (with-redefs-fn {#'pyx/replacement-entry (fn [ext-name _]
+                                                       {:context ::source :ext-name ext-name})
+                             #'pyx/context-builder (fn [_ ext-name _ _]
+                                                     (fn []
+                                                       (swap! built inc)
+                                                       {:context ext-name}))
+                             #'ep/python-context-disposed? (fn [_]
+                                                             (> (swap! checks inc) 1))
+                             #'pyx/close-session-contexts! (fn [worker]
+                                                             (deliver closed worker))}
+              (fn []
+                (pyx/prewarm-session-contexts! "w-396" {} [{:ext/name "late" :ext/ctx-fn identity}])
+                (expect (= "w-396" (deref closed 10000 nil)))
+                (expect (= 1 @built))
+                (pyx/prewarm-session-contexts! "w-396"
+                                               {}
+                                               [{:ext/name "again" :ext/ctx-fn identity}])
+                (Thread/sleep 100)
+                (expect (= 1 @built))))))))))
 
 (defdescribe extension-cancelled-caller-lease-test
              ;; #192: cancellation of the host caller is not completion of guest execution.

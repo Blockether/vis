@@ -109,60 +109,66 @@
 
         selection
         (some-> (:config/tools environment)
-                deref)]
+                deref)
 
-    (doseq [ext
-            installed
+        plan
+        (vec
+          (for [ext
+                installed
 
-            :let [by-sym
-                  (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))
+                :let [by-sym
+                      (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))
 
-                  ;; A tool list changes only optional extensions, never parts of Vis.
-                  tools
-                  (when (and selection (scoped/engine-setting! ext)) (ext-tool-names ext))]
-            [sym f]
-            (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
+                      ;; A tool list changes only optional extensions, never parts of Vis.
+                      tools
+                      (when (and selection (scoped/engine-setting! ext)) (ext-tool-names ext))]
+                [sym f]
+                (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
 
-      ;; Deactivated extensions get their members REMOVED, not nil'd:
-      ;; `putMember nil` parks a None under the name, which `apropos` kept
-      ;; listing and which called as 'NoneType is not callable' — a disabled
-      ;; tool must not exist in the sandbox at all.
-      (let [target (extension/symbol-binding ext sym)]
-        ;; Bound only when the extension is active, the symbol's `:active-fn` holds for
-        ;; env and the session's tool list keeps it — one gate for every Python binding.
-        (if (and (contains? active-set (:ext/name ext))
-                 (extension/symbol-active? (get by-sym sym) environment)
-                 (or (nil? tools) (tool-on? selection tools (env/sym->py-name target))))
-          (do (env/set-python-binding! python-context target f)
-              ;; Seed this symbol's doc into `__vis_docs__` keyed by its bound
-              ;; py-name, so `doc(db_status)` / `doc(mcp_servers)` /
-              ;; `apropos("mcp")` carry real descriptions. ALIASED extensions
-              ;; bind here (per turn), NOT at context creation, so the eager
-              ;; `build-agent-context` seed never saw them.
-              (env/set-python-binding-doc! python-context
-                                           target
-                                           (extension/symbol-doc-text (get by-sym sym)))
-              ;; ...and its declared signature, so `inspect.signature` / `help` /
-              ;; `typing.get_type_hints` on an aliased tool answer with real
-              ;; parameters and annotations instead of the async trampoline's
-              ;; own `(*a, **k)`.
-              (env/set-python-binding-signature! python-context
-                                                 target
-                                                 (extension/symbol-signature (get by-sym sym)))
-              (env/set-python-binding-contract!
-                python-context
-                target
-                (extension/symbol-contract (get by-sym sym) (env/sym->py-name target)))
-              ;; ...and the keys its options dict must carry, so `doc(name)`
-              ;; states requiredness for an aliased tool too.
-              (env/set-python-binding-keys! python-context
-                                            target
-                                            (extension/symbol-keys-line (get by-sym sym)))
-              ;; ...and its raw result, which `doc(name)` prints under the keys.
-              (env/set-python-binding-result! python-context
-                                              target
-                                              (extension/symbol-result-line (get by-sym sym))))
-          (env/remove-python-binding! python-context target))))))
+            (let [target
+                  (extension/symbol-binding ext sym)
+
+                  entry
+                  (get by-sym sym)]
+
+              ;; Bound only when the extension is active, the symbol's `:active-fn` holds for
+              ;; env and the session's tool list keeps it — one gate for every Python binding.
+              ;; Deactivated extensions get their members REMOVED, not nil'd:
+              ;; `putMember nil` parks a None under the name, which `apropos` kept
+              ;; listing and which called as 'NoneType is not callable' — a disabled
+              ;; tool must not exist in the sandbox at all.
+              (if (and (contains? active-set (:ext/name ext))
+                       (extension/symbol-active? entry environment)
+                       (or (nil? tools) (tool-on? selection tools (env/sym->py-name target))))
+                ;; The metadata keys the bound py-name, so `doc(db_status)`, `apropos("mcp")`,
+                ;; `inspect.signature` and `typing.get_type_hints` answer with the declared
+                ;; contract. ALIASED extensions bind here (per turn), NOT at context creation.
+                [:bind
+                 {:sym target
+                  :val f
+                  :doc (extension/symbol-doc-text entry)
+                  :signature (extension/symbol-signature entry)
+                  :contract (extension/symbol-contract entry (env/sym->py-name target))
+                  :keys (extension/symbol-keys-line entry)
+                  :result (extension/symbol-result-line entry)}]
+                [:remove target]))))
+
+        bound
+        (keep (fn [[op value]]
+                (when (= op :bind) value))
+              plan)
+
+        bound-names
+        (set (map (comp env/sym->py-name :sym) bound))]
+
+    ;; One batch for each direction, so a sandbox build pays a few guest calls, not
+    ;; several for each symbol. A name that an active extension binds stays bound.
+    (env/set-python-bindings! python-context bound)
+    (env/remove-python-bindings!
+      python-context
+      (keep (fn [[op value]]
+              (when (and (= op :remove) (not (bound-names (env/sym->py-name value)))) value))
+            plan))))
 
 (defn sync-active-extension-symbols!
   "Make the Python sandbox's callable globals match active extension state.
@@ -718,11 +724,20 @@
                 ;; builds the sandbox and loads extensions for the saved workspace (#364).
                 (binding [workspace/*workspace-root* (or (:root @workspace-atom)
                                                          workspace/*workspace-root*)]
-                  (let [built (env/create-python-context (merge env-bindings
-                                                                (:custom-bindings @state-atom))
-                                                         sandbox-roots-fn
-                                                         network-opts
-                                                         nil)
+                  (let [built (env/create-python-context
+                                (merge env-bindings (:custom-bindings @state-atom))
+                                sandbox-roots-fn
+                                ;; The extension workers start while the
+                                ;; sandbox builds, not after it (#396).
+                                (assoc network-opts
+                                  :on-configured (fn [session]
+                                                   (when-let [environment @environment-atom]
+                                                     (python-extensions/prewarm-session-contexts!
+                                                       session
+                                                       environment
+                                                       (some-> (:active-extensions environment)
+                                                               deref)))))
+                                nil)
                         python-context (:python-context built)]
 
                     (vreset! pending built)

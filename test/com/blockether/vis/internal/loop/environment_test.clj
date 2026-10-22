@@ -139,28 +139,13 @@
                   scoped/engine-setting!
                   (constantly (when optional? "engines_py"))
 
-                  env/set-python-binding!
-                  (fn [_ target _]
-                    (swap! bound conj (env/sym->py-name target)))
+                  env/set-python-bindings!
+                  (fn [_ entries]
+                    (swap! bound into (map (comp env/sym->py-name :sym)) entries))
 
-                  env/set-python-binding-doc!
-                  (constantly nil)
-
-                  env/set-python-binding-signature!
-                  (constantly nil)
-
-                  env/set-python-binding-contract!
-                  (constantly nil)
-
-                  env/set-python-binding-keys!
-                  (constantly nil)
-
-                  env/set-python-binding-result!
-                  (constantly nil)
-
-                  env/remove-python-binding!
-                  (fn [_ target]
-                    (swap! removed conj (env/sym->py-name target)))]
+                  env/remove-python-bindings!
+                  (fn [_ targets]
+                    (swap! removed into (map env/sym->py-name) targets))]
 
       (loop-env/sync-extension-symbols-into! ::context
                                              {:extensions (atom [ext])

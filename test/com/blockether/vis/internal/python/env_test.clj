@@ -1570,6 +1570,61 @@ Follow every fixture step without truncation."}]))
                (finally (doc-corpus/register-source! ::late (constantly []))))
           (expect (str/includes? (read-it) "is not a handle"))))))
 
+;; (#396) One guest call for each symbol and field made the first block of a session
+;; wait about 90 ms while the sandbox synced the extension tools.
+(defdescribe
+  batch-binding-test
+  (it
+    "binds many tools with their metadata in a fixed number of guest calls"
+    (tpc/with-own
+      [ctx {}]
+      (let [entries
+            (fn [n]
+              (for [i (range n)]
+                {:sym (symbol (str "batch-probe-" i))
+                 :val (fn [& _]
+                        "ok")
+                 :doc (str "batch_probe_" i "(value) -> str. Probe " i ".")
+                 :signature "(value)"
+                 :contract {"name" (str "batch_probe_" i) "tag" "mutation"}
+                 :keys "value (required)"
+                 :result "str"}))
+
+            calls
+            (fn [n]
+              (let [counter
+                    (atom 0)
+
+                    exec
+                    (deref #'ep/exec!)]
+
+                (with-redefs-fn {#'ep/exec! (fn [& args]
+                                              (swap! counter inc)
+                                              (apply exec args))}
+                  #(ep/set-python-bindings! ctx (entries n)))
+                @counter))]
+
+        (expect (= (calls 1) (calls 8)))
+        (let [result
+              (ep/run-python-block
+                ctx
+                (str "import inspect\n"
+                     "print(inspect.signature(batch_probe_7))\n"
+                     "print(batch_probe_7.__doc__.split('.')[0])\n"
+                     "print(batch_probe_7.contract['tag'], __vis_eager__['batch_probe_7'])\n"
+                     "print(__vis_keys__['batch_probe_7'], __vis_results__['batch_probe_7'])\n"))]
+          (expect (= (str "(value)\n" "batch_probe_7(value) -> str\n"
+                          "mutation True\n" "value (required) str\n")
+                     (:stdout result))
+                  (pr-str result)))
+        (ep/remove-python-bindings! ctx (map :sym (entries 8)))
+        (expect (=
+                  "False False\n"
+                  (:stdout
+                    (ep/run-python-block
+                      ctx
+                      "print('batch_probe_7' in globals(), 'batch_probe_7' in __vis_docs__)"))))))))
+
 (defdescribe
   tool-introspection-test
   ;; Every bound tool was a bare `(*a, **k)` trampoline with an empty docstring,

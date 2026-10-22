@@ -1333,6 +1333,17 @@
                (install-built-context! cache-key row))
              (finally (deliver value true)))))))
 
+(defn- context-builder
+  "Build `entry`'s session context in the trusted extension worker of sandbox `worker`."
+  [worker ext-name entry env]
+  #(initialize-extension-context! (pyext/extension-worker-key worker)
+                                  (str ext-name)
+                                  (io/file (:snapshot entry))
+                                  (:path entry)
+                                  (:source entry)
+                                  (:packages entry)
+                                  (assoc env ::project-path (:project-path entry))))
+
 (defn- session-call-target
   "Resolve a registry callable to the invoking session's trusted extension
    worker, never its sandbox. Calls with no worker-backed session use the
@@ -1358,15 +1369,7 @@
         (let [source-ctx (:context entry)
               local (session-context! [worker ext-name]
                                       source-ctx
-                                      #(initialize-extension-context!
-                                         (pyext/extension-worker-key worker)
-                                         (str ext-name)
-                                         (io/file (:snapshot entry))
-                                         (:path entry)
-                                         (:source entry)
-                                         (:packages entry)
-                                         (assoc effective-env
-                                           ::project-path (:project-path entry))))
+                                      (context-builder worker ext-name entry effective-env))
               target-f (get-in (:registration local) path)]
 
           (when-not (fn? target-f)
@@ -3185,6 +3188,31 @@
         (doseq [[_ row] locals]
           (discard-context! (:context row) false)))))
   nil)
+
+(defn prewarm-session-contexts!
+  "Start the session contexts that the first block of sandbox `worker` calls, in the
+   background. That block calls the context callback and operation hooks of each active
+   Python extension, so their workers start while the sandbox builds (#396). A failure
+   is only logged: the first real call builds the context again."
+  [worker env active-extensions]
+  (let [env (assoc env :python-context worker)]
+    (doseq [ext active-extensions
+            :when (or (:ext/ctx-fn ext) (seq (:ext/op-hooks ext)))
+            :let [ext-name (:ext/name ext)
+                  entry (replacement-entry ext-name env)]
+            :when entry]
+
+      (future (try (when-not (env/python-context-disposed? worker)
+                     (session-context! [worker ext-name]
+                                       (:context entry)
+                                       (context-builder worker ext-name entry env))
+                     ;; A session that closed before this build started left nothing to stop it.
+                     (when (env/python-context-disposed? worker) (close-session-contexts! worker)))
+                   (catch Throwable t
+                     (tel/log! {:level :debug
+                                :id ::prewarm-failed
+                                :data {:extension (str ext-name) :error (ex-message t)}})))))
+    nil))
 
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the
