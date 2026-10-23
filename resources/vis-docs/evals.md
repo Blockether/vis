@@ -25,6 +25,8 @@ compare two runs. This page shows each step from an empty folder to a score.
   [Write a task with several turns](#write-a-task-with-several-turns).
 - **You want a published benchmark of such conversations.** [Import Lost in
   Conversation](#import-lost-in-conversation).
+- **You want to know if Vis still remembers early facts when a conversation is larger than the
+  model's context.** [Import LongMemEval](#import-longmemeval).
 - **You want to know if one prompt rule helps on the same tasks.** [Add a rule to the system
   prompt](#add-a-rule-to-the-system-prompt).
 - **You want to know how Vis and Harbor share the work.** Read [Vis and
@@ -284,25 +286,71 @@ missing. A missing file does not change the reward. `write_task` writes this lin
 
 ### Write a task with several turns
 
-A user often gives a request in parts and adds details after the first answer. To test this, split
-`instruction.md` into messages. Put a line with only `<!-- vis:turn -->` between two messages:
+People rarely give a whole request in one message. They start with a short request, read the answer,
+then add a detail or ask a follow-up question. Each of these messages is a turn. A task with several
+turns tests if the agent follows the whole conversation, not only the first message.
+
+Write the messages in `instruction.md`. Put a line with only `<!-- vis:turn -->` between two
+messages:
 
 ```markdown
-Write a function that adds numbers.
+Write a function `total` in `total.py` that adds numbers.
 <!-- vis:turn -->
 The input is a list of integers.
 <!-- vis:turn -->
 Return 0 for an empty list.
 ```
 
-The Vis agent sends each message as one turn of the same session. Each turn waits for the answer to
-the previous one. The checks grade the final answer and the workspace after the last turn. The agent
-stops at the first turn that fails. Other Harbor agents get the whole file as one prompt, so the
-same task also runs as a one-turn control.
+From Python, give [`write_task`](evals-api.md) a list with one string for each message. It writes
+the same file:
+
+```python
+from blockether.vis.evals import write_task
+
+write_task(
+    "tasks",
+    "sum-list",
+    [
+        "Write a function `total` in `total.py` that adds numbers.",
+        "The input is a list of integers.",
+        "Return 0 for an empty list.",
+    ],
+    {"want": {"total.py": ["def total("]}},
+)
+```
+
+This check only shows that `total.py` defines the function. To test the rule of the last turn, add a
+test that calls `total([])`.
+
+This is how the Vis agent runs the task:
+
+1. It starts one Vis session, sends the first message and waits until the answer is complete.
+2. It sends the next message to the same session. The agent sees the earlier messages, its own
+   answers and its tool results, as in a chat in the app.
+3. It does step 2 again for each remaining message.
+4. After the last message, Harbor runs the checks once. They grade the last answer and the files in
+   the workspace.
+
+If a turn ends with an error, the agent sends no more messages, and the checks fail the trial. A
+conversation that grows larger than the context window of the model also fails the trial, because
+the agent controls the size of its context. If the provider is not available, for example because
+your quota is used up, the trial has no score. The round report lists it as unscored.
+
+The time limit of the task covers all turns together. Set it with `agent_timeout_sec` of
+`write_task`, or with `timeout_sec` in the `[agent]` table of `task.toml`.
+
+Other Harbor agents get the whole file, with the marker lines, as one prompt. To compare Vis with
+and without turns, write a second folder with the same task names that gives all messages in one
+string.
 
 The trial folder keeps the trajectory of each turn in `agent/turns/1.json`, `agent/turns/2.json` and
 so on. `agent/trajectory.json` joins all turns, and its totals add up the tokens and the cost of
-each turn. The task time limit covers all turns together.
+each turn.
+
+Each turn sends the whole conversation to the model again, so every turn makes the next request
+larger. A model can read only a fixed number of tokens in one request. Before that limit, the agent
+can fold old turns: it replaces them with a short note that it writes itself. A fact that is not in
+the note is lost. To measure what the notes keep, [import LongMemEval](#import-longmemeval).
 
 ## Step 3: Check the tasks
 
@@ -336,30 +384,164 @@ source=PATH`. To test a raw native image, add `--ak native_bin=PATH`.
 
 ### Add a rule to the system prompt
 
-To measure one prompt rule, run the same tasks twice: once without the rule and once with it. Write
-the rule in a Markdown file and give it with `--ak append_system=PATH`. Each trial then writes the
-text to `.vis/APPEND_SYSTEM.md` in its workspace, so Vis adds it after the system prompt. A task that
-has that file already fails with an error. Then [compare the two runs](#compare-two-runs).
+A prompt rule is a sentence that you add to the instructions of the agent. An example is "Fold old
+turns before the context budget is full." To learn if a rule helps, measure the same tasks with and
+without it:
+
+1. Write the rule in a Markdown file, for example `rule.md`.
+2. Run the tasks without the rule, as in the command above.
+3. Run the same tasks again with `--ak append_system=rule.md` and a new `--job-name`.
+4. [Compare the two runs](#compare-two-runs).
+
+```bash
+harbor run --path tasks \
+  --agent blockether.vis.evals.agent:VisAgent \
+  --env blockether.vis.evals.environment:HostEnvironment \
+  --model zai-coding-plan/glm-5.3-flash \
+  --jobs-dir jobs --job-name with-rule --n-attempts 1 \
+  --ak append_system=rule.md
+```
+
+Give an absolute path, or a path relative to the folder where you run `harbor`. Each trial writes
+the text of the file to `.vis/APPEND_SYSTEM.md` in its workspace. Vis adds that file at the end of
+its system prompt. This option needs the `HostEnvironment` environment. If a task already has
+`.vis/APPEND_SYSTEM.md`, the trial stops with an error and does not replace the file.
+
+Vis also reads `~/.vis/SYSTEM.md`, `~/.vis/APPEND_SYSTEM.md` and the `system_prompt` setting of
+your account in every trial. Keep them the same for both runs, or the comparison measures them too.
 
 ### Import Lost in Conversation
 
 [Lost in Conversation](https://github.com/microsoft/lost_in_conversation) is a published benchmark.
-It splits each problem into small parts and gives them over several turns. This command downloads
-the data once, about 10 MB, and writes the math (GSM8K) and HumanEval code tasks:
+It tests if a model still solves a problem when the user gives the problem in small parts over
+several turns. This command downloads the data once, about 30 MB, and writes the math (GSM8K) and
+HumanEval code tasks:
 
 ```bash
 python -m blockether.vis.evals.lic tasks-lic --cache lic.json
 python -m blockether.vis.evals.lic tasks-lic-concat --cache lic.json --mode concat
 ```
 
-The first folder gives one part in each turn. The second folder gives all parts in one turn, which is
-the control of the benchmark. Both folders have the same task names, so you can compare the two
-runs. `--limit N` keeps the first N tasks of each type. Each task grades the final answer with a
-copy of the benchmark's grader in `tests/check_answer.py`.
+The two folders give the same problems in a different form:
+
+- **`tasks-lic`** gives one part of the problem in each turn.
+- **`tasks-lic-concat`** gives all parts in one turn. This is the CONCAT control of the paper. The
+  importer does not write the FULL control, which is the original problem in one message.
+
+Each folder has 148 tasks: 103 math tasks and 45 code tasks. Both folders have the same task names,
+so you can [compare the two runs](#compare-two-runs). The difference in score shows what the split
+into turns costs the agent. Use `--task math` or `--task code` for one type. `--limit N` keeps the
+first N tasks of each type.
+
+Each task grades the final answer with a program in `tests/check_answer.py`. The math program
+follows the grader of the benchmark. The code program runs the HumanEval tests on the last Python
+block that defines a function.
 
 The parts come in a fixed order, not from a simulated user as in the original benchmark. The last
 turn also says that all details are given. Compare your scores with each other, not with the
 published scores.
+
+These conversations are short, a few thousand tokens. They test if the agent combines the parts of a
+request. They do not test what the agent keeps when the conversation becomes too long.
+
+### Import LongMemEval
+
+[LongMemEval](https://github.com/xiaowu0162/LongMemEval) tests if an assistant remembers facts from
+a long chat history. A user gave facts in earlier chats, for example the degree they graduated with.
+Later the user asks "What degree did I graduate with?". The correct answer needs a fact from an
+earlier chat, often far from the question.
+
+Each task pastes the earlier chats into user turns of about 10,000 tokens. The first message asks
+for a short reply to each one, so the agent usually answers "OK". The last turn gives the current
+date and the question. Only the answer to that question counts.
+
+These commands write five tasks of each question type:
+
+```bash
+python -m blockether.vis.evals.longmemeval tasks-lme --cache longmemeval_s.json --limit 5
+python -m blockether.vis.evals.longmemeval tasks-lme-oracle --cache longmemeval_s.json \
+  --limit 5 --mode oracle
+```
+
+The first command downloads the cleaned LongMemEval_S file from Hugging Face once, about 280 MB.
+`--cache` is the path where the file is kept. The two folders differ in the history that the agent
+gets:
+
+- **`tasks-lme`** keeps the original history of about 115,000 tokens, with the facts somewhere in
+  it. Then it adds neutral chats until the history has about 300,000 tokens. So the facts are in the
+  first part of the conversation, far from the question.
+- **`tasks-lme-oracle`** gives only the chats with the facts, in two or three turns. Its score shows
+  how well the agent answers without a long conversation.
+
+Both folders have the same task names, so you can [compare the two runs](#compare-two-runs). Use
+these options to choose the tasks:
+
+- `--type` selects a question type: `single-session-user`, `single-session-assistant`,
+  `multi-session`, `knowledge-update` or `temporal-reasoning`.
+- `--id` selects one question. Repeat `--type` or `--id` for more values.
+- `--limit N` keeps the first N questions of each type, in the order of their ids.
+- `--target-tokens` sets the size of the history, and `--turn-tokens` the size of each pasted turn.
+
+The importer estimates sizes at four characters for each token. The real count depends on the model.
+In a test run, Claude Opus counted about 1.4 times the estimate. Each task allows 5 minutes for each
+turn, so a long task can run for up to three hours.
+
+A history of 300,000 tokens is larger than the context budget of current models. Vis computes this
+budget for each model and shows it as `auto_compress_above` in the session context. It is 250,000
+tokens for Claude Opus, 230,000 for GPT models and 200,000 for other models. The budget is never
+more than 90% of the context window of the provider.
+For example, `anthropic-coding-plan` gives Claude Haiku 4.5 a window of 150,000 tokens, so its
+budget is about 135,000.
+
+From 75% of the budget, Vis tells the agent to fold old turns. Vis does not fold by itself: the
+model must call `fold_session`. If the model does not fold, the next request becomes larger than the
+window. The turn then fails with `provider_context_overflow`, and the trial fails before the
+question.
+
+If the window of the provider is larger than the whole history, the model can answer without a fold.
+The score then measures recall in a long context, not the fold notes. Read the trajectories to see
+if the agent called `fold_session`.
+
+A long task is expensive because each turn sends the whole conversation again. On
+`anthropic-coding-plan`, one long task of 35 turns cost $5.91 and took 9 minutes with
+`claude-opus-5-5`. With `claude-haiku-4-5`, a task of 36 turns cost about $2 and took 22 minutes. An oracle task
+costs a few cents and takes less than a minute. Start with `--limit 1` to learn the cost of your
+model.
+
+To read the result, compare each question in the two runs:
+
+- **Both runs pass.** The agent kept the fact through its folds.
+- **The oracle task passes and the long task gives a wrong answer.** The agent lost the fact,
+  usually in a fold note. Search `agent/trajectory.json` for `fold_session` and read what the agent
+  kept.
+- **The long task fails before the last turn.** The agent did not fold in time, or its fold removed
+  too little. `agent/run.json` lists one exit code for each turn that ran, so its last entry is the
+  turn that failed.
+- **Both runs fail.** The agent cannot answer even with a short history. This question tells you
+  nothing about folding.
+
+These test runs on `anthropic-coding-plan` show each case:
+
+- **`claude-opus-5-5` answered correctly without a fold.** The last request had 432,000 input
+  tokens. That is more than its budget of 250,000 but less than its window, so the run measured
+  recall in a long context.
+- **`claude-haiku-4-5` answered correctly after two folds.** It folded at turns 14 and 23, and each
+  fold removed about 90,000 tokens. Its window is 150,000 tokens.
+- **`claude-haiku-4-5` failed another task at turn 18.** It folded only the first turn, which
+  removed 7,000 tokens. The next request was larger than the window.
+- **Both oracle tasks passed** in less than 40 seconds each.
+
+So first check that the model folds, and how much each fold removes. Then compare the answers.
+
+Each task grades the answer with a program in `tests/check_answer.py`. The program checks that each
+word and number of the expected answer is in the agent's answer. So the importer keeps only
+questions with a short answer, 294 of the 500. It skips preference questions, questions with no
+answer in the chats and questions that ask the agent to choose between two things. Extra words do
+not fail the check, so an answer with several guesses can pass. The paper uses a model as the judge,
+so compare your runs with each other, not with published scores.
+
+The first message asks the agent not to write files. No check enforces this, so read the trajectory
+when a score looks too good.
 
 For all options of `harbor run`, read the Harbor guide [Run a
 job](https://docs.harborframework.com/jobs/run-a-job). When you start the run from Python with
@@ -654,6 +836,8 @@ position also lists caveats, for example when the board rows ran more trials for
 - Shunyu Yao and others, [τ-bench](https://arxiv.org/abs/2406.12045), 2024: the pass^k metric.
 - Philippe Laban and others, [LLMs get lost in multi-turn
   conversation](https://arxiv.org/abs/2505.06120), 2025: the Lost in Conversation benchmark.
+- Di Wu and others, [LongMemEval: Benchmarking chat assistants on long-term interactive
+  memory](https://arxiv.org/abs/2410.10813), 2025: the LongMemEval benchmark.
 - Jacob Cohen, "A coefficient of agreement for nominal scales", *Educational and Psychological
   Measurement* 20, 1960: Cohen's kappa.
 - Klaus Krippendorff, [Computing Krippendorff's

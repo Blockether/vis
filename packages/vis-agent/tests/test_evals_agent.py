@@ -21,13 +21,12 @@ from blockether.vis.evals.agent import (
     RUN_FILE,
     TRACE_FILE,
     TRAJECTORY_FILE,
-    TURN_MARKER,
     VisAgent,
     check_native_binary,
     provider_failure,
     source_classpath,
-    split_turns,
 )
+from blockether.vis.evals.harbor import TURN_MARKER
 from harbor.models.agent.context import AgentContext
 from harbor.models.task.config import AgentConfig, TaskConfig, VerifierConfig
 from harbor.models.task.task import Task
@@ -397,17 +396,6 @@ def test_harbor_runs_one_trial_on_the_host(tmp_path):
     assert not Path(seen["db_path"]).parent.exists()
 
 
-def test_split_turns_keeps_a_single_turn_unchanged():
-    assert split_turns("One request.\n") == ["One request.\n"]
-    text = f"First part.\n{TURN_MARKER}\n  Second part.\n {TURN_MARKER} \nLast part.\n"
-    assert split_turns(text) == ["First part.", "Second part.", "Last part."]
-    assert split_turns(f"Quote {TURN_MARKER} inside a line.") == [
-        f"Quote {TURN_MARKER} inside a line."
-    ]
-    with pytest.raises(ValueError, match="needs text"):
-        split_turns(f"First part.\n{TURN_MARKER}\n\n")
-
-
 def test_harbor_sends_each_turn_to_one_session(tmp_path):
     instruction = f"First part.\n{TURN_MARKER}\nSecond part.\n"
     result, trial = run_harbor(tmp_path, write_task(tmp_path, instruction))
@@ -475,6 +463,10 @@ def test_provider_failure_reads_only_provider_error_blocks(tmp_path):
         + result({"type": "error", "code": "provider_unavailable", "title": "Down"})
     )
     assert provider_failure(trace) == "provider_unavailable: Down"
+    # A LongMemEval run of 2026-10-23 overflowed the context window at turn 18
+    # without a fold. The agent caused that overflow, so the trial keeps its score.
+    trace.write_text(result({"type": "error", "code": "provider_context_overflow"}))
+    assert provider_failure(trace) is None
 
 
 def test_agent_timeout_stops_the_engine(tmp_path):

@@ -37,6 +37,7 @@ __all__ = [
     "seal_digest",
     "seal_round",
     "seal_rows",
+    "split_turns",
     "summarize",
     "write_task",
 ]
@@ -48,6 +49,9 @@ CHECKS_FILE = "checks.json"
 TEST_SCRIPT_FILE = "test.sh"
 WORKSPACE_FILESYSTEM_FILE = "workspace_filesystem.json"
 WORKSPACE_DIRECTORY = "workspace"
+TURN_MARKER = "<!-- vis:turn -->"
+"""A line with only this text in an instruction starts the next user turn."""
+_TURN_SPLIT = re.compile(rf"^[ \t]*{re.escape(TURN_MARKER)}[ \t]*(?:\n|$)", re.M)
 TASK_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 AGENT = "blockether.vis.evals.agent:VisAgent"
 ENVIRONMENT = "blockether.vis.evals.environment:HostEnvironment"
@@ -344,6 +348,43 @@ class HarborTask:
     metadata: Mapping[str, Any]
     path: Path
 
+    @property
+    def turns(self) -> tuple[str, ...]:
+        """The user messages of the task, one for each turn; see `split_turns`."""
+        return tuple(split_turns(self.instruction))
+
+
+def split_turns(instruction: str) -> list[str]:
+    """Return the user messages of ``instruction``, one for each turn.
+
+    Each line with only ``TURN_MARKER`` ends one message and starts the next. An
+    instruction without that line is one turn and stays unchanged. An empty message
+    raises ValueError.
+    """
+    parts = _TURN_SPLIT.split(instruction)
+    if len(parts) == 1:
+        return [instruction]
+    messages = [part.strip() for part in parts]
+    if not all(messages):
+        raise ValueError("each turn of a multi-turn instruction needs text")
+    return messages
+
+
+def _join_turns(instruction: str | Sequence[str]) -> str:
+    if isinstance(instruction, str):
+        if not instruction.strip():
+            raise ValueError("instruction must not be empty")
+        return instruction
+    messages = list(instruction)
+    if not messages:
+        raise ValueError("instruction must hold at least one user message")
+    for message in messages:
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("each user message must be nonempty text")
+        if _TURN_SPLIT.search(message):
+            raise ValueError(f"a user message cannot hold a {TURN_MARKER} line")
+    return f"\n{TURN_MARKER}\n".join(message.strip() for message in messages)
+
 
 def _seconds(table: object) -> float | None:
     value = table.get("timeout_sec") if isinstance(table, Mapping) else None
@@ -404,7 +445,7 @@ def _seed_path(name: str) -> PurePosixPath:
 def write_task(
     dataset: Path | str,
     name: str,
-    instruction: str,
+    instruction: str | Sequence[str],
     checks: Mapping[str, Any],
     *,
     files: Mapping[str, str] | None = None,
@@ -417,7 +458,8 @@ def write_task(
     """Write the Vis task `name` in the folder `dataset` and return it.
 
     `name` is lowercase words joined by hyphens. `instruction` is the prompt of the
-    agent. `checks` is the `tests/checks.json` object that the Vis grader reads, for
+    agent. A list of strings gives one user message for each turn of one session;
+    `write_task` joins them with `TURN_MARKER` lines. `checks` is the `tests/checks.json` object that the Vis grader reads, for
     example `{"want": {"m.py": ["def c("]}}`. `files` maps each seed file path to its
     text. The paths are relative to `environment/workspace/`. `artifacts` lists the
     workspace files that Harbor copies to `artifacts/` in the trial folder after the
@@ -432,8 +474,7 @@ def write_task(
         )
     if not isinstance(checks, Mapping) or not checks:
         raise ValueError("checks must be a nonempty object")
-    if not instruction.strip():
-        raise ValueError("instruction must not be empty")
+    instruction = _join_turns(instruction)
     seeds = {_seed_path(path): text for path, text in (files or {}).items()}
     kept = [str(_seed_path(path)) for path in artifacts]
     roots = {

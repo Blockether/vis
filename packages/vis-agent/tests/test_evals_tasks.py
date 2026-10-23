@@ -22,9 +22,11 @@ from blockether.vis.evals import (
     read_trials,
     round_summary,
     run_tasks,
+    split_turns,
     write_task,
 )
 from blockether.vis.evals._gateway import handle
+from blockether.vis.evals.harbor import TURN_MARKER
 from blockether.vis.evals.report import main as report_main
 from blockether.vis.evals.reports import REPORT_FILE
 
@@ -137,6 +139,41 @@ def test_write_task_refuses_an_invalid_task(tmp_path, name, files, checks, messa
 def test_write_task_refuses_an_artifact_outside_the_workspace(tmp_path):
     with pytest.raises(ValueError, match="inside the workspace"):
         write_task(tmp_path, "add-c", "Do it.", {"want": {}}, artifacts=["/etc/hosts"])
+    assert not any(tmp_path.iterdir())
+
+
+def test_split_turns_keeps_a_single_turn_unchanged():
+    assert split_turns("One request.\n") == ["One request.\n"]
+    text = f"First part.\n{TURN_MARKER}\n  Second part.\n {TURN_MARKER} \nLast part.\n"
+    assert split_turns(text) == ["First part.", "Second part.", "Last part."]
+    assert split_turns(f"Quote {TURN_MARKER} inside a line.") == [
+        f"Quote {TURN_MARKER} inside a line."
+    ]
+    with pytest.raises(ValueError, match="needs text"):
+        split_turns(f"First part.\n{TURN_MARKER}\n\n")
+
+
+def test_write_task_writes_one_message_for_each_turn(tmp_path):
+    messages = ["My name is Ada.", "  I live in Lisbon.\n", "Where do I live?"]
+    task = write_task(tmp_path, "ask-city", messages, {"want_answer": ["Lisbon"]})
+    assert task.turns == ("My name is Ada.", "I live in Lisbon.", "Where do I live?")
+    assert read_tasks(tmp_path)[0].turns == task.turns
+    single = write_task(tmp_path, "one-turn", ["Only this."], {"want_answer": ["x"]})
+    assert single.instruction == "Only this.\n"
+    assert single.turns == ("Only this.\n",)
+
+
+@pytest.mark.parametrize(
+    ("messages", "message"),
+    [
+        ([], "at least one user message"),
+        (["First.", "  "], "nonempty text"),
+        (["First.", f"Second.\n{TURN_MARKER}\nThird."], "cannot hold"),
+    ],
+)
+def test_write_task_refuses_invalid_turns(tmp_path, messages, message):
+    with pytest.raises(ValueError, match=message):
+        write_task(tmp_path, "ask-city", messages, {"want_answer": ["x"]})
     assert not any(tmp_path.iterdir())
 
 

@@ -1,6 +1,7 @@
 """Evaluation tools: write and run Harbor tasks, read the results and compare them.
 
 Write a Vis task with `write_task`, and run tasks with the Vis agent with `run_tasks`.
+Give `write_task` a list of user messages for a task with several turns.
 Read one Vis run with `load_trajectory` or `parse_trajectory`, and join the turns of
 one session with `merge_trajectories`. Read the cases of a
 Harbor dataset with `read_tasks`, and the trials of a job or round with `read_trials`.
@@ -54,6 +55,7 @@ from .harbor import (
     seal_digest,
     seal_round,
     seal_rows,
+    split_turns,
     summarize,
     write_task,
 )
@@ -213,6 +215,7 @@ __all__ = [
     "seal_digest",
     "seal_round",
     "seal_rows",
+    "split_turns",
     "stage_agreement",
     "standing",
     "summarize",

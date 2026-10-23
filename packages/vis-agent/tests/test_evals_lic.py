@@ -4,8 +4,8 @@ import json
 
 import pytest
 from blockether.vis.evals import read_tasks
-from blockether.vis.evals.agent import split_turns
 from blockether.vis.evals.grade import answer_program_problem
+from blockether.vis.evals.harbor import split_turns
 from blockether.vis.evals.lic import (
     EXPECTED_FILE,
     PROGRAM_FILE,

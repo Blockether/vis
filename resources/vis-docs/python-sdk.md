@@ -101,10 +101,39 @@ You should see a session ID, `Status: completed` and the answer's content blocks
 By default, `run()` returns a turn record, not a text string. A failed,
 cancelled or suspended turn also returns a record: always check `status`.
 
-The record has no `answer` field. To get the answer text, call `final_answer(result)`
-from `blockether.vis.engine`. It returns the Markdown of the last prose block in
-`content`, or `None` when the turn has no answer. To continue the conversation, call
-`agent.run()` again: each call is a new turn in the same session.
+The record has no `answer` field. The answer is in `content`, a list of blocks.
+To get the answer as text, call `final_answer(result)` from
+`blockether.vis.engine`. It returns the Markdown of the last `prose` block, or
+`None` when the turn has no answer.
+
+To continue the conversation, call `agent.run()` again on the same `Agent`. Each
+call is a new turn in the same session. The agent sees your earlier messages,
+its answers and its tool results:
+
+```python
+# conversation.py
+from blockether.vis.engine import Agent, final_answer
+
+
+def main():
+    with Agent(project=".") as agent:
+        for message in [
+            "List the files in this folder. Do not change any file.",
+            "Which of those files is the largest?",
+        ]:
+            result = agent.run(message)
+            if result["status"] != "completed":
+                raise SystemExit(f"Turn ended with status {result['status']}")
+            print(final_answer(result))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+The second answer names one of the files from the first answer. To test such a
+conversation on many tasks and get a score, read [Write a task with several
+turns](evals.md#write-a-task-with-several-turns).
 
 To keep the agent away from some tools, pass `tools`. For example,
 `Agent(tools=["-py.repl_start", "-py.repl_stop"])` turns off those two tools of the

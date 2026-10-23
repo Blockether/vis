@@ -28,7 +28,6 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .agent import TURN_MARKER
 from .harbor import HarborTask, write_task
 
 __all__ = [
@@ -131,7 +130,7 @@ if completed.returncode != 0:
 def load_samples(cache: Path | str, *, url: str = DATA_URL) -> list[dict[str, Any]]:
     """Return the LiC samples from the JSON file `cache`.
 
-    A missing file is downloaded from `url` first. The data is about 10 MB.
+    A missing file is downloaded from `url` first. The data is about 30 MB.
     """
     path = Path(cache)
     if not path.is_file():
@@ -166,7 +165,7 @@ def _shards(sample: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def _instruction(sample: Mapping[str, Any], mode: str) -> str:
+def _instruction(sample: Mapping[str, Any], mode: str) -> str | list[str]:
     shards = _shards(sample)
     rules = f"{_RULES} {_FORMAT[sample['task']]}"
     if mode == "concat":
@@ -175,7 +174,7 @@ def _instruction(sample: Mapping[str, Any], mode: str) -> str:
     first = f"I will describe a problem over several messages. {rules}\n\n{shards[0]}"
     turns = [first, *shards[1:]]
     turns[-1] = f"{turns[-1]}\n\n{_LAST}"
-    return f"\n{TURN_MARKER}\n".join(turns) + "\n"
+    return turns
 
 
 def _expected(sample: Mapping[str, Any]) -> tuple[str, dict[str, str]]:
@@ -218,10 +217,11 @@ def write_lic_tasks(
     chosen = tuple(tasks)
     if unknown := sorted(set(chosen) - set(TASKS)):
         raise ValueError(f"unknown LiC tasks {unknown}; use {TASKS}")
+    rows_in = list(samples)
     written: list[HarborTask] = []
     for task in chosen:
         rows = sorted(
-            (s for s in samples if s.get("task") == task and _supported(s)),
+            (s for s in rows_in if s.get("task") == task and _supported(s)),
             key=lambda s: str(s["task_id"]),
         )
         for sample in rows[:limit]:

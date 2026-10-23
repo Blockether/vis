@@ -25,7 +25,6 @@ import asyncio
 import functools
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -43,14 +42,12 @@ from pydantic import Field
 from ..engine._install import ensure_installed
 from .environment import HostEnvironment
 from .grade import RUN_FILE, STDERR_FILE, TRACE_FILE, TRAJECTORY_FILE
+from .harbor import split_turns
 from .trajectory import load_trajectory as load_vis_trajectory
 from .trajectory import merge_trajectories
 
 DEFAULT_COMMAND = "vis-agent"
-TURN_MARKER = "<!-- vis:turn -->"
-"""A line with only this text in an instruction starts the next user turn."""
 TURNS_DIR = "turns"
-_TURN_SPLIT = re.compile(rf"^[ \t]*{re.escape(TURN_MARKER)}[ \t]*(?:\n|$)", re.M)
 CLASSPATH_TIMEOUT_SEC = 120
 _NATIVE_MAGIC = (
     b"\x7fELF",
@@ -126,24 +123,16 @@ def source_commit(source: Path) -> str | None:
     return completed.stdout.strip() or None
 
 
-def split_turns(instruction: str) -> list[str]:
-    """Return the user messages of ``instruction``, one for each turn.
-
-    Each line with only ``TURN_MARKER`` ends one message and starts the next. An
-    instruction without that line is one turn and stays unchanged. An empty message
-    raises ValueError.
-    """
-    parts = _TURN_SPLIT.split(instruction)
-    if len(parts) == 1:
-        return [instruction]
-    messages = [part.strip() for part in parts]
-    if not all(messages):
-        raise ValueError("each turn of a multi-turn instruction needs text")
-    return messages
-
-
 class ProviderUnavailableError(RuntimeError):
     """The provider refused the turn, so the trial measures nothing about Vis."""
+
+
+SCORED_PROVIDER_CODES = frozenset({"provider_context_overflow"})
+"""Provider error codes that the agent causes, so the trial keeps its score.
+
+A conversation that grows past the context window shows how the agent manages
+its context, for example that it did not fold. Such a trial fails its checks.
+"""
 
 
 def provider_failure(trace: Path) -> str | None:
@@ -151,7 +140,7 @@ def provider_failure(trace: Path) -> str | None:
 
     A provider quota or outage ends the turn with an error block whose code
     starts with ``provider_``. Such a trial is an infrastructure error, not a
-    wrong answer.
+    wrong answer. The codes in ``SCORED_PROVIDER_CODES`` are not returned.
     """
     try:
         lines = trace.read_text(encoding="utf-8").splitlines()
@@ -170,7 +159,7 @@ def provider_failure(trace: Path) -> str | None:
             if not isinstance(block, dict) or block.get("type") != "error":
                 continue
             code = str(block.get("code"))
-            if code.startswith("provider_"):
+            if code.startswith("provider_") and code not in SCORED_PROVIDER_CODES:
                 return f"{code}: {block.get('title') or 'provider error'}"
         return None
     return None
