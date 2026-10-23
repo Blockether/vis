@@ -2185,7 +2185,7 @@ export function SessionsScreen({
   return (
     <section
       aria-label="Sessions"
-      className={`flex h-full min-h-0 w-full flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none ${isDesk ? '' : 'mx-auto max-w-[1400px] sm:px-6 sm:py-4'}`}
+      className={`flex h-full min-h-0 w-full flex-col pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none ${isDesk ? '' : 'mx-auto max-w-[60rem] sm:px-6 sm:py-4'}`}
     >
       {/* A pending share belongs to the whole fleet, not the selected machine. */}
       {share && (

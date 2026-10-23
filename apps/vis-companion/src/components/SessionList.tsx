@@ -342,7 +342,7 @@ function carryRows(row: HTMLElement, event: DragEvent<HTMLElement>, ids: readonl
  * body, outside the list, so they never skip.
  */
 const OFFSCREEN_ROW_CLASS =
-  '[contain-intrinsic-height:auto_50px] mouse:[contain-intrinsic-height:auto_46px] @3xl:[contain-intrinsic-height:auto_48px] mouse:@3xl:[contain-intrinsic-height:auto_32px] in-data-rows-settled:[content-visibility:auto]';
+  '[contain-intrinsic-height:auto_50px] mouse:[contain-intrinsic-height:auto_46px] mouse:@3xl:[contain-intrinsic-height:auto_32px] in-data-rows-settled:[content-visibility:auto]';
 
 export const SessionRow = memo(function SessionRow({
   session,
@@ -737,12 +737,12 @@ export const SessionRow = memo(function SessionRow({
               {/* Narrow lists stack metadata under the title. The container, not the
                   viewport, selects the full-width table so desktop sidebars stay readable.
                   The favorite shares the status cluster; no leading mark indents the title. */}
-              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_7.5rem_6rem] @3xl:gap-y-0">
+              <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1 mouse:@3xl:grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_7.5rem_6rem] mouse:@3xl:gap-y-0">
                 {/* The NAME, and nothing but the name. The badges used to ride inside this
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
               the line entirely. They have their own column now. */}
-                <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 @3xl:col-start-auto @3xl:row-start-auto">
+                <span className="col-start-1 row-start-1 flex min-w-0 items-center gap-1.5 mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto">
                   {/* THE LEAF is the one line a human wrote. It keeps the same
                 JetBrains Mono face as the whole app. Its 12px medium type completes
                 the hierarchy below the larger machine, project and set names, while
@@ -809,27 +809,28 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   )}
                 </span>
-                {/* `@3xl:contents` lets one DOM order cover three layouts. Under 24rem the
+                {/* `mouse:@3xl:contents` lets one DOM order cover three layouts. Under 24rem the
               row shows its title and status mark; from 24rem, including the desktop sidebar,
               the id, turns and time appear as one line of prose under the title. At
-              48rem that line dissolves so the id and the turn count become columns in their
-              own right. The facts are never dropped from the tree, only from the paint. */}
+              48rem with a mouse that line dissolves so the id and the turn count become
+              columns in their own right. Touch keeps the two lines at every width: on a
+              tablet the columns squeezed the title the reader came for. The facts are never dropped from the tree, only from the paint. */}
                 {/* One rank, one ink: hierarchy is carried by SIZE (title 12px vs meta 10px),
               never by transparency — an id at 55% ink beside a `·` at 40% beside a full
               hint made one 9px line carry three different inks and none of them readable.
               A COUNT ends on its track's edge, not where its own digits run out:
               left-aligned, `9 turns` stopped 6px short of the `20 turns` one row below
               it, and a column of numbers that does not end together is not a column. */}
-                <span className="col-start-1 row-start-2 hidden min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint @sm:flex @3xl:contents">
+                <span className="col-start-1 row-start-2 hidden min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint @sm:flex mouse:@3xl:contents">
                   <span className="truncate tabular-nums">{shortId(session.id)}</span>
-                  <span className="@3xl:hidden" aria-hidden="true">
+                  <span className="mouse:@3xl:hidden" aria-hidden="true">
                     ·
                   </span>
-                  <span className="whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums @3xl:justify-self-end">
+                  <span className="whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums mouse:@3xl:justify-self-end">
                     {turns} {turns === 1 ? 'turn' : 'turns'}
                   </span>
                 </span>
-                <span className="col-start-3 row-start-1 inline-flex shrink-0 items-center gap-2 justify-self-end @3xl:col-start-auto @3xl:row-start-auto @3xl:justify-self-start">
+                <span className="col-start-3 row-start-1 inline-flex shrink-0 items-center gap-2 justify-self-end mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto mouse:@3xl:justify-self-start">
                   <span
                     data-session-favorite-slot
                     className="grid size-3.5 shrink-0 place-items-center"
@@ -870,7 +871,7 @@ export const SessionRow = memo(function SessionRow({
                   </span>
                 </span>
                 <span
-                  className="col-start-2 col-end-4 row-start-2 hidden justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums @sm:block @3xl:col-start-auto @3xl:col-end-auto @3xl:row-start-auto"
+                  className="col-start-2 col-end-4 row-start-2 hidden justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums @sm:block mouse:@3xl:col-start-auto mouse:@3xl:col-end-auto mouse:@3xl:row-start-auto"
                   title={formatExact(timestamp)}
                 >
                   {timeLabel(timestamp)}
@@ -1216,22 +1217,22 @@ export function NavigatorSkeleton() {
                   key={row}
                   className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
                 >
-                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 @3xl:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.25rem_6rem] @3xl:gap-y-0">
-                    <span className="col-start-1 row-start-1 @3xl:col-start-auto @3xl:row-start-auto">
+                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 mouse:@3xl:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.25rem_6rem] mouse:@3xl:gap-y-0">
+                    <span className="col-start-1 row-start-1 mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto">
                       <SkeletonBar type="text-meta" width={width} baz="h-2.5" tone="bg-muted/30" />
                     </span>
-                    <span className="col-start-1 row-start-2 hidden items-center gap-x-2 @sm:flex @3xl:contents">
+                    <span className="col-start-1 row-start-2 hidden items-center gap-x-2 @sm:flex mouse:@3xl:contents">
                       <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/20" />
                       <SkeletonBar type="text-chip" width="w-10" baz="h-1.5" tone="bg-muted/20" />
                     </span>
                     {/* The flag column a real row keeps for `NEW`.
                         Nothing is loading in it, but the track has to exist or the
                         columns shift the moment the rows arrive. */}
-                    <span className="col-start-2 row-start-1 @3xl:col-start-auto @3xl:row-start-auto" />
-                    <span className="col-start-3 row-start-1 justify-self-end @3xl:col-start-auto @3xl:row-start-auto @3xl:justify-self-start">
+                    <span className="col-start-2 row-start-1 mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto" />
+                    <span className="col-start-3 row-start-1 justify-self-end mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto mouse:@3xl:justify-self-start">
                       <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/25" />
                     </span>
-                    <span className="col-start-3 row-start-2 hidden justify-self-end @sm:block @3xl:col-start-auto @3xl:row-start-auto @3xl:justify-self-start">
+                    <span className="col-start-3 row-start-2 hidden justify-self-end @sm:block mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto mouse:@3xl:justify-self-start">
                       <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/20" />
                     </span>
                   </span>
