@@ -117,3 +117,6 @@ own_your_harness.pptx
 # Call journal written by the e2e schema-probe fixture when it runs from this
 # checkout instead of a temporary workspace.
 /schema-calls.jsonl
+
+# uv lockfiles. The SDK and the examples are libraries; uv writes the lock locally.
+uv.lock
