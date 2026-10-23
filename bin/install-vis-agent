@@ -17,7 +17,8 @@ components="${VIS_COMPONENTS:-}"
 usage() {
   cat <<EOF
 Usage: install-vis-agent [--install-dir PATH] [--track release|beta|dev]
-                         [--version X.Y.Z] [--sha256 HASH] [--components LIST]
+                         [--version X.Y.Z|beta-<commit>] [--sha256 HASH]
+                         [--components LIST]
 
 Installs the latest complete stable release, or the version you name:
   $install_dir/vis-agent          command and native engine
@@ -31,9 +32,14 @@ No JDK or Clojure installation is required.
   --track dev      main source, always JVM (Git and JDK 25+)
   --version X.Y.Z  exactly that stable release (also vX.Y.Z), never a newer one.
                    A missing release or platform asset stops the installation.
+  --version beta-<commit>
+                   exactly that published beta build, on the beta track. A missing
+                   or incomplete beta, or one without SHA256SUMS, stops the
+                   installation. It never falls back to the latest beta.
   --sha256 HASH    expected SHA-256 of the downloaded vis-agent command. With
-                   --version, the command comes from that release, so the hash
-                   stays valid. Any other command stops the installation.
+                   --version X.Y.Z, the command comes from that release, so the
+                   hash stays valid. A beta pin uses the rolling installer command.
+                   Any other command stops the installation.
   --components LIST
                    optional parts beside the command, the engine and Python:
                    tui, web and desktop separated by commas, all, or none.
@@ -110,17 +116,26 @@ if [[ -n "$components" && ! "$components" =~ ^(none|all|$component_pattern(,$com
 fi
 
 # A pinned version installs exactly that release tag, never the newest one (#332).
+# A beta tag names one immutable beta build, so it selects the beta track (#409).
 release_tag=""
 if [[ -n "$version" ]]; then
-  if [[ ! "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "vis-agent install: '$version' is not a release version (X.Y.Z or vX.Y.Z)" >&2
+  if [[ "$version" =~ ^beta-[0-9a-f]{40}$ ]]; then
+    if (( track_named )) && [[ "$track" != beta ]]; then
+      echo "vis-agent install: --version $version selects a beta build; it cannot be used with --track $track" >&2
+      exit 2
+    fi
+    track=beta
+    release_tag="$version"
+  elif [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if (( track_named )) && [[ "$track" != release ]]; then
+      echo "vis-agent install: --version selects a stable release; it cannot be used with --track $track" >&2
+      exit 2
+    fi
+    release_tag="v${version#v}"
+  else
+    echo "vis-agent install: '$version' is not a release version (X.Y.Z or vX.Y.Z) or a beta tag (beta-<commit>)" >&2
     exit 2
   fi
-  if (( track_named )) && [[ "$track" != release ]]; then
-    echo "vis-agent install: --version selects a stable release; it cannot be used with --track $track" >&2
-    exit 2
-  fi
-  release_tag="v${version#v}"
 fi
 launcher_sha256="$(printf '%s' "$launcher_sha256" | tr 'A-F' 'a-f')"
 if [[ -n "$launcher_sha256" && ! "$launcher_sha256" =~ ^[0-9a-f]{64}$ ]]; then
@@ -170,8 +185,9 @@ sha256_of() {
 # The rolling installer asset only bootstraps acquisition. The stable bundle
 # replaces it with the launcher built at the same tag as its engine and TUI.
 # A pinned version takes the launcher from its own immutable tag, so a pinned
-# --sha256 stays valid. A checkout can supply this bootstrap locally; its
-# tracked files stay untouched.
+# --sha256 stays valid. A beta publishes no separate command, so a pinned beta
+# uses the verified rolling bootstrap; its update installs the beta's launcher.
+# A checkout can supply this bootstrap locally; its tracked files stay untouched.
 wrapper=""
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 if [[ -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then
@@ -181,7 +197,8 @@ else
   wrapper="$(mktemp "${TMPDIR:-/tmp}/vis-agent.XXXXXX")"
   sums="$(mktemp "${TMPDIR:-/tmp}/vis-agent-sums.XXXXXX")"
   trap 'rm -f "$wrapper" "$sums"' EXIT
-  asset_tag="${release_tag:-installer}"
+  asset_tag=installer
+  [[ "$release_tag" != v* ]] || asset_tag="$release_tag"
   base="https://github.com/$repo_slug/releases/download/$asset_tag"
   if [[ -n "$release_tag" ]]; then
     status="$(curl --silent --head --output /dev/null --write-out '%{http_code}' \

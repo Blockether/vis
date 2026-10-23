@@ -73,8 +73,8 @@ from their selected release. Running `bin/install-vis-agent` from a clone also w
 
 ### Pin an exact version
 
-Use `--version` when a CI pipeline or a team must stay on a tested release. The
-installer then installs exactly that release, never a newer one.
+Use `--version` when a CI pipeline or a team must stay on a tested release or beta.
+The installer then installs exactly that build, never a newer one.
 
 ```bash
 curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --version 0.2.46
@@ -85,8 +85,21 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 You can write `0.2.46` or `v0.2.46`. The installer takes the `vis-agent` command from
 that release and runs `vis-agent update v0.2.46`. If the release does not exist or
 has no bundle for your platform, the installation stops. It never falls back to the
-latest release. A version is always a stable release, so you cannot add `--track beta`
+latest release. A stable version selects the release track, so you cannot add `--track beta`
 or `--track dev`.
+
+To pin a tested beta, give its full tag: `beta-` and the 40-character commit.
+`vis-agent switch list` shows the published beta tags.
+
+```bash
+curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install-vis-agent | bash -s -- --version beta-<commit>
+```
+
+A beta tag selects the beta track, so you cannot add `--track release` or `--track dev`.
+The installer runs `vis-agent update beta-<commit>`. The update takes the engine, Python, TUI and
+web app from that beta. It checks each download against the `SHA256SUMS` of the beta. The
+installation stops if the beta does not exist, has no `SHA256SUMS` or misses a selected part. It
+never falls back to the latest beta, and the installed build and track stay the same.
 
 ### Choose what to install
 
@@ -136,8 +149,10 @@ echo "<installer hash>  install-vis-agent" | sha256sum --check
 bash install-vis-agent --version "$tag" --sha256 "<vis-agent hash>"
 ```
 
-With `--version`, the command comes from that release, so its hash does not change.
-A different command stops the installation before it runs.
+With a stable `--version`, the command comes from that release, so its hash does not change.
+A beta publishes no separate command. With a beta tag, the installer uses the command of the
+rolling installer assets, so its hash changes when they refresh. The update then installs the
+command from the beta bundle. A different command stops the installation before it runs.
 
 To check release assets by hand, download them and `SHA256SUMS` to one directory:
 
@@ -158,6 +173,7 @@ The expected output is `vis-agent: OK`. On macOS, use `shasum -a 256 --check
 vis-agent update                          # release, always the default
 vis-agent update --track release          # latest complete stable native release
 vis-agent update --track beta             # latest complete native beta
+vis-agent update beta-<commit>            # that published beta build
 vis-agent update --track dev              # newest main source, always JVM
 ```
 
@@ -167,13 +183,14 @@ vis-agent update --track dev              # newest main source, always JVM
 | `beta` | Published beta of a main commit that passed CI and native checks | Native engine, gateway, workers and TUI |
 | `dev` | Newest commit of `main` | JVM engine, gateway, workers and TUI |
 
-Every update without `--track` selects `release`, also after beta or dev. A successful update
+Every update without `--track` or a beta tag selects `release`, also after beta or dev. A successful update
 records the selection for later launches. To stay on beta or dev, name that track in each update. A
 failed download does not change the recorded selection. Dev ignores any native binaries from a
 previous install.
 
 `vis-agent update vX.Y.Z` installs a specific stable version on the release track.
-Version pins are not accepted with beta or dev. Native updates acquire the engine,
+`vis-agent update beta-<commit>` installs that published beta on the beta track. A missing,
+incomplete or unverified beta stops the update. Dev accepts no version pin. Native updates acquire the engine,
 Python worker and TUI from the same immutable release before replacing installed files.
 A missing native TUI fails rather than starting a JVM client.
 

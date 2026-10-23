@@ -8,7 +8,8 @@
 #
 # Desktop follows the selected track: release and beta download; dev builds from source.
 # Release and beta install native engine, Python and TUI bundles. Dev follows main
-# on the JVM. `update` defaults to release; only --track selects beta or dev.
+# on the JVM. `update` defaults to release; only --track selects beta or dev,
+# and a `beta-<commit>` tag selects that one beta build.
 # `switch` names a build instead of following a track: `switch list` shows what
 # is installed and selectable, `switch <identifier>` installs exactly that one.
 # --jvm selects source for one launch without changing the installed track.
@@ -1009,10 +1010,12 @@ update_native() {
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
   local asset dl release_url archive unpack native_dir tui_asset tui_dl tui_archive tui_unpack web_dl web_archive web_unpack
-  local native_version native_commit _native_metadata release_tag tui_library
+  local native_version native_commit native_track _native_metadata release_tag tui_library
   asset="$(vis_platform_asset)"
-  local sums sums_dl checked="" named=0
+  local sums sums_dl checked="" named=0 pinned_beta=0
   if [[ -n "$target" && "$target" != latest ]]; then named=1; fi
+  # A pinned beta installs complete and verified, or not at all (#409).
+  if (( named )) && [[ "$track" == beta ]]; then pinned_beta=1; fi
   # A named beta build is installed as named; only an unpinned beta resolves the
   # published selection.
   if [[ "$track" == beta && ( -z "$target" || "$target" == latest ) ]]; then
@@ -1051,7 +1054,11 @@ update_native() {
   web_dl=""
   if (( want_web )); then
     web_dl="$release_url/vis-web.tar.gz"
-    vis_release_asset "$web_dl" update || web_dl=""
+    if ! vis_release_asset "$web_dl" update; then
+      (( ! pinned_beta )) || die "update: incomplete beta $target: missing vis-web.tar.gz" \
+        "The selected components must come from the same build." "Installation unchanged."
+      web_dl=""
+    fi
   fi
   # Where the private runtime belongs: beside an installed launcher, or in Vis
   # state when the launcher is a tracked checkout file we must never overwrite.
@@ -1113,6 +1120,9 @@ update_native() {
     say "downloading $sums_dl"
     curl -fsSL "$sums_dl" -o "$sums" || die "update: could not download $sums_dl" "Installation unchanged."
     checked="$sums"
+  elif (( pinned_beta )); then
+    die "update: $target publishes no SHA256SUMS, so its downloads cannot be verified" \
+      "A pinned beta installs only verified downloads." "Installation unchanged."
   else
     warn "$target publishes no SHA256SUMS, so its downloads cannot be verified"
   fi
@@ -1142,8 +1152,13 @@ update_native() {
     [[ -s "$tui_unpack/$tui_library" ]] || die "update: the release bundle is missing its Java Sound library"
   fi
   [[ -z "$web_dl" || -f "$web_unpack/vis-web/index.html" ]] || die "update: the release web app bundle is missing its index.html"
-  read -r native_version native_commit _native_metadata < "$unpack/vis-agent-native.build" || \
+  read -r native_version native_commit native_track _native_metadata < "$unpack/vis-agent-native.build" || \
     die "update: invalid build stamp; native installation unchanged."
+  # A beta tag names its build commit. A bundle of another build never installs under it.
+  if [[ "$track" == beta && ( "$native_track" != beta || "beta-$native_commit" != "$target" ) ]]; then
+    die "update: $target contains the $native_track build $native_commit, not that beta" \
+      "Installation unchanged."
+  fi
   say "selected native $native_version revision $native_commit ($track)"
   if [[ -e "$managed_src" ]]; then
     [[ "$native_commit" =~ ^[0-9a-f]{40}$ ]] || \
@@ -1197,13 +1212,16 @@ update_native() {
 
 vis_update_usage() {
   cat >&2 <<'EOF'
-Usage: vis-agent update|upgrade [vX.Y.Z] [--track release|beta|dev] [--keep-gateway]
-                               [--components LIST]
+Usage: vis-agent update|upgrade [vX.Y.Z|beta-<commit>] [--track release|beta|dev]
+                               [--keep-gateway] [--components LIST]
          `upgrade` is an alias of `update`; both run exactly this command.
          --track NAME  release  newest complete stable native release (default)
                        beta     newest published native beta from green main CI
                        dev      newest main source, always run on the JVM
          vX.Y.Z        install that version on the release track only
+         beta-<commit> install exactly that published beta on the beta track. A
+                       missing, incomplete or unverified beta stops the update;
+                       it never falls back to the latest beta.
          --keep-gateway
                        leave a running gateway alone. Otherwise an idle managed
                        gateway is released before replacing its old runtime.
@@ -1215,7 +1233,7 @@ Usage: vis-agent update|upgrade [vX.Y.Z] [--track release|beta|dev] [--keep-gate
                        A part that is not selected is removed; `vis-agent desktop`
                        still downloads the desktop app on first use.
 
-         Every update without --track selects release, even after beta or dev.
+         Every update without --track or a beta tag selects release, even after beta or dev.
          A successful update records the selection for subsequent launches.
          Native updates include the matching Python worker and the selected components.
          Each download must match the SHA256SUMS of its release before it is unpacked.
@@ -1280,13 +1298,18 @@ release_stale_gateway() {
 }
 # One public selector; commit its state only after installation succeeds.
 vis_do_update() {
-  local target="" keep_gateway=0 track=release arg components="" requested=""
+  local target="" keep_gateway=0 track=release track_named=0 arg components="" requested=""
   while (( $# )); do
     arg="$1"
     case "$arg" in
       --keep-gateway) keep_gateway=1 ;;
-      --track) track="${2:-}"; [[ -n "$track" ]] || die "update: --track needs release, beta or dev"; shift ;;
-      --track=*) track="${arg#*=}" ;;
+      --track)
+        track="${2:-}"
+        track_named=1
+        [[ -n "$track" ]] || die "update: --track needs release, beta or dev"
+        shift
+        ;;
+      --track=*) track="${arg#*=}"; track_named=1 ;;
       --components)
         requested="${2:-}"
         [[ -n "$requested" ]] || die "update: --components needs a list" "Example: --components tui,web"
@@ -1310,8 +1333,14 @@ vis_do_update() {
   case "$target" in
     ""|latest) ;;
     beta-*)
+      # A beta tag is immutable: beta- and the full commit of a published build (#409).
+      [[ "$target" =~ ^beta-[0-9a-f]{40}$ ]] || \
+        die "update: '$target' is not a beta tag" \
+          "A beta tag is beta-<commit> with the full 40-character commit." \
+          "See the published betas: vis-agent switch list"
+      (( track_named )) || track=beta
       [[ "$track" == beta ]] || die "update: '$target' is a beta build, not a release" \
-        "Use: vis-agent switch $target"
+        "Use: vis-agent update $target"
       ;;
     *)
       [[ "$track" == release ]] || \

@@ -244,8 +244,8 @@
 (defn- with-native-install-fixture
   "Exercise installed commands with local release archives; Git/JVM are denied by default."
   [{:keys [installer? installed? missing-worker? missing-tui? missing-tui-library? web? broken-web?
-           stale-web? track previous-track prepare! build-commit extra-env target desktop
-           desktop-fail? checksums extra-args]} f]
+           stale-web? track previous-track prepare! build-commit build-track extra-env target
+           desktop desktop-fail? checksums extra-args]} f]
   (let [root
         (.toFile (Files/createTempDirectory "vis-native-install-" (make-array FileAttribute 0)))
 
@@ -327,7 +327,12 @@
       (write-executable! (io/file payload "vis-agent-native")
                          "#!/usr/bin/env bash\necho new-runtime\n")
       (spit (io/file payload "vis-agent-native.build")
-            (str "9.9.9 " (or build-commit "abc123") " " (or track "release") " now\n"))
+            ;; A beta bundle stamps the commit of its tag, as the beta gate builds it.
+            (str "9.9.9 "
+                 (if (= "beta" (or build-track track)) beta-commit (or build-commit "abc123"))
+                 " "
+                 (or build-track track "release")
+                 " now\n"))
       (when-not missing-worker?
         (.mkdirs (io/file payload "vis-agent-python/python"))
         (spit (io/file payload "vis-agent-python/libvispython.so") "runtime"))
@@ -1804,6 +1809,91 @@
             (expect (str/includes? output "installer publishes no SHA256SUMS") output)
             (expect (str/includes? output "the vis-agent command matches --sha256") output)
             (expect (str/includes? calls "update --track release\n") calls))))))
+
+;; #409: a pinned beta installs exactly that build, or nothing.
+(def ^:private pinned-beta (str "beta-" (apply str (repeat 40 "a"))))
+
+(defdescribe
+  pinned-beta-install-test
+  (it "installs a named beta through update or the installer, only from that beta"
+      (doseq [[installer? target] [[false pinned-beta] [true (str "--version=" pinned-beta)]]]
+        (with-native-install-fixture
+          {:installer? installer?
+           :target target
+           :build-track "beta"
+           :checksums :valid
+           :web? true
+           :previous-track "release"}
+          (fn [{:keys [exit output urls env]}]
+            (expect (zero? exit) output)
+            (expect (str/includes? output
+                                   (str "resolving vis-agent-linux-x64.tar.gz on the beta track in "
+                                        pinned-beta))
+                    output)
+            (expect (not (str/includes? urls "installer/native-beta")) urls)
+            (expect (not (str/includes? urls "releases/latest")) urls)
+            (doseq [asset ["SHA256SUMS" "vis-agent-linux-x64.tar.gz" "vis-tui-linux-x64.tar.gz"
+                           "vis-web.tar.gz"]]
+              (expect (str/includes? urls (str "/releases/download/" pinned-beta "/" asset)) urls))
+            (expect (= "beta\n" (slurp (io/file (get env "VIS_HOME") "install" "track"))))
+            (when installer?
+              (expect (str/includes? output (str "Vis Agent " pinned-beta " installed"))
+                      output))))))
+  (it "stops on an unknown, incomplete, unverified or different beta and keeps the installation"
+      (doseq [[options message]
+              [[{:extra-env {"VIS_TEST_TAG_STATUS" "404"}}
+                (str "has no published release " pinned-beta)]
+               [{:web? true} (str pinned-beta " publishes no SHA256SUMS")]
+               [{:checksums :valid} (str "incomplete beta " pinned-beta ": missing vis-web.tar.gz")]
+               [{:checksums :valid :web? true :build-commit (apply str (repeat 40 "b"))}
+                (str "contains the beta build " (apply str (repeat 40 "b")) ", not that beta")]]]
+        (with-native-install-fixture
+          (merge
+            {:installed? true :target pinned-beta :build-track "beta" :previous-track "release"}
+            options)
+          (fn [{:keys [exit output urls env native]}]
+            (expect (= 1 exit) output)
+            (expect (str/includes? output message) output)
+            (expect (not (str/includes? urls "installer/native-beta")) urls)
+            (expect (not (str/includes? output "selected native")) output)
+            (expect (str/includes? (slurp native) "old-runtime"))
+            (expect (= "release\n" (slurp (io/file (get env "VIS_HOME") "install" "track"))))))))
+  (it "refuses a malformed beta tag or another track before any download"
+      (doseq [[options message]
+              [[{:target "beta-main"} "'beta-main' is not a beta tag"]
+               [{:target (str "beta-" (apply str (repeat 39 "a")))} "is not a beta tag"]
+               [{:track "release" :target pinned-beta} "is a beta build, not a release"]
+               [{:installer? true :target "--version=beta-main"}
+                "is not a release version (X.Y.Z or vX.Y.Z) or a beta tag (beta-<commit>)"]
+               [{:installer? true :track "release" :target (str "--version=" pinned-beta)}
+                "selects a beta build; it cannot be used with --track release"]]]
+        (with-native-install-fixture (assoc options :installed? true)
+                                     (fn [{:keys [exit output urls native]}]
+                                       (expect (pos? exit) output)
+                                       (expect (str/includes? output message) output)
+                                       (expect (str/blank? urls) urls)
+                                       (expect (str/includes? (slurp native) "old-runtime"))))))
+  (it "bootstraps a pinned beta with the verified installer command after the tag check"
+      (let [{:keys [exit output calls installed?]}
+            (run-installer-download ["--version" pinned-beta] {:sums :valid} {})]
+        (expect (zero? exit) output)
+        (expect installed? output)
+        (expect (str/includes? calls
+                               (str "curl https://github.com/Blockether/vis/releases/tag/"
+                                    pinned-beta))
+                calls)
+        (expect (str/includes? calls "/releases/download/installer/vis-agent") calls)
+        (expect (not (str/includes? calls (str "/releases/download/" pinned-beta "/vis-agent")))
+                calls)
+        (expect (str/includes? output "verified the vis-agent command against SHA256SUMS") output)
+        (expect (str/includes? calls (str "update --track beta " pinned-beta)) calls))
+      (let [{:keys [exit output calls installed?]}
+            (run-installer-download ["--version" pinned-beta] {:tag-status "404" :sums :valid} {})]
+        (expect (= 1 exit) output)
+        (expect (str/includes? output (str "has no published release " pinned-beta)) output)
+        (expect (str/includes? output "nothing was installed") output)
+        (expect (not installed?) output)
+        (expect (not (str/includes? calls "update --track")) calls))))
 
 (defdescribe
   distribution-track-test
