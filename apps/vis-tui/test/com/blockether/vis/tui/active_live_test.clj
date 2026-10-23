@@ -120,9 +120,18 @@
             [false true]]
 
       (render/invalidate-cache!)
+      ;; A running step stays below a closed digest (c6a8ef275), so the step settles here.
       (let [payload
             (render/progress->lines-data
-              review-progress
+              (update-in review-progress
+                         [:iterations 0 :forms 0 :activity]
+                         assoc
+                         :state "succeeded"
+                         :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+                         :rows [{:id (:invocation-id owner)
+                                 :operation "Run tests"
+                                 :summary "Checking the build"
+                                 :state "succeeded"}])
               76
               {:show-thinking true :show-iterations true}
               {:session-id "inline-review"
