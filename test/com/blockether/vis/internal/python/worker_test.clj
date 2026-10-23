@@ -1674,6 +1674,36 @@ print(worker_value)"))))
                      (expect (not (str/includes? (pr-str report) "private-control-fixture"))))
                    (finally (deliver release true)))))))))
 
+(defdescribe
+  spare-worker-test
+  ;; Issue #407: a gateway keeps one warm trusted worker ready for the next context.
+  (it "gives the warm spare to the next trusted worker and starts a new spare"
+      (with-worker-context
+        (fn [session]
+          (let [key
+                (worker/extension-worker-key session)
+
+                caller
+                (str session "-extension")
+
+                spares
+                @#'worker/spares]
+
+            (try (worker/keep-spares! "import json\njson.__vis_spare_warm__ = True\n" [nil])
+                 (let [spare @(get @spares (:packages key))]
+                   (worker/trust! key caller true)
+                   (worker/install-runtime! key caller)
+                   (expect (identical? (:process spare) (:process (get @@#'worker/workers key))))
+                   (expect
+                     (= "True"
+                        (str (worker/eval-str
+                               key
+                               caller
+                               "str(getattr(__import__('json'), '__vis_spare_warm__', False))"))))
+                   (expect (some? (get @spares (:packages key))))
+                   (expect (not (identical? spare @(get @spares (:packages key))))))
+                 (finally (worker/keep-spares! nil nil) (worker/stop-worker! key))))))))
+
 (defdescribe trusted-worker-missing-packages-test
              (it "never creates a missing project packages directory"
                  ;; #377: a created site-packages left an invalid .venv that uv rejected.

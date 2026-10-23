@@ -313,8 +313,10 @@
   "Load the global catalog after HTTP starts so clients can report preparation without a
    health timeout. Then prepare the catalogs of known projects, so the first session in a
    project after a start does not wait for them. The gateway has no project of its own:
-   it never prepares the directory it started in."
+   it never prepares the directory it started in. Unchanged extensions register from
+   their saved manifests, and a warm worker waits for the next extension context (#407)."
   []
+  (python-extensions/use-registration-manifests! true)
   ;; A later successful scan must clear a failed startup, including an empty catalog.
   (python-extensions/add-change-listener! ::extension-startup
                                           (fn [{:keys [project-root]}]
@@ -331,7 +333,9 @@
          (tel/log! {:level :warn
                     :id ::known-projects-failed
                     :data {:error (extension-diagnostic-text (or (ex-message t) (str t)))}
-                    :msg "Could not list the known projects at startup"}))))
+                    :msg "Could not list the known projects at startup"})))
+  ;; The next session then takes a warm worker for its extension contexts (#407).
+  (python-extensions/keep-spare-workers!))
 
 (defn- status-map
   []

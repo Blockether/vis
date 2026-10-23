@@ -6,6 +6,8 @@ import os
 import sys
 from types import ModuleType
 
+import vis_code
+
 # The host stages the SDK engine next to this file, for `blockether.vis.engine`.
 _ENGINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vis_engine")
 
@@ -62,7 +64,7 @@ def install(source, host=None):
     previous = sys.modules.get(module.__name__)
     sys.modules[module.__name__] = module
     try:
-        exec(compile(source, module.__file__, "exec"), module.__dict__)
+        exec(vis_code.code(source, module.__file__), module.__dict__)
     except BaseException:
         if previous is None:
             sys.modules.pop(module.__name__, None)

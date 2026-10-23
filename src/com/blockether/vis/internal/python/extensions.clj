@@ -134,10 +134,36 @@
 
 (defn- worker-for [sess] (get @context-workers sess pyext/shared-key))
 
-(defn- exec-in! [sess code] (pyext/exec! (worker-for sess) sess code))
+(defonce
+  ^:private
+  ^{:doc
+    "Extension namespace -> the fn that opens it. A registration from a saved manifest
+     opens its namespace at its first Python operation, not at load (#407)."}
+  pending-contexts
+  (atom {}))
+
+(def ^:private ^:dynamic *opening*
+  "The pending namespace that this thread opens now. Its own operations do not wait."
+  nil)
+
+(defn- pending-context? [sess] (contains? @pending-contexts sess))
+
+(defn- open-pending!
+  "Open `sess` when it is still pending. One caller opens it, and the others wait."
+  [sess]
+  (when-let [open (get @pending-contexts sess)]
+    (when-not (= sess *opening*)
+      (locking open
+        (when (pending-context? sess)
+          (binding [*opening* sess]
+            (open))
+          (swap! pending-contexts dissoc sess))))))
+
+(defn- exec-in! [sess code] (open-pending! sess) (pyext/exec! (worker-for sess) sess code))
 
 (defn- install-sync-tool-in!
   [sess tool-name]
+  (open-pending! sess)
   (pyext/install-sync-tool! (worker-for sess) sess tool-name))
 
 (def ^:private callable-key
@@ -168,6 +194,7 @@
    The interpreter renders the value as JSON text, so what comes back is exactly
    what a host tool result is: plain data with string keys, and nothing live."
   [sess expr]
+  (open-pending! sess)
   (let [text (try (pyext/run (worker-for sess) sess expr)
                   (catch Throwable t
                     (throw (ex-info (raised-message t) {:type ::python-raised :session sess} t))))]
@@ -458,6 +485,12 @@
   live-contexts
   (atom #{}))
 
+(defn- context-name
+  "A new extension namespace name for `label`. A name is never used again."
+  [label]
+  (str "vis_ext_" (.incrementAndGet ^AtomicLong context-seq)
+       "_" (str/replace (str label) #"[^A-Za-z0-9_]" "_")))
+
 (defn- open-context!
   "The body both `build-context` arities share.
 
@@ -466,8 +499,7 @@
    (`with-redefs` swaps the var, and a self-call through it lands back in the
    stub — measured, as a 2-arg call into a 1-arg stub)."
   [worker label]
-  (let [sess (str "vis_ext_" (.incrementAndGet ^AtomicLong context-seq)
-                  "_" (str/replace (str label) #"[^A-Za-z0-9_]" "_"))]
+  (let [sess (context-name label)]
     (swap! context-workers assoc sess worker)
     (try (pyext/trust! worker sess true)
          (pyext/install-runtime! worker sess)
@@ -1138,12 +1170,16 @@
        (let [{:keys [calls snapshot]} (get @context-lifecycle ctx)]
          (if (and close-in-worker? (pos? (long (or calls 0))))
            (swap! context-lifecycle assoc-in [ctx :closing?] true)
-           (let [worker (worker-for ctx)]
+           (let [worker (worker-for ctx)
+                 ;; A pending namespace was never opened in its worker.
+                 opened? (not (pending-context? ctx))]
+
+             (swap! pending-contexts dissoc ctx)
              (swap! live-contexts disj ctx)
              (swap! context-workers dissoc ctx)
              (swap! context-lifecycle dissoc ctx)
              (try (python-host/forget-session! ctx) (catch Throwable _ nil))
-             (when (and close-in-worker? (pyext/worker-live? worker))
+             (when (and close-in-worker? opened? (pyext/worker-live? worker))
                (try (pyext/close-session! worker ctx) (catch Throwable _ nil)))
              (when (and (not= worker pyext/shared-key) (not-any? #{worker} (vals @context-workers)))
                (pyext/stop-worker! worker))
@@ -1186,11 +1222,12 @@
    into functions that the SDK does not evaluate, so `doc()` lost every type.
    The source crosses as JSON text: a Python string literal reads an escaped
    surrogate pair as two characters, while `json.loads` rejoins it. `<string>` is
-   the file name the interpreter gives code it executes directly."
+   the file name the interpreter gives code it executes directly. `vis_code` compiles
+   the source once for each worker and keeps the code in the bytecode cache (#407)."
   [source]
-  (str "exec(compile(__import__('json').loads(" (python-string-literal (json/write-json-str source))
-       "), '<string>', 'exec', flags=__import__('__future__').annotations.compiler_flag,"
-       " dont_inherit=True), globals())"))
+  (str "exec(__import__('vis_code').code(__import__('json').loads("
+       (python-string-literal (json/write-json-str source))
+       "), '<string>', __import__('__future__').annotations.compiler_flag), globals())"))
 
 (defn- context-worker-key
   "The trusted worker that holds the context of an extension frozen at `snap`.
@@ -1198,64 +1235,103 @@
   [worker ^File snap packages]
   (if packages (pyext/extension-worker-key [worker (.getCanonicalPath snap)] packages) worker))
 
-(defn- initialize-extension-context!
-  "Evaluate admitted extension `source` in a trusted namespace of `worker`.
+(defn- evaluate-extension!
+  "Evaluate admitted extension `source` in the open namespace `ctx`.
    `entry-path` is the canonical source entry file exposed through Python's
-   conventional module globals. Returns the unsealed registration without
-   touching the Clojure registry."
+   conventional module globals. Returns the sealed registration data."
+  [ctx label ^File snap entry-path source packages bound-env]
+  (let [frozen-home (.getCanonicalPath (.getParentFile snap))]
+    (bind-host! ctx label bound-env)
+    (locking ctx
+      (extension/with-context
+        {:ext {:ext/name label} :env (or bound-env {:workspace/root (workspace/cwd-root)})}
+        (python-host/conveying
+          ctx
+          (exec-in!
+            ctx
+            (str "import sys as __vis_pathsys__\n"
+                 "import os as __vis_pathos__\n"
+                 "__vis_ext_dir__ = "
+                 (python-string-literal (.getCanonicalPath snap))
+                 "\n"
+                 "__vis_frozen_home__ = "
+                 (python-string-literal frozen-home)
+                 "\n"
+                 "__file__ = "
+                 (python-string-literal entry-path)
+                 "\n"
+                 "__cached__ = None\n"
+                 "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
+                 "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
+                 "__vis_packages__ = "
+                 (python-string-literal (or packages (runtime/packages-dir)))
+                 "\nimport package_paths as __vis_package_paths__\n"
+                 "__vis_package_paths__.refresh(__vis_packages__, reload=True)\n"
+                 "if __vis_packages__ in __vis_pathsys__.path:\n"
+                 "    __vis_pathsys__.path.remove(__vis_packages__)\n"
+                 "__vis_pathsys__.path.insert(1, __vis_packages__)\n"
+                 "import importlib as __vis_importlib__\n" "__vis_importlib__.invalidate_caches()\n"
+                 "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
+                 "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
+                 "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
+                 "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
+                 "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
+                 "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
+                 "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
+                 "        del __vis_pathsys__.modules[__vis_name__]\n"))
+          (exec-in! ctx bootstrap-python)
+          (exec-in! ctx (postponed-annotations-python source)))))
+    (run-in ctx "__vis_registration__()")))
+
+(defn- initialize-extension-context!
+  "Evaluate admitted extension `source` in a new trusted namespace of `worker`.
+   Returns the sealed and the unsealed registration without touching the Clojure
+   registry."
   [worker label ^File snap entry-path source packages bound-env]
-  (let [ctx
-        (build-context (context-worker-key worker snap packages) label)
-
-        frozen-home
-        (.getCanonicalPath (.getParentFile snap))]
-
+  (let [ctx (build-context (context-worker-key worker snap packages) label)]
     (swap! context-lifecycle assoc
       ctx
       {:snapshot (.getCanonicalPath snap) :calls 0 :project-path (::project-path bound-env)})
-    (try (bind-host! ctx label bound-env)
-         (locking ctx
-           (extension/with-context
-             {:ext {:ext/name label} :env (or bound-env {:workspace/root (workspace/cwd-root)})}
-             (python-host/conveying
-               ctx
-               (exec-in!
-                 ctx
-                 (str "import sys as __vis_pathsys__\n"
-                      "import os as __vis_pathos__\n"
-                      "__vis_ext_dir__ = "
-                      (python-string-literal (.getCanonicalPath snap))
-                      "\n"
-                      "__vis_frozen_home__ = "
-                      (python-string-literal frozen-home)
-                      "\n"
-                      "__file__ = "
-                      (python-string-literal entry-path)
-                      "\n"
-                      "__cached__ = None\n"
-                      "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
-                      "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n"
-                      "__vis_packages__ = "
-                      (python-string-literal (or packages (runtime/packages-dir)))
-                      "\nimport package_paths as __vis_package_paths__\n"
-                      "__vis_package_paths__.refresh(__vis_packages__, reload=True)\n"
-                      "if __vis_packages__ in __vis_pathsys__.path:\n"
-                      "    __vis_pathsys__.path.remove(__vis_packages__)\n"
-                      "__vis_pathsys__.path.insert(1, __vis_packages__)\n"
-                      "import importlib as __vis_importlib__\n"
-                      "__vis_importlib__.invalidate_caches()\n"
-                      "__vis_pathsys__.path[:] = [__vis_p__ for __vis_p__ in __vis_pathsys__.path\n"
-                      "                          if not __vis_p__.startswith(__vis_frozen_home__)\n"
-                      "                          or __vis_pathos__.path.isdir(__vis_p__)]\n"
-                      "for __vis_name__, __vis_mod__ in list(__vis_pathsys__.modules.items()):\n"
-                      "    __vis_file__ = getattr(__vis_mod__, '__file__', None) or ''\n"
-                      "    if (__vis_file__.startswith(__vis_frozen_home__)\n"
-                      "            and not __vis_file__.startswith(__vis_ext_dir__)):\n"
-                      "        del __vis_pathsys__.modules[__vis_name__]\n"))
-               (exec-in! ctx bootstrap-python)
-               (exec-in! ctx (postponed-annotations-python source)))))
-         {:context ctx :registration (unseal ctx (run-in ctx "__vis_registration__()"))}
+    (try (let [sealed (evaluate-extension! ctx label snap entry-path source packages bound-env)]
+           {:context ctx :sealed sealed :registration (unseal ctx sealed)})
          (catch Throwable t (discard-context! ctx) (throw t)))))
+
+(defn- deferred-extension-context!
+  "Register `sealed`, the saved registration of an admitted extension, under a pending
+   namespace of `worker`. The first Python operation in the namespace evaluates the
+   extension (#407). When that evaluation registers other data, the namespace closes,
+   `stale!` runs and the operation fails. Returns the unsealed registration."
+  [worker label ^File snap entry-path source packages bound-env sealed stale!]
+  (let [worker
+        (context-worker-key worker snap packages)
+
+        ctx
+        (context-name label)
+
+        open
+        (fn []
+          (try (pyext/trust! worker ctx true)
+               (pyext/install-runtime! worker ctx)
+               (when-not
+                 (= sealed
+                    (evaluate-extension! ctx label snap entry-path source packages bound-env))
+                 (throw (ex-info (str "Python extension " label
+                                      " registered other data than its saved manifest."
+                                      " It loads again at the next session or /reload.")
+                                 {:type ::stale-manifest :file entry-path})))
+               (catch Throwable t
+                 (swap! pending-contexts dissoc ctx)
+                 (stale!)
+                 (discard-context! ctx)
+                 (throw t))))]
+
+    (swap! context-workers assoc ctx worker)
+    (swap! context-lifecycle assoc
+      ctx
+      {:snapshot (.getCanonicalPath snap) :calls 0 :project-path (::project-path bound-env)})
+    (swap! pending-contexts assoc ctx open)
+    (swap! live-contexts conj ctx)
+    {:context ctx :registration (unseal ctx sealed)}))
 
 (defn- source-entry
   [ext-name source-ctx]
@@ -3222,6 +3298,93 @@
                                 :data {:extension (str ext-name) :error (ex-message t)}})))))
     nil))
 
+(def ^:private spare-warmup-python
+  "Python that a spare extension worker runs before its first context: the imports of
+   the bootstrap and the SDK body, which also fills the code cache of `vis_code` (#407)."
+  (str "import asyncio, dataclasses, inspect, types\n"
+       "__import__('vis_sdk').install("
+       (python-string-literal (classpath-src "blockether/vis/extension.py"))
+       ")\n"))
+
+(defn keep-spare-workers!
+  "Keep a warm trusted worker ready for the next extension context: one for the shared
+   packages and one for each package directory of a loaded extension (#407). A gateway
+   calls this after its startup load. With `false`, stop the spares."
+  ([] (keep-spare-workers! true))
+  ([keep?]
+   (pyext/keep-spares! (when keep? spare-warmup-python)
+                       (cons nil (keep :packages (vals @loaded))))))
+
+(defonce ^:private registration-manifests?
+  ;; True while the loader registers unchanged extensions from their saved manifests.
+  (atom false))
+
+(defn use-registration-manifests!
+  "Register an unchanged extension from its saved manifest and evaluate it at the first
+   Python operation in its registration namespace (#407). A gateway turns this on before
+   its startup load. `/reload --all` always evaluates every file."
+  [on?]
+  (reset! registration-manifests? (boolean on?)))
+
+(def ^:private manifest-host
+  "The digest of the Python that turns an extension file into its registration data."
+  (delay (util/sha256-hex (str bootstrap-python
+                               (classpath-src "vis-guest/vis_sdk.py")
+                               (classpath-src "vis-guest/vis_code.py")))))
+
+(defn- manifest-file
+  "The saved registration of the extension file `path` in `project-root`."
+  ^File [project-root path]
+  (io/file (.getParentFile (io/file (runtime/packages-dir)))
+           "registrations"
+           (str (util/sha256-hex (pr-str [project-root path])) ".json")))
+
+(defn- manifest-digest [inputs] (util/sha256-hex (pr-str [@manifest-host inputs])))
+
+(defn- read-manifest
+  "`{:file :registration}` for the saved registration of `path`, when `inputs-for` gives
+   the inputs that it was saved with. `inputs-for` takes the declared env of the manifest."
+  [project-root path inputs-for]
+  (let [f (manifest-file project-root path)]
+    (when (.isFile f)
+      (try (let [saved (json/read-json (slurp f) :key-fn identity)
+                 sealed (get saved "registration")
+                 declared (mapv (fn [n]
+                                  {:name n})
+                                (normalize-env-names (get sealed "env")))]
+
+             (when (and (map? sealed)
+                        (= (get saved "inputs") (manifest-digest (inputs-for declared))))
+               {:file f :registration sealed}))
+           (catch Throwable _ nil)))))
+
+(defn- write-manifest!
+  "Save the sealed registration of `path` with a digest of its `inputs`, readable only by
+   the owner. A failure costs only speed."
+  [project-root path inputs sealed]
+  (let [f
+        (manifest-file project-root path)
+
+        staged
+        (io/file (.getParentFile f) (str (.getName f) "." (random-uuid) ".tmp"))]
+
+    (try
+      (io/make-parents f)
+      (spit staged (json/write-json-str {"inputs" (manifest-digest inputs) "registration" sealed}))
+      (try (java.nio.file.Files/setPosixFilePermissions
+             (.toPath staged)
+             (java.nio.file.attribute.PosixFilePermissions/fromString "rw-------"))
+           (catch UnsupportedOperationException _ nil))
+      (java.nio.file.Files/move (.toPath staged)
+                                (.toPath f)
+                                (into-array java.nio.file.CopyOption
+                                            [java.nio.file.StandardCopyOption/ATOMIC_MOVE
+                                             java.nio.file.StandardCopyOption/REPLACE_EXISTING]))
+      (catch Throwable t
+        (.delete staged)
+        (tel/log!
+          {:level :debug :id ::manifest-write-failed :data {:file path :error (ex-message t)}})))))
+
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the
    extension it declares. The import root - the file's own directory - is FROZEN
@@ -3236,11 +3399,15 @@
    `frozen` reuses an already-frozen root: one freeze per root per load pass,
    and the heal path re-runs its entry against the root it was admitted with.
 
-   Returns `{:path :sha :code-sha :snapshot :ext-name :context}`; throws (with
-   the context closed) on any failure."
+   `manifest` is the saved registration of an unchanged file. It registers the file
+   without an evaluation, and the context opens at its first Python operation.
+
+   Returns `{:path :sha :code-sha :snapshot :ext-name :context :sealed}`; throws (with
+   the context closed) on any failure. `:sealed` is nil for a manifest."
   ([^File f] (load-file! f nil))
   ([^File f frozen] (load-file! f frozen nil))
-  ([^File f frozen claimed]
+  ([^File f frozen claimed] (load-file! f frozen claimed nil))
+  ([^File f frozen claimed manifest]
    (let [path
          (.getCanonicalPath f)
 
@@ -3262,15 +3429,27 @@
          project-path
          (entry-project-path path project-root)
 
+         bound-env
+         (when project-root {:workspace/root project-root ::project-path project-path})
+
          initialized
-         (initialize-extension-context!
-           pyext/shared-key
-           (.getName f)
-           snap
-           path
-           source
-           (:packages frozen)
-           (when project-root {:workspace/root project-root ::project-path project-path}))
+         (if manifest
+           (deferred-extension-context! pyext/shared-key
+                                        (.getName f)
+                                        snap
+                                        path
+                                        source
+                                        (:packages frozen)
+                                        bound-env
+                                        (:registration manifest)
+                                        #(io/delete-file (:file manifest) true))
+           (initialize-extension-context! pyext/shared-key
+                                          (.getName f)
+                                          snap
+                                          path
+                                          source
+                                          (:packages frozen)
+                                          bound-env))
 
          ctx
          (:context initialized)]
@@ -3329,7 +3508,8 @@
             :source source
             :ext-name (:ext/name spec)
             :ext validated
-            :context ctx}))
+            :context ctx
+            :sealed (:sealed initialized)}))
        (catch Throwable t (close-context! ctx) (throw t))))))
 
 (defn- live-symbol-fn
@@ -3386,7 +3566,9 @@
                                                :roots (:roots entry)
                                                :packages (:packages entry)
                                                :package-metadata (:package-metadata entry)})))]
-                  (swap! loaded assoc entry-key (assoc rebuilt :order (:order entry)))
+                  (swap! loaded assoc
+                    entry-key
+                    (assoc (dissoc rebuilt :sealed) :order (:order entry)))
                   (close-context! dead-ctx)
                   (tel/log! {:level :info
                              :id ::context-rebuilt
@@ -3538,6 +3720,16 @@
                         (.getCanonicalPath (io/file (:file %)))))
                @failures)
 
+         ;; The saved registration of an unchanged file that loaded cleanly (#407).
+         manifest
+         (memoize
+           (fn [^File f]
+             (let [path (.getCanonicalPath f)]
+               (when (and @registration-manifests? (not all?) (not (failed-before path)))
+                 (when-let [frozen (try (per-root :frozen (get plans f) prepare-root!)
+                                        (catch Throwable _ nil))]
+                   (read-manifest project-root path #(file-inputs f % (:packages frozen))))))))
+
          reloaded
          (atom 0)]
 
@@ -3584,7 +3776,11 @@
 
                    :let [path
                          (.getCanonicalPath f)]
-                   :when (or all? (nil? (get @loaded [project-root path])) (failed-before path))]
+                   :when (and (or all?
+                                  (nil? (get @loaded [project-root path]))
+                                  (failed-before path))
+                              ;; A manifest entry starts its worker at its first operation.
+                              (not (manifest f)))]
 
              (when-let [frozen (try (per-root :frozen (get plans f) prepare-root!)
                                     (catch Throwable _ nil))]
@@ -3613,7 +3809,7 @@
                         previous
                         (not (failed-before path))
                         (not (context-dead? prev-ctx))
-                        (pyext/worker-live? (worker-for prev-ctx))
+                        (or (pending-context? prev-ctx) (pyext/worker-live? (worker-for prev-ctx)))
                         (= (:inputs previous)
                            (file-inputs f (get-in previous [:ext :ext/env]) (:packages previous))))
                  ;; Unchanged: keep the live entry; only its scan position can move.
@@ -3622,12 +3818,18 @@
                       (let [{:keys [ext-name] :as entry}
                             (as-> (load-file! f
                                               (per-root :frozen (get plans f) prepare-root!)
-                                              (partial claimed path))
+                                              (partial claimed path)
+                                              (manifest f))
                               entry
                               (assoc entry
                                 :order (.indexOf ^java.util.List files f)
                                 :inputs
-                                (file-inputs f (get-in entry [:ext :ext/env]) (:packages entry))))]
+                                (file-inputs f (get-in entry [:ext :ext/env]) (:packages entry))))
+                            sealed (:sealed entry)
+                            entry (dissoc entry :sealed)]
+
+                        (when (and @registration-manifests? sealed)
+                          (write-manifest! project-root path (:inputs entry) sealed))
                         ;; A later file (project dir) registering the same extension
                         ;; name supersedes an earlier one at a DIFFERENT path — the
                         ;; registry already swapped the registration; close the

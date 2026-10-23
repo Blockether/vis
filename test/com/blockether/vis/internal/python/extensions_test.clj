@@ -8012,6 +8012,77 @@ vis.register_extension(vis.Extension(
                                    (expect (not (worker/worker-live? (by-name "two")))))))))))))
 
 (defdescribe
+  registration-manifest-test
+  ;; Issue #407: an unchanged extension registers from its saved manifest and runs its
+  ;; file at the first call. A manifest that the file contradicts is deleted.
+  (it
+    "defers evaluation to the first call and drops a stale manifest"
+    (with-shared-packages
+      (fn [_]
+        (let [dir
+              (temp-dir)
+
+              file
+              (write-ext! dir
+                          "manifest_probe.py"
+                          (str "import blockether.vis.extension as vis\n"
+                               "def probe():\n" "    \"Answer seven.\"\n"
+                               "    return 7\n"
+                               "vis.register_extension(vis.Extension(name='manifest-probe',"
+                               " description='Manifest probe', alias='manifest_probe',"
+                               " symbols=[vis.Symbol(probe)]))\n"))
+
+              path
+              (.getCanonicalPath ^java.io.File file)
+
+              load!
+              (fn []
+                (pyx/reload-python-extensions! {:dirs []})
+                (pyx/reload-python-extensions! {:dirs [(str dir)]})
+                (let [[[root _] entry] (first (filter #(= path (second (key %))) @@#'pyx/loaded))]
+                  {:context (:context entry)
+                   :pending? (#'pyx/pending-context? (:context entry))
+                   :manifest (#'pyx/manifest-file root path)}))
+
+              call
+              (fn []
+                (try (:result ((symbol-fn (registered "manifest-probe") 'probe)))
+                     (catch Throwable _ ::failed)))]
+
+          (pyx/use-registration-manifests! true)
+          (try (let [{:keys [pending? ^java.io.File manifest]} (load!)]
+                 (expect (false? pending?))
+                 (expect (.isFile manifest)))
+               (let [{:keys [context pending?]} (load!)]
+                 (expect (true? pending?))
+                 (expect (= 7 (call)))
+                 (expect (false? (#'pyx/pending-context? context))))
+               ;; Same inputs, other data: the registry shows the manifest until the call.
+               (let [^java.io.File manifest
+                     (#'pyx/manifest-file
+                      (first (ffirst (filter #(= path (second (key %))) @@#'pyx/loaded)))
+                      path)
+
+                     saved
+                     (json/read-json (slurp manifest) :key-fn identity)]
+
+                 (spit manifest
+                       (json/write-json-str
+                         (assoc-in saved ["registration" "description"] "Stale")))
+                 (let [{:keys [context pending?]} (load!)]
+                   (expect pending?)
+                   (expect (= "Stale" (:ext/description (registered "manifest-probe"))))
+                   (expect (not= 7 (call)))
+                   (expect (not (.exists manifest)))
+                   (expect (#'pyx/context-dead? context)))
+                 (let [{:keys [pending?]} (load!)]
+                   (expect (false? pending?))
+                   (expect (= "Manifest probe" (:ext/description (registered "manifest-probe"))))
+                   (expect (= 7 (call)))))
+               (finally (pyx/use-registration-manifests! false)
+                        (pyx/reload-python-extensions! {:dirs []}))))))))
+
+(defdescribe
   pyproject-package-reload-test
   (it
     "prepares an existing pyproject environment and reloads source with last-good fallback"

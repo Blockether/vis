@@ -579,7 +579,8 @@
 
 (defn- prepared-inputs
   "Digest what uv's offline check reads, without uv: project and lock files, local path
-   sources, the environment and the embedded tools. Nil without an own `.venv`."
+   sources, the environment and the embedded tools. The bytecode cache is an input too:
+   a stamp records that its compile ran. Nil without an own `.venv`."
   [^File project ^File packages]
   (let [config
         (io/file project ".venv" "pyvenv.cfg")
@@ -593,7 +594,8 @@
     (when (and (.isFile config) (.isDirectory packages))
       (util/sha256-hex (pr-str [(.getCanonicalPath project) (text "pyproject.toml") lock
                                 (path-sources project lock) (slurp config) (.lastModified packages)
-                                (Interpreter/pythonExecutable) (runtime/uv-executable)])))))
+                                (Interpreter/pythonExecutable) (runtime/uv-executable)
+                                (pycache-prefix)])))))
 
 (defn- stamped-packages
   "The site-packages of the project's last verified preparation, while its inputs are unchanged."
@@ -696,7 +698,7 @@
    Otherwise uv owns lock updates, dependency groups and its package cache.
    A ready private environment must pass uv's offline check and use the embedded Python.
    A stamp of that check skips uv while the project, lock and environment are unchanged (#407).
-   A new installation also compiles its bytecode into the embedded Python's cache."
+   A preparation without that stamp also compiles the bytecode into the embedded Python's cache."
   [^File project]
   (locking preparation-lock
     ;; #377: the readiness check and the shell cleanup share one workspace lookup.
@@ -723,7 +725,7 @@
                    (remove-environment-shell! project)
                    (run-uv! project (into [(bundled-uv!) "sync"] (embedded-python))))
                  (let [packages (project-packages project)]
-                   (when-not ready? (compile-bytecode! project packages))
+                   (compile-bytecode! project packages)
                    (stamp-prepared! project packages)
                    (preparation-stage! project (if ready? "cached" "ready"))
                    packages))))
@@ -1181,8 +1183,8 @@
     (.getCanonicalFile project)))
 
 (defn- stamp-synced-project!
-  "After a successful `uv sync`, run the check of automatic preparation and stamp a ready
-   project, so the next gateway start skips uv (#407). Another Python's environment gets no stamp."
+  "After a successful `uv sync`, run the check of automatic preparation, compile the bytecode
+   and stamp a ready project, so the next gateway start skips uv (#407). Another Python's environment gets no stamp."
   [args]
   (let [project (sync-project args)]
     (try (binding [*extension-preparation?* true
@@ -1192,7 +1194,9 @@
                       (not (shared-project? project false))
                       (runtime-environment? project))
              (run-uv! project (into [(bundled-uv!) "sync" "--check" "--offline"] (embedded-python)))
-             (stamp-prepared! project (project-packages project))))
+             (let [packages (project-packages project)]
+               (compile-bytecode! project packages)
+               (stamp-prepared! project packages))))
          (catch Exception _ nil))))
 
 (defn uv-command!

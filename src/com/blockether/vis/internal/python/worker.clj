@@ -129,7 +129,7 @@
                         [name (slurp resource)])))
                (concat (map (fn [name]
                               [name (str "vis-guest/" name)])
-                            ["vis_introspection.py" "vis_results.py" "vis_sdk.py"
+                            ["vis_code.py" "vis_introspection.py" "vis_results.py" "vis_sdk.py"
                              "vis_snapshot.py"])
                        engine-sources))))
 
@@ -553,6 +553,95 @@
 
 (defn- alive? [state] (and state (.isAlive ^Process (:process state))))
 
+(defn- stop-state!
+  "Stop one started worker process. Closing the socket releases every pending
+   parent call; a child that does not leave promptly is force-killed."
+  [state]
+  ;; Lifecycle cancellation is explicit, not an authorization or crash error.
+  (let [[pending _] (reset-vals! (:pending (:peer state)) {})]
+    (doseq [[_ waiting] pending]
+      (deliver waiting {"error" "Python worker stopped by session lifecycle cancellation"})))
+  (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
+  (let [^Process process (:process state)]
+    (.destroy process)
+    (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS) (.destroyForcibly process))
+         (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil))))
+    (try (prune-empty-run-dir! process (:log state)) (catch Throwable _ nil))))
+
+(defonce ^:private spare-warmup
+  ;; Python that a spare trusted worker runs before its first context. Nil keeps no spares.
+  (atom nil))
+
+(defonce ^:private spares
+  ;; Package directory (nil for the shared packages) -> future of one warm trusted worker.
+  (atom {}))
+
+(def ^:private spare-session
+  "The namespace in which a spare worker warms up. It is closed before the first context."
+  "__vis_spare__")
+
+(defn- start-spare!
+  "Start and warm a trusted worker for `packages` in the background: it imports the
+   runtime and runs the warm-up, so its first context only binds a session (#407)."
+  [packages]
+  (future (let [state
+                (start! (->TrustedExtensionWorker ::spare packages))
+
+                peer
+                (:peer state)]
+
+            (try (child/request! peer {"op" "install-runtime" "session" spare-session})
+                 (when-let [code @spare-warmup]
+                   (child/request! peer {"op" "exec" "session" spare-session "code" code}))
+                 (child/request! peer {"op" "close" "session" spare-session})
+                 state
+                 (catch Throwable t (stop-state! state) (throw t))))))
+
+(defn- refill-spare!
+  "Keep one spare for `packages` while spares are on."
+  [packages]
+  (locking spares
+    (when (and @spare-warmup (not (contains? @spares packages)))
+      (swap! spares assoc packages (start-spare! packages)))))
+
+(defn- take-spare!
+  "The warm spare for the trusted extension worker `k`, or nil. Every request for
+   such a worker keeps one new spare ready for the next context."
+  [k]
+  (when (and @spare-warmup (instance? TrustedExtensionWorker k) (not= ::spare (:session k)))
+    (let [packages
+          (:packages k)
+
+          spare
+          (locking spares
+            (let [spare (get @spares packages)]
+              (swap! spares dissoc packages)
+              spare))]
+
+      (refill-spare! packages)
+      (let [state (when spare (try @spare (catch Throwable _ nil)))]
+        (if (alive? state) state (when state (stop-state! state)))))))
+
+(defn keep-spares!
+  "Keep one warm trusted worker ready for each package directory that a context used,
+   and start spares for `packages` now (nil names the shared packages). `warmup` is
+   Python that runs in a spare before its first context; nil stops every spare.
+   A gateway calls this at start; tests and one-shot commands keep none."
+  [warmup packages]
+  (let [stopped (locking spares
+                  (reset! spare-warmup warmup)
+                  (if warmup
+                    []
+                    (let [[old _] (reset-vals! spares {})]
+                      (vals old))))]
+    (doseq [spare stopped]
+      (future (when-let [state (try @spare (catch Throwable _ nil))]
+                (stop-state! state))))
+    (when warmup
+      (doseq [dir (distinct packages)]
+        (refill-spare! (:packages (extension-worker-key nil dir)))))
+    nil))
+
 (defn worker-live?
   "True when `k` already owns a live worker; never starts one."
   [k]
@@ -623,7 +712,7 @@
                         "the next turn starts a fresh one; finish this turn with what you have.")
                    {:type :vis/python-worker-retired :worker k :reason reason})))
         (or state
-            (let [started (start! k)]
+            (let [started (or (take-spare! k) (start! k))]
               (swap! workers assoc k started)
               started))))))
 
@@ -756,22 +845,12 @@
    releases every pending parent call; a child that does not leave promptly is
    force-killed so retired sessions cannot accumulate processes."
   [k]
-  (with-worker-lock
-    k
-    false
-    (fn []
-      (when-let [state (get @workers k)]
-        (swap! workers dissoc k)
-        ;; Lifecycle cancellation is explicit, not an authorization or crash error.
-        (let [[pending _] (reset-vals! (:pending (:peer state)) {})]
-          (doseq [[_ waiting] pending]
-            (deliver waiting {"error" "Python worker stopped by session lifecycle cancellation"})))
-        (try (.close ^SocketChannel (:channel (:peer state))) (catch Throwable _ nil))
-        (let [^Process process (:process state)]
-          (.destroy process)
-          (try (when-not (.waitFor process 200 TimeUnit/MILLISECONDS) (.destroyForcibly process))
-               (catch Throwable _ (try (.destroyForcibly process) (catch Throwable _ nil))))
-          (try (prune-empty-run-dir! process (:log state)) (catch Throwable _ nil))))))
+  (with-worker-lock k
+                    false
+                    (fn []
+                      (when-let [state (get @workers k)]
+                        (swap! workers dissoc k)
+                        (stop-state! state))))
   nil)
 
 (def ^:private HANG_DIAGNOSTIC_MS
