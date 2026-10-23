@@ -96,13 +96,19 @@ you will not edit.
 - A turn: `"t2"`.
 - A range: `"t2/i4-i5"`.
 - Everything through an iteration: `"-t3/i9"`.
+- Every turn through a turn: `"-t3"`.
 - Settled steps since an iteration: `"t2/i5-"`.
 
 Commas join disjoint ranges. You cannot fold the live step. Without `gist`, the steps leave active
 context and no summary replaces them. History is still saved. There is no inline undo.
 
 A turn key, or a range that covers a whole turn, also removes the request and answer of that turn.
-This applies only to turns before the current turn.
+This applies only to turns before the current turn. A chat turn without tool calls folds the same
+way, so a long conversation of pasted text can fold too.
+
+Iteration numbers start again in each turn. `fold_session` refuses a range that ends at an iteration
+that an earlier turn does not have. For example, it refuses `"-t1/i16"` when turn 1 has two
+iterations. The refusal names the key for every earlier turn.
 
 `session["utilization"]` reports these values:
 
@@ -111,8 +117,9 @@ This applies only to turns before the current turn.
   usage or turn total.
 - `auto_compress_above` is the soft budget.
 - `model_input_limit` is the hard input limit for each request.
-- `hint` is conditional. It starts at 75% of the soft budget and becomes urgent at 90%. Above
-  100%, it requires a fold while the pressure remains.
+- `hint` is conditional. It starts at 75% of the soft budget. From 90%, it asks for a fold before
+  the next answer. Above 100%, it requires a fold while the pressure remains. After the first turn,
+  it gives the exact key that folds every earlier turn.
 
 The soft budget depends on the model: 250k tokens for Claude Opus models, 230k for GPT models and
 200k for other models. It is never more than 90% of a known input limit, so smaller windows get a

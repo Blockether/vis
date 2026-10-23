@@ -328,6 +328,26 @@
         (expect (str/includes? (ex-message ex) "matches no settled step"))
         (expect (str/includes? (ex-message ex) "t1/i1 … t2/i1"))
         (expect (nil? (get @ca "session_summaries")))))
+  ;; Regression, LongMemEval run of 2026-10-23: "-t1/i16" meant turns 1-16, but turn 1
+  ;; held two steps, so the fold freed 7k tokens and the next turn overflowed.
+  (it "a range end that names a step an earlier turn never had is refused with the turn key"
+      (let [ca
+            (atom {"session_turn" 17
+                   "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i1" "t16/i1"]
+                   "engine_turn_weights" {}
+                   "engine_utilization" {}})
+
+            sf
+            (get (compaction-verbs ca) 'fold-session)
+
+            ex
+            (try (sf "-t1/i16" "turns 1-16") nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (= :vis/fold-session-unknown-key (:type (ex-data ex))))
+        (expect (str/includes? (ex-message ex) "t1/i16 is not a step; turn 1 holds t1/i1 … t1/i2"))
+        (expect (str/includes? (ex-message ex) "use \"-t16\""))
+        (expect (nil? (get @ca "session_summaries")))
+        (expect (str/starts-with? (sf "-t16" "turns 1-16") "folded"))))
   (it "fold_session([\"t2\"]): a bare turn id records as a whole-turn scope token"
       (let [[ca ev]
             (with-verbs)
@@ -1195,6 +1215,22 @@
                    "intended edit/test" "dirty files" "never bare or abbreviated filenames"
                    "confirm the receipt saved tokens"]]
             (expect (str/includes? hint text)))))
+    ;; Regression, LongMemEval run of 2026-10-23: Opus read the hint as tool-step folding
+    ;; only and never folded a chat of 35 turns; Haiku read "-tN/iK" as a turn range.
+    (it
+      "names the exact key for every earlier turn and says that plain chat turns fold"
+      (let [hint (eng/over-budget-hint advisory 6 6)]
+        (expect (str/includes? hint "print(fold_session(\"-t5\", gist)) folds every earlier turn"))
+        (expect (str/includes? hint "Plain chat turns fold too"))
+        (expect (str/includes? hint "keep every fact, name, date, number and request of the user")))
+      (expect (not (str/includes? (eng/over-budget-hint advisory 1 1) "Plain chat turns")))
+      ;; Haiku saw FOLD NOW at 133k of a 135k budget, put the fold off to the next turn,
+      ;; and that turn overflowed its 150k window. Urgent pressure folds before the answer.
+      (doseq [util [urgent required]]
+        (expect (str/includes?
+                  (eng/over-budget-hint util 6 6)
+                  "Fold before you answer, also when the answer needs no other tool call")))
+      (expect (not (str/includes? (eng/over-budget-hint advisory 6 6) "Fold before you answer"))))
     (it "prints the fold receipt at every pressure level"
         (doseq [util [advisory urgent required]]
           (expect (str/includes? (eng/over-budget-hint util 6 6)

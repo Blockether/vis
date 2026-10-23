@@ -901,7 +901,9 @@
       ;; asks to find every change of a file first. It lands at 12 431.
       ;; One system prompt for every channel: §5 tells a non-interactive run not to ask, and the
       ;; CLI-only prompt is gone. It lands at 12 448.
-      (expect (< (count text) 12450))
+      ;; 12.45k → 12.6k: in a LongMemEval run, Opus kept a chat of 35 turns unfolded, because
+      ;; it read folds as tool-step folds only. §6 says that chat turns fold too. It lands at 12 579.
+      (expect (< (count text) 12600))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))
@@ -994,6 +996,10 @@
                ;; but not the KEY it takes, so the shape was guessed — a selector structure
                ;; or a bare id that resolved to nothing. The key grammar is in the core now.
                "A string key such as `\"-t2/i9\"` folds every step through it"
+               ;; Regression, LongMemEval run of 2026-10-23: Opus kept a chat of 35 turns
+               ;; unfolded because it read folds as tool-step folds only.
+               "A chat turn without tool calls also folds"
+               "`\"-t5\"` folds turns 1-5 with their user messages"
                ;; Nothing stores a folded step for later: the gist is the whole survivor,
                ;; and a prompt that hints otherwise buys a fold the model regrets.
                "Only the gist stays"

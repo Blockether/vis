@@ -803,7 +803,10 @@
    Pressure starts at 75% of `auto_compress_above`, escalates at 90%, and becomes
    mandatory above the operating ceiling. Once armed it remains visible while
    pressure remains; an ignored warning must never silently expire. The hint names
-   `fold_session`, the safe settled boundary, and the evidence to preserve. Pure."
+   `fold_session`, the safe settled boundary, and the evidence to preserve. After
+   turn 1 it also gives the exact key `\"-tN\"` for every earlier turn, because
+   models read the `-tN/iK` template as a turn range or thought that a plain chat
+   turn without tool steps cannot fold. Pure."
   [util current-turn since-turn]
   (let [req
         (long (or (get util "last_request_tokens") 0))
@@ -823,6 +826,9 @@
         required?
         (and (pos? cap) (> req cap))
 
+        earlier
+        (when (and current-turn (> (long current-turn) 1)) (dec (long current-turn)))
+
         action
         (cond required? "ACTION REQUIRED"
               urgent? "FOLD NOW"
@@ -837,12 +843,17 @@
         " of "
         (fmt-toks cap)
         " compaction budget. "
+        (when urgent? "Fold before you answer, also when the answer needs no other tool call. ")
+        (when earlier
+          (str "Plain chat turns fold too: print(fold_session(\"-t"
+               earlier
+               "\", gist)) folds every earlier turn, user messages included. "))
         (if required?
           "Fold settled search/tool sweeps and superseded reads NOW with one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
           (str
             "Use one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
             (when urgent? " before another large tool call")))
-        "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
+        "; keep every fact, name, date, number and request of the user in the gist; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
 
 (defn session-view
   "The single projection from engine-internal ctx to the model-facing

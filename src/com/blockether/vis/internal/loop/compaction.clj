@@ -352,6 +352,31 @@
                                  {:type :vis/fold-session-unknown-key
                                   :key label
                                   :scopes (into (sorted-set) named)}))))
+             ;; A range end that names a step an earlier turn never had folds less than
+             ;; the model meant. A LongMemEval run of 2026-10-23 sent "-t1/i16" for "turns
+             ;; 1-16": turn 1 held two steps, so the fold freed 7k tokens and turn 18
+             ;; overflowed. Refuse it and name the whole-turn key.
+             (when-let [missing (first (filter (fn [sc]
+                                                 (when-let [[tn] (ctx-engine/scope-key sc)]
+                                                   (and (< (long tn) (long turn))
+                                                        (not (contains? universe sc))
+                                                        (some
+                                                          (fn [u]
+                                                            (= tn (first (ctx-engine/scope-key u))))
+                                                          uni))))
+                                               (mapcat vals (ctx-engine/intent-ranges base))))]
+               (let [tn (first (ctx-engine/scope-key missing))
+                     held (sort-by ctx-engine/scope-key
+                                   (filter #(= tn (first (ctx-engine/scope-key %))) uni))]
+
+                 (throw (ex-info
+                          (str "fold_session: " missing
+                               " is not a step; turn " tn
+                               " holds " (first held)
+                               " … " (last held)
+                               ". To fold every earlier turn, use \"-t" (dec (long turn))
+                               "\". " ctx-engine/fold-key-grammar)
+                          {:type :vis/fold-session-unknown-key :key label :scopes #{missing}}))))
              (let [g (some-> gist
                              str
                              str/trim

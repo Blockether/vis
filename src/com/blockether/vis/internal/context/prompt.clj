@@ -432,6 +432,8 @@
     "request). `hint` shows at 75% of the soft budget. Only diagnostics show detailed usage and cache metrics.\n"
     "- Fold settled work that you no longer need: always `print(fold_session(key, gist))`. A string key such as "
     "`\"-t2/i9\"` folds every step through it. Only the gist stays; a fold without a gist deletes the steps.\n"
+    "- A chat turn without tool calls also folds: `\"-t5\"` folds turns 1-5 with their user messages. Keep the "
+    "user's facts in the gist.\n"
     "- Fold at the change from research to implementation when `hint` shows and a large phase follows. Below the "
     "hint, fold only for repeated large or clipped results that are worth one cache reset.\n"
     "- Make that fold the only call of the next step: `print(fold_session(\"-tN/iK\", gist))` through the last "
