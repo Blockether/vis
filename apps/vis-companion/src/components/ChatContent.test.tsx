@@ -549,6 +549,28 @@ describe('Markdown attachment links', () => {
     expect(view.container.textContent).toContain('Chart');
     expect(view.container.textContent).toContain('loss curve.png');
   });
+
+  // Regression: hotlink-protected hosts such as Fandom answer 404 when the app origin is the Referer.
+  it('loads a web image without a Referer', () => {
+    const view = render(<Markdown>{'![Sparkion](https://static.wikia.nocookie.net/tibia/images/4/48/Sparkion.gif)'}</Markdown>);
+
+    expect(view.container.querySelector('img')?.getAttribute('referrerpolicy')).toBe('no-referrer');
+  });
+
+  // Regression: a sprite between words was a block at its natural size, so the bullet stood
+  // alone and the item text broke below a 300px picture.
+  it('keeps an image between words on its text line and gives a lone image its own block', () => {
+    const sprite = 'https://example.com/potion.gif';
+    const view = render(
+      <Markdown>{`- ![Potion](${sprite}) **Great Spirit Potion** (lvl 80+)\n\n![Chart](https://example.com/chart.png)`}</Markdown>,
+    );
+    const [inline, figure] = Array.from(view.container.querySelectorAll('img'));
+
+    expect(inline.classList).toContain('inline-block');
+    expect(inline.classList).toContain('max-h-[1lh]');
+    expect(figure.classList).toContain('block');
+    expect(figure.classList).toContain('max-w-full');
+  });
 });
 
 describe('Markdown tool card body', () => {

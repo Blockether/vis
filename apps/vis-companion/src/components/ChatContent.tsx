@@ -561,6 +561,41 @@ function markdownUrlTransform(url: string): string {
 const MARKDOWN_PLUGINS = [remarkGfm, remarkParseCache];
 const HARD_BREAK_PLUGINS = [remarkGfm, remarkBreaks, remarkParseCache];
 
+type HastNode = {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+};
+
+/**
+ * Marks an image that is the only content of its paragraph or list item. Such an image is a
+ * figure; an image between words is an inline picture, such as an item sprite in a list.
+ */
+function rehypeStandaloneImages() {
+  const visit = (node: HastNode) => {
+    const content = (node.children ?? []).filter(
+      (child) => !(child.type === 'text' && !child.value?.trim()) && child.tagName !== 'br',
+    );
+    if (
+      (node.tagName === 'p' || node.tagName === 'li') &&
+      content.length > 0 &&
+      content.every((child) => child.tagName === 'img')
+    )
+      for (const image of content) image.properties = { ...image.properties, dataStandalone: true };
+    node.children?.forEach(visit);
+  };
+  return visit;
+}
+
+const IMAGE_PLUGINS = [rehypeStandaloneImages];
+/** A figure keeps its proportions inside the column and at most a phone screen of height. */
+const FIGURE_IMAGE_CLASS = 'my-2 block h-auto max-h-80 w-auto max-w-full object-contain';
+/** A picture in running text, such as an item sprite, keeps the line height of its text. */
+const INLINE_IMAGE_CLASS =
+  'inline-block h-auto max-h-[1lh] w-auto max-w-full object-contain align-top';
+
 /** Relative links are local names, not routes in the Companion web application. */
 function isLocalHref(href: string): boolean {
   return !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\?)/i.test(href);
@@ -633,6 +668,7 @@ export const Markdown = memo(function Markdown({
         // `reasoning->ast` emits `[:br]` for it and the TUI paints it as its own row.
         // CommonMark would otherwise flow those lines into one paragraph.
         remarkPlugins={hardBreaks ? HARD_BREAK_PLUGINS : MARKDOWN_PLUGINS}
+        rehypePlugins={IMAGE_PLUGINS}
         components={{
           a: ({ children: label, href, title }) => {
             const local = href && isLocalHref(href);
@@ -656,9 +692,22 @@ export const Markdown = memo(function Markdown({
           },
           // A model names the image it attached by the path it wrote, which is on the
           // gateway host. Only a web image loads here; a session artifact opens in the reader.
-          img: ({ src, alt, title }) => {
+          // Send no Referer: image hosts with hotlink protection (Fandom and others) answer 404
+          // to a foreign app origin, but serve the same URL without one.
+          img: ({ src, alt, title, node }) => {
             const source = typeof src === 'string' ? src : '';
-            if (/^https?:/i.test(source)) return <img src={source} alt={alt ?? ''} title={title} />;
+            if (/^https?:/i.test(source))
+              return (
+                <img
+                  src={source}
+                  alt={alt ?? ''}
+                  title={title}
+                  referrerPolicy="no-referrer"
+                  className={
+                    node?.properties?.dataStandalone ? FIGURE_IMAGE_CLASS : INLINE_IMAGE_CLASS
+                  }
+                />
+              );
             const name = localFilename(source);
             const attachmentId =
               attachmentIdFromHref(source) ||
