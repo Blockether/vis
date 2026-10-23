@@ -598,7 +598,7 @@
 
 (defdescribe
   managed-agent-presentation-test
-  (it "bounds Unicode answers without dropping the delegated result"
+  (it "shows a bounded answer preview without the full answer body"
       (let [answer
             (apply str (repeat 160 "😀"))
 
@@ -612,7 +612,9 @@
             (get-in projection ["rows" 0 "presentation"])]
 
         (expect (contract/valid-projection? projection))
-        (expect (= answer (get-in view ["sections" 0 "content" 0 "text"])))
+        (expect (str/starts-with? answer
+                                  (str/replace (get-in view ["sections" 0 "headline"]) #"…$" "")))
+        (expect (= [] (get-in view ["sections" 0 "content"])))
         (expect (= "Completed · 2 iterations" (get-in view ["sections" 0 "summary"])))
         (expect (not (re-find #"internal-" (pr-str view))))))
   (it "shows meaningful empty and populated status counts"
@@ -658,8 +660,8 @@
                     "1 running" "Files granted" "2 files not granted" "1 file not granted"
                     "No reply"]
                    (mapv #(get % "summary") views)))
-        (expect (= [{"type" "markdown" "text" "Which file?"}]
-                   (get-in views [0 "sections" 0 "content"])))
+        (expect (= "Which file?" (get-in views [0 "sections" 0 "headline"])))
+        (expect (= [] (get-in views [0 "sections" 0 "content"])))
         (expect (= [{"type" "markdown" "text" "Use the parser file."}]
                    (get-in views [3 "content"])))
         (expect (not (re-find #"child|Session|Parent:" (pr-str views)))))))

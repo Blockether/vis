@@ -724,6 +724,7 @@
    "content" (council-body value "content")})
 
 (defn- council-record
+  "One line for each agent. Its full answer stays in the agent's own session."
   [value]
   {"headline" (session-preview (or (not-empty (field value "question"))
                                    (not-empty (field value "answer"))
@@ -739,7 +740,7 @@
                             (if-let [budget (field value "iteration_budget")]
                               (str used " of " (counted-label budget "iteration"))
                               (counted-label used "iteration")))]))
-   "content" (council-body value (if (not-empty (field value "question")) "question" "answer"))})
+   "content" []})
 
 (defn- council-presentation
   "Show messages and outcomes, not Council's storage and delivery envelopes."

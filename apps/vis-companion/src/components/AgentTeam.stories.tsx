@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import { STORY_SESSION } from '../dev/story-data';
 import type { Subagent } from '../lib/types';
-import { AgentTeamPanel } from './AgentTeam';
+import { AgentTeamPanel, AgentTeamStrip } from './AgentTeam';
 import { SessionHeader } from './SessionHeader';
 
 const child: Subagent = {
@@ -78,5 +78,24 @@ export const BudgetReached: Story = {
     const page = within(document.body);
     expect(page.getByText('Budget reached')).toBeVisible();
     expect(page.queryByRole('button', { name: 'Stop agent' })).toBeNull();
+  },
+};
+export const Strip: Story = {
+  render: () => (
+    <div className="p-4">
+      <AgentTeamStrip
+        agents={[
+          { ...child, session_id: 'done', status: 'completed', pending_input: false },
+          { ...child, session_id: 'working', pending_input: false },
+          { ...child, session_id: 'blocked', pending_input_count: 2 },
+        ]}
+        onShow={fn()}
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText('needs you ×2')).toBeVisible();
+    expect(canvas.getByText('4/32')).toBeVisible();
   },
 };

@@ -348,6 +348,18 @@
                    (with-redefs [team/summary (constantly snapshot)]
                      (expect (= label (team/header-label "leader" false)))))))
 
+(defdescribe footer-team-chip-test
+             (it "names each agent with its state and leaves while no agent works or waits"
+                 (doseq [[agents label]
+                         [[nil nil] [[{"status" "completed"}] nil]
+                          [[{"status" "completed"}
+                            {"status" "running" "iterations_used" 3 "iteration_budget" 20}
+                            {"status" "running" "pending_input" true "pending_input_count" 2}
+                            {"status" "queued"}]
+                           "Agents: A1 done · A2 3/20 · A3 needs you (2) · A4 queued"]]]
+                   (with-redefs [team/summary (constantly {:agents agents})]
+                     (expect (= label (team/footer-label "leader")))))))
+
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
              (it "old tab response does not repaint new tab"
                  (let [entered

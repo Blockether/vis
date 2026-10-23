@@ -72,6 +72,43 @@
                      " active/" (count agents)
                      " cached" (when (some #(get % "pending_input") agents) " !")))))
 
+(defn- agent-state
+  "Short state words for one agent in the footer chip."
+  [agent]
+  (let [open (long (or (get agent "pending_input_count") 1))]
+    (if (get agent "pending_input")
+      (if (> open 1) (str "needs you (" open ")") "needs you")
+      (case (get agent "status")
+        "running"
+        (str (get agent "iterations_used" 0) "/" (get agent "iteration_budget" "?"))
+
+        "completed"
+        "done"
+
+        "failed"
+        "failed"
+
+        "queued"
+        "queued"
+
+        "cancelled"
+        "stopped"
+
+        "budget reached"))))
+
+(defn footer-label
+  "Team state for the footer chip from the cached snapshot. Nil while no agent works or waits
+   for a person, so a finished team leaves the footer. Never fetches during painting."
+  [sid]
+  (let [agents (:agents (summary sid))]
+    (when (some #(or (get % "pending_input") (contains? #{"queued" "running"} (get % "status")))
+                agents)
+      (str "Agents: "
+           (str/join " · "
+                     (map-indexed (fn [index agent]
+                                    (str "A" (inc (long index)) " " (agent-state agent)))
+                                  agents))))))
+
 (defn start-refresh!
   "One screen-owned worker refreshes only the active session, at most every 5s.
    Call the returned cleanup on screen teardown. No network work runs in paint."

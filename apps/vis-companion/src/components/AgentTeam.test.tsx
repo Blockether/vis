@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
 import type { Subagent } from '../lib/types';
-import { AgentTeam, AgentTeamView } from './AgentTeam';
+import { AgentTeam, AgentTeamStrip, AgentTeamView } from './AgentTeam';
 
 const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'task',
   task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
@@ -147,5 +147,31 @@ describe('agent team controller', () => {
     await act(async () => { vi.advanceTimersByTime(5000); });
     expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();
     expect(agents).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('agent team strip', () => {
+  const done: Subagent = { ...child, session_id: 'done', status: 'completed', pending_input: false };
+  const working: Subagent = { ...child, session_id: 'working', pending_input: false };
+
+  it('stays hidden while no agent works or waits for a person', () => {
+    const { container } = render(<AgentTeamStrip agents={[done]} onShow={vi.fn()} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('names each agent with its state and opens the team', () => {
+    const onShow = vi.fn();
+    render(
+      <AgentTeamStrip
+        agents={[done, working, { ...child, session_id: 'blocked', pending_input_count: 2 }]}
+        onShow={onShow}
+      />,
+    );
+    expect(screen.getByText('A1')).toBeInTheDocument();
+    expect(screen.getByText('done')).toBeInTheDocument();
+    expect(screen.getByText('2/4')).toBeInTheDocument();
+    expect(screen.getByText('needs you ×2')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Agent team: 2 active, 1 need input/ }));
+    expect(onShow).toHaveBeenCalledOnce();
   });
 });

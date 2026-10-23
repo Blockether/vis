@@ -19,7 +19,7 @@ import {
   UserMessage,
 } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { AgentTeam } from '../components/AgentTeam';
+import { AgentTeamPanel, AgentTeamStrip, useAgentTeam } from '../components/AgentTeam';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
 import {
   ComposerAttachmentPicker,
@@ -1088,6 +1088,9 @@ export function SessionScreen({
   // inherits the app shell's keyboard pin without a second viewport listener or
   // a lagging fixed WebKit layer.
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
+  // One poller feeds the header entry and the strip above the composer.
+  const team = useAgentTeam(client, sid);
+  const [teamOpen, setTeamOpen] = useState(false);
   // A drag carrying files is over the composer: the box has to say so, or the
   // reader is guessing where to let go with a file already in hand.
   const [dropActive, setDropActive] = useState(false);
@@ -5258,15 +5261,20 @@ export function SessionScreen({
             model={headerModel}
             commands={headerCommands}
             sidebar={sidebar}
-            team={
-              <AgentTeam
-                key={sid}
-                client={client}
-                sid={sid}
+            team={team.enabled ? (
+              <AgentTeamPanel
+                agents={team.agents}
+                loading={team.loading}
+                error={team.error}
+                pending={team.pending}
                 parentId={session?.agent?.parent_id}
+                open={teamOpen}
+                onOpenChange={setTeamOpen}
+                onRefresh={team.refresh}
+                onCancel={team.cancel}
                 onOpen={onOpenSession}
               />
-            }
+            ) : null}
           />
 
           {routerOpen && (
@@ -5448,6 +5456,8 @@ export function SessionScreen({
               selectedIndex={slashIndex}
               onSelect={completeSlash}
             />
+
+            {team.enabled && <AgentTeamStrip agents={team.agents} onShow={() => setTeamOpen(true)} />}
 
             <QueuedTurnsTray
               key={sid}

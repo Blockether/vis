@@ -36,6 +36,7 @@
    namespace replaces that whole path."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.client :as lp]
             [com.blockether.vis.tui.limits-fmt :as lfmt]
             [com.blockether.vis.tui.components :as components]
@@ -706,13 +707,16 @@
        (into ["" "Use /goal --pause, --resume or --cancel in the composer."])))))
 
 (defn- build-limits-segments
-  "Cached quota information is plain text; only the adjacent goal is interactive."
+  "Cached quota information is plain text; only the adjacent goal and team chips are interactive."
   [db now-ms]
   (let [provider
         (session-effective-provider db)
 
         text
-        (when provider (generic-limits-footer-text db provider now-ms))]
+        (when provider (generic-limits-footer-text db provider now-ms))
+
+        team
+        (agent-team/footer-label (get-in db [:session :id]))]
 
     (into (cond-> [{:text
                     (if text (str "Limits: " (str/replace text #"^limits: " "") " ") "Limits ")
@@ -733,6 +737,14 @@
                    :kind :footer-goal
                    :region :left
                    :priority 1
+                   :join-left? true})
+
+            ;; The team lives outside Activity: one chip while an agent works or waits.
+            team
+            (conj {:text (str " " team " ")
+                   :kind :footer-agents
+                   :region :left
+                   :priority 2
                    :join-left? true}))
           (build-usage-segments db))))
 

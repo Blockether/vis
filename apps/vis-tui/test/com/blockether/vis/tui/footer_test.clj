@@ -1,5 +1,6 @@
 (ns com.blockether.vis.tui.footer-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.footer :as footer]
             [com.blockether.vis.tui.input :as input]
@@ -63,6 +64,18 @@
                 (expect (str/starts-with? limits-row "  Limits"))
                 (expect (str/ends-with? git-row "git ~/vis (main)  "))
                 (expect (str/ends-with? limits-row "~$0.0042  "))))))))))
+
+(defdescribe footer-team-chip-test
+             (it "shows a clickable team chip only while the session's team is live"
+                 (with-redefs [agent-team/footer-label (fn [sid]
+                                                         (when (= "leader" sid) "Agents: A1 3/20"))]
+                   (let [chips (fn [sid]
+                                 (filterv #(= :footer-agents (:kind %))
+                                   (#'footer/build-limits-segments
+                                    {:messages [] :settings {} :session {:id sid}}
+                                    0)))]
+                     (expect (= [" Agents: A1 3/20 "] (mapv :text (chips "leader"))))
+                     (expect (= [] (chips "other")))))))
 
 (defdescribe
   inline-goal-iterations-test

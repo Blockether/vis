@@ -3960,7 +3960,7 @@
   (differ-only-in? a b view-churn-keys))
 
 (def ^:private header-hover-kinds
-  #{:copy-id :header-help :header-agents :footer-goal :footer-reasoning :footer-thinking
+  #{:copy-id :header-help :footer-agents :footer-goal :footer-reasoning :footer-thinking
     :header-tasks :header-search})
 
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
@@ -8505,7 +8505,7 @@
                                      :header-improve
                                      (open-improve! screen)
 
-                                     :header-agents
+                                     :footer-agents
                                      (show-agent-team!)
 
                                      :header-tasks
@@ -8818,7 +8818,7 @@
                                  :header-improve
                                  (open-improve! screen)
 
-                                 :header-agents
+                                 :footer-agents
                                  (show-agent-team!)
 
                                  :header-tasks
@@ -8986,7 +8986,7 @@
                                  :header-improve
                                  (open-improve! screen)
 
-                                 :header-agents
+                                 :footer-agents
                                  (show-agent-team!)
 
                                  :header-tasks
