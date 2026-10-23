@@ -20,6 +20,8 @@ def bootstrap(monkeypatch):
         sys.modules, "blockether.vis.extension", sys.modules["blockether.vis.extension"]
     )
     monkeypatch.delitem(sys.modules, "blockether.vis._outside")
+    # The engine stages each guest module next to vis_sdk.py, so its imports resolve.
+    monkeypatch.syspath_prepend(str(REPOSITORY / "resources/vis-guest"))
     spec = importlib.util.spec_from_file_location(
         "vis_sdk", REPOSITORY / "resources/vis-guest/vis_sdk.py"
     )
