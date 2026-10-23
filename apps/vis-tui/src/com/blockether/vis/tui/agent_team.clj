@@ -171,20 +171,9 @@
 
 ;; ── Team card ───────────────────────────────────────────────────────────────
 
-(def ^:private ^:const bar-width "The cells of the iteration bar of a card row." 10)
-
-(defn- bar-done
-  "How many of the `bar-width` cells the used iterations fill."
-  [used budget]
-  (let [used
-        (long (or used 0))
-
-        budget
-        (long (or budget 0))]
-
-    (if (pos? budget)
-      (min (long bar-width) (long (Math/round (/ (* 1.0 used (long bar-width)) budget))))
-      0)))
+(def ^:private ^:const task-width
+  "The most cells that the task column of a card takes. A longer task ends with an ellipsis."
+  40)
 
 (defn- card-state
   [agent]
@@ -207,24 +196,22 @@
 
                 "budget reached")))
 
-(defn- card-progress
-  "The iteration bar and count of a running row, such as `────────── 4/10`. The bar is one box
-   glyph that the terminal draws itself, and the used part has its own colour, so it stays on the
-   text line in every font."
-  [{:keys [status used budget]}]
-  (when (contains? #{"running" "budget_limited"} status)
-    (str (apply str (repeat bar-width \─)) " " (or used 0) "/" (or budget "?"))))
+(defn- card-count
+  "The iterations of a row, such as `4/10`, or nil before the agent has a budget."
+  [{:keys [used budget]}]
+  (when budget (str (or used 0) "/" budget)))
 
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
 
 (defn- card-columns
-  "The cell widths of the card columns, so A-numbers, roles, states, bars and tasks of every row
-   start in the same column. A column that no row uses has width 0."
+  "The cell widths of the card columns, so A-numbers, roles, tasks, states and counts of every
+   row start in the same column. A column that no row uses has width 0."
   [rows]
   {:n (widest (map #(str "A" (:n %)) rows))
    :role (widest (keep :role rows))
+   :task (min (long task-width) (long (widest (map :task rows))))
    :state (widest (map :state rows))
-   :progress (widest (keep card-progress rows))})
+   :count (widest (keep card-count rows))})
 
 (defn card
   "The team card data of team `team-id` from `agents`, or nil when the team has no agent.
@@ -249,7 +236,7 @@
         {:team-id team-id :rows (mapv #(assoc % :columns columns) rows)}))))
 
 (defn card-title
-  "The first row of a team card, such as `Team · 3 agents · 1 running · 1 asks you`."
+  "The first row of a team card, such as `Team · 3 agents · 2 ask you · 1 running`."
   [{:keys [rows]}]
   (let [counted
         (fn [pred]
@@ -267,8 +254,8 @@
     (str "Team · "
          (count rows)
          (if (= 1 (count rows)) " agent" " agents")
+         (when (pos? asking) (str " · " asking (if (= 1 asking) " asks you" " ask you")))
          (when (pos? running) (str " · " running " running"))
-         (when (pos? asking) (str " · " asking " asks you"))
          (when (pos? done) (str " · " done " done")))))
 
 (defn- pad
@@ -277,47 +264,54 @@
   (let [text (str text)]
     (str text (apply str (repeat (max 0 (- (long width) (long (p/display-width text)))) \space)))))
 
+(defn- pad-left
+  "`text` with spaces before it to `width` cells, so numbers end in one column."
+  [text width]
+  (let [text (str text)]
+    (str (apply str (repeat (max 0 (- (long width) (long (p/display-width text)))) \space)) text)))
+
 (defn- card-offsets
   "The cell offsets of the columns of one card row from its left edge."
-  [{:keys [n role state progress]}]
+  [{:keys [n role task state]}]
   (let [role-col
         (+ (long n) 2)
 
-        state-col
+        task-col
         (if (pos? (long role)) (+ role-col (long role) 2) role-col)
 
-        progress-col
-        (+ state-col (long state) 2)
+        state-col
+        (+ task-col (long task) 2)
 
-        task-col
-        (if (pos? (long progress)) (+ progress-col (long progress) 2) progress-col)]
+        count-col
+        (+ state-col (long state) 2)]
 
-    {:n 0 :role role-col :state state-col :progress progress-col :task task-col}))
+    {:n 0 :role role-col :task task-col :state state-col :count count-col}))
+
+(defn- card-cells
+  "The text of each column of one card row, padded to the card columns."
+  [{:keys [n role task state columns] :as row}]
+  (let [{n-width :n role-width :role task-width :task state-width :state count-width :count}
+        (or columns (card-columns [row]))]
+    {:n (pad (str "A" n) n-width)
+     :role (when (pos? (long role-width)) (pad role role-width))
+     :task (pad (p/ellipsize (str task) task-width) task-width)
+     :state (pad state state-width)
+     :count (when (pos? (long count-width)) (pad-left (card-count row) count-width))}))
 
 (defn card-row-text
   "Plain text of one agent row of the card, as copy shows it, in the card columns."
-  [{:keys [n role state task columns] :as row}]
-  (let [{n-width :n role-width :role state-width :state progress-width :progress}
-        (or columns (card-columns [row]))]
-    (str (pad (str "A" n) n-width)
-         "  "
-         (when (pos? (long role-width)) (str (pad role role-width) "  "))
-         (pad state state-width)
-         "  "
-         (when (pos? (long progress-width)) (str (pad (card-progress row) progress-width) "  "))
-         task)))
+  [row]
+  (str/trimr (str/join "  " (keep (card-cells row) [:n :role :task :state :count]))))
 
 (defn card-detail-text
-  "The dim second row of a waiting or running agent, or nil. It starts with a box glyph, so the
-   terminal draws it in the cell grid."
+  "The dim second row of a running agent: what it does now, or nil."
   [{:keys [waiting? status activity]}]
-  (cond waiting? "└ waiting for you · see Questions below"
-        (and (= "running" status) (seq activity)) (str "└ " activity)))
+  (when (and (not waiting?) (= "running" status) (seq activity)) (str activity)))
 
 (defn- detail-indent
-  "The cells before the detail row of `row`: it starts under the state column."
+  "The cells before the detail row of `row`: it starts under the task column."
   [row]
-  (:state (card-offsets (or (:columns row) (card-columns [row])))))
+  (:task (card-offsets (or (:columns row) (card-columns [row])))))
 
 (defn- paint-card-line!
   [^TextGraphics g left row width viewport-top {:keys [team-line]}]
@@ -330,30 +324,37 @@
         put!
         (fn [col fg text bold?]
           (let [room (- (+ (long left) width) (long col))]
-            (when (pos? room)
+            (when (and (pos? room) (seq text))
               (let [text (p/ellipsize (str text) room)]
                 (p/set-colors! g fg bg)
                 (if bold?
                   (p/styled g [p/BOLD] (p/put-str! g col row text))
-                  (p/put-str! g col row text))
-                (+ (long col) (long (p/display-width text)))))))]
+                  (p/put-str! g col row text))))))]
 
+    ;; The card band covers the whole row, so every row ends at the same edge.
+    (p/set-colors! g t/code-block-fg bg)
+    (p/fill-rect! g left row width 1)
     (case (:type team-line)
       :title
-      (put! left t/code-block-fg (:text team-line) true)
+      (let [text (str (:text team-line))]
+        (put! left t/code-block-fg "Team" true)
+        (put! (+ (long left) 4) t/dialog-hint (subs text (min 4 (count text))) false))
 
       :detail
       (put! (+ (long left) (long (:indent team-line 2))) t/dialog-hint (:text team-line) false)
 
       :agent
-      (let [{:keys [n role state waiting? status used budget task session-id] :as agent-row}
+      (let [{:keys [state waiting? status session-id] :as agent-row}
             (:row team-line)
+
+            cells
+            (card-cells agent-row)
 
             state-fg
             (cond waiting? t/warning-fg
-                  (= "running" status) t/warning-fg
                   (= "failed" status) t/status-bad
                   (= "completed" status) t/status-ok
+                  (= "running" status) t/code-block-fg
                   :else t/dialog-hint)
 
             ;; Each part starts at its column, so every row of the card lines up.
@@ -362,26 +363,13 @@
 
             at
             (fn [k]
-              (+ (long left) (long (get offsets k))))
+              (+ (long left) (long (get offsets k))))]
 
-            progress
-            (card-progress agent-row)]
-
-        (put! (at :n) t/code-block-fg (str "A" n) true)
-        (when role (put! (at :role) t/dialog-hint role false))
+        (put! (at :n) t/code-block-fg (:n cells) true)
+        (put! (at :role) t/dialog-hint (:role cells) false)
+        (put! (at :task) t/code-block-fg (:task cells) false)
         (put! (at :state) state-fg state (boolean waiting?))
-        (when progress
-          (let [done (bar-done used budget)]
-            (when (pos? (long done)) (put! (at :progress) t/status-ok (subs progress 0 done) false))
-            (put! (+ (long (at :progress)) (long done))
-                  t/dialog-hint
-                  (subs progress done bar-width)
-                  false)
-            (put! (+ (long (at :progress)) (long bar-width))
-                  t/code-block-fg
-                  (subs progress bar-width)
-                  false)))
-        (put! (at :task) t/code-block-fg task false)
+        (put! (at :count) t/dialog-hint (:count cells) false)
         (when session-id
           (.register interactions/hit-map
                      {:bounds {:row (+ (long viewport-top) (long row)) :col left :width width}
