@@ -19,7 +19,7 @@ References:
 from __future__ import annotations
 
 import math
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Hashable, Iterable, Sequence
 
 __all__ = [
@@ -159,7 +159,7 @@ def krippendorff_alpha(units: Iterable[Sequence[Hashable | None]]) -> float | No
     for agreement by chance, and below 0 for less agreement than chance. It is
     undefined without two values in one unit, or when all values are the same.
     """
-    pairs: Counter = Counter()
+    pairs: defaultdict[tuple[Hashable, Hashable], float] = defaultdict(float)
     for unit in units:
         values = Counter(value for value in unit if value is not None)
         size = sum(values.values())
@@ -169,7 +169,7 @@ def krippendorff_alpha(units: Iterable[Sequence[Hashable | None]]) -> float | No
             for second, other in values.items():
                 same = 1 if first == second else 0
                 pairs[first, second] += count * (other - same) / (size - 1)
-    totals: Counter = Counter()
+    totals: defaultdict[Hashable, float] = defaultdict(float)
     for (first, _), weight in pairs.items():
         totals[first] += weight
     total = sum(totals.values())
