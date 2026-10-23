@@ -1090,4 +1090,23 @@
                              json/read-json
                              (get "groups"))]
               (expect (some #(= "permissions" (get % "id")) groups))
-              (expect (not-any? #(= "mcp" (get % "id")) groups))))))))
+              (expect (not-any? #(= "mcp" (get % "id")) groups)))))))
+  (it "puts the session snapshot limit in General, not in a section of its own"
+      (with-empty-config
+        (let [db (h/store)]
+          (with-redefs [lp/db-info (constantly db)
+                        discovery/all-skills (constantly [])]
+
+            (let [groups (-> (#'settings-api/list-settings-handler {:query-params {}})
+                             :body
+                             json/read-json
+                             (get "groups"))
+                  general (some #(when (= "general" (get % "id")) %) groups)]
+
+              (expect (some #(= "session_snapshot_limit" (get % "id")) (get general "toggles")))
+              (expect (= ["general"]
+                         (for [group groups
+                               toggle (get group "toggles")
+                               :when (= "session_snapshot_limit" (get toggle "id"))]
+
+                           (get group "id"))))))))))

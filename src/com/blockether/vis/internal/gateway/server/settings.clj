@@ -132,7 +132,7 @@
   "The sections of settings, in order: id, title and the toggle groups that each gathers.
    Owners register toggles into groups. Clients add their own controls, such as provider
    accounts or MCP servers, to the section with the same id."
-  [[:general "General" [:council :experimental]] [:providers "Providers" [:provider]]
+  [[:general "General" [:council :session :experimental]] [:providers "Providers" [:provider]]
    [:voice "Voice" [:voice]] [:permissions "Permissions" [:sandbox]] [:tools "Tools" [:skills]]])
 
 (defn- section-title
@@ -432,6 +432,7 @@
                        (concat (when-not local? [(assoc (agent-name-setting) :scopes ["global"])])
                                (rows :council)
                                (when-not local? [(machine-name-setting)])
+                               (rows :session)
                                (rows :experimental))
 
                        :permissions

@@ -4010,7 +4010,7 @@
 (defn- mcp-settings-rows
   "The MCP servers section: one row per server — its live status riding the same line —
    opening that server's own transient INSIDE this frame. The header's Add button adds a
-   server (#338), so an empty section has no hint. The header has no rule. Empty until
+   server (#338), so an empty section has no hint. Empty until
    `load-mcp-inventory!` has run."
   []
   (let [{:keys [status servers error]} @(mcp-inventory-atom)]
@@ -4019,7 +4019,6 @@
         (concat [{:type :section
                   :label "MCP servers"
                   :section-id "mcp"
-                  :no-rule true
                   :button {:type :action
                            :id :mcp-add
                            :label "Add"
@@ -6012,21 +6011,13 @@
                                                                 (- paint-w 2))]
                             (p/set-colors! g t/dialog-border t/dialog-bg)
                             (p/fill-rect! g (inc lleft) row-y paint-w 1)
-                            ;; A `:no-rule` header shows only its name and button.
-                            (when-not (:no-rule (nth rows row-idx))
-                              (p/put-str! g
-                                          (+ lleft 2)
-                                          row-y
-                                          (settings-section-text shown paint-w)))
+                            (p/put-str! g (+ lleft 2) row-y (settings-section-text shown paint-w))
                             (p/set-fg! g t/dialog-hint-key)
                             ;; A header without a button shows the selection on its name.
                             (p/styled
                               g
                               (if (and selected? (nil? button)) (p/selection-styles true) [p/BOLD])
-                              (p/put-str! g
-                                          (+ lleft (if (:no-rule (nth rows row-idx)) 2 5))
-                                          row-y
-                                          shown))
+                              (p/put-str! g (+ lleft 5) row-y shown))
                             ;; A header button stands inside the rule. The selection gives it the
                             ;; accent fill, as in a confirm dialog.
                             (when-let [{:keys [x end]} button]

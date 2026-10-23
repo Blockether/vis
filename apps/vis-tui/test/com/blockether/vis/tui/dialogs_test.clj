@@ -2511,7 +2511,7 @@
         (reset! inventory {:status :ok :servers [] :error nil})
         (expect (= [:section] (mapv :type (mcp-rows))))
         (expect (= :mcp-add (get-in (first (mcp-rows)) [:button :id])))
-        (expect (true? (:no-rule (first (mcp-rows)))))
+        (expect (not (contains? (first (mcp-rows)) :no-rule)))
         (reset! inventory {:status :loading :servers [] :error nil})
         (expect (= "Loading MCP servers…" (:label (second (mcp-rows)))))
         (reset! inventory
