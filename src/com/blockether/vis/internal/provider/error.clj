@@ -296,6 +296,13 @@
   [err]
   (= :svar.llm/refusal (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn content-filter-error?
+  "True when Svar classifies the failure as a provider content-filter stop: a
+   Responses `content_filter` incomplete, a Chat `content_filter` finish reason or
+   a filter rejection of the request. An Anthropic refusal keeps its own card."
+  [err]
+  (and (not (refusal-error? err)) (= :content-filtered (:category (svar-classification err)))))
+
 (defn refusal-stop-details
   "Anthropic `stop_details` map for a refusal — `{\"category\" .. \"explanation\" ..}`
    (string keys, either value possibly nil), or nil. svar hoists it to the top
@@ -687,6 +694,9 @@
                                ". This is a documented, deliberate refusal — not a stall and not a "
                                "credential problem. Your transcript and tool results are intact."
                                (when explanation (str " Provider explanation: " explanation))))
+      (content-filter-error? err) (str "WHAT HAPPENED: "
+                                       (:summary (svar-classification err))
+                                       ". Your transcript and tool results are intact.")
       (empty-content-error? err)
       (let [resends (long (or (:empty-reply-resends data) 0))]
         (str "WHAT HAPPENED: the model replied with no text and no tool call."
@@ -842,6 +852,11 @@
       :empty-content
       "Model returned an empty response"
 
+      :content-filter
+      (if (false? (:reached-model? (svar-classification err)))
+        "Provider content filter rejected the request"
+        "Provider content filter stopped the response")
+
       :file-descriptors-exhausted
       "Out of file descriptors"
 
@@ -958,6 +973,10 @@
 
       :empty-content
       (str "NEXT STEP: retry explicitly. If it persists, rephrase or trim the last " "message.")
+
+      :content-filter
+      (str "NEXT STEP: rephrase or remove the flagged content. An unchanged retry is usually "
+           "filtered again; if this is a false positive, switch provider/model.")
 
       :refusal
       (str "NEXT STEP: an identical retry on the same model earns the same refusal. "
@@ -1088,6 +1107,7 @@
           ;; Svar types a dropped stream but gives it no category.
           (stream-connection-error? err) :stream-interrupted
           (refusal-error? err) :refusal
+          (content-filter-error? err) :content-filter
           (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           (or (tool-schema-rejection-message? (str provider-message "\n" message))

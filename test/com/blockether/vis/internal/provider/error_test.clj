@@ -461,6 +461,46 @@
         (expect (re-find #"(?i)declined" (perr/provider-error-explanation err))))))
 
 (defdescribe
+  content-filter-kind-test
+  ;; Issue #413: a Responses content_filter stop read as a missing terminal marker.
+  (it "names a Responses content_filter stop instead of an interrupted stream"
+      (let [e
+            (ex-info "Stream ended with incomplete response, reason: content_filter"
+                     {:type :svar.core/stream-incomplete
+                      :reason "content_filter"
+                      :partial-content "I'm sorry, but I cannot assist with that request."
+                      :content-acc-len 49
+                      :reasoning-acc-len 0
+                      :stream-finalization {:terminal? true
+                                            :terminal-kind :done-marker
+                                            :last-event-type "response.incomplete"
+                                            :incomplete? true
+                                            :incomplete-reason "content_filter"
+                                            :finish-reason "incomplete"
+                                            :http-status 200}})
+
+            message
+            (get (first (perr/provider-error-content e)) "message")]
+
+        (expect (= :content-filter (perr/provider-error-kind e)))
+        (expect (= "Provider content filter stopped the response" (perr/provider-error-title e)))
+        (expect (str/includes? message "content_filter") message)
+        (expect (not (str/includes? message "terminal marker")) message)
+        (expect (true? (:reached-model? (perr/svar-classification e))))))
+  (it "names the flagged categories of a filtered request"
+      (let [err {:message "HTTP 400"
+                 :data {:status 400
+                        :body (str "{\"error\":{\"code\":\"content_filter\","
+                                   "\"message\":\"The response was filtered\","
+                                   "\"inner_error\":{\"code\":\"ResponsibleAIPolicyViolation\","
+                                   "\"content_filter_result\":{\"violence\":"
+                                   "{\"filtered\":true,\"severity\":\"medium\"}}}}}")}}]
+        (expect (= :content-filter (perr/provider-error-kind err)))
+        (expect (= "Provider content filter rejected the request" (perr/provider-error-title err)))
+        (expect (str/includes? (perr/provider-error-explanation err) "violence (medium)"))
+        (expect (str/includes? (perr/provider-error-next-step err) "rephrase")))))
+
+(defdescribe
   pre-output-stream-abort-test
   "The typed watchdog family Vis may re-issue while nothing has streamed. The set
    itself is svar's; this proves Vis reads it, and reads it in both error shapes."
