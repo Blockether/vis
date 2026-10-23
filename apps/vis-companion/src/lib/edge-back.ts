@@ -531,6 +531,13 @@ export function useEdgeBack(
 
     const onStart = (event: Event) => {
       if (landing) return;
+      // A STROKE STILL ON THE STAGE NEVER ENDED HERE. A second finger refused its
+      // gesture, or its lift went to a node that left the tree. Send it home first.
+      // A new stage over it would keep its shifted list as the list's own style.
+      if (stage) {
+        finish(false, gesture?.across ?? 0);
+        return;
+      }
       const touchEvent = event as TouchEvent;
       const at = pointOf(touchEvent);
       const started = at
@@ -597,7 +604,10 @@ export function useEdgeBack(
       pane.removeEventListener('touchmove', onMove, true);
       pane.removeEventListener('touchend', onEnd, true);
       pane.removeEventListener('touchcancel', onCancel, true);
-      if (stage) edgeClose(stage);
+      if (stage) {
+        edgeClose(stage);
+        setSwiping(false);
+      }
       // The step was taken, or the pane went: give back what the stroke still holds.
       if (landing) release();
     };

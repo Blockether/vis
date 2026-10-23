@@ -362,6 +362,57 @@ describe('the pop the stroke draws', () => {
     expect(onBack).not.toHaveBeenCalled();
   });
 
+  // Regression, user report (paraphrased: after a sideways slide the session list stood
+  // a third of the width to the left, with an empty strip on its right). A second finger
+  // ended the stroke's gesture but left its stage open, so the lift was ignored and the
+  // next stroke kept the list's shifted transform as its original style.
+  it('gives the list back its own place after a second finger lands mid-stroke', () => {
+    const onBack = vi.fn();
+    const { getByTestId, rerender } = render(<OpenSession onBack={onBack} />);
+    const pane = getByTestId('pane');
+    const list = getByTestId('list');
+
+    act(() => {
+      fireTouch(getByTestId('line'), 'touchstart', [AT]);
+      fireTouch(getByTestId('line'), 'touchmove', [across(20)]);
+      fireTouch(getByTestId('line'), 'touchstart', [across(20), { x: 200, y: 400 }]);
+      fireTouch(getByTestId('line'), 'touchend', []);
+    });
+    settle();
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(list.style.cssText).toBe('');
+    expect(pane.style.cssText).toBe('');
+
+    act(() => swipeIn(getByTestId('line'), EDGE_BACK_PX + 20));
+    settle();
+    expect(onBack).toHaveBeenCalledTimes(1);
+    rerender(<OpenSession onBack={onBack} enabled={false} />);
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(list.style.cssText).toBe('');
+  });
+
+  it('takes a stroke home when its lift never arrived, before the next one starts', () => {
+    const { getByTestId } = render(<OpenSession onBack={vi.fn()} />);
+    const list = getByTestId('list');
+
+    act(() => {
+      fireTouch(getByTestId('line'), 'touchstart', [AT]);
+      fireTouch(getByTestId('line'), 'touchmove', [across(20)]);
+      // The lift went to a node that left the tree, so it never reached the pane.
+      fireTouch(getByTestId('line'), 'touchstart', [AT]);
+    });
+    settle();
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(list.style.cssText).toBe('');
+    expect(document.querySelector('[data-edge-veil]')).toBe(null);
+  });
+
   it('carries on at the speed of the finger instead of lurching ahead of it', () => {
     // The curve starts at 0.72 / 0.32 of its average speed.
     const launch = (remaining: number, velocity: number) =>
