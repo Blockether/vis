@@ -133,6 +133,8 @@ type ProseLine = {
   separator: string;
   /** The browser hyphenated the word that this line ends in. */
   hyphen: boolean;
+  /** An atomic box wider than the column wraps inside this line, so the line wraps too. */
+  wraps: boolean;
   /** Natural spacing: justified, its gaps would open wider than `MAX_GAP`. */
   ragged: boolean;
 };
@@ -201,8 +203,6 @@ function nativeLines(element: HTMLElement, content: InlineContent): ProseLine[] 
     return [...range.getClientRects()].filter((rect) => rect.height > 0);
   };
   const middle = (rect: DOMRect) => rect.top + rect.height / 2;
-  const inAtomic = (offset: number) =>
-    content.atomic.some(([start, end]) => offset > start && offset < end);
   /**
    * Whether the browser drew a hyphen at a break inside a word: `false` when it breaks
    * without one, `null` when the break cannot be told apart and the lines stay native.
@@ -210,6 +210,8 @@ function nativeLines(element: HTMLElement, content: InlineContent): ProseLine[] 
   const hyphenated = (offset: number): boolean | null => {
     // Source hyphens and slashes are break opportunities without a glyph.
     if (/[-‐/]/u.test(text[offset - 1])) return false;
+    // So is each edge of an atomic box.
+    if (content.atomic.some(([start, end]) => offset === start || offset === end)) return false;
     const [leaf] = locate(offset);
     const owner = getComputedStyle(leaf.parentElement ?? element);
     if (
@@ -270,12 +272,18 @@ function nativeLines(element: HTMLElement, content: InlineContent): ProseLine[] 
   let guess = 4;
   /** The current line holds the rest of a split word and is not pushed yet. */
   let open = false;
+  /** The current line holds an atomic box that wraps inside itself. */
+  let wraps = false;
+  const push = (start: number, end: number, hyphen: boolean) => {
+    lines.push({ start, end, hyphen, wraps });
+    wraps = false;
+  };
   while (next < words.length) {
     if (Number.isNaN(bottom)) bottom = wordRects(next)[0].bottom;
     const onLine = (index: number) => middle(wordRects(index)[0]) <= bottom;
     if (!onLine(next)) {
       // The rest of a split word filled its line.
-      lines.push({ start: lineStart, end: lineEnd, hyphen: false });
+      push(lineStart, lineEnd, false);
       lineStart = words[next].index;
       bottom = Number.NaN;
       open = false;
@@ -304,7 +312,7 @@ function nativeLines(element: HTMLElement, content: InlineContent): ProseLine[] 
     lineEnd = end;
     const fragments = wordRects(low);
     if (middle(fragments[fragments.length - 1]) <= bottom) {
-      lines.push({ start: lineStart, end, hyphen: false });
+      push(lineStart, end, false);
       if (next < words.length) lineStart = words[next].index;
       bottom = Number.NaN;
       open = false;
@@ -324,17 +332,26 @@ function nativeLines(element: HTMLElement, content: InlineContent): ProseLine[] 
         if (glyph && middle(glyph) > bottom) past = at;
         else first = at + 1;
       }
-      if (inAtomic(first)) return null;
+      const box = content.atomic.find(([start, end]) => first > start && first < end);
+      if (box) {
+        // Only a box wider than the column breaks inside: the line ends after the box.
+        const last = rects(box[1] - 1, box[1])[0];
+        if (!last) return null;
+        wraps = true;
+        from = box[1] - 1;
+        bottom = last.bottom;
+        continue;
+      }
       const hyphen = hyphenated(first);
       if (hyphen === null) return null;
-      lines.push({ start: lineStart, end: first, hyphen });
+      push(lineStart, first, hyphen);
       const moved = rects(first, first + 1)[0];
       if (!moved) return null;
       lineStart = from = first;
       bottom = moved.bottom;
     }
   }
-  if (open) lines.push({ start: lineStart, end: lineEnd, hyphen: false });
+  if (open) push(lineStart, lineEnd, false);
 
   let repaired = false;
   const composed = lines.map((line, index): ProseLine => {
@@ -833,8 +850,9 @@ export function JustifiedProse({
                 style={{
                   display: 'inline-block',
                   width: '100%',
-                  whiteSpace: 'nowrap',
-                  textAlignLast: line.ragged || index === lines.length - 1 ? 'start' : 'justify',
+                  whiteSpace: line.wraps ? 'normal' : 'nowrap',
+                  textAlignLast:
+                    line.ragged || line.wraps || index === lines.length - 1 ? 'start' : 'justify',
                 }}
               >
                 {inlineSlice(content, line.start, line.end)}

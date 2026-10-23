@@ -131,6 +131,36 @@ export const ResponsiveParagraphs: Story = {
   },
 };
 
+const wideCode =
+  'See the change in `c6a8ef275 fix(trace): show the running step below a closed digest`. Its own CI run was cancelled.';
+
+/**
+ * Regression, user report: code wider than the column took its own lines, and the short
+ * line before it stretched its few gaps across the whole column.
+ */
+export const CodeWiderThanColumn: Story = {
+  // Line geometry needs real browser layout: open this story in Storybook to play it.
+  tags: ['!test'],
+  render: () => (
+    <div className="p-3 text-body text-white">
+      <div data-prose-column style={{ width: 340, maxWidth: '100%' }}>
+        <Markdown>{wideCode}</Markdown>
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    await document.fonts.ready;
+    const column = canvasElement.querySelector<HTMLElement>('[data-prose-column]')!;
+    const prose = column.querySelector('p')!;
+    for (const width of [340, 300, 420]) {
+      column.style.width = `${width}px`;
+      await waitFor(() => expectEven(prose));
+      await expectSteady(column);
+    }
+    expectSelection(prose, wideCode.replaceAll('`', ''));
+  },
+};
+
 const spokenRequest = Array(30)
   .fill(
     'I want to review the request,  keep the original words and check that a long recording remains easy to read.',

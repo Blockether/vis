@@ -45,8 +45,43 @@ function layoutOf(root: Element): Box[] {
     if (index > start) words.push([start, index]);
   }
   const lines: [number, number][][] = [];
+  /** The lines inside a code box wider than the column keep natural gaps. */
+  const boxed = new Set<[number, number][]>();
+  /** Every placed word, in reading order. */
+  const order: [number, number][] = [];
   let x = 0;
   for (const word of words) {
+    let end = word[0];
+    while (end < word[1] && glued[end]) end++;
+    if ((end - word[0]) * CHAR > width) {
+      // Inline code is an inline-block of at most the column. Wider code takes its own
+      // lines and wraps at its own spaces; the text after it starts a new line.
+      let line: [number, number][] | null = null;
+      for (const match of text.slice(word[0], end).matchAll(/\S+/g)) {
+        const piece: [number, number] = [
+          word[0] + match.index,
+          word[0] + match.index + match[0].length,
+        ];
+        const size = (piece[1] - piece[0]) * CHAR;
+        if (line && x + CHAR + size <= width) {
+          line.push(piece);
+          x += CHAR + size;
+        } else {
+          line = [piece];
+          lines.push(line);
+          boxed.add(line);
+          x = size;
+        }
+        order.push(piece);
+      }
+      x = width;
+      if (end < word[1]) {
+        lines.push([[end, word[1]]]);
+        order.push(lines.at(-1)![0]);
+        x = (word[1] - end) * CHAR;
+      }
+      continue;
+    }
     const size = (word[1] - word[0]) * CHAR;
     const line = lines.at(-1);
     if (line && x + CHAR + size <= width) {
@@ -56,18 +91,21 @@ function layoutOf(root: Element): Box[] {
       lines.push([word]);
       x = size;
     }
+    order.push(word);
   }
   const boxes: Box[] = Array.from(text, () => ({ line: 0, left: 0, width: 0 }));
   for (const [number, line] of lines.entries()) {
     const used = line.reduce((sum, [start, end]) => sum + (end - start) * CHAR, 0);
     const gap =
-      number < lines.length - 1 && line.length > 1 ? (width - used) / (line.length - 1) : CHAR;
+      number < lines.length - 1 && line.length > 1 && !boxed.has(line)
+        ? (width - used) / (line.length - 1)
+        : CHAR;
     let left = 0;
     for (const [index, [start, end]] of line.entries()) {
       for (let at = start; at < end; at++)
         boxes[at] = { line: number, left: left + (at - start) * CHAR, width: CHAR };
       left += (end - start) * CHAR;
-      const next = line[index + 1] ?? words[words.indexOf(line[index]) + 1];
+      const next = line[index + 1] ?? order[order.indexOf(line[index]) + 1];
       for (let at = end; at < (next?.[0] ?? text.length); at++) {
         const first = at === end && index < line.length - 1;
         boxes[at] = { line: number, left, width: first ? gap : 0 };
@@ -211,6 +249,29 @@ describe('justified prose', () => {
     expect(endings(prose)).toEqual(['start', 'justify', 'justify', 'start']);
     expect(prose.textContent).toBe(codedText);
     expect(prose.querySelector('code')?.textContent).toBe('src/components/Prose.tsx');
+  });
+
+  // Regression, user report: code wider than the column took its own lines, and the short
+  // line before it stayed natively justified, with gaps across the whole column.
+  it('sets the line before code wider than the column ragged and lets the code wrap', async () => {
+    const wide =
+      'Read it in `c6a8ef275 fix(trace): show the running step below a closed digest`. It stays short.';
+    const view = render(<Markdown>{wide}</Markdown>);
+    await settle();
+    const prose = view.getByRole('paragraph');
+    expect(prose).toHaveAttribute('data-justified-lines');
+    expect(prose.textContent).toBe(wide.replaceAll('`', ''));
+    const lines = [...prose.children].filter(
+      (line): line is HTMLElement =>
+        line instanceof HTMLElement && line.style.display === 'inline-block',
+    );
+    expect(lines.map((line) => line.textContent)).toEqual([
+      'Read it in',
+      'c6a8ef275 fix(trace): show the running step below a closed digest',
+      '. It stays short.',
+    ]);
+    expect(endings(prose)).toEqual(['start', 'start', 'start']);
+    expect(lines.map((line) => line.style.whiteSpace)).toEqual(['nowrap', 'normal', 'nowrap']);
   });
 
   it('reads a paragraph with a long token even without code', async () => {
