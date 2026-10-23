@@ -523,7 +523,7 @@ export function CircleAlertIcon({ className }: { className?: string }) {
 /**
  * The mark of each subagent role in the agents contract. Each one is the Lucide
  * twin of the glyph that the TUI draws for the role (`x-vis-mark`): a lens for
- * ⊙ research, a gear for ⚙ implement, a checked box for ▣ verify and an eye for
+ * ⊙ research, a gear for ◆ implement, a checked box for ▣ verify and an eye for
  * ◈ audit. Roles are not states, so none of them is a ring.
  */
 export const ROLE_ICONS: Readonly<Record<string, LucideIcon>> = {

@@ -303,7 +303,7 @@
     },
     "role": {
       "description": "Choose the role by the result that you need: facts, changed files, a pass or fail, or findings.",
-      "$comment": "A role is a label for people and the leader. It sets no tool, file or model limit. Each x-vis-mark is the glyph that the TUI draws. The Companion draws its Lucide twin.",
+      "$comment": "A role is a label for people and the leader. It sets no tool, file or model limit. Each x-vis-mark is the glyph that the TUI draws: a geometric shape that monospace fonts have, so it takes one cell. The Companion draws its Lucide twin.",
       "oneOf": [
         {
           "const": "research",
@@ -314,7 +314,7 @@
         {
           "const": "implement",
           "title": "Changes files",
-          "x-vis-mark": "⚙",
+          "x-vis-mark": "◆",
           "description": "Changes files. Writes code, tests, docs or configuration and runs the checks for its change. Use it for one bounded change."
         },
         {

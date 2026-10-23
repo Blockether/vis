@@ -211,25 +211,43 @@
 
                 "budget reached")))
 
+(defn- card-progress
+  [{:keys [status used budget]}]
+  (when (contains? #{"running" "budget_limited"} status)
+    (str (bar used budget 10) " " (or used 0) "/" (or budget "?"))))
+
+(defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
+
+(defn- card-columns
+  "The cell widths of the card columns, so marks, A-numbers, states, bars and tasks of every
+   row start in the same column. A column that no row uses has width 0."
+  [rows]
+  {:mark (widest (keep :mark rows))
+   :n (widest (map #(str "A" (:n %)) rows))
+   :state (widest (map :state rows))
+   :progress (widest (keep card-progress rows))})
+
 (defn card
   "The team card data of team `team-id` from `agents`, or nil when the team has no agent.
    Plain data, so an unchanged team compares equal across polls."
   [team-id agents]
   (let [rows (filter #(= team-id (get (second %) "team_id")) (numbered agents))]
     (when (seq rows)
-      {:team-id team-id
-       :rows (mapv (fn [[n agent]]
-                     {:n n
-                      :mark (role-mark agent)
-                      :state (card-state agent)
-                      :waiting? (waiting? agent)
-                      :status (get agent "status")
-                      :used (get agent "iterations_used")
-                      :budget (get agent "iteration_budget")
-                      :task (str/replace (str (get agent "task")) #"\s+" " ")
-                      :activity (get agent "activity")
-                      :session-id (get agent "session_id")})
-                   rows)})))
+      (let [rows (mapv (fn [[n agent]]
+                         {:n n
+                          :mark (role-mark agent)
+                          :state (card-state agent)
+                          :waiting? (waiting? agent)
+                          :status (get agent "status")
+                          :used (get agent "iterations_used")
+                          :budget (get agent "iteration_budget")
+                          :task (str/replace (str (get agent "task")) #"\s+" " ")
+                          :activity (get agent "activity")
+                          :session-id (get agent "session_id")})
+                       rows)
+            columns (card-columns rows)]
+
+        {:team-id team-id :rows (mapv #(assoc % :columns columns) rows)}))))
 
 (defn card-title
   "The first row of a team card, such as `Team · 3 agents · 1 running · 1 asks you`."
@@ -254,30 +272,52 @@
          (when (pos? asking) (str " · " asking " asks you"))
          (when (pos? done) (str " · " done " done")))))
 
-(defn- card-progress
-  [{:keys [status used budget]}]
-  (when (contains? #{"running" "budget_limited"} status)
-    (str (bar used budget 10) " " (or used 0) "/" (or budget "?"))))
+(defn- pad
+  "`text` with spaces to `width` cells."
+  [text width]
+  (let [text (str text)]
+    (str text (apply str (repeat (max 0 (- (long width) (long (p/display-width text)))) \space)))))
+
+(defn- card-offsets
+  "The cell offsets of the columns of one card row from its left edge."
+  [{:keys [mark n state progress]}]
+  (let [n-col
+        (if (pos? (long mark)) (inc (long mark)) 0)
+
+        state-col
+        (+ n-col (long n) 2)
+
+        progress-col
+        (+ state-col (long state) 2)
+
+        task-col
+        (if (pos? (long progress)) (+ progress-col (long progress) 2) progress-col)]
+
+    {:n n-col :state state-col :progress progress-col :task task-col}))
 
 (defn card-row-text
-  "Plain text of one agent row of the card, as copy shows it."
-  [{:keys [n mark state task] :as row}]
-  (str (some-> mark
-               (str " "))
-       "A"
-       n
-       "  "
-       state
-       (some->> (card-progress row)
-                (str "  "))
-       "  "
-       task))
+  "Plain text of one agent row of the card, as copy shows it, in the card columns."
+  [{:keys [n mark state task columns] :as row}]
+  (let [{mark-width :mark n-width :n state-width :state progress-width :progress}
+        (or columns (card-columns [row]))]
+    (str (when (pos? (long mark-width)) (str (pad mark mark-width) " "))
+         (pad (str "A" n) n-width)
+         "  "
+         (pad state state-width)
+         "  "
+         (when (pos? (long progress-width)) (str (pad (card-progress row) progress-width) "  "))
+         task)))
 
 (defn card-detail-text
   "The dim second row of a waiting or running agent, or nil."
   [{:keys [waiting? status activity]}]
   (cond waiting? "↳ waiting for you · see Questions below"
         (and (= "running" status) (seq activity)) (str "↳ " activity)))
+
+(defn- detail-indent
+  "The cells before the detail row of `row`: it starts under the state column."
+  [row]
+  (:state (card-offsets (or (:columns row) (card-columns [row])))))
 
 (defn- paint-card-line!
   [^TextGraphics g left row width viewport-top {:keys [team-line]}]
@@ -303,7 +343,7 @@
       (put! left t/code-block-fg (:text team-line) true)
 
       :detail
-      (put! (+ (long left) 2) t/dialog-hint (:text team-line) false)
+      (put! (+ (long left) (long (:indent team-line 2))) t/dialog-hint (:text team-line) false)
 
       :agent
       (let [{:keys [n mark state waiting? status task session-id] :as agent-row}
@@ -316,27 +356,22 @@
                   (= "completed" status) t/status-ok
                   :else t/dialog-hint)
 
-            col
-            (or (some-> (when mark (put! left t/header-active-tab-accent mark false))
-                        inc)
-                left)
+            ;; Each part starts at its column, so every row of the card lines up.
+            offsets
+            (card-offsets (or (:columns agent-row) (card-columns [agent-row])))
 
-            col
-            (some-> (put! col t/code-block-fg (str "A" n) true)
-                    (+ 2))
+            at
+            (fn [k]
+              (+ (long left) (long (get offsets k))))
 
-            col
-            (some-> col
-                    (put! state-fg state (boolean waiting?))
-                    (+ 2))
+            progress
+            (card-progress agent-row)]
 
-            col
-            (if-let [progress (when col (card-progress agent-row))]
-              (some-> (put! col t/status-ok progress false)
-                      (+ 2))
-              col)]
-
-        (when col (put! col t/code-block-fg task false))
+        (when mark (put! left t/header-active-tab-accent mark false))
+        (put! (at :n) t/code-block-fg (str "A" n) true)
+        (put! (at :state) state-fg state (boolean waiting?))
+        (when progress (put! (at :progress) t/status-ok progress false))
+        (put! (at :task) t/code-block-fg task false)
         (when session-id
           (.register interactions/hit-map
                      {:bounds {:row (+ (long viewport-top) (long row)) :col left :width width}
@@ -361,7 +396,9 @@
           (concat (mapcat (fn [row]
                             (cons (entry (card-row-text row) {:type :agent :row row})
                                   (when-let [detail (card-detail-text row)]
-                                    [(entry (str "  " detail) {:type :detail :text detail})])))
+                                    (let [indent (detail-indent row)]
+                                      [(entry (str (apply str (repeat indent \space)) detail)
+                                              {:type :detail :text detail :indent indent})]))))
                           (:rows team-card))
                   [{:line marker :meta nil}]))))
 

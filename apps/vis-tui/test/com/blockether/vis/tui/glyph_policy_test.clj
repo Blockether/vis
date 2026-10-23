@@ -11,7 +11,7 @@
 (def ^:private opencode-glyphs
   "Non-ASCII glyphs that opencode's TUI draws, with the single and rounded
    opentui border characters."
-  (set "·—•…←↑→↓↳⇆⊙⋯─│┃┌┐└┘├┤┬┴┼╭╮╯╰╹▀▄█■▣△▶▸▼▾◆◈◉○●⚙✓✕✗✱⟳⠇⠋⠏⠙⠦⠧⠴⠸⠹⠼⬖⬝⬥⬩⬪"))
+  (set "·—•…←↑→↓↳⇆⊙⋯─│┃┌┐└┘├┤┬┴┼╭╮╯╰╹▀▄█■▣△▶▸▼▾◆◈◉○●✓✕✗✱⟳⠇⠋⠏⠙⠦⠧⠴⠸⠹⠼⬖⬝⬥⬩⬪"))
 
 (def ^:private input-data
   "Characters that only parse input text and are never drawn, by file name."
@@ -50,6 +50,8 @@
                 (expect (empty? (violations "a.clj" "(re-find #\"[\u20AC\u00A3]\" s)")))
                 (expect (empty? (violations "state.clj" "#{\\\u3002}")))
                 (expect (= [["table.clj" 1 \u3002]] (violations "table.clj" "#{\\\u3002}")))))
+  ;; A gear (U+2699) came from the emoji font in many terminals and drew wider than its
+  ;; cell, so the marks are geometric shapes that monospace fonts have.
   (it "draws each subagent role mark of the contract from the opencode set"
       (let [marks (map #(get % "x-vis-mark")
                        (get-in (document/schema-document "agents") ["$defs" "role" "oneOf"]))]

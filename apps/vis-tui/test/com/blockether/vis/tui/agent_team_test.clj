@@ -364,7 +364,7 @@
                  {"status" "queued"}
                  {"status" "running" "role" "research" "iterations_used" 2 "iteration_budget" 9}
                  {"status" "completed" "role" "implement"}]
-                "Agents: ⊙ A3 2/9 · ⚙ A4 done · ▣ A1 1/9 · A2 queued"]]]
+                "Agents: ⊙ A3 2/9 · ◆ A4 done · ▣ A1 1/9 · A2 queued"]]]
         (with-redefs [team/summary (constantly {:agents agents})]
           (expect (= label (team/footer-label "leader")))))))
 
@@ -449,7 +449,7 @@
                               (mapv (fn [[n agent]]
                                       [n (get agent "session_id")])
                                     (team/numbered waiting-team))))
-                   (expect (= "Agents: ⚙ A2 asks you · ▣ A3 asks you · ⊙ A1 4/10"
+                   (expect (= "Agents: ◆ A2 asks you · ▣ A3 asks you · ⊙ A1 4/10"
                               (team/footer-label "leader"))))))
 
 (defdescribe
@@ -462,13 +462,26 @@
             (:rows team-card)]
 
         (expect (= "Team · 3 agents · 1 running · 2 asks you" (team/card-title team-card)))
-        (expect (= ["⚙ A2  asks you  ■■──────── 2/10  Fix parser"
+        ;; Every part starts in the same column on each row, also for a longer state or count.
+        (expect (= ["◆ A2  asks you  ■■──────── 2/10   Fix parser"
                     "▣ A3  asks you  ■■■■■■■■■■ 10/10  Run tests"
-                    "⊙ A1  running  ■■■■────── 4/10  Read docs"]
+                    "⊙ A1  running   ■■■■────── 4/10   Read docs"]
                    (mapv team/card-row-text rows)))
+        (expect (= 1 (count (set (map #(str/index-of (team/card-row-text %) (:task %)) rows)))))
         (expect (= "↳ Patched ~/src/a.clj" (team/card-detail-text (nth rows 2))))
         (expect (= "↳ waiting for you · see Questions below" (team/card-detail-text (first rows))))
-        (expect (nil? (team/card "turn-9" waiting-team)))))
+        (expect (nil? (team/card "turn-9" waiting-team)))
+        (let [lines
+              (map :line (team/card-entries team-card))
+
+              row
+              (first (filter #(str/includes? % "Read docs") lines))
+
+              detail
+              (first (filter #(str/includes? % "Patched") lines))]
+
+          (expect (= (str/index-of row "running") (str/index-of detail "↳"))
+                  "The detail row starts under the state column"))))
   (it "decorates only the last assistant message of the team turn"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
         (let [messages [{:role :user :session-turn-id "turn-1" :text "go"}
