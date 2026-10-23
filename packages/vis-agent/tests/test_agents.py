@@ -150,8 +150,9 @@ def test_child_controls_answer_records_and_wait_longer_than_the_gateway():
         assert team.resume("child", "More", timeout_secs=60).session_id == "child"
         assert isinstance(team.extend("child", 5), SubagentRecord)
         assert team.deny("child", "Not now").status == "asking"
+        assert team.answer("child", "Use docs/").session_id == "child"
         assert team.grant("child", {"write": ["docs/**"]}).iterations_used == 2
-        assert timeouts == [270, 35, 270, 90, None, None, None]
+        assert timeouts == [270, 35, 270, 90, None, None, None, None]
         requests = [
             (path.removeprefix("/v1/sessions/leader/agents"), json.loads(body))
             for method, path, _, body in calls
@@ -173,6 +174,7 @@ def test_child_controls_answer_records_and_wait_longer_than_the_gateway():
             ("/resume", {"session_id": "child", "task": "More", "timeout_secs": 60}),
             ("/extend", {"session_id": "child", "iterations": 5}),
             ("/deny", {"session_id": "child", "reason": "Not now"}),
+            ("/answer", {"session_id": "child", "text": "Use docs/"}),
             ("/grant", {"session_id": "child", "files": {"write": ["docs/**"]}}),
         ]
 

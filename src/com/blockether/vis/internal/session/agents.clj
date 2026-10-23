@@ -568,10 +568,11 @@
 ;; restart ends the question with its turn.
 (defonce ^:private questions (atom {}))
 
-(defn open-question
-  "The question that child `sid` waits on its parent to answer, or nil."
+(defn open-request
+  "The open question that child `sid` waits on its parent to answer, or nil: `{:question text
+   :entry_id id}`, plus `:budget` or `:files` for a budget or file request."
   [sid]
-  (:question (get @questions (str sid))))
+  (get @questions (str sid)))
 
 (defn- runtime-fn
   [k]
@@ -1077,6 +1078,21 @@
   [env session-id reason]
   (result :council.deny (deny-records env session-id reason)))
 
+(defn- answer-records
+  "Reply with `text` to the open question of a subagent and answer its record. A person answers
+   here for the parent, so the child continues without the wait."
+  [env session-id text]
+  (let [{:keys [session_id text]}
+        (checked env :answer {:session_id session-id :text text})
+
+        {:keys [entry_id]}
+        (get @questions session_id)]
+
+    (when-not entry_id (fail! :invalid-request "That subagent has no open question"))
+    ((runtime-fn :publish) env {:kind "informational" :content text :reply_to entry_id})
+    (swap! questions #(if (= entry_id (get-in % [session_id :entry_id])) (dissoc % session_id) %))
+    (current-record env session_id)))
+
 (defn- overlaps?
   "True when the write rules `a` and `b` can name one file: one rule root covers the other."
   [a b]
@@ -1293,8 +1309,8 @@
 (defn operation!
   "Run one managed-subagent operation for the calling session and answer its plain result.
    Gateway routes and extensions call this entry point; model tools call the same functions.
-   `operation` is :spawn, :list, :route, :run, :wait, :cancel, :resume, :extend, :deny or
-   :grant. Records answer in their wire form."
+   `operation` is :spawn, :list, :route, :run, :wait, :cancel, :resume, :extend, :deny, :answer
+   or :grant. Records answer in their wire form."
   [env operation opts]
   (let [opts
         (walk/keywordize-keys (or opts {}))
@@ -1327,6 +1343,9 @@
 
           :deny
           (deny-records env (:session_id opts) (:reason opts))
+
+          :answer
+          (answer-records env (:session_id opts) (:text opts))
 
           :grant
           (grant-records env (:session_id opts) (:files opts))

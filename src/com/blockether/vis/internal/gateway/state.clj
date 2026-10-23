@@ -6121,14 +6121,37 @@
                                 (assoc :is_forked true)))))
           (or rows []))))
 
+(defn- agent-activity
+  "The latest Activity line of session `sid` in its replay ring, such as `Patched ~/a.clj`, or
+   nil. A running row wins over a finished one."
+  [sid]
+  (let [pick (fn [m k]
+               (when (map? m) (or (get m k) (get m (keyword k)))))]
+    (some (fn [event]
+            (when (= "block.activity" (get event "type"))
+              (let [rows (pick (pick event "activity") "rows")
+                    row (or (last (filter #(= "running" (pick % "state")) rows)) (last rows))
+                    view (pick row "presentation")]
+
+                (not-empty (str/join " "
+                                     (remove str/blank?
+                                       (map #(str/trim (str (or % "")))
+                                            [(pick view "headline") (pick view "summary")])))))))
+          (reverse (seq (:events (session-entry sid)))))))
+
 (defn- agent-view
-  "One team row. `question` is the open question that the child asks its parent."
+  "One team row. `question` is the open question that the child asks its parent, with its
+   `question_entry_id` and any budget or file request. `activity` is the latest Activity line
+   of a queued or running child."
   [db child]
   (let [sid
         (:session_id child)
 
-        question
-        (agents/open-question sid)]
+        request
+        (agents/open-request sid)
+
+        activity
+        (when (contains? #{"queued" "running"} (:status child)) (agent-activity sid))]
 
     (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
                    (smodel/model-of db sid)
@@ -6136,8 +6159,19 @@
                     :pending_input (bus/session-waiting? sid)
                     :pending_input_count (bus/session-waiting-count sid)
                     :usage (session-usage-info sid)})
-      question
-      (assoc :question question))))
+      request
+      (assoc :question
+        (:question request) :question_entry_id
+        (:entry_id request))
+
+      (:budget request)
+      (assoc :budget_request (:budget request))
+
+      (:files request)
+      (assoc :files_request (:files request))
+
+      activity
+      (assoc :activity activity))))
 
 (defn- agent-list
   [env _opts]
@@ -6574,14 +6608,15 @@
     (when (contains? #{:spawn :run} operation) (agents/require-enabled! db sid))
     ;; Reads and controls need durable state, not a newly bootstrapped interpreter.
     ;; Spawn consumes the running parent's safe model checkpoint, resume publishes in its
-    ;; active execution, and spawn and grant check its security policy. Extend and deny
-    ;; answer an open child request with a Council reply in that execution too.
-    (agents/operation!
-      (assoc (when (contains? #{:spawn :run :grant :resume :extend :deny} operation) (live-env sid))
-        :db-info db
-        :session-id sid)
-      operation
-      opts)))
+    ;; active execution, and spawn and grant check its security policy. Extend, deny and
+    ;; answer reply to an open child request with a Council reply in that execution too.
+    (agents/operation! (assoc (when (contains? #{:spawn :run :grant :resume :extend :deny :answer}
+                                               operation)
+                                (live-env sid))
+                         :db-info db
+                         :session-id sid)
+                       operation
+                       opts)))
 
 (defn fork-session!
   "Fork `sid` into a NEW INDEPENDENT session holding a deep copy of every turn

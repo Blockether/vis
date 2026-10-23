@@ -197,6 +197,27 @@
       ],
       "additionalProperties": false
     },
+    "answer": {
+      "$comment": "A person answers the open question of a subagent for its parent.",
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "pattern": "\\S"
+        }
+      },
+      "required": [
+        "session_id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
     "grant": {
       "$comment": "Add file rules to the grant of a subagent. A child without write rules already writes where its parent writes, so a write grant changes nothing for it. A write rule under a read_only or deny rule of the child fails.",
       "type": "object",
@@ -421,6 +442,38 @@
           "minimum": 0
         },
         "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question_entry_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "budget_request": {
+          "type": "object",
+          "properties": {
+            "iterations": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "files_request": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "$ref": "#/$defs/files"
+            },
+            "reason": {
+              "type": "string"
+            }
+          }
+        },
+        "activity": {
+          "$comment": "The latest Activity line of a queued or running agent, such as Patched ~/src/a.clj.",
           "type": "string",
           "minLength": 1
         },

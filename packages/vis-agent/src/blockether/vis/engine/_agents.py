@@ -23,6 +23,11 @@ class Subagent:
     model: str | None = None
     routing_locked: bool = False
     pending_input: bool = False
+    question: str | None = None
+    question_entry_id: int | None = None
+    budget_request: dict[str, Any] | None = None
+    files_request: dict[str, Any] | None = None
+    activity: str | None = None
     usage: dict[str, Any] | None = None
     files: dict[str, list[str]] | None = None
 

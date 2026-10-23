@@ -2826,6 +2826,7 @@ def _calls():
         ('council.resume', lambda: council.resume('C', 'Again')),
         ('council.cancel', lambda: council.cancel('C')),
         ('council.deny', lambda: council.deny('C', 'No')),
+        ('council.answer', lambda: council.answer('C', 'Yes')),
         ('council.extend', lambda: council.extend('C', 4)),
         ('council.grant', lambda: council.grant('C', {'read_only': ['src']})),
         ('council.route', lambda: council.route('m', provider='p', session_id='C')),
@@ -2923,6 +2924,7 @@ vis.register_extension(vis.Extension(
                      "council.resume" ["POST" "/agents/resume"]
                      "council.cancel" ["POST" "/agents/cancel"]
                      "council.deny" ["POST" "/agents/deny"]
+                     "council.answer" ["POST" "/agents/answer"]
                      "council.extend" ["POST" "/agents/extend"]
                      "council.grant" ["POST" "/agents/grant"]
                      "council.route" ["POST" "/agents/route"]})

@@ -742,6 +742,31 @@
                               (counted-label used "iteration")))]))
    "content" []})
 
+(defn- council-control
+  "One line for a control of one agent. The team rows in the turn show the agent itself."
+  [op value]
+  (let [budget (field value "iteration_budget")]
+    (if-not value
+      "No subagent"
+      (case op
+        "council.cancel"
+        (label (field value "status"))
+
+        "council.extend"
+        (if budget (str "Budget now " (counted-label budget "iteration")) "Budget extended")
+
+        "council.deny"
+        "Request denied"
+
+        "council.grant"
+        (if-let [rules (seq (field value "files"))]
+          (str "Grant now "
+               (str/join
+                 " · "
+                 (for [[k paths] (sort-by (comp str key) rules)]
+                   (str (str/replace (name k) "_" " ") " " (counted-label (count paths) "rule")))))
+          "Files granted")))))
+
 (defn- council-presentation
   "Show messages and outcomes, not Council's storage and delivery envelopes."
   [op value]
@@ -780,13 +805,10 @@
           sections?
           (assoc "sections" (mapv council-message items))))
 
-      ("council.run"
-       "council.wait"
-       "council.cancel"
-       "council.resume"
-       "council.extend"
-       "council.deny"
-       "council.grant")
+      ("council.cancel" "council.extend" "council.deny" "council.grant")
+      {"headline" headline "summary" (council-control op (first value)) "content" []}
+
+      ("council.run" "council.wait" "council.resume")
       {"headline" headline
        "summary" (if (seq value)
                    (str/join " · "

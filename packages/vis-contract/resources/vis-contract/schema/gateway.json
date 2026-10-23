@@ -745,6 +745,17 @@
           "extension": "background"
         }
       },
+      "path": "/v1/sessions/:sid/agents/answer"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "json",
+          "response": "json",
+          "extension": "background"
+        }
+      },
       "path": "/v1/sessions/:sid/agents/cancel"
     },
     {

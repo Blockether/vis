@@ -80,6 +80,7 @@
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/sessions/:sid/agents"] (agents-handler :list)
    [:post "/v1/sessions/:sid/agents"] (agents-handler :spawn)
+   [:post "/v1/sessions/:sid/agents/answer"] (agents-handler :answer)
    [:post "/v1/sessions/:sid/agents/cancel"] (agents-handler :cancel)
    [:post "/v1/sessions/:sid/agents/deny"] (agents-handler :deny)
    [:post "/v1/sessions/:sid/agents/extend"] (agents-handler :extend)

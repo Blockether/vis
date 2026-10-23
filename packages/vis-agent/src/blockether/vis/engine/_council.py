@@ -356,6 +356,11 @@ class Council:
         body = {"session_id": session_id, "reason": reason}
         return self._records("/deny", body, "deny")[0]
 
+    def answer(self, session_id: str, text: str) -> SubagentRecord:
+        """Answer the open question of a subagent for its parent; the child continues."""
+        body = {"session_id": session_id, "text": text}
+        return self._records("/answer", body, "answer")[0]
+
     def grant(self, session_id: str, files: dict[str, list[str]]) -> SubagentRecord:
         """Add ``write``, ``read_only`` or ``deny`` file rules to the grant of a subagent.
 

@@ -566,7 +566,7 @@
                          (get r "budget_request")))
               (expect (= "Budget request: 10 more iterations. Reason: The suite has 40 files"
                          (get r "question")))
-              (expect (= (get r "question") (agents/open-question child))
+              (expect (= (get r "question") (:question (agents/open-request child)))
                       "The team list shows the open question")
               (outcome #(agents/extend-agent env child 10))
               (expect (= {"granted" 10
@@ -584,7 +584,21 @@
               (let [denied (deref asked 5000 ::timeout)]
                 (expect (= 0 (get denied "granted")))
                 (expect (re-find #"^Denied: Stop at the parser\." (get denied "reply")))))
-            (expect (= :invalid-request (outcome #(agents/deny-agent env child "No request")))))
+            (expect (= :invalid-request (outcome #(agents/deny-agent env child "No request"))))
+            ;; A person answers the question of a child for its parent (the Questions inbox).
+            (let [asked (future (outcome
+                                  #(agents/ask child-env "Which parser?" {:timeout_secs 10})))]
+              (asking-record env child)
+              (expect (nil? (get (first (agents/operation! env
+                                                           :answer
+                                                           {:session_id child
+                                                            :text "Use the new parser."}))
+                                 "question"))
+                      "The answered question leaves the record")
+              (expect (= "Use the new parser." (deref asked 5000 ::timeout))))
+            (expect (= :invalid-request
+                       (outcome
+                         #(agents/operation! env :answer {:session_id child :text "Late"})))))
           (expect (= :invalid-request (outcome #(agents/ask-budget child-env 601 "Too many"))))
           (expect (= :invalid-request (outcome #(agents/ask-budget env 5 "Not a child"))))))))
   (it

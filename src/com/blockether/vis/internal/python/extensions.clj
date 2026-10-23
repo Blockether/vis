@@ -767,6 +767,7 @@
    [:post "/v1/sessions/:sid/agents"] [:vis.council.spawn "Run subagents" false]
    [:post "/v1/sessions/:sid/agents/run"] [:vis.council.run "Run subagents" false]
    [:post "/v1/sessions/:sid/agents/wait"] [:vis.council.wait "Wait for subagents" true]
+   [:post "/v1/sessions/:sid/agents/answer"] [:vis.council.answer "Answer subagent" false]
    [:post "/v1/sessions/:sid/agents/cancel"] [:vis.council.cancel "Cancel subagents" false]
    [:post "/v1/sessions/:sid/agents/deny"] [:vis.council.deny "Deny subagent request" false]
    [:post "/v1/sessions/:sid/agents/extend"] [:vis.council.extend "Extend subagent budget" false]

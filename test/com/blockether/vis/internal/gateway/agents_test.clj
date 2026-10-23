@@ -2,6 +2,7 @@
   (:require [charred.api :as json]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.server :as server]
+            [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.router :as loop-router]
@@ -34,7 +35,8 @@
   canonical-agent-routes-and-validation-test
   (it "canonical agent routes and validation"
       (doseq [[path methods]
-              [["/v1/sessions/:sid/agents" [:get :post]] ["/v1/sessions/:sid/agents/cancel" [:post]]
+              [["/v1/sessions/:sid/agents" [:get :post]] ["/v1/sessions/:sid/agents/answer" [:post]]
+               ["/v1/sessions/:sid/agents/cancel" [:post]]
                ["/v1/sessions/:sid/agents/deny" [:post]] ["/v1/sessions/:sid/agents/extend" [:post]]
                ["/v1/sessions/:sid/agents/grant" [:post]]
                ["/v1/sessions/:sid/agents/resume" [:post]]
@@ -150,3 +152,28 @@
         (expect (ps/db-routing-locked? db leader) "An idempotent human pick locks agent routing")
         (expect (= 409
                    (:status (request :post path "{\"provider\":\"p\",\"model\":\"large\"}"))))))))
+
+(defdescribe
+  agent-activity-test
+  (it "shows the latest Activity line of an agent, a running row first"
+      (let [sid
+            "agent-activity-child"
+
+            event
+            (fn [rows]
+              {"type" "block.activity" "activity" {"rows" rows}})
+
+            row
+            (fn [state headline summary]
+              {"state" state "presentation" {"headline" headline "summary" summary}})]
+
+        (#'state/put-session!
+         sid
+         {:events [(event [(row "succeeded" "Read" "~/a.clj")]) {"type" "block.output"}
+                   (event [(row "running" "Run tests" "agents-test")
+                           (row "succeeded" "Patched" "~/b.clj")])]})
+        (expect (= "Run tests agents-test" (#'state/agent-activity sid)))
+        (#'state/put-session! sid {:events [(event [(row "succeeded" "Patched" "~/b.clj")])]})
+        (expect (= "Patched ~/b.clj" (#'state/agent-activity sid)))
+        (#'state/put-session! sid {:events [{"type" "block.output"}]})
+        (expect (nil? (#'state/agent-activity sid))))))

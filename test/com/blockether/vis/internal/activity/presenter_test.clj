@@ -655,11 +655,13 @@
              [:council.ask_files "" {:granted false :missing ["/b"] :reply nil} nil]])]
       (expect (contract/valid-projection? projection))
       (let [views (mapv #(get % "presentation") (get projection "rows"))]
-        (expect (= ["1 asking" "1 lost" "1 cancelled" "Parent replied" "No reply" "1 completed"
-                    "1 asking" "Granted 10 iterations" "No iterations granted" "No reply"
-                    "1 running" "Files granted" "2 files not granted" "1 file not granted"
-                    "No reply"]
+        (expect (= ["1 asking" "1 lost" "Cancelled" "Parent replied" "No reply"
+                    "Budget now 20 iterations" "1 asking" "Granted 10 iterations"
+                    "No iterations granted" "No reply" "Grant now write 1 rule" "Files granted"
+                    "2 files not granted" "1 file not granted" "No reply"]
                    (mapv #(get % "summary") views)))
+        ;; A control of one agent is one line: the team rows in the turn show the agent.
+        (expect (every? #(empty? (get-in views [% "sections"])) [2 5 10]))
         (expect (= "Which file?" (get-in views [0 "sections" 0 "headline"])))
         (expect (= [] (get-in views [0 "sections" 0 "content"])))
         (expect (= [{"type" "markdown" "text" "Use the parser file."}]
