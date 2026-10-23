@@ -168,7 +168,9 @@ const HERO_VALUE = 12;
  * THE SIZE LADDER. A name is always larger than the caption under it, and a value
  * is never smaller than the label over it. A section label is `text-ui`, and what it
  * names is `text-body` or larger. A fact label is `text-meta` over a `text-body`
- * value. A step, a row or a link is `text-body` over a `text-meta` caption. The headline is
+ * value. A step or a row is `text-body` over a `text-meta` caption. A link is
+ * `text-ui` over a `text-meta` place: links are where the work also lives, not
+ * the work itself, so they read one step quieter than the rows above them. The headline is
  * `text-subhead` over a `text-body` detail.
  */
 function NodeLabel({ children }: { children: string }) {
@@ -1110,9 +1112,9 @@ const TARGET_WORD = { url: 'Web page', path: 'File', attachment: 'Attachment' } 
 function LinkRows({ node }: { node: LiveLinkNode }) {
   if (node.links.length === 0) return <Empty>{EMPTY_LINE.link}</Empty>;
   return (
-    <ul className="min-w-0 divide-y divide-dialog-edge font-mono text-body">
+    <ul className="min-w-0 divide-y divide-dialog-edge font-mono text-ui">
       {node.links.map((link) => (
-        <li key={link.id} className="flex min-w-0 items-start gap-2 py-2 first:pt-0 last:pb-0">
+        <li key={link.id} className="flex min-w-0 items-start gap-2 py-1.5 first:pt-0 last:pb-0">
           {link.tone && link.tone !== 'idle' && <LineMark tone={link.tone} />}
           <span className="min-w-0 flex-1">
             {link.target_kind === 'url' ? (
@@ -1120,18 +1122,21 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
                 href={link.target}
                 target="_blank"
                 rel="noreferrer"
-                className="font-bold text-white underline decoration-dialog-hint underline-offset-4 [overflow-wrap:anywhere]"
+                className="text-white underline decoration-dialog-hint underline-offset-2 [overflow-wrap:anywhere]"
               >
                 <InlineMarkdown>{link.label}</InlineMarkdown>
               </a>
             ) : (
               <>
-                <span className="block font-bold text-white [overflow-wrap:anywhere]">
+                <span className="block text-white [overflow-wrap:anywhere]">
                   <InlineMarkdown>{link.label}</InlineMarkdown>
                 </span>
-                <span className="mt-0.5 block text-meta text-dialog-hint [overflow-wrap:anywhere]">
-                  {link.target}
-                </span>
+                {/* A place that only repeats the label says nothing new. */}
+                {link.target !== link.label && (
+                  <span className="block text-meta text-dialog-hint [overflow-wrap:anywhere]">
+                    {link.target}
+                  </span>
+                )}
               </>
             )}
           </span>
