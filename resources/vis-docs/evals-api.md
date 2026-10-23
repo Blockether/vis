@@ -216,9 +216,9 @@ print(Path("jobs/first", REPORT_FILE).exists())  # True, run_tasks wrote it
 | `diagnosis` | The [`diagnose`](#find-the-failure-causes) result, with the `label_check` of `labels.json`. |
 | `judge` | The stage agreement of a judge, or `None` without `judge_stages.json`. |
 
-`labels`, `judge_dir` and `stage_labels` change the paths of the
-[label files](evals.md#check-the-causes-with-labels). `write_report(full, path)` writes the JSON.
-It raises `FileNotFoundError` when the folder holds no trial.
+`round_report` raises `FileNotFoundError` when the folder holds no trial. `labels`, `judge_dir`
+and `stage_labels` replace the default paths of the [label and judge
+files](evals.md#check-the-causes-with-labels). `write_report(full, path)` writes the JSON.
 
 </div>
 

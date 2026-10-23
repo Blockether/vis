@@ -178,8 +178,8 @@ for each task. They follow the Anthropic guides in [References](#references).
   [check the judge with labels](#check-the-causes-with-labels).
 - **Replace tasks that every run solves.** A task that always passes cannot show a change.
 
-After each change of the tasks, read some passed and some failed trajectories. A broken task
-often shows only there.
+After each change of the tasks, read some passed and some failed trajectories. Some broken tasks
+show only there, for example a check that passes for the wrong reason.
 
 ### Replace an extension with a mock
 
@@ -266,6 +266,7 @@ After the check, Harbor copies the file to `artifacts/payload-calls.jsonl` in th
 `artifacts/manifest.json` gives the status of each file: `ok`, or `failed` when the file is
 missing. A missing file does not change the reward. `write_task` writes this line when you give
 [`artifacts`](evals-api.md#write-a-task).
+
 ## Step 3: Check the tasks
 
 A bad task gives wrong scores. For example, its instruction does not name a file that its checks
@@ -292,7 +293,7 @@ harbor run --path tasks \
 ```
 
 `HARBOR_TELEMETRY=off` stops Harbor from sending usage data. `--n-attempts` sets the trials for
-each task. Use 3 or more attempts to measure [pass@k and pass^k](#scores-and-intervals). More
+each task. [pass@k and pass^k](#repeated-attempts) need at least k attempts for each task. More
 attempts give a smaller interval but cost more. To test a Vis checkout, add `--ak
 source=PATH`. To test a raw native image, add `--ak native_bin=PATH`.
 
@@ -360,8 +361,9 @@ Repeats (2 attempts per task)
   2  16     75.0%   75.0%
 ```
 
-Here, pass@2 and pass^2 are equal. Each task passed both attempts or failed both. The interval
-is 39 points wide, so 16 tasks cannot show a small change.
+Each task passed both attempts or failed both, so pass@2 equals pass^2. For the same reason, the
+attempt interval is as wide as the task interval. A second round of 16 tasks can detect only a
+change of 48 points or more.
 
 | Option | Effect |
 |---|---|
@@ -438,8 +440,8 @@ number of attempts:
 | pass@k | Does the agent solve the task in at least one of k attempts? |
 | pass^k | Does the agent solve the task in all k attempts? |
 
-Vis estimates both from all n attempts of a task, not only from the first k. A task with c
-solved attempts gives these values. The report shows the mean over the tasks.
+Vis estimates both from all attempts of a task, not only from the first k. A task with n
+attempts and c solved attempts gives these values. The report shows the mean over the tasks.
 
 ```text
 pass@k = 1 - C(n - c, k) / C(n, k)
@@ -449,7 +451,7 @@ pass^k = C(c, k) / C(n, k)
 `C(n, k)` is the number of ways to choose k attempts from n. For example, a task that solved 2
 of 4 attempts has pass@2 = 1 - 1/6 = 83% and pass^2 = 1/6 = 17%.
 
-- At k = 1, both rates are the attempt pass rate of the task.
+- At k = 1, both rates are c / n.
 - pass@k goes up with k, and pass^k goes down. A large gap shows an agent that is not
   consistent.
 - Use pass@k when one success is enough, for example when a person picks the best result.
@@ -524,16 +526,18 @@ python -m blockether.vis.evals.report jobs/first --judge jobs/vis-judge/judge-20
 
 The report then gives two checks:
 
-- **The sample agreement and its alpha** show how often the judge agrees with itself. A judge that
-  does not agree with itself cannot agree with people.
-- **The stage labels** compare the judge with a person. Write them in `stage-labels.json` in the
-  judge folder, for example `{"add-function__AbC123": {"stage": "write"}}`.
+- **The sample agreement** is the share of trials where all samples give the same stage. Its
+  alpha corrects it for chance. Correct the rubric of a judge that disagrees with itself before you
+  compare it with people.
+- **The stage labels** compare the judge with a person. Save them in `stage-labels.json` in the
+  judge folder with `save_stage_label`, or write the file, for example
+  `{"add-function__AbC123": {"stage": "write"}}`.
 
 | Krippendorff's alpha | What it means |
 |---|---|
 | Below 0.667 | The samples disagree too much. Make the rubric clearer before you use them. |
 | From 0.667 to 0.8 | Use the results only for tentative conclusions. Read the trials where the samples differ. |
-| 0.8 or more | The samples are reliable. |
+| 0.8 or more | You can use the stages of the judge. |
 
 ## Compare two runs
 
