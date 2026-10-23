@@ -958,10 +958,19 @@ function TableRows({
     !node.columns.some((column) => /^(state|status)$/i.test(column.label.trim()));
   const span = Math.max(1, node.columns.length + (hasState ? 1 : 0));
   return (
-    <div className="-mx-(--live-view-inset) overflow-x-auto">
-      <table className="w-full min-w-0 border-collapse font-mono text-body">
+    // Only a SELECTABLE table bleeds to the view's edges, because its rows are press
+    // bands. A table that is only read keeps its rules on the column of the words, so
+    // its lines end where the links and the log under it end.
+    <div className={`${isSelectable ? '-mx-(--live-view-inset) ' : ''}overflow-x-auto`}>
+      <table
+        className={`w-full min-w-0 border-collapse font-mono text-body ${
+          isSelectable
+            ? ''
+            : '[&_td:first-child]:pl-0 [&_td:last-child]:pr-0 [&_th:first-child]:pl-0 [&_th:last-child]:pr-0'
+        }`}
+      >
         <thead className="hidden sm:table-header-group">
-          <tr className="border-b border-dialog-edge">
+          <tr className="border-b border-dialog-edge/40">
             {node.columns.map((column) => (
               <th
                 key={column.id}
@@ -983,7 +992,7 @@ function TableRows({
             )}
           </tr>
         </thead>
-        <tbody className="divide-y divide-dialog-edge">
+        <tbody className="divide-y divide-dialog-edge/40">
           {rows.length === 0 && (
             <tr>
               <td className="px-(--live-view-inset) py-2" colSpan={span}>
@@ -1065,7 +1074,7 @@ function TableRows({
                       </span>
                     </ListRow>
                   ) : (
-                    <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-1.5">
+                    <span className="flex min-w-0 items-start gap-2 py-1.5 sm:pr-(--live-view-inset)">
                       <span className={`flex min-w-0 flex-1 items-start gap-2 ${mark}`}>
                         <LineMark tone={row.tone} />
                         <RowFace node={node} row={row} />
@@ -1112,7 +1121,7 @@ const TARGET_WORD = { url: 'Web page', path: 'File', attachment: 'Attachment' } 
 function LinkRows({ node }: { node: LiveLinkNode }) {
   if (node.links.length === 0) return <Empty>{EMPTY_LINE.link}</Empty>;
   return (
-    <ul className="min-w-0 divide-y divide-dialog-edge font-mono text-ui">
+    <ul className="min-w-0 divide-y divide-dialog-edge/40 font-mono text-ui">
       {node.links.map((link) => (
         <li key={link.id} className="flex min-w-0 items-start gap-2 py-1.5 first:pt-0 last:pb-0">
           {link.tone && link.tone !== 'idle' && <LineMark tone={link.tone} />}
@@ -1222,7 +1231,10 @@ function NodeCell({
       {isDisclosure ? (
         // The name starts on the column of every other section name, and the chevron
         // follows it: a chevron in front pushed `Output` 20px in from `Services`.
+        // The press face stops at its words, so its focus ring frames `Output 200 lines`
+        // and not an empty band across the whole view.
         <Disclosure
+          className="max-w-fit"
           isOpen={isOpen}
           tone="branch"
           inlineChevron
@@ -1265,7 +1277,7 @@ function NodeCell({
             </ViewLayout>
           )}
           {node.type === 'divider' && (
-            <hr className="m-0 w-full border-0 border-t border-dialog-edge" />
+            <hr className="m-0 w-full border-0 border-t border-dialog-edge/40" />
           )}
           {node.type === 'paragraph' && (
             <ViewParagraph>
@@ -1591,7 +1603,9 @@ export function LiveViewPanel({
               <li
                 key={node.id}
                 className={`min-w-0 ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${
-                  node.type === 'log' && index > 0 ? 'border-t border-dialog-edge pt-4' : ''
+                  node.type === 'log' && index > 0
+                    ? 'relative pt-4 before:absolute before:inset-x-(--live-view-inset) before:top-0 before:border-t before:border-dialog-edge/40'
+                    : ''
                 }`}
               >
                 <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
