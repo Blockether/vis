@@ -35,6 +35,9 @@ const IMAGE_MEDIA: Record<string, string> = {
 };
 const TEXT_PREVIEW_BYTES = 200_000;
 
+/** The preview starts under the file name: the row gutter, the chevron and its gap. */
+const PREVIEW_EDGE = 'pb-3 pl-8 pr-3 sm:pl-9 sm:pr-4';
+
 function extensionOf(name: string): string {
   const base = name.split('/').pop() ?? '';
   const dot = base.lastIndexOf('.');
@@ -110,30 +113,37 @@ function EntryPreview({ buffer, entry }: { buffer: ArrayBuffer; entry: ZipEntry 
     };
   }, [buffer, entry]);
 
-  if (!preview) return <p className="px-3 py-2 font-mono text-meta text-dialog-hint">Loading…</p>;
+  if (!preview) return <p className={`${PREVIEW_EDGE} font-mono text-meta text-dialog-hint`}>Loading…</p>;
   if (preview.kind === 'image') {
-    return <img src={preview.url} alt={entry.name} className="mx-auto max-h-96 max-w-full object-contain p-3" />;
+    return (
+      <div className={PREVIEW_EDGE}>
+        <img src={preview.url} alt={entry.name} className="max-h-96 max-w-full border border-code-edge object-contain" />
+      </div>
+    );
   }
   if (preview.kind === 'text') {
     const media = zipEntryMediaType(entry.name);
     // The same readers as an opened artifact: a note renders as a document, a table as a
     // table, and other text keeps its own line breaks.
+    // The table draws its own frame, so only other text gets one here: one frame, never two.
     const body =
       media === 'text/csv' || media === 'text/tab-separated-values' ? (
-        <DataTable body={tableBlock(entry, media, preview.text)} compact frameless />
+        <DataTable body={tableBlock(entry, media, preview.text)} compact isNameShown={false} />
       ) : (
-        <TextBody text={preview.text} mime={media} name={entry.name} />
+        <div className="my-2 max-h-96 overflow-auto border border-code-edge">
+          <TextBody text={preview.text} mime={media} name={entry.name} />
+        </div>
       );
     return (
-      <div className="px-3 py-2">
-        <div className="max-h-96 overflow-auto border border-dialog-edge bg-panel p-2">{body}</div>
+      <div className={PREVIEW_EDGE}>
+        {body}
         {preview.truncated ? (
-          <p className="pt-1 font-mono text-meta text-dialog-hint">Preview shows the start of the file. Save it to read all of it.</p>
+          <p className="pt-1.5 font-mono text-meta text-dialog-hint">Preview shows the start of the file. Save it to read all of it.</p>
         ) : null}
       </div>
     );
   }
-  return <p className="px-3 py-2 font-mono text-meta text-dialog-hint">{preview.reason}</p>;
+  return <p className={`${PREVIEW_EDGE} font-mono text-meta text-dialog-hint`}>{preview.reason}</p>;
 }
 
 /** The entries of one ZIP archive, readable and savable one by one. */
@@ -171,11 +181,11 @@ export function ZipArchive({ blob, name }: { blob: Blob; name: string }) {
   const count = archive.entries.length;
   return (
     <div className="-mx-3 sm:-mx-4">
-      <p className="px-3 pb-2 font-mono text-meta text-dialog-hint sm:px-4">
-        {`ZIP · ${count} ${count === 1 ? 'file' : 'files'} · ${attachmentBytes(total)} unpacked`}
+      <p className="px-3 pb-3 font-mono text-meta text-dialog-hint sm:px-4">
+        {`${count} ${count === 1 ? 'file' : 'files'}, ${attachmentBytes(total)} unpacked`}
       </p>
       {count === 0 ? <p className="px-3 font-mono text-meta text-dialog-hint sm:px-4">This archive is empty.</p> : null}
-      <ul aria-label={`Files in ${name}`}>
+      <ul aria-label={`Files in ${name}`} className={count > 0 ? 'border-t border-dialog-edge' : ''}>
         {archive.entries.map((entry) => {
           const isOpen = selected === entry.name;
           const media = zipEntryMediaType(entry.name);
@@ -192,7 +202,7 @@ export function ZipArchive({ blob, name }: { blob: Blob; name: string }) {
                   <span className="flex w-full min-w-0 items-center gap-2 font-mono text-meta">
                     <ChevronIcon className={`size-3 shrink-0 ${isOpen ? 'rotate-90' : ''}`} />
                     <span className="min-w-0 flex-1 truncate text-left">{entry.name}</span>
-                    <span className="shrink-0 text-dialog-hint">
+                    <span className="shrink-0 tabular-nums text-dialog-hint">
                       {entry.encrypted ? 'encrypted' : attachmentBytes(entry.size)}
                     </span>
                   </span>

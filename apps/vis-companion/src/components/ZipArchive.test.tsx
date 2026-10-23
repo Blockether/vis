@@ -28,7 +28,7 @@ describe('ZIP archive view', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     const view = render(<ZipArchive blob={new Blob([buffer], { type: 'application/zip' })} name="bundle.zip" />);
 
-    expect(await view.findByText('ZIP · 2 files · 27B unpacked')).toBeVisible();
+    expect(await view.findByText('2 files, 27B unpacked')).toBeVisible();
     const list = view.getByRole('list', { name: 'Files in bundle.zip' });
     expect(Array.from(list.querySelectorAll('li')).map((row) => row.textContent)).toEqual([
       'docs/readme.md24B',

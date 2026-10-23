@@ -228,6 +228,12 @@ const BODY_CELL = 'h-[26px] border-b border-code-edge p-0 align-middle';
 /** The `│` of the TUI grid: every column but the first carries its own rule. */
 const COLUMN_RULE = 'border-l border-code-edge';
 
+/** The caption's plain phrase: `3 rows, 2 columns, 64 B`. */
+export function tableShape(rows: number, cols: number, size: string): string {
+  const counted = `${rows} ${rows === 1 ? 'row' : 'rows'}, ${cols} ${cols === 1 ? 'column' : 'columns'}`;
+  return size ? `${counted}, ${size}` : counted;
+}
+
 type Sort = { index: number; dir: 'asc' | 'desc' } | null;
 type Cell = { row: number; col: number } | null;
 
@@ -259,6 +265,7 @@ export const DataTable = memo(function DataTable({
   compact,
   frameless = false,
   fill = false,
+  isNameShown = true,
 }: {
   body: string;
   compact: boolean;
@@ -266,6 +273,8 @@ export const DataTable = memo(function DataTable({
   frameless?: boolean;
   /** Fill the opened artifact's available body; presentation stays one spreadsheet. */
   fill?: boolean;
+  /** Name the file in the caption; an owner that already names it passes `false`. */
+  isNameShown?: boolean;
 }) {
   const artifact = useMemo(() => parseTableBlock(body), [body]);
   const grid = useMemo(() => parseCsv(artifact.csv), [artifact.csv]);
@@ -306,6 +315,7 @@ export const DataTable = memo(function DataTable({
 
   const chosen = ordered.filter((row) => selected.has(row.key));
   const label = artifact.name || 'table';
+  const shape = tableShape(artifact.rows ?? rows.length, artifact.cols ?? header.length, artifact.sizeLabel);
   const cellId = (row: number, col: number) => `${gridId}-c${row}-${col}`;
 
   /** asc → desc → OFF: the file's own order stays reachable on the third click. */
@@ -400,14 +410,15 @@ export const DataTable = memo(function DataTable({
     <div
       className={`${fill ? 'h-full w-full' : `${compact ? 'my-2' : 'my-3'} w-fit max-w-full`} flex max-h-full min-h-0 flex-col overflow-hidden font-mono text-meta text-code-foreground [-webkit-text-size-adjust:none] [text-size-adjust:none] ${SHEET} ${frameless ? '' : 'border border-code-edge'}`}
     >
-      <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
-        <span className="min-w-0 flex-1 truncate text-chip text-muted">
-          {artifact.summary || label}
+      <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 border-b border-code-edge bg-panel px-2 py-1.5">
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          {isNameShown ? <span className="min-w-0 truncate font-semibold text-white">{label}</span> : null}
+          <span className="shrink-0 text-dialog-hint">{shape}</span>
         </span>
-        <span className="shrink-0 text-chip text-dialog-hint" aria-live="polite">
+        <span className="shrink-0 text-dialog-hint" aria-live="polite">
           {selected.size > 0 ? `${selected.size} selected` : ''}
         </span>
-        <Button variant="secondary" density="compact" onClick={copy}>
+        <Button variant="secondary" density="inline" onClick={copy}>
           {copied ? 'Copied' : chosen.length > 0 ? `Copy ${chosen.length} rows` : 'Copy CSV'}
         </Button>
       </div>
@@ -415,14 +426,14 @@ export const DataTable = memo(function DataTable({
       {cell !== null && (
         <div className="flex items-start gap-2 border-b border-code-edge bg-panel-2 px-2 py-1.5">
           <span className="shrink-0 pt-0.5 text-chip text-dialog-hint">
-            {`${header[cell.col] ?? ''} · row ${cell.row + 1}`}
+            {`${header[cell.col] ?? ''}, row ${cell.row + 1}`}
           </span>
           <pre className="max-h-20 min-w-0 flex-1 overflow-auto text-meta break-all whitespace-pre-wrap text-code-foreground">
             {focused === '' ? 'NULL' : focused}
           </pre>
           <Button
             variant="secondary"
-            density="compact"
+            density="inline"
             onClick={() => void navigator.clipboard?.writeText(focused ?? '')}
           >
             Copy value
@@ -486,7 +497,9 @@ export const DataTable = memo(function DataTable({
             aria-rowcount={ordered.length + 1}
             aria-colcount={header.length + 1}
             aria-activedescendant={cell === null ? undefined : cellId(cell.row, cell.col)}
-            className="w-max min-w-full border-collapse font-mono text-meta text-code-foreground focus-visible:outline-2 focus-visible:outline-accent"
+            className={`w-max min-w-full border-collapse font-mono text-meta text-code-foreground focus-visible:outline-2 focus-visible:outline-accent ${
+              frameless ? '' : '[&>tbody>tr:last-child>td]:border-b-0'
+            }`}
           >
             <thead>
               <tr>

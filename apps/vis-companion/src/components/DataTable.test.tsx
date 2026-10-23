@@ -14,6 +14,7 @@ import {
   parseCsv,
   parseTableBlock,
   sortRows,
+  tableShape,
   toCsv,
   type TableRow,
 } from './DataTable';
@@ -168,6 +169,13 @@ describe('paging', () => {
   });
 });
 
+describe('tableShape', () => {
+  it('counts in words, singular for one', () => {
+    expect(tableShape(1, 1, '23B')).toBe('1 row, 1 column, 23B');
+    expect(tableShape(3, 2, '')).toBe('3 rows, 2 columns');
+  });
+});
+
 describe('DataTable', () => {
   const html = renderToStaticMarkup(<DataTable body={fence} compact />);
 
@@ -183,7 +191,8 @@ describe('DataTable', () => {
     expect(html).toContain('aria-sort="none"');
     expect(html).toContain('aria-label="Sort by name"');
     expect(text(html)).toContain('3 rows');
-    expect(text(html)).toContain('[Table: fleet.csv 3 rows × 3 cols, 64 B]');
+    expect(text(html)).toContain('3 rows, 3 columns, 64 B');
+    expect(text(html)).not.toContain('[Table:');
     expect(html).not.toContain('type="search"');
     expect(html).not.toContain('Filter rows');
   });
