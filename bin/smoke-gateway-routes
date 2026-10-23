@@ -11,13 +11,15 @@
 #
 # Usage: bin/smoke-gateway-routes [bundle-dir]    # default target/release-bundle
 #
-#   VIS_SMOKE_LAN_HOST   probe this address instead of the discovered one
-#   VIS_SMOKE_TIMEOUT_S  seconds to wait per route (default 60)
+#   VIS_SMOKE_LAN_HOST       probe this address instead of the discovered one
+#   VIS_SMOKE_TIMEOUT_S      seconds to wait per route (default 60)
+#   VIS_SMOKE_LAN_TIMEOUT_S  seconds to wait for the LAN route (default VIS_SMOKE_TIMEOUT_S)
 set -euo pipefail
 
 bundle="${1:-target/release-bundle}"
 vis="$bundle/vis-agent"
 tries="${VIS_SMOKE_TIMEOUT_S:-60}"
+lan_tries="${VIS_SMOKE_LAN_TIMEOUT_S:-$tries}"
 
 [ -x "$vis" ] || {
   echo "smoke-gateway-routes: no staged wrapper at $vis" >&2
@@ -59,7 +61,7 @@ trap 'kill "$gateway_pid" 2>/dev/null || true; wait "$gateway_pid" 2>/dev/null |
 probe_route() {
   local host="$1"
   local label="$2"
-  local left="$tries"
+  local left="$3"
   while [ "$left" -gt 0 ]; do
     if curl -fsS --max-time 3 "http://$host:$port/healthz" 2>/dev/null | grep -q '"status"'; then
       echo "ok: $label reaches http://$host:$port"
@@ -74,10 +76,10 @@ probe_route() {
   return 1
 }
 
-probe_route 127.0.0.1 loopback
+probe_route 127.0.0.1 loopback "$tries"
 
 if [ -n "$lan" ]; then
-  probe_route "$lan" "the LAN address"
+  probe_route "$lan" "the LAN address" "$lan_tries"
 else
   # A build machine with no network of its own still proves the loopback route.
   echo "notice: this host holds no LAN address — the LAN route was not tested" >&2

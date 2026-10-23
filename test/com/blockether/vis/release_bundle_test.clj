@@ -5673,10 +5673,13 @@
         true
         (fn [bundle _log]
           ;; 192.0.2.0/24 (TEST-NET-1) answers nowhere, which is exactly what a
-          ;; firewall-blocked binary looks like from another device.
-          (let [{:keys [exit output]}
-                (run-bash ["bin/smoke-gateway-routes" (.getAbsolutePath ^File bundle)]
-                          {"VIS_SMOKE_LAN_HOST" "192.0.2.1" "VIS_SMOKE_TIMEOUT_S" "2"})]
+          ;; firewall-blocked binary looks like from another device. Loopback gets
+          ;; the full budget: a loaded CI runner can start the stub after 2 s.
+          (let [{:keys [exit output]} (run-bash ["bin/smoke-gateway-routes"
+                                                 (.getAbsolutePath ^File bundle)]
+                                                {"VIS_SMOKE_LAN_HOST" "192.0.2.1"
+                                                 "VIS_SMOKE_TIMEOUT_S" "15"
+                                                 "VIS_SMOKE_LAN_TIMEOUT_S" "2"})]
             (expect (not= 0 exit) output)
             (expect (str/includes? output "ok: loopback") output)
             (expect (str/includes? output "the LAN address never answered") output)))))
