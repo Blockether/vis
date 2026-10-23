@@ -2554,6 +2554,8 @@ function sessionViewFingerprint(session: Session): string {
     session.status,
     session.live,
     session.current_turn_id,
+    session.is_awaiting_input,
+    session.awaiting_input_count,
     session.turn_count,
     session.answer_count,
     session.is_unread,

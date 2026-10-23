@@ -299,6 +299,48 @@ describe('a session list carried by the fleet stream', () => {
     expect(listReads(view.requests)).toBeGreaterThan(read);
   });
 
+  // Regression, Vis session 16bf3af0-3dc5-45fe-bc6c-1cf6395b6bc5: a form answered while
+  // the list stood behind the session kept its group's HITL badge. The read on return
+  // carried the cleared flag, but the row comparison ignored it and kept the old row.
+  it('clears a group HITL badge that was answered while the list was hidden', async () => {
+    const fleet = fleetHub();
+    const parked = listSession({
+      id: 'p1',
+      title: 'Parked',
+      group_id: 'g1',
+      live: true,
+      status: 'running',
+      current_turn_id: 't1',
+      is_awaiting_input: true,
+      awaiting_input_count: 1,
+    });
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [parked],
+          groups: [
+            { id: 'g1', project_id: null, name: 'Waiting work', color: 'blue', session_count: 1 },
+          ],
+        },
+      ],
+      subscriptions: fleet.hub as never,
+    });
+    restore = view.restore;
+    fleet.hub.gatewayUrl = view.conns[0]!.url;
+    await settle(500);
+    const band = () => screen.getByRole('button', { name: /^(Collapse|Expand) Waiting work$/ });
+    expect(band()).toHaveTextContent('HITL');
+
+    view.setVisible(false);
+    view.setRows(0, [{ ...parked, is_awaiting_input: false, awaiting_input_count: 0 }]);
+    await settle(1_000);
+    view.setVisible(true);
+    await settle(1_000);
+
+    expect(band()).not.toHaveTextContent('HITL');
+    expect(band()).toHaveTextContent('LIVE');
+  });
+
   it("takes a row's new title from the frame alone", async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);
