@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Removed
 - The `prompt_cache_keepalive` setting is gone. Vis always keeps the provider prompt cache warm during a running turn.
 
+### Fixed
+- Companion: Enter now confirms a session delete that you open with Delete or Backspace. The focus stays on the safe answer, and Enter after Tab presses the focused answer (#412).
+
 ## [v0.3.2] - 2026-10-22
 
 ### Changed

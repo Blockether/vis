@@ -695,7 +695,10 @@ export const ListRow = forwardRef<
  * height, and neither of them is a 28px target inside a dialog.
  *
  * The refusal comes FIRST and takes the focus, because the safe answer is the
- * one a mistaken thumb should land on; the committing half wears the red wash
+ * one a mistaken thumb should land on. Enter still answers YES: the person who
+ * pressed Delete on a keyboard asked the question and confirms it with Enter.
+ * After Tab moves the focus, Enter presses the focused answer again. The
+ * committing half wears the red wash
  * `MenuItem`'s danger row and the swipe strip's `Delete` wear, so the ink that
  * means "this does not come back" is the same ink wherever it is asked.
  *
@@ -738,12 +741,36 @@ export function ConfirmRow({
   onKeep: () => void;
   onConfirm: () => void;
 }) {
+  // Tab means the keyboard chose an answer itself; Enter then presses that one.
+  const focusChosenRef = useRef(false);
+  const answerOnEnter = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Tab') {
+      focusChosenRef.current = true;
+      return;
+    }
+    if (
+      event.key !== 'Enter' ||
+      event.repeat ||
+      event.nativeEvent.isComposing ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.shiftKey ||
+      focusChosenRef.current
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isBusy) onConfirm();
+  };
   return (
     // The overlay replaces the horizontal list rules without contributing
     // pixels of its own. The panel already supplies the side edges.
     <div
       role="group"
       aria-label={question}
+      onKeyDown={answerOnEnter}
       className="relative flex flex-col after:pointer-events-none after:absolute after:-top-px after:inset-x-0 after:bottom-0 after:border-y after:border-err-edge"
       style={rowHeight === undefined ? undefined : { minHeight: rowHeight }}
     >

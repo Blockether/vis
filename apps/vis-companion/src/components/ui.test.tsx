@@ -8,8 +8,9 @@
 // component by Storybook (`ui.stories.tsx`) and looked at. Rules about the SOURCE
 // (the closed vocabulary, corner and shadow rungs, named ways out) live in
 // `ui.conventions.test.ts`, which scans files instead of rendering them.
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   BandButton,
@@ -468,6 +469,49 @@ describe('ConfirmRow', () => {
     expect(keep).toHaveTextContent(/keep/i);
     expect(commit).toHaveTextContent('Yes, delete');
     expect(keep.parentElement).toHaveClass('min-h-12', 'mouse:min-h-8');
+  });
+
+  // #412: Enter answers yes, as in a dialog, while the focus stays on the safe answer.
+  it('answers yes on Enter while the refusal holds the focus', async () => {
+    const user = userEvent.setup();
+    const onKeep = vi.fn();
+    const onConfirm = vi.fn();
+    render(<ConfirmRow question="Delete alpha?" confirmLabel="Yes, delete" onKeep={onKeep} onConfirm={onConfirm} />);
+
+    expect(screen.getByRole('button', { name: 'No, keep' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onKeep).not.toHaveBeenCalled();
+  });
+
+  it('ignores a held Enter, a busy answer and Enter with a modifier', () => {
+    const onConfirm = vi.fn();
+    const { rerender } = render(
+      <ConfirmRow question="Delete alpha?" confirmLabel="Yes, delete" onKeep={() => {}} onConfirm={onConfirm} />,
+    );
+    const keep = screen.getByRole('button', { name: 'No, keep' });
+    // The repeat of the key that opened the question must not answer it.
+    fireEvent.keyDown(keep, { key: 'Enter', repeat: true });
+    fireEvent.keyDown(keep, { key: 'Enter', metaKey: true });
+    rerender(
+      <ConfirmRow question="Delete alpha?" confirmLabel="Deleting..." isBusy onKeep={() => {}} onConfirm={onConfirm} />,
+    );
+    fireEvent.keyDown(keep, { key: 'Enter' });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it('keeps on Enter after the keyboard chooses the refusal', async () => {
+    const user = userEvent.setup();
+    const onKeep = vi.fn();
+    const onConfirm = vi.fn();
+    render(<ConfirmRow question="Delete alpha?" confirmLabel="Yes, delete" onKeep={onKeep} onConfirm={onConfirm} />);
+
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Yes, delete' })).toHaveFocus();
+    await user.tab({ shift: true });
+    await user.keyboard('{Enter}');
+    expect(onKeep).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it('spells the cost of the destructive answer inside the question', () => {

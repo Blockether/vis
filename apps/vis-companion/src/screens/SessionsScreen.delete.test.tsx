@@ -67,6 +67,35 @@ describe('deleting one session confirms inside its own row', () => {
     expect(screen.getByText('Second')).toBeVisible();
   });
 
+  // #412: in the web app and desktop, Enter answers the open question with yes.
+  it('deletes on Enter once the question is open', async () => {
+    const user = userEvent.setup();
+    const view = renderSessionsScreen({ machines: machines() });
+    restore = view.restore;
+    await screen.findByText('First');
+    view.requests.length = 0;
+
+    fireEvent.click(
+      screen
+        .getByRole('group', { name: 'First actions' })
+        .querySelector("button[aria-label='Delete']")!,
+    );
+    const strip = await screen.findByRole('group', { name: 'Delete First?' });
+    // The safe answer keeps the focus; only the Enter key answers yes.
+    expect(within(strip).getByRole('button', { name: 'No, keep' })).toHaveFocus();
+    expect(view.requests.some((request) => request.method === 'DELETE')).toBe(false);
+    await user.keyboard('{Enter}');
+
+    await waitFor(() =>
+      expect(
+        view.requests.some(
+          (request) => request.method === 'DELETE' && request.path === '/v1/sessions/a1',
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(screen.queryByText('First')).toBeNull());
+  });
+
   it('no keeps the session: the row comes back and nothing is sent', async () => {
     const view = renderSessionsScreen({ machines: machines() });
     restore = view.restore;
