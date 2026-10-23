@@ -436,6 +436,12 @@ function recordWake(awayMs: number): void {
     away_ms: Math.max(0, awayMs),
     inflight_request_count: inflightGatewayRequests.size,
     inflight_requests: inflightRequestDetails(now),
+    // A white window after a return is either an empty tree or a page that does not paint.
+    // Without this count the log cannot tell the two apart.
+    root_children:
+      typeof document === 'undefined'
+        ? null
+        : (document.getElementById('root')?.childElementCount ?? null),
   });
 }
 

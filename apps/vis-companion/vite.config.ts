@@ -14,6 +14,14 @@ import {
 import { companionBuildInfo } from './scripts/build-info.ts';
 
 const buildInfo = companionBuildInfo();
+// The dev page imports only Vite's client here, never the app, so it runs when the app cannot.
+const DEV_BLANK_PAGE_RECOVERY = [
+  "import { createHotContext } from '/@vite/client';",
+  "const hot = createHotContext('/@vis/blank-page-recovery');",
+  "hot.on('vite:beforeUpdate', () => {",
+  "  if (document.getElementById('root')?.childElementCount === 0) location.reload();",
+  '});',
+].join('\n');
 // https://vite.dev/config/
 export default defineConfig(async ({ command, mode }) => {
   const devGateways = command === 'serve' ? await discoverDevGatewayConnections() : [];
@@ -49,6 +57,24 @@ export default defineConfig(async ({ command, mode }) => {
     // The preview page carries the same bearer tokens as the dev page: loopback only.
     preview: { host: '127.0.0.1', port: 5274 },
     plugins: [
+      {
+        // Every edit to a module without a hot boundary reloads the dev page. A reload
+        // that lands mid-edit (a syntax error, an import of an export that is not
+        // written yet) leaves `#root` empty, and the module graph never loaded, so the
+        // fixed file has nothing to hot-update. The next change starts the page again.
+        name: 'vis-dev-blank-page-recovery',
+        apply: 'serve',
+        transformIndexHtml() {
+          return [
+            {
+              tag: 'script',
+              attrs: { type: 'module' },
+              children: DEV_BLANK_PAGE_RECOVERY,
+              injectTo: 'head' as const,
+            },
+          ];
+        },
+      },
       {
         name: 'vis-dev-gateway-autoconnect',
         apply: 'serve',

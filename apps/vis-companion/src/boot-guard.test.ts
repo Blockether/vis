@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const guard = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
   .map((match) => match[1])
-  .find((code) => code.includes('vis-boot-failure'));
+  .find((code) => code.includes('vis-boot-recovery'));
 
 function boot() {
   const reload = vi.fn();
@@ -15,10 +15,15 @@ function boot() {
   return { reload, root: document.getElementById('root')! };
 }
 
-const surface = () => document.getElementById('vis-boot-failure');
+const surface = () => document.getElementById('vis-boot-recovery');
 
 async function settle() {
   await Promise.resolve();
+}
+
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: state });
+  document.dispatchEvent(new Event('visibilitychange'));
 }
 
 // Each case boots its own guard; drop the listeners of the earlier ones.
@@ -33,6 +38,7 @@ beforeEach(() => {
     });
   }
   vi.useFakeTimers();
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
   document.body.innerHTML = '<div id="root"></div>';
   sessionStorage.clear();
 });
@@ -48,74 +54,105 @@ afterEach(() => {
 describe('the blank-page guard in index.html', () => {
   it('runs after #root and before the module bundle', () => {
     expect(guard).toContain('MutationObserver');
-    const at = html.indexOf('vis-boot-failure');
+    const at = html.indexOf('vis-boot-recovery');
     expect(html.indexOf('<div id="root">')).toBeLessThan(at);
     expect(at).toBeLessThan(html.indexOf('type="module"'));
   });
 
   it('stays out of the way of an app that starts', async () => {
-    const { root } = boot();
+    const { reload, root } = boot();
     root.append(document.createElement('main'));
     await settle();
-    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(120_000);
     expect(surface()).toBeNull();
+    expect(reload).not.toHaveBeenCalled();
   });
 
-  it('replaces a tree that an uncaught error removed', async () => {
-    const { root } = boot();
-    root.append(document.createElement('main'));
-    await settle();
-    window.dispatchEvent(new ErrorEvent('error', { message: 'Uncaught TypeError: boom' }));
-    root.replaceChildren();
-    await settle();
-    expect(surface()?.textContent).toContain('Vis stopped rendering');
-    expect(surface()?.textContent).toContain('Uncaught TypeError: boom');
-  });
-
-  it('reports a module script that failed to load', () => {
-    boot();
+  it('starts the app again when a module script failed to load', () => {
+    const { reload } = boot();
     const script = document.createElement('script');
     script.src = 'http://127.0.0.1:5273/src/main.tsx';
     document.body.append(script);
     script.dispatchEvent(new Event('error'));
-    expect(surface()?.textContent).toContain('Vis could not start');
     expect(surface()?.textContent).toContain('/src/main.tsx');
+    vi.advanceTimersByTime(999);
+    expect(reload).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(reload).toHaveBeenCalledOnce();
   });
 
-  it('gives up waiting for a bundle that never mounts', () => {
-    boot();
+  it('starts the app again when a module does not link', () => {
+    const { reload } = boot();
+    window.dispatchEvent(
+      new ErrorEvent('error', { message: "SyntaxError: Importing binding name 'x' is not found." }),
+    );
+    expect(surface()?.textContent).toContain("binding name 'x'");
+    vi.advanceTimersByTime(1_000);
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it('starts the app again when it never mounts', () => {
+    const { reload } = boot();
     vi.advanceTimersByTime(19_000);
     expect(surface()).toBeNull();
     vi.advanceTimersByTime(1_000);
     expect(surface()?.textContent).toContain('did not start');
+    vi.advanceTimersByTime(1_000);
+    expect(reload).toHaveBeenCalledOnce();
   });
 
-  it('removes the surface when the app mounts after all', async () => {
-    const { root } = boot();
-    vi.advanceTimersByTime(20_000);
-    expect(surface()?.textContent).toContain('Vis could not start');
+  it('waits longer after each failed start, up to 30 seconds', () => {
+    sessionStorage.setItem('vis.bootRetries', '3');
+    const { reload } = boot();
+    window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }));
+    vi.advanceTimersByTime(7_999);
+    expect(reload).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(reload).toHaveBeenCalledOnce();
+    expect(sessionStorage.getItem('vis.bootRetries')).toBe('4');
+
+    sessionStorage.setItem('vis.bootRetries', '9');
+    document.body.innerHTML = '<div id="root"></div>';
+    const second = boot();
+    window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }));
+    vi.advanceTimersByTime(30_000);
+    expect(second.reload).toHaveBeenCalledOnce();
+  });
+
+  it('waits for a hidden page to be shown', () => {
+    const { reload } = boot();
+    setVisibility('hidden');
+    window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }));
+    vi.advanceTimersByTime(60_000);
+    expect(reload).not.toHaveBeenCalled();
+    setVisibility('visible');
+    vi.advanceTimersByTime(1_000);
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it('stands down and resets the delay when the app mounts after all', async () => {
+    sessionStorage.setItem('vis.bootRetries', '2');
+    const { reload, root } = boot();
+    window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }));
+    expect(surface()?.textContent).toContain('Starting Vis again');
     root.append(document.createElement('main'));
     await settle();
+    vi.advanceTimersByTime(60_000);
     expect(surface()).toBeNull();
-  });
-
-  it('reloads once when you come back to the broken page', () => {
-    const { reload } = boot();
-    window.dispatchEvent(new Event('focus'));
     expect(reload).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(20_000);
-    window.dispatchEvent(new Event('focus'));
-    document.dispatchEvent(new Event('visibilitychange'));
-    expect(reload).toHaveBeenCalledOnce();
-    vi.advanceTimersByTime(15_000);
-    window.dispatchEvent(new Event('pageshow'));
-    expect(reload).toHaveBeenCalledTimes(2);
+    expect(sessionStorage.getItem('vis.bootRetries')).toBeNull();
   });
 
-  it('reloads from its button', () => {
-    const { reload } = boot();
-    vi.advanceTimersByTime(20_000);
-    surface()?.querySelector('button')?.click();
+  it('starts the app again when the tree is lost after it mounted', async () => {
+    const { reload, root } = boot();
+    root.append(document.createElement('main'));
+    await settle();
+    window.dispatchEvent(new ErrorEvent('error', { message: 'Uncaught TypeError: boom' }));
+    expect(surface()).toBeNull();
+    root.replaceChildren();
+    await settle();
+    expect(surface()?.textContent).toContain('Uncaught TypeError: boom');
+    vi.advanceTimersByTime(1_000);
     expect(reload).toHaveBeenCalledOnce();
   });
 });

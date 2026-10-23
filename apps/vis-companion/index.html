@@ -36,72 +36,90 @@
     <div id="root"></div>
     <!--
       The guard against a blank page. React owns `#root`, and nothing else draws
-      there. If the module bundle never runs (a chunk that failed to load, a dev
-      reload that met a half-written file) or an uncaught error unmounts the tree,
-      the page stays an empty sheet with no message and no way back. This script
-      does not need the bundle. It shows a recovery surface beside `#root`, and it
-      reloads the page when you come back to it, at most once in each `RETRY_MS`.
+      there. If the module bundle never runs (a dev reload that met a half-written
+      file, a chunk that failed to load) or the tree is lost, the page stays an
+      empty sheet. This script does not need the bundle. A blank page has nothing
+      to lose, so it starts the app again by itself, with a growing delay, and
+      shows a quiet notice instead of white while it waits.
     -->
     <script>
       (function () {
         var BOOT_TIMEOUT_MS = 20000;
-        var RETRY_MS = 15000;
-        var RETRY_KEY = 'vis.bootRetryAt';
+        var RETRY_MAX_MS = 30000;
+        var RETRIES_KEY = 'vis.bootRetries';
         var root = document.getElementById('root');
         var mounted = false;
         var lastError = null;
         var surface = null;
+        var retryTimer = null;
         var visibleMs = 0;
 
-        function show(message) {
-          if (surface || root.childElementCount > 0) return;
-          surface = document.createElement('div');
-          surface.id = 'vis-boot-failure';
-          surface.setAttribute('role', 'alert');
-          surface.style.cssText =
-            'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;' +
-            'align-items:center;justify-content:center;gap:16px;padding:20px;text-align:center;' +
-            'background:Canvas;color:CanvasText;font:15px/1.4 -apple-system,system-ui,sans-serif';
-          var title = document.createElement('p');
-          title.style.cssText = 'margin:0;font-size:18px;font-weight:600';
-          title.textContent = mounted ? 'Vis stopped rendering' : 'Vis could not start';
-          var detail = document.createElement('p');
-          detail.style.cssText =
-            'margin:0;max-width:24rem;opacity:.7;font:12px/1.4 ui-monospace,monospace;overflow-wrap:anywhere';
-          detail.textContent = message;
-          var button = document.createElement('button');
-          button.type = 'button';
-          button.textContent = 'Reload Vis';
-          button.style.cssText =
-            'padding:8px 16px;border-radius:8px;border:1px solid currentColor;background:none;' +
-            'color:inherit;font:inherit;cursor:pointer';
-          button.onclick = function () {
-            location.reload();
-          };
-          surface.append(title, detail, button);
-          document.body.appendChild(surface);
+        function isBlank() {
+          return root.childElementCount === 0;
         }
 
-        // Coming back to a broken page is the moment to try again: the file is
-        // fixed or the network is back by then. The stamp stops a reload loop.
-        function retry() {
-          if (!surface || document.visibilityState !== 'visible') return;
+        function retries() {
           try {
-            if (Date.now() - Number(sessionStorage.getItem(RETRY_KEY) || 0) < RETRY_MS) return;
-            sessionStorage.setItem(RETRY_KEY, String(Date.now()));
+            return Number(sessionStorage.getItem(RETRIES_KEY)) || 0;
           } catch (e) {
-            return;
+            return 0;
+          }
+        }
+
+        // A hidden page waits: `visibilitychange` schedules the attempt again.
+        function restart() {
+          retryTimer = null;
+          if (!isBlank() || document.visibilityState !== 'visible') return;
+          try {
+            sessionStorage.setItem(RETRIES_KEY, String(retries() + 1));
+          } catch (e) {
+            /* Storage disabled: the delay stays at its first step. */
           }
           location.reload();
         }
 
+        function schedule() {
+          if (retryTimer !== null || !surface || !isBlank()) return;
+          retryTimer = setTimeout(restart, Math.min(RETRY_MAX_MS, 1000 * Math.pow(2, retries())));
+        }
+
+        function recover(message) {
+          if (!isBlank()) return;
+          if (!surface) {
+            surface = document.createElement('div');
+            surface.id = 'vis-boot-recovery';
+            surface.setAttribute('role', 'status');
+            surface.style.cssText =
+              'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;' +
+              'align-items:center;justify-content:center;gap:12px;padding:20px;text-align:center;' +
+              'background:Canvas;color:CanvasText;font:15px/1.4 -apple-system,system-ui,sans-serif';
+            var title = document.createElement('p');
+            title.style.cssText = 'margin:0;font-weight:600';
+            title.textContent = 'Starting Vis again…';
+            var detail = document.createElement('p');
+            detail.style.cssText =
+              'margin:0;max-width:24rem;opacity:.6;font:12px/1.4 ui-monospace,monospace;overflow-wrap:anywhere';
+            surface.append(title, detail);
+            document.body.appendChild(surface);
+          }
+          surface.lastChild.textContent = message;
+          schedule();
+        }
+
         new MutationObserver(function () {
-          if (root.childElementCount > 0) {
+          if (!isBlank()) {
             mounted = true;
+            clearTimeout(retryTimer);
+            retryTimer = null;
             if (surface) surface.remove();
             surface = null;
+            try {
+              sessionStorage.removeItem(RETRIES_KEY);
+            } catch (e) {
+              /* Nothing to reset. */
+            }
           } else if (mounted) {
-            show(lastError || 'An uncaught error removed the screen.');
+            recover(lastError || 'The screen was removed.');
           }
         }).observe(root, { childList: true });
 
@@ -112,10 +130,11 @@
           function (event) {
             var target = event.target;
             if (target && target.tagName === 'SCRIPT') {
-              if (!mounted) show('A script failed to load: ' + (target.src || 'inline'));
-            } else {
-              lastError = String(event.message || event.error || 'Unknown error');
+              if (!mounted) recover('A script failed to load: ' + (target.src || 'inline'));
+              return;
             }
+            lastError = String(event.message || event.error || 'Unknown error');
+            if (!mounted) recover(lastError);
           },
           true,
         );
@@ -124,13 +143,11 @@
           if (mounted) return clearInterval(timer);
           if (document.visibilityState === 'visible') visibleMs += 1000;
           if (visibleMs >= BOOT_TIMEOUT_MS) {
-            show(lastError || 'The app did not start in ' + BOOT_TIMEOUT_MS / 1000 + ' seconds.');
+            recover(lastError || 'The app did not start in ' + BOOT_TIMEOUT_MS / 1000 + ' seconds.');
           }
         }, 1000);
 
-        document.addEventListener('visibilitychange', retry);
-        window.addEventListener('pageshow', retry);
-        window.addEventListener('focus', retry);
+        document.addEventListener('visibilitychange', schedule);
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
