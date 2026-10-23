@@ -783,7 +783,7 @@ describe('what a run says about its own layout', () => {
     const detail = screen.getByText(/real SDK engine/).closest('span') as HTMLElement;
     expect(detail.className).toContain('[overflow-wrap:anywhere]');
     expect(detail.className).not.toContain('truncate');
-    expect(detail.className).toContain('text-ui');
+    expect(detail.className).toContain('text-meta');
     const label = screen.getByText('Verify release source').closest('span') as HTMLElement;
     expect(label.closest('ol')?.className).toContain('text-body');
   });

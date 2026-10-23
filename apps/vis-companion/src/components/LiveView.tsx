@@ -168,7 +168,7 @@ const HERO_VALUE = 12;
  * THE SIZE LADDER. A name is always larger than the caption under it, and a value
  * is never smaller than the label over it. A section label is `text-ui`, and what it
  * names is `text-body` or larger. A fact label is `text-meta` over a `text-body`
- * value. A step or a link is `text-body` over a `text-ui` detail. The headline is
+ * value. A step, a row or a link is `text-body` over a `text-meta` caption. The headline is
  * `text-subhead` over a `text-body` detail.
  */
 function NodeLabel({ children }: { children: string }) {
@@ -436,7 +436,7 @@ function StepsRows({ node }: { node: LiveStepsNode }) {
                 <span className="sr-only">, {TONE_WORD[step.tone]}</span>
               </span>
               {step.detail && (
-                <span className="mt-0.5 block text-ui text-dialog-hint [overflow-wrap:anywhere]">
+                <span className="mt-0.5 block text-meta text-dialog-hint [overflow-wrap:anywhere]">
                   <InlineMarkdown>{step.detail}</InlineMarkdown>
                 </span>
               )}
@@ -855,13 +855,13 @@ function RowFace({ node, row }: { node: LiveTableNode; row: LiveRow }) {
           <span className="sr-only sm:hidden">, {TONE_WORD[row.tone]}</span>
         </span>
         {value !== '' && (
-          <span className="shrink-0 tabular-nums text-ui text-dialog-hint sm:hidden">
+          <span className="shrink-0 tabular-nums text-meta text-dialog-hint sm:hidden">
             {value}
           </span>
         )}
       </span>
       {detail !== '' && (
-        <span className="mt-0.5 block text-ui text-dialog-hint [overflow-wrap:anywhere] sm:hidden">
+        <span className="mt-0.5 block text-meta text-dialog-hint [overflow-wrap:anywhere] sm:hidden">
           <InlineMarkdown>{detail}</InlineMarkdown>
         </span>
       )}
@@ -1074,7 +1074,7 @@ function TableRows({
                 {detailAt.map((index) => (
                   <td
                     key={node.columns[index]?.id ?? index}
-                    className="hidden px-(--live-view-inset) py-2 align-baseline text-ui text-dialog-hint [overflow-wrap:anywhere] sm:table-cell"
+                    className="hidden px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere] sm:table-cell"
                   >
                     <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
                   </td>
@@ -1129,7 +1129,7 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
                 <span className="block font-bold text-white [overflow-wrap:anywhere]">
                   <InlineMarkdown>{link.label}</InlineMarkdown>
                 </span>
-                <span className="mt-0.5 block text-ui text-dialog-hint [overflow-wrap:anywhere]">
+                <span className="mt-0.5 block text-meta text-dialog-hint [overflow-wrap:anywhere]">
                   {link.target}
                 </span>
               </>
@@ -1215,28 +1215,37 @@ function NodeCell({
   return (
     <div className="min-w-0 space-y-2">
       {isDisclosure ? (
+        // The name starts on the column of every other section name, and the chevron
+        // follows it: a chevron in front pushed `Output` 20px in from `Services`.
         <Disclosure
           isOpen={isOpen}
           tone="branch"
-          alignsWithMarks
+          inlineChevron
           density="comfortable"
           aria-label={label}
           aria-controls={isOpen ? contentId : undefined}
           onClick={() => presentation.toggle(node.id, !isOpen)}
+          tally={
+            node.type === 'log' ? (
+              <span className="font-normal text-ui text-dialog-hint">
+                {node.total_lines} lines
+              </span>
+            ) : undefined
+          }
         >
           <NodeLabel>{label}</NodeLabel>
-          {node.type === 'log' && (
-            <span className="ml-2 font-normal text-ui text-dialog-hint">
-              {node.total_lines} lines
-            </span>
-          )}
         </Disclosure>
       ) : (
         node.label && node.type !== 'button' && <NodeLabel>{node.label}</NodeLabel>
       )}
       {node.type === 'log' && !isOpen && <LogErrors node={node} label={label} />}
+      {/* A log's output starts at the column of the view, not under its name: an
+          indent there only took width from the lines. */}
       {(!isDisclosure || isOpen) && (
-        <div id={contentId} className={`min-w-0 ${isDisclosure ? 'pl-5' : ''}`}>
+        <div
+          id={contentId}
+          className={`min-w-0 ${isDisclosure && node.type !== 'log' ? 'pl-5' : ''}`}
+        >
           {node.type === 'group' && (
             <ViewLayout direction={node.direction}>
               {node.fields.map((child) => (
