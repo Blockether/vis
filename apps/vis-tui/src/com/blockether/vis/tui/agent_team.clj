@@ -1,11 +1,20 @@
 (ns com.blockether.vis.tui.agent-team
-  "Managed team inspection through the same gateway as the conversation."
+  "Managed team inspection through the same gateway as the conversation.
+
+   The cached team snapshot also feeds three surfaces: the team card under the turn that
+   started a team, the Questions inbox above the prompt and the breadcrumb of a child
+   session. None of them fetches during painting."
   (:require [clojure.string :as str]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.client :as vis]
-            [com.blockether.vis.tui.dialogs :as dlg])
-  (:import [java.net URLEncoder]
+            [com.blockether.vis.tui.dialogs :as dlg]
+            [com.blockether.vis.tui.interactions :as interactions]
+            [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.theme :as t])
+  (:import [com.googlecode.lanterna.graphics TextGraphics]
+           [com.googlecode.lanterna.input KeyStroke KeyType]
+           [java.net URLEncoder]
            [java.nio.charset StandardCharsets]))
 
 (defn- path
@@ -25,17 +34,35 @@
   [agent]
   (some #(when (= (get % "const") (get agent "role")) (get % "x-vis-mark")) (roles)))
 
+(defn waiting?
+  "Whether `agent` waits for a person: a form in its own session, or an open question, budget
+   request or file request to its parent."
+  [agent]
+  (boolean (or (get agent "pending_input")
+               (get agent "question")
+               (get agent "budget_request")
+               (get agent "files_request"))))
+
+(defn- role-rank
+  [agent]
+  (or (first (keep-indexed #(when (= (get %2 "const") (get agent "role")) %1) (roles)))
+      (count (roles))))
+
 (defn numbered
-  "`[n agent]` pairs. `n` is the start order from 1. Rows of one role stand together in contract
-   order, and a row without a role comes last."
+  "`[n agent]` pairs. `n` is the start order from 1 inside the agent's team (`team_id`), so it
+   never changes. Agents that wait for a person come first. Then rows of one role stand
+   together in contract order, and a row without a role comes last."
   [agents]
-  (let [rank (fn [[_ agent]]
-               (or (first (keep-indexed #(when (= (get %2 "const") (get agent "role")) %1) (roles)))
-                   (count (roles))))]
-    (sort-by rank
-             (map-indexed (fn [index agent]
-                            [(inc (long index)) agent])
-                          agents))))
+  (let [numbers (second (reduce (fn [[seen out] agent]
+                                  (let [team (get agent "team_id")
+                                        n (inc (long (get seen team 0)))]
+
+                                    [(assoc seen team n) (conj out n)]))
+                                [{} []]
+                                agents))]
+    (sort-by (fn [[_ agent]]
+               [(if (waiting? agent) 0 1) (role-rank agent)])
+             (map vector numbers agents))))
 
 (defn summary
   "Cached team snapshot; never performs network work during painting."
@@ -100,8 +127,8 @@
   "Short state words for one agent in the footer chip."
   [agent]
   (let [open (long (or (get agent "pending_input_count") 1))]
-    (if (get agent "pending_input")
-      (if (> open 1) (str "needs you (" open ")") "needs you")
+    (if (waiting? agent)
+      (if (and (get agent "pending_input") (> open 1)) (str "asks you (" open ")") "asks you")
       (case (get agent "status")
         "running"
         (str (get agent "iterations_used" 0) "/" (get agent "iteration_budget" "?"))
@@ -120,13 +147,20 @@
 
         "budget reached"))))
 
+(defn- active? [agent] (or (waiting? agent) (contains? #{"queued" "running"} (get agent "status"))))
+
 (defn footer-label
   "Team state for the footer chip from the cached snapshot. Nil while no agent works or waits
-   for a person, so a finished team leaves the footer. Never fetches during painting."
+   for a person, so a finished team leaves the footer. Only teams with such an agent show.
+   Never fetches during painting."
   [sid]
-  (let [agents (:agents (summary sid))]
-    (when (some #(or (get % "pending_input") (contains? #{"queued" "running"} (get % "status")))
-                agents)
+  (let [agents
+        (:agents (summary sid))
+
+        live-teams
+        (set (map #(get % "team_id") (filter active? agents)))]
+
+    (when (seq (filter active? agents))
       (str "Agents: "
            (str/join " · "
                      (map (fn [[n agent]]
@@ -134,7 +168,625 @@
                                          (str " "))
                                  "A" n
                                  " " (agent-state agent)))
-                          (numbered agents)))))))
+                          (filter #(contains? live-teams (get (second %) "team_id"))
+                                  (numbered agents))))))))
+
+;; ── Team card ───────────────────────────────────────────────────────────────
+
+(defn- bar
+  "An iteration bar of `width` cells: ■ for used iterations, ─ for the rest."
+  [used budget width]
+  (let [width
+        (long width)
+
+        used
+        (long (or used 0))
+
+        budget
+        (long (or budget 0))
+
+        done
+        (if (pos? budget) (min width (long (Math/round (/ (* 1.0 used width) budget)))) 0)]
+
+    (str (apply str (repeat done \■)) (apply str (repeat (- width done) \─)))))
+
+(defn- card-state
+  [agent]
+  (cond (waiting? agent) "asks you"
+        :else (case (get agent "status")
+                "running"
+                "running"
+
+                "queued"
+                "queued"
+
+                "completed"
+                "done"
+
+                "failed"
+                "failed"
+
+                "cancelled"
+                "stopped"
+
+                "budget reached")))
+
+(defn card
+  "The team card data of team `team-id` from `agents`, or nil when the team has no agent.
+   Plain data, so an unchanged team compares equal across polls."
+  [team-id agents]
+  (let [rows (filter #(= team-id (get (second %) "team_id")) (numbered agents))]
+    (when (seq rows)
+      {:team-id team-id
+       :rows (mapv (fn [[n agent]]
+                     {:n n
+                      :mark (role-mark agent)
+                      :state (card-state agent)
+                      :waiting? (waiting? agent)
+                      :status (get agent "status")
+                      :used (get agent "iterations_used")
+                      :budget (get agent "iteration_budget")
+                      :task (str/replace (str (get agent "task")) #"\s+" " ")
+                      :activity (get agent "activity")
+                      :session-id (get agent "session_id")})
+                   rows)})))
+
+(defn card-title
+  "The first row of a team card, such as `Team · 3 agents · 1 running · 1 asks you`."
+  [{:keys [rows]}]
+  (let [counted
+        (fn [pred]
+          (count (filter pred rows)))
+
+        running
+        (counted #(and (not (:waiting? %)) (= "running" (:status %))))
+
+        asking
+        (counted :waiting?)
+
+        done
+        (counted #(= "completed" (:status %)))]
+
+    (str "Team · "
+         (count rows)
+         (if (= 1 (count rows)) " agent" " agents")
+         (when (pos? running) (str " · " running " running"))
+         (when (pos? asking) (str " · " asking " asks you"))
+         (when (pos? done) (str " · " done " done")))))
+
+(defn- card-progress
+  [{:keys [status used budget]}]
+  (when (contains? #{"running" "budget_limited"} status)
+    (str (bar used budget 10) " " (or used 0) "/" (or budget "?"))))
+
+(defn card-row-text
+  "Plain text of one agent row of the card, as copy shows it."
+  [{:keys [n mark state task] :as row}]
+  (str (some-> mark
+               (str " "))
+       "A"
+       n
+       "  "
+       state
+       (some->> (card-progress row)
+                (str "  "))
+       "  "
+       task))
+
+(defn card-detail-text
+  "The dim second row of a waiting or running agent, or nil."
+  [{:keys [waiting? status activity]}]
+  (cond waiting? "↳ waiting for you · see Questions below"
+        (and (= "running" status) (seq activity)) (str "↳ " activity)))
+
+(defn- paint-card-line!
+  [^TextGraphics g left row width viewport-top {:keys [team-line]}]
+  (let [width
+        (long width)
+
+        bg
+        t/code-block-bg
+
+        put!
+        (fn [col fg text bold?]
+          (let [room (- (+ (long left) width) (long col))]
+            (when (pos? room)
+              (let [text (p/ellipsize (str text) room)]
+                (p/set-colors! g fg bg)
+                (if bold?
+                  (p/styled g [p/BOLD] (p/put-str! g col row text))
+                  (p/put-str! g col row text))
+                (+ (long col) (long (p/display-width text)))))))]
+
+    (case (:type team-line)
+      :title
+      (put! left t/code-block-fg (:text team-line) true)
+
+      :detail
+      (put! (+ (long left) 2) t/dialog-hint (:text team-line) false)
+
+      :agent
+      (let [{:keys [n mark state waiting? status task session-id] :as agent-row}
+            (:row team-line)
+
+            state-fg
+            (cond waiting? t/warning-fg
+                  (= "running" status) t/warning-fg
+                  (= "failed" status) t/status-bad
+                  (= "completed" status) t/status-ok
+                  :else t/dialog-hint)
+
+            col
+            (or (some-> (when mark (put! left t/header-active-tab-accent mark false))
+                        inc)
+                left)
+
+            col
+            (some-> (put! col t/code-block-fg (str "A" n) true)
+                    (+ 2))
+
+            col
+            (some-> col
+                    (put! state-fg state (boolean waiting?))
+                    (+ 2))
+
+            col
+            (if-let [progress (when col (card-progress agent-row))]
+              (some-> (put! col t/status-ok progress false)
+                      (+ 2))
+              col)]
+
+        (when col (put! col t/code-block-fg task false))
+        (when session-id
+          (.register interactions/hit-map
+                     {:bounds {:row (+ (long viewport-top) (long row)) :col left :width width}
+                      :kind :switch-session
+                      :text session-id})))
+
+      nil)))
+
+(defn card-entries
+  "Transcript rows of a team card on the Activity band: `{:line :meta}` maps."
+  [team-card]
+  (let [marker
+        p/MARKER_ACTIVITY
+
+        entry
+        (fn [text team-line]
+          {:line (str marker text)
+           :meta {:kind :activity-live-entry :live-paint paint-card-line! :team-line team-line}})]
+
+    (into [{:line marker :meta nil}
+           (entry (card-title team-card) {:type :title :text (card-title team-card)})]
+          (concat (mapcat (fn [row]
+                            (cons (entry (card-row-text row) {:type :agent :row row})
+                                  (when-let [detail (card-detail-text row)]
+                                    [(entry (str "  " detail) {:type :detail :text detail})])))
+                          (:rows team-card))
+                  [{:line marker :meta nil}]))))
+
+(defn with-card-lines
+  "Append the team card rows of `projected` (an assistant message with `:agent-team-card`) to its
+   painted lines. A windowed slice keeps its lines."
+  [projected]
+  (if-let [team-card (and (not (:lines-window projected))
+                          (:prewrapped-lines projected)
+                          (:agent-team-card projected))]
+    (let [lines (vec (:prewrapped-lines projected))
+          line-meta (or (:line-meta projected) (vec (repeat (count lines) nil)))
+          entries (card-entries team-card)]
+
+      (assoc projected
+        :prewrapped-lines (into (conj lines "") (map :line) entries)
+        :line-meta (into (conj (vec line-meta) nil) (map :meta) entries)))
+    projected))
+
+(defonce ^:private ^java.util.IdentityHashMap decorated-memo (java.util.IdentityHashMap. 64))
+
+(defn- decorate
+  [message team-card]
+  (locking decorated-memo
+    (let [[cached-card decorated] (.get ^java.util.IdentityHashMap decorated-memo message)]
+      (if (and decorated (= cached-card team-card))
+        decorated
+        (let [decorated (assoc message :agent-team-card team-card)]
+          (when (> (.size ^java.util.IdentityHashMap decorated-memo) 512)
+            (.clear ^java.util.IdentityHashMap decorated-memo))
+          (.put ^java.util.IdentityHashMap decorated-memo message [team-card decorated])
+          decorated)))))
+
+(defn decorate-messages
+  "Give the last assistant message of each turn that started a team its `:agent-team-card`
+   from the cached snapshot of `sid`. Returns `messages` unchanged when no team is known.
+   An unchanged team keeps the decorated message identity, so height caches still hit."
+  [messages sid]
+  (let [agents (:agents (summary sid))]
+    (if (or (empty? agents) (empty? messages))
+      messages
+      (let [teams (set (keep #(get % "team_id") agents))
+            last-index (reduce (fn [acc [i m]]
+                                 (let [turn (:session-turn-id m)]
+                                   (if (and (= :assistant (:role m)) (contains? teams turn))
+                                     (assoc acc turn i)
+                                     acc)))
+                               {}
+                               (map-indexed vector messages))]
+
+        (if (empty? last-index)
+          messages
+          (reduce-kv (fn [out team-id i]
+                       (if-let [team-card (card team-id agents)]
+                         (assoc out i (decorate (nth out i) team-card))
+                         out))
+                     (vec messages)
+                     last-index))))))
+
+;; ── Questions inbox ─────────────────────────────────────────────────────────
+
+(defonce ^:private inbox (atom {}))
+
+(defn- request-kind
+  [agent]
+  (cond (get agent "question") :question
+        (get agent "budget_request") :budget
+        (get agent "files_request") :files
+        (get agent "pending_input") :input))
+
+(defn requests
+  "Open requests of the agents of `sid` to a person, oldest first by Council entry. A request
+   that the person moved to Later stands at the end."
+  [sid]
+  (let [later
+        (get-in @inbox [sid :later] [])
+
+        items
+        (->> (numbered (:agents (summary sid)))
+             (keep (fn [[n agent]]
+                     (when-let [kind (request-kind agent)]
+                       (let [entry-id (get agent "question_entry_id")]
+                         {:key [(get agent "session_id") kind entry-id]
+                          :n n
+                          :kind kind
+                          :entry-id entry-id
+                          :agent agent}))))
+             (sort-by (fn [{:keys [entry-id n]}]
+                        [(if entry-id 0 1) (or entry-id 0) n])))
+
+        rank
+        (zipmap later (range))]
+
+    (vec (sort-by #(get rank (:key %) -1) items))))
+
+(defn- inbox-state [sid] (get @inbox sid))
+
+(defn- current-request
+  [sid items]
+  (when (seq items) (nth items (mod (long (or (:index (inbox-state sid)) 0)) (count items)))))
+
+(defn- request-text
+  [{:keys [kind agent]}]
+  (case kind
+    :question
+    (str (get agent "question"))
+
+    :budget
+    (let [{:strs [iterations reason]} (get agent "budget_request")]
+      (str "Asks for " iterations " more iterations" (when (seq reason) (str ": " reason))))
+
+    :files
+    (let [{:strs [files reason]}
+          (get agent "files_request")
+
+          paths
+          (mapcat #(get files %) ["write" "read_only" "deny"])]
+
+      (str "Asks for file access: " (str/join ", " paths) (when (seq reason) (str ". " reason))))
+
+    :input
+    (let [open (long (or (get agent "pending_input_count") 1))]
+      (str "Waits for your input in its own session" (when (> open 1) (str " (" open " forms)"))))))
+
+(defn request-actions
+  "The numbered actions of a request: `[[key label action] ...]`."
+  [{:keys [kind agent]}]
+  (case kind
+    :question
+    [["1" "Answer" :answer]]
+
+    :budget
+    [["1" (str "Grant +" (get-in agent ["budget_request" "iterations"])) :extend]
+     ["2" "Deny" :deny]]
+
+    :files
+    [["1" "Grant" :grant] ["2" "Deny" :deny]]
+
+    :input
+    [["1" "Open agent session" :open]]))
+
+(defn- hint-text
+  [sid item]
+  (let [{:keys [focused? answering]} (inbox-state sid)]
+    (cond (= answering (:key item)) "Type the answer below · Enter send · Esc cancel"
+          focused? (str/join " · "
+                             (concat (map (fn [[k label]]
+                                            (str k " " label))
+                                          (request-actions item))
+                                     (when (#{:budget :files} (:kind item)) ["C-d deny"])
+                                     ["Tab next" "Esc later"]))
+          :else "C-x Q answer")))
+
+(defn- wrap-words
+  "Up to `max-lines` lines of `text` at `width` columns; the last one ends with … when cut."
+  [text width max-lines]
+  (let [width
+        (max 1 (long width))
+
+        words
+        (str/split (str/trim (str/replace (str text) #"\s+" " ")) #" ")
+
+        lines
+        (reduce (fn [lines word]
+                  (let [line
+                        (peek lines)
+
+                        joined
+                        (if (str/blank? line) word (str line " " word))]
+
+                    (if (or (str/blank? line) (<= (long (p/display-width joined)) width))
+                      (conj (pop lines) joined)
+                      (conj lines word))))
+                [""]
+                words)]
+
+    (if (> (count lines) (long max-lines))
+      (let [kept (vec (take max-lines lines))]
+        (conj (pop kept) (p/ellipsize (str (peek kept) " " (nth lines max-lines)) width)))
+      (mapv #(p/ellipsize % width) lines))))
+
+(defn- body-width [cols] (max 1 (- (long cols) 4)))
+
+(defn inbox-height
+  "Rows that the Questions inbox of `sid` takes above the prompt, 0 without open requests."
+  ^long [sid cols]
+  (let [items (requests sid)]
+    (if-let [item (current-request sid items)]
+      (+ 3 1 (count (wrap-words (request-text item) (body-width cols) 2)))
+      0)))
+
+(defn inbox-view
+  "Plain rows of the Questions inbox of `sid`: `{:title :head :text [lines] :hint}`, or nil."
+  [sid cols]
+  (let [items (requests sid)]
+    (when-let [item (current-request sid items)]
+      (let [index (inc (long (.indexOf ^java.util.List items item)))
+            agent (:agent item)
+            unseen? (not (contains? (:seen (inbox-state sid) #{}) (:key item)))]
+
+        {:title (str " Questions · " index " of " (count items) " ")
+         :head (str (some-> (role-mark agent)
+                            (str " "))
+                    "A"
+                    (:n item)
+                    (when-let [role (get agent "role")]
+                      (str " " role))
+                    (when unseen? " · NEW")
+                    " · "
+                    (str/replace (str (get agent "task")) #"\s+" " "))
+         :text (wrap-words (request-text item) (body-width cols) 2)
+         :hint (hint-text sid item)
+         :focused? (boolean (:focused? (inbox-state sid)))}))))
+
+(defn draw-inbox!
+  "Paint the Questions inbox of `sid` at `top` across `cols` columns."
+  [^TextGraphics g sid top cols]
+  (when-let [{:keys [title head text hint focused?]} (inbox-view sid cols)]
+    (let [width (max 1 (long cols))
+          height (+ 3 1 (count text))
+          inner (body-width cols)]
+
+      (p/set-colors! g t/dialog-border t/dialog-bg)
+      (p/fill-rect! g 0 top width height)
+      (when (>= width 4)
+        (p/draw-box! g 0 top width height)
+        (p/set-colors! g (if focused? t/header-active-tab-accent t/dialog-border) t/dialog-bg)
+        (p/styled g [p/BOLD] (p/put-str! g 2 top (p/truncate-cols title (max 0 (- width 4))))))
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/styled g [p/BOLD] (p/put-str! g 2 (inc (long top)) (p/ellipsize head inner)))
+      (doseq [[i line] (map-indexed vector text)]
+        (p/put-str! g 2 (+ (long top) 2 (long i)) line))
+      (p/set-colors! g (if focused? t/header-active-tab-accent t/dialog-hint) t/dialog-bg)
+      (p/put-str! g 2 (+ (long top) 2 (count text)) (p/ellipsize hint inner)))))
+
+(defn focus-inbox!
+  "Give the Questions inbox of `sid` the keyboard. Returns false when nothing is open."
+  [sid]
+  (let [items (requests sid)]
+    (if (seq items)
+      (do (swap! inbox update
+            sid
+            (fn [s]
+              (-> s
+                  (assoc :focused? true
+                         :answering nil)
+                  (update :seen (fnil conj #{}) (:key (current-request sid items))))))
+          true)
+      false)))
+
+(defn- character
+  [^KeyStroke key]
+  (when (and (instance? KeyStroke key)
+             (= KeyType/Character (.getKeyType key))
+             (not (.isAltDown key)))
+    (.getCharacter key)))
+
+(defn- key-type [key] (when (instance? KeyStroke key) (.getKeyType ^KeyStroke key)))
+
+(defn inbox-owns-key?
+  "Whether the Questions inbox of `sid` takes `key`. A focused inbox takes its action keys,
+   Tab, C-d and Esc. While the person types an answer, it takes only Enter and Esc."
+  [sid key]
+  (let [{:keys [focused? answering]} (inbox-state sid)]
+    (boolean (and (or focused? answering)
+                  (seq (requests sid))
+                  (if answering
+                    (contains? #{KeyType/Enter KeyType/Escape} (key-type key))
+                    (or (contains? #{KeyType/Tab KeyType/Escape} (key-type key))
+                        (let [ch (character key)]
+                          (and ch
+                               (or (and (.isCtrlDown ^KeyStroke key) (= \d ch))
+                                   (and (not (.isCtrlDown ^KeyStroke key))
+                                        (contains? #{\1 \2 \3} ch)))))))))))
+
+(defn- control!
+  "POST one team control for `item` off the input thread, then refresh the team."
+  [sid suffix body failure changed! after-success]
+  (vis/worker-future "tui-agent-inbox"
+                     (fn []
+                       (try (if (= 200
+                                   (:status (vis/request! :post (path sid suffix) {:body body})))
+                              (after-success)
+                              (vis/notify! failure :level :error))
+                            (catch Exception _ (vis/notify! failure :level :error)))
+                       (fetch! sid)
+                       (changed!))))
+
+(defn- run-action!
+  [sid item action {:keys [changed! open-session!]}]
+  (let [id
+        (get-in item [:agent "session_id"])
+
+        after
+        (fn []
+          (swap! inbox update sid assoc :focused? false :answering nil))]
+
+    (case action
+      :answer
+      (swap! inbox update sid assoc :focused? false :answering (:key item))
+
+      :extend
+      (control! sid
+                "/extend"
+                {:session_id id :iterations (get-in item [:agent "budget_request" "iterations"])}
+                "Could not grant iterations; refresh the team"
+                changed!
+                after)
+
+      :grant
+      (control! sid
+                "/grant"
+                {:session_id id :files (get-in item [:agent "files_request" "files"])}
+                "Could not grant file access; refresh the team"
+                changed!
+                after)
+
+      :deny
+      (control! sid
+                "/deny"
+                {:session_id id :reason "A person denied the request."}
+                "Could not deny the request; refresh the team"
+                changed!
+                after)
+
+      :open
+      (do (after) (open-session! id))
+
+      nil)))
+
+(defn inbox-key!
+  "Act on `key` for the Questions inbox of `sid`. Call only when `inbox-owns-key?` is true.
+   `opts`: `:changed!` repaints, `:open-session!` opens a session id, `:input-text` returns the
+   prompt text and `:reset-input!` clears it."
+  [sid key {:keys [changed! input-text reset-input!] :as opts}]
+  (let [items
+        (requests sid)
+
+        item
+        (current-request sid items)
+
+        {:keys [answering]}
+        (inbox-state sid)
+
+        kind
+        (key-type key)
+
+        ch
+        (character key)
+
+        action-for
+        (fn [n]
+          (some (fn [[k _ action]]
+                  (when (= k (str n)) action))
+                (request-actions item)))]
+
+    (cond answering (if (= KeyType/Escape kind)
+                      (swap! inbox update sid assoc :answering nil)
+                      (let [target
+                            (some #(when (= answering (:key %)) %) items)
+
+                            text
+                            (str/trim (str (input-text)))]
+
+                        (cond (nil? target) (swap! inbox update sid assoc :answering nil)
+                              (str/blank? text) (vis/notify! "Type the answer first" :level :warn)
+                              :else (do (reset-input!)
+                                        (control!
+                                          sid
+                                          "/answer"
+                                          {:session_id (get-in target [:agent "session_id"])
+                                           :text text}
+                                          "Could not send the answer; refresh the team"
+                                          changed!
+                                          #(swap! inbox update sid assoc :answering nil))))))
+          (= KeyType/Tab kind) (let [next-index
+                                     (inc (long (or (:index (inbox-state sid)) 0)))
+
+                                     next-item
+                                     (nth items (mod next-index (count items)))]
+
+                                 (swap! inbox update
+                                   sid
+                                   #(-> %
+                                        (assoc :index next-index)
+                                        (update :seen (fnil conj #{}) (:key next-item)))))
+          (= KeyType/Escape kind)
+          (swap! inbox update
+            sid
+            (fn [s]
+              (-> s
+                  (update :later #(conj (vec (remove #{(:key item)} %)) (:key item)))
+                  (assoc :focused? false))))
+          (and ch (.isCtrlDown ^KeyStroke key)) (when (#{:budget :files} (:kind item))
+                                                  (run-action! sid item :deny opts))
+          ch (when-let [action (action-for ch)]
+               (run-action! sid item action opts)))
+    (changed!)
+    true))
+
+;; ── Breadcrumb ──────────────────────────────────────────────────────────────
+
+(defn breadcrumb
+  "Header path of child session `sid` from its cached team, such as `← Leader · ⊙ A2 · task`:
+   `{:text :parent-id}`, or nil when the TUI does not know the parent."
+  [sid]
+  (let [pairs
+        (numbered (:agents (summary sid)))
+
+        number-of
+        (into {}
+              (map (fn [[n agent]]
+                     [(get agent "session_id") n]))
+              pairs)]
+
+    (when-let [[n agent] (some #(when (= (str sid) (get (second %) "session_id")) %) pairs)]
+      (when-let [parent (get agent "parent_id")]
+        {:parent-id parent
+         :text (str "← " (if-let [k (and (not= parent (get agent "leader_id")) (number-of parent))]
+                           (str "A" k)
+                           "Leader")
+                    " · " (some-> (role-mark agent)
+                                  (str " "))
+                    "A" n
+                    " · " (str/replace (str (get agent "task")) #"\s+" " "))}))))
 
 (defn start-refresh!
   "One screen-owned worker refreshes only the active session, at most every 5s.

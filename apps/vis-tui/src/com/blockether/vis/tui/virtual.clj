@@ -52,6 +52,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.render :as render]
+            [com.blockether.vis.tui.agent-team :as agent-team]
             [com.blockether.vis.tui.markdown-layout :as layout]
             [com.blockether.vis.tui.presentation :as ast])
   (:import [java.util IdentityHashMap LinkedHashMap]
@@ -949,11 +950,13 @@
   (render/with-cache projection-cache
                      projection-cache-gen
                      (height-key message bubble-w settings detail-expansions session-id)
-                     (project-message message
-                                      bubble-w
-                                      settings
-                                      {:session-id session-id
-                                       :detail-expansions detail-expansions})))
+                     ;; The turn that started a team ends with its team card.
+                     (agent-team/with-card-lines (project-message message
+                                                                  bubble-w
+                                                                  settings
+                                                                  {:session-id session-id
+                                                                   :detail-expansions
+                                                                   detail-expansions}))))
 
 ;;; ── Layout plan ────────────────────────────────────────────────────────────
 ;;
@@ -1173,6 +1176,10 @@
         messages
         (squash-cross-message-errors messages)
 
+        ;; The turn that started a team carries its team card from the cached snapshot.
+        messages
+        (agent-team/decorate-messages messages session-id)
+
         n
         (long (count messages))
 
@@ -1314,10 +1321,11 @@
                                                            ;; until the turn settled.
                                                            :runs (:runs m)
                                                            :detail-expansions detail-expansions))]
-                    (assoc m
-                      :text text
-                      :prewrapped-lines lines
-                      :line-meta line-meta))
+                    ;; The team card of this turn refreshes under the live progress too.
+                    (agent-team/with-card-lines (assoc m
+                                                  :text text
+                                                  :prewrapped-lines lines
+                                                  :line-meta line-meta)))
                   ;; The bottom and scrollback must use the same complete projection.
                   ;; A tail slice has no full-height metadata and would poison the
                   ;; sticky height cache with only the visible tail's height (#244).

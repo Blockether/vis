@@ -299,6 +299,13 @@
      ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
      [(keymap/label-for :show-sessions) "Switch session — the session-list picker"]
      [(keymap/label-for :session-metrics) "Session metrics — context health, totals and cache"]]}
+   {:title "Agent questions"
+    :rows [[(keymap/label-for :agent-questions)
+            "Focus the Questions inbox above the prompt while a subagent asks you"]
+           ["1 · 2" "Pick the numbered action: Answer, Grant, Deny or Open agent session"]
+           ["Enter" "Send the typed answer to the subagent"] ["Tab" "Show the next question"]
+           ["C-d" "Deny a budget or file request"] ["Esc" "Later: move the question to the end"]
+           ["Click a team card row" "Open the session of that subagent"]]}
    {:title "Project sidebar"
     :rows [[(keymap/label-for :switch-project) "Show or hide the project sidebar"]
            [keymap/sidebar-help-hint "List the sidebar keys while the sidebar has focus"]

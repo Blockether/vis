@@ -268,11 +268,13 @@
                         (map (comp first second)))
                   (re-seq #"(?m)^\|([^|\n]*)\|" (or page "")))
 
-            ;; Improve is experimental, and the published manual leaves experimental
-            ;; features out (docs core-test, experimental-feature-docs-test).
+            ;; Improve and subagents are experimental, and the published manual leaves
+            ;; experimental features out (docs core-test, experimental-feature-docs-test).
             published
             (conj (into #{}
-                        (comp (remove #(= :improve (:show-when %))) (map :key))
+                        (comp (remove #(or (= :improve (:show-when %))
+                                           (= :agent-questions (:action %))))
+                              (map :key))
                         keymap/prefix-commands)
                   keymap/prefix-palette-key)]
 

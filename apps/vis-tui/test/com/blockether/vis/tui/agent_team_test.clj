@@ -359,7 +359,7 @@
                [[{"status" "completed"}
                  {"status" "running" "iterations_used" 3 "iteration_budget" 20}
                  {"status" "running" "pending_input" true "pending_input_count" 2}
-                 {"status" "queued"}] "Agents: A1 done · A2 3/20 · A3 needs you (2) · A4 queued"]
+                 {"status" "queued"}] "Agents: A3 asks you (2) · A1 done · A2 3/20 · A4 queued"]
                [[{"status" "running" "role" "verify" "iterations_used" 1 "iteration_budget" 9}
                  {"status" "queued"}
                  {"status" "running" "role" "research" "iterations_used" 2 "iteration_budget" 9}
@@ -396,3 +396,151 @@
                             (expect (= "new-tab"
                                        (.poll changed 2 java.util.concurrent.TimeUnit/SECONDS)))
                             (finally (stop))))))))
+
+(def ^:private waiting-team
+  [{"session_id" "c1"
+    "parent_id" "leader"
+    "leader_id" "leader"
+    "team_id" "turn-1"
+    "task" "Read docs"
+    "status" "running"
+    "role" "research"
+    "iterations_used" 4
+    "iteration_budget" 10
+    "activity" "Patched ~/src/a.clj"}
+   {"session_id" "c2"
+    "parent_id" "leader"
+    "leader_id" "leader"
+    "team_id" "turn-1"
+    "task" "Fix parser"
+    "status" "running"
+    "role" "implement"
+    "iterations_used" 2
+    "iteration_budget" 10
+    "question" "Keep the old API?"
+    "question_entry_id" 30}
+   {"session_id" "c3"
+    "parent_id" "leader"
+    "leader_id" "leader"
+    "team_id" "turn-1"
+    "task" "Run tests"
+    "status" "running"
+    "role" "verify"
+    "iterations_used" 10
+    "iteration_budget" 10
+    "budget_request" {"iterations" 20 "reason" "More tests"}
+    "question_entry_id" 12}
+   {"session_id" "c4"
+    "parent_id" "leader"
+    "leader_id" "leader"
+    "team_id" "turn-2"
+    "task" "Later team"
+    "status" "completed"
+    "role" "audit"}])
+
+(defn- key-of
+  ([ch] (KeyStroke. (char ch) false false))
+  ([ch ctrl?] (KeyStroke. (char ch) (boolean ctrl?) false)))
+
+(defdescribe waiting-agents-first-test
+             (it "puts waiting agents first, keeps numbers per team and says asks you in the footer"
+                 (with-redefs [team/summary (constantly {:agents waiting-team})]
+                   (expect (= [[2 "c2"] [3 "c3"] [1 "c1"] [1 "c4"]]
+                              (mapv (fn [[n agent]]
+                                      [n (get agent "session_id")])
+                                    (team/numbered waiting-team))))
+                   (expect (= "Agents: ⚙ A2 asks you · ▣ A3 asks you · ⊙ A1 4/10"
+                              (team/footer-label "leader"))))))
+
+(defdescribe
+  team-card-test
+  (it "draws one row per agent of the team with state, bar and activity"
+      (let [team-card
+            (team/card "turn-1" waiting-team)
+
+            rows
+            (:rows team-card)]
+
+        (expect (= "Team · 3 agents · 1 running · 2 asks you" (team/card-title team-card)))
+        (expect (= ["⚙ A2  asks you  ■■──────── 2/10  Fix parser"
+                    "▣ A3  asks you  ■■■■■■■■■■ 10/10  Run tests"
+                    "⊙ A1  running  ■■■■────── 4/10  Read docs"]
+                   (mapv team/card-row-text rows)))
+        (expect (= "↳ Patched ~/src/a.clj" (team/card-detail-text (nth rows 2))))
+        (expect (= "↳ waiting for you · see Questions below" (team/card-detail-text (first rows))))
+        (expect (nil? (team/card "turn-9" waiting-team)))))
+  (it "decorates only the last assistant message of the team turn"
+      (with-redefs [team/summary (constantly {:agents waiting-team})]
+        (let [messages [{:role :user :session-turn-id "turn-1" :text "go"}
+                        {:role :assistant :session-turn-id "turn-1" :text "ok"}
+                        {:role :assistant :session-turn-id "turn-3" :text "other"}]
+              decorated (team/decorate-messages messages "leader")]
+
+          (expect (= "turn-1" (get-in decorated [1 :agent-team-card :team-id])))
+          (expect (nil? (:agent-team-card (nth decorated 0))))
+          (expect (nil? (:agent-team-card (nth decorated 2))))
+          (expect (identical? (nth decorated 1) (nth (team/decorate-messages messages "leader") 1)))
+          (let [projected (team/with-card-lines (assoc (nth decorated 1)
+                                                  :prewrapped-lines ["ok"]
+                                                  :line-meta [nil]))]
+            (expect (= (count (:prewrapped-lines projected)) (count (:line-meta projected))))
+            (expect (some #(str/includes? % "Team · 3 agents") (:prewrapped-lines projected))))))))
+
+(defdescribe
+  questions-inbox-test
+  (it
+    "orders requests oldest first and answers with the actions of each kind"
+    (let [posts (atom [])]
+      (with-redefs [team/summary (constantly {:agents waiting-team})
+                    vis/worker-future (fn [_ f]
+                                        (f))
+                    team/fetch! (fn [_]
+                                  nil)
+                    vis/request! (fn [method path opts]
+                                   (swap! posts conj [method path (:body opts)])
+                                   {:status 200 :body "[]"})]
+
+        (let [sid (str "inbox-" (random-uuid))
+              changed (atom 0)
+              opts {:changed! #(swap! changed inc)
+                    :open-session! identity
+                    :input-text (constantly " Yes, keep it ")
+                    :reset-input! (constantly nil)}]
+
+          (expect (= [:budget :question] (mapv :kind (team/requests sid))))
+          (expect (pos? (team/inbox-height sid 80)))
+          (expect (not (team/inbox-owns-key? sid (key-of \1))))
+          (expect (= " Questions · 1 of 2 " (:title (team/inbox-view sid 80))))
+          (expect (str/includes? (:head (team/inbox-view sid 80)) "NEW"))
+          (expect (team/focus-inbox! sid))
+          (expect (not (str/includes? (:head (team/inbox-view sid 80)) "NEW")))
+          (expect (= "1 Grant +20 · 2 Deny · C-d deny · Tab next · Esc later"
+                     (:hint (team/inbox-view sid 80))))
+          (expect (team/inbox-owns-key? sid (key-of \1)))
+          (expect (not (team/inbox-owns-key? sid (key-of \a))))
+          (team/inbox-key! sid (key-of \1) opts)
+          (expect (= [[:post "/v1/sessions/" "/agents/extend" {:session_id "c3" :iterations 20}]]
+                     (mapv (fn [[m p b]]
+                             [m (subs p 0 13) (subs p (str/last-index-of p "/agents")) b])
+                           @posts)))
+          (team/focus-inbox! sid)
+          (team/inbox-key! sid (KeyStroke. KeyType/Tab) opts)
+          (expect (= "Fix parser" (get-in (nth (team/requests sid) 1) [:agent "task"])))
+          (team/inbox-key! sid (key-of \1) opts)
+          (expect (team/inbox-owns-key? sid (KeyStroke. KeyType/Enter)))
+          (expect (not (team/inbox-owns-key? sid (key-of \x))))
+          (team/inbox-key! sid (KeyStroke. KeyType/Enter) opts)
+          (expect (= {:session_id "c2" :text "Yes, keep it"} (last (map last @posts))))
+          (expect (str/ends-with? (second (last @posts)) "/agents/answer"))
+          (expect (not (team/inbox-owns-key? sid (KeyStroke. KeyType/Enter))))
+          (team/focus-inbox! sid)
+          (team/inbox-key! sid (KeyStroke. KeyType/Escape) opts)
+          (expect (not (team/inbox-owns-key? sid (key-of \1))))
+          (expect (pos? @changed)))))))
+
+(defdescribe child-breadcrumb-test
+             (it "names the path from the leader to the child session"
+                 (with-redefs [team/summary (constantly {:agents waiting-team})]
+                   (expect (= {:parent-id "leader" :text "← Leader · ⊙ A1 · Read docs"}
+                              (team/breadcrumb "c1")))
+                   (expect (nil? (team/breadcrumb "unknown"))))))

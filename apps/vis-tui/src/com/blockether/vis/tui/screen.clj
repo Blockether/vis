@@ -3042,8 +3042,10 @@
         input-top
         (- (long rows) input-box-h (long footer/height))
 
+        ;; The agent Questions inbox stands above the attachment rail, inside the same band.
         rail-h
-        (attachment-rail/rail-height (:attachments db))
+        (+ (attachment-rail/rail-height (:attachments db))
+           (agent-team/inbox-height (get-in db [:session :id]) cols))
 
         rail-top
         (- input-top rail-h)
@@ -3082,12 +3084,21 @@
   (or (not (project-sidebar-locked? db cols)) (and (:help-open? db) (projects/help-key? db key))))
 
 (defn- paint-attachment-rail!
+  "Paint the agent Questions inbox, then the attachment rail below it."
   [g db rail-top cols]
-  (attachment-rail/draw! g
-                         (:attachments db)
-                         rail-top
-                         cols
-                         {:focused? (:attachment-focus? db) :focused-index (:attachment-index db)}))
+  (let [sid
+        (get-in db [:session :id])
+
+        inbox-h
+        (agent-team/inbox-height sid cols)]
+
+    (agent-team/draw-inbox! g sid rail-top cols)
+    (attachment-rail/draw! g
+                           (:attachments db)
+                           (+ (long rail-top) inbox-h)
+                           cols
+                           {:focused? (:attachment-focus? db)
+                            :focused-index (:attachment-index db)})))
 
 (defn- paint-composer!
   [g input input-top text-rows cols]
@@ -4290,12 +4301,7 @@
           ;; AFTER the commit (as before) left those regions in an uncommitted
           ;; staging buffer that the next `begin-frame!` dropped — so the footer
           ;; buttons were never clickable on the live/partial render path.
-          (attachment-rail/draw! g
-                                 (:attachments db)
-                                 rail-top
-                                 cols
-                                 {:focused? (:attachment-focus? db)
-                                  :focused-index (:attachment-index db)})
+          (paint-attachment-rail! g db rail-top cols)
           (footer/draw-echo-area! g db echo-row cols now-ms)
           (footer/draw-footer! g db footer-row cols now-ms)
           (.commitFrame interactions/hit-map))))
@@ -8051,6 +8057,11 @@
                                                                                  [:session :agent
                                                                                   :parent-id])))]
                                         (switch-session! {:action :switch :id id}))))
+                 focus-agent-questions!
+                 (fn []
+                   (if (agent-team/focus-inbox! (current-session-id))
+                     (state/dispatch [:bump-render-version :full-frame])
+                     (vis/notify! "No agent asks you anything now" :level :info :ttl-ms 2000)))
                  show-session-metrics! (fn []
                                          (when-not (:dialog-open? @state/app-db)
                                            (with-dialog-lock #(dlg/session-metrics-dialog!
@@ -8246,6 +8257,17 @@
                    (recur)
                    ;; Forms retain ordinary typing; C-x still reaches global navigation.
                    (human-input-owns-key? db key) (do (human-input-key! db key) (recur))
+                   ;; The agent Questions inbox takes its keys only after C-x Q gave it focus,
+                   ;; or while the person types an answer to one question.
+                   (agent-team/inbox-owns-key? (get-in db [:session :id]) key)
+                   (do (agent-team/inbox-key!
+                         (get-in db [:session :id])
+                         key
+                         {:changed! #(state/dispatch [:bump-render-version :full-frame])
+                          :open-session! #(switch-session! {:action :switch :id %})
+                          :input-text #(input/input->text (:input @state/app-db))
+                          :reset-input! #(state/dispatch [:reset-input])})
+                       (recur))
                    (live-log-search-key! db key) (recur)
                    ;; An ARMED stop swallows it next: the human is typing the
                    ;; comment that travels with the interrupt, so no stroke of it
@@ -9370,6 +9392,9 @@
                                      :agent-team
                                      (show-agent-team!)
 
+                                     :agent-questions
+                                     (focus-agent-questions!)
+
                                      :improve
                                      (open-improve! screen)
 
@@ -9613,6 +9638,10 @@
 
                          :session-metrics
                          (do (show-session-metrics!) (recur))
+
+                         ;; C-x Q — give the agent Questions inbox the keyboard.
+                         :agent-questions
+                         (do (focus-agent-questions!) (recur))
 
                          ;; C-x k — mark the whole queue for the running turn's
                          ;; next step (the header's `→ Send now`).

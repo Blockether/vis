@@ -24,8 +24,10 @@
    `screen.clj` registers a watcher on screen mount that bumps the
    render version for any change, so a `(notify! ...)` from anywhere
    nudges this band to repaint immediately."
-  (:require [com.blockether.vis.tui.client :as vis]
+  (:require [com.blockether.vis.tui.agent-team :as agent-team]
+            [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.components :as components]
+            [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
@@ -310,8 +312,13 @@
         center-w
         (max 0 (min center-w (- center-limit center-x)))
 
+        ;; A subagent session shows its path from the leader instead of its title.
+        crumb
+        (when (get-in db [:session :agent :parent-id])
+          (agent-team/breadcrumb (get-in db [:session :id])))
+
         title-text
-        (ellipsize (title-or-placeholder db) center-w)
+        (ellipsize (or (:text crumb) (title-or-placeholder db)) center-w)
 
         title-width
         (p/display-width title-text)
@@ -330,7 +337,13 @@
       (p/clear-styles! g)
       (p/set-colors! g t/header-fg t/terminal-bg)
       (p/enable! g p/BOLD)
-      (p/put-str! g title-col content-row title-text))
+      (p/put-str! g title-col content-row title-text)
+      ;; The breadcrumb opens the parent session.
+      (when (and crumb *register-click-regions?*)
+        (.register interactions/hit-map
+                   {:bounds {:row content-row :col title-col :width title-width}
+                    :kind :switch-session
+                    :text (:parent-id crumb)})))
     ;; RIGHT 20%: session-id copy button.
     (components/id-badge! g action-col content-row id-copy-text full-uuid *register-click-regions?*)
     ;; RIGHT slot: help/search as real BUTTONS — filled chips via the shared

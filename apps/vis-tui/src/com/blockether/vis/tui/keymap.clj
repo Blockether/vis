@@ -132,6 +132,9 @@
    ;; C-x A (Shift+a) archives the current session or restores it, like `A` in the sidebar.
    {:action :archive-session :key \A :label "archive session" :group "Session"}
    {:action :session-metrics :key \u :label "session metrics" :group "Session"}
+   ;; C-x Q (Shift+q) gives the agent Questions inbox the keyboard, so 1-3, Tab, C-d and Esc
+   ;; answer subagents without taking normal typing. Palette-only: the Session band is full.
+   {:action :agent-questions :key \Q :label "agent questions" :group "Session" :show-when :never}
    ;; `k` = kick the queue: mark every queued message for the running turn's next
    ;; step (the header's Send all now button). Palette-only — the Session band is full.
    {:action :queue-send-all-now :key \k :label "send queue now" :group "Session" :show-when :never}
