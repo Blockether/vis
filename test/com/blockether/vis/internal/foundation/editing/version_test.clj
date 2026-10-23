@@ -92,6 +92,13 @@
                  (version/note-shown! "/tmp/shown.txt" "0000000a" [[5 7] [1 2] [3 4] [9 9]])
                  (expect (= [[1 7] [9 9]] (version/shown-ranges "/tmp/shown.txt" "0000000a")))
                  (expect (nil? (version/shown-ranges "/tmp/shown.txt" "0000000b"))))
+             (it "merges a later range into an open range that ends at Long/MAX_VALUE"
+                 ;; A text patch without a read records [1 Long/MAX_VALUE]; the next cat or
+                 ;; grep of that version failed with `long overflow`.
+                 (version/note-shown! "/tmp/shown.txt" "0000000d" [[1 Long/MAX_VALUE]])
+                 (version/note-shown! "/tmp/shown.txt" "0000000d" [[20 25]])
+                 (expect (= [[1 Long/MAX_VALUE]]
+                            (version/shown-ranges "/tmp/shown.txt" "0000000d"))))
              (it "covers a span only when one range holds all of its lines"
                  (expect (version/covers? [[1 7] [9 9]] 2 7))
                  (expect (not (version/covers? [[1 7] [9 9]] 7 9)))

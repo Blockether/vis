@@ -160,7 +160,7 @@
   [ranges]
   (reduce (fn [acc [from to]]
             (let [[prev-from prev-to] (peek acc)]
-              (if (and prev-to (<= (long from) (inc (long prev-to))))
+              (if (and prev-to (<= (dec (long from)) (long prev-to)))
                 (conj (pop acc) [prev-from (max (long prev-to) (long to))])
                 (conj acc [(long from) (long to)]))))
           []
