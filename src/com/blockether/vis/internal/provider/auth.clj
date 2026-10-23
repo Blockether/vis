@@ -16,6 +16,17 @@
 
 (defn- provider-descriptor [provider-id] (registry/provider-by-id provider-id))
 
+(defn shared-project-provider-message
+  "Why a machine request cannot use `provider-id`, or nil when it can. Several
+   projects register that ID, and a request without a project cannot choose one (#410)."
+  [provider-id]
+  (let [roots (registry/provider-project-roots provider-id)]
+    (when (and (< 1 (count roots)) (nil? (provider-descriptor provider-id)))
+      (str (name provider-id)
+           " is registered by " (count roots)
+           " projects, so machine settings cannot choose one."
+           " Each session uses the provider of its own project."))))
+
 (defn- auth-kinds
   "Which headless legs `provider-id` supports."
   [provider-id]
@@ -143,7 +154,10 @@
         (auth-kinds provider-id)
 
         interactive
-        (interactive? provider-id)]
+        (interactive? provider-id)
+
+        shared
+        (shared-project-provider-message provider-id)]
 
     (cond (self-minted? provider-id)
           {:ok? false
@@ -157,6 +171,7 @@
            :message (str (name provider-id)
                          " is managed — its credential is issued by the runtime, so there is no key"
                          " to enter or change")}
+          shared {:ok? false :error :ambiguous-provider :message shared}
           (nil? (provider-descriptor provider-id))
           {:ok? false :error :unknown-provider :message (str "no registered provider " provider-id)}
           (and (nil? start) (not interactive) (not (api-key-leg? provider-id)))

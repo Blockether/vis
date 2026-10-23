@@ -15,6 +15,7 @@
     [com.blockether.vis.internal.decisions.registry :as decision-registry]
     [com.blockether.vis.internal.decisions.jobs :as decision-jobs]
     [com.blockether.vis.internal.extension.core :as extension]
+    [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.external-opener :as external-opener]
     [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
     [com.blockether.vis.internal.gateway.client :as client]
@@ -3362,6 +3363,58 @@
             (expect (= (get row "models") (mapv #(get % "name") details)))
             (when (= :openai (:id provider))
               (expect (false? (get-in details [0 "is_reasoning_effort_configurable"])))))))))
+
+;; Issue #410: machine Sign in for a provider from `<project>/.vis/extensions/`
+;; answered 404 unknown-provider, and its router row offered an API key.
+(defdescribe
+  machine-provider-routes-resolve-project-providers
+  (it "starts sign-in for a provider that only one project registers"
+      (let [root
+            "/tmp/vis-410-gateway"
+
+            id
+            :issue-410-gateway]
+
+        (registry/set-project-providers! root [{:provider/id id :provider/label "Token"}] #{})
+        (try (let [response
+                   (#'providers-api/provider-auth-start-handler
+                    {:path-params {:provider-id (name id)}})
+
+                   flow
+                   (wire/parse-json (:body response))]
+
+               (expect (= 200 (:status response)))
+               (expect (= "api-key" (get flow "kind")))
+               (provider-auth/cancel-auth! (get flow "flow_id")))
+             (finally (registry/set-project-providers! root [] #{})))))
+  (it "shows the limitation when several projects register the provider"
+      (let [roots
+            ["/tmp/vis-410-gateway-a" "/tmp/vis-410-gateway-b"]
+
+            id
+            :issue-410-gateway-shared]
+
+        (doseq [root roots]
+          (registry/set-project-providers!
+            root
+            [{:provider/id id :provider/label "Token" :provider/is-managed true}]
+            #{}))
+        (try (let [row
+                   (wire/->wire
+                     (#'providers-api/router-provider-entry {:id id :models []} nil nil false))
+
+                   response
+                   (#'providers-api/provider-auth-start-handler
+                    {:path-params {:provider-id (name id)}})]
+
+               (expect (= "managed" (get row "auth_kind")))
+               (expect (true? (get row "is_managed")))
+               (expect (false? (get-in row ["status" "is_authenticated"])))
+               (expect (str/includes? (get-in row ["status" "detail"]) "2 projects"))
+               (expect (= 409 (:status response)))
+               (expect (str/includes? (:body response) "ambiguous-provider")))
+             (finally (doseq [root roots]
+                        (registry/set-project-providers! root [] #{})))))))
 
 ;; Regression: the fleet was probed one provider at a time, so /v1/router cost
 ;; the SUM of every live auth/limits probe — about a minute on eight providers,

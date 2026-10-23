@@ -282,10 +282,29 @@
 
 (defn registered-providers [] (vec (vals (effective-providers))))
 
-(defn provider-by-id
-  "Lookup a provider in the calling project's catalog, then the global catalog."
+(defn provider-project-roots
+  "The roots of the project catalogs that register provider `id`, sorted."
   [id]
-  (get (effective-providers) id))
+  (into (sorted-set)
+        (keep (fn [[root {:keys [providers]}]]
+                (when (contains? providers id) root)))
+        @project-providers))
+
+(defn- project-only-provider
+  "The descriptor of `id` when exactly one project catalog registers it, else nil.
+   Two projects can register one ID with different credentials, so this never
+   chooses between them."
+  [id]
+  (let [owners (into [] (keep #(get-in % [:providers id])) (vals @project-providers))]
+    (when (= 1 (count owners)) (first owners))))
+
+(defn provider-by-id
+  "Lookup a provider in the calling project's catalog, then the global catalog.
+   A machine request binds no project. It also finds a provider that exactly one
+   project registers, so machine settings can sign it in (#410)."
+  [id]
+  (or (get (effective-providers) id)
+      (when (nil? workspace/*workspace-root*) (project-only-provider id))))
 
 (defonce command-registry
   ;; Vector preserves registration order, which then becomes the

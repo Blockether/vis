@@ -230,13 +230,17 @@
 
 (defn- auth-error-response
   "Map a `provider-auth` failure map onto an HTTP status. Unknown provider/flow
-   is 404, an unsupported or malformed request is 400, and a genuine upstream
+   is 404, a provider that several projects register is 409, an unsupported or
+   malformed request is 400, and a genuine upstream
    OAuth failure is 502 — the caller can tell 'you asked wrong' from 'GitHub
    said no'."
   [{:keys [error message]}]
   (http/error-response (case error
                          (:unknown-provider :unknown-flow)
                          404
+
+                         :ambiguous-provider
+                         409
 
                          (:auth-unsupported :auth-self-minted :missing-input :invalid-input)
                          400
@@ -355,13 +359,17 @@
 
         ;; The TUI gates controls on these Svar facts, not on provider/model names.
         models
-        (normalized-models provider)]
+        (normalized-models provider)
+
+        ;; Several projects register this ID, so this request cannot sign it in (#410).
+        shared
+        (provider-auth/shared-project-provider-message id)]
 
     {:id (name id)
      :label (config/display-label id)
-     :is-managed (providers/managed? id)
+     :is-managed (or (some? shared) (providers/managed? id))
      ;; How a client signs in: a managed provider with `auth-fn` reads `oauth`.
-     :auth-kind (name (providers/auth-kind id provider))
+     :auth-kind (if shared "managed" (name (providers/auth-kind id provider)))
      :base-url (or (config/provider-base-url provider) (:base-url provider))
      :models (into [] (keep :name) (:models provider))
      :model-details (mapv (fn [model]
@@ -380,8 +388,9 @@
      ;; Default thinking settings of the sessions on this provider; nil when unset.
      :reasoning-level (:reasoning-level provider)
      :reasoning-effort (:reasoning-effort provider)
-     :status
-     (if probe? (providers/provider-status provider) (providers/provider-status-cached provider))
+     :status (cond shared {:is-authenticated false :auth-state :unverified :detail shared}
+                   probe? (providers/provider-status provider)
+                   :else (providers/provider-status-cached provider))
      :limits (if probe?
                (providers/provider-limits-safe provider)
                (provider-limits/limits-without-fetching id))}))
