@@ -73,7 +73,8 @@
   (:import [java.io File]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
-           [java.util.concurrent.atomic AtomicLong]))
+           [java.util.concurrent.atomic AtomicLong]
+           [java.util.concurrent.locks ReentrantLock]))
 
 (set! *warn-on-reflection* true)
 
@@ -3917,7 +3918,32 @@
 
                      (delete-tree! (io/file snapshot)))))))))))))
 
-(defonce ^:private ensure-load-lock (Object.))
+(defonce ^:private ^ReentrantLock ensure-load-lock (ReentrantLock.))
+
+(defonce ^:private foreground-loads
+  ;; Foreground loads that wait for `ensure-load-lock`. A background load yields to them.
+  (AtomicLong. 0))
+
+(def ^:private ^:dynamic *background-load?*
+  "True while this thread prepares a project that no session waits for."
+  false)
+
+(defn- with-load-lock
+  "Call `f` while this thread holds the load lock. A background load lets each waiting
+   foreground load go first, so a session does not wait behind other projects (#407)."
+  [f]
+  (if (.isHeldByCurrentThread ensure-load-lock)
+    (f)
+    (do (if *background-load?*
+          (loop []
+
+            (while (pos? (.get ^AtomicLong foreground-loads)) (Thread/sleep 10))
+            (.lock ensure-load-lock)
+            (when (pos? (.get ^AtomicLong foreground-loads)) (.unlock ensure-load-lock) (recur)))
+          (do (.incrementAndGet ^AtomicLong foreground-loads)
+              (try (.lock ensure-load-lock)
+                   (finally (.decrementAndGet ^AtomicLong foreground-loads)))))
+        (try (f) (finally (.unlock ensure-load-lock))))))
 
 ;; Scopes (nil = global) whose declared packages this process prepared. A project
 ;; first loaded through the process-directory fallback is prepared once a session
@@ -4008,61 +4034,67 @@
         results
         (if (and ready (every? some? ready))
           ready
-          (locking ensure-load-lock
-            ;; A multi-scope reload cannot expose a partially updated report.
-            (when force?
-              (swap! last-fingerprint (fn [fingerprints]
-                                        (reduce (fn [state {:keys [project-root]}]
-                                                  (if-let [fingerprint (get state project-root)]
-                                                    (assoc state
-                                                      project-root
-                                                      (vary-meta fingerprint dissoc ::scope-result))
-                                                    state))
-                                                fingerprints
-                                                scopes))))
-            (mapv
-              (fn [{:keys [project-root] :as scope}]
-                (let [initialized?
-                      (contains? @last-fingerprint project-root)
+          (with-load-lock
+            (fn []
+              ;; A multi-scope reload cannot expose a partially updated report.
+              (when force?
+                (swap! last-fingerprint (fn [fingerprints]
+                                          (reduce (fn [state {:keys [project-root]}]
+                                                    (if-let [fingerprint (get state project-root)]
+                                                      (assoc state
+                                                        project-root (vary-meta fingerprint
+                                                                                dissoc
+                                                                                ::scope-result))
+                                                      state))
+                                                  fingerprints
+                                                  scopes))))
+              (mapv
+                (fn [{:keys [project-root] :as scope}]
+                  (let [initialized?
+                        (contains? @last-fingerprint project-root)
 
-                      ;; Prepare global and explicitly opened project catalogs only.
-                      prepare?
-                      (and (not explicit?) (or (:global scope) (some? workspace/*workspace-root*)))
+                        ;; Prepare global and explicitly opened project catalogs only.
+                        prepare?
+                        (and (not explicit?)
+                             (or (:global scope) (some? workspace/*workspace-root*)))
 
-                      pending?
-                      (and prepare? (not (contains? @prepared-scopes project-root)))
+                        pending?
+                        (and prepare? (not (contains? @prepared-scopes project-root)))
 
-                      result
-                      (if (and initialized? (not force?) (not pending?))
-                        {:loaded (count (scope-entries project-root))
-                         :failed (count (filter #(= project-root (:project-root %)) @failures))
-                         :changed? false}
-                        (do
-                          ;; Invalidate before any admission or reload mutation.
-                          (when-let [fingerprint (get @last-fingerprint project-root)]
-                            (swap! last-fingerprint assoc
-                              project-root
-                              (vary-meta fingerprint dissoc ::scope-result)))
-                          (let [prepared (when prepare?
-                                           (prepare-scope-packages! scope project-root))]
-                            (when (or (:force? opts) pending?)
-                              (swap! last-fingerprint dissoc project-root))
-                            (load-scope! (cond-> (merge opts scope prepared)
-                                           prepare?
-                                           (assoc :sync-projects? true))))))
+                        result
+                        (if (and initialized? (not force?) (not pending?))
+                          {:loaded (count (scope-entries project-root))
+                           :failed (count (filter #(= project-root (:project-root %)) @failures))
+                           :changed? false}
+                          (do
+                            ;; Invalidate before any admission or reload mutation.
+                            (when-let [fingerprint (get @last-fingerprint project-root)]
+                              (swap! last-fingerprint assoc
+                                project-root
+                                (vary-meta fingerprint dissoc ::scope-result)))
+                            (let [prepared (when prepare?
+                                             (prepare-scope-packages! scope project-root))]
+                              (when (or (:force? opts) pending?)
+                                (swap! last-fingerprint dissoc project-root))
+                              (load-scope! (cond-> (merge opts scope prepared)
+                                             prepare?
+                                             (assoc :sync-projects? true))))))
 
-                      result
-                      (assoc result
-                        :extensions (vec (sort (keep :ext-name
-                                                     (vals (scope-entries project-root))))))]
+                        result
+                        (assoc result
+                          :extensions (vec (sort (keep :ext-name
+                                                       (vals (scope-entries project-root))))))]
 
-                  ;; Publish only after registration, listeners and cleanup finish.
-                  (when-let [fingerprint (get @last-fingerprint project-root)]
-                    (swap! last-fingerprint assoc
-                      project-root
-                      (vary-meta fingerprint assoc ::scope-result (assoc result :changed? false))))
-                  result))
-              scopes)))]
+                    ;; Publish only after registration, listeners and cleanup finish.
+                    (when-let [fingerprint (get @last-fingerprint project-root)]
+                      (swap! last-fingerprint assoc
+                        project-root
+                        (vary-meta fingerprint
+                                   assoc
+                                   ::scope-result
+                                   (assoc result :changed? false))))
+                    result))
+                scopes))))]
 
     {:loaded (reduce + 0 (map :loaded results))
      :failed (reduce + 0 (map :failed results))
@@ -4104,19 +4136,26 @@
     (binding [workspace/*workspace-root* (.getCanonicalPath directory)]
       (ensure-python-extensions-loaded!))))
 
+(defn prepare-project-in-background!
+  "[[prepare-project!]] for a project that no session waits for. A session load that
+   waits for the load lock goes first (#407)."
+  [root]
+  (binding [*background-load?* true]
+    (prepare-project! root)))
+
 (defn reload-python-extensions!
   "Reload global extensions and the calling project, preserving other project catalogs.
    Only new, changed and failed extension files load again; `{:all? true}` loads all (#393)."
   ([] (reload-python-extensions! nil))
   ([opts]
-   (locking ensure-load-lock
-     (when (pyext/worker-live? pyext/shared-key)
-       (pyext/exec! pyext/shared-key
-                    runtime/default-session
-                    (str "import package_paths; package_paths.refresh("
-                         (python-string-literal (runtime/packages-dir))
-                         ", reload=True)")))
-     (load-scopes! (assoc opts :force? true) true))))
+   (with-load-lock (fn []
+                     (when (pyext/worker-live? pyext/shared-key)
+                       (pyext/exec! pyext/shared-key
+                                    runtime/default-session
+                                    (str "import package_paths; package_paths.refresh("
+                                         (python-string-literal (runtime/packages-dir))
+                                         ", reload=True)")))
+                     (load-scopes! (assoc opts :force? true) true)))))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 

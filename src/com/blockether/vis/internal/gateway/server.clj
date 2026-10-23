@@ -294,14 +294,14 @@
 (defn- prepare-known-projects!
   "Prepare the catalog of each project that the person added or opened before (#396).
    A session there then reuses that catalog and does not wait for its first load.
-   One failed project never stops the others."
+   One failed project never stops the others. A session load goes first (#407)."
   []
   (doseq [root
           (keep #(get % "workspace_root") (state/list-projects))
 
           :when (.isDirectory (java.io.File. ^String root))]
 
-    (try (python-extensions/prepare-project! root)
+    (try (python-extensions/prepare-project-in-background! root)
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::project-extensions-failed

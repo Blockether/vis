@@ -14,7 +14,10 @@
                                                 #'pyx/load-failures (constantly [])
                                                 #'pyx/loaded-python-extensions (constantly {})
                                                 #'runtime/preparation-status (constantly [])
-                                                #'state/list-projects (constantly [])}
+                                                #'state/list-projects (constantly [])
+                                                ;; Startup turns these on for the whole process.
+                                                #'pyx/use-registration-manifests! (constantly nil)
+                                                #'pyx/keep-spare-workers! (constantly nil)}
                                  run))])
 
 (defdescribe startup-prepares-before-announcing-completion
@@ -44,33 +47,42 @@
   startup-prepares-known-projects-after-the-global-catalog
   ;; Issue #396: the first session in a project after a gateway start waited for
   ;; that project's whole extension catalog to load.
-  (it "prepares each existing known project after the global catalog"
-      (let [calls
-            (atom [])
+  (it
+    "prepares each existing known project after the global catalog"
+    (let [calls
+          (atom [])
 
-            first-root
-            (str (System/getProperty "java.io.tmpdir"))
+          first-root
+          (str (System/getProperty "java.io.tmpdir"))
 
-            second-root
-            (System/getProperty "user.dir")]
+          second-root
+          (System/getProperty "user.dir")]
 
-        (with-redefs [pyx/ensure-python-extensions-loaded!
-                      (fn [opts]
-                        (swap! calls conj [:global opts])
-                        {:loaded 1 :failed 0})
+      (with-redefs [pyx/ensure-python-extensions-loaded!
+                    (fn [opts]
+                      (swap! calls conj [:global opts])
+                      {:loaded 1 :failed 0})
 
-                      state/list-projects
-                      (constantly [{"workspace_root" first-root}
-                                   {"workspace_root" "/missing/vis-project"}
-                                   {"workspace_root" second-root}])
+                    state/list-projects
+                    (constantly [{"workspace_root" first-root}
+                                 {"workspace_root" "/missing/vis-project"}
+                                 {"workspace_root" second-root}])
 
-                      pyx/prepare-project!
-                      #(swap! calls conj [:project %])]
+                    pyx/prepare-project!
+                    #(swap! calls conj [:project % @#'pyx/*background-load?*])
 
-          (#'server/prepare-startup-extensions!)
-          (expect (= [[:global {:global-only? true}] [:project first-root] [:project second-root]]
-                     @calls))
-          (expect (= {:stage "ready"} @@#'server/extension-startup)))))
+                    pyx/use-registration-manifests!
+                    #(swap! calls conj [:manifests %])
+
+                    pyx/keep-spare-workers!
+                    #(swap! calls conj [:spares])]
+
+        (#'server/prepare-startup-extensions!)
+        ;; #407: manifests before the first load; known projects yield to sessions.
+        (expect (= [[:manifests true] [:global {:global-only? true}] [:project first-root true]
+                    [:project second-root true] [:spares]]
+                   @calls))
+        (expect (= {:stage "ready"} @@#'server/extension-startup)))))
   (it "keeps preparing the other projects after one project fails"
       (let [prepared
             (atom [])

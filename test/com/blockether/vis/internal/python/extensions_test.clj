@@ -673,6 +673,58 @@
                (expect (:stale? (first (pyx/load-failures nil))))
                (finally (pyx/reload-python-extensions! {:dirs []}))))))))
 
+(defdescribe foreground-project-priority-test
+             ;; Issue #407: a session's project must not wait behind the background preparation of
+             ;; other known projects. A background load lets each waiting foreground load go first.
+             (it
+               "prepares a foreground project before the next background project"
+               (let [[a b d :as roots]
+                     (vec (repeatedly 3 #(.getCanonicalPath ^java.io.File (temp-dir))))
+
+                     home
+                     (temp-dir)
+
+                     order
+                     (atom [])
+
+                     a-started
+                     (promise)
+
+                     release-a
+                     (promise)]
+
+                 (with-redefs-fn {#'pyx/last-fingerprint (atom {})
+                                  #'pyx/prepared-scopes (atom #{})
+                                  #'pyx/failures (atom [])
+                                  #'pyx/default-extension-dirs (fn []
+                                                                 [(io/file home "extensions")
+                                                                  (io/file (workspace/cwd-root)
+                                                                           ".vis/extensions")])
+                                  #'pyx/sync-packages! (fn [opts]
+                                                         (when (:project opts)
+                                                           (let [root (workspace/cwd-root)]
+                                                             (swap! order conj root)
+                                                             (when (= a root)
+                                                               (deliver a-started true)
+                                                               (deref release-a 10000 nil))))
+                                                         [])}
+                   (fn []
+                     (try (pyx/ensure-python-extensions-loaded! {:global-only? true})
+                          (let [background (future (doseq [root [a b]]
+                                                     (pyx/prepare-project-in-background! root)))]
+                            (deref a-started 10000 nil)
+                            (let [foreground (future (pyx/prepare-project! d))]
+                              ;; The foreground load waits for the lock that `a` holds.
+                              (Thread/sleep 200)
+                              (deliver release-a true)
+                              (deref foreground 10000 nil)
+                              (deref background 10000 nil)
+                              (expect (= [a d b] @order))))
+                          (finally (deliver release-a true)
+                                   (doseq [root roots]
+                                     (pyx/reload-python-extensions! {:dirs [] :project-root root}))
+                                   (pyx/reload-python-extensions! {:dirs []}))))))))
+
 (defdescribe
   project-admission-retry-test
   (it "keeps project admission usable and retries failed packages on reload"

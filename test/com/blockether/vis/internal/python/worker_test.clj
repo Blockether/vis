@@ -1689,6 +1689,8 @@ print(worker_value)"))))
                 spares
                 @#'worker/spares]
 
+            ;; Another test can leave spares with another warm-up in this JVM.
+            (worker/keep-spares! nil nil)
             (try (worker/keep-spares! "import json\njson.__vis_spare_warm__ = True\n" [nil])
                  (let [spare @(get @spares (:packages key))]
                    (worker/trust! key caller true)
