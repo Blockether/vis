@@ -19,7 +19,7 @@ import {
   UserMessage,
 } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { AgentTeamPanel, AgentTeamStrip, useAgentTeam } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, useAgentTeam } from '../components/AgentTeam';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
 import {
   ComposerAttachmentPicker,
@@ -1088,9 +1088,6 @@ export function SessionScreen({
   // inherits the app shell's keyboard pin without a second viewport listener or
   // a lagging fixed WebKit layer.
   const [composerNotice, setComposerNotice] = useState<string | null>(null);
-  // One poller feeds the header entry and the strip above the composer.
-  const team = useAgentTeam(client, sid);
-  const [teamOpen, setTeamOpen] = useState(false);
   // A drag carrying files is over the composer: the box has to say so, or the
   // reader is guessing where to let go with a file already in hand.
   const [dropActive, setDropActive] = useState(false);
@@ -4561,6 +4558,24 @@ export function SessionScreen({
   // only when it is the LAST visible row and no running-turn bubble is painting.
   // Kept as a boolean (not `runningTurn`) so streaming frames don't re-run the memo.
   const hasRunningTurn = runningTurn != null;
+  // Subagents belong to the turn that started them, so each turn shows its own.
+  const team = useAgentTeam(client, sid, hasRunningTurn, turns.length);
+  const teams = useMemo(() => agentsByTurn(team.agents), [team.agents]);
+  const teamFor = useCallback(
+    (turnId: string | undefined) => {
+      const agents = turnId ? teams.get(turnId) : undefined;
+      return agents ? (
+        <TurnAgents
+          agents={agents}
+          pending={team.pending}
+          error={team.error}
+          onOpen={onOpenSession}
+          onCancel={team.cancel}
+        />
+      ) : undefined;
+    },
+    [teams, team.pending, team.error, team.cancel, onOpenSession],
+  );
   // Activity is transcript-native, like in the TUI. Resolve its live picture before
   // building either row owner so optimistic and persisted handoff paints one slot.
   const revealFiledLiveRecord = useCallback(() => {
@@ -4733,11 +4748,13 @@ export function SessionScreen({
               client={client}
               sid={sid}
               onOpenAttachment={openLinkedArtifact}
+              team={teamFor(turn.turn_id)}
             />
           </div>
         );
       }),
     [
+      teamFor,
       visibleTurns,
       turnsSettled,
       hasRunningTurn,
@@ -4823,10 +4840,12 @@ export function SessionScreen({
           sid={sid}
           onOpenAttachment={openLinkedArtifact}
           liveViews={liveViews}
+          team={teamFor(runningTurn.id)}
         />
       </div>
     );
   }, [
+    teamFor,
     runningTurn,
     turns.length,
     openedAt,
@@ -4869,10 +4888,12 @@ export function SessionScreen({
           sid={sid}
           onOpenAttachment={openLinkedArtifact}
           liveViews={liveViews}
+          team={teamFor(settlingTurn.id)}
         />
       </div>
     );
   }, [
+    teamFor,
     settlingShown,
     settlingTurn,
     turns.length,
@@ -5261,20 +5282,6 @@ export function SessionScreen({
             model={headerModel}
             commands={headerCommands}
             sidebar={sidebar}
-            team={team.enabled ? (
-              <AgentTeamPanel
-                agents={team.agents}
-                loading={team.loading}
-                error={team.error}
-                pending={team.pending}
-                parentId={session?.agent?.parent_id}
-                open={teamOpen}
-                onOpenChange={setTeamOpen}
-                onRefresh={team.refresh}
-                onCancel={team.cancel}
-                onOpen={onOpenSession}
-              />
-            ) : null}
           />
 
           {routerOpen && (
@@ -5456,8 +5463,6 @@ export function SessionScreen({
               selectedIndex={slashIndex}
               onSelect={completeSlash}
             />
-
-            {team.enabled && <AgentTeamStrip agents={team.agents} onShow={() => setTeamOpen(true)} />}
 
             <QueuedTurnsTray
               key={sid}

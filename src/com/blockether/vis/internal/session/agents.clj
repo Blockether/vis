@@ -556,6 +556,11 @@
 ;; restart ends the question with its turn.
 (defonce ^:private questions (atom {}))
 
+(defn open-question
+  "The question that child `sid` waits on its parent to answer, or nil."
+  [sid]
+  (:question (get @questions (str sid))))
+
 (defn- runtime-fn
   [k]
   (or (get @runtime k) (fail! :unavailable "Managed subagents require the gateway runtime")))

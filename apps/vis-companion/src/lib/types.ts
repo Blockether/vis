@@ -68,6 +68,8 @@ export interface Subagent {
   pending_input?: boolean;
   /** How many unanswered requests it is parked on — 0 or absent when none. */
   pending_input_count?: number;
+  /** The open question that it asks its parent, while it waits for the answer. */
+  question?: string;
   usage?: SessionUsage | null;
 }
 

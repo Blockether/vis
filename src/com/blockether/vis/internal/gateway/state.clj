@@ -6122,14 +6122,22 @@
           (or rows []))))
 
 (defn- agent-view
+  "One team row. `question` is the open question that the child asks its parent."
   [db child]
-  (let [sid (:session_id child)]
-    (merge (dissoc child :spawn_key :spawn_fingerprint)
-           (smodel/model-of db sid)
-           {:routing_locked (persistance/db-routing-locked? db sid)
-            :pending_input (bus/session-waiting? sid)
-            :pending_input_count (bus/session-waiting-count sid)
-            :usage (session-usage-info sid)})))
+  (let [sid
+        (:session_id child)
+
+        question
+        (agents/open-question sid)]
+
+    (cond-> (merge (dissoc child :spawn_key :spawn_fingerprint)
+                   (smodel/model-of db sid)
+                   {:routing_locked (persistance/db-routing-locked? db sid)
+                    :pending_input (bus/session-waiting? sid)
+                    :pending_input_count (bus/session-waiting-count sid)
+                    :usage (session-usage-info sid)})
+      question
+      (assoc :question question))))
 
 (defn- agent-list
   [env _opts]

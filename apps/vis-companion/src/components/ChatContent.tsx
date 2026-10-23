@@ -4474,6 +4474,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   onOpenAttachment,
   onFork,
   isForking = false,
+  team,
 }: {
   turn: TranscriptTurn;
   agentName?: string;
@@ -4506,6 +4507,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   /** Fork through this persisted turn, including its answer. Absent before persistence. */
   onFork?: () => void;
   isForking?: boolean;
+  /** The subagents that this turn started, under its activity and above its answer. */
+  team?: ReactNode;
 }) {
   const blocks = turn.content ?? [];
   const fallback = blocks.length ? '' : fallbackAnswer(turn);
@@ -4588,6 +4591,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           sid={sid}
           liveViews={liveViews}
         />
+        {team}
         {/* Desktop messages share the reading scale with the composer and session title.
             Controls and tool payloads stay compact; touch keeps its existing density. */}
         {(shownBlocks.length > 0 || fallback || emptyStatus) && (

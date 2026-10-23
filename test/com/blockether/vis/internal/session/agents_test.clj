@@ -525,6 +525,8 @@
                          (get r "budget_request")))
               (expect (= "Budget request: 10 more iterations. Reason: The suite has 40 files"
                          (get r "question")))
+              (expect (= (get r "question") (agents/open-question child))
+                      "The team list shows the open question")
               (outcome #(agents/extend-agent env child 10))
               (expect (= {"granted" 10
                           "iteration_budget" 14

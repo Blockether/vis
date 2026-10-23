@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
@@ -71,7 +71,6 @@ export function SessionHeader({
   model,
   commands,
   sidebar,
-  team,
 }: {
   model: SessionHeaderModel;
   commands: SessionHeaderCommands;
@@ -80,7 +79,6 @@ export function SessionHeader({
    * put away: it stands on the band's leading edge, where the phone's arrow does.
    */
   sidebar?: { isShown: boolean; onToggle: () => void };
-  team?: ReactNode;
 }) {
   // ON A DESK THE LIST IS BESIDE THIS HEADER, not behind it: there is nothing to go
   // back to, so the arrow goes. Its edge is not left bare, though — the toggle that
@@ -177,7 +175,6 @@ export function SessionHeader({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))]">
-        {team}
         <IconButton
           label={menuLabel}
           variant="quiet"

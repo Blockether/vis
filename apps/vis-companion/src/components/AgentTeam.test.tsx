@@ -3,45 +3,12 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
 import type { Subagent } from '../lib/types';
-import { AgentTeam, AgentTeamStrip, AgentTeamView } from './AgentTeam';
+import { TurnAgents, agentsByTurn, useAgentTeam } from './AgentTeam';
 
-const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'task',
+const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'turn-1',
   task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
-  provider: 'p', model: 'small', pending_input: true, routing_locked: true, usage: { cost_usd: 0.0123 } };
-const props = { agents: [child], loading: false, error: null, pending: null,
-  onRefresh: vi.fn(), onOpen: vi.fn(), onCancel: vi.fn() };
-
-describe('agent team controls', () => {
-  it('shows task, budget, input, routing lock and cost; confirms cancellation', () => {
-    const onOpen = vi.fn(); const onCancel = vi.fn();
-    render(<AgentTeamView {...props} parentId="leader" onOpen={onOpen} onCancel={onCancel} />);
-    expect(screen.getByText('Needs your input')).toBeInTheDocument();
-    expect(screen.getByText('Verify the contract')).toBeInTheDocument();
-    expect(screen.getByText('2 / 4 iterations')).toBeInTheDocument();
-    expect(screen.getByText(/Human model lock/)).toBeInTheDocument();
-    expect(screen.getByText(/0.0123/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Open parent' }));
-    expect(onOpen).toHaveBeenLastCalledWith('leader');
-    fireEvent.click(screen.getByRole('button', { name: 'Inspect agent' }));
-    expect(onOpen).toHaveBeenLastCalledWith('child');
-    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
-    expect(onCancel).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
-    expect(onCancel).toHaveBeenCalledWith('child');
-  });
-  it('keeps loading, failure, empty and terminal states distinct', () => {
-    const { rerender } = render(<AgentTeamView {...props} agents={[]} loading />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading team');
-    rerender(<AgentTeamView {...props} agents={[]} error="Gateway unavailable" />);
-    expect(screen.getByRole('alert')).toHaveTextContent('Gateway unavailable');
-    expect(screen.queryByText(/No subagents/)).not.toBeInTheDocument();
-    rerender(<AgentTeamView {...props} agents={[]} />);
-    expect(screen.getByText(/No subagents yet/)).toBeInTheDocument();
-    rerender(<AgentTeamView {...props} agents={[{ ...child, status: 'budget_limited', pending_input: false }]} />);
-    expect(screen.getByText('Budget reached')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
-  });
- });
+  provider: 'p', model: 'small', routing_locked: true, usage: { cost_usd: 0.0123 } };
+const props = { pending: null, onOpen: vi.fn(), onCancel: vi.fn() };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -51,127 +18,139 @@ function deferred<T>() {
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-describe('agent team controller', () => {
-  it('polls single-flight, pauses while hidden and aborts on replacement and unmount', async () => {
+describe('turn agents', () => {
+  it('gives each agent one line with its state, and folds its details', () => {
+    render(<TurnAgents {...props} agents={[child]} />);
+    const row = screen.getByRole('button', { expanded: false });
+    expect(row).toHaveTextContent('A1');
+    expect(row).toHaveTextContent('2/4');
+    expect(row).toHaveTextContent('Verify the contract');
+    expect(screen.queryByText(/Human model lock/)).not.toBeInTheDocument();
+    fireEvent.click(row);
+    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(/small · Human model lock · 2 \/ 4 iterations · \$0.0123/)).toBeInTheDocument();
+  });
+
+  it('inspects an agent and confirms a stop', () => {
+    const onOpen = vi.fn(); const onCancel = vi.fn();
+    render(<TurnAgents {...props} agents={[child]} onOpen={onOpen} onCancel={onCancel} />);
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect agent' }));
+    expect(onOpen).toHaveBeenCalledWith('child');
+    fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
+    expect(onCancel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' }));
+    expect(onCancel).toHaveBeenCalledWith('child');
+  });
+
+  it('names done, blocked, asking and terminal agents, and offers no stop after the end', () => {
+    render(<TurnAgents {...props} agents={[
+      { ...child, session_id: 'done', status: 'completed' },
+      { ...child, session_id: 'blocked', pending_input: true, pending_input_count: 2 },
+      { ...child, session_id: 'asking', question: 'Count only src/?' },
+      { ...child, session_id: 'spent', status: 'budget_limited' },
+    ]} />);
+    expect(screen.getByText('done')).toBeInTheDocument();
+    expect(screen.getByText('needs you ×2')).toBeInTheDocument();
+    expect(screen.getByText('asks leader')).toBeInTheDocument();
+    expect(screen.getByText('budget used')).toBeInTheDocument();
+    // A child that waited on its leader showed only its iterations, as if it still worked.
+    fireEvent.click(screen.getAllByRole('button', { expanded: false })[2]);
+    expect(screen.getByText('Count only src/?')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { expanded: false })[2]);
+    expect(screen.queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
+  });
+
+  it('renders nothing for a turn without agents', () => {
+    const { container } = render(<TurnAgents {...props} agents={[]} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('groups agents by the turn that started them, in start order', () => {
+    const groups = agentsByTurn([
+      child,
+      { ...child, session_id: 'later', team_id: 'turn-2' },
+      { ...child, session_id: 'second', team_id: 'turn-1' },
+    ]);
+    expect(groups.get('turn-1')?.map((agent) => agent.session_id)).toEqual(['child', 'second']);
+    expect(groups.get('turn-2')?.map((agent) => agent.session_id)).toEqual(['later']);
+  });
+});
+
+function Team({ client, sid, running = false }: { client: GatewayClient; sid: string; running?: boolean }) {
+  const team = useAgentTeam(client, sid, running);
+  return <TurnAgents agents={team.agents} pending={team.pending} error={team.error} onOpen={vi.fn()} onCancel={team.cancel} />;
+}
+
+describe('agent team reader', () => {
+  it('polls single-flight while a turn runs, pauses while hidden and aborts on replacement and unmount', async () => {
     vi.useFakeTimers();
     const first = deferred<Subagent[]>();
     const agents = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue([child]);
-    const client = { agents, setting: vi.fn().mockResolvedValue({ enabled: true }), cancelAgent: vi.fn() } as unknown as GatewayClient;
-    const { rerender, unmount } = render(<AgentTeam client={client} sid="leader" onOpen={vi.fn()} />);
+    const client = { agents, cancelAgent: vi.fn() } as unknown as GatewayClient;
+    const { rerender, unmount } = render(<Team client={client} sid="leader" running />);
     await act(async () => {});
     const signal = agents.mock.calls[0][1] as AbortSignal;
-    await act(async () => { vi.advanceTimersByTime(15000); });
+    await act(async () => { vi.advanceTimersByTime(9000); });
     expect(agents).toHaveBeenCalledTimes(1);
     await act(async () => { first.resolve([child]); });
-    expect(screen.getByRole('button', { name: /Agents: 1 total, 1 active, 1 need input/ })).toBeInTheDocument();
+    expect(screen.getByText('Verify the contract')).toBeInTheDocument();
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
-    await act(async () => { vi.advanceTimersByTime(5000); });
+    await act(async () => { vi.advanceTimersByTime(3000); });
     expect(agents).toHaveBeenCalledTimes(1);
     hidden.mockReturnValue(false);
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(agents).toHaveBeenCalledTimes(2);
-    rerender(<AgentTeam client={client} sid="next" onOpen={vi.fn()} />);
+    rerender(<Team client={client} sid="next" running />);
     expect(signal.aborted).toBe(true);
     await act(async () => {});
     expect(agents).toHaveBeenLastCalledWith('next', expect.any(AbortSignal));
     const lastSignal = agents.mock.calls.at(-1)![1] as AbortSignal;
+    const calls = agents.mock.calls.length;
     unmount();
     expect(lastSignal.aborted).toBe(true);
     await act(async () => { vi.advanceTimersByTime(10000); });
-    expect(agents).toHaveBeenCalledTimes(3);
+    expect(agents).toHaveBeenCalledTimes(calls);
   });
 
-  it('keeps a cancellation failure visible across successful background polling', async () => {
+  it('reads a settled team once and stops polling', async () => {
+    vi.useFakeTimers();
+    const agents = vi.fn().mockResolvedValue([{ ...child, status: 'completed' }]);
+    render(<Team client={{ agents, cancelAgent: vi.fn() } as unknown as GatewayClient} sid="leader" />);
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(30000); });
+    expect(agents).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('done')).toBeInTheDocument();
+  });
+
+  it('keeps its rows on a malformed answer and ignores a late answer for another session', async () => {
+    const old = deferred<Subagent[]>();
+    const agents = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValueOnce({}).mockResolvedValue([]);
+    const client = { agents, cancelAgent: vi.fn() } as unknown as GatewayClient;
+    const { rerender } = render(<Team client={client} sid="old" />);
+    await act(async () => {});
+    rerender(<Team client={client} sid="new" />);
+    await act(async () => {});
+    await act(async () => { old.resolve([child]); });
+    expect(screen.queryByText('Verify the contract')).not.toBeInTheDocument();
+  });
+
+  it('keeps a stop failure visible across background reads until a stop succeeds', async () => {
     vi.useFakeTimers();
     const agents = vi.fn().mockResolvedValue([child]);
     const cancelAgent = vi.fn().mockRejectedValue(new Error('Stop failed. Try again.'));
-    const client = { agents, setting: vi.fn().mockResolvedValue({ enabled: true }), cancelAgent } as unknown as GatewayClient;
-    render(<AgentTeam client={client} sid="leader" onOpen={vi.fn()} />);
+    render(<Team client={{ agents, cancelAgent } as unknown as GatewayClient} sid="leader" />);
     await act(async () => {});
-    fireEvent.click(screen.getByRole('button', { name: /Agents: 1/ }));
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
     expect(cancelAgent).toHaveBeenCalledWith('leader', 'child');
     expect(screen.getByRole('alert')).toHaveTextContent('Stop failed. Try again.');
-    await act(async () => { vi.advanceTimersByTime(5000); });
+    await act(async () => { vi.advanceTimersByTime(3000); });
     expect(screen.getByRole('alert')).toHaveTextContent('Stop failed. Try again.');
     cancelAgent.mockResolvedValue(undefined);
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm stop' })); });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
-  it('rejects malformed responses, recovers on refresh and opens the parent', async () => {
-    const agents = vi.fn().mockResolvedValueOnce({}).mockResolvedValue([child]);
-    const onOpen = vi.fn();
-    const client = { agents, setting: vi.fn().mockResolvedValue({ enabled: true }), cancelAgent: vi.fn() } as unknown as GatewayClient;
-    render(<AgentTeam client={client} sid="child" parentId="leader" onOpen={onOpen} />);
-    fireEvent.click(await screen.findByRole('button', { name: /Agents: 0/ }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('invalid agent team');
-    fireEvent.click(screen.getByRole('button', { name: 'Refresh team' }));
-    expect(await screen.findByText('Verify the contract')).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Open parent' }));
-    expect(onOpen).toHaveBeenCalledWith('leader');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-  it('ignores a late response from an aborted session request', async () => {
-    const old = deferred<Subagent[]>();
-    const agents = vi.fn().mockReturnValueOnce(old.promise).mockResolvedValue([]);
-    const client = { agents, setting: vi.fn().mockResolvedValue({ enabled: true }), cancelAgent: vi.fn() } as unknown as GatewayClient;
-    const { rerender } = render(<AgentTeam client={client} sid="old" onOpen={vi.fn()} />);
-    await act(async () => {});
-    rerender(<AgentTeam client={client} sid="new" onOpen={vi.fn()} />);
-    await act(async () => {});
-    await act(async () => { old.resolve([child]); });
-    expect(screen.getByRole('button', { name: /Agents: 0 total/ })).toBeInTheDocument();
-  });
-  it('keeps the team hidden and does not fetch agents until the feature is enabled', async () => {
-    vi.useFakeTimers();
-    const setting = vi.fn().mockResolvedValue({ enabled: false });
-    const agents = vi.fn().mockResolvedValue([child]);
-    const client = { setting, agents } as unknown as GatewayClient;
-    render(<AgentTeam client={client} sid="leader" onOpen={vi.fn()} />);
-    await act(async () => {});
-    expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();
-    expect(agents).not.toHaveBeenCalled();
-    setting.mockResolvedValue({ enabled: true });
-    await act(async () => { vi.advanceTimersByTime(5000); });
-    expect(screen.getByRole('button', { name: /Agents: 1/ })).toBeInTheDocument();
-    setting.mockResolvedValue({ enabled: false });
-    await act(async () => { vi.advanceTimersByTime(5000); });
-    expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();
-    expect(agents).toHaveBeenCalledTimes(1);
-    expect(setting).toHaveBeenCalledWith('subagents', expect.any(AbortSignal), { scope: 'session', target_id: 'leader' });
-    setting.mockRejectedValue(new Error('Settings unavailable'));
-    await act(async () => { vi.advanceTimersByTime(5000); });
-    expect(screen.queryByRole('button', { name: /Agents:/ })).toBeNull();
-    expect(agents).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('agent team strip', () => {
-  const done: Subagent = { ...child, session_id: 'done', status: 'completed', pending_input: false };
-  const working: Subagent = { ...child, session_id: 'working', pending_input: false };
-
-  it('stays hidden while no agent works or waits for a person', () => {
-    const { container } = render(<AgentTeamStrip agents={[done]} onShow={vi.fn()} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('names each agent with its state and opens the team', () => {
-    const onShow = vi.fn();
-    render(
-      <AgentTeamStrip
-        agents={[done, working, { ...child, session_id: 'blocked', pending_input_count: 2 }]}
-        onShow={onShow}
-      />,
-    );
-    expect(screen.getByText('A1')).toBeInTheDocument();
-    expect(screen.getByText('done')).toBeInTheDocument();
-    expect(screen.getByText('2/4')).toBeInTheDocument();
-    expect(screen.getByText('needs you ×2')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^Agent team: 2 active, 1 need input/ }));
-    expect(onShow).toHaveBeenCalledOnce();
   });
 });

@@ -381,6 +381,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
         "usage": {
           "type": [
             "object",

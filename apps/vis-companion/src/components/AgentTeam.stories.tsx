@@ -1,101 +1,62 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
-import { STORY_SESSION } from '../dev/story-data';
 import type { Subagent } from '../lib/types';
-import { AgentTeamPanel, AgentTeamStrip } from './AgentTeam';
-import { SessionHeader } from './SessionHeader';
+import { TurnAgents } from './AgentTeam';
 
 const child: Subagent = {
-  session_id: 'contract-review', parent_id: 'leader', leader_id: 'leader', team_id: 'task',
+  session_id: 'contract-review', parent_id: 'leader', leader_id: 'leader', team_id: 'turn-1',
   task: 'Verify the SDK contract and report remaining risks', status: 'running',
-  iteration_budget: 32, iterations_used: 4, provider: 'openai', model: 'gpt-5', pending_input: true,
+  iteration_budget: 32, iterations_used: 4, provider: 'openai', model: 'gpt-5',
   routing_locked: true, usage: { cost_usd: 0.0123 },
 };
 
 const meta = {
-  title: 'Session/Agent team', component: AgentTeamPanel,
-  parameters: { layout: 'fullscreen' },
-  args: {
-    agents: [child], loading: false, error: null, pending: null,
-    onRefresh: fn(), onOpen: fn(), onCancel: fn(),
-  },
-  render: (args) => <SessionHeader
-    model={{ title: STORY_SESSION.title, sessionId: STORY_SESSION.id, connected: true, artifacts: { count: 4, isOpen: false } }}
-    commands={{ back: fn(), toggleArtifacts: fn() }} team={<AgentTeamPanel {...args} />} />,
-} satisfies Meta<typeof AgentTeamPanel>;
+  title: 'Session/Turn agents', component: TurnAgents,
+  parameters: { layout: 'padded' },
+  args: { agents: [child], pending: null, onOpen: fn(), onCancel: fn() },
+} satisfies Meta<typeof TurnAgents>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-const openTeam: NonNullable<Story['play']> = async ({ canvasElement }) => {
-  const canvas = within(canvasElement);
-  const button = canvas.getByRole('button', { name: /^Agents:/ });
-  await userEvent.click(button);
-  expect(within(document.body).getByRole('dialog', { name: 'Agent team' })).toBeVisible();
-};
-
-export const Running: Story = { play: async (context) => {
-  await openTeam(context);
-  const page = within(document.body);
-  expect(page.getByText('Needs your input')).toBeVisible();
-  await userEvent.click(page.getByRole('button', { name: 'Stop agent' }));
-  expect(page.getByRole('button', { name: 'Confirm stop' })).toBeVisible();
-  await userEvent.click(page.getByRole('button', { name: 'Keep working' }));
-} };
-export const Empty: Story = {
-  args: { agents: [] },
-  play: async (context) => {
-    await openTeam(context);
-    expect(within(document.body).getByText(/No subagents yet/)).toBeVisible();
+export const Live: Story = {
+  args: {
+    agents: [
+      { ...child, session_id: 'done', status: 'completed', iterations_used: 3 },
+      { ...child, session_id: 'working', task: 'List the components that render the team' },
+      { ...child, session_id: 'asking', task: 'Count the Clojure sources', question: 'Should I count tests in test/ or only sources in src/?' },
+      { ...child, session_id: 'blocked', task: 'Release the bundle', pending_input: true, pending_input_count: 2 },
+    ],
   },
-};
-export const Loading: Story = {
-  args: { agents: [], loading: true },
-  play: async (context) => {
-    await openTeam(context);
-    expect(within(document.body).getByRole('status')).toHaveTextContent('Loading team');
-  },
-};
-export const Failed: Story = {
-  args: { agents: [], error: 'Gateway unavailable. Refresh to try again.' },
-  play: async (context) => {
-    await openTeam(context);
-    expect(within(document.body).getByRole('alert')).toHaveTextContent('Gateway unavailable');
-  },
-};
-export const Completed: Story = {
-  args: { agents: [{ ...child, status: 'completed', pending_input: false }] },
-  play: async (context) => {
-    await openTeam(context);
-    const page = within(document.body);
-    expect(page.getByText('Completed')).toBeVisible();
-    expect(page.queryByRole('button', { name: 'Stop agent' })).toBeNull();
-  },
-};
-export const BudgetReached: Story = {
-  args: { agents: [{ ...child, status: 'budget_limited', pending_input: false, iterations_used: 32 }] },
-  play: async (context) => {
-    await openTeam(context);
-    const page = within(document.body);
-    expect(page.getByText('Budget reached')).toBeVisible();
-    expect(page.queryByRole('button', { name: 'Stop agent' })).toBeNull();
-  },
-};
-export const Strip: Story = {
-  render: () => (
-    <div className="p-4">
-      <AgentTeamStrip
-        agents={[
-          { ...child, session_id: 'done', status: 'completed', pending_input: false },
-          { ...child, session_id: 'working', pending_input: false },
-          { ...child, session_id: 'blocked', pending_input_count: 2 },
-        ]}
-        onShow={fn()}
-      />
-    </div>
-  ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     expect(canvas.getByText('needs you ×2')).toBeVisible();
+    expect(canvas.getByText('asks leader')).toBeVisible();
     expect(canvas.getByText('4/32')).toBeVisible();
+  },
+};
+
+export const Expanded: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { expanded: false }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Stop agent' }));
+    expect(canvas.getByRole('button', { name: 'Confirm stop' })).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: 'Keep working' }));
+  },
+};
+
+export const Finished: Story = {
+  args: {
+    agents: [
+      { ...child, session_id: 'a', status: 'completed' },
+      { ...child, session_id: 'b', status: 'failed', task: 'Run the native tests' },
+      { ...child, session_id: 'c', status: 'budget_limited', iterations_used: 32, task: 'Review the gateway routes' },
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText('done')).toBeVisible();
+    await userEvent.click(canvas.getAllByRole('button', { expanded: false })[0]);
+    expect(canvas.queryByRole('button', { name: 'Stop agent' })).toBeNull();
   },
 };
