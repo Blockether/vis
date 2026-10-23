@@ -34,6 +34,105 @@
   </head>
   <body>
     <div id="root"></div>
+    <!--
+      The guard against a blank page. React owns `#root`, and nothing else draws
+      there. If the module bundle never runs (a chunk that failed to load, a dev
+      reload that met a half-written file) or an uncaught error unmounts the tree,
+      the page stays an empty sheet with no message and no way back. This script
+      does not need the bundle. It shows a recovery surface beside `#root`, and it
+      reloads the page when you come back to it, at most once in each `RETRY_MS`.
+    -->
+    <script>
+      (function () {
+        var BOOT_TIMEOUT_MS = 20000;
+        var RETRY_MS = 15000;
+        var RETRY_KEY = 'vis.bootRetryAt';
+        var root = document.getElementById('root');
+        var mounted = false;
+        var lastError = null;
+        var surface = null;
+        var visibleMs = 0;
+
+        function show(message) {
+          if (surface || root.childElementCount > 0) return;
+          surface = document.createElement('div');
+          surface.id = 'vis-boot-failure';
+          surface.setAttribute('role', 'alert');
+          surface.style.cssText =
+            'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;' +
+            'align-items:center;justify-content:center;gap:16px;padding:20px;text-align:center;' +
+            'background:Canvas;color:CanvasText;font:15px/1.4 -apple-system,system-ui,sans-serif';
+          var title = document.createElement('p');
+          title.style.cssText = 'margin:0;font-size:18px;font-weight:600';
+          title.textContent = mounted ? 'Vis stopped rendering' : 'Vis could not start';
+          var detail = document.createElement('p');
+          detail.style.cssText =
+            'margin:0;max-width:24rem;opacity:.7;font:12px/1.4 ui-monospace,monospace;overflow-wrap:anywhere';
+          detail.textContent = message;
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'Reload Vis';
+          button.style.cssText =
+            'padding:8px 16px;border-radius:8px;border:1px solid currentColor;background:none;' +
+            'color:inherit;font:inherit;cursor:pointer';
+          button.onclick = function () {
+            location.reload();
+          };
+          surface.append(title, detail, button);
+          document.body.appendChild(surface);
+        }
+
+        // Coming back to a broken page is the moment to try again: the file is
+        // fixed or the network is back by then. The stamp stops a reload loop.
+        function retry() {
+          if (!surface || document.visibilityState !== 'visible') return;
+          try {
+            if (Date.now() - Number(sessionStorage.getItem(RETRY_KEY) || 0) < RETRY_MS) return;
+            sessionStorage.setItem(RETRY_KEY, String(Date.now()));
+          } catch (e) {
+            return;
+          }
+          location.reload();
+        }
+
+        new MutationObserver(function () {
+          if (root.childElementCount > 0) {
+            mounted = true;
+            if (surface) surface.remove();
+            surface = null;
+          } else if (mounted) {
+            show(lastError || 'An uncaught error removed the screen.');
+          }
+        }).observe(root, { childList: true });
+
+        // A module script that fails to load fires `error` on its element. That
+        // event does not bubble, but the capture phase still sees it.
+        window.addEventListener(
+          'error',
+          function (event) {
+            var target = event.target;
+            if (target && target.tagName === 'SCRIPT') {
+              if (!mounted) show('A script failed to load: ' + (target.src || 'inline'));
+            } else {
+              lastError = String(event.message || event.error || 'Unknown error');
+            }
+          },
+          true,
+        );
+
+        var timer = setInterval(function () {
+          if (mounted) return clearInterval(timer);
+          if (document.visibilityState === 'visible') visibleMs += 1000;
+          if (visibleMs >= BOOT_TIMEOUT_MS) {
+            show(lastError || 'The app did not start in ' + BOOT_TIMEOUT_MS / 1000 + ' seconds.');
+          }
+        }, 1000);
+
+        document.addEventListener('visibilitychange', retry);
+        window.addEventListener('pageshow', retry);
+        window.addEventListener('focus', retry);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
