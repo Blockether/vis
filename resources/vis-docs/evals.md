@@ -27,6 +27,8 @@ compare two runs. This page shows each step from an empty folder to a score.
   Conversation](#import-lost-in-conversation).
 - **You want to know if Vis still remembers early facts when a conversation is larger than the
   model's context.** [Import LongMemEval](#import-longmemeval).
+- **You want to know if Vis can repeat an earlier answer word for word from a long conversation.**
+  [Import MRCR](#import-mrcr).
 - **You want to know if one prompt rule helps on the same tasks.** [Add a rule to the system
   prompt](#add-a-rule-to-the-system-prompt).
 - **You want to know how Vis and Harbor share the work.** Read [Vis and
@@ -543,6 +545,41 @@ so compare your runs with each other, not with published scores.
 The first message asks the agent not to write files. No check enforces this, so read the trajectory
 when a score looks too good.
 
+### Import MRCR
+
+[MRCR](https://huggingface.co/datasets/openai/mrcr) tests if an assistant can find and repeat one
+answer from a long conversation. The conversation holds many similar requests, for example two
+requests for a poem about tapirs. The last request asks for one of them, for example "Prepend
+mWEa9DrPT3 to the 2nd poem about tapirs". The correct answer is that earlier answer, word for word,
+with the random string at the start.
+
+This command writes five tasks with two similar requests each:
+
+```bash
+python -m blockether.vis.evals.mrcr tasks-mrcr --cache mrcr.jsonl --limit 5
+```
+
+The command downloads only the rows that it needs, about 1 MB for each long row. `--cache` is a JSON
+Lines file that keeps them, so a second run downloads nothing. Use these options to choose the
+tasks:
+
+- `--needles` sets the number of similar requests: 2, 4 or 8. More requests make the task harder.
+- `--min-chars` and `--max-chars` set the size of the conversation in characters. The defaults keep
+  conversations of about 150,000 to 325,000 tokens, which are larger than the context budget of
+  current models.
+- `--limit N` keeps the first N rows that match, in the order of the data.
+- `--turn-tokens` sets the size of each pasted turn, and `--min-ratio` the pass mark of the check.
+
+Each task pastes the earlier conversation into user turns of about 10,000 tokens, as the LongMemEval
+tasks do. The last turn gives the request. The check in `tests/check_answer.py` follows the MRCR
+grader. The answer must start with the random string, and the rest must match at least 90% of the
+expected text. MRCR reports the mean match, so compare your runs with each other, not with published
+scores.
+
+MRCR and LongMemEval measure different things. A LongMemEval answer needs one short fact, and a fold
+note can keep it. An MRCR answer needs a whole earlier answer word for word, and a fold note seldom
+keeps that. So a model that folds can pass LongMemEval and fail MRCR.
+
 For all options of `harbor run`, read the Harbor guide [Run a
 job](https://docs.harborframework.com/jobs/run-a-job). When you start the run from Python with
 [`run_tasks`](evals-api.md#run-the-tasks), Vis also writes the [round
@@ -838,6 +875,8 @@ position also lists caveats, for example when the board rows ran more trials for
   conversation](https://arxiv.org/abs/2505.06120), 2025: the Lost in Conversation benchmark.
 - Di Wu and others, [LongMemEval: Benchmarking chat assistants on long-term interactive
   memory](https://arxiv.org/abs/2410.10813), 2025: the LongMemEval benchmark.
+- Kiran Vodrahalli and others, [Michelangelo: Long context evaluations beyond
+  haystacks](https://arxiv.org/abs/2409.12640), 2024: the MRCR task.
 - Jacob Cohen, "A coefficient of agreement for nominal scales", *Educational and Psychological
   Measurement* 20, 1960: Cohen's kappa.
 - Klaus Krippendorff, [Computing Krippendorff's
