@@ -845,7 +845,21 @@
                     (expect (= '[gh.runs retired_tool]
                                (vec (ep/unowned-bindings ctx
                                                          '[session fff_path fff_path.method gh.runs
-                                                           retired_tool])))))))
+                                                           retired_tool]))))))
+  (it "refreshes the context after a block shadows the builtins that it uses"
+      ;; A block global `set` failed every later turn of session 63196a38.
+      (tpc/with-own
+        [ctx {}]
+        (ep/bind-ctx! ctx {"workspace" {"root" "/workspace/first"}})
+        (expect (nil? (:error
+                        (ep/run-python-block
+                          ctx
+                          "set = project_root_path / 'test.clj'\nsorted = 1\ndir = Path = None"))))
+        (ep/bind-ctx! ctx {"workspace" {"root" "/workspace/second"}})
+        (expect (= "/workspace/second test.clj 1 None\n"
+                   (:stdout (ep/run-python-block
+                              ctx
+                              "print(project_root_path, set.name, sorted, dir)")))))))
 
 (defdescribe
   worker-system-globals-test
@@ -864,7 +878,15 @@
                               ctx
                               (str "print(isinstance(project_root_path, pathlib.Path), "
                                    "str(project_root_path) == session['workspace']['root'], "
-                                   "fixture_path == project_root_path)"))))))))
+                                   "fixture_path == project_root_path)")))))))
+  (it "refreshes the worker context after a block shadows a builtin"
+      ;; A block global `set` failed every later turn of session 63196a38.
+      (tpc/with-own
+        [ctx {} (constantly [(System/getProperty "user.dir")]) {:worker? true :jail-enabled? true}]
+        (ep/bind-ctx! ctx {"workspace" {"root" (System/getProperty "user.dir")}})
+        (expect (nil? (:error (ep/run-python-block ctx "set = project_root_path / 'test.clj'"))))
+        (ep/bind-ctx! ctx {"workspace" {"root" (System/getProperty "user.dir")}})
+        (expect (= "test.clj\n" (:stdout (ep/run-python-block ctx "print(set.name)")))))))
 
 (defdescribe
   block-error-fidelity-test

@@ -557,24 +557,26 @@
                       (first (str/split (sym->py-name sym) #"\." 2)))
                     (or custom-bindings {})))))
 
+(defn- protected-names-python
+  "Python that adds `names` to `__vis_protected_names__`. It reads `set` and `sorted`
+   from `builtins`, so a block global with one of these names cannot break it."
+  [names]
+  (str "__vis_b__ = __import__('builtins')\n"
+       "__vis_b__.globals()['__vis_protected_names__'] = __vis_b__.sorted(__vis_b__.set("
+       "__vis_b__.globals().get('__vis_protected_names__') or []) | __vis_b__.set("
+       (py-json-literal names)
+       "))"))
+
 (defn- install-protected-names!
   "Declare which globals the block may SHADOW but never overwrite for the
    session. The runtime reads this list when it wraps a block."
   [session custom-bindings]
   (exec! session
-         (str "globals()['__vis_protected_names__'] = sorted(set("
-              "globals().get('__vis_protected_names__') or []) | set("
-              (py-json-literal (vec (sort (protected-names-for-bindings custom-bindings))))
-              "))")))
+         (protected-names-python (vec (sort (protected-names-for-bindings custom-bindings))))))
 
 (defn- add-protected-names!
   [session names]
-  (when (seq names)
-    (exec! session
-           (str "globals()['__vis_protected_names__'] = sorted(set("
-                "globals().get('__vis_protected_names__') or []) | set("
-                (py-json-literal (vec (sort (set (map str names)))))
-                "))"))))
+  (when (seq names) (exec! session (protected-names-python (vec (sort (set (map str names))))))))
 
 (defn- owned-names
   "The global names that `session` reserves for Vis: system variables and root names."
@@ -886,16 +888,18 @@
   (set-python-binding! (python-context env) sym val))
 
 (def ^:private context-bindings-python
-  "def __vis_bind_ctx__(g, data, fallback):
+  "# The defaults keep the builtins of the definition time, so a block global `set` cannot break a refresh.
+def __vis_bind_ctx__(g, data, fallback, Path=__import__('pathlib').Path, set=set, sorted=sorted,
+                     builtin_names=frozenset(dir(__import__('builtins')))):
     workspace = data.get('workspace') or {}
-    paths = {entry['python_name']: __import__('pathlib').Path(entry['cwd'])
+    paths = {entry['python_name']: Path(entry['cwd'])
              for entry in (workspace.get('filesystem_roots') or [])
              if entry.get('python_name') and not entry.get('is_denied')}
-    paths['project_root_path'] = __import__('pathlib').Path(workspace.get('root') or fallback)
+    paths['project_root_path'] = Path(workspace.get('root') or fallback)
     old = set(g.get('__vis_path_names__', ['project_root_path']))
     names = set(paths)
     protected = set(g.get('__vis_protected_names__') or [])
-    collisions = (names - old) & (set(g) | protected | set(dir(__import__('builtins'))))
+    collisions = (names - old) & (set(g) | protected | builtin_names)
     if collisions:
         raise ValueError('Python name collision: ' + ', '.join(sorted(collisions))
                          + '; choose a different workspace.filesystem python_name')
