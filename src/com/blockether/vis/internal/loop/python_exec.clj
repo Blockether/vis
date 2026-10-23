@@ -289,6 +289,19 @@
                 (fn [printed]
                   (if (str/blank? (str printed)) document (str printed "\n\n" document))))))))
 
+(defn- envelope-with-human-stops
+  "Append one host line to stdout for each live view that a person stopped in this block.
+   The stop and its note go to the extension that drove the view, and the block's own
+   prints can drop them. This line makes sure that the model reads them."
+  [envelope stops]
+  (if-not (seq stops)
+    envelope
+    (let [notice (str/join "\n" (mapv #(str "[Vis] " (view/human-stop-text %)) stops))]
+      (update envelope
+              :stdout
+              (fn [printed]
+                (if (str/blank? (str printed)) notice (str printed "\n\n" notice)))))))
+
 (defn- activity-store
   "Durable Activity history for a block that belongs to a saved conversation."
   [env]
@@ -705,7 +718,8 @@
                                              (/ timeout-ms 1000)
                                              "s wall")})]
 
-          (envelope-with-settled-views activity-envelope swept))
+          (-> (envelope-with-settled-views activity-envelope swept)
+              (envelope-with-human-stops (view/take-human-stops! block-owner))))
         (let [;; A cancel unwinds the same way a wall does. An ordinary Python
               ;; exception does NOT — `with vis.live` closes on its way out — so this
               ;; finds nothing to sweep and says nothing.
@@ -734,8 +748,10 @@
                                    :error (or (:message (:error recovered-result))
                                               "the run that opened this view ended")}))]
 
-          (envelope-with-settled-views activity-envelope swept)))
-      (finally (reset! block-owner true)))))
+          (-> (envelope-with-settled-views activity-envelope swept)
+              (envelope-with-human-stops (view/take-human-stops! block-owner)))))
+      ;; Stops that land after the block took them are not for a later block.
+      (finally (reset! block-owner true) (view/take-human-stops! block-owner)))))
 
 (defn- run-with-timing
   [python-context code _sandbox-ns timeout-ms start-time tool-event-fn env]

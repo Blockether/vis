@@ -2707,6 +2707,65 @@
                  (finally (hi/close-live! (:id a)) (hi/close-live! (:id b)))))))))
 
 (defdescribe
+  live-view-human-stop-test
+  ;; Regression: a model loop around a watch tool opened the view again after each human
+  ;; stop, in the same block, and the person's note never reached the model.
+  (it "refuses a new view in the block that a person stopped and answers each stop once"
+      (recorded
+        (fn []
+          (let [owner
+                (atom false)
+
+                other
+                (atom false)
+
+                spec
+                (live-spec {:id "status" :type "status" :text "Watching"})
+
+                first-view
+                (binding [hi/*block-owner* owner]
+                  (hi/open-live! spec))]
+
+            @(future (hi/interrupt-live! (:id first-view) "I stop it for a reason"))
+            (let [refusal (try (binding [hi/*block-owner* owner]
+                                 (hi/open-live! spec))
+                               nil
+                               (catch clojure.lang.ExceptionInfo e e))]
+              (expect (= :vis/live-stopped-by-human (:type (ex-data refusal))))
+              (expect (str/includes? (ex-message refusal) "I stop it for a reason")))
+            (let [elsewhere (binding [hi/*block-owner* other]
+                              (hi/open-live! spec))]
+              (expect (some? (hi/live-view (:id elsewhere))))
+              (hi/close-live! (:id elsewhere)))
+            (expect (= [{:title "CI" :note "I stop it for a reason"}] (hi/take-human-stops! owner)))
+            (expect (empty? (hi/take-human-stops! owner)))
+            (expect (empty? (hi/take-human-stops! nil)))))))
+  (it "names a stop without a note and ignores a stop after its block ended"
+      (recorded
+        (fn []
+          (let [owner
+                (atom false)
+
+                spec
+                (live-spec {:id "status" :type "status" :text "Watching"})
+
+                quiet
+                (binding [hi/*block-owner* owner]
+                  (hi/open-live! spec))
+
+                late
+                (binding [hi/*block-owner* owner]
+                  (hi/open-live! spec))]
+
+            (hi/interrupt-live! (:id quiet))
+            (let [stops (hi/take-human-stops! owner)]
+              (expect (= [{:title "CI"}] stops))
+              (expect (str/includes? (hi/human-stop-text (first stops)) "without a note")))
+            (reset! owner true)
+            (hi/interrupt-live! (:id late) "too late")
+            (expect (empty? (hi/take-human-stops! owner))))))))
+
+(defdescribe
   live-patch-close-race-test
   (it "returns the ended verdict when close wins after the first registry lookup"
       (recorded

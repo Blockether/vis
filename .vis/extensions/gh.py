@@ -2049,7 +2049,8 @@ PROMPT = """gh surface active — GitHub through the gh CLI:
 Each answer is a typed frozen object (Account, RunSummary, WatchOutcome). A watch opens a live view
 that the human can watch and stop. Its WatchOutcome holds every job, step and failed-log tail, once.
 Use gh.watch(), not a shell polling loop or a loop around gh.watch(). It signs in when needed and
-follows a newer run that replaces the watched run."""
+follows a newer run that replaces the watched run.
+If the person stops a watch (is_stopped_by_human), do not watch again. Print human_note and answer it."""
 
 
 vis.register_extension(

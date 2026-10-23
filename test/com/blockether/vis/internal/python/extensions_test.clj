@@ -2301,7 +2301,7 @@ _fetches = 0
 def fetch_run(run_id, repo=None):
     global _fetches
     _fetches += 1
-    if _fetches > 2:
+    if _fetches == 3:
         _shell('gh run view 42')
     return {'status': 'queued', 'jobs': [], 'databaseId': 42,
             'workflowName': 'CI', 'headBranch': 'main',
@@ -2332,19 +2332,44 @@ def fetch_run(run_id, repo=None):
                                                             (if (= "stop" op) "stopped" "running")
                                                             "exit" (when (= "stop" op) 143)}})))}
             (fn []
-              (try (let [answer (binding [extension/*current-environment* {:session-id sid
-                                                                           :db-info store}]
-                                  ((symbol-fn (registered "gh") 'gh.watch) 42))]
-                     (expect (true? (:success? answer)) (pr-str answer))
-                     (expect (= "WatchOutcome" (get-in answer [:result "__vis_object__"])))
-                     (expect (= "interrupted" (get-in answer [:result "__vis_attrs__" "ending"])))
-                     (expect (true? (get-in answer
-                                            [:result "__vis_attrs__" "is_stopped_by_human"])))
-                     (expect (= "Stop CI monitoring"
-                                (get-in answer [:result "__vis_attrs__" "human_note"])))
-                     (expect (= ["background" "logs" "stop"] @operations))
-                     (expect (not-any? #(= sid (:session-id %)) (human-input/live-views))))
-                   (finally (stop-view!))))))))))
+              (try
+                (let [owner
+                      (atom false)
+
+                      watch!
+                      (fn []
+                        (binding [extension/*current-environment*
+                                  {:session-id sid :db-info store}
+
+                                  human-input/*block-owner*
+                                  owner]
+
+                          ((symbol-fn (registered "gh") 'gh.watch) 42)))
+
+                      answer
+                      (watch!)
+
+                      ;; Regression: a model loop around gh.watch opened the stopped watch
+                      ;; again in the same block, and the person's note never reached it.
+                      again
+                      (watch!)]
+
+                  (expect (false? (:success? again)) (pr-str again))
+                  (expect (str/includes? (pr-str again) "Vis refused a new live view"))
+                  (expect (str/includes? (pr-str again) "Stop CI monitoring"))
+                  (expect (= [{:title "CI · run 42" :note "Stop CI monitoring"}]
+                             (mapv #(select-keys % [:title :note])
+                                   (human-input/take-human-stops! owner))))
+                  (expect (empty? (human-input/take-human-stops! owner)))
+                  (expect (true? (:success? answer)) (pr-str answer))
+                  (expect (= "WatchOutcome" (get-in answer [:result "__vis_object__"])))
+                  (expect (= "interrupted" (get-in answer [:result "__vis_attrs__" "ending"])))
+                  (expect (true? (get-in answer [:result "__vis_attrs__" "is_stopped_by_human"])))
+                  (expect (= "Stop CI monitoring"
+                             (get-in answer [:result "__vis_attrs__" "human_note"])))
+                  (expect (= ["background" "logs" "stop"] @operations))
+                  (expect (not-any? #(= sid (:session-id %)) (human-input/live-views))))
+                (finally (stop-view!))))))))))
 
 (def ^:private trusted-process-py
   "import ctypes

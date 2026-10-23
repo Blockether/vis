@@ -557,6 +557,8 @@ Companion app's Interrupt button opens the same input.
   it. Reading it uses at most one host call per batching interval.
 - `view.is_from_human` is true when the user stopped the view. `view.note` contains
   their note or `None`.
+- After the user stops a view, the agent step that opened it cannot open another
+  live view. Vis adds the stop and the note to the output that the agent reads.
 - Updating an ended view raises `vis.Interrupted` with the note, even if the
   loop does not check the flag.
 - From the producer, `view.close(reason="interrupted", summary="Stopped monitoring")`

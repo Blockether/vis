@@ -3746,6 +3746,20 @@
                         (finally (try (env/dispose-python-context! pc) (catch Throwable _ nil)))))))
 
 (defdescribe
+  python-block-human-stop-notice-test
+  ;; Regression: a person stopped a live view with a note, but the block printed only
+  ;; its own fields, so the model never read the note.
+  (it "appends each live view that a person stopped to the block output"
+      (let [notice (deref #'python-exec/envelope-with-human-stops)]
+        (expect (= {:stdout "done"} (notice {:stdout "done"} [])))
+        (expect (= (str "done\n\n[Vis] The person stopped the live view \"CI\" with this note: "
+                        "Stop now. Do not watch it again. Read the note and answer the person.")
+                   (:stdout (notice {:stdout "done"} [{:title "CI" :note "Stop now"}]))))
+        (expect (str/starts-with?
+                  (:stdout (notice {} [{:title "CI"}]))
+                  "[Vis] The person stopped the live view \"CI\" without a note")))))
+
+(defdescribe
   python-block-runs-in-the-session-context-test
   ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
   ;; block itself ran with NO session context. A sandbox SHIM bridge reads the

@@ -67,6 +67,30 @@
    Host callbacks inherit this binding. Views keep it until they close."
   nil)
 
+(defonce ^:private human-stops
+  ;; The live views that a PERSON stopped while the block that opened them still ran,
+  ;; keyed by that block's owner token. The block takes them once, when it ends.
+  (atom {}))
+
+(defn human-stop-text
+  "One sentence for the model about the live view that a person stopped: its title,
+   their note and what the model must do next."
+  [{:keys [title note]}]
+  (str "The person stopped the live view \""
+       title
+       "\""
+       (if note (str " with this note: " note) " without a note")
+       ". Do not watch it again. Read the note and answer the person."))
+
+(defn take-human-stops!
+  "The live views that a person stopped while the block of `block-owner` ran, oldest
+   first, as `{:title … :note …}` maps. Each stop is answered once."
+  [block-owner]
+  (if-not block-owner
+    []
+    (let [[old _] (swap-vals! human-stops dissoc block-owner)]
+      (get old block-owner []))))
+
 (defonce ^:private secrets (atom {}))
 
 ;; Secret vault
@@ -1847,6 +1871,14 @@
    is the one place a view differs from a request, which answers `undeliverable`
    at once because a form nobody can see is a thread parked forever."
   [view]
+  ;; A person's stop ends the watching of the whole block. Without this, a model loop
+  ;; around a watch tool opened the same view again at once, and the note never
+  ;; reached the model.
+  (when-let [stop (some->> *block-owner*
+                           (get @human-stops)
+                           peek)]
+    (throw (ex-info (str "Vis refused a new live view. " (human-stop-text stop))
+                    {:type :vis/live-stopped-by-human :title (:title stop) :note (:note stop)})))
   (let [record
         (-> view
             normalize-live-view
@@ -2192,6 +2224,14 @@
                ;; receives the budgeted model picture, or its explicit compact result.
                (when-let [release (:wall-hold entry)]
                  (release))
+               (when-let [owner (and human (:block-owner entry))]
+                 (when-not @owner
+                   (swap! human-stops update
+                     owner
+                     (fnil conj [])
+                     (cond-> {:title (:title @cell)}
+                       (:note verdict)
+                       (assoc :note (:note verdict))))))
                (sink/close! (:file entry)
                             (cond-> artifact-result
                               (seq snapshots)
