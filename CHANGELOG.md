@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - `install-vis-agent --version beta-<commit>` and `vis-agent update beta-<commit>` install exactly that published beta. A missing, incomplete or unverified beta stops the installation and never falls back to the latest beta (#409).
 
+### Changed
+- After Reload extensions in Machine settings, the Companion shows a short summary. Directories and extension names are under Details, and failures stay visible (#411).
+
 ### Removed
 - The `prompt_cache_keepalive` setting is gone. Vis always keeps the provider prompt cache warm during a running turn.
 

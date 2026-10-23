@@ -108,7 +108,7 @@ it('keeps a failed project extension visible and runs its code only on request',
   const header = band.querySelector('header')!;
   expect(within(header).queryByRole('status')).toBeNull();
   expect(within(band).getByText('Reloading…').closest('[role="status"]')).toHaveClass('text-left');
-  // #348: the report names each scanned scope and its directory, not only the counts.
+  // #348: the report names each scanned scope. #411: its directory and names are details.
   finishReload({
     loaded: 1,
     failed: 1,
@@ -118,14 +118,16 @@ it('keeps a failed project extension visible and runs its code only on request',
     ],
     reload_id: 'reload-1',
   });
-  const note = (await within(band).findByText('No machine extensions in ~/.vis/extensions.')).closest('[role="status"]')!;
-  const lines = [...note.querySelectorAll('p')].map((line) => line.textContent);
-  expect(lines).toEqual([
-    'No machine extensions in ~/.vis/extensions.',
-    'Project extensions (/work/app/.vis/extensions): 1 loaded (notifier), 1 failed.',
-    'Each failed extension shows its error.',
-  ]);
+  const summary = 'No machine extensions. Project extensions: 1 loaded, 1 failed. Each failed extension shows its error.';
+  const note = (await within(band).findByText(summary)).closest('[role="status"]') as HTMLElement;
+  expect([...note.querySelectorAll('p')].map((line) => line.textContent)).toEqual([summary]);
   expect(note).toHaveClass('text-left');
+  expect(note).not.toHaveTextContent('/work/app/.vis/extensions');
+  await user.click(within(note).getByRole('button', { name: 'Details' }));
+  expect([...note.querySelectorAll('li')].map((line) => line.textContent)).toEqual([
+    'Machine extensions in ~/.vis/extensions: none.',
+    'Project extensions in /work/app/.vis/extensions: notifier.',
+  ]);
   expect(reload).toHaveBeenCalledWith({ scope: 'project', target_id: 'p1' });
   expect(read.mock.calls.length).toBeGreaterThan(reads);
 });
@@ -183,9 +185,13 @@ it('reloads machine extensions from machine settings and explains an older gatew
   expect(band).not.toHaveTextContent('Machine extension');
   expect(band).not.toContainElement(screen.getByRole('heading', { name: 'Agent' }));
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
-  // #348, #373: an empty machine reload says where it looked and where project extensions reload.
-  expect(await within(band).findByText('No machine extensions in ~/.vis/extensions.')).toBeInTheDocument();
-  expect(within(band).getByText('Project extensions reload in Project settings.')).toBeInTheDocument();
+  // #348, #373: an empty machine reload says where project extensions reload. #411: where it
+  // looked is a detail.
+  const note = (
+    await within(band).findByText('No machine extensions. Project extensions reload in Project settings.')
+  ).closest('[role="status"]') as HTMLElement;
+  await user.click(within(note).getByRole('button', { name: 'Details' }));
+  expect(within(note).getByText('Machine extensions in ~/.vis/extensions: none.')).toBeInTheDocument();
   expect(reload).toHaveBeenLastCalledWith(undefined);
 
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
@@ -251,8 +257,9 @@ it('names each extension once, on the row of its Auto/On/Off choice', async () =
   expect(within(band).queryByText(/^Auto detects applicability/)).toBeNull();
 });
 
-// #373: a machine reload names the project extensions of the open session and opens Project settings.
-it('names project extensions after a machine reload and opens Project settings', async () => {
+// #373: a machine reload counts the project extensions of the open session and opens Project settings.
+// #411: the summary stays short; the project inventory is a detail.
+it('counts project extensions after a machine reload and opens Project settings', async () => {
   const user = userEvent.setup();
   vi.spyOn(GatewayClient.prototype, 'cachedSettings').mockReturnValue(null);
   vi.spyOn(GatewayClient.prototype, 'settings').mockResolvedValue({
@@ -280,12 +287,18 @@ it('names project extensions after a machine reload and opens Project settings',
   await screen.findByText(/Extension failed to load/);
   expect(screen.queryByRole('button', { name: 'Open Project settings' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Reload extensions' }));
-  const note = (await screen.findByText('This project has 1 extension (notifier).')).closest('[role="status"]')!;
-  expect([...note.querySelectorAll('p')].map((line) => line.textContent)).toEqual([
-    'No machine extensions in ~/.vis/extensions.',
-    'This project has 1 extension (notifier).',
-    'Project extensions reload in Project settings.',
+  const summary = 'No machine extensions. 1 project extension reloads in Project settings.';
+  const note = (await screen.findByText(summary)).closest('[role="status"]') as HTMLElement;
+  expect([...note.querySelectorAll('p')].map((line) => line.textContent)).toEqual([summary]);
+  expect(note).not.toHaveTextContent('notifier');
+  const details = within(note).getByRole('button', { name: 'Details' });
+  expect(details).toHaveAttribute('aria-expanded', 'false');
+  await user.click(details);
+  expect(details).toHaveAttribute('aria-expanded', 'true');
+  expect([...note.querySelectorAll('li')].map((line) => line.textContent)).toEqual([
+    'Machine extensions in ~/.vis/extensions: none.',
+    'Project extensions of Workspace: notifier.',
   ]);
-  await user.click(within(note as HTMLElement).getByRole('button', { name: 'Open Project settings' }));
+  await user.click(within(note).getByRole('button', { name: 'Open Project settings' }));
   expect(openScoped).toHaveBeenCalledWith(expect.any(GatewayClient), { scope: 'project', target_id: 'p1', label: 'Workspace' });
 });

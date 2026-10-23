@@ -1,6 +1,6 @@
 import { useContext, useId, useState, type ReactNode } from 'react';
 import { RefreshIcon } from '../../components/icons';
-import { Banner, Button, IconButton, Text } from '../../components/ui';
+import { Banner, Button, Disclosure, IconButton, Text } from '../../components/ui';
 import { GatewayError, type GatewayClient } from '../../lib/gateway';
 import { OpenScopedSettings } from '../../lib/open-settings';
 import type {
@@ -28,35 +28,43 @@ export function hasExtensionNotice(group: ToggleGroup): boolean {
   return Boolean(group.extension && group.extension.status !== 'loaded');
 }
 
+/** A reload report: a short summary that stays visible, and details that a reader opens. */
+export interface ExtensionReloadReport {
+  summary: string[];
+  details: string[];
+}
+
 /**
- * The reload report, one line each: each scanned scope names its directory and what it
- * loaded. A machine reload names the project extensions, which reload in Project settings.
- * Issues #348 and #373.
+ * The reload report. The summary counts each scanned scope and keeps failures visible. A machine
+ * reload counts the project extensions, which reload only in Project settings. The directories and
+ * extension names are details. Issues #348, #373 and #411.
  */
 export function extensionReloadStatus(
   result: ExtensionReload,
   global: boolean,
   project?: SettingsProjectExtensions,
-): string[] {
+): ExtensionReloadReport {
   const scopes = result.scopes ?? [];
-  const lines = scopes.length
-    ? scopes.map((entry) => {
-        const label = entry.scope === 'project' ? 'project extensions' : 'machine extensions';
-        const dir = entry.dirs.join(', ');
-        if (entry.loaded + entry.failed === 0) return `No ${label} in ${dir}.`;
-        const shown = entry.extensions.slice(0, 8);
-        const more = entry.extensions.length - shown.length;
-        const names = shown.length ? ` (${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''})` : '';
-        const title = label.charAt(0).toUpperCase() + label.slice(1);
-        return `${title} (${dir}): ${entry.loaded} loaded${names}, ${entry.failed} failed.`;
-      })
-    : [`${result.loaded} loaded, ${result.failed} failed.`];
-  if (global && project) {
-    lines.push(`This project has ${project.count} ${project.count === 1 ? 'extension' : 'extensions'} (${project.names.join(', ')}).`);
+  const summary: string[] = [];
+  const details: string[] = [];
+  if (!scopes.length) summary.push(`${result.loaded} loaded, ${result.failed} failed.`);
+  for (const entry of scopes) {
+    const label = entry.scope === 'project' ? 'project extensions' : 'machine extensions';
+    const title = label.charAt(0).toUpperCase() + label.slice(1);
+    const failed = entry.failed > 0 ? `, ${entry.failed} failed` : '';
+    summary.push(entry.loaded + entry.failed === 0 ? `No ${label}.` : `${title}: ${entry.loaded} loaded${failed}.`);
+    const names = entry.extensions.length ? entry.extensions.join(', ') : 'none';
+    details.push(`${title} in ${entry.dirs.join(', ')}: ${names}.`);
   }
-  if (global) lines.push('Project extensions reload in Project settings.');
-  if (result.failed > 0) lines.push('Each failed extension shows its error.');
-  return lines;
+  if (global && project) {
+    const noun = project.count === 1 ? 'project extension reloads' : 'project extensions reload';
+    summary.push(`${project.count} ${noun} in Project settings.`);
+    if (project.names.length) details.push(`Project extensions of ${project.label}: ${project.names.join(', ')}.`);
+  } else if (global) {
+    summary.push('Project extensions reload in Project settings.');
+  }
+  if (result.failed > 0) summary.push('Each failed extension shows its error.');
+  return { summary, details };
 }
 
 /** The load error of one extension section, or nothing while it loads normally. */
@@ -194,7 +202,8 @@ export function ExtensionsPanel({
   renderSetting: (toggle: Toggle, head?: SettingHead) => ReactNode;
 }) {
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string[] | null>(null);
+  const [status, setStatus] = useState<ExtensionReloadReport | null>(null);
+  const [isDetailsOpen, setDetailsOpen] = useState(false);
   // Only a finished machine reload report points to Project settings.
   const [isReported, setReported] = useState(false);
   const scoped = Boolean(target && target.scope !== 'global');
@@ -209,15 +218,16 @@ export function ExtensionsPanel({
     : undefined;
   const reload = async () => {
     setBusy(true);
-    setStatus(['Reloading…']);
+    setStatus({ summary: ['Reloading…'], details: [] });
     setReported(false);
+    setDetailsOpen(false);
     try {
       const result = await client.reloadExtensions(target);
       await onRefresh();
       setStatus(extensionReloadStatus(result, !scoped, project));
       setReported(true);
     } catch (error) {
-      setStatus([actionError(error)]);
+      setStatus({ summary: [actionError(error)], details: [] });
     } finally {
       setBusy(false);
     }
@@ -241,10 +251,27 @@ export function ExtensionsPanel({
         ) : undefined
       }
     >
-      {/* The reload report stands below the header as a left-aligned note, one line each (#373). */}
+      {/* The reload report stands below the header as a left-aligned note (#373): a short
+          summary, then its directories and names as folded details (#411). */}
       {hasActions && status && (
         <div role="status" className="space-y-1 px-3 py-2 text-left sm:px-4">
-          {status.map((line) => <Text key={line} as="p" variant="description" className="break-words">{line}</Text>)}
+          <Text as="p" variant="description" className="break-words">{status.summary.join(' ')}</Text>
+          {status.details.length > 0 && (
+            <>
+              <Disclosure isOpen={isDetailsOpen} onClick={() => setDetailsOpen((open) => !open)}>
+                Details
+              </Disclosure>
+              {isDetailsOpen && (
+                <ul className="space-y-1">
+                  {status.details.map((line) => (
+                    <li key={line}>
+                      <Text as="span" variant="description" className="break-words">{line}</Text>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
           {isReported && openProject && (
             <Button variant="secondary" density="panel" className="mt-1" onClick={openProject}>Open Project settings</Button>
           )}
