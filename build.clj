@@ -1121,7 +1121,9 @@
              ;; Restricted native access (java.lang.foreign): rift and the embedded
              ;; CPython bridge both use downcalls. A future JDK blocks them unless the
              ;; application opts in explicitly.
-             "--enable-native-access=ALL-UNNAMED" "-H:IncludeResources=META-INF/vis/.*"
+             "--enable-native-access=ALL-UNNAMED"
+             ;; Enable stack dumps and diagnostic attach without restarting the gateway.
+             "--enable-monitoring=threaddump,jcmd" "-H:IncludeResources=META-INF/vis/.*"
              "-H:IncludeResources=vis-models/.*" "-H:IncludeResources=.*\\.edn$"
              ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
              "-H:IncludeResources=vis/VERSION"

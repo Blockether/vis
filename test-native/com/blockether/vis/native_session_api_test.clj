@@ -343,3 +343,52 @@
                    (stop-gateway! p))
                  (.stop ^HttpServer server 0)
                  (#'binary/delete-tree! dir))))))
+
+(defdescribe
+  native-thread-dump-test
+  (it
+    "prints native thread stacks and keeps the gateway healthy"
+    (let [^File dir
+          (#'binary/temp-dir "vis-native-thread-dump-")
+
+          port
+          (with-open [socket (ServerSocket. 0)]
+            (.getLocalPort socket))
+
+          process
+          (start-gateway! (#'binary/require-binary) dir port)]
+
+      (try
+        (with-redefs-fn {#'gateway-client/ensure-gateway!
+                         (constantly {:host "127.0.0.1" :port port :remote? true})
+                         #'gateway-client/client-id (atom nil)
+                         #'gateway-client/release-hook-installed? (atom true)}
+          (fn []
+            (await-health! process)
+            (let [dump-file
+                  (io/file dir "threads.txt")
+
+                  ^java.util.List command
+                  [(.getAbsolutePath (io/file (System/getProperty "java.home") "bin" "jcmd"))
+                   (str (.pid process)) "Thread.print"]
+
+                  diagnostic
+                  (.start (doto (ProcessBuilder. command)
+                            (.redirectErrorStream true)
+                            (.redirectOutput dump-file)))]
+
+              (try (let [finished? (.waitFor diagnostic 30 java.util.concurrent.TimeUnit/SECONDS)]
+                     (expect finished?)
+                     (when finished?
+                       ;; Native Image writes stacks to the target process log, not the attach response.
+                       (let [dump (str (slurp dump-file) (slurp (io/file dir "gateway.log")))]
+                         (expect (zero? (.exitValue diagnostic)) dump)
+                         (expect (re-find #"\"main\" #[0-9]+ thread=.* state=" dump) dump)
+                         (expect (str/includes?
+                                   dump
+                                   "com.blockether.vis.internal.gateway.server$serve_main_BANG_")
+                                 dump))))
+                   (finally (when (.isAlive diagnostic) (#'binary/kill-tree! diagnostic))))
+              (expect (.isAlive process))
+              (expect (= 200 (:status (gateway-client/request! :get "/healthz")))))))
+        (finally (stop-gateway! process) (#'binary/delete-tree! dir))))))

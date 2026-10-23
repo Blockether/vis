@@ -14,11 +14,13 @@
       (let [form (read {:eof ::eof} reader)]
         (cond (= ::eof form) (throw (ex-info "native-image-args is missing" {}))
               (and (seq? form) (= 'defn- (first form)) (= 'native-image-args (second form)))
-              (filter #(and (string? %) (str/starts-with? % "-H:")) (tree-seq coll? seq form))
+              (filter string? (tree-seq coll? seq form))
               :else (recur))))))
 
 (defdescribe
   native-image-resources-test
+  (it "enables thread dumps and diagnostic attach in native builds"
+      (expect (some #{"--enable-monitoring=threaddump,jcmd"} (native-image-flags))))
   (it
     "excludes ONNX debug symbols while keeping the platform JNI libraries"
     (let [flags
