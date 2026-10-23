@@ -104,8 +104,8 @@
 (def max-active-children (get schema "x-vis-max-active-children"))
 
 (def roles
-  "The subagent roles of the agents contract, in its order: `const`, `title`, `description` and
-   `x-vis-mark`. A role is a label. It sets no tool, file or model limit."
+  "The subagent roles of the agents contract, in its order: `const`, `title` and `description`.
+   A role is a label. It sets no tool, file or model limit."
   (get-in schema ["$defs" "role" "oneOf"]))
 
 (def ^:private role-guide

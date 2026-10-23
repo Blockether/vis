@@ -3,7 +3,6 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
 import type { Subagent } from '../lib/types';
-import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import { ROLES, TurnAgents, agentsByTurn, useAgentTeam } from './AgentTeam';
 import { ROLE_ICONS } from './icons';
 
@@ -33,11 +32,10 @@ describe('turn agents', () => {
     expect(screen.getByText(/small · Human model lock · 2 \/ 4 iterations · \$0.0123/)).toBeInTheDocument();
   });
 
-  it('marks each contract role with its own Lucide twin of the TUI glyph', () => {
+  it('marks each contract role with its own Lucide icon', () => {
     expect(ROLES.map((role) => role.const)).toEqual(['research', 'implement', 'verify', 'audit']);
     expect(Object.keys(ROLE_ICONS)).toEqual(ROLES.map((role) => role.const));
     expect(new Set(Object.values(ROLE_ICONS)).size).toBe(ROLES.length);
-    expect(agentsSchema.$defs.role.oneOf.every((role) => role['x-vis-mark'].length === 1)).toBe(true);
   });
 
   it('keeps one role together and the A-numbers in start order', () => {

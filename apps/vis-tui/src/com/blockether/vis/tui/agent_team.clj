@@ -24,15 +24,16 @@
 (defonce ^:private snapshots (atom {}))
 
 (defn- roles
-  "The subagent roles of the agents contract, in its order. Each `x-vis-mark` is a glyph that the
-   Companion draws as its Lucide twin."
+  "The subagent roles of the agents contract, in its order."
   []
   (get-in (document/schema-document "agents") ["$defs" "role" "oneOf"]))
 
-(defn role-mark
-  "The contract glyph of the role of `agent`, or nil for no role or an unknown role."
+(defn role-name
+  "The contract role of `agent`, such as `implement`, or nil for no role or an unknown role. The
+   TUI writes the role as a word: role glyphs come from a fallback font in many terminal fonts
+   and do not line up with the text."
   [agent]
-  (some #(when (= (get % "const") (get agent "role")) (get % "x-vis-mark")) (roles)))
+  (some #(when (= (get % "const") (get agent "role")) (get % "const")) (roles)))
 
 (defn waiting?
   "Whether `agent` waits for a person: a form in its own session, or an open question, budget
@@ -164,31 +165,26 @@
       (str "Agents: "
            (str/join " · "
                      (map (fn [[n agent]]
-                            (str (some-> (role-mark agent)
-                                         (str " "))
-                                 "A" n
-                                 " " (agent-state agent)))
+                            (str "A" n " " (agent-state agent)))
                           (filter #(contains? live-teams (get (second %) "team_id"))
                                   (numbered agents))))))))
 
 ;; ── Team card ───────────────────────────────────────────────────────────────
 
-(defn- bar
-  "An iteration bar of `width` cells: ■ for used iterations, ─ for the rest."
-  [used budget width]
-  (let [width
-        (long width)
+(def ^:private ^:const bar-width "The cells of the iteration bar of a card row." 10)
 
-        used
+(defn- bar-done
+  "How many of the `bar-width` cells the used iterations fill."
+  [used budget]
+  (let [used
         (long (or used 0))
 
         budget
-        (long (or budget 0))
+        (long (or budget 0))]
 
-        done
-        (if (pos? budget) (min width (long (Math/round (/ (* 1.0 used width) budget)))) 0)]
-
-    (str (apply str (repeat done \■)) (apply str (repeat (- width done) \─)))))
+    (if (pos? budget)
+      (min (long bar-width) (long (Math/round (/ (* 1.0 used (long bar-width)) budget))))
+      0)))
 
 (defn- card-state
   [agent]
@@ -212,18 +208,21 @@
                 "budget reached")))
 
 (defn- card-progress
+  "The iteration bar and count of a running row, such as `────────── 4/10`. The bar is one box
+   glyph that the terminal draws itself, and the used part has its own colour, so it stays on the
+   text line in every font."
   [{:keys [status used budget]}]
   (when (contains? #{"running" "budget_limited"} status)
-    (str (bar used budget 10) " " (or used 0) "/" (or budget "?"))))
+    (str (apply str (repeat bar-width \─)) " " (or used 0) "/" (or budget "?"))))
 
 (defn- widest [texts] (reduce max 0 (map #(long (p/display-width (str %))) texts)))
 
 (defn- card-columns
-  "The cell widths of the card columns, so marks, A-numbers, states, bars and tasks of every
-   row start in the same column. A column that no row uses has width 0."
+  "The cell widths of the card columns, so A-numbers, roles, states, bars and tasks of every row
+   start in the same column. A column that no row uses has width 0."
   [rows]
-  {:mark (widest (keep :mark rows))
-   :n (widest (map #(str "A" (:n %)) rows))
+  {:n (widest (map #(str "A" (:n %)) rows))
+   :role (widest (keep :role rows))
    :state (widest (map :state rows))
    :progress (widest (keep card-progress rows))})
 
@@ -235,7 +234,7 @@
     (when (seq rows)
       (let [rows (mapv (fn [[n agent]]
                          {:n n
-                          :mark (role-mark agent)
+                          :role (role-name agent)
                           :state (card-state agent)
                           :waiting? (waiting? agent)
                           :status (get agent "status")
@@ -280,12 +279,12 @@
 
 (defn- card-offsets
   "The cell offsets of the columns of one card row from its left edge."
-  [{:keys [mark n state progress]}]
-  (let [n-col
-        (if (pos? (long mark)) (inc (long mark)) 0)
+  [{:keys [n role state progress]}]
+  (let [role-col
+        (+ (long n) 2)
 
         state-col
-        (+ n-col (long n) 2)
+        (if (pos? (long role)) (+ role-col (long role) 2) role-col)
 
         progress-col
         (+ state-col (long state) 2)
@@ -293,26 +292,27 @@
         task-col
         (if (pos? (long progress)) (+ progress-col (long progress) 2) progress-col)]
 
-    {:n n-col :state state-col :progress progress-col :task task-col}))
+    {:n 0 :role role-col :state state-col :progress progress-col :task task-col}))
 
 (defn card-row-text
   "Plain text of one agent row of the card, as copy shows it, in the card columns."
-  [{:keys [n mark state task columns] :as row}]
-  (let [{mark-width :mark n-width :n state-width :state progress-width :progress}
+  [{:keys [n role state task columns] :as row}]
+  (let [{n-width :n role-width :role state-width :state progress-width :progress}
         (or columns (card-columns [row]))]
-    (str (when (pos? (long mark-width)) (str (pad mark mark-width) " "))
-         (pad (str "A" n) n-width)
+    (str (pad (str "A" n) n-width)
          "  "
+         (when (pos? (long role-width)) (str (pad role role-width) "  "))
          (pad state state-width)
          "  "
          (when (pos? (long progress-width)) (str (pad (card-progress row) progress-width) "  "))
          task)))
 
 (defn card-detail-text
-  "The dim second row of a waiting or running agent, or nil."
+  "The dim second row of a waiting or running agent, or nil. It starts with a box glyph, so the
+   terminal draws it in the cell grid."
   [{:keys [waiting? status activity]}]
-  (cond waiting? "↳ waiting for you · see Questions below"
-        (and (= "running" status) (seq activity)) (str "↳ " activity)))
+  (cond waiting? "└ waiting for you · see Questions below"
+        (and (= "running" status) (seq activity)) (str "└ " activity)))
 
 (defn- detail-indent
   "The cells before the detail row of `row`: it starts under the state column."
@@ -346,7 +346,7 @@
       (put! (+ (long left) (long (:indent team-line 2))) t/dialog-hint (:text team-line) false)
 
       :agent
-      (let [{:keys [n mark state waiting? status task session-id] :as agent-row}
+      (let [{:keys [n role state waiting? status used budget task session-id] :as agent-row}
             (:row team-line)
 
             state-fg
@@ -367,10 +367,20 @@
             progress
             (card-progress agent-row)]
 
-        (when mark (put! left t/header-active-tab-accent mark false))
         (put! (at :n) t/code-block-fg (str "A" n) true)
+        (when role (put! (at :role) t/dialog-hint role false))
         (put! (at :state) state-fg state (boolean waiting?))
-        (when progress (put! (at :progress) t/status-ok progress false))
+        (when progress
+          (let [done (bar-done used budget)]
+            (when (pos? (long done)) (put! (at :progress) t/status-ok (subs progress 0 done) false))
+            (put! (+ (long (at :progress)) (long done))
+                  t/dialog-hint
+                  (subs progress done bar-width)
+                  false)
+            (put! (+ (long (at :progress)) (long bar-width))
+                  t/code-block-fg
+                  (subs progress bar-width)
+                  false)))
         (put! (at :task) t/code-block-fg task false)
         (when session-id
           (.register interactions/hit-map
@@ -600,9 +610,7 @@
             unseen? (not (contains? (:seen (inbox-state sid) #{}) (:key item)))]
 
         {:title (str " Questions · " index " of " (count items) " ")
-         :head (str (some-> (role-mark agent)
-                            (str " "))
-                    "A"
+         :head (str "A"
                     (:n item)
                     (when-let [role (get agent "role")]
                       (str " " role))
@@ -802,7 +810,7 @@
 ;; ── Breadcrumb ──────────────────────────────────────────────────────────────
 
 (defn breadcrumb
-  "Header path of child session `sid` from its cached team, such as `← Leader · ⊙ A2 · task`:
+  "Header path of child session `sid` from its cached team, such as `Leader → A2 implement · task`:
    `{:text :parent-id}`, or nil when the TUI does not know the parent."
   [sid]
   (let [pairs
@@ -817,13 +825,15 @@
     (when-let [[n agent] (some #(when (= (str sid) (get (second %) "session_id")) %) pairs)]
       (when-let [parent (get agent "parent_id")]
         {:parent-id parent
-         :text (str "← " (if-let [k (and (not= parent (get agent "leader_id")) (number-of parent))]
-                           (str "A" k)
-                           "Leader")
-                    " · " (some-> (role-mark agent)
-                                  (str " "))
-                    "A" n
-                    " · " (str/replace (str (get agent "task")) #"\s+" " "))}))))
+         :text (str (if-let [k (and (not= parent (get agent "leader_id")) (number-of parent))]
+                      (str "A" k)
+                      "Leader")
+                    " → A"
+                    n
+                    (some->> (role-name agent)
+                             (str " "))
+                    " · "
+                    (str/replace (str (get agent "task")) #"\s+" " "))}))))
 
 (defn start-refresh!
   "One screen-owned worker refreshes only the active session, at most every 5s.
@@ -870,8 +880,8 @@
 
 (defn- row-label
   [row]
-  (str (some-> (role-mark row)
-               (str " " (get row "role") " · "))
+  (str (some-> (role-name row)
+               (str " · "))
        (get row "task")
        " · "
        (if (get row "pending_input") "Needs input" (str/replace (get row "status") "_" " "))

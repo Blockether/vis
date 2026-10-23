@@ -103,23 +103,18 @@
 
 (defdescribe
   subagent-role-test
-  (it "offers each contract role to the leader as a label with a mark"
+  (it "offers each contract role to the leader as a label"
       (let [text
             (agents/prompt {})
 
             run-doc
-            (:doc (meta #'agents/run))
-
-            marks
-            (map #(get % "x-vis-mark") agents/roles)]
+            (:doc (meta #'agents/run))]
 
         (expect (= ["research" "implement" "verify" "audit"] (mapv #(get % "const") agents/roles)))
         (expect (str/includes? text "Choose the role by the result that you need"))
         (doseq [role agents/roles]
           (expect (str/includes? text (str (get role "const") ": " (get role "description"))))
-          (expect (str/includes? run-doc (get role "const")))
-          (expect (= 1 (count (get role "x-vis-mark")))))
-        (expect (= 4 (count (set marks))) "Each role has its own mark")))
+          (expect (str/includes? run-doc (get role "const"))))))
   (it "accepts a contract role and refuses another one"
       (expect (document/valid-json? "agents" "spawn" {"task" "Fix" "role" "implement"}))
       (expect (document/valid-json? "agents" "run" {"tasks" [{"task" "Read" "role" "research"}]}))

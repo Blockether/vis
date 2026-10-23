@@ -104,7 +104,7 @@
                    (expect (= :inspect (:action (second (team/items [] "parent")))))
                    (expect (str/starts-with? (:label (last (team/items [(assoc row "role" "audit")]
                                                                        nil)))
-                                             "◈ audit · ")))))
+                                             "audit · ")))))
 
 (def review-agent
   {"session_id" "child"
@@ -364,7 +364,7 @@
                  {"status" "queued"}
                  {"status" "running" "role" "research" "iterations_used" 2 "iteration_budget" 9}
                  {"status" "completed" "role" "implement"}]
-                "Agents: ⊙ A3 2/9 · ◆ A4 done · ▣ A1 1/9 · A2 queued"]]]
+                "Agents: A3 2/9 · A4 done · A1 1/9 · A2 queued"]]]
         (with-redefs [team/summary (constantly {:agents agents})]
           (expect (= label (team/footer-label "leader")))))))
 
@@ -449,7 +449,7 @@
                               (mapv (fn [[n agent]]
                                       [n (get agent "session_id")])
                                     (team/numbered waiting-team))))
-                   (expect (= "Agents: ◆ A2 asks you · ▣ A3 asks you · ⊙ A1 4/10"
+                   (expect (= "Agents: A2 asks you · A3 asks you · A1 4/10"
                               (team/footer-label "leader"))))))
 
 (defdescribe
@@ -463,13 +463,16 @@
 
         (expect (= "Team · 3 agents · 1 running · 2 asks you" (team/card-title team-card)))
         ;; Every part starts in the same column on each row, also for a longer state or count.
-        (expect (= ["◆ A2  asks you  ■■──────── 2/10   Fix parser"
-                    "▣ A3  asks you  ■■■■■■■■■■ 10/10  Run tests"
-                    "⊙ A1  running   ■■■■────── 4/10   Read docs"]
+        (expect (= ["A2  implement  asks you  ────────── 2/10   Fix parser"
+                    "A3  verify     asks you  ────────── 10/10  Run tests"
+                    "A1  research   running   ────────── 4/10   Read docs"]
                    (mapv team/card-row-text rows)))
+        ;; The used part of the bar has its own colour, not its own glyph.
+        (expect (= [2 10 4] (mapv #(#'team/bar-done (:used %) (:budget %)) rows)))
+        (expect (zero? (#'team/bar-done 3 nil)))
         (expect (= 1 (count (set (map #(str/index-of (team/card-row-text %) (:task %)) rows)))))
-        (expect (= "↳ Patched ~/src/a.clj" (team/card-detail-text (nth rows 2))))
-        (expect (= "↳ waiting for you · see Questions below" (team/card-detail-text (first rows))))
+        (expect (= "└ Patched ~/src/a.clj" (team/card-detail-text (nth rows 2))))
+        (expect (= "└ waiting for you · see Questions below" (team/card-detail-text (first rows))))
         (expect (nil? (team/card "turn-9" waiting-team)))
         (let [lines
               (map :line (team/card-entries team-card))
@@ -480,7 +483,7 @@
               detail
               (first (filter #(str/includes? % "Patched") lines))]
 
-          (expect (= (str/index-of row "running") (str/index-of detail "↳"))
+          (expect (= (str/index-of row "running") (str/index-of detail "└"))
                   "The detail row starts under the state column"))))
   (it "decorates only the last assistant message of the team turn"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
@@ -554,6 +557,6 @@
 (defdescribe child-breadcrumb-test
              (it "names the path from the leader to the child session"
                  (with-redefs [team/summary (constantly {:agents waiting-team})]
-                   (expect (= {:parent-id "leader" :text "← Leader · ⊙ A1 · Read docs"}
+                   (expect (= {:parent-id "leader" :text "Leader → A1 research · Read docs"}
                               (team/breadcrumb "c1")))
                    (expect (nil? (team/breadcrumb "unknown"))))))

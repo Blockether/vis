@@ -5,7 +5,6 @@
   "The TUI source draws only the opencode glyph set."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.contract.document :as document]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (def ^:private opencode-glyphs
@@ -50,13 +49,18 @@
                 (expect (empty? (violations "a.clj" "(re-find #\"[\u20AC\u00A3]\" s)")))
                 (expect (empty? (violations "state.clj" "#{\\\u3002}")))
                 (expect (= [["table.clj" 1 \u3002]] (violations "table.clj" "#{\\\u3002}")))))
-  ;; A gear (U+2699) came from the emoji font in many terminals and drew wider than its
-  ;; cell, so the marks are geometric shapes that monospace fonts have.
-  (it "draws each subagent role mark of the contract from the opencode set"
-      (let [marks (map #(get % "x-vis-mark")
-                       (get-in (document/schema-document "agents") ["$defs" "role" "oneOf"]))]
-        (expect (= 4 (count (set marks))))
-        (expect (every? #(and (= 1 (count %)) (opencode-glyphs (first %))) marks))))
+  ;; Monaco, Menlo and SF Mono do not all have shapes such as ■ ⊙ ▣ ◈ or the arrow ↳. A
+  ;; terminal then takes them from a fallback font with another size and baseline, so the agent
+  ;; rows did not line up. Box glyphs are safe: the terminal draws them in the cell grid.
+  (it "draws the agent surfaces only with glyphs that common monospace fonts have"
+      (let [font-safe?
+            (fn [ch]
+              (or ((set "·—…→") ch) (<= 0x2500 (int ch) 0x257F)))
+
+            text
+            (slurp (io/file "src/com/blockether/vis/tui/agent_team.clj"))]
+
+        (expect (= [] (vec (distinct (filter #(and (> (int %) 127) (not (font-safe? %))) text)))))))
   (it "every TUI source file draws only opencode glyphs"
       (let [files (source-files)]
         (expect (< 50 (count files)))
