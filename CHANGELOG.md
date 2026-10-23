@@ -7,17 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.3.3] - 2026-10-23
+
 ### Added
 - `install-vis-agent --version beta-<commit>` and `vis-agent update beta-<commit>` install exactly that published beta. A missing, incomplete or unverified beta stops the installation and never falls back to the latest beta (#409).
+- Evals: each round writes a report with pass@k, pass^k and Krippendorff's alpha. The evals agreement result now also contains `alpha`.
+- TUI: C-x A archives the current session.
+- Evals: a Harbor task can have several user turns. Give `write_task` a list of user messages. All turns run in one session, and the run joins their trajectories. You can import Lost in Conversation and LongMemEval tasks.
+- Python SDK: `final_answer()` returns the final answer of a turn.
 
 ### Changed
 - After Reload extensions in Machine settings, the Companion shows a short summary. Directories and extension names are under Details, and failures stay visible (#411).
+- The gateway registers an unchanged extension only when a session uses it, and loads for an open session go before background loads. Gateway start and the first turn in a project are faster (#407).
+- Council: a grant that the child already has is a no-op. A child's `read_only` or `deny` rule wins over a write grant, and the error names the conflict. `council.resume(files=...)` sets the file scope of the resumed turn (#414).
+- Companion and TUI show the agent team outside Activity, with a short summary on each agent row. Council lifecycle rows no longer repeat each subagent answer on every wait and resume.
+- Settings: the snapshot limit is under General.
+- Each turn's transcript shows the subagents that the turn started. The agent team list also shows the open question that a subagent asks its leader.
+- Svar 0.7.214.
 
 ### Removed
 - The `prompt_cache_keepalive` setting is gone. Vis always keeps the provider prompt cache warm during a running turn.
 
 ### Fixed
+- A provider content filter now shows its own card with the provider's reason and the flagged categories. Before, it showed "Provider stream interrupted" and said that the terminal marker was missing (#413).
+- A provider that several projects register now resolves for sign-in, sign-out, limits and models in the TUI and on the machine (#410).
 - Companion: Enter now confirms a session delete that you open with Delete or Backspace. The focus stays on the safe answer, and Enter after Tab presses the focused answer (#412).
+- Companion: an unfinished edge swipe no longer leaves the session list shifted to the left.
+- Companion: a short line before inline code that is wider than the column no longer stretches its word gaps.
+- In summarized steps, the running step and its code stay visible below a closed digest.
+- A live view that a person stopped stays closed. Before, a model loop opened it again at once.
+- Codex WebSocket handshakes no longer stall when many processes exit at the same time.
+- A uv installation that times out keeps the output that uv printed before the timeout.
+- The native binary accepts thread dumps and diagnostic attach.
+- After `/reload`, each extension tool call runs the tool that it names. Before, an added, removed or reordered tool could run a different method. A removed or changed tool is refused (#415).
+- `cat` and `grep` no longer fail after a patch of a version that you did not read.
+- When a reused provider connection closes before any response, Vis sends the request again at once. It no longer shows a provider retry.
+- Evals: a task without seed files no longer fails before the agent starts.
+- Evals: a context overflow now fails the trial. Before, the trial had no score.
 
 ## [v0.3.2] - 2026-10-22
 
