@@ -2875,7 +2875,49 @@
             (expect (string/starts-with? (.getCanonicalPath ^java.io.File f) clone)) ;; lands in clone
             (expect (= "in-clone" (slurp f)))                                        ;; reads clone, NOT trunk
             (expect (= (.replace (str trunk "/x.txt") "\\" "/") (rel-path f)))) ;; display shows real trunk path, `/`-normalized
-          (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
+          (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts"))))))
+  ;; A file in an added root under home used to show its whole absolute path
+  ;; in cat and grep headers. It now shows `~/…`, and that address round-trips.
+  (it
+    "a file under home but outside the primary cwd renders as ~/… and resolves back"
+    (let [safe-path
+          (private-fn "safe-path")
+
+          rel-path
+          (private-fn "rel-path")
+
+          home
+          (mk-tmp-dir "vis-home")
+
+          primary
+          (str home "/primary")
+
+          sibling
+          (str home "/sibling")
+
+          prior
+          (System/getProperty "user.home")]
+
+      (.mkdirs (java.io.File. ^String primary))
+      (.mkdirs (java.io.File. ^String sibling))
+      (spit (java.io.File. ^String sibling "x.txt") "in-sibling")
+      (try (System/setProperty "user.home" home)
+           (binding [workspace/*workspace-root*
+                     primary
+
+                     workspace/*filesystem-roots*
+                     [{:trunk sibling :clone sibling :draft :shared}]]
+
+             (let [f
+                   (safe-path (str sibling "/x.txt"))
+
+                   shown
+                   (rel-path f)]
+
+               (expect (= "~/sibling/x.txt" shown))
+               (expect (= (.getCanonicalPath ^java.io.File f)
+                          (.getCanonicalPath ^java.io.File (safe-path shown))))))
+           (finally (System/setProperty "user.home" prior))))))
 
 (defdescribe patch-does-not-attach-test
              (it "edits in temp and workspace do not become attachments"

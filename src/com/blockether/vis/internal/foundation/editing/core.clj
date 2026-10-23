@@ -420,8 +420,9 @@
   [^File f]
   ;; Reverse of safe-path's remap so the address the model SEES round-trips:
   ;; a file under the primary cwd renders RELATIVE; a file under a context
-  ;; CLONE renders as its REAL (trunk) absolute path — never the ~/.vis/drafts
-  ;; clone path. Anything else falls back to the absolute path.
+  ;; CLONE renders as its REAL (trunk) path — never the ~/.vis/drafts clone
+  ;; path. Outside the primary cwd, a path under home renders as `~/…`, which
+  ;; safe-path expands again; anything else stays absolute.
   (let [^java.nio.file.Path cwd-canon
         (canonical-path (workspace/cwd))
 
@@ -438,9 +439,10 @@
                                   (canonical-path trunk)]
 
                               (when (.startsWith p cp)
-                                (paths/unixify (.resolve tp (.relativize cp p))))))
+                                (paths/abbreviate-home (paths/unixify
+                                                         (.resolve tp (.relativize cp p)))))))
                           (workspace/filesystem-root-mappings))
-                    (str p)))))
+                    (paths/abbreviate-home (str p))))))
 
 (defn- shown-version!
   "Remember `content` as the version of `f` that a read showed, and answer the version.
@@ -1054,9 +1056,11 @@
   "True when `rel-path` rendered a RELATIVE address for the listed directory, so
    `target-rel` is a usable PREFIX into the workspace index's own records.
 
-   Context clones use absolute trunk addresses, so they cannot reuse relative index records."
+   Context clones and other roots use absolute or `~/…` addresses, so they cannot reuse
+   relative index records."
   [target-rel]
-  (not (str/starts-with? (str target-rel) "/")))
+  (let [s (str target-rel)]
+    (not (or (str/starts-with? s "/") (= s "~") (str/starts-with? s "~/")))))
 
 (defn- warm-ls-lease
   "Lease the workspace index only when `grep` or `find` already built it.
