@@ -160,6 +160,22 @@ function liveRuns(rows: Iterable<Session>): Session[] {
     .sort((a, b) => sessionMillis(b) - sessionMillis(a));
 }
 
+/**
+ * Keep the objects that a read did not change, and the list when no item changed.
+ * Each revalidation answers with fresh copies of the same groups and rows. Those
+ * copies re-rendered every row of a band, and that blocked a fast scroll.
+ */
+function keepUnchanged<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  const previousById = new Map(current.map((item) => [item.id, item]));
+  const next = incoming.map((item) => {
+    const previous = previousById.get(item.id);
+    return previous && JSON.stringify(previous) === JSON.stringify(item) ? previous : item;
+  });
+  return current.length === next.length && current.every((item, index) => item === next[index])
+    ? current
+    : next;
+}
+
 /** A group's colour where no rail carries it: one mark, beside a group's name in a menu. */
 function Swatch({ color }: { color: string | null }) {
   return <span aria-hidden className={`size-2.5 shrink-0 ${groupSwatch(color)}`} />;
@@ -969,7 +985,7 @@ export const ProjectGroup = memo(function ProjectGroup({
         if (answer.nextCursor) cursors.current.set(from + answer.rows.length, answer.nextCursor);
         setPaged((held) => ({
           start,
-          rows: answer.rows.slice(start - from),
+          rows: keepUnchanged(held?.rows ?? NO_ROWS, answer.rows.slice(start - from)),
           total: answer.total,
           awaiting: answer.awaiting,
           // The gateway ships the shelves with the HEAD window alone. A tail read
@@ -977,7 +993,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           // same view and band window stay exactly as the head painted them.
           grouped:
             after === '' || held?.view !== archived || held?.bandOffset !== bandOffset
-              ? answer.grouped
+              ? keepUnchanged(held?.grouped ?? NO_ROWS, answer.grouped)
               : held.grouped,
           bandOffset,
           view: archived,
@@ -1040,12 +1056,12 @@ export const ProjectGroup = memo(function ProjectGroup({
       .then((answer) => {
         if (!live) return;
         asideRevision.current = revision;
-        setGroupedPage({
+        setGroupedPage((held) => ({
           view: groupArchived,
           offset: bandOffset,
-          rows: answer.grouped,
+          rows: keepUnchanged(held?.rows ?? NO_ROWS, answer.grouped),
           read: groupsRead,
-        });
+        }));
         noteRefresh('page', groupsRead);
       })
       .catch(() => {
@@ -1274,7 +1290,7 @@ export const ProjectGroup = memo(function ProjectGroup({
           bandWindow,
         );
         if (!live) return;
-        setGroups(answer?.groups ?? []);
+        setGroups((current) => keepUnchanged(current, answer?.groups ?? []));
         setGroupTotal(answer?.total ?? 0);
         setGroupSessionTotal(answer?.session_total ?? 0);
         setGroupsReady({ view: groupArchived, offset: bandOffset, read: groupsRead });
