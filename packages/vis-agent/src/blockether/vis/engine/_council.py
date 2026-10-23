@@ -316,15 +316,27 @@ class Council:
         return self._records("/cancel", {"session_id": session_id}, "cancel")[0]
 
     def resume(
-        self, session_id: str, task: str, *, timeout_secs: int = 240
+        self,
+        session_id: str,
+        task: str,
+        *,
+        files: dict[str, list[str]] | None = None,
+        timeout_secs: int = 240,
     ) -> SubagentRecord:
         """Give a finished subagent a follow-up task in its own session, then wait for it.
 
         The parent must be active, as for ``spawn``: an idle parent gets
         ``inactive-session``. The child keeps its whole context. A child without
         iterations left needs ``extend`` first. A running child needs ``wait``.
+        ``files`` replaces the file grant of the child for the follow-up task.
         """
-        body = {"session_id": session_id, "task": task, "timeout_secs": timeout_secs}
+        body: dict[str, Any] = {
+            "session_id": session_id,
+            "task": task,
+            "timeout_secs": timeout_secs,
+        }
+        if files is not None:
+            body["files"] = files
         return self._records("/resume", body, "resume", timeout_secs)[0]
 
     def extend(self, session_id: str, iterations: int) -> SubagentRecord:
@@ -343,8 +355,11 @@ class Council:
     def grant(self, session_id: str, files: dict[str, list[str]]) -> SubagentRecord:
         """Add ``write``, ``read_only`` or ``deny`` file rules to the grant of a subagent.
 
-        A grant gives at most your own access. The record has a ``warning`` when an
-        active sibling can write the same files.
+        A grant gives at most your own access. A write rule that the child can already
+        write changes nothing. A write rule under a ``read_only`` or ``deny`` rule of the
+        child fails: use ``resume`` with ``files`` for a new scope. The record has a
+        ``warning`` for unchanged write rules and for an active sibling that can write
+        the same files.
         """
         body = {"session_id": session_id, "files": files}
         return self._records("/grant", body, "grant")[0]

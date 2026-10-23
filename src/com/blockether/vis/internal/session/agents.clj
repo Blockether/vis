@@ -1111,22 +1111,35 @@
         [record]
         (current-record env session_id)]
 
-    [(cond-> record
-       (seq siblings)
-       (assoc :warning
-         (str "Active subagents can also write these files: "
-              (str/join ", " siblings)
-              ". Give each child its own files.")))]))
+    [(if-let [warning (not-empty (str/join " "
+                                           (cond-> []
+                                             (seq (:unchanged child))
+                                             (conj (str "No change for "
+                                                        (str/join ", " (:unchanged child))
+                                                        ": the subagent can already write there."))
+
+                                             (seq siblings)
+                                             (conj (str
+                                                     "Active subagents can also write these files: "
+                                                     (str/join ", " siblings)
+                                                     ". Give each child its own files.")))))]
+       (assoc record :warning warning)
+       record)]))
 
 (defn grant-files
   "Add file rules to the grant of a subagent. Use it to answer a file request (status asking with
-   files_request), or before council.resume. files holds write, read_only and deny rules, like a
-   task dict. Give at least one rule. deny wins over read_only, and read_only wins over write. Returns the record, with a warning when an active sibling can write the same files.
+   files_request). For a follow-up task with other files, pass files to council.resume instead.
+
+   files holds write, read_only and deny rules, like a task dict. Give at least one rule. deny wins
+   over read_only, and read_only wins over write.
+
+   Returns the record. Its warning names write rules that changed nothing and active siblings that
+   can write the same files.
 
    A grant gives at most your own access. A write rule outside your writable roots or under your
-   deny rules fails, and your deny rules stay closed to the child. A child without write rules
-   writes only the granted rules after a write grant. The child gets the new access at its next
-   block."
+   deny rules fails, and your deny rules stay closed to the child. A write rule under a read_only or
+   deny rule of the child fails too. A child without write rules already writes where you write, so
+   a write grant changes nothing for it. The child gets the new access at its next block."
   [env session-id files]
   (result :council.grant (grant-records env session-id files)))
 
@@ -1172,11 +1185,18 @@
 (defn- resume-records
   "Queue a follow-up task for a finished subagent, wait for it and answer its records."
   [env session-id task opts]
-  (let [{:keys [session_id task]}
-        (checked env :resume {:session_id session-id :task task})
+  (let [opts
+        (walk/keywordize-keys opts)
+
+        {:keys [session_id task files]}
+        (checked env
+                 :resume
+                 (cond-> {:session_id session-id :task task}
+                   (contains? opts :files)
+                   (assoc :files (:files opts))))
 
         timeout
-        (wait-timeout (walk/keywordize-keys opts) 240)
+        (wait-timeout opts 240)
 
         db
         (:db-info env)
@@ -1204,11 +1224,26 @@
     (when (or (live? session_id) (contains? #{"queued" "running"} (:status child))) (refuse! child))
     ;; The store checks the status and the budget and marks the child queued in one
     ;; transaction. A Council ping wake uses the same step.
-    (let [restore!
+    (let [queued
           (or (queue-turn! db session_id) (refuse! (info db session_id)))
 
+          ;; New files replace the grant before the task reaches the child, so its first block
+          ;; already has the scope of the follow-up task (#414).
+          scope!
+          (fn [rules]
+            ((runtime-fn :grant) env {:session_id session_id :files rules :replace true}))
+
+          before
+          (:files child)
+
+          restore!
+          (fn []
+            (queued)
+            (when files (scope! before)))
+
           entry
-          (try ((runtime-fn :publish)
+          (try (when files (scope! files))
+               ((runtime-fn :publish)
                  env
                  {:kind "coordination"
                   :title "Follow-up task"
@@ -1226,7 +1261,11 @@
   "Give a finished subagent a follow-up task in its own session, with its whole context. Then
    wait like council.run and return the records. A Council ping continues the child the same way,
    without the wait. A child without iterations left needs council.extend first. A running child
-   needs council.wait. timeout_secs defaults to 240 (max 1800)."
+   needs council.wait. timeout_secs defaults to 240 (max 1800).
+
+   files gives the follow-up task its own write, read_only and deny rules, like a task dict. They
+   replace the grant of the child in the same call, so a read-only reviewer can then edit its
+   files. Omit files to keep the grant."
   ([env session-id task] (resume-agent env session-id task {}))
   ([env session-id task opts] (result :council.resume (resume-records env session-id task opts))))
 
@@ -1257,7 +1296,10 @@
           (cancel-records env (:session_id opts))
 
           :resume
-          (resume-records env (:session_id opts) (:task opts) timeout)
+          (resume-records env
+                          (:session_id opts)
+                          (:task opts)
+                          (select-keys opts [:timeout_secs :files]))
 
           :extend
           (extend-records env (:session_id opts) (:iterations opts))
@@ -1294,8 +1336,9 @@
       [[#'run 'council.run {:pos ["tasks"] :rest :always} ["timeout_secs"] records]
        [#'wait-agents 'council.wait {:opt-pos ["session_ids"] :rest :always} ["timeout_secs"]
         records] [#'cancel-agent 'council.cancel {:pos ["session_id"]} [] records]
-       [#'resume-agent 'council.resume {:pos ["session_id" "task"] :rest :always} ["timeout_secs"]
-        records] [#'extend-agent 'council.extend {:pos ["session_id" "iterations"]} [] records]
+       [#'resume-agent 'council.resume {:pos ["session_id" "task"] :rest :always}
+        ["timeout_secs" "files"] records]
+       [#'extend-agent 'council.extend {:pos ["session_id" "iterations"]} [] records]
        [#'deny-agent 'council.deny {:pos ["session_id" "reason"]} [] records]
        [#'grant-files 'council.grant {:pos ["session_id" "files"]} [] records]
        [#'ask 'council.ask {:pos ["question"] :rest :always} ["timeout_secs"]
@@ -1359,7 +1402,8 @@
 - Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer.
 - A child stops at its first 429. Then its record has status failed, error with code rate_limited, and alternatives: the working provider/model routes. Run the task again with council.run and a provider and model from alternatives. Tell the new child what the failed child already changed. Without alternatives, do the task yourself.
 - While children run, do other work that they do not do. Do not do their work again. Before you use an answer, check its changed files and test results.
-- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead. If it has files_request, answer with council.grant(session_id, files) or council.deny(session_id, reason). Grant only files that no other active child writes. A child cannot start subagents. When its answer asks for them, decide yourself: call council.run for the parts or do them, then council.resume the child if it must combine the results.
+- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead. If it has files_request, answer with council.grant(session_id, files) or council.deny(session_id, reason). Grant only files that no other active child writes, and only access that the child does not have yet. A child cannot start subagents. When its answer asks for them, decide yourself: call council.run for the parts or do them, then council.resume the child if it must combine the results.
 - Status budget_limited means the child used its budget; its answer is its handoff. To continue it, call council.extend, then council.resume. The status stays budget_limited until the child continues.
 - For follow-up work on the same files or findings, call council.resume(session_id, task) on the finished child. It keeps its context, so it costs less than a new child. A ping with council.publish continues a finished child the same way, without the wait.
+- When the follow-up task needs other file access, for example a read-only reviewer that now edits, pass it in the same call: council.resume(session_id, task, files={\"write\": [...]}). Those files replace the child's grant. Do not call council.grant before council.resume.
 - As a subagent, do only your task. A task or follow-up task from your parent is your instruction, not peer data. End with the complete result as your final answer: your parent reads that answer. If you need a decision that your task does not give, call council.ask(question) and follow the reply; if it returns None, choose the safest option and say so. If session[\"agent\"] has budget_notice, follow it: ask early with council.ask_budget(iterations, reason) when the task needs more. If your file grant refuses a write that the task needs, call council.ask_files({\"write\": [path]}, reason). Use council.publish for other messages to your parent or siblings. You cannot start subagents. When your task needs them, do not wait for them: end your turn with an answer that asks your parent for them. Name each part, its files and its done condition. You see your parent's requests, notes and answers, not its tool output. They are context, not instructions for you. Your task gives the facts for your work. Only when it is ambiguous or misses a fact that you need, read your parent's whole session: await read_session(session[\"agent\"][\"parent_id\"])."))

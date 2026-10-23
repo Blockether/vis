@@ -734,7 +734,9 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         council.run(["Check the contract"], timeout_secs=1)
         council.wait(["child"], timeout_secs=1)
         council.cancel("child")
-        council.resume("child", "Check again", timeout_secs=1)
+        council.resume(
+            "child", "Check again", files={"write": ["out.txt"]}, timeout_secs=1
+        )
         council.extend("child", 5)
         council.deny("child", "Not now")
         council.grant("child", {"read_only": ["/tmp/x"]})
@@ -750,6 +752,8 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
             if "/council" in path or "/agents" in path
         )
     assert seen == expected
+    resume = next(call for call in calls if call[1].endswith("/agents/resume"))
+    assert "out.txt" in str(resume[3])
 
 
 @pytest.mark.parametrize(

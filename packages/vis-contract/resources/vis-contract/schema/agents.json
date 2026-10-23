@@ -192,7 +192,7 @@
       "additionalProperties": false
     },
     "grant": {
-      "$comment": "Add file rules to the grant of a subagent. A child without write rules writes only the granted rules after a write grant.",
+      "$comment": "Add file rules to the grant of a subagent. A child without write rules already writes where its parent writes, so a write grant changes nothing for it. A write rule under a read_only or deny rule of the child fails.",
       "type": "object",
       "properties": {
         "session_id": {
@@ -237,6 +237,10 @@
         },
         "task": {
           "$ref": "#/$defs/spawn/properties/task"
+        },
+        "files": {
+          "$comment": "Replace the grant of the child for the follow-up task.",
+          "$ref": "#/$defs/files"
         },
         "timeout_secs": {
           "$ref": "#/$defs/wait/properties/timeout_secs"

@@ -6274,9 +6274,23 @@
   ;; Serializes spawns and grants, so two concurrent grants cannot lose a rule.
   (Object.))
 
+(defn- grant-conflicts
+  "The write rules of `added` that a read_only or deny rule of the child grant `current` covers,
+   each with that rule. read_only and deny win over write, so a grant cannot open them (#414)."
+  [current added]
+  (vec (keep (fn [rule]
+               (some (fn [k]
+                       (some #(when (process-jail/rule-covers? % rule)
+                                (str rule " (" (name k) " " % ")"))
+                             (get current k)))
+                     [:deny :read_only]))
+             (:write added))))
+
 (defn- agent-grant
-  "Add the rules of `opts` to the file grant of a child of the calling parent. The child gets the
-   new policy at its next block. Answers the child row."
+  "Add the rules of `opts` to the file grant of a child of the calling parent. With `:replace`,
+   the rules replace the grant: a follow-up task gets its own scope, and no rules mean the
+   parent's access. The child gets the new policy at its next block. Answers the child row, with
+   `:unchanged` for the write rules that the child already had."
   [env opts]
   (locking agent-lock
     (let [db
@@ -6305,26 +6319,54 @@
           (when-not (:security-policy env)
             (agents/fail! :inactive-session "A file grant needs the parent's live session"))
 
+          replace?
+          (boolean (:replace opts))
+
           added
           (or (agent-files env (resolve-workspace db sid) (:files opts))
-              (agents/fail! :invalid-request "files needs at least one rule"))
+              (when-not replace? (agents/fail! :invalid-request "files needs at least one rule")))
+
+          current
+          (not-empty (:files child))
+
+          blocked
+          (when-not replace? (grant-conflicts current added))
 
           _
-          (when (and (seq (:write added)) (empty? (get-in child [:files :write])))
+          (when (seq blocked)
             (agents/fail! :invalid-request
-                          (str
-                            "That subagent can write every file that you can write. A write grant"
-                            " would limit it to the granted files.")))
+                          (str "files.write cannot open " (str/join ", " blocked)
+                               ": deny wins over read_only, and read_only wins over write. To "
+                               "give the subagent other files for a new task, call "
+                               "council.resume(session_id, task, files={...}): those files "
+                               "replace its grant.")))
+
+          ;; Without write rules, a child already writes where its parent writes (#414). A write
+          ;; grant would narrow that access, so it adds nothing.
+          inherited?
+          (and (not replace?) (empty? (:write current)))
+
+          unchanged
+          (if inherited? (:write added) (filterv (set (:write current)) (:write added)))
 
           merged
-          (merge-with #(vec (distinct (concat %1 %2))) (:files child) added)]
+          (if replace?
+            added
+            (not-empty (merge-with #(vec (distinct (concat %1 %2)))
+                                   current
+                                   (cond-> added
+                                     inherited?
+                                     (dissoc :write)))))]
 
-      (persistance/db-agent-update! db child-id {:files merged})
-      ;; Narrow the parent's live policy, so the grant stays a subset of the parent's access.
-      (process-jail/grant-jail! child-id
-                                (:process-jail (security-policy/restrict (:security-policy env)
-                                                                         merged)))
-      (agents/info db child-id))))
+      (when (not= merged current)
+        (persistance/db-agent-update! db child-id {:files merged})
+        ;; Narrow the parent's live policy, so the grant stays a subset of the parent's access.
+        (process-jail/grant-jail! child-id
+                                  (:process-jail (security-policy/restrict (:security-policy env)
+                                                                           merged))))
+      (cond-> (agents/info db child-id)
+        (seq unchanged)
+        (assoc :unchanged unchanged)))))
 
 (defn- agent-spawn
   [env opts]

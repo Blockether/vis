@@ -1,0 +1,28 @@
+{
+  "want": {
+    "audit.txt": [
+      "scope-ok-7431",
+      "subagent"
+    ]
+  },
+  "wantnot": {
+    "audit.txt": [
+      "leader"
+    ]
+  },
+  "want_answer": [
+    "followup-done"
+  ],
+  "want_tools": [
+    "council.run",
+    "council.resume"
+  ],
+  "forbid_tools": [
+    "patch",
+    "council.grant"
+  ],
+  "want_activity_sequence": [
+    "council.run",
+    "council.resume"
+  ]
+}

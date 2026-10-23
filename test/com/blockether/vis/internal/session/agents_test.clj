@@ -345,12 +345,13 @@
        :list (fn [_ _]
                (ps/db-agent-list db leader))
        ;; The gateway also resolves and checks the rules; here they stay as given.
-       :grant (fn [_ {:keys [session_id files]}]
+       :grant (fn [_ {:keys [session_id files replace]}]
                 (let [old (:files (ps/db-agent-info db session_id))]
-                  (ps/db-agent-update! db
-                                       session_id
-                                       {:files
-                                        (merge-with #(vec (distinct (concat %1 %2))) old files)})))
+                  (ps/db-agent-update!
+                    db
+                    session_id
+                    {:files
+                     (if replace files (merge-with #(vec (distinct (concat %1 %2))) old files))})))
        :publish (fn [env opts]
                   (let [id (inc (count @entries))]
                     (swap! entries assoc id (assoc opts :author (str (:session-id env))))
@@ -736,10 +737,15 @@
           (outcome #(agents/extend-agent env child 2))
           (expect (= "budget_limited" (:status (agents/info db child))))
           (expect (= "queued"
-                     (get (first (outcome
-                                   #(agents/resume-agent env child "More" {:timeout_secs 1})))
+                     (get (first (outcome #(agents/resume-agent env
+                                                                child
+                                                                "More"
+                                                                {:timeout_secs 1
+                                                                 :files {:write ["out.txt"]}})))
                           "status"))
                   "An extended budget_limited child resumes")
+          ;; #414: files on council.resume replace the grant of the follow-up task in one call.
+          (expect (= {:write ["out.txt"]} (:files (agents/info db child))))
           (ps/db-agent-update! db child {:status "cancelled"})
           (expect (= :invalid-request (outcome #(agents/resume-agent env child "More"))))))))
   ;; A Council ping and council.resume are one follow-up step, so both pass the active cap.
@@ -1003,14 +1009,33 @@
                          (expect (pj/take-stale-worker! owner))
                          (expect (not (pj/take-stale-worker! owner))))
                        (finally (pj/release-grants! owner ::live-env)))
-                  ;; A write grant would take access from a child that can write everything.
-                  (expect (= :invalid-request
-                             (try (gateway/agents-operation! leader
-                                                             :grant
-                                                             {:session_id sid
-                                                              :files {:write ["docs/**"]}})
-                                  nil
-                                  (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
+                  ;; #414: a child without write rules already writes where its parent writes,
+                  ;; so a write grant changes nothing and says so.
+                  (let [granted (-> (gateway/agents-operation! leader
+                                                               :grant
+                                                               {:session_id sid
+                                                                :files {:write ["docs/**"]}})
+                                    first
+                                    walk/keywordize-keys)]
+                    (expect (nil? (:files granted)))
+                    (expect (nil? (:files (ps/db-agent-info db sid))))
+                    (expect (str/includes? (:warning granted) "No change for")))
+                  ;; #414: a read_only rule of the child wins over a write grant and names the
+                  ;; resume call that gives a new task its own files.
+                  (let [auditor (:session_id (gateway/agents-operation!
+                                               leader
+                                               :spawn
+                                               {:task "Audit only" :files {:read_only ["**"]}}))
+                        refusal (try (gateway/agents-operation! leader
+                                                                :grant
+                                                                {:session_id auditor
+                                                                 :files {:write ["docs/a.md"]}})
+                                     nil
+                                     (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+
+                    (expect (str/includes? refusal "/docs/a.md (read_only "))
+                    (expect (str/includes? refusal "council.resume(session_id, task, files="))
+                    (expect (not (str/includes? refusal "every file"))))
                   ;; Only the parent grants: a child cannot widen its own access.
                   (expect (= :not-owner
                              (try (gateway/agents-operation! owner
@@ -1065,7 +1090,7 @@
                                 leader
                                 "\")")]
 
-                  (expect (= 3 (count (filter #(str/includes? % hint) delegated))))))
+                  (expect (= 4 (count (filter #(str/includes? % hint) delegated))))))
               (expect (= "cancelled"
                          (get (first (gateway/agents-operation! leader :cancel {:session_id sid}))
                               "status")))
