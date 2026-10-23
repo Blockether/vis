@@ -104,6 +104,32 @@
             (expect (str/includes? (str (:diagnostics data)) "UV_PARTIAL_MARKER")
                     (pr-str data)))))))
 
+(defdescribe installer-closed-pipe-keeps-partial-line-test
+             (it "installer closed pipe keeps partial line"
+                 ;; Linux CI closed the pipe on timeout and lost the unterminated marker line.
+                 (let [sent
+                       (atom false)
+
+                       in
+                       (proxy [java.io.InputStream] []
+                         (read
+                           ([] (throw (java.io.IOException. "Stream closed")))
+                           ([^bytes b off len]
+                            (when @sent (throw (java.io.IOException. "Stream closed")))
+                            (let [marker (.getBytes "UV_PARTIAL_MARKER: waiting")]
+                              (System/arraycopy marker 0 b (int off) (alength marker))
+                              (reset! sent true)
+                              (alength marker)))))
+
+                       tail
+                       (atom "")]
+
+                   (expect (instance? java.io.IOException
+                                      (failure #(#'python-runtime/capture-diagnostics!
+                                                  (java.io.InputStreamReader. in)
+                                                  tail))))
+                   (expect (str/includes? @tail "UV_PARTIAL_MARKER")))))
+
 (defdescribe automatic-preparation-preserves-safe-cause-test
              (it "automatic preparation preserves safe cause"
                  (with-uv-fixture

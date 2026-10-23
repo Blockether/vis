@@ -283,13 +283,17 @@
             (.setLength line 0)))]
 
     (with-open [reader (java.io.BufferedReader. reader)]
-      (loop [overflow? false]
-        (let [c (.read reader)]
-          (cond (= -1 c) (when (or overflow? (pos? (.length line))) (emit! overflow?))
-                (= 10 c) (do (emit! overflow?) (recur false))
-                :else (if (or overflow? (>= (.length line) diagnostic-limit))
-                        (recur true)
-                        (do (.append line (char c)) (recur false)))))))
+      (try (loop [overflow? false]
+             (let [c (.read reader)]
+               (cond (= -1 c) (when (or overflow? (pos? (.length line))) (emit! overflow?))
+                     (= 10 c) (do (emit! overflow?) (recur false))
+                     :else (if (or overflow? (>= (.length line) diagnostic-limit))
+                             (recur true)
+                             (do (.append line (char c)) (recur false))))))
+           (catch java.io.IOException e
+             ;; A closed pipe must not drop the partial line already read.
+             (when (pos? (.length line)) (emit! false))
+             (throw e))))
     @tail))
 
 (defn installer-error
@@ -332,7 +336,9 @@
               (reify
                 java.util.function.Consumer
                   (accept [_ child] (.destroyForcibly ^ProcessHandle child)))))
-  (.destroyForcibly process)
+  ;; Process/destroyForcibly also closes stdout on Linux, so the reader loses unread
+  ;; output. Kill through the handle and let the reader drain the pipe to EOF.
+  (.destroyForcibly (.toHandle process))
   (.waitFor process 5 TimeUnit/SECONDS))
 
 (def ^:dynamic ^:private *extension-preparation?* false)
