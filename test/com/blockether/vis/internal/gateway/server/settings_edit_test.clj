@@ -159,6 +159,20 @@
                              (expect (= 400 (:status failure)))
                              (expect (contains? (:field-errors failure) "jail_network"))
                              (expect (= {} (store/db-scoped-settings db "session" sid))))))
+    (it "rejects an unknown tool name and writes no tool list (issue #416)"
+        (with-empty-config
+          (with-redefs [policy/tool-names (constantly ["vis.files.read" "vis.shell.run"])]
+            (let [{:keys [db target sid]} (scope-fixture)
+                  failure (failure-data #(edit/apply! db
+                                                      target
+                                                      (edit/revision db target)
+                                                      [{"id" "tools_deny"
+                                                        "action" "value"
+                                                        "value" ["vis.shell.*" "vis.nope"]}]))]
+
+              (expect (= 400 (:status failure)))
+              (expect (= ["vis.nope"] (:tools failure)))
+              (expect (= {} (store/db-scoped-settings db "session" sid)))))))
     (it "rejects malformed batches, duplicate ids and null without mutation"
         (with-empty-config
           (let [{:keys [db target sid id]}

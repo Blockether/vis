@@ -41,11 +41,6 @@
    it apart from snake_case toggle ids."
   "launch:tools")
 
-(defn- tool-pattern
-  "Compile one tool name from a tool list. `*` matches any characters."
-  [s]
-  (re-pattern (str/join ".*" (map #(java.util.regex.Pattern/quote %) (str/split s #"\*" -1)))))
-
 (defn tool-selection
   "Parse a tool list from `--tools`. Names keep only those tools of the extensions that
    they name, `-name` entries turn those tools off, and `*` matches any characters. Return
@@ -63,25 +58,40 @@
             (throw (ex-info (str "Name at least one tool. To turn off every optional extension, "
                                  "use --extensions none.")
                             {:status 400 :type :tool/empty-selection}))
-            (empty? dropped) {:keep (mapv tool-pattern names) :names names}
+            (empty? dropped) {:keep (mapv scoped-policy/tool-pattern names) :names names}
             (= (count dropped) (count names)) (let [names (mapv #(subs % 1) dropped)]
-                                                {:drop (mapv tool-pattern names) :names names})
+                                                {:drop (mapv scoped-policy/tool-pattern names)
+                                                 :names names})
             :else (throw
                     (ex-info
                       "Use either tool names to keep or -names to turn off, not both in one list."
                       {:status 400 :type :tool/mixed-selection}))))))
 
+(defn- tool-alias
+  "The part of a dotted tool name before its first dot, or nil."
+  [s]
+  (when (str/includes? s ".") (first (str/split s #"\." 2))))
+
 (defn tool-on?
   "False when `selection` turns off `tool`. `tools` are the names of every tool of the
-   extension that owns `tool`: a keep list changes only extensions whose tools it names."
+   extension that owns `tool`. A keep list changes only the extensions that it names: by
+   a tool, or by the alias of a dotted name. So a tool that a new release adds, or a
+   renamed tool, stays off (#416)."
   [selection tools tool]
-  (let [hit? (fn [pattern tool-name]
-               (boolean (re-matches pattern tool-name)))]
+  (let [hit?
+        (fn [pattern tool-name]
+          (boolean (re-matches pattern tool-name)))
+
+        alias
+        (tool-alias tool)]
+
     (cond (:drop selection) (not-any? #(hit? % tool) (:drop selection))
-          (:keep selection) (or (boolean (some #(hit? % tool) (:keep selection)))
-                                (not-any? (fn [pattern]
-                                            (some #(hit? pattern %) tools))
-                                          (:keep selection)))
+          (:keep selection)
+          (or (boolean (some #(hit? % tool) (:keep selection)))
+              (not (or (some (fn [pattern]
+                               (some #(hit? pattern %) tools))
+                             (:keep selection))
+                       (and alias (some #(= alias (tool-alias %)) (:names selection))))))
           :else true)))
 
 (defn- ext-tool-names
@@ -89,6 +99,39 @@
   [ext]
   (mapv #(env/sym->py-name (extension/symbol-binding ext (:ext.symbol/symbol %)))
         (extension/ext-symbols ext)))
+
+(defn- list-selection
+  "The selection of one scoped `{:allow names}` or `{:deny names}` tool list."
+  [{:keys [allow deny]}]
+  (if allow
+    {:keep (mapv scoped-policy/tool-pattern allow) :names (vec allow)}
+    {:drop (mapv scoped-policy/tool-pattern deny) :names (vec deny)}))
+
+(defn session-tool-policy
+  "The selections of the scoped tool lists that apply to `session-id` (see
+   `scoped-policy/tool-lists`). A session that the database does not know has none."
+  [db-info session-id]
+  (if (and db-info session-id (persistance/db-get-session db-info session-id))
+    (mapv list-selection (scoped-policy/tool-lists db-info session-id))
+    []))
+
+(defn tool-allowed?
+  "False when the tool list of `environment` or a scoped tool list turns off `tool`, the
+   bound name of a tool of `ext`. Every list applies. Parts of Vis stay on."
+  [environment ext tool]
+  (or (not (scoped/engine-setting! ext))
+      (let [tools (ext-tool-names ext)]
+        (every? #(tool-on? % tools tool)
+                (cons (some-> (:config/tools environment)
+                              deref)
+                      (some-> (:config/tool-policy environment)
+                              deref))))))
+
+(defn- tool-call-allowed?
+  "[[tool-allowed?]] for symbol `sym` of `ext`. The extension wrapper calls it before
+   each call, so a saved handle of a tool that is off fails before extension IO."
+  [environment ext sym]
+  (tool-allowed? environment ext (env/sym->py-name (extension/symbol-binding ext sym))))
 
 (defn sync-extension-symbols-into!
   "The symbol sync itself, against a context handed in EXPLICITLY.
@@ -107,21 +150,14 @@
         active-set
         (set (map :ext/name active-extensions))
 
-        selection
-        (some-> (:config/tools environment)
-                deref)
-
         plan
         (vec
           (for [ext
                 installed
 
                 :let [by-sym
-                      (into {} (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))
-
-                      ;; A tool list changes only optional extensions, never parts of Vis.
-                      tools
-                      (when (and selection (scoped/engine-setting! ext)) (ext-tool-names ext))]
+                      (into {}
+                            (map (juxt :ext.symbol/symbol identity) (extension/ext-symbols ext)))]
                 [sym f]
                 (try (extension/wrap-extension ext environment) (catch Throwable _ nil))]
 
@@ -132,14 +168,14 @@
                   (get by-sym sym)]
 
               ;; Bound only when the extension is active, the symbol's `:active-fn` holds for
-              ;; env and the session's tool list keeps it — one gate for every Python binding.
+              ;; env and the tool lists keep it — one gate for every Python binding.
               ;; Deactivated extensions get their members REMOVED, not nil'd:
               ;; `putMember nil` parks a None under the name, which `apropos` kept
               ;; listing and which called as 'NoneType is not callable' — a disabled
               ;; tool must not exist in the sandbox at all.
               (if (and (contains? active-set (:ext/name ext))
                        (extension/symbol-active? entry environment)
-                       (or (nil? tools) (tool-on? selection tools (env/sym->py-name target))))
+                       (tool-allowed? environment ext (env/sym->py-name target)))
                 ;; The metadata keys the bound py-name, so `doc(db_status)`, `apropos("mcp")`,
                 ;; `inspect.signature` and `typing.get_type_hints` answer with the declared
                 ;; contract. ALIASED extensions bind here (per turn), NOT at context creation.
@@ -791,6 +827,9 @@
                          :config/sources sources
                          ;; An atom, so `set-session-tools!` can change a live session.
                          :config/tools (atom (tool-selection tools))
+                         ;; The scoped tool lists. A settings write and a rebuild refresh them.
+                         :config/tool-policy (atom (session-tool-policy db-info session-id))
+                         :config/tool-on? tool-call-allowed?
                          :security/filesystem-roots configured-rw-roots
                          :security/no-search-roots (security-policy/no-search-roots security-config)
                          :access-view-fn access-view-fn
@@ -1527,6 +1566,10 @@
           (reset! values (cond-> effective
                            (and (not (:scope event)) (#{"global" "default"} source))
                            (assoc (:id event) (:new event)))))))
+    (when (= ["tools"] (:section event))
+      (doseq [{:keys [environment]} (vals entries)]
+        (some-> (:config/tool-policy environment)
+                (reset! (session-tool-policy (:db-info environment) (:session-id environment))))))
     (when (or (= workspace/draft-backend-toggle-id (:id event))
               (#{["workspace"] ["jail"]} (:section event)))
       (mark-policy-reload!))
@@ -1884,23 +1927,41 @@
           (str "Use the name that python_execution binds, such as " (first selectable) ".")
           :else "No optional extension has tools in this session.")))
 
+(defn selectable-tools
+  "The sorted names of the tools that a tool list can name in the bound project: the
+   public tools of its optional extensions."
+  []
+  (python-extensions/ensure-python-extensions-loaded!)
+  (sort (into #{}
+              (comp (filter #(let [scope (:ext/source-scope %)] (or (nil? scope)
+                                                                    (workspace/source-enabled?
+                                                                      scope))))
+                    (filter scoped/engine-setting!)
+                    (mapcat ext-tool-names)
+                    (remove #(str/starts-with? (last (str/split % #"\.")) "_")))
+              (extension/registered-extensions))))
+
+(defn- settings-tool-names
+  "The tools that a scoped tool list can name where `root` runs, or nil when that
+   project cannot load. Settings suggest these names and refuse others."
+  [root]
+  (try (binding [workspace/*workspace-root* (or root workspace/*workspace-root*)]
+         (python-extensions/prepare-project! (workspace/cwd))
+         (vec (selectable-tools)))
+       (catch Exception e (tel/log! {:level :warn :id ::tool-names-failed} (ex-message e)) nil)))
+
+(defonce ^:private _settings-tool-names (scoped-policy/set-tool-names-fn! settings-tool-names))
+
 (defn check-tool-selection!
   "Validate a tool list against the tools of the optional extensions of the bound project.
    Return the trimmed list to save, or nil without a list. Throw a 400 error for a bad list
    or for a name that matches no tool."
   [tools]
   (when-let [{:keys [names]} (tool-selection tools)]
-    (python-extensions/ensure-python-extensions-loaded!)
-    (let [selectable (sort (into #{}
-                                 (comp (filter #(let [scope (:ext/source-scope %)]
-                                                  (or (nil? scope)
-                                                      (workspace/source-enabled? scope))))
-                                       (filter scoped/engine-setting!)
-                                       (mapcat ext-tool-names)
-                                       (remove #(str/starts-with? (last (str/split % #"\.")) "_")))
-                                 (extension/registered-extensions)))
+    (let [selectable (selectable-tools)
           unknown (remove (fn [tool-name]
-                            (some #(re-matches (tool-pattern tool-name) %) selectable))
+                            (some #(re-matches (scoped-policy/tool-pattern tool-name) %)
+                                  selectable))
                     names)]
 
       (when (seq unknown)

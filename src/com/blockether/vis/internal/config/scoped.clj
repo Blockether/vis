@@ -199,8 +199,9 @@
                     (when (str/starts-with? k prefix) [(subs k (count prefix)) v])))
             (store/db-scoped-settings db scope target-id)))))
 
-(defn definitions
-  "Resolve named definitions atomically per name, never merging credentials across scopes."
+(defn definition-layers
+  "Named definitions of `section` at each scope of `target`, least specific first, as
+   `[scope entries]` pairs. Entries hold only the names that a scope writes."
   [db {:keys [scope root group-id] :as target} section]
   (let [global
         (merge (get-in (config/load-global-yaml-config-raw) section)
@@ -209,18 +210,23 @@
         project
         (when root
           (binding [workspace/*workspace-root* root]
-            (get-in (config/load-project-tiers-raw) section)))
+            (get-in (config/load-project-tiers-raw) section)))]
 
-        layers
-        (cond-> [["global" global]]
-          root
-          (conj ["project" project])
+    (cond-> [["global" global]]
+      root
+      (conj ["project" project])
 
-          group-id
-          (conj ["group" (own-definitions db {:scope "group" :target-id group-id} section)])
+      group-id
+      (conj ["group" (own-definitions db {:scope "group" :target-id group-id} section)])
 
-          (= scope "session")
-          (conj ["session" (own-definitions db target section)]))
+      (= scope "session")
+      (conj ["session" (own-definitions db target section)]))))
+
+(defn definitions
+  "Resolve named definitions atomically per name, never merging credentials across scopes."
+  [db target section]
+  (let [layers
+        (definition-layers db target section)
 
         own
         (own-definitions db target section)]

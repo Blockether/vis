@@ -29,6 +29,8 @@
         (let [{:keys [section key]} (first (filter #(= id (:id %)) policy/fields))]
           (when (and (= action "value") (nil? value))
             (throw (ex-info "Use inherit instead of null" {:status 400 :id id})))
+          (when (and (= ["tools"] section) (sequential? value))
+            (policy/check-tool-names! target value))
           {:id id :section section :name key :value (when (= action "value") value)})
         (= id "agent_name")
         (do (when-not (= "global" (:scope target))

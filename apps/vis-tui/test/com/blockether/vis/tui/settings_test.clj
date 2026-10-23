@@ -658,6 +658,14 @@
                                                ["allow" :done]
                                                []
                                                {:lists [["~/project"]]}))))))
+  (it "edits a tools list as one entry per line (issue #416)"
+      (expect (= ["vis.shell.*"]
+                 (scripted-structured-edit {:label "Denied tools"
+                                            :setting {"editor" "tools"}
+                                            :toggle-value ["vis.files.read"]}
+                                           []
+                                           []
+                                           {:lists [["vis.shell.*"]]}))))
   (it "directs unsupported settings to the configuration file without opening a raw editor"
       (let [editors
             (atom [])

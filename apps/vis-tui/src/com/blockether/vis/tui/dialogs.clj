@@ -5018,7 +5018,7 @@
     ("filesystem" "network")
     (settings-object-editor! screen g region row)
 
-    "list"
+    ("list" "tools")
     (settings-list-editor! screen (:label row) (:toggle-value row))
 
     (do (mini-note! screen

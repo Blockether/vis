@@ -359,7 +359,8 @@ export type SettingEditor =
   | 'paths'
   | 'filesystem'
   | 'network'
-  | 'list';
+  | 'list'
+  | 'tools';
 
 export type SettingsScope = 'global' | 'project' | 'group' | 'session';
 
@@ -405,6 +406,8 @@ export interface Toggle {
   /** Present only when a wider scope decides this inherited row. */
   decided_in?: SettingDecidedIn;
   editor?: SettingEditor;
+  /** Values that the editor offers for completion, such as the tool names of a tools row. */
+  suggestions?: string[];
   schema?: string;
   /** Id of the setting that this row belongs under. */
   parent?: string;

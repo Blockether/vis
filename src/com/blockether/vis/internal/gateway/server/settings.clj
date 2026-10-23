@@ -334,6 +334,13 @@
          :count (count names)
          :names (vec names)}))))
 
+(defn- access-settings
+  "The access rows of `target`. A tool list row also suggests the tools that it can name."
+  [target]
+  (let [names (delay (vec (or (scoped-policy/tool-names target) [])))]
+    (mapv #(cond-> % (= "tools" (:editor %)) (assoc :suggestions @names))
+          (scoped-policy/settings (lp/db-info) target))))
+
 (defn- settings-catalog
   "The settings of `target`. `change-errors` maps a setting id to its failed change hook."
   [request target change-errors]
@@ -436,7 +443,7 @@
                                (rows :experimental))
 
                        :permissions
-                       (concat (scoped-policy/settings (lp/db-info) target) (rows :sandbox))
+                       (concat (access-settings target) (rows :sandbox))
 
                        (mapcat rows groups)))
 
@@ -563,9 +570,8 @@
         (cond
           (not (toggle-contract/toggle-id? id))
           (http/error-response 400 :invalid-setting-id "Setting id must be lower-case snake_case")
-          (scoped-policy/setting? id)
-          (http/json-response (first (filter #(= id (:id %))
-                                             (scoped-policy/settings (lp/db-info) target))))
+          (scoped-policy/setting? id) (http/json-response (first (filter #(= id (:id %))
+                                                                         (access-settings target))))
           (and (= id "agent_name") (= "global" (:scope target))) (http/json-response
                                                                    (agent-name-setting))
           (and (= id rooms/machine-name-id) (= "global" (:scope target))) (http/json-response
@@ -599,8 +605,8 @@
         (cond (and (#{:skills :mcp} (:group (toggles/toggle-spec id))) (not (resources id)))
               (http/error-response 404 :unknown-setting "Resource is not available in this target")
               (scoped-policy/setting? id)
-              (http/json-response
-                (scoped-policy/set-setting! (lp/db-info) target id action (get body "value")))
+              (do (scoped-policy/set-setting! (lp/db-info) target id action (get body "value"))
+                  (http/json-response (first (filter #(= id (:id %)) (access-settings target)))))
               (= id "agent_name")
               (if (= "global" (:scope target))
                 (set-agent-name-setting action {:raw (get body "value")})

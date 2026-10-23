@@ -268,6 +268,24 @@ it('edits list entries with ordinary controls', () => {
   expect(onRawChange).not.toHaveBeenCalled();
 });
 
+it('offers the tool names of a tools row for completion (issue #416)', () => {
+  const { onChange } = renderField(
+    {
+      id: 'tools_deny',
+      label: 'Denied tools',
+      type: 'array',
+      editor: 'tools',
+      suggestions: ['vis.files.read', 'vis.shell.run'],
+    },
+    ['vis.shell.run'],
+  );
+  const entry = screen.getByRole('combobox', { name: 'Denied tools 1' });
+  const options = document.getElementById(entry.getAttribute('list') ?? '')?.querySelectorAll('option');
+  expect([...(options ?? [])].map((option) => option.value)).toEqual(['vis.files.read', 'vis.shell.run']);
+  fireEvent.change(entry, { target: { value: 'vis.files.*' } });
+  expect(onChange).toHaveBeenLastCalledWith(['vis.files.*']);
+});
+
 it('directs unsupported settings to the configuration file instead of a JSON editor', () => {
   const { onChange, onRawChange } = renderField(
     { id: 'custom', label: 'Custom configuration', type: 'object' },

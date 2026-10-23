@@ -1,5 +1,5 @@
 import { IconButton, Input, Select, Switch, Text } from '../../components/ui';
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { FormLabel } from './SettingsLayout';
 import { PlusIcon, ProjectsIcon, TrashIcon } from '../../components/icons';
 import { ProjectFolderSheet } from '../../components/ProjectFolderSheet';
@@ -116,6 +116,7 @@ function StringList({
   onChange,
   disabled,
   numbers = false,
+  suggestions,
 }: {
   /** The visible legend. */
   label: string;
@@ -127,8 +128,11 @@ function StringList({
   onChange: (value: SettingValue[]) => void;
   disabled: boolean;
   numbers?: boolean;
+  /** Values that each entry offers for completion. */
+  suggestions?: string[];
 }) {
   const rows = Array.isArray(value) ? value : [];
+  const suggestionsId = useId();
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-2">
       <ListHeader label={`Add ${name.toLowerCase()}`} hint={hint} onAdd={() => onChange([...rows, numbers ? 0 : ''])}>
@@ -140,6 +144,7 @@ function StringList({
             className="min-w-0 flex-1"
             aria-label={`${name} ${index + 1}`}
             type={numbers ? 'number' : 'text'}
+            list={suggestions?.length ? suggestionsId : undefined}
             value={String(entry)}
             onChange={(event) =>
               onChange(
@@ -162,6 +167,13 @@ function StringList({
         <Text as="p" variant="description">
           No entries
         </Text>
+      )}
+      {!!suggestions?.length && (
+        <datalist id={suggestionsId}>
+          {suggestions.map((suggestion) => (
+            <option key={suggestion} value={suggestion} />
+          ))}
+        </datalist>
       )}
     </fieldset>
   );
@@ -667,7 +679,7 @@ export function SettingField(props: FieldProps) {
       </div>
     );
   }
-  if (setting.editor === 'list')
+  if (setting.editor === 'list' || setting.editor === 'tools')
     return (
       <StringList
         label={setting.label}
@@ -675,6 +687,7 @@ export function SettingField(props: FieldProps) {
         value={value}
         disabled={disabled}
         onChange={onChange}
+        suggestions={setting.editor === 'tools' ? setting.suggestions : undefined}
       />
     );
   return (

@@ -15,6 +15,8 @@ when you want settings shared across projects or checked into a repository.
   the flags in [Leave out global or project configuration](#leave-out-global-or-project-configuration).
 - **One session needs only some tools of an extension, such as `py.lint_code` but not
   `py.repl_start`.** Start it with the flag in [Choose single tools](#choose-single-tools).
+- **Some tools must stay off in every session of a project or group.** Set the tool lists in
+  [Turn tools off for a project, group or session](#turn-tools-off-for-a-project-group-or-session).
 - **One session or group needs different behavior.** Open its
   [scoped settings](#project-group-and-session-settings) instead of changing the
   gateway defaults.
@@ -202,6 +204,37 @@ its next step.
 
 The choice applies only to tools of extensions with an Auto/On/Off setting. A tool that is off is not
 in the session's Python sandbox. The extension's prompt text can still name it.
+
+### Turn tools off for a project, group or session
+
+Use tool lists in configuration when the same tools must stay off in every session of a scope. Add
+a `tools` section to a global or project file:
+
+```yaml
+# vis.yml
+tools:
+  deny:
+    - py.repl_*          # no Python REPL tools
+  allow:
+    - clj.lint_code      # of clj, keep only these two tools
+    - clj.run_tests
+```
+
+The entries use the names and the `*` of `--tools`. An `allow` list keeps only the named tools of
+the extensions that it names. A tool that a later release adds to such an extension also stays off.
+A `deny` list turns only the named tools off.
+
+You can also set the lists in the **Allowed tools** and **Turned-off tools** rows of global, project,
+group and session settings. The rows suggest the tool names of the session's extensions. Vis refuses
+a name that matches no tool, and it writes nothing.
+
+Every list applies: from the configuration files, from each settings scope and from `--tools`. A
+more specific scope cannot turn on a tool that a wider scope turns off. A session that another
+session starts also gets the lists of that session.
+
+A tool that is off is not in the sandbox, and Vis refuses calls to it, also through a saved handle.
+New and resumed sessions get the lists at their start. A change during a session applies at its next
+tool call.
 
 ## Providers and models
 

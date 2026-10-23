@@ -2010,6 +2010,15 @@
           args))
       args)))
 
+(defn- assert-tool-on!
+  "Refuse a call to a tool that the tool lists of `env` turn off, before any extension IO.
+   A saved handle or a `vis.tools` call of that tool fails here too (#416)."
+  [env ext sym]
+  (when-let [on? (:config/tool-on? env)]
+    (when-not (on? env ext sym)
+      (throw (ex-info (str "Tool is turned off in this session: " (symbol-binding ext sym) ".")
+                      {:type :tool/disabled :extension (:ext/name ext) :tool (str sym)})))))
+
 (defn- invoke-symbol-wrapper*
   "Full invocation pipeline for an observed tool symbol entry:
    before-fn -> fn -> after-fn, with on-error-fn catching :fn errors.
@@ -2028,6 +2037,7 @@
   (when (= "off" (scoped/engine-mode env ext))
     (throw (ex-info "Extension is disabled in this session"
                     {:type :extension/disabled :extension (:ext/name ext)})))
+  (assert-tool-on! env ext (:ext.symbol/symbol sym-entry))
   (with-context
     {:ext ext :symbol (:ext.symbol/symbol sym-entry) :env env}
     (let [sym
@@ -2303,6 +2313,7 @@
                              (throw (ex-info "Extension is disabled in this session"
                                              {:type :extension/disabled
                                               :extension (:ext/name ext)})))
+                           (assert-tool-on! (env-thunk) ext sym)
                            (with-context {:ext ext :symbol sym :env (env-thunk)}
                                          (apply (:ext.symbol/fn sym-entry) args)))))
                      (fn [& args]

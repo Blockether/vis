@@ -3005,8 +3005,16 @@
             "paths",
             "filesystem",
             "network",
-            "list"
+            "list",
+            "tools"
           ]
+        },
+        "suggestions": {
+          "type": "array",
+          "description": "Values that an editor offers as completions. Other values can still be valid.",
+          "items": {
+            "type": "string"
+          }
         },
         "schema": {
           "type": "string"

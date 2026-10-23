@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.sandbox.scoped-policy
   "Scoped access settings. Local policy can narrow, never expand, the host ceiling."
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.validation :as validation]
@@ -50,9 +51,89 @@
     :label "Keychain access"
     :default false
     :type "boolean"
-    :editor "switch"}])
+    :editor "switch"}
+   {:id "tools_allow"
+    :section ["tools"]
+    :key "allow"
+    :label "Allowed tools"
+    :default []
+    :type "array"
+    :editor "tools"
+    :applies "next_call"
+    :description
+    "Only these tools of each extension in the list stay on. Lists of wider scopes also apply."}
+   {:id "tools_deny"
+    :section ["tools"]
+    :key "deny"
+    :label "Turned-off tools"
+    :default []
+    :type "array"
+    :editor "tools"
+    :applies "next_call"
+    :description "These tools are off. Lists of wider scopes also apply."}])
+
+(def ^:private sections
+  "The configuration sections that these settings write."
+  [["workspace"] ["jail"] ["tools"]])
 
 (defn setting? [id] (boolean (some #(= id (:id %)) fields)))
+
+(defonce ^:private tool-names-fn (atom (constantly nil)))
+
+(defn set-tool-names-fn!
+  "Install `f`, which takes a workspace root and answers the tool names that a tool list
+   can name there, or nil when it cannot tell."
+  [f]
+  (reset! tool-names-fn f))
+
+(defn tool-names
+  "The tool names that a tool list can name in `target`, or nil when they are unknown."
+  [target]
+  (@tool-names-fn (:root target)))
+
+(defn tool-pattern
+  "Compile one entry of a tool list. `*` matches any characters."
+  [s]
+  (re-pattern (str/join ".*" (map #(java.util.regex.Pattern/quote %) (str/split s #"\*" -1)))))
+
+(defn check-tool-names!
+  "Throw a 400 error for an entry of `names` that matches no tool of `target`."
+  [target names]
+  (when-let [known (tool-names target)]
+    (let [matches? (fn [entry]
+                     (let [pattern (tool-pattern entry)]
+                       (some #(re-matches pattern %) known)))
+          unknown (remove matches? names)]
+
+      (when (seq unknown)
+        (throw (ex-info (str "Unknown tool: " (str/join ", " unknown) ". Choose a suggested name.")
+                        {:status 400 :type :tool/unknown :tools (vec unknown)})))))
+  names)
+
+(defn tool-lists
+  "The tool lists that apply to `session-id`, from each scope, least specific first, as
+   `{:allow names}` and `{:deny names}` maps. A subagent also gets the lists of its parent."
+  [db session-id]
+  (let [agent
+        (store/db-agent-info db session-id)
+
+        lists
+        (fn [sid]
+          (for [[_ entries]
+                (scoped/definition-layers db (scoped/target db "session" sid) ["tools"])
+
+                [k list-key]
+                [["allow" :allow] ["deny" :deny]]
+
+                :let [names
+                      (get entries k)]
+                :when (some? names)]
+
+            {list-key (vec names)}))]
+
+    (vec (concat (some-> (:parent_id agent)
+                         lists)
+                 (lists session-id)))))
 
 (defn- host-config
   []
@@ -72,7 +153,7 @@
               section
               (into {} (map (juxt :name :value)) (scoped/definitions db target section))))
           (host-config)
-          [["workspace"] ["jail"]]))
+          sections))
 
 (defn- covered?
   [roots path]
@@ -175,15 +256,15 @@
           (map (fn [section]
                  [section
                   (into {} (map (juxt :name identity)) (scoped/definitions db target section))]))
-          [["workspace"] ["jail"]])
+          sections)
 
         inherited
         (into {}
               (map (fn [section]
                      [section (scoped/inherited-definitions db target section)]))
-              [["workspace"] ["jail"]])]
+              sections)]
 
-    (mapv (fn [{:keys [id section key label default type editor choices]}]
+    (mapv (fn [{:keys [id section key label default type editor choices applies description]}]
             (let [{:keys [value source is-override] :or {value default source "default"}}
                   (get-in layers [section key])
 
@@ -203,9 +284,11 @@
                  :inherited-value (:value parent)
                  :inherited-source (:source parent)
                  :own-value (when is-override value)
-                 :applies "next_turn"
+                 :applies (or applies "next_turn")
                  :description
-                 "Changes apply to the next turn. Local access cannot exceed host permissions."}
+                 (or
+                   description
+                   "Changes apply to the next turn. Local access cannot exceed host permissions.")}
                 (= type "boolean")
                 (assoc :enabled value)
 
@@ -245,6 +328,9 @@
         _
         (when (and (= action "value") (nil? value))
           (throw (ex-info "Use inherit instead of null" {:status 400})))
+
+        _
+        (when (and (= ["tools"] section) (sequential? value)) (check-tool-names! target value))
 
         candidate
         (if (= action "inherit")

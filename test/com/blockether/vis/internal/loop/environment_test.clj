@@ -262,6 +262,113 @@
           (try (expect (= ["py.lint_code"] (:names @(:config/tools resumed))))
                (finally (loop-env/dispose-environment! resumed))))))))
 
+(defn- policy-allows
+  "The tools of `py-tools` that the scoped tool lists `lists` keep for a session."
+  [lists]
+  (with-redefs [scoped/engine-setting! (constantly "engines_py")]
+    (let [environment {:config/tool-policy (atom (mapv (deref #'loop-env/list-selection) lists))}]
+      (filterv #(loop-env/tool-allowed? environment (py-extension) %) py-tools))))
+
+(defn- gated-call
+  "Call `py.repl_stop` of a `py` extension through the extension wrapper while the scoped
+   lists `lists` apply. `raw?` takes the raw path. Return the call count and the error type."
+  [lists raw?]
+  (let [calls
+        (atom 0)
+
+        ext
+        (assoc-in (py-extension)
+          [:ext/engine :ext.engine/symbols]
+          [{:ext.symbol/symbol 'py.repl_stop
+            :ext.symbol/raw? raw?
+            :ext.symbol/fn (fn []
+                             (swap! calls inc)
+                             :done)}])
+
+        environment
+        {:config/tool-policy (atom (mapv (deref #'loop-env/list-selection) lists))
+         :config/tool-on? (deref #'loop-env/tool-call-allowed?)}]
+
+    (with-redefs [scoped/engine-setting!
+                  (constantly "engines_py")
+
+                  scoped/engine-mode
+                  (constantly "on")]
+
+      (let [f
+            (get (extension/wrap-extension ext environment) 'py.repl_stop)
+
+            error
+            (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
+
+        {:calls @calls :error error}))))
+
+;; #416: tool lists in configuration and in scoped settings, not only `--tools`.
+(defdescribe
+  scoped-tool-lists-test
+  (describe "an allow list"
+            (it "keeps only its tools of the extension that it names"
+                (expect (= ["py.lint_code" "py.repl_eval"]
+                           (policy-allows [{:allow ["py.lint_code" "py.repl_eval"]}]))))
+            (it "keeps a tool that a later release adds off"
+                (expect (false? (loop-env/tool-on? (loop-env/tool-selection ["py.lint_code"])
+                                                   py-tools
+                                                   "py.format_code"))))
+            (it "keeps every tool off when the extension renames the named tools"
+                (expect (= [] (policy-allows [{:allow ["py.lint"]}])))))
+  (describe "lists of several scopes"
+            (it "apply together, so a narrower scope never turns a tool on again"
+                (expect (= ["py.repl_eval"]
+                           (policy-allows [{:allow ["py.repl_*"]} {:deny ["py.repl_st*"]}
+                                           {:allow ["py.lint_code" "py.repl_eval"]}])))))
+  (describe
+    "dispatch"
+    (it "refuses a saved handle of a tool that is off before the extension runs"
+        (expect (= {:calls 0 :error :tool/disabled} (gated-call [{:deny ["py.repl_stop"]}] false)))
+        (expect (= {:calls 0 :error :tool/disabled} (gated-call [{:deny ["py.repl_stop"]}] true))))
+    (it "runs a tool that every list keeps"
+        (expect (= {:calls 1 :error nil} (gated-call [{:deny ["py.lint_code"]}] true)))))
+  (describe
+    "a session"
+    (it
+      "follows a settings write at once and keeps it for a resume"
+      (let [path
+            (temp-db-path)
+
+            router
+            {:providers [{:id :lmstudio}]}
+
+            created
+            (loop-env/create-environment router {:db path})
+
+            sid
+            (:session-id created)
+
+            db-info
+            (:db-info created)
+
+            k
+            (loop-env/cache-key sid)
+
+            cache
+            @#'loop-env/cache]
+
+        (swap! cache assoc k {:environment created})
+        (try (with-redefs [scoped/engine-setting! (constantly "engines_py")]
+               (expect (loop-env/tool-allowed? created (py-extension) "py.repl_stop"))
+               (scoped/set-definition! db-info
+                                       (scoped/target db-info "session" sid)
+                                       ["tools"]
+                                       "deny"
+                                       ["py.repl_stop"])
+               (expect (not (loop-env/tool-allowed? created (py-extension) "py.repl_stop")))
+               (expect (loop-env/tool-allowed? created (py-extension) "py.lint_code")))
+             (finally (swap! cache dissoc k) (loop-env/dispose-environment! created)))
+        (let [resumed (loop-env/create-environment router {:db path :session sid})]
+          (try (with-redefs [scoped/engine-setting! (constantly "engines_py")]
+                 (expect (not (loop-env/tool-allowed? resumed (py-extension) "py.repl_stop"))))
+               (finally (loop-env/dispose-environment! resumed))))))))
+
 (defdescribe
   reload-unbind-test
   ;; #415: a reload dropped an extension row or one of its symbols, and the session kept

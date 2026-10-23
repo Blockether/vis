@@ -626,7 +626,10 @@
                       deref)
           :when (contains? active (:ext/name ext))
           entry (extension/ext-symbols ext)
-          :when (contains? entry :ext.symbol/fn)]
+          :when (and (contains? entry :ext.symbol/fn)
+                     (if-let [on? (:config/tool-on? session-env)]
+                       (on? session-env ext (:ext.symbol/symbol entry))
+                       true))]
 
       [(env/sym->py-name (extension/symbol-binding ext (:ext.symbol/symbol entry))) ext entry])))
 

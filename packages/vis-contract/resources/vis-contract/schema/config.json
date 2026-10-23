@@ -694,6 +694,32 @@
       },
       "additionalProperties": false
     },
+    "toolList": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_*][A-Za-z0-9_.*]*$",
+        "maxLength": 200
+      },
+      "description": "Tool names as python_execution binds them, such as memo.recall. * matches any characters."
+    },
+    "tools": {
+      "type": "object",
+      "properties": {
+        "allow": {
+          "$ref": "#/$defs/toolList",
+          "description": "Keep only these tools of each extension that the list names. Other tools of that extension, also later ones, are off."
+        },
+        "deny": {
+          "$ref": "#/$defs/toolList",
+          "description": "Turn these tools off."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Tools of optional extensions that a session can call. Every scope applies: a narrower scope can turn tools off, never on."
+    },
     "jail": {
       "type": "object",
       "properties": {
@@ -1327,6 +1353,9 @@
         },
         "jail": {
           "$ref": "#/$defs/jail"
+        },
+        "tools": {
+          "$ref": "#/$defs/tools"
         },
         "environment": {
           "$ref": "#/$defs/environment"
