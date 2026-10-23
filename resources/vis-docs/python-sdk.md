@@ -101,6 +101,11 @@ You should see a session ID, `Status: completed` and the answer's content blocks
 By default, `run()` returns a turn record, not a text string. A failed,
 cancelled or suspended turn also returns a record: always check `status`.
 
+The record has no `answer` field. To get the answer text, call `final_answer(result)`
+from `blockether.vis.engine`. It returns the Markdown of the last prose block in
+`content`, or `None` when the turn has no answer. To continue the conversation, call
+`agent.run()` again: each call is a new turn in the same session.
+
 To keep the agent away from some tools, pass `tools`. For example,
 `Agent(tools=["-py.repl_start", "-py.repl_stop"])` turns off those two tools of the
 `py` extension. [Choose single tools](configuration.md#choose-single-tools) describes

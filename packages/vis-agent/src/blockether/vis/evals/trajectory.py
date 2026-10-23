@@ -33,6 +33,7 @@ __all__ = [
     "Trajectory",
     "TrajectoryMetrics",
     "load_trajectory",
+    "merge_trajectories",
     "parse_trajectory",
 ]
 
@@ -780,3 +781,59 @@ def load_trajectory(path: str | os.PathLike[str], *, strict: bool = True) -> Tra
     except json.JSONDecodeError as failure:
         raise _invalid(f"the file is not JSON (line {failure.lineno})") from None
     return parse_trajectory(document, strict=strict)
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _sum_metrics(values: list[Mapping[str, Any]]) -> dict[str, Any]:
+    totals: dict[str, Any] = {}
+    for value in values:
+        for key, item in value.items():
+            if isinstance(item, Mapping):
+                nested = [v for v in (totals.get(key), item) if isinstance(v, Mapping)]
+                totals[key] = _sum_metrics(nested)
+            elif _number(item) and _number(totals.get(key)):
+                totals[key] += item
+            else:
+                totals[key] = item
+    return totals
+
+
+def merge_trajectories(documents: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Join the ATIF documents of the turns of one session into one document.
+
+    Give the documents in turn order. The steps follow in that order with new step
+    ids from 1. `final_metrics` adds the numbers of all turns, and
+    `subagent_trajectories` keeps every child. The other keys come from the last
+    document. `extra.turns` is the count of turns. The first turn error stays in
+    `extra.error`, so a failed turn also fails the merged run. An empty list raises
+    ValueError.
+    """
+    if not documents:
+        raise ValueError("there is no trajectory to merge")
+    merged = json.loads(json.dumps(documents[-1]))
+    steps = [
+        {**step, "step_id": number}
+        for number, step in enumerate(
+            (s for d in documents for s in d.get("steps") or ()), start=1
+        )
+    ]
+    merged["steps"] = steps
+    metrics = [d["final_metrics"] for d in documents if _map(d.get("final_metrics"))]
+    if metrics:
+        merged["final_metrics"] = _sum_metrics(metrics)
+        if "total_steps" in merged["final_metrics"]:
+            merged["final_metrics"]["total_steps"] = len(steps)
+    children = [c for d in documents for c in d.get("subagent_trajectories") or ()]
+    if children:
+        merged["subagent_trajectories"] = json.loads(json.dumps(children))
+    extra = dict(_map(merged.get("extra")))
+    errors = [_map(d.get("extra")).get("error") for d in documents]
+    first_error = next((error for error in errors if error), None)
+    if first_error and not extra.get("error"):
+        extra["error"] = first_error
+    extra["turns"] = len(documents)
+    merged["extra"] = extra
+    return merged

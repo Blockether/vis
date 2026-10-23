@@ -74,6 +74,18 @@ def test_run_preserves_the_canonical_turn_record(local, tmp_path, status):
         assert agent.run("Request") is result
 
 
+def test_final_answer_is_the_last_prose_block():
+    prose = {"type": "prose", "markdown": "Final."}
+    code = {"type": "code", "code": "print(1)"}
+    turn = {"content": [{"type": "prose", "markdown": "Early."}, code, prose]}
+    assert engine.final_answer(turn) == "Final."
+    assert engine.final_answer({"content": [code]}) is None
+    assert (
+        engine.final_answer({"content": [{"type": "prose", "markdown": " "}]}) is None
+    )
+    assert engine.final_answer({"status": "failed"}) is None
+
+
 @pytest.mark.parametrize("operation", ["connect", "create_session"])
 def test_startup_failure_closes_owned_engine_and_prevents_reuse(
     local, tmp_path, operation

@@ -21,6 +21,12 @@ compare two runs. This page shows each step from an empty folder to a score.
   with labels](#check-the-causes-with-labels).
 - **The agent must call a function of your extension, but the real function must not run.**
   [Replace the extension with a mock](#replace-an-extension-with-a-mock).
+- **Your users give a request over several messages, and you want to test that conversation.**
+  [Write a task with several turns](#write-a-task-with-several-turns).
+- **You want a published benchmark of such conversations.** [Import Lost in
+  Conversation](#import-lost-in-conversation).
+- **You want to know if one prompt rule helps on the same tasks.** [Add a rule to the system
+  prompt](#add-a-rule-to-the-system-prompt).
 - **You want to know how Vis and Harbor share the work.** Read [Vis and
   Harbor](#vis-and-harbor).
 - **Your own program must do these steps.** Read [Evaluations API](evals-api.md).
@@ -144,11 +150,16 @@ A trial passes only when all its checks pass. These are the checks that most tas
 | `want` | Each named file holds each text. |
 | `wantnot` | No named file holds any of its texts. |
 | `want_answer` | The final answer of the agent holds each text. |
+| `want_answer_program` | A Python file in `tests/` accepts the final answer. |
 | `want_json_files` | Each named file is JSON Lines with exactly these rows, in this order. |
 | `want_tools` | The agent used each named tool. |
 | `forbid_tools` | The agent did not use any named tool. |
 | `max_patch_calls_per_file` | The agent changed each file with at most this number of successful `patch` calls. |
 | `max_total_output_chars` | The tool output of the run stayed below this size. |
+
+`want_answer_program` names a file relative to `checks.json`, for example `"check_answer.py"`. The
+file gets the answer on its standard input. Exit code 0 accepts the answer. Any other exit code fails
+the check, and the last line of the error output becomes the failure detail.
 
 The grader always checks that the agent finished without an error. The `e2e/` folder of the Vis
 repository has 42 tasks that use these checks. Read them for more examples.
@@ -271,6 +282,28 @@ After the check, Harbor copies the file to `artifacts/payload-calls.jsonl` in th
 missing. A missing file does not change the reward. `write_task` writes this line when you give
 [`artifacts`](evals-api.md#write-a-task).
 
+### Write a task with several turns
+
+A user often gives a request in parts and adds details after the first answer. To test this, split
+`instruction.md` into messages. Put a line with only `<!-- vis:turn -->` between two messages:
+
+```markdown
+Write a function that adds numbers.
+<!-- vis:turn -->
+The input is a list of integers.
+<!-- vis:turn -->
+Return 0 for an empty list.
+```
+
+The Vis agent sends each message as one turn of the same session. Each turn waits for the answer to
+the previous one. The checks grade the final answer and the workspace after the last turn. The agent
+stops at the first turn that fails. Other Harbor agents get the whole file as one prompt, so the
+same task also runs as a one-turn control.
+
+The trial folder keeps the trajectory of each turn in `agent/turns/1.json`, `agent/turns/2.json` and
+so on. `agent/trajectory.json` joins all turns, and its totals add up the tokens and the cost of
+each turn. The task time limit covers all turns together.
+
 ## Step 3: Check the tasks
 
 A bad task gives wrong scores. For example, its instruction does not name a file that its checks
@@ -300,6 +333,33 @@ harbor run --path tasks \
 each task. [pass@k and pass^k](#repeated-attempts) need at least k attempts for each task. More
 attempts give a smaller interval but cost more. To test a Vis checkout, add `--ak
 source=PATH`. To test a raw native image, add `--ak native_bin=PATH`.
+
+### Add a rule to the system prompt
+
+To measure one prompt rule, run the same tasks twice: once without the rule and once with it. Write
+the rule in a Markdown file and give it with `--ak append_system=PATH`. Each trial then writes the
+text to `.vis/APPEND_SYSTEM.md` in its workspace, so Vis adds it after the system prompt. A task that
+has that file already fails with an error. Then [compare the two runs](#compare-two-runs).
+
+### Import Lost in Conversation
+
+[Lost in Conversation](https://github.com/microsoft/lost_in_conversation) is a published benchmark.
+It splits each problem into small parts and gives them over several turns. This command downloads
+the data once, about 10 MB, and writes the math (GSM8K) and HumanEval code tasks:
+
+```bash
+python -m blockether.vis.evals.lic tasks-lic --cache lic.json
+python -m blockether.vis.evals.lic tasks-lic-concat --cache lic.json --mode concat
+```
+
+The first folder gives one part in each turn. The second folder gives all parts in one turn, which is
+the control of the benchmark. Both folders have the same task names, so you can compare the two
+runs. `--limit N` keeps the first N tasks of each type. Each task grades the final answer with a
+copy of the benchmark's grader in `tests/check_answer.py`.
+
+The parts come in a fixed order, not from a simulated user as in the original benchmark. The last
+turn also says that all details are given. Compare your scores with each other, not with the
+published scores.
 
 For all options of `harbor run`, read the Harbor guide [Run a
 job](https://docs.harborframework.com/jobs/run-a-job). When you start the run from Python with
@@ -592,6 +652,8 @@ position also lists caveats, for example when the board rows ran more trials for
 - Mark Chen and others, [Evaluating large language models trained on
   code](https://arxiv.org/abs/2107.03374), 2021: the unbiased pass@k estimator.
 - Shunyu Yao and others, [τ-bench](https://arxiv.org/abs/2406.12045), 2024: the pass^k metric.
+- Philippe Laban and others, [LLMs get lost in multi-turn
+  conversation](https://arxiv.org/abs/2505.06120), 2025: the Lost in Conversation benchmark.
 - Jacob Cohen, "A coefficient of agreement for nominal scales", *Educational and Psychological
   Measurement* 20, 1960: Cohen's kappa.
 - Klaus Krippendorff, [Computing Krippendorff's

@@ -25,6 +25,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,7 @@ TRAJECTORY_FILE = "trajectory.json"
 RUN_FILE = "run.json"
 REWARD_FILE = "reward.json"
 GRADE_FILE = "grade.json"
+ANSWER_PROGRAM_TIMEOUT_SEC = 120
 
 
 TERMINAL_ACTIVITY_STATES = {"succeeded", "failed", "cancelled"}
@@ -1040,6 +1043,32 @@ def _workspace_text(work: str, name: str) -> str:
         return ""
 
 
+def answer_program_problem(program: str, answer: str, work: str) -> str | None:
+    """Run the Python file ``program`` on the final answer; return its failure.
+
+    The program gets the answer on its standard input and runs in the workspace
+    ``work``. Exit code 0 accepts the answer, and the result is None. Otherwise the
+    result names the last line of the program's error output.
+    """
+    try:
+        completed = subprocess.run(
+            [sys.executable, program],
+            input=answer,
+            capture_output=True,
+            text=True,
+            cwd=work,
+            timeout=ANSWER_PROGRAM_TIMEOUT_SEC,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return f"answer program ran longer than {ANSWER_PROGRAM_TIMEOUT_SEC} s"
+    if completed.returncode == 0:
+        return None
+    lines = (completed.stderr or completed.stdout).strip().splitlines()
+    reason = lines[-1] if lines else f"exit code {completed.returncode}"
+    return f"answer program rejected the answer: {reason}"
+
+
 def grade_trial(
     sc: Mapping[str, Any], work: str | os.PathLike[str], trial: TrialFiles
 ) -> Grade:
@@ -1186,6 +1215,10 @@ def grade_trial(
     for s in sc.get("want_answer") or []:
         if s not in answer:
             checks.fail("answer", f"answer missing {s!r}")
+    if program := sc.get("want_answer_program"):
+        checks.use("answer")
+        if problem := answer_program_problem(program, answer, work):
+            checks.fail("answer", problem)
     if sc.get("want_forms"):
         checks.use("forms")
     for needle in sc.get("want_forms") or []:
@@ -1545,6 +1578,8 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, name) is None:
             parser.error(f"--{name.replace('_', '-')} is required outside Vis Harbor")
     checks = json.loads(args.checks.read_text())
+    if program := checks.get("want_answer_program"):
+        checks["want_answer_program"] = str(args.checks.parent / program)
     if args.task:
         checks["id"] = args.task
     grade = grade_trial(checks, args.workspace, load_trial(args.agent_logs))

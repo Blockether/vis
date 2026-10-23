@@ -11,6 +11,12 @@ directory:
 - ``stderr.txt``: the error output of the CLI.
 - ``trajectory.json``: the ATIF trajectory of the session.
 - ``run.json``: the provider, the model, the exit code and the wall time.
+
+A line with only ``<!-- vis:turn -->`` in the instruction starts the next user
+turn. The agent then sends each message as one CLI turn of the same session, with
+``--session-id``. ``turns/<n>.json`` keeps the trajectory of turn n, and
+``trajectory.json`` joins all turns. Other Harbor agents get the whole text as one
+prompt.
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ import asyncio
 import functools
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -37,8 +44,13 @@ from ..engine._install import ensure_installed
 from .environment import HostEnvironment
 from .grade import RUN_FILE, STDERR_FILE, TRACE_FILE, TRAJECTORY_FILE
 from .trajectory import load_trajectory as load_vis_trajectory
+from .trajectory import merge_trajectories
 
 DEFAULT_COMMAND = "vis-agent"
+TURN_MARKER = "<!-- vis:turn -->"
+"""A line with only this text in an instruction starts the next user turn."""
+TURNS_DIR = "turns"
+_TURN_SPLIT = re.compile(rf"^[ \t]*{re.escape(TURN_MARKER)}[ \t]*(?:\n|$)", re.M)
 CLASSPATH_TIMEOUT_SEC = 120
 _NATIVE_MAGIC = (
     b"\x7fELF",
@@ -76,6 +88,10 @@ class VisOptions(AgentOptions):
     command: str | None = Field(
         default=None, description="Shell prefix that replaces the engine, for tests."
     )
+    append_system: str | None = Field(
+        default=None,
+        description="File whose text each trial adds to the system prompt.",
+    )
 
 
 @functools.cache
@@ -108,6 +124,22 @@ def source_commit(source: Path) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return completed.stdout.strip() or None
+
+
+def split_turns(instruction: str) -> list[str]:
+    """Return the user messages of ``instruction``, one for each turn.
+
+    Each line with only ``TURN_MARKER`` ends one message and starts the next. An
+    instruction without that line is one turn and stays unchanged. An empty message
+    raises ValueError.
+    """
+    parts = _TURN_SPLIT.split(instruction)
+    if len(parts) == 1:
+        return [instruction]
+    messages = [part.strip() for part in parts]
+    if not all(messages):
+        raise ValueError("each turn of a multi-turn instruction needs text")
+    return messages
 
 
 class ProviderUnavailableError(RuntimeError):
@@ -144,6 +176,15 @@ def provider_failure(trace: Path) -> str | None:
     return None
 
 
+def _session_id(trajectory: Path) -> str | None:
+    """Return the session id of the trajectory file, or None."""
+    try:
+        value = json.loads(trajectory.read_text(encoding="utf-8")).get("session_id")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
+
+
 def check_native_binary(path: str) -> None:
     """Refuse a launcher script: the measurement must use the native image."""
     with open(path, "rb") as executable:
@@ -165,6 +206,10 @@ class VisAgent(BaseAgent):
     (``VIS_HARBOR_NATIVE_BIN``), ``source`` (``VIS_HARBOR_SOURCE``). Without them, the
     agent runs the ``vis-agent`` CLI of the SDK's release. When the installed CLI is
     missing or another release, setup downloads that release once into the SDK cache.
+
+    ``append_system`` (``VIS_HARBOR_APPEND_SYSTEM``) names a file. Each trial writes
+    its text to ``.vis/APPEND_SYSTEM.md`` in the workspace, so two runs can compare a
+    prompt rule on the same tasks. A task that has that file already is an error.
     """
 
     capabilities = AgentCapabilities(atif=True)
@@ -197,6 +242,12 @@ class VisAgent(BaseAgent):
         source = options.source or self._setting("VIS_HARBOR_SOURCE")
         self.source = Path(source).resolve() if source else None
         self.engine_override = options.command
+        append_system = options.append_system or self._setting(
+            "VIS_HARBOR_APPEND_SYSTEM"
+        )
+        self.append_system = (
+            Path(append_system).read_text(encoding="utf-8") if append_system else None
+        )
         self.classpath: str | None = None
         self.installed_command: str | None = None
         self.model_name = f"{self.provider}/{self.model}"
@@ -229,10 +280,12 @@ class VisAgent(BaseAgent):
         return [*arguments, "--persist"]
 
     def shell_command(self) -> str:
-        """Return the bash command of one trial.
+        """Return the bash command of one CLI turn.
 
         Paths and the prompt stay in environment variables. Then the path
-        translation of the host environment cannot change them.
+        translation of the host environment cannot change them. A later turn
+        continues the session in ``VIS_HARBOR_SESSION_ID``. Each turn appends to the
+        trace and the error output.
         """
         if self.engine_override:
             engine = self.engine_override
@@ -246,15 +299,30 @@ class VisAgent(BaseAgent):
         return (
             "unset VIS_GATEWAY_URL; "
             f"{engine} {arguments} "
-            f'--trajectory "$VIS_HARBOR_AGENT_LOGS/{TRAJECTORY_FILE}" '
+            '${VIS_HARBOR_SESSION_ID:+--session-id "$VIS_HARBOR_SESSION_ID"} '
+            '--trajectory "$VIS_HARBOR_AGENT_LOGS/$VIS_HARBOR_TRAJECTORY" '
             '"$VIS_HARBOR_PROMPT" '
-            f'> "$VIS_HARBOR_AGENT_LOGS/{TRACE_FILE}" '
-            f'2> "$VIS_HARBOR_AGENT_LOGS/{STDERR_FILE}"'
+            f'>> "$VIS_HARBOR_AGENT_LOGS/{TRACE_FILE}" '
+            f'2>> "$VIS_HARBOR_AGENT_LOGS/{STDERR_FILE}"'
         )
 
-    def process_env(self, instruction: str, runtime: Path) -> dict[str, str]:
-        """Return the variables of the CLI process, with a database for this trial."""
+    def process_env(
+        self,
+        instruction: str,
+        runtime: Path,
+        *,
+        trajectory: str = TRAJECTORY_FILE,
+        session_id: str | None = None,
+    ) -> dict[str, str]:
+        """Return the variables of one CLI turn, with a database for this trial.
+
+        ``trajectory`` is the trajectory path relative to the agent logs. With
+        ``session_id``, the turn continues that session.
+        """
         env = dict(self._extra_env)
+        env["VIS_HARBOR_TRAJECTORY"] = trajectory
+        if session_id:
+            env["VIS_HARBOR_SESSION_ID"] = session_id
         env["VIS_DB_PATH"] = str(runtime / "vis.mdb")
         env["VIS_EXTENSIONS_DIR"] = self._setting("VIS_EXTENSIONS_DIR") or str(
             runtime / "extensions"
@@ -291,6 +359,11 @@ class VisAgent(BaseAgent):
     async def run(
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
+        turns = split_turns(instruction)
+        if self.append_system is not None:
+            if not isinstance(environment, HostEnvironment):
+                raise TypeError("append_system needs the HostEnvironment workspace")
+            self._write_append_system(Path(environment.workspace))
         runtime = Path(tempfile.mkdtemp(prefix="vis_harbor_runtime_"))
         record = {
             "provider": self.provider,
@@ -301,22 +374,80 @@ class VisAgent(BaseAgent):
             "is_cancelled": False,
         }
         started = time.monotonic()
+        if len(turns) > 1:
+            record["turns"] = []
         try:
-            result = await environment.exec(
-                self.shell_command(), env=self.process_env(instruction, runtime)
-            )
-            record["exit_code"] = result.return_code
+            if len(turns) == 1:
+                result = await environment.exec(
+                    self.shell_command(), env=self.process_env(instruction, runtime)
+                )
+                record["exit_code"] = result.return_code
+            else:
+                await self._run_turns(turns, environment, runtime, record)
         except asyncio.CancelledError:
             record["is_cancelled"] = True
             raise
         finally:
             record["wall_s"] = round(time.monotonic() - started, 3)
             self.logs_dir.mkdir(parents=True, exist_ok=True)
+            if len(turns) > 1:
+                self._join_turns()
             (self.logs_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
             shutil.rmtree(runtime, ignore_errors=True)
             self.populate_context_post_run(context)
         if failure := provider_failure(self.logs_dir / TRACE_FILE):
             raise ProviderUnavailableError(failure)
+
+    def _write_append_system(self, workspace: Path) -> None:
+        target = workspace / ".vis" / "APPEND_SYSTEM.md"
+        if target.exists():
+            raise ValueError(
+                "append_system cannot replace the .vis/APPEND_SYSTEM.md of the task"
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self.append_system or "", encoding="utf-8")
+
+    async def _run_turns(
+        self,
+        turns: list[str],
+        environment: BaseEnvironment,
+        runtime: Path,
+        record: dict,
+    ) -> None:
+        """Send each message as one turn of one session; stop at a failed turn."""
+        (self.logs_dir / TURNS_DIR).mkdir(parents=True, exist_ok=True)
+        session_id = None
+        for number, message in enumerate(turns, start=1):
+            name = f"{TURNS_DIR}/{number}.json"
+            env = self.process_env(
+                message, runtime, trajectory=name, session_id=session_id
+            )
+            result = await environment.exec(self.shell_command(), env=env)
+            record["exit_code"] = result.return_code
+            record["turns"].append({"exit_code": result.return_code})
+            if result.return_code != 0 or provider_failure(self.logs_dir / TRACE_FILE):
+                return
+            if session_id is None:
+                session_id = _session_id(self.logs_dir / name)
+            if session_id is None:
+                raise RuntimeError("the first turn wrote no persisted session id")
+
+    def _join_turns(self) -> None:
+        """Write ``trajectory.json`` from the trajectories of the finished turns."""
+        documents = []
+        number = 1
+        while (path := self.logs_dir / TURNS_DIR / f"{number}.json").is_file():
+            try:
+                documents.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError) as error:
+                self.logger.warning("Cannot read %s: %s", path, error)
+                break
+            number += 1
+        if documents:
+            merged = merge_trajectories(documents)
+            (self.logs_dir / TRAJECTORY_FILE).write_text(
+                json.dumps(merged, indent=2) + "\n", encoding="utf-8"
+            )
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Copy the token and cost totals of the trajectory into ``context``."""

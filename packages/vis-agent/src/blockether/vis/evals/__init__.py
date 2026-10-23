@@ -1,7 +1,8 @@
 """Evaluation tools: write and run Harbor tasks, read the results and compare them.
 
 Write a Vis task with `write_task`, and run tasks with the Vis agent with `run_tasks`.
-Read one Vis run with `load_trajectory` or `parse_trajectory`. Read the cases of a
+Read one Vis run with `load_trajectory` or `parse_trajectory`, and join the turns of
+one session with `merge_trajectories`. Read the cases of a
 Harbor dataset with `read_tasks`, and the trials of a job or round with `read_trials`.
 Count the trials with `case_results` or `summarize`. Seal a finished round with
 `seal_round`. Compare two results with `compare_cases`, or test paired changes with
@@ -120,6 +121,7 @@ from .trajectory import (
     Trajectory,
     TrajectoryMetrics,
     load_trajectory,
+    merge_trajectories,
     parse_trajectory,
 )
 
@@ -190,6 +192,7 @@ __all__ = [
     "load_trajectory",
     "majority",
     "mcnemar_exact",
+    "merge_trajectories",
     "paired_change",
     "parse_trajectory",
     "pass_all_k",

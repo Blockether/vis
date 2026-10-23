@@ -75,6 +75,19 @@ def test_start_makes_a_git_repository_with_the_seed_files(started):
     assert _git(workspace, "status", "--porcelain") == ""
 
 
+def test_start_accepts_a_task_without_seed_files(tmp_path):
+    # Lost in Conversation tasks have no seed files. The first commit of an empty
+    # workspace failed, so Harbor stopped each trial before the agent ran.
+    environment = _environment(tmp_path, files={"empty.txt": ""})
+    (environment.environment_dir / "workspace" / "empty.txt").unlink()
+    asyncio.run(environment.start(force_build=False))
+    try:
+        assert _git(environment.workspace, "log", "--format=%s") == "init\n"
+        assert list(environment.workspace.iterdir()) == [environment.workspace / ".git"]
+    finally:
+        asyncio.run(environment.stop(delete=True))
+
+
 def test_path_table_maps_the_harbor_paths(started):
     table = started.path_table()
     assert table["/logs/agent"] == started.trial_paths.agent_dir

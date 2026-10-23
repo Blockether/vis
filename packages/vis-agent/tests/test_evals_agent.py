@@ -21,10 +21,12 @@ from blockether.vis.evals.agent import (
     RUN_FILE,
     TRACE_FILE,
     TRAJECTORY_FILE,
+    TURN_MARKER,
     VisAgent,
     check_native_binary,
     provider_failure,
     source_classpath,
+    split_turns,
 )
 from harbor.models.agent.context import AgentContext
 from harbor.models.task.config import AgentConfig, TaskConfig, VerifierConfig
@@ -84,11 +86,13 @@ if arguments[-1].startswith("sleep"):
     time.sleep(60)
 trajectory = Path(arguments[arguments.index("--trajectory") + 1])
 trajectory.write_text((here / "trajectory.json").read_text())
+rule = Path(".vis/APPEND_SYSTEM.md")
 seen = {
     "arguments": arguments,
     "cwd": os.getcwd(),
     "db_path": os.environ.get("VIS_DB_PATH"),
     "gateway_url": os.environ.get("VIS_GATEWAY_URL"),
+    "append_system": rule.read_text() if rule.is_file() else None,
 }
 print(json.dumps(seen))
 if arguments[-1].startswith("quota"):
@@ -139,7 +143,7 @@ def write_task(root: Path, instruction: str, agent_timeout_sec: float = 60.0) ->
     return task
 
 
-def run_harbor(tmp_path: Path, task: Path) -> tuple[dict, Path]:
+def run_harbor(tmp_path: Path, task: Path, *options: str) -> tuple[dict, Path]:
     stub = tmp_path / "stub"
     stub.mkdir()
     (stub / "engine.py").write_text(STUB_ENGINE)
@@ -161,6 +165,7 @@ def run_harbor(tmp_path: Path, task: Path) -> tuple[dict, Path]:
             "stub-provider/stub-model",
             "--ak",
             f"command={sys.executable} {stub / 'engine.py'}",
+            *(item for option in options for item in ("--ak", option)),
             "--jobs-dir",
             str(jobs),
             "--n-concurrent",
@@ -231,12 +236,13 @@ def test_shell_command_keeps_paths_and_the_prompt_in_variables(
         '-J-Duser.dir="$VIS_HARBOR_WORKSPACE" -M:vis --full-trace-json-stream'
     )
     assert (
-        "--provider p --model m --reasoning-effort high --persist --trajectory"
-        in command
+        "--provider p --model m --reasoning-effort high --persist "
+        '${VIS_HARBOR_SESSION_ID:+--session-id "$VIS_HARBOR_SESSION_ID"} '
+        '--trajectory "$VIS_HARBOR_AGENT_LOGS/$VIS_HARBOR_TRAJECTORY"' in command
     )
     assert command.endswith(
-        '"$VIS_HARBOR_PROMPT" > "$VIS_HARBOR_AGENT_LOGS/trace.jsonl" '
-        '2> "$VIS_HARBOR_AGENT_LOGS/stderr.txt"'
+        '"$VIS_HARBOR_PROMPT" >> "$VIS_HARBOR_AGENT_LOGS/trace.jsonl" '
+        '2>> "$VIS_HARBOR_AGENT_LOGS/stderr.txt"'
     )
     assert str(tmp_path) not in command
     env = agent.process_env("go", tmp_path)
@@ -389,6 +395,56 @@ def test_harbor_runs_one_trial_on_the_host(tmp_path):
     assert seen["gateway_url"] is None
     assert seen["db_path"].endswith("vis.mdb")
     assert not Path(seen["db_path"]).parent.exists()
+
+
+def test_split_turns_keeps_a_single_turn_unchanged():
+    assert split_turns("One request.\n") == ["One request.\n"]
+    text = f"First part.\n{TURN_MARKER}\n  Second part.\n {TURN_MARKER} \nLast part.\n"
+    assert split_turns(text) == ["First part.", "Second part.", "Last part."]
+    assert split_turns(f"Quote {TURN_MARKER} inside a line.") == [
+        f"Quote {TURN_MARKER} inside a line."
+    ]
+    with pytest.raises(ValueError, match="needs text"):
+        split_turns(f"First part.\n{TURN_MARKER}\n\n")
+
+
+def test_harbor_sends_each_turn_to_one_session(tmp_path):
+    instruction = f"First part.\n{TURN_MARKER}\nSecond part.\n"
+    result, trial = run_harbor(tmp_path, write_task(tmp_path, instruction))
+    assert result["verifier_result"]["rewards"] == {"reward": 1.0}
+    agent_result = result["agent_result"]
+    assert (
+        agent_result["n_input_tokens"],
+        agent_result["n_cache_tokens"],
+        agent_result["n_output_tokens"],
+        agent_result["cost_usd"],
+    ) == (240, 200, 60, 0.02)
+    logs = trial / "agent"
+    first, second = (json.loads(line) for line in (logs / TRACE_FILE).open())
+    assert first["arguments"][-1] == "First part."
+    assert "--session-id" not in first["arguments"]
+    assert second["arguments"][-1] == "Second part."
+    session = second["arguments"].index("--session-id")
+    assert second["arguments"][session + 1] == "stub-session"
+    assert first["db_path"] == second["db_path"]
+    assert (logs / "turns" / "1.json").is_file() and (
+        logs / "turns" / "2.json"
+    ).is_file()
+    merged = json.loads((logs / TRAJECTORY_FILE).read_text())
+    assert [step["step_id"] for step in merged["steps"]] == [1, 2, 3, 4]
+    assert merged["extra"]["turns"] == 2
+    record = json.loads((logs / RUN_FILE).read_text())
+    assert record["turns"] == [{"exit_code": 0}, {"exit_code": 0}]
+
+
+def test_append_system_writes_the_rule_into_the_workspace(tmp_path):
+    rule = tmp_path / "rule.md"
+    rule.write_text("Fold every earlier turn.\n")
+    task = write_task(tmp_path, "One request.\n")
+    result, trial = run_harbor(tmp_path, task, f"append_system={rule}")
+    assert result["verifier_result"]["rewards"] == {"reward": 1.0}
+    seen = json.loads((trial / "agent" / TRACE_FILE).read_text())
+    assert seen["append_system"] == "Fold every earlier turn.\n"
 
 
 def test_a_provider_refusal_is_an_agent_error_not_a_wrong_answer(tmp_path):

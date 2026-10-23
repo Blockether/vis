@@ -136,6 +136,26 @@ def test_a_timeout_or_a_failed_exit_is_an_error(tmp_path, scenario, exit_code, m
     assert result.rewards["no_errors"] == 0.0
 
 
+def test_an_answer_program_reads_the_final_answer(tmp_path):
+    program = tmp_path / "check_answer.py"
+    program.write_text(
+        "import sys\n"
+        "if sys.stdin.read().strip() != 'Done.':\n"
+        "    sys.exit('the answer is not Done.')\n"
+    )
+    scenario = {"want_answer_program": str(program)}
+    document = _run(_form("t1/i1/f1", PATCH_CODE), answer="Done.")
+    assert grade.grade_trial(scenario, tmp_path, _trial(document)).is_passed
+
+    document = _run(_form("t1/i1/f1", PATCH_CODE), answer="Not yet.")
+    result = grade.grade_trial(scenario, tmp_path, _trial(document))
+    assert result.result["guards"]["answer"] is False
+    assert (
+        "answer program rejected the answer: the answer is not Done."
+        in (result.result["detail"])
+    )
+
+
 def test_a_run_error_does_not_converge(tmp_path):
     document = _run(_form("t1/i1/f1", PATCH_CODE), answer=None, error="provider failed")
     result = grade.grade_trial({}, tmp_path, _trial(document))

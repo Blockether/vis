@@ -239,7 +239,13 @@ def _syntax_message(answer: str, error: json.JSONDecodeError) -> str:
     return f"not valid JSON: {error.msg} at {where}"
 
 
-def _final_answer(turn: dict) -> str | None:
+def final_answer(turn: dict) -> str | None:
+    """Return the final answer text of the turn record `turn`, or None.
+
+    A turn record has no `answer` field. The answer is the Markdown of the last
+    `prose` block in `turn["content"]`. A turn without that block, or with only
+    blank text in it, gives None.
+    """
     content = turn.get("content")
     if not isinstance(content, list):
         return None
@@ -397,7 +403,7 @@ def _run(
                 {"turn": turn, "answer": None, "errors": [_turn_problem(turn)]}
             )
             raise StructuredOutputError(f"{name} turn did not complete", attempts)
-        answer = _final_answer(turn)
+        answer = final_answer(turn)
         result, problems = contract.validate(answer)
         if not problems:
             return result

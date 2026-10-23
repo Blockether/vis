@@ -37,7 +37,7 @@ GIT_SETUP = (
     ("git", "config", "user.email", "t@t.co"),
     ("git", "config", "user.name", "t"),
     ("git", "add", "-A"),
-    ("git", "commit", "-qm", "init"),
+    ("git", "commit", "-q", "--allow-empty", "-m", "init"),
 )
 _SAFE_PATH = re.compile(r"[\w./-]+")
 _BEFORE_PATH = r"(?<![\w./-])"

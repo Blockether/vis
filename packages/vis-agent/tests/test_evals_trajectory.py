@@ -10,6 +10,7 @@ from blockether.vis.evals import (
     StepMetrics,
     Trajectory,
     load_trajectory,
+    merge_trajectories,
     parse_trajectory,
 )
 
@@ -230,6 +231,36 @@ def test_reads_the_run_its_totals_and_its_final_answer():
         2,
     )
     assert totals.reasoning_tokens is None and totals.subagent_cost_usd is None
+
+
+def test_merge_joins_the_turns_of_one_session():
+    first, second = _document(), _document()
+    first["extra"]["error"] = None
+    merged = merge_trajectories([first, second])
+    run = parse_trajectory(merged)
+    assert [step.step_id for step in run.steps] == list(
+        range(1, 2 * len(first["steps"]) + 1)
+    )
+    assert run.user_message == "Count the files." and run.final_answer == "3"
+    totals = run.final_metrics
+    assert (totals.total_cost_usd, totals.total_tokens, totals.iteration_count) == (
+        0.024,
+        2560,
+        4,
+    )
+    assert run.extra["turns"] == 2
+    assert first["steps"][-1]["step_id"] == 3
+
+
+def test_merge_keeps_the_first_turn_error():
+    failed, finished = _document(), _document()
+    failed["extra"]["error"] = "provider failed"
+    finished["extra"].pop("error", None)
+    assert parse_trajectory(merge_trajectories([failed, finished])).error == (
+        "provider failed"
+    )
+    with pytest.raises(ValueError, match="no trajectory"):
+        merge_trajectories([])
 
 
 def test_each_function_call_has_its_function_arguments_result_state_and_step_cost():

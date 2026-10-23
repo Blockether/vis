@@ -4,7 +4,7 @@ For installation, workflows and lifecycle choices, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
-from ._agent import Agent, StructuredOutputError
+from ._agent import Agent, StructuredOutputError, final_answer
 from ._agents import Subagent, SubagentRecord
 from ._client import (
     Event,
@@ -70,5 +70,6 @@ __all__ = [
     "Turn",
     "VisTimeout",
     "ensure_installed",
+    "final_answer",
     "install",
 ]
