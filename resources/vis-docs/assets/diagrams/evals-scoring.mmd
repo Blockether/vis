@@ -1,0 +1,38 @@
+---
+config:
+  theme: base
+  fontFamily: JetBrains Mono
+  deterministicIds: true
+  htmlLabels: false
+  themeVariables:
+    background: "#ffffff"
+    primaryColor: "#f8f8f8"
+    primaryTextColor: "#1e1e1e"
+    primaryBorderColor: "#505050"
+    secondaryColor: "#f8f8f8"
+    tertiaryColor: "#ffffff"
+    lineColor: "#505050"
+    textColor: "#1e1e1e"
+    actorTextColor: "#1e1e1e"
+    actorBorder: "#505050"
+    actorBkg: "#f8f8f8"
+    signalColor: "#505050"
+    signalTextColor: "#1e1e1e"
+    noteBkgColor: "#f8f8f8"
+    noteTextColor: "#1e1e1e"
+    noteBorderColor: "#505050"
+  flowchart:
+    htmlLabels: false
+    curve: linear
+---
+flowchart TB
+    accTitle: From attempts to pass rates
+    accDescr: Each attempt is scored or unscored. The latest scored attempt of each task gives the pass rate and the strict pass rate. All scored attempts give the attempt pass rate, pass@k and pass^k. Unscored tasks count as failed only in the strict pass rate.
+    attempt["Attempt<br/>one trial of one task"] --> scored{"Scored?"}
+    scored -- yes --> all["Scored attempts<br/>of each task"]
+    scored -- no --> unscored["Unscored"]
+    all --> latest["Latest scored attempt<br/>of each task"]
+    all --> attempts["Attempt pass rate<br/>solved / scored attempts"]
+    all --> repeats["pass@k and pass^k<br/>n and c of each task"]
+    latest --> rate["Pass rate<br/>solved / scored tasks"]
+    latest --> strict["Strict pass rate<br/>solved / all tasks<br/>unscored = failed"]

@@ -1,0 +1,39 @@
+---
+config:
+  theme: base
+  fontFamily: JetBrains Mono
+  deterministicIds: true
+  htmlLabels: false
+  themeVariables:
+    background: "#ffffff"
+    primaryColor: "#f8f8f8"
+    primaryTextColor: "#1e1e1e"
+    primaryBorderColor: "#505050"
+    secondaryColor: "#f8f8f8"
+    tertiaryColor: "#ffffff"
+    lineColor: "#505050"
+    textColor: "#1e1e1e"
+    actorTextColor: "#1e1e1e"
+    actorBorder: "#505050"
+    actorBkg: "#f8f8f8"
+    signalColor: "#505050"
+    signalTextColor: "#1e1e1e"
+    noteBkgColor: "#f8f8f8"
+    noteTextColor: "#1e1e1e"
+    noteBorderColor: "#505050"
+  flowchart:
+    htmlLabels: false
+    curve: linear
+---
+flowchart TB
+    accTitle: Evaluation steps and their files
+    accDescr: You write tasks and check them, run them with Harbor into a job folder, and report the round into vis-report.json. Labels and a judge check the failure causes. A second report lets you compare two runs.
+    write["Step 2<br/>Write the tasks"] --> check["Step 3<br/>Check the tasks"]
+    check -. "a check fails" .-> write
+    check --> run["Step 4<br/>harbor run"]
+    run --> jobs[("jobs/first/<br/>one folder per trial")]
+    jobs --> report["Step 5<br/>Report the round"]
+    report --> json[("vis-report.json")]
+    report -. "check the causes" .-> labels["Labels and<br/>judge samples"]
+    labels -.-> report
+    json --> compare["Step 6<br/>Compare two runs"]

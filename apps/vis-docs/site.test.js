@@ -118,11 +118,11 @@ test('Getting started is the only app setup guide in the published indexes', () 
   }
 });
 
-test('Council diagrams are accessible, self-contained and match their Mermaid sources', () => {
+test('Documentation diagrams are accessible, self-contained and match their Mermaid sources', () => {
   const font = readFileSync('../../resources/vis-docs/assets/fonts/jetbrains-mono.woff2').toString(
     'base64',
   );
-  for (const name of ['council-messages', 'council-modules']) {
+  for (const name of ['council-messages', 'council-modules', 'evals-steps', 'evals-scoring']) {
     const source = readFileSync(`dist/assets/diagrams/${name}.mmd`);
     const svg = readFileSync(`dist/assets/diagrams/${name}.svg`, 'utf8');
     expect(source).toEqual(readFileSync(`../../resources/vis-docs/assets/diagrams/${name}.mmd`));

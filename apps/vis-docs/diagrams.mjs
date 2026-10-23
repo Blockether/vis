@@ -7,14 +7,14 @@ import { fileURLToPath } from 'node:url';
 
 const assets = new URL('../../resources/vis-docs/assets/', import.meta.url);
 const font = await readFile(new URL('fonts/jetbrains-mono.woff2', assets));
-const temporary = await mkdtemp(join(tmpdir(), 'vis-council-diagrams-'));
+const temporary = await mkdtemp(join(tmpdir(), 'vis-docs-diagrams-'));
 try {
   const css = join(temporary, 'font.css');
   await writeFile(
     css,
     `@font-face { font-family: 'JetBrains Mono'; src: url(data:font/woff2;base64,${font.toString('base64')}) format('woff2'); }`,
   );
-  for (const name of ['council-messages', 'council-modules']) {
+  for (const name of ['council-messages', 'council-modules', 'evals-steps', 'evals-scoring']) {
     const input = new URL(`diagrams/${name}.mmd`, assets);
     const output = new URL(`diagrams/${name}.svg`, assets);
     execFileSync(

@@ -55,6 +55,10 @@ The Vis setup is different from the Harbor defaults in three ways:
 For the Harbor concepts, read the Harbor [core concepts](https://docs.harborframework.com/core-concepts)
 and the [task overview](https://docs.harborframework.com/tasks/overview).
 
+The steps of this page pass these files from one to the next:
+
+[![You write and check the tasks, run them with Harbor into a job folder, and report the round into vis-report.json. Labels and judge samples check the failure causes.](assets/diagrams/evals-steps.svg)](assets/diagrams/evals-steps.svg)
+
 ## Step 1: Install the tools
 
 You need Python 3.12 or later and a configured provider and model. Read
@@ -328,10 +332,10 @@ results](https://docs.harborframework.com/results/view-job-results).
 
 ### Report the round
 
-One command gives all numbers of the round:
+One command gives all numbers of the round. Give it the job folder and the task folder:
 
 ```bash
-python -m blockether.vis.evals.report jobs/first
+python -m blockether.vis.evals.report jobs/first --tasks tasks
 ```
 
 The command prints these parts:
@@ -347,7 +351,7 @@ It also writes the same data as JSON to `jobs/first/vis-report.json`. This is th
 report of a round with 16 tasks and two attempts for each task:
 
 ```text
-Round full2 - dataset unknown, model claude-opus-5-5
+Round code-tasks - dataset dataset2, model claude-opus-5-5
 
 Score
   Pass rate          12/16 tasks  75.0%  95% CI 50.5-89.8%
@@ -359,15 +363,30 @@ Repeats (2 attempts per task)
   k  tasks  pass@k  pass^k
   1  16     75.0%   75.0%
   2  16     75.0%   75.0%
+
+Outcomes
+  solved: 12 (code-medium-auto, code-medium-few, ...)
+  failed_tests: 4 (code-hard-auto, code-hard-few, code-hard-many, code-hard-solo)
+
+Failure causes
+  early_stops: The agent finished early and failed the tests in 4 tasks (code-hard-few, ...)
 ```
 
-Each task passed both attempts or failed both, so pass@2 equals pass^2. For the same reason, the
-attempt interval is as wide as the task interval. A second round of 16 tasks can detect only a
-change of 48 points or more.
+Read it from the top:
+
+1. **Score.** 12 of 16 tasks passed. The 95% interval of the pass rate is 50.5% to 89.8%. A
+   second round of 16 tasks can detect only a change of 48 points or more.
+2. **Repeats.** Each task passed both attempts or failed both, so pass@2 equals pass^2. For the
+   same reason, the attempt interval is as wide as the task interval.
+3. **Outcomes and causes.** The 4 failed tasks failed their tests after an early stop. Read their
+   trajectories first.
+
+`--tasks` gives the time limits of the tasks. Without it, the report cannot find early stops, and
+this round shows `no rule matched`.
 
 | Option | Effect |
 |---|---|
-| `--tasks DIR` | Reads the dataset folder. The strict pass rate then also counts the tasks without a trial. |
+| `--tasks DIR` | Reads the task folder: the dataset name, the time limits and the tasks without a trial. |
 | `--model M` | Counts only the attempts of this model. |
 | `--round NAME` | Sets the round name. The default is the folder name. |
 | `--labels FILE` | Reads the cause labels. The default is `labels.json` in the job folder. |
@@ -414,6 +433,8 @@ An attempt is **scored** when Harbor verified it and the agent did real work:
 
 Each task counts once, by its latest scored attempt. A task without a scored attempt is in
 `unscored_model_tasks`.
+
+[![A scored attempt counts in the attempt pass rate and in pass@k and pass^k. The latest scored attempt of each task gives the pass rate and the strict pass rate. An unscored task counts as failed only in the strict pass rate.](assets/diagrams/evals-scoring.svg)](assets/diagrams/evals-scoring.svg)
 
 ## Scores and intervals
 
