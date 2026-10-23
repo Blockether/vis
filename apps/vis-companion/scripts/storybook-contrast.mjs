@@ -65,7 +65,7 @@ try {
     ...storyIds.filter((id) => id.startsWith('vocabulary-controls--')),
     'components-artifacts-sheet--files',
     'components-data-table--opened',
-    'components-live-view--finished-jobs',
+    'live-view-panel--finished-jobs',
     'components-iteration-trace--code-with-result',
     'components-menu--verbs',
     'components-menu--danger-focused',

@@ -627,7 +627,9 @@ describe('the shipped screens', () => {
   });
   // A PLOT IS NOT AN ICON. `ChatContent.tsx`'s speech waveform draws one `<rect>` per measured
   // bucket, as many as the width a `ResizeObserver` reports, and `PerfOverlay.tsx`'s memory
-  // trends draw one `<polyline>` through their samples; an icon is a fixed glyph on the
+  // trends draw one `<polyline>` through their samples. `LiveView.tsx`'s progress track (#417)
+  // draws its fraction as one `<rect>` over another, because a live view may not animate
+  // and may not set an inline style. An icon is a fixed glyph on the
   // 24-unit grid, and keeping those in one module is the whole point of this rule. So each
   // plot is named here rather than exempted by folder, and it still may never draw a
   // glyph's `<path>`.
@@ -640,7 +642,11 @@ describe('the shipped screens', () => {
         /<svg/.test(source),
     );
 
-    expect(drawn.map(([path]) => path)).toEqual(['./ChatContent.tsx', './PerfOverlay.tsx']);
+    expect(drawn.map(([path]) => path)).toEqual([
+      './ChatContent.tsx',
+      './LiveView.tsx',
+      './PerfOverlay.tsx',
+    ]);
     for (const [, plot] of drawn) {
       expect(plot.match(/<svg/g)).toHaveLength(1);
       expect(plot).not.toContain('<path');

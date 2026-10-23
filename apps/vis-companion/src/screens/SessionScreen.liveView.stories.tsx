@@ -52,7 +52,7 @@ const client = new Proxy(baseClient, {
 });
 
 const meta = {
-  title: 'Screens/Session Live view',
+  title: 'Live View/Session screen',
   component: SessionScreen,
   parameters: { layout: 'fullscreen' },
   decorators: [

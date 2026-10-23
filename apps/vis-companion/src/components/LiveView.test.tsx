@@ -123,7 +123,7 @@ describe('a live view on the phone', () => {
   it('draws the fraction as a bar and states the count beside it', () => {
     paint();
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('67');
-    expect(document.body.innerHTML).toContain('2/3');
+    expect(document.body.innerHTML).toContain('2 of 3');
   });
 
   // A bar that never moves reads as a stall. A run whose size is not known yet
@@ -133,7 +133,7 @@ describe('a live view on the phone', () => {
       view: withNode(opened(), { id: 'swept', type: 'progress', label: 'Swept' }),
     });
     expect(screen.queryByRole('progressbar')).toBeNull();
-    expect(html).toContain('working');
+    expect(html).toContain('Working');
   });
 
   it("says what an empty node is waiting for, in the engine's own words", () => {
@@ -174,12 +174,14 @@ describe('a live view on the phone', () => {
     )!;
     expect(name.className).toContain('font-bold');
     expect(name.className).not.toContain('uppercase');
-    expect(name.parentElement?.textContent).toBe('Failure · Run native build');
+    // #417: what follows the name is a plain hint phrase, not a dot-joined meta string.
+    expect(name.nextElementSibling?.textContent).toBe('Run native build');
+    expect(name.parentElement?.textContent).not.toContain('·');
   });
 
-  // A rule fences one block of a run off from the next. A divider is a rule the view
-  // ASKED for, so the rows on either side of one are not ruled a second time.
-  it('rules the blocks of a run apart without doubling a divider', () => {
+  // #417: space separates the sections of a run. A rule under every node fenced the
+  // run into a stack of boxes, so only the log, the secondary reading, keeps one.
+  it('separates sections by space and rules off only the log', () => {
     const view: LiveView = {
       ...opened(),
       nodes: [
@@ -199,13 +201,15 @@ describe('a live view on the phone', () => {
           groups: [],
         },
         { id: 'written', type: 'paragraph', text: 'Report written.' },
+        { id: 'out', type: 'log', label: 'Output', lines: [], window_lines: 2000, total_lines: 0 },
       ],
     };
     paint({ view });
     const rows = [...document.querySelectorAll('section > ul > li')];
     expect(rows.map((one) => one.className.includes('border-t'))).toEqual([
       false,
-      true,
+      false,
+      false,
       false,
       false,
       true,
@@ -330,10 +334,12 @@ describe('selecting a table row', () => {
 
     // A leg indents its mark, and its name follows the mark: the words never indent alone.
     const leg = screen.getByRole('button', { name: 'Select iOS' });
-    expect(leg.querySelector('svg')?.getAttribute('class')).toContain('ml-5');
+    // The mark sits in its line box; the box and the words move together.
+    const indent = (row: HTMLElement) => row.querySelector('svg')?.parentElement?.parentElement;
+    expect(indent(leg)?.className).toContain('ml-5');
     expect(leg.innerHTML).not.toContain('pl-3');
     const job = screen.getByRole('button', { name: 'Select Publish docs' });
-    expect(job.querySelector('svg')?.getAttribute('class')).not.toContain('ml-5');
+    expect(indent(job)?.className).not.toContain('ml-5');
   });
   // Regression, session 641fbdc0-44a9-46dd-86c9-3e8b9bdf878b: a parent with a single leg
   // stayed flat beside its folded neighbors, so one table showed two shapes and the lone
@@ -738,9 +744,12 @@ describe('what a run says about its own layout', () => {
     // Two elements, not two halves of one line.
     expect(headline).not.toBe(detail);
     expect(headline.contains(detail)).toBe(false);
-    // The same grid, the detail on its own row under the headline's column.
+    // One column: the state word over the headline, the detail on its own line under it.
     expect(detail.parentElement).toBe(headline.parentElement);
-    expect(detail.className).toContain('col-start-2');
+    expect(headline.nextElementSibling).toBe(detail);
+    // #417: a label is larger than the caption under it.
+    expect(headline.className).toContain('text-subhead');
+    expect(detail.className).toContain('text-body');
     // Nothing may take width from the headline any more.
     expect(headline.className).not.toContain('flex-1');
     expect(headline.parentElement?.className).not.toContain('flex');
@@ -748,9 +757,10 @@ describe('what a run says about its own layout', () => {
 
 
   // Regression, reported from the phone: a step's detail is the part that can be
-  // any length, and it refused to shrink — so a long one pushed the row past the
-  // screen instead of saying a little less.
-  it('trims a long step detail instead of stretching its row', () => {
+  // any length, and it refused to shrink, so a long one pushed the row past the
+  // screen. #417: it now wraps under its label, smaller than the label, and keeps
+  // every word.
+  it('wraps a long step detail under its label instead of stretching its row', () => {
     const view: LiveView = {
       ...opened(),
       nodes: [
@@ -771,9 +781,11 @@ describe('what a run says about its own layout', () => {
     paint({ view });
 
     const detail = screen.getByText(/real SDK engine/).closest('span') as HTMLElement;
-    expect(detail.className).toContain('truncate');
-    expect(detail.className).toContain('min-w-0');
-    expect(detail.className).not.toContain('shrink-0');
+    expect(detail.className).toContain('[overflow-wrap:anywhere]');
+    expect(detail.className).not.toContain('truncate');
+    expect(detail.className).toContain('text-ui');
+    const label = screen.getByText('Verify release source').closest('span') as HTMLElement;
+    expect(label.closest('ol')?.className).toContain('text-body');
   });
   // Regression, user report: Activity patches rendered one-by-one on WKWebView and
   // starved the independent elapsed-time paint, leaving its clock visibly frozen.

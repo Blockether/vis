@@ -74,7 +74,7 @@ const client = {
   })),
 } as unknown as typeof STORY_INERT_CLIENT;
 const meta = {
-  title: 'Transcript/Activity live views',
+  title: 'Live View/In the transcript',
   component: IterationTrace,
   parameters: { layout: 'padded' },
   args: {

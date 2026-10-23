@@ -16,7 +16,7 @@ import { LiveViewPanel } from './LiveView';
  * but not yet answered, over, and refused.
  */
 const meta = {
-  title: 'Components/Live view',
+  title: 'Live View/Panel',
   component: LiveViewPanel,
   parameters: { layout: 'padded' },
   args: { view: STORY_LIVE_VIEW, onInterrupt: fn(), onSelect: () => {} },

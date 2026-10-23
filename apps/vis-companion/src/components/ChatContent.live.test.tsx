@@ -89,15 +89,16 @@ it('keeps an embedded run to one row and paints its picture only when opened', (
 // The opened run is the app's ONE dialog (`Modal` + `DialogFrame`), not the viewport-pinned
 // artifact screen: on a desktop, opening a run used to paper the session list, the transcript
 // and the composer with a single view.
-it('opens a run in the app dialog, with the run still a bordered box inside it', () => {
+// #417: the dialog is the run's box, so the run paints no second frame inside it.
+it('opens a run in the app dialog, with no second frame inside it', () => {
   const mounted = render(<LiveViewPanel view={STORY_LIVE_VIEW} embedded />);
   expect(mounted.queryByRole('dialog')).toBeNull();
   fireEvent.click(mounted.getByRole('button', { name: `Open run ${STORY_LIVE_VIEW.title}` }));
   const dialog = mounted.getByRole('dialog', { name: STORY_LIVE_VIEW.title });
   expect(dialog).toHaveAttribute('aria-modal', 'true');
   const opened = dialog.querySelector('section.live-view-panel');
-  expect(opened).toHaveClass('border', 'border-dialog-edge');
-  expect(opened).not.toHaveClass('border-y');
+  expect(opened).not.toHaveClass('border');
+  expect(within(dialog).getAllByText(STORY_LIVE_VIEW.title)).toHaveLength(1);
 });
 
 // The dialog belongs to the SESSION, not to the window: the list beside the transcript stays

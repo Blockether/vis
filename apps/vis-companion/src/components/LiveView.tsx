@@ -1,4 +1,5 @@
 import {
+  Fragment,
   startTransition,
   useEffect,
   useId,
@@ -11,6 +12,7 @@ import {
 import {
   BandLabel,
   Button,
+  CopyChip,
   DialogFrame,
   Disclosure,
   ExecutionAction,
@@ -92,6 +94,27 @@ const TONE_INK: Record<LiveTone, string> = {
 };
 
 /**
+ * The ink of a tone MARK. Words beside a mark keep the body ink, because text never
+ * wears a data colour. A mark that says "nothing happened yet" steps back to the hint.
+ */
+const MARK_INK: Record<LiveTone, string> = {
+  idle: 'text-dialog-hint',
+  running: 'text-accent-ink',
+  ok: 'text-ok',
+  warn: 'text-warn',
+  error: 'text-err',
+};
+
+/** The tone as a WORD, so a state reads without colour and without the icon (#417). */
+const TONE_WORD: Record<LiveTone, string> = {
+  idle: 'Waiting',
+  running: 'Running',
+  ok: 'Passed',
+  warn: 'Warning',
+  error: 'Failed',
+};
+
+/**
  * What a node with nothing in it SAYS. The engine's own sentences
  * (`view.materializer/empty-line`), so the phone, the terminal and the document
  * report an empty table with one wording rather than three.
@@ -114,39 +137,60 @@ const LOG_PAGE = 200;
  */
 const LOG_READ_PAGE = 2000;
 
+/** A value at least this long is an identifier rather than a figure, so it gets a copy action. */
+const LONG_VALUE = 24;
+
 /**
- * The node's name, in the label voice the dialog's fields already use.
+ * An identifier breaks AFTER its separators, so `platform/services/deploy` wraps
+ * at a slash rather than in the middle of a word. Any break still wins over a row
+ * that scrolls sideways.
+ */
+function Breakable({ children }: { children: string }) {
+  const parts = children.split(/(?<=[/._-])/);
+  return parts.map((part, index) => (
+    <Fragment key={index}>
+      {part}
+      {index < parts.length - 1 && <wbr />}
+    </Fragment>
+  ));
+}
+
+/** A single stat this short is a figure, so it stands as the view's large number. */
+const HERO_VALUE = 12;
+
+/**
+ * A section's name, in the case its author wrote it.
  *
- * WEIGHT CARRIES THE NAME, not caps. A live label often says what it is a label
- * OF — `Failure · vis-agent + vis-contract (PyPI packages)`, `Timeline ·
- * macos-latest` — and the name itself is whatever the extension called the thing:
- * `Last observed pool state`, `glms-tests/glms-test-data #6043`. Caps strip the
- * ascenders and descenders a word is recognised by, so a shouted build identifier
- * stops being scannable and starts competing with the rows it introduces. The name
- * keeps the case its author wrote it in, exactly as the terminal paints it, and
- * stands out by ink and weight instead. Everything up to the first `·` is the name;
- * what follows is ordinary type at the same size.
+ * WEIGHT CARRIES THE NAME, not caps: a shouted build identifier stops being
+ * scannable. Everything up to the first `·` is the name; the rest follows as a
+ * plain phrase joined by commas, because a run of dot-joined meta reads as noise.
+ *
+ * THE SIZE LADDER. A name is always larger than the caption under it, and a value
+ * is never smaller than the label over it. A section label is `text-ui`, and what it
+ * names is `text-body` or larger. A fact label is `text-meta` over a `text-body`
+ * value. A step or a link is `text-body` over a `text-ui` detail. The headline is
+ * `text-subhead` over a `text-body` detail.
  */
 function NodeLabel({ children }: { children: string }) {
   const [name, ...rest] = children.split(' · ');
   return (
-    <span className="block font-mono text-meta text-dialog-hint">
-      <span className="font-bold text-white">{name}</span>
-      {rest.length > 0 && <span> · {rest.join(' · ')}</span>}
+    <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 font-mono text-ui">
+      <span className="font-bold text-white [overflow-wrap:anywhere]">{name}</span>
+      {rest.length > 0 && (
+        <span className="text-dialog-hint [overflow-wrap:anywhere]">{rest.join(', ')}</span>
+      )}
     </span>
   );
 }
 
 function Empty({ children }: { children: string }) {
-  return <p className="font-mono text-meta italic text-dialog-hint">{children}</p>;
+  return <p className="font-mono text-ui italic text-dialog-hint">{children}</p>;
 }
 
 /**
- * The tone, as a SHAPE. A tone arrives as a word and used to leave as colour
- * alone — one dot, five inks — and colour alone is not a state: `ok` green
- * measures 2.9:1 on the light theme's panel, under the 3:1 a mark owes, and the
- * readers who cannot separate it from the amber beside it are a twentieth of
- * everyone. One ring with five interiors says WHICH state; the colour agrees.
+ * The tone, as a SHAPE. One ring with five interiors says WHICH state, and the
+ * colour agrees: colour alone is not a state for the readers who cannot separate
+ * green from the amber beside it.
  */
 const TONE_MARK: Record<LiveTone, typeof CircleDotIcon> = {
   idle: CircleDashedIcon,
@@ -158,74 +202,74 @@ const TONE_MARK: Record<LiveTone, typeof CircleDotIcon> = {
 
 function ToneMark({ tone, className = 'size-3' }: { tone: LiveTone; className?: string }) {
   const Drawn = TONE_MARK[tone];
-  return <Drawn className={`${className} ${MARK_NUDGE} ${TONE_INK[tone]}`} />;
+  return <Drawn className={`${className} shrink-0 ${MARK_NUDGE} ${MARK_INK[tone]}`} />;
 }
 
 /**
- * The MARK says the state; the sentence beside it keeps the panel's ordinary ink.
- *
- * Colouring every line by its tone painted a green row for every job that merely
- * passed — five inks down one column, and the row actually doing something no
- * longer stood out. Only a FAILURE speaks in colour, because it is why the reader
- * opened the view.
+ * A mark ON ITS LINE. The box is one line tall in the type of the words beside it,
+ * and the mark is centred in it. The mark then stands on the first line of those
+ * words, however they wrap and whatever size the mark is. A padding guessed for one
+ * size put the marks of a step rail below the labels they belong to.
  */
-function rowInk(tone: LiveTone): string {
-  return tone === 'error' ? TONE_INK.error : '';
-}
-
-/** A phase that has not run yet is not part of the picture, so it steps back. */
-function stepInk(tone: LiveTone): string {
-  return tone === 'idle' ? 'text-dialog-hint' : rowInk(tone);
-}
-
-/**
- * Rules FENCE the blocks of a run. A status line, a meter and a table are separate
- * readings, and in the embedded card they stack close enough that spacing alone
- * lets them run together; a hairline between two nodes keeps each one its own row.
- * A divider is a rule the view ASKED for, so neither side of one is ruled twice.
- */
-function rowRule(previous: LiveNode | undefined, node: LiveNode): string {
-  if (!previous || previous.type === 'divider' || node.type === 'divider') return '';
-  return 'border-t border-dialog-edge';
-}
-
-/**
- * The verdict of a SEALED record. An open view needs no `Live` badge: it is already
- * changing on screen and exposed as a live region. Mark only the exception to that
- * default — the outcome once the picture cannot change again.
- */
-function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolean }) {
-  if (!isSettled) return null;
-  const failed = view.nodes.some((node) => node.type === 'status' && node.tone === 'error');
-  const [word, paint] = failed
-    ? (['Failed', 'bg-err/15 text-err'] as const)
-    : (['Done', 'bg-hover text-dialog-hint'] as const);
+function LineMark({ tone, className = 'size-3' }: { tone: LiveTone; className?: string }) {
+  const Drawn = TONE_MARK[tone];
   return (
-    <span
-      className={`shrink-0 px-1.5 py-0.5 font-mono text-meta font-bold uppercase tracking-[0.08em] ${paint}`}
-    >
-      {word}
+    <span className="flex h-[1lh] shrink-0 items-center">
+      <Drawn className={`${className} ${MARK_INK[tone]}`} />
+    </span>
+  );
+}
+
+/** A state as a mark and a word, at caption size. Only a failure colours its word. */
+function ToneWord({ tone, word = TONE_WORD[tone] }: { tone: LiveTone; word?: string }) {
+  return (
+    <span className="inline-flex items-start gap-1.5 font-mono text-meta text-dialog-hint">
+      <LineMark tone={tone} />
+      <span className={tone === 'error' ? 'text-err' : ''}>{word}</span>
     </span>
   );
 }
 
 /**
- * The headline owns the whole column and its detail sits UNDER it. Sharing one
- * line cost the headline every character the detail claimed: on a phone, "1 of 2
- * jobs finished" beside a workflow and a job name broke to one word per line.
- *
- * The headline's mark is 14px, so its gap is 6px: its words then start 20px in, on the
- * column of the rows under it, which start with a 12px mark and an 8px gap.
+ * The MARK says the state; the sentence beside it keeps the panel's ordinary ink.
+ * Only a FAILURE speaks in colour, because it is why the reader opened the view.
+ */
+function rowInk(tone: LiveTone): string {
+  return tone === 'error' ? TONE_INK.error : '';
+}
+
+/**
+ * The verdict of a SEALED record, as a word and a mark in sentence case. An open view
+ * needs no `Live` badge: it is already changing on screen and is a live region.
+ */
+function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolean }) {
+  if (!isSettled) return null;
+  const failed = view.nodes.some((node) => node.type === 'status' && node.tone === 'error');
+  return (
+    <span className="shrink-0">
+      <ToneWord tone={failed ? 'error' : 'ok'} word={failed ? 'Failed' : 'Done'} />
+    </span>
+  );
+}
+
+/**
+ * The HEADLINE: the run's one sentence at reading size. Its state stands over it as
+ * a word, and its detail sits under it one size down, so the sentence owns the
+ * whole column on a phone.
  */
 function StatusRow({ node }: { node: LiveStatusNode }) {
   return (
-    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-1.5 gap-y-1 font-mono text-title">
-      <ToneMark tone={node.tone} className="size-3.5" />
-      <p className={`min-w-0 ${PROSE} ${TONE_INK[node.tone]}`}>
+    <div className="min-w-0 space-y-1 font-mono">
+      <ToneWord tone={node.tone} />
+      <p
+        className={`min-w-0 text-subhead font-bold ${PROSE} [overflow-wrap:anywhere] ${
+          node.tone === 'error' ? 'text-err' : 'text-white'
+        }`}
+      >
         <InlineMarkdown>{node.text}</InlineMarkdown>
       </p>
       {node.detail && (
-        <p className="col-start-2 min-w-0 text-meta text-dialog-hint">
+        <p className="min-w-0 text-body text-dialog-hint [overflow-wrap:anywhere]">
           <InlineMarkdown>{node.detail}</InlineMarkdown>
         </p>
       )}
@@ -233,27 +277,31 @@ function StatusRow({ node }: { node: LiveStatusNode }) {
   );
 }
 
-const METER_SEGMENTS = 20;
-const METER_CELLS = Array.from({ length: METER_SEGMENTS }, (_, cell) => cell);
-
-/** The live view's segmented progress face, shared with its terminal rendering. */
+/**
+ * How far, as ONE track. A bar answers "how far", so it draws a fraction and no
+ * count. It is drawn, not animated: only a declared spinner moves in a live view,
+ * so the fill steps to each new value and needs no reduced-motion variant.
+ */
 function ProgressMeter({ value, label }: { value: number; label: string }) {
-  const filled = Math.max(0, Math.min(METER_SEGMENTS, Math.round(value * METER_SEGMENTS)));
+  const clamped = Math.max(0, Math.min(1, value));
   return (
     <span
       role="progressbar"
       aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={Math.round(Math.max(0, Math.min(1, value)) * 100)}
-      className="flex h-1.5 w-full gap-px mouse:h-1"
+      aria-valuenow={Math.round(clamped * 100)}
+      className="block h-1.5 w-full mouse:h-1"
     >
-      {METER_CELLS.map((cell) => (
-        <span
-          key={cell}
-          className={`h-full flex-1 ${cell < filled ? 'bg-accent' : 'bg-dialog-edge'}`}
-        />
-      ))}
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 1000 1"
+        preserveAspectRatio="none"
+        className="block size-full"
+      >
+        <rect width="1000" height="1" className="fill-dialog-edge" />
+        <rect width={Math.round(clamped * 1000)} height="1" className="fill-accent" />
+      </svg>
     </span>
   );
 }
@@ -276,77 +324,128 @@ function SelectableTableRow({
 }
 
 /**
- * A bar only when there is a fraction to draw. `done of total` is stated in
- * words beside it because a bar answers "how far", never "how many", and a scan
- * of 3 hosts and a scan of 3000 draw the same third of a bar.
+ * The percent LEADS, the count says how many, the track says how far. `done of
+ * total` is in words because a scan of 3 hosts and a scan of 3000 draw the same
+ * third of a bar.
  */
 function ProgressRow({ node }: { node: LiveProgressNode }) {
   const fraction = liveFraction(node);
   const counted =
-    node.done !== undefined && node.total !== undefined ? `${node.done}/${node.total}` : null;
+    node.done !== undefined && node.total !== undefined ? `${node.done} of ${node.total}` : null;
+  if (fraction === null) {
+    return (
+      <p className="font-mono text-body text-dialog-hint">
+        <span className="italic">Working</span>
+        {counted && <span className="tabular-nums">, {counted}</span>}
+      </p>
+    );
+  }
   return (
-    <div className="min-w-0">
-      {fraction === null ? (
-        <p className="font-mono text-ui text-dialog-hint">
-          <span className="italic">working</span>
-          {counted && <span className="ml-2 text-meta">{counted}</span>}
-        </p>
-      ) : (
-        <>
-          <ProgressMeter value={fraction} label={node.label ?? 'Progress'} />
-          <p className="mt-1.5 flex items-baseline gap-2 font-mono text-meta text-dialog-hint">
-            <span className="text-ui font-bold tabular-nums text-white">
-              {livePercent(fraction)}%
-            </span>
-            {counted && <span className="tabular-nums">{counted}</span>}
-          </p>
-        </>
-      )}
+    <div className="min-w-0 space-y-2 font-mono">
+      <p className="flex flex-wrap items-baseline gap-x-3">
+        <span className="text-head font-bold tabular-nums text-white">
+          {livePercent(fraction)}%
+        </span>
+        {counted && <span className="text-body tabular-nums text-dialog-hint">{counted}</span>}
+      </p>
+      <ProgressMeter value={fraction} label={node.label ?? 'Progress'} />
     </div>
   );
 }
 
-/** Counters that keep their slot as their numbers move. */
+/**
+ * Counters as FACTS: each label over its value, in a grid that wraps to the width.
+ * A long identifier wraps instead of scrolling sideways and keeps a copy action on
+ * its first line. One short figure alone is the view's large number.
+ */
 function StatRow({ node }: { node: LiveStatNode }) {
   if (node.stats.length === 0) return <Empty>{EMPTY_LINE.stat}</Empty>;
+  const [only] = node.stats;
+  if (node.stats.length === 1 && only.value_text.length <= HERO_VALUE) {
+    return (
+      <div className="min-w-0 font-mono">
+        <p className="text-display font-bold tabular-nums text-white">{only.value_text}</p>
+        <p className="flex min-w-0 items-start gap-1.5 text-body text-dialog-hint">
+          {only.tone !== 'idle' && <LineMark tone={only.tone} />}
+          <span className="min-w-0 [overflow-wrap:anywhere]">
+            <InlineMarkdown>{only.label}</InlineMarkdown>
+          </span>
+          {only.tone !== 'idle' && <span className="sr-only">{TONE_WORD[only.tone]}</span>}
+        </p>
+      </div>
+    );
+  }
   return (
-    <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 font-mono">
+    <dl className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,9rem),1fr))] gap-x-5 gap-y-3 font-mono">
       {node.stats.map((stat) => (
-        <div key={stat.id} className="flex items-baseline gap-1.5">
-          <dt className="text-meta text-dialog-hint">
+        <div key={stat.id} className="min-w-0">
+          <dt className="text-meta text-dialog-hint [overflow-wrap:anywhere]">
             <InlineMarkdown>{stat.label}</InlineMarkdown>
           </dt>
-          <dd className={`text-ui font-bold ${TONE_INK[stat.tone]}`}>{stat.value_text}</dd>
+          <dd className="flex min-w-0 items-start gap-1.5 text-body font-bold tabular-nums text-white">
+            {stat.tone !== 'idle' && <LineMark tone={stat.tone} />}
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              <Breakable>{stat.value_text}</Breakable>
+            </span>
+            {stat.tone !== 'idle' && <span className="sr-only">{TONE_WORD[stat.tone]}</span>}
+            {stat.value_text.length > LONG_VALUE && (
+              <span className="flex h-[1lh] shrink-0 items-center">
+                <CopyChip value={stat.value_text} label={`Copy ${stat.label}`} />
+              </span>
+            )}
+          </dd>
         </div>
       ))}
     </dl>
   );
 }
 
+/**
+ * Steps on a RAIL. Each mark stands on the first line of its label (`LineMark`).
+ * The rail runs from under one mark to the line box of the next, with the same
+ * margin at both ends, so every gap on it is equal whether a step has a detail or
+ * not. The step in flight, or the one that failed, is the loud one; a step not
+ * reached yet steps back.
+ */
 function StepsRows({ node }: { node: LiveStepsNode }) {
   if (node.steps.length === 0) return <Empty>{EMPTY_LINE.steps}</Empty>;
   return (
-    <ul className="space-y-1.5 font-mono text-ui">
-      {node.steps.map((step) => (
-        <li key={step.id} className="flex min-w-0 items-baseline gap-2">
-          <ToneMark tone={step.tone} />
-          <span className={`min-w-0 flex-1 truncate ${stepInk(step.tone)}`}>
-            <InlineMarkdown>{step.label}</InlineMarkdown>
-          </span>
-          {step.value && (
-            <span className="shrink-0 font-bold tabular-nums text-white">{step.value}</span>
-          )}
-          {/* What a step REPORTS keeps its width, and the words beside it give way:
-              a detail that could not shrink pushed the whole row off a narrow screen
-              instead of saying a little less. */}
-          {step.detail && (
-            <span className="min-w-0 shrink truncate text-meta text-dialog-hint">
-              <InlineMarkdown>{step.detail}</InlineMarkdown>
+    <ol className="min-w-0 font-mono text-body">
+      {node.steps.map((step, index) => {
+        const isLast = index === node.steps.length - 1;
+        const isCurrent = step.tone === 'running' || step.tone === 'error';
+        const ink =
+          step.tone === 'error'
+            ? 'text-err'
+            : step.tone === 'idle'
+              ? 'text-dialog-hint'
+              : 'text-white';
+        return (
+          <li key={step.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-2.5">
+            <span className="flex flex-col items-center">
+              <LineMark tone={step.tone} className="size-3.5" />
+              {!isLast && (
+                <span aria-hidden="true" className="my-0.5 w-px flex-1 bg-dialog-edge" />
+              )}
             </span>
-          )}
-        </li>
-      ))}
-    </ul>
+            <span className={`min-w-0 ${isLast ? '' : 'pb-3'}`}>
+              <span
+                className={`block [overflow-wrap:anywhere] ${ink} ${isCurrent ? 'font-bold' : ''}`}
+              >
+                <InlineMarkdown>{step.label}</InlineMarkdown>
+                <span className="sr-only">, {TONE_WORD[step.tone]}</span>
+              </span>
+              {step.detail && (
+                <span className="mt-0.5 block text-ui text-dialog-hint [overflow-wrap:anywhere]">
+                  <InlineMarkdown>{step.detail}</InlineMarkdown>
+                </span>
+              )}
+            </span>
+            <span className="tabular-nums text-dialog-hint">{step.value}</span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -410,6 +509,8 @@ function LogRows({
   const [searchError, setSearchError] = useState(false);
   const searchRequest = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
+  const output = useRef<HTMLPreElement>(null);
+  const [isFollowing, setIsFollowing] = useState(true);
   useEffect(
     () => () => {
       searchRequest.current += 1;
@@ -523,10 +624,19 @@ function LogRows({
     };
   }, [hasLoad, node.id, windowStart, readAttempt]);
 
+  // FOLLOW keeps the newest line in sight as lines arrive; a paused pane stays where
+  // the reader left it. Search results are a fixed page, so they never follow.
+  const lineCount = node.lines.length + (head?.lines.length ?? 0);
+  useEffect(() => {
+    const pane = output.current;
+    if (!isFollowing || search || !pane) return;
+    pane.scrollTop = pane.scrollHeight;
+  }, [isFollowing, search, lineCount]);
+
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 space-y-2">
       <form
-        className="flex items-center gap-2"
+        className="flex min-w-0 flex-wrap items-center gap-2"
         onSubmit={(event) => {
           event.preventDefault();
           void find(draft);
@@ -535,7 +645,7 @@ function LogRows({
         <Input
           ref={searchInput}
           type="search"
-          className="min-w-0 flex-1"
+          className="min-w-40 flex-1"
           aria-label={`Search ${node.label || 'Output'}`}
           placeholder="Search log…"
           value={draft}
@@ -548,20 +658,41 @@ function LogRows({
             }
           }}
         />
+        {/* The actions wrap as ONE group: a copy icon alone on a line read as a stray mark. */}
+        <span className="flex shrink-0 items-center gap-2">
         <Button type="submit" variant="secondary" density="panel">
           Search
         </Button>
+        {!search && (
+          <Button
+            variant="secondary"
+            density="panel"
+            onClick={() => setIsFollowing((follow) => !follow)}
+          >
+            {isFollowing ? 'Pause' : 'Follow'}
+          </Button>
+        )}
+        <CopyChip
+          label="Copy output"
+          value={async () =>
+            (search
+              ? (result?.page.lines ?? [])
+              : (head?.lines ?? []).concat(node.lines)
+            ).join('\n')
+          }
+        />
+        </span>
       </form>
       {search && (
-        <div className="mt-2 space-y-2">
+        <div className="space-y-2">
           <p role="status" className="break-words font-mono text-ui text-dialog-hint">
-            {`“${search.query}” · `}
+            {`“${search.query}”: `}
             {isSearching
               ? 'Searching…'
               : result
-                ? `${result.page.matched} matches · ${result.page.total} recorded lines`
+                ? `${result.page.matched} matches in ${result.page.total} recorded lines`
                 : 'Search results'}
-            {!load && ' · Loaded lines only'}
+            {!load && '. Loaded lines only'}
           </p>
           {result && result.window !== node.lines && (
             <p className="font-mono text-ui text-dialog-hint">Log changed. Refresh results.</p>
@@ -601,12 +732,12 @@ function LogRows({
         </div>
       )}
       {!search && isReading && (
-        <p role="status" className="mt-2 font-mono text-ui text-dialog-hint">
+        <p role="status" className="font-mono text-ui text-dialog-hint">
           Reading earlier lines…
         </p>
       )}
       {!search && readError && (
-        <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-5">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-5">
           <p role="alert" className="font-mono text-ui text-err">
             Could not read the earlier lines.
           </p>
@@ -617,6 +748,7 @@ function LogRows({
       )}
       {!search && node.lines.length === 0 && !head && <Empty>{EMPTY_LINE.log}</Empty>}
       <pre
+        ref={output}
         role="region"
         tabIndex={0}
         aria-label={`${node.label || 'Output'} output`}
@@ -627,7 +759,7 @@ function LogRows({
             searchInput.current?.focus();
           }
         }}
-        className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-all border border-dialog-edge bg-panel-2 p-2 font-mono text-ui text-dialog-hint"
+        className="max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-all bg-panel-2 p-2 font-mono text-ui text-dialog-hint"
       >
         {search ? (
           result && (
@@ -646,6 +778,32 @@ function LogRows({
         )}
       </pre>
     </div>
+  );
+}
+
+/**
+ * A folded log still SAYS its failures: its last error lines stand under its name,
+ * so folding the output never hides why a run failed (#417).
+ */
+function LogErrors({ node, label }: { node: LiveLogNode; label: string }) {
+  const first = Math.max(0, node.total_lines - node.lines.length) + 1;
+  const errors = node.lines
+    .flatMap((line, index) =>
+      node.line_tones?.[index] === 'error' ? [{ line, number: first + index }] : [],
+    )
+    .slice(-3);
+  if (errors.length === 0) return null;
+  return (
+    <pre
+      aria-label={`Latest errors in ${label}`}
+      className="whitespace-pre-wrap break-all bg-panel-2 p-2 font-mono text-ui"
+    >
+      <LogLines
+        lines={errors.map((error) => error.line)}
+        tones={errors.map(() => 'error' as const)}
+        numbers={errors.map((error) => error.number)}
+      />
+    </pre>
   );
 }
 
@@ -687,22 +845,23 @@ function RowFace({ node, row }: { node: LiveTableNode; row: LiveRow }) {
   const detail = detailAt
     .map((index) => row.cells[index] ?? '')
     .filter((cell) => cell !== '')
-    .join(' · ');
+    .join(', ');
   const name = row.cells[0] ?? '';
   return (
-    <span className="block min-w-0">
+    <span className="block min-w-0 flex-1">
       <span className="flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 flex-1 truncate">
+        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
           <InlineMarkdown>{name}</InlineMarkdown>
+          <span className="sr-only sm:hidden">, {TONE_WORD[row.tone]}</span>
         </span>
         {value !== '' && (
-          <span className="shrink-0 tabular-nums text-meta text-dialog-hint sm:hidden">
+          <span className="shrink-0 tabular-nums text-ui text-dialog-hint sm:hidden">
             {value}
           </span>
         )}
       </span>
       {detail !== '' && (
-        <span className="mt-0.5 block truncate text-meta text-dialog-hint sm:hidden">
+        <span className="mt-0.5 block text-ui text-dialog-hint [overflow-wrap:anywhere] sm:hidden">
           <InlineMarkdown>{detail}</InlineMarkdown>
         </span>
       )}
@@ -789,23 +948,37 @@ function TableRows({
     visible.push(...heads);
   }
 
-  const span = Math.max(1, node.columns.length);
+  // A STATE column only when a row has a state to report: a table of plain facts
+  // would otherwise grow a column of "Waiting" down its whole length.
+  // A producer that already declared its own state column keeps it alone.
+  const hasState =
+    rows.some((row) => row.tone !== 'idle') &&
+    !node.columns.some((column) => /^(state|status)$/i.test(column.label.trim()));
+  const span = Math.max(1, node.columns.length + (hasState ? 1 : 0));
   return (
     <div className="-mx-(--live-view-inset) overflow-x-auto">
-      <table className="w-full min-w-0 border-collapse font-mono text-ui">
+      <table className="w-full min-w-0 border-collapse font-mono text-body">
         <thead className="hidden sm:table-header-group">
           <tr className="border-b border-dialog-edge">
             {node.columns.map((column) => (
               <th
                 key={column.id}
                 scope="col"
-                className={`px-(--live-view-inset) py-2 font-bold text-meta text-dialog-hint ${
+                className={`px-(--live-view-inset) py-2 font-normal text-meta text-dialog-hint ${
                   column.align === 'right' ? 'text-right' : 'text-left'
                 }`}
               >
                 <InlineMarkdown>{column.label}</InlineMarkdown>
               </th>
             ))}
+            {hasState && (
+              <th
+                scope="col"
+                className="py-2 pr-(--live-view-inset) text-left font-normal text-meta text-dialog-hint"
+              >
+                State
+              </th>
+            )}
           </tr>
         </thead>
         <tbody className="divide-y divide-dialog-edge">
@@ -863,7 +1036,7 @@ function TableRows({
             // A LEG moves one whole step in, mark and words together, so its mark stands
             // under its head's name. Indenting only the words left the mark on the outer
             // column, with a wider gap after it than any other row has.
-            const mark = row.parent ? 'size-3 ml-5' : 'size-3';
+            const mark = row.parent ? 'ml-5' : '';
             return (
               <SelectableTableRow
                 key={row.id}
@@ -884,29 +1057,36 @@ function TableRows({
                       aria-pressed={isSelected}
                       aria-label={`Select ${row.cells[0] || row.id}`}
                     >
-                      <ToneMark tone={row.tone} className={mark} />
-                      <span className="min-w-0 flex-1 font-mono text-ui">
+                      <span className={`flex min-w-0 flex-1 items-start gap-2 font-mono text-body ${mark}`}>
+                        <LineMark tone={row.tone} />
                         <RowFace node={node} row={row} />
                       </span>
                     </ListRow>
                   ) : (
                     <span className="flex min-w-0 items-start gap-2 px-(--live-view-inset) py-1.5">
-                      <ToneMark tone={row.tone} className={mark} />
-                      <RowFace node={node} row={row} />
+                      <span className={`flex min-w-0 flex-1 items-start gap-2 ${mark}`}>
+                        <LineMark tone={row.tone} />
+                        <RowFace node={node} row={row} />
+                      </span>
                     </span>
                   )}
                 </td>
                 {detailAt.map((index) => (
                   <td
                     key={node.columns[index]?.id ?? index}
-                    className="hidden px-(--live-view-inset) py-2 align-middle text-meta text-dialog-hint sm:table-cell"
+                    className="hidden px-(--live-view-inset) py-2 align-baseline text-ui text-dialog-hint [overflow-wrap:anywhere] sm:table-cell"
                   >
                     <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
                   </td>
                 ))}
                 {valueAt >= 0 && (
-                  <td className="hidden py-2 pr-(--live-view-inset) pl-2 text-right align-middle tabular-nums text-meta text-dialog-hint sm:table-cell">
+                  <td className="hidden py-2 pr-(--live-view-inset) pl-2 text-right align-baseline tabular-nums text-ui text-white sm:table-cell">
                     <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
+                  </td>
+                )}
+                {hasState && (
+                  <td className="hidden py-2 pr-(--live-view-inset) align-baseline whitespace-nowrap sm:table-cell">
+                    <ToneWord tone={row.tone} />
                   </td>
                 )}
               </SelectableTableRow>
@@ -918,48 +1098,47 @@ function TableRows({
   );
 }
 
+/** What a target opens, in words, so a link says where it goes before it is pressed. */
+const TARGET_WORD = { url: 'Web page', path: 'File', attachment: 'Attachment' } as const;
+
 /**
- * Where the work also lives. A `url` is reachable from the phone and opens; a
- * path or an attachment names a place on the MACHINE, so it is stated as text
- * rather than dressed as a link that would do nothing under the thumb.
- * A result set shares one frame and fills columns in source order when they fit.
+ * Where the work also lives. A `url` is reachable from the phone and opens; a path
+ * or an attachment names a place on the MACHINE, so it is stated as text, with the
+ * place under its name, rather than dressed as a link that does nothing. What a
+ * link opens follows as a word, never an arrow glued to the label.
  */
 function LinkRows({ node }: { node: LiveLinkNode }) {
   if (node.links.length === 0) return <Empty>{EMPTY_LINE.link}</Empty>;
-  const isGrid = node.links.length > 1;
   return (
-    <ul
-      className={`font-mono text-ui ${isGrid ? 'grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-2 border border-dialog-hint p-2' : 'space-y-1.5'}`}
-    >
+    <ul className="min-w-0 divide-y divide-dialog-edge font-mono text-body">
       {node.links.map((link) => (
-        <li
-          key={link.id}
-          className={`flex min-w-0 gap-2 ${isGrid ? 'min-h-11 items-center mouse:min-h-7' : 'items-baseline'}`}
-        >
-          <ArrowOutIcon className={`size-3 ${MARK_NUDGE} text-dialog-hint`} />
-          {link.target_kind === 'url' ? (
-            <a
-              href={link.target}
-              target="_blank"
-              rel="noreferrer"
-              className={`min-w-0 flex-1 text-accent-ink underline underline-offset-2 ${isGrid ? 'flex min-h-11 items-center wrap-anywhere mouse:min-h-7' : 'truncate'}`}
-            >
-              <span className="min-w-0">
+        <li key={link.id} className="flex min-w-0 items-start gap-2 py-2 first:pt-0 last:pb-0">
+          {link.tone && link.tone !== 'idle' && <LineMark tone={link.tone} />}
+          <span className="min-w-0 flex-1">
+            {link.target_kind === 'url' ? (
+              <a
+                href={link.target}
+                target="_blank"
+                rel="noreferrer"
+                className="font-bold text-white underline decoration-dialog-hint underline-offset-4 [overflow-wrap:anywhere]"
+              >
                 <InlineMarkdown>{link.label}</InlineMarkdown>
-              </span>
-            </a>
-          ) : (
-            <span className={`min-w-0 flex-1 text-white ${isGrid ? 'wrap-anywhere' : 'truncate'}`}>
-              <InlineMarkdown>{link.label}</InlineMarkdown>
-            </span>
-          )}
-          {link.target_kind !== 'url' && (
-            <span
-              className={`min-w-0 shrink text-meta text-dialog-hint ${isGrid ? 'basis-1/2 wrap-anywhere' : 'truncate'}`}
-            >
-              {link.target}
-            </span>
-          )}
+              </a>
+            ) : (
+              <>
+                <span className="block font-bold text-white [overflow-wrap:anywhere]">
+                  <InlineMarkdown>{link.label}</InlineMarkdown>
+                </span>
+                <span className="mt-0.5 block text-ui text-dialog-hint [overflow-wrap:anywhere]">
+                  {link.target}
+                </span>
+              </>
+            )}
+          </span>
+          <span className="flex h-[1lh] shrink-0 items-center gap-1.5 text-dialog-hint">
+            <span className="text-meta">{TARGET_WORD[link.target_kind]}</span>
+            {link.target_kind === 'url' && <ArrowOutIcon className="size-3" />}
+          </span>
         </li>
       ))}
     </ul>
@@ -1034,7 +1213,7 @@ function NodeCell({
       node.default_expanded === true;
   const label = node.label || (node.type === 'log' ? 'Output' : node.id);
   return (
-    <div className="min-w-0 space-y-1.5">
+    <div className="min-w-0 space-y-2">
       {isDisclosure ? (
         <Disclosure
           isOpen={isOpen}
@@ -1047,12 +1226,15 @@ function NodeCell({
         >
           <NodeLabel>{label}</NodeLabel>
           {node.type === 'log' && (
-            <span className="ml-2 text-ui text-dialog-hint">{node.total_lines} lines</span>
+            <span className="ml-2 font-normal text-ui text-dialog-hint">
+              {node.total_lines} lines
+            </span>
           )}
         </Disclosure>
       ) : (
         node.label && node.type !== 'button' && <NodeLabel>{node.label}</NodeLabel>
       )}
+      {node.type === 'log' && !isOpen && <LogErrors node={node} label={label} />}
       {(!isDisclosure || isOpen) && (
         <div id={contentId} className={`min-w-0 ${isDisclosure ? 'pl-5' : ''}`}>
           {node.type === 'group' && (
@@ -1069,7 +1251,7 @@ function NodeCell({
             </ViewLayout>
           )}
           {node.type === 'divider' && (
-            <hr className="m-0 w-full border-0 border-t border-dialog-hint" />
+            <hr className="m-0 w-full border-0 border-t border-dialog-edge" />
           )}
           {node.type === 'paragraph' && (
             <ViewParagraph>
@@ -1180,6 +1362,7 @@ export function LiveViewPanel({
   load,
   isSettled = false,
   embedded = false,
+  inDialog = false,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -1198,6 +1381,11 @@ export function LiveViewPanel({
   isSettled?: boolean;
   /** Frame RUN below ACTIVITY without enclosing the other execution content. */
   embedded?: boolean;
+  /**
+   * The run fills its own dialog. The dialog's band already names it, so the panel
+   * paints no second title and no frame: a box inside the dialog's box.
+   */
+  inDialog?: boolean;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -1230,6 +1418,8 @@ export function LiveViewPanel({
     setNote(null);
     send(typed.trim() === '' ? null : typed.trim());
   };
+  const canInterrupt = !isSettled && Boolean(onInterrupt) && !isArmed;
+  const isCard = !embedded && !inDialog;
   return (
     <>
       {/* Embedded, a run is a band like the TUI draws it: no frame of its own, the
@@ -1237,17 +1427,20 @@ export function LiveViewPanel({
           bands beside it. Only the standalone dialog keeps a frame. */}
       <section
         className={`live-view-panel min-w-0 overflow-hidden ${
-          embedded ? '' : 'border border-dialog-edge bg-panel'
+          isCard ? 'border border-dialog-edge bg-panel' : ''
         }`}
         data-execution-run={embedded || undefined}
         role={isSettled ? undefined : 'status'}
         aria-live={isSettled ? undefined : 'polite'}
       >
+        {(!inDialog || canInterrupt || isSettled) && (
         <header
           className={
             embedded
               ? 'flex min-h-9 min-w-0 items-center gap-2 mouse:min-h-7'
-              : 'flex items-start gap-2 border-b border-dialog-edge bg-panel-2 px-(--live-view-inset) py-2.5'
+              : inDialog
+                ? 'flex min-w-0 flex-row-reverse items-center justify-between gap-2 px-(--live-view-inset) pb-2'
+                : 'flex items-start gap-2 border-b border-dialog-edge px-(--live-view-inset) py-2.5'
           }
         >
           {embedded ? (
@@ -1265,20 +1458,20 @@ export function LiveViewPanel({
               )}
             </ExecutionAction>
           ) : (
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-mono text-title font-bold text-white">
-                {view.title}
-              </span>
-              {view.description && (
-                <span className="block truncate font-mono text-meta text-dialog-hint">
-                  <InlineMarkdown>{view.description}</InlineMarkdown>
+            isCard && (
+              <span className="min-w-0 flex-1">
+                <span className="block font-mono text-title font-bold text-white [overflow-wrap:anywhere]">
+                  {view.title}
                 </span>
-              )}
-            </span>
+                {view.description && (
+                  <span className="block font-mono text-ui text-dialog-hint [overflow-wrap:anywhere]">
+                    <InlineMarkdown>{view.description}</InlineMarkdown>
+                  </span>
+                )}
+              </span>
+            )
           )}
-          {!isSettled &&
-            onInterrupt &&
-            !isArmed &&
+          {canInterrupt &&
             (embedded ? (
               <TextButton
                 isBand
@@ -1324,10 +1517,11 @@ export function LiveViewPanel({
           )}
           <ViewState view={view} isSettled={isSettled} />
         </header>
+        )}
         {!isSettled && isArmed && onInterrupt && (
           <form
             className={`flex flex-wrap items-center gap-x-2 gap-y-5 py-2 ${
-              embedded ? '' : 'border-b border-dialog-edge bg-panel-2 px-(--live-view-inset)'
+              embedded ? '' : 'px-(--live-view-inset)'
             }`}
             onSubmit={(event) => {
               event.preventDefault();
@@ -1363,8 +1557,8 @@ export function LiveViewPanel({
         )}
         {error && (
           <p
-            className={`py-2 font-mono text-chip text-err ${
-              embedded ? '' : 'border-b border-dialog-edge px-(--live-view-inset)'
+            className={`py-2 font-mono text-ui text-err ${
+              embedded ? '' : 'px-(--live-view-inset)'
             }`}
           >
             {error}
@@ -1374,14 +1568,17 @@ export function LiveViewPanel({
             painted in place stood taller than the turn that opened it and pushed the
             answer off the screen — the same rule a settled run obeys one row above
             (`LiveRunRow`). The picture is one press away, in the run's own screen. */}
+        {/* SPACE separates the sections, not a rule under every node: a hairline between
+            each pair fenced the run into a stack of boxes. Only the log, the secondary
+            reading, keeps a rule above it. */}
         {!embedded && (
-          <ul>
+          <ul className={`space-y-6 ${inDialog ? 'pt-2 pb-4' : 'py-4'}`}>
             {view.nodes.map((node, index) => (
-              // Table cells own their padding; an outer inset makes the first and last
-              // rows uneven relative to the internal separators. Keep labelled headings inset.
               <li
                 key={node.id}
-                className={`min-w-0 ${rowRule(view.nodes[index - 1], node)} ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${node.type === 'table' ? (node.label ? 'pt-2.5' : '') : 'py-2.5'}`}
+                className={`min-w-0 ${node.type === 'divider' ? '' : 'px-(--live-view-inset)'} ${
+                  node.type === 'log' && index > 0 ? 'border-t border-dialog-edge pt-4' : ''
+                }`}
               >
                 <NodeCell node={node} load={load} onSelect={onSelect} presentation={presentation} />
               </li>
@@ -1412,9 +1609,15 @@ function OpenedRun({
   ...panel
 }: Omit<Parameters<typeof LiveViewPanel>[0], 'embedded'> & { onClose: () => void }) {
   return (
-    <RunDialog title={panel.view.title} onClose={onClose}>
+    <RunDialog
+      title={panel.view.title}
+      subtitle={
+        panel.view.description ? <InlineMarkdown>{panel.view.description}</InlineMarkdown> : undefined
+      }
+      onClose={onClose}
+    >
       <div className="min-h-0 flex-1 overflow-y-auto py-3">
-        <LiveViewPanel {...panel} />
+        <LiveViewPanel {...panel} inDialog />
       </div>
     </RunDialog>
   );
@@ -1432,8 +1635,8 @@ function OpenedRun({
  * covered. It FILLS that pane: held to the desktop question box it opened as a small
  * window in the middle of the session it reports on.
  *
- * The run keeps its own border in here, so the box the transcript shows is the box
- * the dialog shows.
+ * The run paints no frame and no second title in here (`inDialog`): the dialog is
+ * its box, and the dialog's band is its one title.
  */
 export function RunDialog({
   title,

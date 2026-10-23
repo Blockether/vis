@@ -138,6 +138,7 @@ export function LiveArtifact({
         <LiveViewPanel
           view={shown}
           isSettled
+          inDialog
           onSelect={
             record.selection_snapshots?.length
               ? (nodeId, itemIds) => {
