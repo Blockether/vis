@@ -406,8 +406,7 @@
     "status" "running"
     "role" "research"
     "iterations_used" 4
-    "iteration_budget" 10
-    "activity" "Patched ~/src/a.clj"}
+    "iteration_budget" 10}
    {"session_id" "c2"
     "parent_id" "leader"
     "leader_id" "leader"
@@ -454,44 +453,31 @@
 
 (defdescribe
   team-card-test
-  (it
-    "draws one row per agent of the team with state, bar and activity"
-    (let [team-card
-          (team/card "turn-1" waiting-team)
+  (it "draws one row per agent of the team with role, task, state and count"
+      (let [team-card
+            (team/card "turn-1" waiting-team)
 
-          rows
-          (:rows team-card)]
+            rows
+            (:rows team-card)]
 
-      (expect (= "Team · 3 agents · 2 ask you · 1 running" (team/card-title team-card)))
-      ;; Every part starts in the same column on each row, and counts end in one column.
-      (expect (= ["A2  implement  Fix parser  asks you   2/10"
-                  "A3  verify     Run tests   asks you  10/10"
-                  "A1  research   Read docs   running    4/10"]
-                 (mapv team/card-row-text rows)))
-      (expect (= "Patched ~/src/a.clj" (team/card-detail-text (nth rows 2))))
-      (expect (nil? (team/card-detail-text (first rows)))
-              "A waiting agent has no second row: the Questions inbox shows its request")
-      (expect (nil? (team/card "turn-9" waiting-team)))
-      (let [long-task
-            (assoc-in (vec waiting-team) [0 "task"] (apply str (repeat 60 "x")))
+        (expect (= "Team · 3 agents · 2 ask you · 1 running" (team/card-title team-card)))
+        ;; Every part starts in the same column on each row, and counts end in one column.
+        (expect (= ["A2  implement  Fix parser  asks you   2/10"
+                    "A3  verify     Run tests   asks you  10/10"
+                    "A1  research   Read docs   running    4/10"]
+                   (mapv team/card-row-text rows)))
+        (expect (nil? (team/card "turn-9" waiting-team)))
+        (let [long-task
+              (assoc-in (vec waiting-team) [0 "task"] (apply str (repeat 60 "x")))
 
-            long-row
-            (first (filter #(= 1 (:n %)) (:rows (team/card "turn-1" long-task))))]
+              long-row
+              (first (filter #(= 1 (:n %)) (:rows (team/card "turn-1" long-task))))]
 
-        (expect (str/includes? (team/card-row-text long-row)
-                               (str (apply str (repeat 39 "x")) "…  "))
-                "A long task ends with an ellipsis at the task column width"))
-      (let [lines
-            (map :line (team/card-entries team-card))
-
-            row
-            (first (filter #(str/includes? % "Read docs") lines))
-
-            detail
-            (first (filter #(str/includes? % "Patched") lines))]
-
-        (expect (= (str/index-of row "Read docs") (str/index-of detail "Patched"))
-                "The detail row starts under the task column"))))
+          (expect (str/includes? (team/card-row-text long-row)
+                                 (str (apply str (repeat 39 "x")) "…  "))
+                  "A long task ends with an ellipsis at the task column width"))
+        (expect (= 4 (count (filter :meta (team/card-entries team-card))))
+                "The card has the title and one row for each agent, without activity rows")))
   (it "decorates only the last assistant message of the team turn"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
         (let [messages [{:role :user :session-turn-id "turn-1" :text "go"}

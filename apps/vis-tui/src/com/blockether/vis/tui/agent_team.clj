@@ -228,7 +228,6 @@
                           :used (get agent "iterations_used")
                           :budget (get agent "iteration_budget")
                           :task (str/replace (str (get agent "task")) #"\s+" " ")
-                          :activity (get agent "activity")
                           :session-id (get agent "session_id")})
                        rows)
             columns (card-columns rows)]
@@ -303,16 +302,6 @@
   [row]
   (str/trimr (str/join "  " (keep (card-cells row) [:n :role :task :state :count]))))
 
-(defn card-detail-text
-  "The dim second row of a running agent: what it does now, or nil."
-  [{:keys [waiting? status activity]}]
-  (when (and (not waiting?) (= "running" status) (seq activity)) (str activity)))
-
-(defn- detail-indent
-  "The cells before the detail row of `row`: it starts under the task column."
-  [row]
-  (:task (card-offsets (or (:columns row) (card-columns [row])))))
-
 (defn- paint-card-line!
   [^TextGraphics g left row width viewport-top {:keys [team-line]}]
   (let [width
@@ -339,9 +328,6 @@
       (let [text (str (:text team-line))]
         (put! left t/code-block-fg "Team" true)
         (put! (+ (long left) 4) t/dialog-hint (subs text (min 4 (count text))) false))
-
-      :detail
-      (put! (+ (long left) (long (:indent team-line 2))) t/dialog-hint (:text team-line) false)
 
       :agent
       (let [{:keys [state waiting? status session-id] :as agent-row}
@@ -391,13 +377,9 @@
 
     (into [{:line marker :meta nil}
            (entry (card-title team-card) {:type :title :text (card-title team-card)})]
-          (concat (mapcat (fn [row]
-                            (cons (entry (card-row-text row) {:type :agent :row row})
-                                  (when-let [detail (card-detail-text row)]
-                                    (let [indent (detail-indent row)]
-                                      [(entry (str (apply str (repeat indent \space)) detail)
-                                              {:type :detail :text detail :indent indent})]))))
-                          (:rows team-card))
+          (concat (map (fn [row]
+                         (entry (card-row-text row) {:type :agent :row row}))
+                       (:rows team-card))
                   [{:line marker :meta nil}]))))
 
 (defn with-card-lines
