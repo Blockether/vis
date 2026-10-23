@@ -809,19 +809,19 @@ export const SessionRow = memo(function SessionRow({
                     </span>
                   )}
                 </span>
-                {/* `mouse:@3xl:contents` lets one DOM order cover three layouts. Under 24rem the
-              row shows its title and status mark; from 24rem, including the desktop sidebar,
-              the id, turns and time appear as one line of prose under the title. At
-              48rem with a mouse that line dissolves so the id and the turn count become
-              columns in their own right. Touch keeps the two lines at every width: on a
-              tablet the columns squeezed the title the reader came for. The facts are never dropped from the tree, only from the paint. */}
+                {/* `mouse:@3xl:contents` lets one DOM order cover two layouts. At every width
+              the id, turns and time stand as one line of prose under the title, also in a
+              narrow tablet sidebar: hiding them there left a list of bare titles. At 48rem
+              with a mouse that line dissolves so the id and the turn count become columns
+              in their own right. Touch keeps the two lines at every width: on a tablet the
+              columns squeezed the title the reader came for. */}
                 {/* One rank, one ink: hierarchy is carried by SIZE (title 12px vs meta 10px),
               never by transparency — an id at 55% ink beside a `·` at 40% beside a full
               hint made one 9px line carry three different inks and none of them readable.
               A COUNT ends on its track's edge, not where its own digits run out:
               left-aligned, `9 turns` stopped 6px short of the `20 turns` one row below
               it, and a column of numbers that does not end together is not a column. */}
-                <span className="col-start-1 row-start-2 hidden min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint @sm:flex mouse:@3xl:contents">
+                <span className="col-start-1 row-start-2 flex min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint mouse:@3xl:contents">
                   <span className="truncate tabular-nums">{shortId(session.id)}</span>
                   <span className="mouse:@3xl:hidden" aria-hidden="true">
                     ·
@@ -851,27 +851,23 @@ export const SessionRow = memo(function SessionRow({
                         ? "Unsent message waiting in this session's composer"
                         : inputDescription
                     }
-                    className={`shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${
-                      // Narrow sidebars show only live or input-needed marks.
-                      status === 'IDLE' && !location ? 'hidden @sm:inline-flex' : 'inline-flex'
-                    } ${sessionStatusTone(status)}`}
+                    className={`inline-flex shrink-0 items-center gap-1 font-mono text-chip font-bold tracking-[0.08em] ${sessionStatusTone(
+                      status,
+                    )}`}
                   >
                     <span
                       data-session-status-dot
                       aria-hidden="true"
                       className={`size-1.5 shrink-0 ${status === 'IDLE' ? 'border border-current' : 'bg-current'} ${live || status.startsWith('HITL') ? 'animate-pulse motion-reduce:animate-none' : ''}`}
                     />
-                    <span
-                      className={location ? '' : 'sr-only @sm:not-sr-only'}
-                      aria-hidden={inputDescription ? true : undefined}
-                    >
+                    <span aria-hidden={inputDescription ? true : undefined}>
                       {renameBusy ? (location ? 'SAVING' : 'Saving') : status}
                     </span>
                     {inputDescription && <span className="sr-only">{inputDescription}</span>}
                   </span>
                 </span>
                 <span
-                  className="col-start-2 col-end-4 row-start-2 hidden justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums @sm:block mouse:@3xl:col-start-auto mouse:@3xl:col-end-auto mouse:@3xl:row-start-auto"
+                  className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums mouse:@3xl:col-start-auto mouse:@3xl:col-end-auto mouse:@3xl:row-start-auto"
                   title={formatExact(timestamp)}
                 >
                   {timeLabel(timestamp)}
@@ -1221,7 +1217,7 @@ export function NavigatorSkeleton() {
                     <span className="col-start-1 row-start-1 mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto">
                       <SkeletonBar type="text-meta" width={width} baz="h-2.5" tone="bg-muted/30" />
                     </span>
-                    <span className="col-start-1 row-start-2 hidden items-center gap-x-2 @sm:flex mouse:@3xl:contents">
+                    <span className="col-start-1 row-start-2 flex items-center gap-x-2 mouse:@3xl:contents">
                       <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/20" />
                       <SkeletonBar type="text-chip" width="w-10" baz="h-1.5" tone="bg-muted/20" />
                     </span>
@@ -1232,7 +1228,7 @@ export function NavigatorSkeleton() {
                     <span className="col-start-3 row-start-1 justify-self-end mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto mouse:@3xl:justify-self-start">
                       <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/25" />
                     </span>
-                    <span className="col-start-3 row-start-2 hidden justify-self-end @sm:block mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto mouse:@3xl:justify-self-start">
+                    <span className="col-start-3 row-start-2 block justify-self-end mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto mouse:@3xl:justify-self-start">
                       <SkeletonBar type="text-chip" width="w-12" baz="h-1.5" tone="bg-muted/20" />
                     </span>
                   </span>

@@ -288,8 +288,7 @@ export const Unsent: Story = {
 
 /**
  * A session the human put away. The gateway owns that stamp, so the row reads ARCHIVED
- * wherever it is still painted — a project's reveal, a search result — and its dimmed mark
- * stays at narrow widths, where IDLE's hides.
+ * wherever it is still painted — a project's reveal, a search result — with a dimmed mark.
  */
 const ARCHIVED_SESSION: Session = {
   ...STORY_SESSION_ROW,

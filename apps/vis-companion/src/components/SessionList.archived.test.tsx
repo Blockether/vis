@@ -60,9 +60,10 @@ describe('an archived session row', () => {
     expect(dot.className).not.toContain('animate-pulse');
   });
 
-  it('keeps its mark at narrow widths, where IDLE hides its own', () => {
+  // A tablet sidebar is narrower than 24rem; IDLE hid its mark there and left bare titles.
+  it('keeps every mark at narrow widths, IDLE included', () => {
     expect(statusCell({ ...idle, archived_at: 1717 }).className).not.toContain('hidden');
-    expect(statusCell({ ...idle, archived_at: null }).className).toContain('hidden @sm:inline-flex');
+    expect(statusCell({ ...idle, archived_at: null }).className).not.toContain('hidden');
   });
 
   it('outranks whatever the row was doing when it was filed', () => {
