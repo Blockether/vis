@@ -93,6 +93,10 @@ own explicit request. Report every commit, push and release in the final reply.
 - On a row inside a fold, ← selects that fold row and folds it. Enter and a click also toggle a fold.
 - Show the fold state with ▸ (folded) or ▾ (open). List the arrow keys in that surface's help.
 
+### Interface text
+
+- In the TUI and the Companion, avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.
+
 ### Code
 
 - Do not add compatibility layers or migrations for obsolete APIs. Update the consumers and remove the old paths.
