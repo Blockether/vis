@@ -1435,7 +1435,8 @@
    Folding is GRADUATED: the foldable universe is walked OLDEST first and the search
    keeps the SMALLEST prefix whose projection fits the budget `budget-fn` derives from
    the pending request. A fold spends the least recent context it can; recent
-   settled work survives verbatim. Canonical history and persisted semantic gists
+   settled work survives verbatim. After an overflow, each earlier turn is one unit
+   with its request and answer, so a chat without tool calls can also shrink. Canonical history and persisted semantic gists
    remain authoritative. Every actual send still repeats Svar's provider-aware
    preflight; a local or usage-anchored estimate is not an exact provider count.
 
@@ -1461,18 +1462,53 @@
                        (transcript/iteration-record-scope rec)))
                trailer-iters)
 
+         boundary-turn
+         (fn [rec]
+           (when (:turn/boundary rec) (:turn/position rec)))
+
+         scope-turn
+         (comp first ctx-engine/scope-key)
+
+         expanded
+         (ctx-engine/expand-through summaries
+                                    universe
+                                    (distinct (keep (comp boundary-turn second) trailer-iters)))
+
          already-folded
-         (into #{} (mapcat #(get % "scopes")) (ctx-engine/expand-through summaries universe))
+         (into #{} (mapcat #(get % "scopes")) expanded)
+
+         folded-turns
+         (into #{} (mapcat #(get % "turns")) expanded)
+
+         live-turn
+         (some->> (concat (keep scope-turn universe)
+                          (keep (comp boundary-turn second) trailer-iters))
+                  seq
+                  (apply max))
+
+         ;; Only an overflow rescue folds whole earlier turns, user messages included.
+         ;; A chat without tool calls holds almost all of its tokens there, so an
+         ;; iteration-only fold cannot shrink it. The budget fold keeps them for the model.
+         whole-turns?
+         (and (not= :budget reason) (some? live-turn))
+
+         earlier-turn?
+         (fn [turn]
+           (and whole-turns? turn (< (long turn) (long live-turn))))
 
          ;; Chronological (the trailer is ordered), so a prefix is always the OLDEST work.
          foldable
-         (into [] (comp (distinct) (remove already-folded)) universe)
-
-         live-turn
-         (some->> universe
-                  (keep (comp first ctx-engine/scope-key))
-                  seq
-                  (apply max))]
+         (into []
+               (comp (keep (fn [[_ rec]]
+                             (if-let [turn (boundary-turn rec)]
+                               (when (and (earlier-turn? turn) (not (contains? folded-turns turn)))
+                                 {:turn turn})
+                               (when-let [scope (transcript/iteration-record-scope rec)]
+                                 (when-not (or (contains? already-folded scope)
+                                               (earlier-turn? (scope-turn scope)))
+                                   {:scope scope})))))
+                     (distinct))
+               trailer-iters)]
 
      (when (seq foldable)
        (let [before-messages
@@ -1490,8 +1526,16 @@
 
              project
              (fn [n]
-               (let [scopes
-                     (into #{} (take n) foldable)
+               (let [units
+                     (take n foldable)
+
+                     turns
+                     (into #{} (keep :turn) units)
+
+                     scopes
+                     (into (into #{} (keep :scope) units)
+                           (filter #(contains? turns (scope-turn %)))
+                           universe)
 
                      activity
                      (emergency-fold-activity trailer-iters scopes)
@@ -1501,6 +1545,9 @@
                               "gist" (str (if (= :budget reason)
                                             "Proactive transport fold omitted "
                                             "Emergency transport fold omitted ")
+                                          (when (seq turns)
+                                            (str (count turns)
+                                                 " earlier turn(s) with their messages and "))
                                           (count scopes)
                                           " settled iteration(s)"
                                           (when (seq activity) (str " (" activity ")"))
@@ -1508,6 +1555,9 @@
                                             " at the operating context budget"
                                             " after context overflow")
                                           "; canonical session history remains intact.")}
+                       (seq turns)
+                       (assoc "turns" turns)
+
                        live-turn
                        (assoc "at_turn" live-turn))
 
@@ -1522,6 +1572,7 @@
 
                  {:messages messages
                   :scopes scopes
+                  :turns turns
                   :summary intent
                   :after-tokens (count-messages-fn messages)}))
 
@@ -1561,6 +1612,7 @@
             :saved-tokens (- (long before-tokens) (long (:after-tokens chosen)))
             :budget-tokens budget
             :folded-scopes (count (:scopes chosen))
+            :folded-turns (count (:turns chosen))
             :foldable-scopes (count foldable)
             :scopes (:scopes chosen)
             :summary (:summary chosen)}))))))

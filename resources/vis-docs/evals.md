@@ -495,10 +495,11 @@ more than 90% of the context window of the provider.
 For example, `anthropic-coding-plan` gives Claude Haiku 4.5 a window of 150,000 tokens, so its
 budget is about 135,000.
 
-From 75% of the budget, Vis tells the agent to fold old turns. Vis does not fold by itself: the
-model must call `fold_session`. If the model does not fold, the next request becomes larger than the
-window. The turn then fails with `provider_context_overflow`, and the trial fails before the
-question.
+From 75% of the budget, Vis tells the agent to fold old turns. The model must call `fold_session`
+and write the note itself. If the model does not fold, the next request becomes larger than the
+window. Vis then drops the oldest turns from that request until it fits. Their note says only how
+many turns it dropped, so the facts of those turns are lost. If one turn alone is larger than the
+window, the turn fails with `provider_context_overflow`, and the trial fails before the question.
 
 If the window of the provider is larger than the whole history, the model can answer without a fold.
 The score then measures recall in a long context, not the fold notes. Read the trajectories to see
@@ -515,7 +516,8 @@ To read the result, compare each question in the two runs:
 - **Both runs pass.** The agent kept the fact through its folds.
 - **The oracle task passes and the long task gives a wrong answer.** The agent lost the fact,
   usually in a fold note. Search `agent/trajectory.json` for `fold_session` and read what the agent
-  kept.
+  kept. A fold that covers an earlier fold replaces its note, so check that the new note keeps the
+  old facts. If the agent never called `fold_session`, Vis dropped old turns, and their facts are lost.
 - **The long task fails before the last turn.** The agent did not fold in time, or its fold removed
   too little. `agent/run.json` lists one exit code for each turn that ran, so its last entry is the
   turn that failed.
@@ -531,6 +533,12 @@ These test runs on `anthropic-coding-plan` show each case:
   fold removed about 90,000 tokens. Its window is 150,000 tokens.
 - **`claude-haiku-4-5` failed another task at turn 18.** It folded only the first turn, which
   removed 7,000 tokens. The next request was larger than the window.
+- **`claude-haiku-4-5` answered correctly after four folds.** It used the keys from the hint, for
+  example `t15-t23`. Each new fold covered only the turns after the last fold, so the old notes
+  stayed.
+- **`claude-haiku-4-5` gave the correct answer and the trial still failed.** Vis refused one fold
+  key, `-t16/i1-t25`, so the `activities` check failed. Read `verifier/grade.json` to find the
+  check that failed.
 - **Both oracle tasks passed** in less than 40 seconds each.
 
 So first check that the model folds, and how much each fold removes. Then compare the answers.

@@ -241,8 +241,9 @@
   "The fold KEY grammar in ONE line, said verbatim by every refusal so the
    caller reads the whole vocabulary at the moment it typed something else."
   (str "the key is a string — \"t2/i5\" one step · \"t2\" a whole turn · "
-       "\"t2/i1-i56\" a range · \"-t2/i56\" everything through it · "
-       "\"t2/i5-\" everything since it · comma-separate several"))
+       "\"t2-t5\" whole turns · \"t2/i1-i56\" a range · "
+       "\"-t2/i56\" everything through it · \"t2/i5-\" everything since it · "
+       "comma-separate several"))
 
 (defn- fold-endpoint
   "Canonical `tN`/`tN/iM` id for ONE end of a fold target. A `tN/iM/fK` form id
@@ -797,6 +798,32 @@
        (seq now)
        (assoc "now" now)))))
 
+(defn folded-turn-prefix
+  "The highest turn N such that folds cover every whole turn 1..N, or 0. Reads the
+   recorded selector shape: explicit `\"turns\"`, bare `tN` scopes and range windows
+   with whole-turn bounds. A cursor inside a turn covers only the turns before it. Pure."
+  [summaries]
+  (let [covered (into #{}
+                      (mapcat (fn [s]
+                                (concat
+                                  (keep #(when (integer? %) (long %)) (get s "turns"))
+                                  (keep turn-key (get s "scopes"))
+                                  (mapcat
+                                    (fn [{:strs [through from to]}]
+                                      (let [end (fn [cursor]
+                                                  (or (turn-key cursor)
+                                                      (some-> (scope-key cursor)
+                                                              first
+                                                              dec)))]
+                                        (cond through (range 1 (inc (long (or (end through) 0))))
+                                              (and (turn-key from) (turn-key to))
+                                              (range (turn-key from) (inc (long (turn-key to))))
+                                              :else nil)))
+                                    (intent-ranges s)))))
+                      summaries)]
+    (loop [n 0]
+      (if (contains? covered (inc n)) (recur (inc n)) n))))
+
 (defn over-budget-hint
   "Stateful compaction guidance for `session_utilization`.
 
@@ -806,54 +833,69 @@
    `fold_session`, the safe settled boundary, and the evidence to preserve. After
    turn 1 it also gives the exact key `\"-tN\"` for every earlier turn, because
    models read the `-tN/iK` template as a turn range or thought that a plain chat
-   turn without tool steps cannot fold. Pure."
-  [util current-turn since-turn]
-  (let [req
-        (long (or (get util "last_request_tokens") 0))
+   turn without tool steps cannot fold. After earlier folds, the key starts after the
+   last folded turn, so it does not replace their gists. Pure."
+  ([util current-turn since-turn] (over-budget-hint util current-turn since-turn nil))
+  ([util current-turn since-turn summaries]
+   (let [req
+         (long (or (get util "last_request_tokens") 0))
 
-        cap
-        (long (or (get util "auto_compress_above") 0))
+         cap
+         (long (or (get util "auto_compress_above") 0))
 
-        armed?
-        (and since-turn current-turn)
+         armed?
+         (and since-turn current-turn)
 
-        advisory?
-        (and (pos? cap) (>= (* req 4) (* cap 3)))
+         advisory?
+         (and (pos? cap) (>= (* req 4) (* cap 3)))
 
-        urgent?
-        (and (pos? cap) (>= (* req 10) (* cap 9)))
+         urgent?
+         (and (pos? cap) (>= (* req 10) (* cap 9)))
 
-        required?
-        (and (pos? cap) (> req cap))
+         required?
+         (and (pos? cap) (> req cap))
 
-        earlier
-        (when (and current-turn (> (long current-turn) 1)) (dec (long current-turn)))
+         earlier
+         (when (and current-turn (> (long current-turn) 1)) (dec (long current-turn)))
 
-        action
-        (cond required? "ACTION REQUIRED"
-              urgent? "FOLD NOW"
-              advisory? "FOLD SOON"
-              :else nil)]
+         folded
+         (long (folded-turn-prefix summaries))
 
-    (when (and armed? action)
-      (str
-        action
-        ": handled context "
-        (fmt-toks req)
-        " of "
-        (fmt-toks cap)
-        " compaction budget. "
-        (when urgent? "Fold before you answer, also when the answer needs no other tool call. ")
-        (when earlier
-          (str "Plain chat turns fold too: print(fold_session(\"-t"
-               earlier
-               "\", gist)) folds every earlier turn, user messages included. "))
-        (if required?
-          "Fold settled search/tool sweeps and superseded reads NOW with one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
-          (str
-            "Use one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
-            (when urgent? " before another large tool call")))
-        "; keep every fact, name, date, number and request of the user in the gist; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
+         chat-key
+         (when (and earlier (< folded (long earlier)))
+           (cond (zero? folded) (str "-t" earlier)
+                 (= (inc folded) (long earlier)) (str "t" earlier)
+                 :else (str "t" (inc folded) "-t" earlier)))
+
+         action
+         (cond required? "ACTION REQUIRED"
+               urgent? "FOLD NOW"
+               advisory? "FOLD SOON"
+               :else nil)]
+
+     (when (and armed? action)
+       (str
+         action
+         ": handled context "
+         (fmt-toks req)
+         " of "
+         (fmt-toks cap)
+         " compaction budget. "
+         (when urgent? "Fold before you answer, also when the answer needs no other tool call. ")
+         (when chat-key
+           (str
+             "Plain chat turns fold too: print(fold_session(\"" chat-key
+             "\", gist)) folds "
+             (if (pos? folded) "the turns after your last fold" "every earlier turn")
+             ", user messages included. "
+             (when (pos? folded)
+               "Your earlier gists stay; a fold that covers an earlier fold replaces its gist. ")))
+         (if required?
+           "Fold settled search/tool sweeps and superseded reads NOW with one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
+           (str
+             "Use one broad print(fold_session(\"-tN/iK\", gist)) through the last completed scope"
+             (when urgent? " before another large tool call")))
+         "; keep every fact, name, date, number and request of the user in the gist; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens.")))))
 
 (defn session-view
   "The single projection from engine-internal ctx to the model-facing
@@ -870,7 +912,8 @@
          hint
          (over-budget-hint measured
                            (get ctx "session_turn")
-                           (get ctx "engine_overbudget_hint_turn"))
+                           (get ctx "engine_overbudget_hint_turn")
+                           (get ctx "session_summaries"))
 
          util
          (cond-> (select-keys measured ["auto_compress_above" "model_input_limit"])

@@ -1231,6 +1231,22 @@
                   (eng/over-budget-hint util 6 6)
                   "Fold before you answer, also when the answer needs no other tool call")))
       (expect (not (str/includes? (eng/over-budget-hint advisory 6 6) "Fold before you answer"))))
+    ;; Regression, LongMemEval run of 2026-10-23: Haiku folded "-t15", then "-t27".
+    ;; The second fold replaced the first gist, and the answer fact was lost.
+    (it "after earlier folds names the key for the turns after the last fold"
+        (let [hint (eng/over-budget-hint advisory 28 28 [{"through" "t15" "gist" "g"}])]
+          (expect (str/includes? hint
+                                 "print(fold_session(\"t16-t27\", gist)) folds the turns after"))
+          (expect (str/includes? hint "Your earlier gists stay")))
+        (expect (str/includes? (eng/over-budget-hint advisory 28 28 [{"through" "t26" "gist" "g"}])
+                               "print(fold_session(\"t27\", gist))"))
+        (expect (not (str/includes?
+                       (eng/over-budget-hint advisory 28 28 [{"through" "t27" "gist" "g"}])
+                       "Plain chat turns")))
+        (expect (= 2 (eng/folded-turn-prefix [{"through" "t3/i2"}])))
+        (expect (= 5 (eng/folded-turn-prefix [{"from" "t1" "to" "t4"} {"scopes" #{"t5"}}])))
+        (expect (= 2 (eng/folded-turn-prefix [{"turns" #{1 2 4}}])))
+        (expect (= 0 (eng/folded-turn-prefix [{"scopes" #{"t1/i1"}} {"from" "t2" "to" "t3"}]))))
     (it "prints the fold receipt at every pressure level"
         (doseq [util [advisory urgent required]]
           (expect (str/includes? (eng/over-budget-hint util 6 6)

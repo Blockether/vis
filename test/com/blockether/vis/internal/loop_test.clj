@@ -10487,6 +10487,56 @@
         (expect (some #(re-find #"Emergency transport fold" (str (:content %)))
                       (:messages recovery)))
         (expect (some #(re-find #"1 tool call" (str (:content %))) (:messages recovery)))))
+    ;; Regression, LongMemEval run of 2026-10-23: Haiku answered pasted chat logs
+    ;; without tool calls. Its turn 16 overflowed, and the rescue found nothing to fold,
+    ;; because the user messages of earlier turns were not foldable units.
+    (it
+      "after an overflow folds the OLDEST earlier chat turns whole, user messages included"
+      (let [large
+            (apply str (repeat 20000 "x"))
+
+            boundary
+            (fn [edge position text & [current?]]
+              [(str "t" position "/" (name edge))
+               (cond-> {:turn/boundary edge
+                        :turn/position position
+                        :preserved-thinking/replay? false
+                        :turn/messages [{:role (if (= :request edge) "user" "assistant")
+                                         :content text}]}
+                 current?
+                 (assoc :turn/current? true))])
+
+            trailer
+            [(boundary :request 1 (str "OLDEST LOG " large)) (boundary :closing 1 "OK")
+             (boundary :request 2 (str "MIDDLE LOG " large)) (boundary :closing 2 "OK")
+             (boundary :request 3 "What degree did I graduate with?" true)]
+
+            rescue
+            (fn [reason]
+              (emergency-fold-projection []
+                                         trailer
+                                         []
+                                         {:provider :openai :model "gpt"}
+                                         "gpt-4o"
+                                         (fn [before]
+                                           (- (long before) 1000))
+                                         {:reason reason}))
+
+            recovery
+            (rescue nil)
+
+            text
+            (str/join "\n" (map (comp str :content) (:messages recovery)))]
+
+        (expect (some? recovery))
+        (expect (= #{1} (get-in recovery [:summary "turns"])))
+        (expect (= 1 (:folded-turns recovery)))
+        (expect (not (str/includes? text "OLDEST LOG")))
+        (expect (str/includes? text "MIDDLE LOG"))
+        (expect (str/includes? text "What degree did I graduate with?"))
+        (expect (str/includes? text "1 earlier turn(s) with their messages"))
+        ;; The budget fold leaves the user messages to a model-written gist.
+        (expect (nil? (rescue :budget)))))
     (it "treats tool-only payloads as foldable context"
         ;; Boundary contract: Svar owns canonical structured-message token counting;
         ;; overflow rescue must inherit that count instead of treating tool payloads as free.

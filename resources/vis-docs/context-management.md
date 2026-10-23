@@ -119,7 +119,8 @@ iterations. The refusal names the key for every earlier turn.
 - `model_input_limit` is the hard input limit for each request.
 - `hint` is conditional. It starts at 75% of the soft budget. From 90%, it asks for a fold before
   the next answer. Above 100%, it requires a fold while the pressure remains. After the first turn,
-  it gives the exact key that folds every earlier turn.
+  it gives the exact key that folds every earlier turn that is not folded yet, so your earlier gists
+  stay. A fold that covers an earlier fold replaces its gist.
 
 The soft budget depends on the model: 250k tokens for Claude Opus models, 230k for GPT models and
 200k for other models. It is never more than 90% of a known input limit, so smaller windows get a
