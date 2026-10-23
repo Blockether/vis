@@ -72,7 +72,22 @@ export interface Subagent {
   pending_input_count?: number;
   /** The open question that it asks its parent, while it waits for the answer. */
   question?: string;
+  /** The Council entry of the open question. It grows with time, so it orders questions. */
+  question_entry_id?: number;
+  /** An open request for more iterations. The parent answers it with extend or deny. */
+  budget_request?: { iterations?: number; reason?: string };
+  /** An open request for file access. The parent answers it with grant or deny. */
+  files_request?: { files?: AgentFiles; reason?: string };
+  /** The latest Activity line of a queued or running agent, such as `Patched ~/src/a.clj`. */
+  activity?: string;
   usage?: SessionUsage | null;
+}
+
+/** A subagent file grant: paths or globs. Deny wins over read_only, read_only over write. */
+export interface AgentFiles {
+  write?: string[];
+  read_only?: string[];
+  deny?: string[];
 }
 
 export interface Session {

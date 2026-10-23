@@ -87,6 +87,7 @@ import { SESSION_DRAG_MIME, useSessionDropTarget } from '../../lib/session-drag'
 import type { ArchiveView, BandWindow, GatewayConn, Session, SessionGroup } from '../../lib/types';
 import { unreadAfterVisit } from '../../lib/unread';
 import { isKeyboardInputElement } from '../../lib/viewport';
+import { nestAgentSessions, type NestedSession } from './agent-nesting';
 
 /** Where inside the group sheet the reader is standing (`ProjectGroup`). */
 type MenuStep =
@@ -1429,13 +1430,16 @@ export const ProjectGroup = memo(function ProjectGroup({
   // A range belongs to what this project actually paints, not to rows on another page
   // or a folded shelf. Keep its anchor even though the first plain click opens a session.
   const listed = searching ? painted : filed.loose;
+  // Subagent sessions stand under the session that started them, in shift-selection order too.
   const visibleIds = searching
-    ? listed.map((session) => session.id)
+    ? nestAgentSessions(listed).map(({ session }) => session.id)
     : [
         ...bands.flatMap((band) =>
-          isGroupOpen(band.id) ? (filed.byGroup.get(band.id) ?? NO_ROWS).map((row) => row.id) : [],
+          isGroupOpen(band.id)
+            ? nestAgentSessions(filed.byGroup.get(band.id) ?? NO_ROWS).map(({ session }) => session.id)
+            : [],
         ),
-        ...listed.map((session) => session.id),
+        ...nestAgentSessions(listed).map(({ session }) => session.id),
       ];
   const selectionScope = JSON.stringify([
     page, groupPage, pageSize, needle, archived, groupArchived, isShowing,
@@ -1951,6 +1955,13 @@ export const ProjectGroup = memo(function ProjectGroup({
       </Fragment>
     );
   };
+  // A subagent row steps in under its parent; the rule on its left edge joins the team.
+  const nestedRow = ({ session, depth }: NestedSession) =>
+    depth === 0 ? row(session) : (
+      <div key={session.id} style={{ paddingLeft: `${depth}rem` }} className="border-l border-edge" data-agent-depth={depth}>
+        {row(session)}
+      </div>
+    );
 
   const sessionSetRef = useRef<HTMLDivElement>(null);
   const pageLayout = `${pageSize}\u0000${archived}\u0000${needle}`;
@@ -2217,7 +2228,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                         }}
                         onCancelRename={() => setRenamingGroupId(null)}
                       />
-                      {isBandOpen && held.map(row)}
+                      {isBandOpen && nestAgentSessions(held).map(nestedRow)}
                     </SessionDropArea>
                   );
                 })}
@@ -2252,7 +2263,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   </IconButton>
                 }
               />
-              {listed.map(row)}
+              {nestAgentSessions(listed).map(nestedRow)}
               {emptySessions && (
                 <p className="px-4 py-3 font-mono text-meta text-dialog-hint">
                   No archived sessions in this project.

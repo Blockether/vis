@@ -83,10 +83,38 @@ describe('turn agents', () => {
     expect(screen.getByText('asks leader')).toBeInTheDocument();
     expect(screen.getByText('budget used')).toBeInTheDocument();
     // A child that waited on its leader showed only its iterations, as if it still worked.
-    fireEvent.click(screen.getAllByRole('button', { expanded: false })[2]);
+    fireEvent.click(screen.getByRole('button', { name: /asks leader/ }));
     expect(screen.getByText('Count only src/?')).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole('button', { expanded: false })[2]);
+    fireEvent.click(screen.getByRole('button', { name: /asks leader/ }));
     expect(screen.queryByRole('button', { name: 'Stop agent' })).not.toBeInTheDocument();
+  });
+
+  it('puts an agent that waits for a person or the leader first, then the roles', () => {
+    render(<TurnAgents {...props} agents={[
+      { ...child, session_id: 'read', task: 'Read the logs', role: 'research' },
+      { ...child, session_id: 'spend', task: 'Wants budget', role: 'verify', budget_request: { iterations: 8 }, question: 'More?' },
+      { ...child, session_id: 'form', task: 'Needs a form', role: 'audit', pending_input: true },
+    ]} />);
+    expect(screen.getAllByRole('button', { expanded: false }).map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/^A2verify.*Wants budget$/),
+      expect.stringMatching(/^A3audit.*Needs a form$/),
+      expect.stringMatching(/^A1research.*Read the logs$/),
+    ]);
+  });
+
+  it('shows what a working agent does now with a bar for its budget', () => {
+    const { container } = render(<TurnAgents {...props} agents={[
+      { ...child, activity: 'Patched ~/src/a.clj' },
+      { ...child, session_id: 'done', status: 'completed', activity: 'Old line' },
+      { ...child, session_id: 'asking', question: 'Which branch?', activity: 'Waits' },
+    ]} />);
+    expect(screen.queryByText('Waits')).not.toBeInTheDocument();
+    expect(screen.getByText('Patched ~/src/a.clj')).toBeInTheDocument();
+    expect(screen.queryByText('Old line')).not.toBeInTheDocument();
+    const bars = container.querySelectorAll('[data-agent-progress]');
+    expect(bars).toHaveLength(1);
+    expect((bars[0].firstElementChild as HTMLElement).style.width).toBe('50%');
+    expect(screen.getByText('2/4')).toBeInTheDocument();
   });
 
   it('renders nothing for a turn without agents', () => {

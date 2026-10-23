@@ -22,10 +22,10 @@ export const Live: Story = {
   args: {
     agents: [
       { ...child, session_id: 'done', status: 'completed', iterations_used: 3, role: 'audit' },
-      { ...child, session_id: 'working', task: 'List the components that render the team', role: 'research' },
+      { ...child, session_id: 'working', task: 'List the components that render the team', role: 'research', iterations_used: 12, activity: 'Search files AgentTeam' },
       { ...child, session_id: 'asking', task: 'Count the Clojure sources', question: 'Should I count tests in test/ or only sources in src/?', role: 'research' },
       { ...child, session_id: 'blocked', task: 'Release the bundle', pending_input: true, pending_input_count: 2, role: 'implement' },
-      { ...child, session_id: 'check', task: 'Run the gateway tests', role: 'verify' },
+      { ...child, session_id: 'check', task: 'Run the gateway tests', role: 'verify', activity: 'Run tests agents-test' },
     ],
   },
   play: async ({ canvasElement }) => {
@@ -33,6 +33,7 @@ export const Live: Story = {
     expect(canvas.getByText('needs you ×2')).toBeVisible();
     expect(canvas.getByText('asks leader')).toBeVisible();
     expect(canvas.getByText('4/32')).toBeVisible();
+    expect(canvas.getByText('Search files AgentTeam')).toBeVisible();
   },
 };
 

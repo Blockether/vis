@@ -20,6 +20,9 @@ import {
 } from '../components/ChatContent';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
 import { TurnAgents, agentsByTurn, useAgentTeam } from '../components/AgentTeam';
+import { AgentCrumb } from '../components/AgentCrumb';
+import { AgentDock } from '../components/AgentDock';
+import { AgentInbox } from '../components/AgentInbox';
 import { ScopedSettingsDialog } from './settings/ScopedSettingsDialog';
 import {
   ComposerAttachmentPicker,
@@ -5283,6 +5286,9 @@ export function SessionScreen({
             commands={headerCommands}
             sidebar={sidebar}
           />
+          {session?.agent?.role === 'subagent' && session.agent.parent_id && (
+            <AgentCrumb sid={sid} parentId={session.agent.parent_id} agents={team.agents} onOpen={onOpenSession} />
+          )}
 
           {routerOpen && (
             <ProviderRouterDialog
@@ -5450,6 +5456,17 @@ export function SessionScreen({
                 onClick={() => scrollToEnd('smooth')}
               />
             )}
+
+            {/* The open requests of this session's agents, then its live team, above the composer. */}
+            <AgentInbox agents={team.agents} sid={sid} pending={team.pending} actions={team} onOpen={onOpenSession} />
+            <AgentDock
+              agents={team.agents}
+              sid={sid}
+              pending={team.pending}
+              error={team.error}
+              onOpen={onOpenSession}
+              onCancel={team.cancel}
+            />
 
             <ComposerSuggestions
               kind="files"

@@ -216,6 +216,8 @@ describe('every control is drawn in the gallery', () => {
   // the owner keeps the exception closed: a new component module must either get
   // its own story or say which existing frame actually exercises it.
   const indirectStoryOwner: Record<string, string> = {
+    AgentCrumb: './AgentInbox.stories.tsx',
+    AgentDock: './AgentInbox.stories.tsx',
     SessionHealth: './SessionStats.stories.tsx',
     AnnotationLayer: './MarkdownArtifact.stories.tsx',
     ChatContent: './LiveView.stories.tsx',
