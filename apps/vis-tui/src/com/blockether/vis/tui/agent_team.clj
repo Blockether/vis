@@ -352,7 +352,7 @@
               (+ (long left) (long (get offsets k))))]
 
         (put! (at :n) t/code-block-fg (:n cells) true)
-        (put! (at :role) t/dialog-hint (:role cells) false)
+        (put! (at :role) t/dialog-hint (:role cells) true)
         (put! (at :task) t/code-block-fg (:task cells) false)
         (put! (at :state) state-fg state (boolean waiting?))
         (put! (at :count) t/dialog-hint (:count cells) false)
