@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- Vis no longer sends warm requests to keep the provider prompt cache alive. The `prompt_cache_keepalive` setting is gone.
+
 ## [v0.3.2] - 2026-10-22
 
 ### Changed
