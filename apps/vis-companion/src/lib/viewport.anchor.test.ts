@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyScrollAnchorGrowth, scrollAnchorFor } from './viewport';
+import { applyScrollAnchor, applyScrollAnchorGrowth, scrollAnchorFor } from './viewport';
 
 // One transcript in content coordinates: the view starts at 100 px on screen, and an
 // element at content position `position` paints at `100 + position - scrollTop`.
@@ -53,5 +53,59 @@ describe('applyScrollAnchorGrowth', () => {
 
     expect(applyScrollAnchorGrowth(viewport, anchor)).toBe(false);
     expect(viewport.scrollTop).toBe(1_000);
+  });
+});
+
+// Two stacked segments: the reader reads `first`, and `second` starts below it.
+function stack(scrollTop: number) {
+  const viewport = { scrollTop, getBoundingClientRect: () => ({ top: 100, bottom: 700 }) };
+  const part = (position: number, height: number) => {
+    const node = {
+      isConnected: true,
+      position,
+      children: [] as Element[],
+      nextElementSibling: null as Element | null,
+      getBoundingClientRect() {
+        const top = 100 + node.position - viewport.scrollTop;
+        return { top, bottom: top + height };
+      },
+    };
+    return node;
+  };
+  const first = part(900, 400);
+  const second = part(1_300, 400);
+  first.nextElementSibling = second as unknown as Element;
+  const transcript = {
+    isConnected: true,
+    children: [first, second] as unknown as Element[],
+    getBoundingClientRect: () => ({ top: 100 - viewport.scrollTop, bottom: 9_999 }),
+  };
+  return { viewport, first, second, anchor: scrollAnchorFor(viewport, transcript)! };
+}
+
+// Regression, user report: the web transcript sometimes jumped by a whole history page.
+// The page merged the first loaded step into an earlier segment under a new key, so
+// the segment that the reader was reading unmounted while 8 623 px landed above.
+describe('a replaced anchor', () => {
+  it('holds the line by the sibling below it', () => {
+    const { viewport, first, second, anchor } = stack(1_000);
+    first.isConnected = false;
+    second.position += 8_623;
+
+    expect(applyScrollAnchor(viewport, anchor)).toBe(true);
+
+    expect(viewport.scrollTop).toBe(1_000 + 8_623);
+    expect(second.getBoundingClientRect().top - 100).toBe(300);
+  });
+
+  it('bills the growth by the sibling below it under a wheel move', () => {
+    const { viewport, first, second, anchor } = stack(1_000);
+    viewport.scrollTop = 940;
+    first.isConnected = false;
+    second.position += 8_623;
+
+    expect(applyScrollAnchorGrowth(viewport, anchor)).toBe(true);
+
+    expect(viewport.scrollTop).toBe(940 + 8_623);
   });
 });

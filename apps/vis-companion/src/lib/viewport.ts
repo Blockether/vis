@@ -329,6 +329,7 @@ type AnchorElement = {
   // `data-anchor="skip"` marks chrome that sits above the content it mutates —
   // the "load earlier" row — whose position says nothing about the reader.
   dataset?: { anchor?: string };
+  nextElementSibling?: Element | null;
 };
 type AnchorScroller = { scrollTop: number; getBoundingClientRect(): AnchorRect };
 /**
@@ -337,8 +338,19 @@ type AnchorScroller = { scrollTop: number; getBoundingClientRect(): AnchorRect }
  * at. That pixel is the part of the reading that OUTLIVES the element, and the
  * only thing left to put the reader back on when the turn they were reading is
  * unmounted and replaced.
+ *
+ * `below` holds the next sibling at each level of the walk, nearest first, with
+ * its own offset. A commit can replace the anchored element while content lands
+ * above it: a history page merges the first loaded step into an earlier segment
+ * under a new key. The first connected sibling below still measures that growth.
+ * An ancestor cannot: the history lands inside it, under its top edge.
  */
-export type ScrollAnchor = { el: AnchorElement; offset: number; top: number };
+export type ScrollAnchor = {
+  el: AnchorElement;
+  offset: number;
+  top: number;
+  below: { el: AnchorElement; offset: number }[];
+};
 
 /** Deepest descendants win, but a transcript is deep: bound the walk. */
 const ANCHOR_MAX_DEPTH = 24;
@@ -376,27 +388,45 @@ export function scrollAnchorFor(
   const target = viewport.getBoundingClientRect().top;
   let node = crossingChild(container, target);
   if (!node) return null;
+  const chain = [node];
   for (let depth = 0; depth < ANCHOR_MAX_DEPTH; depth += 1) {
     const deeper = crossingChild(node, target);
     if (!deeper) break;
     node = deeper;
+    chain.push(node);
+  }
+  const below: ScrollAnchor['below'] = [];
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const next = chain[index].nextElementSibling as unknown as AnchorElement | null | undefined;
+    if (next) below.push({ el: next, offset: next.getBoundingClientRect().top - target });
   }
   return {
     el: node,
     offset: node.getBoundingClientRect().top - target,
     top: viewport.scrollTop,
+    below,
   };
+}
+
+/** The anchored element, else the nearest connected sibling below it, else null. */
+function anchorStillMounted(
+  anchor: ScrollAnchor | null,
+): { el: AnchorElement; offset: number } | null {
+  if (!anchor) return null;
+  if (anchor.el.isConnected) return anchor;
+  return anchor.below.find((entry) => entry.el.isConnected) ?? null;
 }
 
 /**
  * Puts the anchored element back where it was. False means there was nothing to
- * restore (no anchor, or the turn was unmounted meanwhile) and the caller owns
- * the fallback.
+ * restore (no anchor, or the turn and every sibling below it were unmounted
+ * meanwhile) and the caller owns the fallback.
  */
 export function applyScrollAnchor(viewport: AnchorScroller, anchor: ScrollAnchor | null): boolean {
-  if (!anchor || !anchor.el.isConnected) return false;
+  const held = anchorStillMounted(anchor);
+  if (!held) return false;
   const drift =
-    anchor.el.getBoundingClientRect().top - viewport.getBoundingClientRect().top - anchor.offset;
+    held.el.getBoundingClientRect().top - viewport.getBoundingClientRect().top - held.offset;
   if (Math.abs(drift) > 0.5) viewport.scrollTop = Math.max(0, viewport.scrollTop + drift);
   return true;
 }
@@ -410,11 +440,12 @@ export function applyScrollAnchorGrowth(
   viewport: AnchorScroller,
   anchor: ScrollAnchor | null,
 ): boolean {
-  if (!anchor || !anchor.el.isConnected) return false;
+  const held = anchorStillMounted(anchor);
+  if (!anchor || !held) return false;
   const growth =
-    anchor.el.getBoundingClientRect().top -
+    held.el.getBoundingClientRect().top -
     viewport.getBoundingClientRect().top -
-    anchor.offset +
+    held.offset +
     viewport.scrollTop -
     anchor.top;
   if (Math.abs(growth) > 0.5) viewport.scrollTop = Math.max(0, viewport.scrollTop + growth);
