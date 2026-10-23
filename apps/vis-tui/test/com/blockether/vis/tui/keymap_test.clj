@@ -210,6 +210,18 @@
         (expect (some #(= {:key "D" :type :action :id :delete-session :label "delete session"} %)
                       (mapcat :items (:groups (keymap/prefix-spec {}))))))))
 
+(defdescribe
+  archive-session-chord-test
+  (it "C-x A archives the current session; C-x a still attaches a file"
+      (expect (= "C-x A" (keymap/label-for :archive-session)))
+      (expect (= :archive-session
+                 (:action (input/resolve-prefix-key (KeyStroke. \A false false true)
+                                                    {:prefix :cx}))))
+      (expect (= :pick-file (keymap/prefix-action-for \a))))
+  (it "the hydra offers it under Session"
+      (expect (some #(= {:key "A" :type :action :id :archive-session :label "archive session"} %)
+                    (mapcat :items (:groups (keymap/prefix-spec {})))))))
+
 (defdescribe session-group-chord-test
              ;; BLO-167: a session can be filed under one of its project's groups.
              (it "is a palette verb whose key is free — `g` can only ever be the abort"

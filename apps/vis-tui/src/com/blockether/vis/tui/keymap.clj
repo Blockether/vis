@@ -129,6 +129,8 @@
    {:action :new-session :key \n :label "new session" :group "Session"}
    {:action :show-sessions :key \s :label "switch session" :group "Session"}
    {:action :delete-session :key prefix-delete-key :label "delete session" :group "Session"}
+   ;; C-x A (Shift+a) archives the current session or restores it, like `A` in the sidebar.
+   {:action :archive-session :key \A :label "archive session" :group "Session"}
    {:action :session-metrics :key \u :label "session metrics" :group "Session"}
    ;; `k` = kick the queue: mark every queued message for the running turn's next
    ;; step (the header's Send all now button). Palette-only — the Session band is full.

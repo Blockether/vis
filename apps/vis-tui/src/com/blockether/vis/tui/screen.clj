@@ -7909,6 +7909,30 @@
                        (vis/notify! "No current session to delete"
                                     :level :warn
                                     :ttl-ms copy-success-ttl-ms))
+                     ;; C-x A archives the CURRENT session, or restores an archived one,
+                     ;; like `A` on a sidebar row. The gateway refuses a running session.
+                     (= :archive (:action choice))
+                     (if-let [target-id (current-session-id)]
+                       (let [away? (nil? (get-in @state/app-db [:session :archived-at]))]
+                         (try
+                           (let [result (vis/gateway-set-session-archived! target-id away?)]
+                             (state/dispatch [:session-archive-changed target-id
+                                              (get result "archived_at")])
+                             (refresh-projects!)
+                             (vis/notify! (if away? "Archived session" "Unarchived session")
+                                          :level :success
+                                          :ttl-ms copy-success-ttl-ms))
+                           (catch Throwable t
+                             (vis/notify!
+                               (if (= 409 (:http-status (ex-data t)))
+                                 "This session is still active. Archive it once its turn is done."
+                                 (str "Could not " (if away? "archive" "unarchive")
+                                      " session: " (ex-message t)))
+                               :level :warn
+                               :ttl-ms copy-success-ttl-ms))))
+                       (vis/notify! "No current session to archive"
+                                    :level :warn
+                                    :ttl-ms copy-success-ttl-ms))
                      ;; Ctrl+S in the navigator → the human's STAR. The gateway owns
                      ;; the mark and allocates its rank, so the PATCH is the whole
                      ;; write: reopening the list paints the row the gateway echoed.
@@ -9282,6 +9306,9 @@
                                      :delete-session
                                      (switch-session! {:action :delete})
 
+                                     :archive-session
+                                     (switch-session! {:action :archive})
+
                                      :fork-at-turn
                                      (switch-session! {:action :fork-at-turn})
 
@@ -9603,6 +9630,10 @@
                          ;; C-x D — delete the current session after a confirmation.
                          :delete-session
                          (do (switch-session! {:action :delete}) (recur))
+
+                         ;; C-x A — archive the current session, or restore it.
+                         :archive-session
+                         (do (switch-session! {:action :archive}) (recur))
 
                          :fork-session
                          (do (switch-session! {:action :fork}) (recur))
