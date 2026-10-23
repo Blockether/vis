@@ -100,6 +100,9 @@ export const DeployDashboardPhone: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Output' }));
     await expect(canvas.getByRole('searchbox', { name: 'Search Output' })).toBeVisible();
     await expect(canvas.getByRole('button', { name: 'Pause' })).toBeVisible();
+    // A tap shows no focus ring, but a scripted click leaves one. Drop it so the
+    // story shows what a reader on a phone sees.
+    (document.activeElement as HTMLElement | null)?.blur();
     const page = document.documentElement;
     await expect(page.scrollWidth).toBeLessThanOrEqual(page.clientWidth);
   },
