@@ -54,6 +54,13 @@
                          (Thread/sleep 10)
                          (recur (inc attempt)))))
                    (worker/stop-worker! key)
+                   ;; A worker that outlives the 200 ms stop wait is pruned by its async exit
+                   ;; hook; the v0.3.3 release run on a loaded macOS runner checked too early.
+                   (when-not output?
+                     (loop [attempt 0]
+                       (when (and (< attempt 1000) (.exists run-directory))
+                         (Thread/sleep 10)
+                         (recur (inc attempt)))))
                    (expect (= output? (.isDirectory run-directory)))))
                (finally (worker/stop-worker! key)
                         (doseq [^File file (reverse (file-seq directory))]
