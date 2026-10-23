@@ -576,11 +576,16 @@
                 (py-json-literal (vec (sort (set (map str names)))))
                 "))"))))
 
+(defn- owned-names
+  "The global names that `session` reserves for Vis: system variables and root names."
+  [session]
+  (into (set (map name SYSTEM_VAR_NAMES))
+        (when session (read-json (py-run session "globals().get('__vis_path_names__', [])")))))
+
 (defn- assert-unowned-bindings!
   [session names]
   (let [owned
-        (into (set (map name SYSTEM_VAR_NAMES))
-              (when session (read-json (py-run session "globals().get('__vis_path_names__', [])"))))
+        (owned-names session)
 
         collisions
         (sort (filter owned names))]
@@ -588,6 +593,13 @@
     (when (seq collisions)
       (throw (ex-info (str "Python name collision: " (str/join ", " collisions))
                       {:names (vec collisions)})))))
+
+(defn unowned-bindings
+  "`syms` without each symbol whose top-level name `session` reserves. A reload can
+   give the name of a retired tool to a new root, and then the root owns it (#415)."
+  [session syms]
+  (let [owned (owned-names session)]
+    (remove #(owned (first (str/split (sym->py-name %) #"\." 2))) syms)))
 
 (defn set-python-binding!
   "Bind `sym` -> `val` in `session`'s globals.

@@ -16,6 +16,7 @@
     [com.blockether.vis.internal.content :as content]
     [com.blockether.vis.internal.context.agents :as agents]
     [com.blockether.vis.internal.context.loop :as ctx-loop]
+    [com.blockether.vis.internal.extension.client :as client-extensions]
     [com.blockether.vis.internal.extension.core :as extension]
     [com.blockether.vis.internal.channel.form :as form]
     [com.blockether.vis.internal.gateway.state :as gateway-state]
@@ -10207,6 +10208,110 @@
           (expect (not (loop-env/policy-stale? kept)))
           (expect (loop-env/policy-stale? changed))
           (expect (loop-env/policy-stale? failing))))))
+
+;; #415: a reload kept the extension rows of a running session. The session missed new
+;; tools, and its stale rows called into the registration that replaced theirs.
+(defdescribe
+  python-extension-reseat-test
+  (let [row
+        (fn [ext-name scope version]
+          (cond-> {:ext/name ext-name :version version}
+            scope
+            (assoc :ext/source-scope scope)))
+
+        native
+        (row "native" nil 1)
+
+        session
+        (fn [sid root rows]
+          {:environment {:session-id sid :workspace/root root :extensions (atom rows)}})
+
+        rows
+        #(mapv (juxt :ext/name :ext/source-scope :version) @(get-in % [:environment :extensions]))
+
+        reseat!
+        #((get @@#'python-extensions/change-listeners ::loop-env/reseat-python-extensions) %)]
+
+    (it "rebuilds the rows in creation order and keeps the rows that no catalog supplies"
+        (expect (= [["native" nil 1] ["kept" "global" 2] ["added" "global" 1] ["shadow" "project" 1]
+                    ["project" "project" 2] ["client" nil 2] ["custom" nil 1]]
+                   (mapv (juxt :ext/name :ext/source-scope :version)
+                         (#'loop-env/reseated-extensions
+                          [native (row "removed" "global" 1) (row "kept" "global" 1)
+                           (row "project" "project" 1) (row "client" nil 1) (row "custom" nil 1)]
+                          [native (row "kept" "global" 2) (row "shadow" "global" 1)
+                           (row "added" "global" 1)]
+                          [(row "shadow" "project" 1) (row "project" "project" 2)]
+                          [(row "client" nil 2)])))))
+    (it
+      "reseats every session on a global change and keeps its project rows"
+      (let [a
+            (session "a" "/vis-415/a" [native (row "tool" "global" 1) (row "proj-a" "project" 1)])
+
+            b
+            (session "b" "/vis-415/b" [native (row "tool" "global" 1) (row "proj-b" "project" 1)])]
+
+        (with-redefs [loop-env/cache
+                      (atom {:a a :b b})
+
+                      extension/registered-extensions
+                      (fn [root]
+                        (cond-> [native (row "tool" "global" 2) (row "new" "global" 1)]
+                          root
+                          (conj (row "other" "project" 1))))
+
+                      client-extensions/extensions-for
+                      (constantly [])]
+
+          (reseat! {:project-root nil}))
+        (expect (= [["native" nil 1] ["tool" "global" 2] ["new" "global" 1] ["proj-a" "project" 1]]
+                   (rows a)))
+        (expect (= [["native" nil 1] ["tool" "global" 2] ["new" "global" 1] ["proj-b" "project" 1]]
+                   (rows b)))))
+    (it "reseats only the sessions of the project whose catalog changed"
+        (let [a
+              (session "a" "/vis-415/a" [native (row "proj-a" "project" 1)])
+
+              b
+              (session "b" "/vis-415/b" [native (row "proj-b" "project" 1)])
+
+              before
+              @(get-in b [:environment :extensions])]
+
+          (with-redefs [loop-env/cache
+                        (atom {:a a :b b})
+
+                        extension/registered-extensions
+                        (fn [root]
+                          (cond-> [native]
+                            (= "/vis-415/a" root)
+                            (conj (row "proj-a" "project" 2))))
+
+                        client-extensions/extensions-for
+                        (constantly [])]
+
+            (reseat! {:project-root "/vis-415/a"}))
+          (expect (= [["native" nil 1] ["proj-a" "project" 2]] (rows a)))
+          (expect (identical? before @(get-in b [:environment :extensions])))))
+    (it "reseats the other sessions when one of them fails"
+        (let [a
+              (session "a" "/vis-415/a" [(row "tool" "global" 1)])
+
+              b
+              (session "b" "/vis-415/b" [(row "tool" "global" 1)])]
+
+          (with-redefs [loop-env/cache
+                        (atom {:a a :b b})
+
+                        extension/registered-extensions
+                        (constantly [(row "tool" "global" 2)])
+
+                        client-extensions/extensions-for
+                        #(if (= "a" %) (throw (ex-info "client registry failed" {})) [])]
+
+            (reseat! {:project-root nil}))
+          (expect (= [["tool" "global" 1]] (rows a)))
+          (expect (= [["tool" "global" 2]] (rows b)))))))
 
 ;; Regression, issue #106: a Settings flip only reached live tool bindings when it
 ;; arrived through the gateway HTTP handler, which called

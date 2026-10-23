@@ -159,16 +159,31 @@
               plan)
 
         bound-names
-        (set (map (comp env/sym->py-name :sym) bound))]
+        (set (map (comp env/sym->py-name :sym) bound))
+
+        ;; A reload can drop a row, or a symbol of a row, so no step of `plan` removes
+        ;; its name. Remove each name that the last sync bound and this one does not (#415).
+        ;; Keep a name that the sandbox now reserves, for example for a new root. Its value
+        ;; replaced the tool, so the reset below also stops tracking the name.
+        unbound
+        (some->> (:bound-extension-symbols environment)
+                 deref
+                 (remove #(bound-names (env/sym->py-name %)))
+                 not-empty
+                 (env/unowned-bindings python-context))]
 
     ;; One batch for each direction, so a sandbox build pays a few guest calls, not
     ;; several for each symbol. A name that an active extension binds stays bound.
     (env/set-python-bindings! python-context bound)
     (env/remove-python-bindings!
       python-context
-      (keep (fn [[op value]]
-              (when (and (= op :remove) (not (bound-names (env/sym->py-name value)))) value))
-            plan))))
+      (concat (keep (fn [[op value]]
+                      (when (and (= op :remove) (not (bound-names (env/sym->py-name value))))
+                        value))
+                    plan)
+              unbound))
+    (some-> (:bound-extension-symbols environment)
+            (reset! (set (keep :sym bound))))))
 
 (defn sync-active-extension-symbols!
   "Make the Python sandbox's callable globals match active extension state.
@@ -196,6 +211,12 @@
      (sync-extension-symbols-into! python-context environment active-extensions))
    environment))
 
+(defn- with-extension
+  "`exts` with `ext` in place of the row with the same `:ext/name`, as the last row."
+  [exts ext]
+  (let [ext-name (:ext/name ext)]
+    (conj (filterv #(not= ext-name (:ext/name %)) exts) ext)))
+
 (defn install-extension!
   "Register a validated extension into `environment` (per-env registration,
    distinct from the global-registry `register-extension!` defined earlier
@@ -210,14 +231,7 @@
   (when-not (:extensions environment)
     (anomaly/incorrect! "Invalid vis environment - missing :extensions atom"
                         {:type :vis/invalid-env}))
-  (swap! (:extensions environment) (fn [exts]
-                                     (let [ns-sym
-                                           (:ext/name ext)
-
-                                           without
-                                           (vec (remove #(= (:ext/name %) ns-sym) exts))]
-
-                                       (conj without ext))))
+  (swap! (:extensions environment) with-extension ext)
   ;; Extension rows stay installed even when inactive, but callable symbol
   ;; bindings are activation-aware (sync-active-extension-symbols!). The Python
   ;; sandbox has no passive Java class/import config — the agent writes Python +
@@ -873,7 +887,8 @@
                                                  {}))
                   :session-title-atom session-title-atom
                   :extensions (atom [])
-                  :active-extensions (atom []))]
+                  :active-extensions (atom [])
+                  :bound-extension-symbols (atom #{}))]
 
         (reset! environment-atom env)
         (swap! state-atom assoc :environment env :session-id session-id)
@@ -1653,12 +1668,91 @@
   (extension/register-reload-hook! ::router-reload reload-router!))
 
 ;; Keep live session envs in sync with Python-extension (re)loads. Each env
-;; caches its own `:extensions` rows — slash dispatch (`active-slashes env`)
-;; and sandbox bindings read those, NOT the global registry — so a `/reload`
-;; that swaps the registry must also reseat every cached env. Otherwise a
-;; newly added extension stays invisible to running sessions and stale rows
-;; keep calling into a disposed Python session, whose doors went with it.
-;; Same propagation pattern as `refresh-cached-routers!`.
+;; caches its own `:extensions` rows — slash dispatch (`active-slashes env`),
+;; operation hooks and sandbox bindings read those, NOT the global registry — so a
+;; `/reload` that swaps the registry must also reseat every cached env. A reload
+;; keeps the env of a session whose policy did not change (#408). Without this
+;; reseat, a newly added extension stayed invisible to running sessions and stale
+;; rows called into the registration that replaced theirs (#415). Same propagation
+;; pattern as `refresh-cached-routers!`.
+
+(defn- python-extension-row?
+  "True for a row that a Python extension catalog supplies."
+  [ext]
+  (contains? ext :ext/source-scope))
+
+(defn- project-extension-row?
+  "True for a row that a project's Python extension catalog supplies."
+  [ext]
+  (= "project" (:ext/source-scope ext)))
+
+(defn- reseated-extensions
+  "The extension rows of a session after a Python catalog change.
+
+   Rebuild them in the order of `create-environment`: the `global` rows that no
+   `project` row replaces, then `project`, then the live `clients` of the session.
+   Keep each other row that no Python catalog supplies after them, in its order."
+  [rows global project clients]
+  (let [project-names
+        (into #{} (map :ext/name) project)
+
+        supplied
+        (concat (remove #(project-names (:ext/name %)) global) project clients)
+
+        supplied-names
+        (into #{} (map :ext/name) supplied)]
+
+    (reduce with-extension
+            []
+            (concat supplied
+                    (remove #(or (python-extension-row? %) (supplied-names (:ext/name %))) rows)))))
+
+(defonce ^:private reseat-lock
+  ;; A heal notifies without the load lock. One reseat at a time, so the last reseat
+  ;; reads the newest catalogs.
+  (Object.))
+
+(defn- reseat-python-extensions!
+  "Reseat the extension rows of each cached session after a Python catalog change.
+
+   A global catalog change reaches every session. A project catalog change reaches
+   the sessions in that project. A global change keeps the project rows of a session,
+   also when its project catalog is not loaded. Operation hooks and network filters
+   use the new rows at once, and sandbox bindings change at the next turn. This runs
+   no guest code and takes no session lock."
+  [{:keys [project-root]}]
+  (let [changed-root (some-> project-root
+                             workspace/normalize-root)]
+    (locking reseat-lock
+      (let [global (extension/registered-extensions nil)]
+        (doseq [[k {:keys [environment]}] @cache
+                :let [rows (:extensions environment)]
+                :when rows]
+
+          (try (when (or (nil? changed-root)
+                         (= changed-root
+                            (binding [workspace/*workspace-root* (workspace/workspace-root
+                                                                   environment)]
+                              (workspace/cwd-root))))
+                 (let [project (when changed-root
+                                 (filterv project-extension-row?
+                                   (extension/registered-extensions changed-root)))
+                       clients (client-extensions/extensions-for (:session-id environment))]
+
+                   (swap! rows (fn [current]
+                                 (reseated-extensions current
+                                                      global
+                                                      (or project
+                                                          (filterv project-extension-row? current))
+                                                      clients)))))
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::reseat-extensions-failed
+                            :data {:session (str k) :error (ex-message t)}}))))))))
+
+;; Keep the Var so namespace reloads retain live wiring.
+(defonce ^:private _python-extension-reseat
+  (python-extensions/add-change-listener! ::reseat-python-extensions #'reseat-python-extensions!))
 
 (defn set-provider!
   "Set the single active provider config. Persists to disk, updates

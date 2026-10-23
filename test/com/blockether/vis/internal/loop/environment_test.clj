@@ -261,3 +261,63 @@
         (let [resumed (loop-env/create-environment router {:db path :session sid})]
           (try (expect (= ["py.lint_code"] (:names @(:config/tools resumed))))
                (finally (loop-env/dispose-environment! resumed))))))))
+
+(defdescribe
+  reload-unbind-test
+  ;; #415: a reload dropped an extension row or one of its symbols, and the session kept
+  ;; the old tool bound. No row asked to remove the name.
+  (it
+    "removes each name that the last sync bound and the current rows no longer bind"
+    (let [removed
+          (atom nil)
+
+          reserved
+          (atom #{})
+
+          ext
+          (py-extension)
+
+          environment
+          {:extensions (atom [ext]) :bound-extension-symbols (atom #{})}
+
+          sync!
+          #(loop-env/sync-extension-symbols-into! ::context environment @(:extensions environment))
+
+          names
+          #(set (map env/sym->py-name %))]
+
+      (with-redefs [extension/wrap-extension
+                    (fn [ext _]
+                      (into {}
+                            (map (fn [entry]
+                                   [(:ext.symbol/symbol entry) identity]))
+                            (extension/ext-symbols ext)))
+
+                    env/set-python-bindings!
+                    (fn [_ _])
+
+                    env/unowned-bindings
+                    (fn [_ syms]
+                      (remove #(@reserved (env/sym->py-name %)) syms))
+
+                    env/remove-python-bindings!
+                    (fn [_ targets]
+                      (reset! removed (names targets)))]
+
+        (sync!)
+        (let [bound (names @(:bound-extension-symbols environment))]
+          (expect (contains? bound "py.lint_code") (pr-str bound))
+          (expect (empty? @removed))
+          (swap! (:extensions environment)
+            (fn [[row]]
+              [(update-in row
+                          [:ext/engine :ext.engine/symbols]
+                          (partial filterv #(not= 'py.lint_code (:ext.symbol/symbol %))))]))
+          (sync!)
+          (expect (= #{"py.lint_code"} @removed))
+          ;; The sandbox now reserves one name, so the sync keeps it and stops tracking it.
+          (reset! reserved #{"py.repl_stop"})
+          (reset! (:extensions environment) [])
+          (sync!)
+          (expect (= (disj bound "py.lint_code" "py.repl_stop") @removed))
+          (expect (empty? @(:bound-extension-symbols environment))))))))

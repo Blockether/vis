@@ -6895,6 +6895,189 @@ vis.register_extension(vis.Extension(name=\"stale-ctx\", description=\"Stale ctx
                  (finally (ep/dispose-python-context! ctx))))))))
 
 (defdescribe
+  callable-site-identity-test
+  ;; #415: a session ran the registry callable at the old position in a reloaded
+  ;; registration. A callable keeps its identity when elements move around it.
+  (let [unseal
+        #(#'pyx/unseal nil @#'pyx/registration-site %)
+
+        site
+        #(get (meta %) ::pyx/callable-site)
+
+        target
+        (fn [source-ctx f local-ctx registration]
+          (#'pyx/session-callable
+           "x"
+           source-ctx
+           (site f)
+           {:source-context local-ctx :callables (#'pyx/registration-callables registration)}))
+
+        refusal
+        (fn [local-ctx f registration]
+          (try (target :old f local-ctx registration)
+               nil
+               (catch clojure.lang.ExceptionInfo e (ex-data e))))
+
+        sym
+        (fn [sym-name cid & {:as more}]
+          (merge {"marker" "symbol" "name" sym-name "doc" "Tool." "fn" {"__vis_callable__" cid}}
+                 more))
+
+        hook
+        (fn [cid]
+          {"marker" "op_hook" "ops" ["write"] "phase" "before" "fn" {"__vis_callable__" cid}})
+
+        v1
+        (unseal {"name" "x" "symbols" [(sym "local_status" 1) (sym "push_branch" 2)]})
+
+        v2
+        (unseal {"name" "x"
+                 "symbols" [(sym "prepare_branch" 1) (sym "local_status" 2) (sym "push_branch" 3)]})
+
+        stale
+        (get-in v1 ["symbols" 0 "fn"])]
+
+    (it "keeps the identity and declaration of a callable when another one goes before it"
+        (let [moved (get-in v2 ["symbols" 1 "fn"])]
+          (expect (= ["symbols" 0 "fn"] (:path (site stale))))
+          (expect (= ["symbols" 1 "fn"] (:path (site moved))))
+          (expect (= (dissoc (site stale) :path) (dissoc (site moved) :path)))))
+    (it "selects the callable with the same identity in another generation"
+        (expect (identical? (get-in v2 ["symbols" 1 "fn"]) (target :old stale :new v2))))
+    (it "selects by identity in the same generation, also for another declaration"
+        ;; A session evaluates the registration in its own environment. So its layout
+        ;; and its docs can differ from the registration in the registry.
+        (let [session
+              (unseal {"name" "x"
+                       "symbols" [(sym "local_status" 1 "doc" "Session.") (sym "push_branch" 2)]})
+
+              moved
+              (unseal {"name" "x"
+                       "symbols" [(sym "prepare_branch" 1) (sym "local_status" 2 "doc" "Session.")
+                                  (sym "push_branch" 3)]})]
+
+          (expect (identical? (get-in session ["symbols" 0 "fn"]) (target :old stale :old session)))
+          (expect (identical? (get-in moved ["symbols" 1 "fn"]) (target :old stale :old moved)))
+          (expect (= :removed
+                     (:reason (refusal :old
+                                       stale
+                                       (unseal {"name" "x" "symbols" [(sym "push_branch" 1)]})))))))
+    (it "refuses a callable that a reload changed or removed, before guest code runs"
+        (expect (= {:type ::pyx/callable-refused :extension "x" :reason :changed}
+                   (refusal :new
+                            stale
+                            (unseal {"name" "x" "symbols" [(sym "local_status" 1 "doc" "New.")]}))))
+        (expect (= {:type ::pyx/callable-refused :extension "x" :reason :removed}
+                   (refusal :new stale (unseal {"name" "x" "symbols" [(sym "push_branch" 1)]})))))
+    (it "selects a twin by its ordinal, after a reload only while the count of twins stays"
+        ;; One registration can give a session another count of twins in its environment.
+        (let [old
+              (get-in (unseal {"op_hooks" [(hook 1) (hook 2)]}) ["op_hooks" 1 "fn"])
+
+              same
+              (unseal {"op_hooks" [(hook 3) (hook 4)]})
+
+              more
+              (unseal {"op_hooks" [(hook 3) (hook 4) (hook 5)]})]
+
+          (expect (identical? (get-in same ["op_hooks" 1 "fn"]) (target :old old :new same)))
+          (expect (identical? (get-in more ["op_hooks" 1 "fn"]) (target :old old :old more)))
+          (expect (= :removed (:reason (refusal :new old more))))))
+    (it "gives a changed element without a name another identity, so a reload removes it"
+        ;; The label of a hook is its whole shape, so a changed hook gives :removed,
+        ;; not :changed.
+        (expect (= :removed
+                   (:reason (refusal :new
+                                     (get-in (unseal {"op_hooks" [(hook 1)]}) ["op_hooks" 0 "fn"])
+                                     (unseal {"op_hooks" [(assoc (hook 2) "ops" ["read"])]}))))))
+    (it "indexes each callable of a registration under its own identity, twins too"
+        (expect (= 3
+                   (count (#'pyx/registration-callables
+                           (unseal {"op_hooks" [(hook 1) (hook 2)] "symbols" [(sym "a" 3)]}))))))
+    (it "gives a callable from a call result no site, so it runs in its own context"
+        (expect (nil? (site (#'pyx/unseal nil {"__vis_callable__" 7}))))
+        (expect (nil? (site (first (#'pyx/unseal nil [{"__vis_callable__" 7}]))))))))
+
+(def ^:private reload-dispatch-tools
+  ;; #415: the tools of the reload fixture as [name definition].
+  {:local-status
+   ["local_status"
+    "def local_status():\n    \"\"\"Report the local status.\"\"\"\n    return \"status 1\"\n"]
+   :local-status-2
+   ["local_status"
+    "def local_status():\n    \"\"\"Report the local status.\"\"\"\n    return \"status 2\"\n"]
+   :local-status-param
+   ["local_status"
+    "def local_status(repo_dir: str = \".\"):\n    \"\"\"Report the local status.\"\"\"\n    return \"status 3\"\n"]
+   :prepare-branch
+   ["prepare_branch"
+    "def prepare_branch():\n    \"\"\"Commit and push a branch.\"\"\"\n    return \"mutated\"\n"]
+   :push-branch ["push_branch"
+                 "def push_branch():\n    \"\"\"Push a branch.\"\"\"\n    return \"pushed\"\n"]})
+
+(defn- reload-dispatch-py
+  "Source of the #415 reload fixture with `tools` in this order."
+  [& tools]
+  (let [tools (map reload-dispatch-tools tools)]
+    (str "import blockether.vis.extension as vis\n\n\n"
+         (str/join "\n\n" (map second tools))
+         "\n\nvis.register_extension(vis.Extension(name=\"reload-dispatch\","
+         " description=\"Reload dispatch fixture.\", alias=\"reload_dispatch\", symbols=["
+         (str/join
+           ", "
+           (map #(str "vis.Symbol("
+                      (first %)
+                      ", activity=vis.Activity(label=\"Run a fixture tool\", show_start=False))")
+                tools))
+         "]))\n")))
+
+(defn- call-after-reload
+  "Call `local_status` of fixture `before` in a session, then reload fixture `after`
+   and call that binding again. Answer both results (#415)."
+  [before after]
+  (with-fresh-loaded
+    {"extension.py" before}
+    (fn [loaded {:keys [ext-dir]}]
+      (expect (= 0 (:failed loaded)) (pr-str (pyx/load-failures)))
+      (let [ctx
+            (:python-context (ep/create-python-context {} nil {:worker? true} nil))
+
+            stale
+            (symbol-fn (registered "reload-dispatch") 'local_status)
+
+            call
+            #(binding [extension/*current-environment* {:python-context ctx :session-id ctx}]
+               (stale))]
+
+        (try (let [first-result (call)]
+               (write-ext! ext-dir "extension.py" after)
+               (expect (= 0 (:failed (pyx/reload-python-extensions! {:dirs [(str ext-dir)]}))))
+               [first-result (call)])
+             (finally (ep/dispose-python-context! ctx)))))))
+
+(defdescribe
+  extension-reload-dispatch-test
+  ;; #415: a reload inserted a tool before `local_status`. The binding of a session
+  ;; from before the reload then ran the inserted tool, a commit and push.
+  (it "runs the same tool when a reload inserts another tool before it"
+      (let [[before after] (call-after-reload
+                             (reload-dispatch-py :local-status :push-branch)
+                             (reload-dispatch-py :prepare-branch :local-status-2 :push-branch))]
+        (expect (= "status 1" (:result before)) (pr-str before))
+        (expect (= "status 2" (:result after)) (pr-str after))))
+  (it "refuses a tool whose declaration a reload changed, and does not heal it"
+      (let [[_ after] (call-after-reload
+                        (reload-dispatch-py :local-status :push-branch)
+                        (reload-dispatch-py :prepare-branch :local-status-param :push-branch))]
+        (expect (nil? (:result after)) (pr-str after))
+        (expect (str/includes? (pr-str after) "changed this callable in a reload") (pr-str after))))
+  (it "refuses a tool that a reload removed"
+      (let [[_ after] (call-after-reload (reload-dispatch-py :local-status :push-branch)
+                                         (reload-dispatch-py :prepare-branch :push-branch))]
+        (expect (nil? (:result after)) (pr-str after))
+        (expect (str/includes? (pr-str after) "has no matching callable") (pr-str after)))))
+
+(defdescribe
   python-human-input-test
   (it
     "vis.ask pauses the extension, then returns typed values with the password kept opaque"

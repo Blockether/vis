@@ -260,40 +260,127 @@
                                 names)))
        (catch Throwable _ nil)))
 
-(def ^:private callable-path-key ::callable-path)
+(def ^:private callable-site-key ::callable-site)
+
+(def ^:private registration-site
+  "The site of a whole registration: the root that `unseal` extends."
+  {:path [] :identity [] :twins []})
+
+(defn- sealed-callable?
+  "True when `x` is the sealed marker of one guest callable."
+  [x]
+  (and (map? x) (= 1 (count x)) (contains? x callable-key)))
+
+(defn- sealed-shape
+  "`x` with one placeholder for each sealed callable. Callable ids follow the seal
+   order, so only this shape compares one declaration across two loads."
+  [x]
+  (cond (sealed-callable? x) ::callable
+        (map? x) (into {}
+                       (map (fn [[k v]]
+                              [k (sealed-shape v)]))
+                       x)
+        (sequential? x) (mapv sealed-shape x)
+        :else x))
+
+(defn- element-label
+  "The label of one registration list element across loads: its marker with its
+   string `id` or `name`, else its whole declared shape (#415)."
+  [shape]
+  (or (when (map? shape)
+        (some (fn [k]
+                (let [v (get shape k)]
+                  (when (string? v) [(get shape "marker") k v])))
+              ["id" "name"]))
+      [::shape shape]))
+
+(defn- element-sites
+  "The site of each element of list `xs` in a registration at `site`. Elements with
+   the same label are twins. The identity step of an element is its label and its
+   ordinal among its twins, and `:twins` adds their count. Its declaration is its
+   sealed shape (#415). Twins match by their ordinal, so a reorder of twins is not
+   visible."
+  [site xs]
+  (let [shapes
+        (mapv sealed-shape xs)
+
+        labels
+        (mapv element-label shapes)
+
+        counts
+        (frequencies labels)]
+
+    (loop [i
+           0
+
+           seen
+           {}
+
+           sites
+           []]
+
+      (if (= i (count xs))
+        sites
+        (let [label
+              (labels i)
+
+              ordinal
+              (long (get seen label 0))]
+
+          (recur (inc i)
+                 (assoc seen label (inc ordinal))
+                 (conj sites
+                       {:path (conj (:path site) i)
+                        :identity (conj (:identity site) [label ordinal])
+                        :twins (conj (:twins site) (counts label))
+                        :declaration (shapes i)})))))))
+
+(defn- callable-site
+  "The registration site of callable `f`, or nil."
+  [f]
+  (get (meta f) callable-site-key))
 
 (defn- unseal
   "Answer `x` with every sealed callable marker replaced by a Clojure fn.
 
-   Registration callables carry their structural path as metadata. A session can
-   evaluate the same admitted registration in its own worker and use that path
-   to select the corresponding callable without registering the extension again."
-  ([sess x] (unseal sess [] x))
-  ([sess path x]
-   (cond (and (map? x) (= 1 (count x)) (contains? x callable-key))
-         (let [cid (str (get x callable-key))]
-           (with-meta
-             (fn [args]
-               (let [keyword-arguments? (::python-host/keyword-arguments (meta (peek args)))
-                     ;; Only the host wire can mark kwargs; positional maps stay data.
-                     [sealed callbacks]
-                     (sealed-args (if keyword-arguments? [(pop args) (peek args)] [args {}]))]
+   With a `site`, `x` is a registration. Each of its callables then carries its site
+   as metadata: the structural `:path`, an `:identity` that names each list element by
+   `element-label` and ordinal, the `:twins` count at each list step, and the
+   `:declaration` of the nearest list element. A session evaluates the same admitted
+   registration in its own worker and uses the site to select the corresponding
+   callable without registering the extension again."
+  ([sess x] (unseal sess nil x))
+  ([sess site x]
+   (cond
+     (sealed-callable? x)
+     (let [cid (str (get x callable-key))]
+       (cond-> (fn [args]
+                 (let [keyword-arguments? (::python-host/keyword-arguments (meta (peek args)))
+                       ;; Only the host wire can mark kwargs; positional maps stay data.
+                       [sealed callbacks]
+                       (sealed-args (if keyword-arguments? [(pop args) (peek args)] [args {}]))]
 
-                 (when (seq callbacks)
-                   (python-host/install-sync-tools! sess callbacks install-sync-tool-in!))
-                 (try (unseal sess
-                              (run-in sess (python-call-expr cid (first sealed) (second sealed))))
-                      (finally (when (seq callbacks) (release-callbacks! sess (keys callbacks)))))))
-             {callable-path-key path}))
-         (map? x) (into {}
-                        (map (fn [[k v]]
-                               [k (unseal sess (conj path k) v)]))
-                        x)
-         (sequential? x) (mapv (fn [i v]
-                                 (unseal sess (conj path i) v))
-                               (range)
-                               x)
-         :else x)))
+                   (when (seq callbacks)
+                     (python-host/install-sync-tools! sess callbacks install-sync-tool-in!))
+                   (try (unseal sess
+                                (run-in sess (python-call-expr cid (first sealed) (second sealed))))
+                        (finally (when (seq callbacks)
+                                   (release-callbacks! sess (keys callbacks)))))))
+         site
+         (with-meta {callable-site-key site})))
+     (map? x) (into {}
+                    (map (fn [[k v]]
+                           [k
+                            (unseal sess
+                                    (some-> site
+                                            (update :path conj k)
+                                            (update :identity conj k))
+                                    v)]))
+                    x)
+     (sequential? x)
+     (let [xs (vec x)]
+       (mapv #(unseal sess %1 %2) (if site (element-sites site xs) (repeat nil)) xs))
+     :else x)))
 
 (defn- call-py
   "Call a Python callable of an extension with marshalled args, answering the
@@ -1294,7 +1381,7 @@
       ctx
       {:snapshot (.getCanonicalPath snap) :calls 0 :project-path (::project-path bound-env)})
     (try (let [sealed (evaluate-extension! ctx label snap entry-path source packages bound-env)]
-           {:context ctx :sealed sealed :registration (unseal ctx sealed)})
+           {:context ctx :sealed sealed :registration (unseal ctx registration-site sealed)})
          (catch Throwable t (discard-context! ctx) (throw t)))))
 
 (defn- deferred-extension-context!
@@ -1332,7 +1419,7 @@
       {:snapshot (.getCanonicalPath snap) :calls 0 :project-path (::project-path bound-env)})
     (swap! pending-contexts assoc ctx open)
     (swap! live-contexts conj ctx)
-    {:context ctx :registration (unseal ctx sealed)}))
+    {:context ctx :registration (unseal ctx registration-site sealed)}))
 
 (defn- source-entry
   [ext-name source-ctx]
@@ -1418,16 +1505,62 @@
                (install-built-context! cache-key row))
              (finally (deliver value true)))))))
 
+(defn- registration-callables
+  "The callables of unsealed `registration` by the `:identity` of their site. Each
+   identity occurs once in a registration (#415)."
+  [registration]
+  (into {}
+        (keep #(when-let [site (and (fn? %) (callable-site %))] [(:identity site) %]))
+        (tree-seq coll? seq registration)))
+
 (defn- context-builder
-  "Build `entry`'s session context in the trusted extension worker of sandbox `worker`."
+  "Build `entry`'s session context in the trusted extension worker of sandbox `worker`.
+   The context also holds its callables by identity, so a call does not walk the
+   registration."
   [worker ext-name entry env]
-  #(initialize-extension-context! (pyext/extension-worker-key worker)
-                                  (str ext-name)
-                                  (io/file (:snapshot entry))
-                                  (:path entry)
-                                  (:source entry)
-                                  (:packages entry)
-                                  (assoc env ::project-path (:project-path entry))))
+  #(let [row
+         (initialize-extension-context! (pyext/extension-worker-key worker)
+                                        (str ext-name)
+                                        (io/file (:snapshot entry))
+                                        (:path entry)
+                                        (:source entry)
+                                        (:packages entry)
+                                        (assoc env ::project-path (:project-path entry)))]
+     (assoc row :callables (registration-callables (:registration row)))))
+
+(defn- session-callable
+  "The callable of session context `local` for the registry callable at `site`.
+
+   A session evaluates the registration in its own environment, and a reload can
+   replace it (#415). So only the callable with the same identity answers, at any
+   path. From another registration, its twin count and its declaration must also be
+   the same. A missing or changed callable fails before guest code runs, with
+   `::callable-refused`."
+  [ext-name source-ctx site local]
+  (let [target
+        (get (:callables local) (:identity site))
+
+        other
+        (callable-site target)
+
+        ;; One registration can show other docs or another count of twins in another
+        ;; environment. So only a registration that replaced the caller's compares them.
+        replaced?
+        (not (identical? source-ctx (:source-context local)))
+
+        reason
+        (cond (or (nil? target) (and replaced? (not= (:twins site) (:twins other)))) :removed
+              (and replaced? (not= (:declaration site) (:declaration other))) :changed)]
+
+    (when reason
+      (throw (ex-info (str "Python extension `"
+                           ext-name
+                           (if (= :removed reason)
+                             "` has no matching callable in this session. Vis did not run it."
+                             (str "` changed this callable in a reload. Vis did not run it."
+                                  " Use it again in a new turn.")))
+                      {:type ::callable-refused :extension ext-name :reason reason})))
+    target))
 
 (defn- session-call-target
   "Resolve a registry callable to the invoking session's trusted extension
@@ -1442,25 +1575,19 @@
         worker
         (env/python-context effective-env)
 
-        path
-        (get (meta source-f) callable-path-key)]
+        site
+        (callable-site source-f)]
 
-    (when (and worker path (not (pyext/worker-live? worker)))
+    (when (and worker site (not (pyext/worker-live? worker)))
       (throw (ex-info "Python extension session is no longer running" {:type ::session-closed})))
-    (if-not (and worker path)
+    (if-not (and worker site)
       [source-ctx source-f]
       (if-let [entry (or (source-entry ext-name source-ctx)
                          (replacement-entry ext-name effective-env))]
-        (let [source-ctx (:context entry)
-              local (session-context! [worker ext-name]
-                                      source-ctx
-                                      (context-builder worker ext-name entry effective-env))
-              target-f (get-in (:registration local) path)]
-
-          (when-not (fn? target-f)
-            (throw (ex-info (str "Python extension callable disappeared at " (pr-str path))
-                            {:extension ext-name :path path})))
-          [(:context local) target-f])
+        (let [local (session-context! [worker ext-name]
+                                      (:context entry)
+                                      (context-builder worker ext-name entry effective-env))]
+          [(:context local) (session-callable ext-name source-ctx site local)])
         (throw (ex-info "Python extension registration was replaced before the call started"
                         {:type ::context-retired}))))))
 
@@ -1609,6 +1736,9 @@
            (catch Throwable t
              (if-let [fresh (and (not *healing-symbol*)
                                  (not (::call-started (ex-data t)))
+                                 ;; A reload removed or changed a refused callable (#415).
+                                 ;; Its name must not run the new version in its place.
+                                 (not= ::callable-refused (:type (ex-data t)))
                                  (context-dead? ctx)
                                  (live-symbol-fn ext-name sym ctx))]
                (binding [*healing-symbol* true]

@@ -834,7 +834,18 @@
           (expect (str/includes? (try (mutate sym) "no error" (catch Exception e (ex-message e)))
                                  "Python name collision:")))
         (expect (= "/workspace/main /workspace/fff\n"
-                   (:stdout (ep/run-python-block ctx "print(project_root_path, fff_path)")))))))
+                   (:stdout (ep/run-python-block ctx "print(project_root_path, fff_path)"))))))
+  (it "keeps reserved names out of a removal of retired bindings"
+      ;; #415: a reload can give the name of a retired tool to a new root.
+      (tpc/with-own [ctx {}]
+                    (ep/bind-ctx! ctx
+                                  {"workspace" {"root" "/workspace/main"
+                                                "filesystem_roots" [{"cwd" "/workspace/fff"
+                                                                     "python_name" "fff_path"}]}})
+                    (expect (= '[gh.runs retired_tool]
+                               (vec (ep/unowned-bindings ctx
+                                                         '[session fff_path fff_path.method gh.runs
+                                                           retired_tool])))))))
 
 (defdescribe
   worker-system-globals-test
