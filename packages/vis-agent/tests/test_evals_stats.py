@@ -1,6 +1,8 @@
 """Tests for the statistics of `blockether.vis.evals`.
 
-The reference values come from SciPy `binomtest` and statsmodels `multipletests`.
+The reference values come from SciPy `binomtest`, statsmodels `multipletests`,
+scikit-learn `cohen_kappa_score`, the PyPI `krippendorff` package, the worked example of
+Krippendorff (2011) and the pass@k formula of Chen et al. (2021).
 """
 
 import pytest
@@ -10,8 +12,11 @@ from blockether.vis.evals import (
     cohen_kappa,
     detectable_change,
     effective_size,
+    krippendorff_alpha,
     mcnemar_exact,
     paired_change,
+    pass_all_k,
+    pass_at_k,
     wilson_interval,
 )
 
@@ -103,3 +108,81 @@ def test_benjamini_hochberg_equals_the_statsmodels_reference(p_values, q_values)
 def test_benjamini_hochberg_refuses_a_value_outside_zero_to_one():
     with pytest.raises(ValueError, match="from 0 to 1"):
         benjamini_hochberg([0.5, 1.5])
+
+
+def test_krippendorff_alpha_matches_the_published_example():
+    # Krippendorff (2011), "Computing Krippendorff's Alpha-Reliability": 4 raters,
+    # 12 units with missing values, nominal alpha 0.743.
+    raters = [
+        [1, 2, 3, 3, 2, 1, 4, 1, 2, None, None, None],
+        [1, 2, 3, 3, 2, 2, 4, 1, 2, 5, None, 3],
+        [None, 3, 3, 3, 2, 3, 4, 2, 2, 5, 1, None],
+        [1, 2, 3, 3, 2, 4, 4, 1, 2, 5, 1, None],
+    ]
+    assert round(krippendorff_alpha(zip(*raters, strict=True)), 3) == 0.743
+
+
+def test_krippendorff_alpha_matches_the_krippendorff_package():
+    samples = [
+        ["write", "write", "verify"],
+        ["understand", "understand", "understand"],
+        ["verify", "write", None],
+        ["other", "other", "other"],
+        ["write", "verify", "verify"],
+    ]
+    assert krippendorff_alpha(samples) == pytest.approx(0.465753, abs=1e-6)
+    first = ["early", "other", "other", "error", "other", "early", "dead", "other"]
+    second = ["early", "other", "early", "error", "other", "other", "dead", "other"]
+    assert krippendorff_alpha(zip(first, second, strict=True)) == pytest.approx(
+        0.642857, abs=1e-6
+    )
+    assert cohen_kappa(list(zip(first, second, strict=True))) == pytest.approx(
+        0.619048, abs=1e-6
+    )
+
+
+def test_krippendorff_alpha_is_undefined_without_pairable_values():
+    assert krippendorff_alpha([]) is None
+    assert krippendorff_alpha([["a"], ["b", None]]) is None
+    # All values are the same, so there is no variation to explain.
+    assert krippendorff_alpha([["a", "a"], ["a", "a"]]) is None
+    assert krippendorff_alpha([["a", "a"], ["b", "b"]]) == 1.0
+    assert krippendorff_alpha([["a", "b"], ["b", "a"]]) < 0
+
+
+def _chen(runs, passed, k):
+    # The numerically stable form of Chen et al. (2021), figure 3.
+    if runs - passed < k:
+        return 1.0
+    product = 1.0
+    for count in range(runs - passed + 1, runs + 1):
+        product *= 1 - k / count
+    return 1 - product
+
+
+def test_pass_at_k_matches_the_formula_of_chen_et_al():
+    for runs in range(1, 12):
+        for passed in range(runs + 1):
+            for k in range(1, runs + 1):
+                assert pass_at_k(runs, passed, k) == pytest.approx(
+                    _chen(runs, passed, k)
+                )
+    assert pass_at_k(10, 3, 5) == pytest.approx(1 - 21 / 252)
+    assert pass_at_k(5, 2, 1) == pytest.approx(0.4)
+
+
+def test_pass_all_k_is_the_chance_that_k_draws_all_pass():
+    assert pass_all_k(10, 6, 3) == pytest.approx(20 / 120)
+    assert pass_all_k(4, 4, 4) == 1.0
+    assert pass_all_k(4, 3, 4) == 0.0
+    assert pass_all_k(5, 2, 1) == pytest.approx(0.4)
+
+
+@pytest.mark.parametrize(
+    ("runs", "passed", "k"), [(3, 4, 1), (3, -1, 1), (3, 1, 0), (3, 1, 4)]
+)
+def test_pass_at_k_rejects_impossible_counts(runs, passed, k):
+    with pytest.raises(ValueError):
+        pass_at_k(runs, passed, k)
+    with pytest.raises(ValueError):
+        pass_all_k(runs, passed, k)

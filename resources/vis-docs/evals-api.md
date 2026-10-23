@@ -27,6 +27,7 @@ requests, select **HTTP** at the top of the page.
 - **A script must create benchmark tasks.** [Write a task](#write-a-task).
 - **A script must run the tasks and score each new round.** [Run the tasks](#run-the-tasks),
   [summarize the round](#summarize-a-round), then [score it](#score-a-round).
+- **A script must save all numbers of a round in one file.** [Report a round](#report-a-round).
 - **Your dashboard must show why tasks fail.** [Find the failure causes](#find-the-failure-causes).
 - **A reviewer labels failed attempts, and you must check the automatic causes.** [Check the
   labels](#check-the-labels).
@@ -76,6 +77,7 @@ work, for example from a computer without the job folders.
 |---|---|---|
 | Write a task | `write_task(dataset, name, instruction, checks)` | None |
 | Run the tasks | `run_tasks(path, model)` | None |
+| Report a round | `round_report(jobs_dir, dataset_dir)` | None |
 | List the tasks of a dataset | `read_tasks(dataset)` | None |
 | Summarize a round | `round_summary(jobs_dir, dataset_dir, model=...)` | None |
 | Score a round | `bench_report(summary)` | `post_evals_report(body=...)` |
@@ -186,7 +188,53 @@ HARBOR_TELEMETRY=off harbor run --path tasks \
 </div>
 
 Harbor writes the job folder `jobs/first`. [Read the results](evals.md#step-5-read-the-results)
-describes its files.
+describes its files. After the run, `run_tasks` also writes the [round report](#report-a-round)
+to `jobs/first/vis-report.json`. Give `report=False` to skip it.
+
+## Report a round
+
+<div data-variant="python">
+
+```python
+from pathlib import Path
+
+from blockether.vis.evals import REPORT_FILE, render_report, round_report
+
+full = round_report("jobs/first", "tasks")
+print(render_report(full))
+for row in full.repeats:
+    print(row.k, row.pass_at_k_percent, row.pass_all_k_percent)
+print(Path("jobs/first", REPORT_FILE).exists())  # True, run_tasks wrote it
+```
+
+`round_report` reads the job folder once and gives a `RoundReport`:
+
+| Field | Content |
+|---|---|
+| `score` | The [`bench_report`](#score-a-round) of the round. |
+| `repeats` | One row for each k: `k`, `tasks`, `pass_at_k_percent` and `pass_all_k_percent`. |
+| `diagnosis` | The [`diagnose`](#find-the-failure-causes) result, with the `label_check` of `labels.json`. |
+| `judge` | The stage agreement of a judge, or `None` without `judge_stages.json`. |
+
+`labels`, `judge_dir` and `stage_labels` change the paths of the
+[label files](evals.md#check-the-causes-with-labels). `write_report(full, path)` writes the JSON.
+It raises `FileNotFoundError` when the folder holds no trial.
+
+</div>
+
+<div data-variant="http">
+
+No route reads job folders. Run the report command on the computer that has the job folder:
+
+```bash
+python -m blockether.vis.evals.report jobs/first --tasks tasks --json
+```
+
+</div>
+
+The repeat rows use the unbiased estimators of
+[Repeated attempts](evals.md#repeated-attempts). To compute them for your own counts, use
+`pass_at_k(runs, passed, k)` and `pass_all_k(runs, passed, k)`.
 
 ## Summarize a round
 
@@ -322,8 +370,9 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/labels" \
 
 </div>
 
-The answer has the `labelled` count, the `agreement_percent`, the `kappa`, the `disagreements` and
-the `advice`. The advice uses the [kappa limits](evals.md#check-the-causes-with-labels).
+The answer has the `labelled` count, the `agreement_percent`, the `kappa`, the Krippendorff
+`alpha`, the `disagreements` and the `advice`. The advice uses the [kappa
+limits](evals.md#check-the-causes-with-labels).
 
 To check other automatic results, for example the stages of a judge, send your own items:
 
@@ -360,6 +409,11 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/evals/agreement" \
 </div>
 
 `source`, `noun`, `labeller` and `fix` are optional. They change only the words of the advice.
+
+To check repeated samples of one judge, use `sample_alpha(samples)`. It maps each trial name to
+the results of its samples and gives Krippendorff's alpha. `alpha_advice(alpha)` gives the advice
+for the [alpha limits](evals.md#check-a-judge). For other data with missing values, use
+`krippendorff_alpha(units)`. Each unit is a list of values, with `None` for a missing value.
 
 ## Compare two runs
 

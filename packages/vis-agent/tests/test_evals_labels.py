@@ -4,9 +4,11 @@ import pytest
 from blockether.vis.evals import (
     MIN_LABELS,
     agreement,
+    alpha_advice,
     kappa_advice,
     majority,
     sample_agreement,
+    sample_alpha,
 )
 
 _ADVICE = {"noun": "stages", "labeller": "label_stage()", "fix": "Fix the rubric."}
@@ -74,3 +76,39 @@ def test_sample_agreement_counts_only_repeated_items():
     assert sample_agreement({"a": ["write"]}) is None
     found = {"a": ["write", "write"], "b": ["write", "verify"], "c": ["other"]}
     assert sample_agreement(found) == 50.0
+
+
+def test_agreement_gives_krippendorff_alpha_next_to_kappa():
+    result = agreement(_items(30, wrong=3), source="judge", **_ADVICE)
+    assert result.kappa == 0.85
+    # Alpha pools the values of both sides, so it differs from kappa. The PyPI
+    # `krippendorff` package gives 0.8525 for the same pairs.
+    assert result.alpha == 0.853
+    assert agreement([], source="judge", **_ADVICE).alpha is None
+
+
+def test_sample_alpha_corrects_the_sample_agreement_for_chance():
+    samples = {
+        "a": ["write", "write", "verify"],
+        "b": ["understand", "understand", "understand"],
+        "c": ["verify", "write"],
+        "d": ["other", "other", "other"],
+        "e": ["write", "verify", "verify"],
+    }
+    # The PyPI `krippendorff` package gives 0.466 for the same samples.
+    assert sample_alpha(samples) == 0.466
+    assert sample_agreement(samples) == 40.0
+    assert sample_alpha({"a": ["write"], "b": ["verify"]}) is None
+
+
+@pytest.mark.parametrize(
+    ("alpha", "start"),
+    [
+        (None, "Alpha is undefined."),
+        (0.5, "Alpha 0.50 is below 0.667."),
+        (0.7, "Alpha 0.70 supports only tentative conclusions."),
+        (0.9, "Alpha 0.90 is at least 0.8."),
+    ],
+)
+def test_alpha_advice_follows_the_limits_of_krippendorff(alpha, start):
+    assert alpha_advice(alpha).startswith(start)

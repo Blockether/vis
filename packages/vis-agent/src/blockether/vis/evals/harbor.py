@@ -492,6 +492,7 @@ def run_tasks(
     attempts: int = 1,
     concurrency: int = 1,
     agent_options: Mapping[str, str] | None = None,
+    report: bool = True,
 ) -> Path:
     """Run the tasks in `path` with the Vis agent on this host and return the job folder.
 
@@ -502,10 +503,14 @@ def run_tasks(
     of trials that run at the same time. `agent_options` are the agent options of
     `harbor run --ak`, for example `{"source": "/path/to/vis"}`. The call sets
     `HARBOR_TELEMETRY=off`, so Harbor sends no usage data. Each trial makes paid
-    model calls. Call it outside a running event loop.
+    model calls. Call it outside a running event loop. With `report`, the call then
+    writes the round report `vis-report.json` in the job folder, as
+    `python -m blockether.vis.evals.report` does. A report error gives a warning and
+    keeps the job folder.
     """
     import asyncio
     import os
+    import warnings
 
     from harbor.job import Job
     from harbor.models.job.config import JobConfig
@@ -541,4 +546,15 @@ def run_tasks(
         await job.run()
         return job.job_dir
 
-    return asyncio.run(run())
+    job_dir = Path(asyncio.run(run()))
+    if report:
+        from .reports import REPORT_FILE, round_report, write_report
+
+        dataset = None if (root / TASK_FILE).is_file() else root
+        try:
+            write_report(
+                round_report(job_dir, dataset, model=model), job_dir / REPORT_FILE
+            )
+        except (OSError, ValueError) as error:
+            warnings.warn(f"no round report for {job_dir}: {error}", stacklevel=2)
+    return job_dir

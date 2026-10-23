@@ -16,7 +16,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .bench import NOTE_LIMIT
-from .labels import STAGES, agreement, majority, sample_agreement
+from .labels import (
+    STAGES,
+    agreement,
+    alpha_advice,
+    majority,
+    sample_agreement,
+    sample_alpha,
+)
 
 __all__ = [
     "StageAgreement",
@@ -49,16 +56,21 @@ class StageAgreement:
 
     `stages` names the judged stage of each trial: the most common stage of its samples.
     `sample_agreement_percent` is the share of trials whose samples all agree, or None
-    with one sample. `kappa` and `advice` follow the limits of `labels`.
+    with one sample. `sample_alpha` is Krippendorff's alpha of the samples, corrected for
+    agreement by chance, and `sample_advice` applies its limits. `kappa`, `alpha` and
+    `advice` compare the judged stages with the labels, with the limits of `labels`.
     """
 
     judged: int
     errors: int
     stages: tuple[str, ...]
     sample_agreement_percent: float | None
+    sample_alpha: float | None
+    sample_advice: str
     labelled: int
     agreement_percent: float | None
     kappa: float | None
+    alpha: float | None
     disagreements: tuple[str, ...]
     advice: str
 
@@ -167,14 +179,18 @@ def stage_agreement(
         labeller="save_stage_label()",
         fix="Correct the judge rubric first.",
     )
+    consistency = sample_alpha(samples)
     return StageAgreement(
         judged=len(judged),
         errors=errors,
         stages=tuple(f"{trial}: {stage}" for trial, stage in judged.items()),
         sample_agreement_percent=sample_agreement(samples),
+        sample_alpha=consistency,
+        sample_advice=alpha_advice(consistency, noun="judge samples"),
         labelled=found.labelled,
         agreement_percent=found.agreement_percent,
         kappa=found.kappa,
+        alpha=found.alpha,
         disagreements=found.disagreements,
         advice=found.advice,
     )

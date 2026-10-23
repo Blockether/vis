@@ -64,6 +64,9 @@ def test_stage_agreement_uses_the_majority_of_the_samples():
     assert found.errors == 2
     assert found.stages == ("a__1: write", "b__1: verify")
     assert found.sample_agreement_percent == 50.0
+    # The PyPI `krippendorff` package gives 0.333 for the same samples.
+    assert found.sample_alpha == 0.333
+    assert found.sample_advice.startswith("Alpha 0.33 is below 0.667.")
     assert found.labelled == 2
     assert found.agreement_percent == 50.0
     assert found.disagreements == ("b__1: judge verify, label write",)
@@ -76,4 +79,6 @@ def test_stage_agreement_without_labels_asks_for_labels():
     assert found.labelled == 0
     assert found.kappa is None
     assert found.sample_agreement_percent is None
+    assert (found.sample_alpha, found.alpha) == (None, None)
+    assert found.sample_advice.startswith("Alpha is undefined.")
     assert "save_stage_label()" in found.advice

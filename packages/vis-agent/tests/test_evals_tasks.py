@@ -25,6 +25,8 @@ from blockether.vis.evals import (
     write_task,
 )
 from blockether.vis.evals._gateway import handle
+from blockether.vis.evals.report import main as report_main
+from blockether.vis.evals.reports import REPORT_FILE
 
 E2E = Path(__file__).parents[3] / "e2e"
 MODEL = "stub-provider/stub-model"
@@ -180,6 +182,43 @@ def test_artifacts_keep_the_call_record_of_a_mock(tmp_path, monkeypatch):
     manifest = json.loads((folder / "artifacts/manifest.json").read_text())
     status = {row["source"]: row["status"] for row in manifest}
     assert (status["payload-calls.jsonl"], status["missing.jsonl"]) == ("ok", "failed")
+
+
+def test_run_tasks_writes_the_round_report_with_repeats(tmp_path, monkeypatch, capsys):
+    # The stub solves add-c in each attempt and never solves add-c-later, so each
+    # pass@k and pass^k is 50% and the report shows the same rate for every k.
+    for name in ("VIS_PROVIDER", "VIS_MODEL", "VIS_REASONING_EFFORT"):
+        monkeypatch.delenv(name, raising=False)
+    dataset = tmp_path / "tasks"
+    write_add_c(dataset, "add-c", "In m.py add a new function c that returns 3.")
+    write_add_c(dataset, "add-c-later", "Read m.py and wait.")
+    job = run_tasks(
+        dataset,
+        MODEL,
+        jobs_dir=tmp_path / "jobs",
+        job_name="repeats",
+        attempts=3,
+        concurrency=2,
+        agent_options={"command": stub_engine(tmp_path / "engine.py")},
+    )
+    saved = json.loads((job / REPORT_FILE).read_text())
+    assert saved["score"]["pass_rate_percent"] == 50.0
+    assert saved["score"]["attempts_per_task"] == 3
+    assert [
+        (row["k"], row["pass_at_k_percent"], row["pass_all_k_percent"])
+        for row in saved["repeats"]
+    ] == [(1, 50.0, 50.0), (2, 50.0, 50.0), (3, 50.0, 50.0)]
+    assert [finding["kind"] for finding in saved["diagnosis"]["findings"]] == [
+        "early_stops"
+    ]
+    # Harbor reads the job folder again with the report file in it.
+    assert len(read_trials(job)) == 6
+
+    assert report_main([str(job), "--tasks", str(dataset), "--no-write"]) == 0
+    text = capsys.readouterr().out
+    assert "Pass rate          1/2 tasks  50.0%" in text
+    assert "  3  2      50.0%   50.0%" in text
+    assert "Cause labels: 0 labels" in text
 
 
 def test_write_task_keeps_an_existing_task(tmp_path):
@@ -353,13 +392,16 @@ def test_the_python_examples_of_the_api_page_run(tmp_path, monkeypatch):
     monkeypatch.setattr(evals, "run_tasks", run_with_stub)
     monkeypatch.chdir(tmp_path)
     blocks = variant_blocks("evals-api.md", "python", "python")
-    assert len(blocks) == 10
+    assert len(blocks) == 11
     namespace: dict = {}
     for block in blocks:
         if "read_leaderboard(" not in block:
             exec(compile(block, "evals-api.md", "exec"), namespace)
     assert namespace["task"].name == "add-function"
     assert namespace["job"] == Path("jobs/first")
+    assert namespace["full"].score.solved_tasks == 0
+    assert [row.k for row in namespace["full"].repeats] == [1]
+    assert (namespace["job"] / evals.REPORT_FILE).exists()
     assert namespace["summary"]["task_outcomes"] == {"failed_tests": ["add-function"]}
     assert json.loads(Path("summary.json").read_text()) == namespace["summary"]
     assert namespace["report"].pass_rate_percent == 0.0

@@ -87,8 +87,9 @@ class BenchReport:
     `_ci95` value is a 95% Wilson interval in percent. A second round of the same size
     cannot detect a change below `detectable_change_points`. `attempts_per_task` is the
     most common scored attempt count of a task. When it is more than one,
-    `pass_at_k_percent` and `pass_all_k_percent` give the share of tasks that solved at
-    least one or all of their first attempts, up to that count. Otherwise they are None.
+    `pass_at_k_percent` and `pass_all_k_percent` give the unbiased pass@k and pass^k with
+    that count as k: the chance that at least one or all of k attempts solve a task.
+    Each task uses all its scored attempts. Otherwise they are None.
     `unstable_tasks` lists tasks with mixed results. `estimated_metered_cost_usd` and
     `cost_per_solved_usd` use metered API prices. They are not subscription charges.
     """

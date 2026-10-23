@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from blockether.vis.evals import HarborTrial, repeat_stats, task_attempts
 
 
@@ -57,3 +58,23 @@ def test_repeat_stats_without_repeats_has_no_pass_at_k():
     empty = repeat_stats({})
     assert (empty.attempts_per_task, empty.attempt_pass_rate) == (0, None)
     assert empty.attempt_pass_rate_ci95 is None
+
+
+def test_repeat_stats_uses_every_attempt_for_an_unbiased_estimate():
+    # Task a has 4 attempts with 2 solved, so pass@2 = 1 - C(2,2)/C(4,2) = 5/6 and
+    # pass^2 = C(2,2)/C(4,2) = 1/6. The first two attempts alone would give 1 and 0.
+    stats = repeat_stats({"a": [True, True, False, False], "b": [True, False]})
+    assert (stats.attempts_per_task, stats.k) == (4, 4)
+    stats = repeat_stats({"a": [True, True, False, False], "b": [True, False]}, 2)
+    assert stats.k == 2
+    assert stats.pass_at_k == pytest.approx((5 / 6 + 1) / 2)
+    assert stats.pass_all_k == pytest.approx((1 / 6 + 0) / 2)
+
+
+def test_repeat_stats_with_k_one_gives_the_mean_task_pass_rate():
+    stats = repeat_stats({"a": [True, False, False, False], "b": [True]}, 1)
+    assert stats.pass_at_k == pytest.approx((1 / 4 + 1) / 2)
+    assert stats.pass_all_k == stats.pass_at_k
+    assert repeat_stats({"a": [True]}, 2).pass_at_k is None
+    with pytest.raises(ValueError):
+        repeat_stats({"a": [True]}, 0)

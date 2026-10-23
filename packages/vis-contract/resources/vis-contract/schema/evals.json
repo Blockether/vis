@@ -580,7 +580,7 @@
       "additionalProperties": false
     },
     "agreement": {
-      "description": "The agreement of automatic results with human labels, with Cohen kappa and advice.",
+      "description": "The agreement of automatic results with human labels, with Cohen kappa, Krippendorff alpha and advice.",
       "type": "object",
       "properties": {
         "labelled": {
@@ -593,6 +593,12 @@
           ]
         },
         "kappa": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "alpha": {
           "type": [
             "number",
             "null"
@@ -612,6 +618,7 @@
         "labelled",
         "agreement_percent",
         "kappa",
+        "alpha",
         "disagreements",
         "advice"
       ],

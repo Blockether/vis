@@ -10,7 +10,9 @@ Count the trials with `case_results` or `summarize`. Seal a finished round with
 then score and diagnose it with `bench_report` and `diagnose`. Keep human cause labels
 with `save_label`. Place a round on a Harbor Hub board with `read_leaderboard`. Check
 automatic causes against human labels with `agreement`, and judge stages with
-`stage_agreement`. For installation and sessions, use the
+`stage_agreement`. Estimate pass@k and pass^k with `pass_at_k` and `pass_all_k`, and
+the agreement of several raters with `krippendorff_alpha`. Build all of it for one
+round with `round_report`, or run `python -m blockether.vis.evals.report`. For installation and sessions, use the
 [Python SDK guide](https://vis.blockether.com/python-sdk.html).
 """
 
@@ -55,15 +57,19 @@ from .harbor import (
     write_task,
 )
 from .labels import (
+    ALPHA_RELIABLE,
+    ALPHA_TENTATIVE,
     KAPPA_REVIEW,
     KAPPA_TRUST,
     MIN_LABELS,
     STAGES,
     Agreement,
     agreement,
+    alpha_advice,
     kappa_advice,
     majority,
     sample_agreement,
+    sample_alpha,
 )
 from .leaderboard import (
     LEADERBOARD_URL,
@@ -75,6 +81,14 @@ from .leaderboard import (
     standing,
 )
 from .repeats import RepeatStats, repeat_stats, task_attempts
+from .reports import (
+    REPORT_FILE,
+    RepeatRow,
+    RoundReport,
+    render_report,
+    round_report,
+    write_report,
+)
 from .rounds import round_summary
 from .stages import (
     StageAgreement,
@@ -91,8 +105,11 @@ from .stats import (
     cohen_kappa,
     detectable_change,
     effective_size,
+    krippendorff_alpha,
     mcnemar_exact,
     paired_change,
+    pass_all_k,
+    pass_at_k,
     wilson_interval,
 )
 from .trajectory import (
@@ -107,6 +124,8 @@ from .trajectory import (
 )
 
 __all__ = [
+    "ALPHA_RELIABLE",
+    "ALPHA_TENTATIVE",
     "CAUSES",
     "EARLY_STOP_SHARE",
     "KAPPA_REVIEW",
@@ -115,6 +134,7 @@ __all__ = [
     "MIN_LABELS",
     "NEAR_MISS_RATIO",
     "NOTE_LIMIT",
+    "REPORT_FILE",
     "STAGES",
     "Agreement",
     "BenchReport",
@@ -128,7 +148,9 @@ __all__ = [
     "Leaderboard",
     "LeaderboardRow",
     "OutcomeCount",
+    "RepeatRow",
     "RepeatStats",
+    "RoundReport",
     "RouteTest",
     "RunSummary",
     "StageAgreement",
@@ -143,6 +165,7 @@ __all__ = [
     "VisStanding",
     "agent_limits",
     "agreement",
+    "alpha_advice",
     "attempt_cause",
     "attempt_outcome",
     "bench_report",
@@ -159,6 +182,7 @@ __all__ = [
     "judge_errors",
     "judged_samples",
     "kappa_advice",
+    "krippendorff_alpha",
     "latest_trials",
     "leaderboard_row",
     "load_labels",
@@ -168,14 +192,19 @@ __all__ = [
     "mcnemar_exact",
     "paired_change",
     "parse_trajectory",
+    "pass_all_k",
+    "pass_at_k",
     "read_leaderboard",
     "read_tasks",
     "read_trial",
     "read_trials",
+    "render_report",
     "repeat_stats",
+    "round_report",
     "round_summary",
     "run_tasks",
     "sample_agreement",
+    "sample_alpha",
     "save_label",
     "save_stage_label",
     "seal_digest",
@@ -188,5 +217,6 @@ __all__ = [
     "task_attempts",
     "task_note",
     "wilson_interval",
+    "write_report",
     "write_task",
 ]

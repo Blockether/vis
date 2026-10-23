@@ -1,16 +1,26 @@
-"""Statistics for evaluation results: intervals, power, paired tests and multiple tests.
+"""Statistics for evaluation results: intervals, power, pass@k, paired tests and agreement.
 
 Each rate, interval and change is a fraction from 0 to 1. A unit is the
 `(passed, runs)` count of one case, for example one task on one route. The repeats of
 one unit are not independent, so the cluster interval and the power use an effective
 size between the unit count and the run count.
+
+References:
+
+- Miller, "Adding Error Bars to Evals", 2024, arXiv:2411.00640: cluster intervals,
+  paired changes and power.
+- Chen et al., "Evaluating Large Language Models Trained on Code", 2021,
+  arXiv:2107.03374: the unbiased pass@k estimator.
+- Yao et al., "tau-bench", 2024, arXiv:2406.12045: pass^k.
+- Cohen, "A Coefficient of Agreement for Nominal Scales", 1960.
+- Krippendorff, "Computing Krippendorff's Alpha-Reliability", 2011.
 """
 
 from __future__ import annotations
 
 import math
 from collections import Counter
-from collections.abc import Hashable, Sequence
+from collections.abc import Hashable, Iterable, Sequence
 
 __all__ = [
     "Z95",
@@ -20,8 +30,11 @@ __all__ = [
     "cohen_kappa",
     "detectable_change",
     "effective_size",
+    "krippendorff_alpha",
     "mcnemar_exact",
     "paired_change",
+    "pass_all_k",
+    "pass_at_k",
     "wilson_interval",
 ]
 
@@ -136,6 +149,69 @@ def cohen_kappa(pairs: Sequence[tuple[Hashable, Hashable]]) -> float | None:
     if expected >= 1:
         return None
     return (observed - expected) / (1 - expected)
+
+
+def krippendorff_alpha(units: Iterable[Sequence[Hashable | None]]) -> float | None:
+    """Return Krippendorff's alpha of nominal values, or None when it is undefined.
+
+    Each unit holds the values that the raters gave one item. None is a missing value.
+    A unit with fewer than two values does not count. Alpha is 1 for full agreement, 0
+    for agreement by chance, and below 0 for less agreement than chance. It is
+    undefined without two values in one unit, or when all values are the same.
+    """
+    pairs: Counter = Counter()
+    for unit in units:
+        values = Counter(value for value in unit if value is not None)
+        size = sum(values.values())
+        if size < 2:
+            continue
+        for first, count in values.items():
+            for second, other in values.items():
+                same = 1 if first == second else 0
+                pairs[first, second] += count * (other - same) / (size - 1)
+    totals: Counter = Counter()
+    for (first, _), weight in pairs.items():
+        totals[first] += weight
+    total = sum(totals.values())
+    if total <= 1:
+        return None
+    observed = sum(weight for (a, b), weight in pairs.items() if a != b)
+    expected = sum(totals[a] * totals[b] for a in totals for b in totals if a != b) / (
+        total - 1
+    )
+    if not expected:
+        return None
+    return 1 - observed / expected
+
+
+def _check_counts(runs: int, passed: int, k: int) -> None:
+    if not 0 <= passed <= runs:
+        raise ValueError("passed must be from 0 to runs")
+    if not 0 < k <= runs:
+        raise ValueError("k must be from 1 to runs")
+
+
+def pass_at_k(runs: int, passed: int, k: int) -> float:
+    """Return the unbiased estimate of pass@k from `passed` solved of `runs` attempts.
+
+    pass@k is the chance that at least one of `k` attempts solves the task. The estimate
+    uses all `runs` attempts, not only the first `k`. Raises `ValueError` unless
+    `0 <= passed <= runs` and `1 <= k <= runs`.
+    """
+    _check_counts(runs, passed, k)
+    if runs - passed < k:
+        return 1.0
+    return 1 - math.comb(runs - passed, k) / math.comb(runs, k)
+
+
+def pass_all_k(runs: int, passed: int, k: int) -> float:
+    """Return the unbiased estimate of pass^k from `passed` solved of `runs` attempts.
+
+    pass^k is the chance that all of `k` attempts solve the task. The limits of
+    `pass_at_k` apply.
+    """
+    _check_counts(runs, passed, k)
+    return math.comb(passed, k) / math.comb(runs, k)
 
 
 def mcnemar_exact(worse: int, better: int) -> float:
