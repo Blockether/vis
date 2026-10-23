@@ -147,6 +147,9 @@ export function docSandbox(mime: string | undefined): string {
 /** The message a framed page sends when the reader follows one of its links. */
 const DOC_LINK_MESSAGE = 'vis-doc-open';
 
+/** The message a framed page sends when one of its own scripts fails. */
+const DOC_ERROR_MESSAGE = 'vis-doc-error';
+
 /** The schemes a framed page can hand to the browser: web pages and mail. */
 const OPENABLE_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
@@ -160,10 +163,60 @@ const OPENABLE_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
  * any external link: a new `noopener` tab, or the system browser on the desktop.
  * A link to `#section` stays in the page, and a page that prevents the click keeps it.
  *
+ * THE PAGE'S OWN ERRORS LEAVE TOO (#418). The frame has no origin, so a page that
+ * reads `localStorage`, `sessionStorage` or `document.cookie` gets a SecurityError.
+ * A single-file application often reads them before it paints, and it then stops
+ * with an empty body. The script puts an in-memory stand-in in place of each store
+ * that the browser refuses, so such a page still runs. The stand-in lives only as
+ * long as the frame, and it gives the page no access outside the frame. Each
+ * uncaught error or rejection still goes to the app, which shows it over the frame.
+ *
  * The source has no `<` and no `&`, so it is also well-formed inside an XHTML page.
  */
 export const DOC_LINK_BRIDGE = `(function (w) {
   var d = w.document;
+  function memory() {
+    var items = Object.create(null);
+    return {
+      get length() { return Object.keys(items).length; },
+      key: function (i) { var k = Object.keys(items)[i]; return k === undefined ? null : k; },
+      getItem: function (k) { k = String(k); return k in items ? items[k] : null; },
+      setItem: function (k, v) { items[String(k)] = String(v); },
+      removeItem: function (k) { delete items[String(k)]; },
+      clear: function () { items = Object.create(null); }
+    };
+  }
+  function stand(name) {
+    try { w[name]; return; } catch (e) {}
+    try { Object.defineProperty(w, name, { value: memory(), configurable: true }); } catch (e) {}
+  }
+  stand('localStorage');
+  stand('sessionStorage');
+  try { d.cookie; } catch (e) {
+    var jar = Object.create(null);
+    try {
+      Object.defineProperty(d, 'cookie', {
+        configurable: true,
+        get: function () {
+          return Object.keys(jar).map(function (k) { return k + '=' + jar[k]; }).join('; ');
+        },
+        set: function (raw) {
+          var text = String(raw), pair = text.split(';')[0], at = pair.indexOf('=');
+          var name = (at === -1 ? '' : pair.slice(0, at)).trim();
+          if (/;\\s*max-age\\s*=\\s*(0|-)/i.test(text)) delete jar[name];
+          else jar[name] = (at === -1 ? pair : pair.slice(at + 1)).trim();
+        }
+      });
+    } catch (e) {}
+  }
+  function fault(message) {
+    w.parent.postMessage({ type: '${DOC_ERROR_MESSAGE}', message: String(message).slice(0, 300) }, '*');
+  }
+  w.addEventListener('error', function (e) { fault(e.message || e.error); });
+  w.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason;
+    fault(r instanceof w.Error ? r.name + ': ' + r.message : r);
+  });
   function send(raw) {
     var href;
     try { href = new URL(String(raw), d.baseURI).href; } catch (e) { return false; }
@@ -219,11 +272,20 @@ export function docLinkHref(data: unknown): string | null {
   }
 }
 
+/** The error that a framed page reported, or null for any other message. */
+export function docErrorText(data: unknown): string | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const { type, message } = data as { type?: unknown; message?: unknown };
+  if (type !== DOC_ERROR_MESSAGE || typeof message !== 'string' || !message.trim()) return null;
+  return message.trim().slice(0, 300);
+}
+
 /**
  * The artifact itself, quarantined: markup renders in its own opaque-origin
- * frame, with no gateway credential and no parent callback. Its one message
- * to the app is a followed link, which the app opens only from this frame,
- * only for a web or mail URL and only while the reader's click is active.
+ * frame, with no gateway credential and no parent callback. It sends the app
+ * two messages. A followed link opens only from this frame, only for a web or
+ * mail URL and only while the reader's click is active. The page's first error
+ * shows as text over the frame, so a blank page has a reason (#418).
  */
 export const DocFrame = memo(function DocFrame({
   url,
@@ -239,6 +301,7 @@ export const DocFrame = memo(function DocFrame({
   // A markup page is framed from its own copy that carries the link bridge.
   // The shared attachment URL stays as it is for every other view.
   const [bridged, setBridged] = useState<{ from: string; url: string } | null>(null);
+  const [error, setError] = useState<{ from: string; text: string } | null>(null);
   useEffect(() => {
     if (!markup) return;
     let alive = true;
@@ -264,6 +327,12 @@ export const DocFrame = memo(function DocFrame({
     const onMessage = (event: MessageEvent) => {
       const own = frame.current?.contentWindow;
       if (!own || event.source !== own) return;
+      const text = docErrorText(event.data);
+      if (text) {
+        // The first error is the cause; the ones after it usually follow from it.
+        setError((shown) => (shown?.from === url ? shown : { from: url, text }));
+        return;
+      }
       const href = docLinkHref(event.data);
       if (!href) return;
       // A page script without a click cannot open tabs or the system browser.
@@ -272,18 +341,26 @@ export const DocFrame = memo(function DocFrame({
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, []);
+  }, [url]);
   const src = markup ? (bridged?.from === url ? bridged.url : undefined) : url;
+  const fault = error?.from === url ? error.text : null;
   return (
-    <iframe
-      ref={frame}
-      title={name}
-      src={src}
-      sandbox={docSandbox(mime)}
-      referrerPolicy="no-referrer"
-      loading="lazy"
-      className="min-h-0 w-full flex-1 border-0 bg-input"
-    />
+    <>
+      {fault ? (
+        <p role="alert" className="break-words px-2 py-1 font-mono text-chip text-footer-muted">
+          This page reported an error: {fault}
+        </p>
+      ) : null}
+      <iframe
+        ref={frame}
+        title={name}
+        src={src}
+        sandbox={docSandbox(mime)}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        className="min-h-0 w-full flex-1 border-0 bg-input"
+      />
+    </>
   );
 });
 

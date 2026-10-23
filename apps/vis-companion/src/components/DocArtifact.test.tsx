@@ -10,6 +10,7 @@ import {
   DOC_LINK_BRIDGE,
   DocStack,
   OverlayScreen,
+  docErrorText,
   docLinkHref,
   docSandbox,
   docStackSummary,
@@ -179,6 +180,54 @@ describe('links in a framed page', () => {
     frame.remove();
   });
 
+  // Regression #418: a single-file app read localStorage in the opaque frame, got a
+  // SecurityError and painted nothing under its fixed banner.
+  it('stands in for each store that the sandbox refuses and keeps one that works', () => {
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const win = frame.contentWindow as Window & typeof globalThis;
+    const refuse = () => {
+      throw new DOMException('The document is sandboxed', 'SecurityError');
+    };
+    Object.defineProperty(win, 'localStorage', { get: refuse, configurable: true });
+    Object.defineProperty(win.document, 'cookie', { get: refuse, set: refuse, configurable: true });
+    const session = win.sessionStorage;
+    new Function('window', DOC_LINK_BRIDGE)(win);
+    win.localStorage.setItem('theme', 'dark');
+    expect(win.localStorage.getItem('theme')).toBe('dark');
+    expect(win.localStorage.getItem('other')).toBeNull();
+    expect(win.localStorage.length).toBe(1);
+    expect(win.localStorage.key(0)).toBe('theme');
+    win.localStorage.clear();
+    expect(win.localStorage.length).toBe(0);
+    expect(win.sessionStorage).toBe(session);
+    win.document.cookie = 'a=1; path=/';
+    win.document.cookie = 'b=2';
+    expect(win.document.cookie).toBe('a=1; b=2');
+    win.document.cookie = 'a=; max-age=0';
+    expect(win.document.cookie).toBe('b=2');
+    frame.remove();
+  });
+
+  it("sends the page's uncaught errors and rejections to the app", () => {
+    const { frame, win, posted } = bridgedFrame();
+    win.dispatchEvent(new win.ErrorEvent('error', { message: 'Uncaught TypeError: Invalid URL' }));
+    expect(posted).toHaveBeenCalledWith({ type: 'vis-doc-error', message: 'Uncaught TypeError: Invalid URL' }, '*');
+    const rejection = Object.assign(new win.Event('unhandledrejection'), { reason: new win.Error('no data') });
+    win.dispatchEvent(rejection);
+    expect(posted).toHaveBeenCalledWith({ type: 'vis-doc-error', message: 'Error: no data' }, '*');
+    frame.remove();
+  });
+
+  it('accepts only a non-empty error text', () => {
+    expect(docErrorText({ type: 'vis-doc-error', message: ' boom ' })).toBe('boom');
+    expect(docErrorText({ type: 'vis-doc-error', message: 'x'.repeat(400) })).toHaveLength(300);
+    expect(docErrorText({ type: 'vis-doc-error', message: ' ' })).toBeNull();
+    expect(docErrorText({ type: 'vis-doc-error', message: 1 })).toBeNull();
+    expect(docErrorText({ type: 'vis-doc-open', message: 'boom' })).toBeNull();
+    expect(docErrorText(null)).toBeNull();
+  });
+
   async function framedDoc() {
     const made: Blob[] = [];
     const create = URL.createObjectURL;
@@ -233,6 +282,20 @@ describe('links in a framed page', () => {
       delete (navigator as { userActivation?: unknown }).userActivation;
     }
     expect(opened).not.toHaveBeenCalled();
+    restore();
+  });
+
+  // Regression #418: the page stopped on an error and the viewer showed only its banner.
+  it("shows the frame's first error over the page", async () => {
+    const { send, restore } = await framedDoc();
+    expect(screen.queryByRole('alert')).toBeNull();
+    send({ type: 'vis-doc-error', message: 'boom' }, window);
+    expect(screen.queryByRole('alert')).toBeNull();
+    send({ type: 'vis-doc-error', message: "Uncaught SecurityError: Failed to read 'localStorage'" });
+    send({ type: 'vis-doc-error', message: 'Uncaught TypeError: later' });
+    expect(screen.getByRole('alert').textContent).toBe(
+      "This page reported an error: Uncaught SecurityError: Failed to read 'localStorage'",
+    );
     restore();
   });
 });
