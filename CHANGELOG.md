@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `install-vis-agent --version beta-<commit>` and `vis-agent update beta-<commit>` install exactly that published beta. A missing, incomplete or unverified beta stops the installation and never falls back to the latest beta (#409).
+
 ### Removed
-- Vis no longer sends warm requests to keep the provider prompt cache alive. The `prompt_cache_keepalive` setting is gone.
+- The `prompt_cache_keepalive` setting is gone. Vis always keeps the provider prompt cache warm during a running turn.
 
 ## [v0.3.2] - 2026-10-22
 
