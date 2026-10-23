@@ -2684,6 +2684,36 @@ describe('steps between progress notes', () => {
     expect(traces(painted.container)).toHaveLength(1);
   });
 
+  // Regression, session 3f76ce62: a long shell wait ran inside a closed digest, so the
+  // phone showed neither the running step nor its code for five minutes.
+  it('keeps the running step and its code below a closed live digest', () => {
+    const done = { source: 'print(1)', duration_ms: 45 };
+    const painted = render(
+      <IterationTrace
+        whole
+        showCode
+        live
+        iterations={[{ id: 'run', forms: [done, { source: 'wait_for_seal()' }] }]}
+      />,
+    );
+    const digest = painted.getByRole('button', { name: /^Expand steps/ });
+    expect(digest).toHaveAttribute('aria-expanded', 'false');
+    expect(painted.container.textContent).toContain('wait_for_seal()');
+    expect(painted.container.textContent).not.toContain('print(1)');
+    expect(painted.getByRole('button', { name: 'Collapse code' })).toBeInTheDocument();
+    painted.rerender(
+      <IterationTrace
+        whole
+        showCode
+        live
+        iterations={[
+          { id: 'run', forms: [done, { source: 'wait_for_seal()', duration_ms: 300_000 }] },
+        ]}
+      />,
+    );
+    expect(painted.container.textContent).not.toContain('wait_for_seal()');
+  });
+
   // Regression: thinking flashed outside the digest until the step's code arrived.
   it.each([false, true])('folds thinking without code into a THINKING row (live: %s)', (live) => {
     const thought = 'Plan the queue change.';

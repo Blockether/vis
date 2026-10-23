@@ -12055,6 +12055,37 @@ print(paths)"
             ;; Source and message stay collapsed until the reader opens them.
             (expect (= -1 (at source)))
             (expect (= -1 (at "is not defined")))))))
+    ;; Regression, session 3f76ce62: a long shell wait ran inside a closed digest, so the
+    ;; reader saw neither the running step nor its code until it settled.
+    (it "keeps the running step of a live turn below its closed digest"
+        (let [steps
+              (fn [running]
+                [{:iteration-id "i1"
+                  :forms [{:code "print('done')" :success? true :duration-ms 45}
+                          (merge {:code "wait_for_seal()"} running)]}])
+
+              render
+              (fn [running live?]
+                (#'render/trace-render-entries
+                 {:iterations (steps running)
+                  :live? live?
+                  :content-w 76
+                  :session-id "s"
+                  :session-turn-id "t"
+                  :settings {:summarize-steps true}}))
+
+              text
+              (fn [entries]
+                (str/join "\n" (map (comp strip-ansi :line) entries)))]
+
+          (let [running (text (render {} true))]
+            (expect (str/includes? running "RAW EXECUTION") running)
+            (expect (str/includes? running "wait_for_seal()") running)
+            (expect (not (str/includes? running "print('done')")) running))
+          ;; The settled step folds into the digest, and a settled turn keeps no running step.
+          (expect (not (str/includes? (text (render {:success? true :duration-ms 300000} true))
+                                      "CODE")))
+          (expect (not (str/includes? (text (render {} false)) "CODE")))))
     ;; Regression, user report: thinking flashed outside the digest until the step's code
     ;; arrived. Thinking alone now folds into a THINKING row, which becomes the digest.
     (it

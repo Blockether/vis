@@ -1515,6 +1515,7 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   interrupted,
   hasActivity,
   duration,
+  initiallyOpen = false,
   children,
 }: {
   value: string;
@@ -1523,9 +1524,11 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
   interrupted: boolean;
   hasActivity: boolean;
   duration: string | null;
+  /** Open the source at mount. The reader's toggle wins after that. */
+  initiallyOpen?: boolean;
   children: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyOpen);
   const lineCount = value ? value.split('\n').length : 0;
   const interruptionLabel = interrupted ? <BandTally> (interrupted)</BandTally> : null;
   return (
@@ -1795,6 +1798,7 @@ const FormTrace = memo(function FormTrace({
   live = false,
   rises = false,
   showCode,
+  openCode = false,
   liveViews,
   attachments,
   client,
@@ -1805,6 +1809,8 @@ const FormTrace = memo(function FormTrace({
   /** Rise into place. Only a call streamed while the reader watches rises. */
   rises?: boolean;
   showCode: boolean;
+  /** Show the source at mount, as for the running step beside a closed digest. */
+  openCode?: boolean;
   liveViews: LiveViewModel[];
   attachments: IterationAttachment[];
   client?: GatewayClient;
@@ -1852,6 +1858,7 @@ const FormTrace = memo(function FormTrace({
           showCode={showCode && Boolean(code)}
           interrupted={showInterruptionInCode}
           hasActivity={hasActivity}
+          initiallyOpen={openCode}
           duration={formatDuration(form.duration_ms)}
         >
           {stdout && <ToolCard form={{ stdout }} embedded />}
@@ -3159,6 +3166,22 @@ const TraceSegment = memo(function TraceSegment({
   // digest that its code joins later. Mirrors the TUI (`render/render-step-digests`).
   const digest = summarize && (chunks.length > 0 || thinking.length > 0);
   const expanded = !digest || open;
+  // Live, a closed digest keeps the step that runs now below its row, with its code and
+  // Activity, so the reader sees that the work started. The step folds in when it settles.
+  // Mirrors the TUI (`render/render-step-digests`).
+  const shownChunks = useMemo(
+    () =>
+      expanded
+        ? chunks
+        : live
+          ? chunks.flatMap((chunk): Chunk[] => {
+              if (chunk.kind !== 'code') return [];
+              const running = chunk.forms.filter((form) => formStep(form, live).running);
+              return running.length ? [{ ...chunk, key: `${chunk.key}-running`, forms: running }] : [];
+            })
+          : [],
+    [chunks, expanded, live],
+  );
   // The digest keeps one control for its live views and recordings in both disclosure states.
   // Mirrors the TUI (`render/step-digest-lives`).
   const lives = useMemo(() => {
@@ -3221,9 +3244,9 @@ const TraceSegment = memo(function TraceSegment({
       {/* Chunk-to-chunk breathing room: each chunk is one call (its program
           glued to its own results), so the ONLY whitespace in the stack
           falls BETWEEN calls. */}
-      {expanded && chunks.length > 0 && (
+      {shownChunks.length > 0 && (
         <div className="grid min-w-0 gap-2.5">
-          {chunks.map((chunk) => {
+          {shownChunks.map((chunk) => {
             return (
               <div key={chunk.key} className="relative min-w-0">
                 {chunk.kind === 'code' ? (
@@ -3232,6 +3255,7 @@ const TraceSegment = memo(function TraceSegment({
                     live={live}
                     rises={live && chunk.step > restoredThrough}
                     showCode={showCode || !chunk.isPython}
+                    openCode={!expanded}
                     liveViews={liveViews}
                     attachments={attachments}
                     client={client}

@@ -8052,12 +8052,13 @@
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?
-            show-python-code? summarize-steps? digest-closed? bubble-w]
+            show-python-code? summarize-steps? digest-closed? code-open? bubble-w]
      :or {show-header? false
           live-preview? false
           show-python-code? true
           summarize-steps? true
-          digest-closed? false}}]]
+          digest-closed? false
+          code-open? false}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
@@ -8430,7 +8431,7 @@
 
                 code-expanded?
                 (or (nil? code-node-id)
-                    (detail-expanded? detail-expansions session-id code-node-id false))
+                    (detail-expanded? detail-expansions session-id code-node-id code-open?))
 
                 c-lines
                 (when (and show-execution-details? (not (str/blank? code-text)))
@@ -9533,15 +9534,25 @@
                   :col (- (long (p/display-width text))
                           (long (p/display-width (:label live)))))))}]))
 
+(defn- running-step-form?
+  "True while a form has no verdict, no error and no settled Activity."
+  [form]
+  (and (nil? (:success? form))
+       (not (:error form))
+       (not (contains? #{"succeeded" "failed" "cancelled"}
+                       (some-> (get-in form [:activity :state])
+                               name)))))
+
 (defn- render-step-digests
   "Summarized steps: each progress note stays, and its steps fold into one digest row.
    An open digest shows the thinking, code, Activity and errors of the steps, without the note.
    A closed digest keeps only files below its row, which also opens the live views.
+   In a live turn, a closed digest keeps its running forms below its row until they settle.
    Steps before the first note fold the same way. Thinking without forms folds into a
    THINKING row, so it never shows outside the digest that its code joins later. A note
    without forms or thinking keeps its own rows."
   [visible-iterations show-silent? show-thinking?
-   {:keys [session-id session-turn-id detail-expansions]}]
+   {:keys [session-id session-turn-id detail-expansions live?]}]
   (let [segments (reduce (fn [segments [_ entry :as pair]]
                            (let [step {:pair pair
                                        :entry (visible-iteration-entry entry show-silent?)}]
@@ -9550,53 +9561,59 @@
                                (update segments (dec (count segments)) conj step))))
                          []
                          visible-iterations)]
-    (into []
-          (mapcat
-            (fn [steps]
-              (let [{[head-idx] :pair head :entry} (first steps)
-                    forms (into [] (mapcat (comp :forms :entry)) steps)
-                    errors (keep (fn [{:keys [entry]}]
-                                   (let [error (:error entry)]
-                                     (when (and (map? error)
-                                                (not-any? #(= (error-map-signature error)
-                                                              (error-map-signature (:error %)))
-                                                          (:forms entry)))
-                                       error)))
-                                 steps)
-                    note (step-note head)
-                    pairs (mapv :pair steps)
-                    thinking? (and show-thinking? (some (comp not-empty :thinking :entry) steps))]
+    (into
+      []
+      (mapcat
+        (fn [steps]
+          (let [{[head-idx] :pair head :entry} (first steps)
+                forms (into [] (mapcat (comp :forms :entry)) steps)
+                errors (keep (fn [{:keys [entry]}]
+                               (let [error (:error entry)]
+                                 (when (and (map? error)
+                                            (not-any? #(= (error-map-signature error)
+                                                          (error-map-signature (:error %)))
+                                                      (:forms entry)))
+                                   error)))
+                             steps)
+                note (step-note head)
+                pairs (mapv :pair steps)
+                thinking? (and show-thinking? (some (comp not-empty :thinking :entry) steps))]
 
-                (if (and (empty? forms) (not thinking?))
-                  pairs
-                  (let [node-id (detail-node-id {:session-turn-id session-turn-id
-                                                 :iteration-number (inc (long head-idx))
-                                                 :section :iteration
-                                                 :kind :digest})
-                        open? (detail-expanded? detail-expansions session-id node-id false)
-                        closed (fn [[idx entry]]
-                                 [[idx
+            (if (and (empty? forms) (not thinking?))
+              pairs
+              (let [node-id (detail-node-id {:session-turn-id session-turn-id
+                                             :iteration-number (inc (long head-idx))
+                                             :section :iteration
+                                             :kind :digest})
+                    open? (detail-expanded? detail-expansions session-id node-id false)
+                    closed (fn [[idx entry]]
+                             (let [running (when live? (filterv running-step-form? (:forms entry)))]
+                               [[idx
+                                 (if (seq running)
                                    (-> entry
                                        (dissoc :thinking)
-                                       (assoc ::digest-closed? true))]])]
+                                       (assoc :forms running
+                                              ::code-open? true))
+                                   (-> entry
+                                       (dissoc :thinking)
+                                       (assoc ::digest-closed? true)))]]))]
 
-                    (concat (when note
-                              [[head-idx
-                                {:iteration-id (:iteration-id head) :assistant-prose note}]])
-                            [[head-idx
-                              {::digest {:forms forms
-                                         :errors errors
-                                         :node-id node-id
-                                         :open? open?
-                                         :lives (step-digest-lives steps forms)}}]]
-                            ;; The note renders once, above its digest.
-                            (render-iteration-entries
-                              (update-in pairs [0 1] dissoc :assistant-prose :content-stream)
-                              (if open? vector closed)
-                              show-silent?
-                              show-thinking?
-                              true)))))))
-          segments)))
+                (concat (when note
+                          [[head-idx {:iteration-id (:iteration-id head) :assistant-prose note}]])
+                        [[head-idx
+                          {::digest {:forms forms
+                                     :errors errors
+                                     :node-id node-id
+                                     :open? open?
+                                     :lives (step-digest-lives steps forms)}}]]
+                        ;; The note renders once, above its digest.
+                        (render-iteration-entries
+                          (update-in pairs [0 1] dissoc :assistant-prose :content-stream)
+                          (if open? vector closed)
+                          show-silent?
+                          show-thinking?
+                          true)))))))
+      segments)))
 
 (defn- render-adjacent-thinking-entries
   "Join reasoning across iteration groups whose remaining output is invisible."
@@ -9674,6 +9691,7 @@
             (let [visible (visible-iteration-entry entry show-silent?)
                   stripped (if show-thinking? visible (dissoc visible :thinking))
                   digest-closed? (boolean (::digest-closed? entry))
+                  code-open? (boolean (::code-open? entry))
                   iter-num (inc (long idx))
                   detail-scope-opts {:section :iteration
                                      :iteration-number iter-num
@@ -9684,7 +9702,7 @@
                      (iteration-fingerprint stripped) (long content-w) bubble-w
                      show-iteration-headers? (boolean show-thinking?) (boolean show-silent?)
                      (get settings :show-python-code true) summarize-steps? digest-closed?
-                     session-id session-turn-id
+                     code-open? session-id session-turn-id
                      ;; Tool-badge / op-row disclosures are keyed
                      ;; `iter<N>:t<frag>:op<M>` — scoped by the TURN
                      ;; token, NOT the `iteration:t<frag>:i<N>` base
@@ -9700,6 +9718,7 @@
                               :show-python-code? (get settings :show-python-code true)
                               :summarize-steps? summarize-steps?
                               :digest-closed? digest-closed?
+                              :code-open? code-open?
                               :session-id session-id
                               :session-turn-id session-turn-id
                               :detail-expansions detail-expansions
@@ -9718,7 +9737,8 @@
                                           show-thinking?
                                           {:session-id session-id
                                            :session-turn-id session-turn-id
-                                           :detail-expansions detail-expansions})
+                                           :detail-expansions detail-expansions
+                                           :live? live?})
                      (render-iteration-entries visible-iterations
                                                vector
                                                show-silent?
