@@ -562,6 +562,28 @@ function withEngine(path: string, engine?: string | null): string {
 
 /** Router rows per gateway base URL, shared by every screen and client instance. */
 const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
+
+/**
+ * The router cache key of a gateway, or of one session context on it. A session context
+ * reads the providers of that session's project (#410).
+ */
+function routerKey(base: string, contextSessionId?: string): string {
+  return contextSessionId ? `${base}\n${contextSessionId}` : base;
+}
+
+/** Every router cache key of the gateway at `base`, with or without a session context. */
+function routerKeys(base: string): string[] {
+  return [...new Set([...routerCache.keys(), ...routerInflight.keys()])].filter(
+    (key) => key === base || key.startsWith(`${base}\n`),
+  );
+}
+
+/** Add the session whose project decides the providers that only projects register (#410). */
+function withContextSession(path: string, contextSessionId?: string): string {
+  if (!contextSessionId) return path;
+  const join = path.includes('?') ? '&' : '?';
+  return `${path}${join}context_session_id=${encodeURIComponent(contextSessionId)}`;
+}
 const providerLimitsListeners = new Map<
   string,
   Set<(providerId: string, limits: ProviderLimits) => void>
@@ -2844,22 +2866,30 @@ export class GatewayClient {
    * has. Without it every relaunch opened Providers on `Checking provider
    * sign-in…` for a payload that only moves when somebody signs in or out.
    */
-  cachedRouter(): RouterProvider[] | null {
+  cachedRouter(contextSessionId?: string): RouterProvider[] | null {
+    // A session context paints the machine rows until its own read lands.
+    const own = contextSessionId
+      ? routerCache.get(routerKey(this.base, contextSessionId))?.rows
+      : undefined;
     return (
-      routerCache.get(this.base)?.rows ?? readSnapshot<RouterProvider[]>(this.snapshotKey('router'))
+      own ??
+      routerCache.get(this.base)?.rows ??
+      readSnapshot<RouterProvider[]>(this.snapshotKey('router'))
     );
   }
 
   /** True when the cached rows are younger than the TTL. */
-  isRouterFresh(): boolean {
-    const entry = routerCache.get(this.base);
+  isRouterFresh(contextSessionId?: string): boolean {
+    const entry = routerCache.get(routerKey(this.base, contextSessionId));
     return !!entry && Date.now() - entry.at < ROUTER_TTL_MS;
   }
 
   /** Forget the cached fleet so the next read re-probes the daemon. */
   invalidateRouter(): void {
-    routerCache.delete(this.base);
-    routerInflight.delete(this.base);
+    for (const key of routerKeys(this.base)) {
+      routerCache.delete(key);
+      routerInflight.delete(key);
+    }
     // The seed goes with it: a provider just signed out of must never paint as
     // signed in on the next open, which is exactly what a kept snapshot would
     // do until the re-probe landed.
@@ -2884,10 +2914,13 @@ export class GatewayClient {
       if (seen.includes(reloadId)) return;
       seenReloads.set(key, [...seen, reloadId].slice(-SEEN_RELOADS_LIMIT));
     }
-    const entry = routerCache.get(key);
-    if (entry) routerCache.set(key, { ...entry, at: 0 });
-    // A read that started before the reload can carry the old fleet.
-    routerInflight.delete(key);
+    // Session context rows go stale too. Their lists read them again on this refresh.
+    for (const stale of routerKeys(key)) {
+      const entry = routerCache.get(stale);
+      if (entry) routerCache.set(stale, { ...entry, at: 0 });
+      // A read that started before the reload can carry the old fleet.
+      routerInflight.delete(stale);
+    }
     void this.router(undefined, { probe: 'changed' })
       .then((rows) => {
         for (const receive of routerRefreshListeners.get(key) ?? []) receive(rows);
@@ -2930,9 +2963,10 @@ export class GatewayClient {
    */
   async router(
     signal?: AbortSignal,
-    opts?: { force?: boolean; probe?: 'changed' },
+    opts?: { force?: boolean; probe?: 'changed'; contextSessionId?: string },
   ): Promise<RouterProvider[]> {
-    const key = this.base;
+    const context = opts?.contextSessionId;
+    const key = routerKey(this.base, context);
     if (opts?.force) this.invalidateRouter();
     else if (!opts?.probe) {
       const entry = routerCache.get(key);
@@ -2943,14 +2977,18 @@ export class GatewayClient {
     // daemon one probe, and an aborted caller never cancels the others.
     let inflight = routerInflight.get(key);
     if (!inflight) {
-      const path = opts?.probe === 'changed' ? '/v1/router?probe=changed' : '/v1/router';
+      const path = withContextSession(
+        opts?.probe === 'changed' ? '/v1/router?probe=changed' : '/v1/router',
+        context,
+      );
       const read: Promise<RouterProvider[]> = this.request<{ providers: RouterProvider[] }>('GET', path)
         .then((response) => {
           const rows = response.providers;
           // A newer read replaced this one, for example after an extension reload.
           if (routerInflight.get(key) !== read) return rows;
           routerCache.set(key, { at: Date.now(), rows });
-          writeSnapshot(this.snapshotKey('router'), rows);
+          // The cold-start seed holds machine rows only.
+          if (!context) writeSnapshot(this.snapshotKey('router'), rows);
           return rows;
         })
         .finally(() => {
@@ -3191,11 +3229,17 @@ export class GatewayClient {
     return pref;
   }
 
-  /** Begin OAuth. Device and reachable browser callbacks finish through polling. */
-  startProviderAuth(providerId: string): Promise<AuthFlow> {
+  /**
+   * Begin OAuth. Device and reachable browser callbacks finish through polling. A
+   * `contextSessionId` signs in the provider of that session's project (#410).
+   */
+  startProviderAuth(providerId: string, contextSessionId?: string): Promise<AuthFlow> {
     return this.request<AuthFlow>(
       'POST',
-      `/v1/providers/${encodeURIComponent(providerId)}/auth/start`,
+      withContextSession(
+        `/v1/providers/${encodeURIComponent(providerId)}/auth/start`,
+        contextSessionId,
+      ),
     );
   }
 
@@ -3255,29 +3299,37 @@ export class GatewayClient {
    * the fresh verdict back into the cached row — no full re-probe of every
    * provider, and no screen left painting the stale dot.
    */
-  async providerStatus(providerId: string, signal?: AbortSignal): Promise<ProviderStatus> {
+  async providerStatus(
+    providerId: string,
+    signal?: AbortSignal,
+    contextSessionId?: string,
+  ): Promise<ProviderStatus> {
     const response = await this.request<{ status?: ProviderStatus }>(
       'GET',
-      `/v1/providers/${encodeURIComponent(providerId)}/status`,
+      withContextSession(`/v1/providers/${encodeURIComponent(providerId)}/status`, contextSessionId),
       undefined,
       signal,
     );
     const status = response.status;
     if (!status) throw new Error(`Provider status response is missing status for ${providerId}`);
-    this.mergeCachedProvider(providerId, { status });
+    this.mergeCachedProvider(providerId, { status }, contextSessionId);
     return status;
   }
 
   /** Live quota report for one provider (`GET /v1/providers/:id/limits`). */
-  async providerLimits(providerId: string, signal?: AbortSignal): Promise<ProviderLimits> {
+  async providerLimits(
+    providerId: string,
+    signal?: AbortSignal,
+    contextSessionId?: string,
+  ): Promise<ProviderLimits> {
     const response = await this.request<{ report?: ProviderLimits }>(
       'GET',
-      `/v1/providers/${encodeURIComponent(providerId)}/limits`,
+      withContextSession(`/v1/providers/${encodeURIComponent(providerId)}/limits`, contextSessionId),
       undefined,
       signal,
     );
     const limits = response.report ?? {};
-    this.mergeCachedProvider(providerId, { limits });
+    this.mergeCachedProvider(providerId, { limits }, contextSessionId);
     for (const receive of providerLimitsListeners.get(this.base) ?? []) receive(providerId, limits);
     return limits;
   }
@@ -3352,10 +3404,15 @@ export class GatewayClient {
   }
 
   /** Keep the shared router cache honest after a single-provider re-probe. */
-  private mergeCachedProvider(providerId: string, patch: Partial<RouterProvider>): void {
-    const entry = routerCache.get(this.base);
+  private mergeCachedProvider(
+    providerId: string,
+    patch: Partial<RouterProvider>,
+    contextSessionId?: string,
+  ): void {
+    const key = routerKey(this.base, contextSessionId);
+    const entry = routerCache.get(key);
     if (!entry) return;
-    routerCache.set(this.base, {
+    routerCache.set(key, {
       at: entry.at,
       rows: entry.rows.map((row) => (row.id === providerId ? { ...row, ...patch } : row)),
     });

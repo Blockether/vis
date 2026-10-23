@@ -129,6 +129,11 @@
             (auth-health/reauthenticate! provider-id (provider-descriptor provider-id) nil lines))
    :settle #(signed-in! provider-id)})
 
+(defn- bound-legs
+  "Flow legs that keep the caller's provider context on worker and callback threads (#410)."
+  [legs]
+  (update-vals legs #(if (fn? %) (bound-fn* %) %)))
+
 (defn- provider-view
   [result]
   (if-let [flow (:flow result)]
@@ -181,18 +186,19 @@
           :else (try (provider-view
                        (auth-flow/start!
                          [:provider provider-id]
-                         (if interactive
-                           (interactive-legs provider-id)
-                           {:start (or start
-                                       (fn []
-                                         {:kind :api-key
-                                          :instructions (api-key-instructions provider-id)}))
-                            :complete (if start
-                                        complete
-                                        (fn [_ value]
-                                          (providers/save-provider-api-key! provider-id value)))
-                            :await await
-                            :settle #(signed-in! provider-id)})))
+                         (bound-legs
+                           (if interactive
+                             (interactive-legs provider-id)
+                             {:start (or start
+                                         (fn []
+                                           {:kind :api-key
+                                            :instructions (api-key-instructions provider-id)}))
+                              :complete (if start
+                                          complete
+                                          (fn [_ value]
+                                            (providers/save-provider-api-key! provider-id value)))
+                              :await await
+                              :settle #(signed-in! provider-id)}))))
                      (catch Throwable _
                        {:ok? false
                         :error :auth-start-failed

@@ -290,6 +290,12 @@
                 (when (contains? providers id) root)))
         @project-providers))
 
+(def ^:dynamic *provider-root*
+  "The project whose catalog a request without a workspace uses first, or nil. Machine
+   settings opened from a session bind the session's project (#410). Only provider
+   lookups read it: configuration and the workspace stay at machine scope."
+  nil)
+
 (defn- project-only-provider
   "The descriptor of `id` when exactly one project catalog registers it, else nil.
    Two projects can register one ID with different credentials, so this never
@@ -300,11 +306,14 @@
 
 (defn provider-by-id
   "Lookup a provider in the calling project's catalog, then the global catalog.
-   A machine request binds no project. It also finds a provider that exactly one
-   project registers, so machine settings can sign it in (#410)."
+   A machine request binds no project. It then reads the `*provider-root*` project,
+   then the only project that registers `id`, so machine settings can sign it in (#410)."
   [id]
   (or (get (effective-providers) id)
-      (when (nil? workspace/*workspace-root*) (project-only-provider id))))
+      (when (nil? workspace/*workspace-root*)
+        (or (when-let [root (workspace/normalize-root *provider-root*)]
+              (get-in @project-providers [root :providers id]))
+            (project-only-provider id)))))
 
 (defonce command-registry
   ;; Vector preserves registration order, which then becomes the

@@ -359,10 +359,13 @@ export interface ProviderAuth extends ProviderFleet {
  * them honest. This is all a model picker needs — signing in is a different
  * job, and lives in `useProviderAuth` below.
  */
-export function useProviderFleet(client: GatewayClient): ProviderFleet {
+export function useProviderFleet(client: GatewayClient, contextSessionId?: string): ProviderFleet {
   // Paint whatever the shared router cache already holds (prefetched at
   // connect time) so a screen opens instantly; `reload` revalidates under it.
-  const [providers, setProviders] = useState<RouterProvider[] | null>(() => client.cachedRouter());
+  // A session context reads the providers of that session's project (#410).
+  const [providers, setProviders] = useState<RouterProvider[] | null>(() =>
+    client.cachedRouter(contextSessionId),
+  );
   const [err, setErrMessage] = useState<ProviderMessage | null>(null);
   const [note, setNoteMessage] = useState<ProviderMessage | null>(null);
   const [pending, setPending] = useState<string | null>(null);
@@ -381,7 +384,10 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
   const reload = useCallback(
     async (signal?: AbortSignal, opts?: { force?: boolean }) => {
       try {
-        const rows = await client.router(signal, opts);
+        const rows = await client.router(
+          signal,
+          contextSessionId ? { ...opts, contextSessionId } : opts,
+        );
         if (signal?.aborted) return;
         setProviders(rows);
         setErr(null);
@@ -391,7 +397,7 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
         setProviders([]);
       }
     },
-    [client, setErr, setProviders],
+    [client, contextSessionId, setErr, setProviders],
   );
 
   const refresh = useCallback(async () => {
@@ -454,10 +460,15 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
   useEffect(
     () =>
       onRouterRefresh(client.base, (rows) => {
+        // These are machine rows. A session context reads its own rows again.
+        if (contextSessionId) {
+          void reload();
+          return;
+        }
         setProviders(rows);
         setErr(null);
       }),
-    [client, setErr],
+    [client, contextSessionId, reload, setErr],
   );
 
   return {
@@ -482,8 +493,8 @@ export function useProviderFleet(client: GatewayClient): ProviderFleet {
  * polling. A reachable loopback receiver can deliver the browser result; other
  * clients retain manual URL entry. No token or PKCE verifier lands here.
  */
-export function useProviderAuth(client: GatewayClient): ProviderAuth {
-  const fleet = useProviderFleet(client);
+export function useProviderAuth(client: GatewayClient, contextSessionId?: string): ProviderAuth {
+  const fleet = useProviderFleet(client, contextSessionId);
   const { setProviders, setErr, setNote, setPending, reload } = fleet;
   const [flow, setFlow] = useState<AuthFlow | null>(null);
   const [redirectUrl, setRedirectUrl] = useState('');
@@ -554,7 +565,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
       setRedirectUrl('');
       setApiKey('');
       try {
-        const started = await client.startProviderAuth(provider.id);
+        const started = await client.startProviderAuth(provider.id, contextSessionId);
         if (generation !== startGeneration.current) {
           void client.cancelProviderAuth(started.provider_id, started.flow_id).catch(() => {});
           return;
@@ -569,7 +580,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
         if (generation === startGeneration.current) setPending(null);
       }
     },
-    [client, setErr, setFlow, setNote, setPending, stopPolling, watchFlow],
+    [client, contextSessionId, setErr, setFlow, setNote, setPending, stopPolling, watchFlow],
   );
 
   /**
@@ -585,8 +596,8 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
       setPending(`status:${providerId}`);
       try {
         const [status, limits] = await Promise.all([
-          client.providerStatus(providerId),
-          client.providerLimits(providerId).catch(() => null),
+          client.providerStatus(providerId, undefined, contextSessionId),
+          client.providerLimits(providerId, undefined, contextSessionId).catch(() => null),
         ]);
         setProviders(
           (rows) =>
@@ -600,7 +611,7 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
         setPending(null);
       }
     },
-    [client, setErr, setPending, setProviders],
+    [client, contextSessionId, setErr, setPending, setProviders],
   );
 
   const resetLimits = useCallback(

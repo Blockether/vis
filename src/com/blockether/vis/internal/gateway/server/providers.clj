@@ -3,8 +3,10 @@
    authentication, status, limits and routing."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.gateway.server.http :as http]
+            [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.provider.auth :as provider-auth]
             [com.blockether.vis.internal.provider.catalog :as catalog]
@@ -617,20 +619,40 @@
              (http/error-response 409 :provider-managed (ex-message e))
              (throw e))))))
 
+(defn- context-root
+  "The project root of the optional `context_session_id` session, or nil. An unknown
+   session keeps machine scope."
+  [request]
+  (when-let [sid (not-empty (get-in request [:query-params "context_session_id"]))]
+    (when-let [db (lp/db-info)]
+      (try (:root (scoped/target db "session" sid)) (catch clojure.lang.ExceptionInfo _ nil)))))
+
+(defn- with-provider-context
+  "Wrap `handler` so that its provider lookups read the project catalog of the
+   `context_session_id` session first (#410). Several projects can register one provider
+   ID. Configuration and the workspace stay at machine scope."
+  [handler]
+  (fn [request]
+    (if-let [root (context-root request)]
+      (binding [registry/*provider-root* root]
+        (handler request))
+      (handler request))))
+
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/models"] models-handler
    [:post "/v1/providers"] add-provider-handler
    [:get "/v1/provider-presets"] provider-presets-handler
    [:delete "/v1/providers/:provider-id"] remove-provider-handler
-   [:get "/v1/providers/:provider-id/status"] provider-status-handler
-   [:get "/v1/providers/:provider-id/limits"] provider-limits-handler
+   [:get "/v1/providers/:provider-id/status"] (with-provider-context provider-status-handler)
+   [:get "/v1/providers/:provider-id/limits"] (with-provider-context provider-limits-handler)
    [:post "/v1/providers/:provider-id/reset-credits/consume"] provider-consume-reset-credit-handler
-   [:get "/v1/providers/:provider-id/models"] provider-models-handler
-   [:post "/v1/providers/:provider-id/auth/start"] provider-auth-start-handler
+   [:get "/v1/providers/:provider-id/models"] (with-provider-context provider-models-handler)
+   [:post "/v1/providers/:provider-id/auth/start"] (with-provider-context
+                                                     provider-auth-start-handler)
    [:post "/v1/providers/:provider-id/auth/complete"] provider-auth-complete-handler
    [:post "/v1/providers/:provider-id/auth/poll"] provider-auth-poll-handler
    [:post "/v1/providers/:provider-id/auth/cancel"] provider-auth-cancel-handler
-   [:post "/v1/providers/:provider-id/logout"] provider-logout-handler
-   [:get "/v1/router"] router-handler
+   [:post "/v1/providers/:provider-id/logout"] (with-provider-context provider-logout-handler)
+   [:get "/v1/router"] (with-provider-context router-handler)
    [:patch "/v1/router"] router-default-handler})

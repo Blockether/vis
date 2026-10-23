@@ -3414,7 +3414,62 @@
                (expect (= 409 (:status response)))
                (expect (str/includes? (:body response) "ambiguous-provider")))
              (finally (doseq [root roots]
-                        (registry/set-project-providers! root [] #{})))))))
+                        (registry/set-project-providers! root [] #{}))))))
+  (it
+    "uses the project of the context session when several projects register the provider"
+    (let [roots
+          ["/tmp/vis-410-context-a" "/tmp/vis-410-context-b"]
+
+          id
+          :issue-410-context
+
+          route
+          #(get providers-api/handlers %)
+
+          request
+          {:path-params {:provider-id (name id)}
+           :query-params {"context_session_id" "session-in-a"}}]
+
+      (doseq [root roots]
+        (registry/set-project-providers! root [{:provider/id id :provider/label root}] #{}))
+      (try
+        (with-redefs [providers-api/context-root
+                      #(when (= "session-in-a" (get-in % [:query-params "context_session_id"]))
+                         (first roots))
+
+                      providers/configured-providers-cached
+                      (constantly [{:id id :models []}])
+
+                      providers/configured-providers
+                      (constantly [{:id id :models []}])
+
+                      providers/provider-status
+                      (constantly {:is-authenticated false})
+
+                      providers/provider-limits-safe
+                      (constantly {})]
+
+          (let [start
+                ((route [:post "/v1/providers/:provider-id/auth/start"]) request)
+
+                flow
+                (wire/parse-json (:body start))
+
+                rows
+                (get (wire/parse-json (:body ((route [:get "/v1/router"]) request))) "providers")
+
+                machine
+                ((route [:post "/v1/providers/:provider-id/auth/start"])
+                  (update request :query-params dissoc "context_session_id"))]
+
+            (expect (= 200 (:status start)))
+            (expect (= "api-key" (get flow "kind")))
+            (provider-auth/cancel-auth! (get flow "flow_id"))
+            (expect (= ["api-key"]
+                       (keep #(when (= (name id) (get % "id")) (get % "auth_kind")) rows)))
+            (expect (= 409 (:status machine)))))
+        (finally (doseq [root roots]
+                   (registry/set-project-providers! root [] #{})))))))
 
 ;; Regression: the fleet was probed one provider at a time, so /v1/router cost
 ;; the SUM of every live auth/limits probe — about a minute on eight providers,

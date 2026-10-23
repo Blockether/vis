@@ -43,7 +43,8 @@ function signInLabel(provider: RouterProvider): string {
  * provider is shown as such with a direct way over to fix it.
  */
 export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageProviders }: Props) {
-  const fleet = useProviderFleet(client);
+  // The session's project decides the providers that only projects register (#410).
+  const fleet = useProviderFleet(client, sid);
   const { providers, err, note, pending, refresh } = fleet;
   const [pref, setPref] = useState<ModelPref | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);

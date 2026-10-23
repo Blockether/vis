@@ -147,3 +147,38 @@ describe('fleet membership', () => {
     expect(calls[2].url).toBe('http://gateway.example.com:7777/v1/router');
   });
 });
+
+// Issue #410: machine settings opened from a session must reach the providers that
+// only that session's project registers, without replacing the machine rows.
+describe('provider reads with a session context', () => {
+  it('names the session and keeps its rows apart from the machine rows', async () => {
+    const client = new GatewayClient(CONN);
+    // The router cache is shared by every client of one gateway, also across tests.
+    client.invalidateRouter();
+    answerWith(
+      { providers: [{ id: 'token', auth_kind: 'managed' }] },
+      { providers: [{ id: 'token', auth_kind: 'api-key' }] },
+      { flow_id: 'f1', kind: 'api-key', provider_id: 'token' },
+      { providers: [{ id: 'token', auth_kind: 'api-key' }] },
+    );
+
+    await client.router();
+    expect(client.cachedRouter('s 1')?.[0].auth_kind).toBe('managed');
+    const rows = await client.router(undefined, { contextSessionId: 's 1' });
+    expect(rows[0].auth_kind).toBe('api-key');
+    expect(calls[1].url).toBe('http://gateway.example.com:7777/v1/router?context_session_id=s%201');
+    expect(client.cachedRouter()?.[0].auth_kind).toBe('managed');
+    expect(client.cachedRouter('s 1')?.[0].auth_kind).toBe('api-key');
+
+    await client.startProviderAuth('token', 's 1');
+    expect(calls[2].method).toBe('POST');
+    expect(calls[2].url).toBe(
+      'http://gateway.example.com:7777/v1/providers/token/auth/start?context_session_id=s%201',
+    );
+
+    client.invalidateRouter();
+    expect(client.isRouterFresh('s 1')).toBe(false);
+    await client.router(undefined, { contextSessionId: 's 1' });
+    expect(calls).toHaveLength(4);
+  });
+});

@@ -598,7 +598,11 @@ export function MachineSettings({
           </SettingsSection>
           {/* Only a route from the model picker opens the band; else the bands context decides. */}
           <SettingsSection title={providers?.title ?? 'Providers'} defaultOpen={isProvidersOpen || undefined}>
-            <ProvidersPanel client={client} focusProviderId={focusProviderId} />
+            <ProvidersPanel
+              client={client}
+              contextSessionId={contextSessionId}
+              focusProviderId={focusProviderId}
+            />
             {providers && providers.toggles.length > 0 && (
               <SettingsPanel title="Options">{settingRows(providers)}</SettingsPanel>
             )}
@@ -1466,8 +1470,17 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
  * and asks for verdicts, but never holds a token, verifier, or device code.
  * The exchange itself is `useProviderAuth`, shared with the router dialog.
  */
-function ProvidersPanel({ client, focusProviderId }: { client: GatewayClient; focusProviderId?: string }) {
-  const auth = useProviderAuth(client);
+function ProvidersPanel({
+  client,
+  contextSessionId,
+  focusProviderId,
+}: {
+  client: GatewayClient;
+  /** The open session: its project decides the providers that only projects register (#410). */
+  contextSessionId?: string;
+  focusProviderId?: string;
+}) {
+  const auth = useProviderAuth(client, contextSessionId);
   const { providers, err, note } = auth;
   const [isAdding, setIsAdding] = useState(false);
   // A message that names a provider is painted inside THAT provider's row by
