@@ -17,6 +17,23 @@
 ;; rather than to one vendor. Nothing is registered here: these events resolve
 ;; against the very registry production uses.
 
+(defdescribe open-session-becomes-the-provider-context
+             ;; #410: provider requests resolve project providers through the open session.
+             (it "passes each change of the open session ID to the client"
+                 (let [seen (atom [])]
+                   (with-redefs-fn {#'vis/set-context-session! #(swap! seen conj %)}
+                     (fn []
+                       (let [db (atom nil)]
+                         (add-watch db
+                                    ::probe
+                                    (.get (.getWatches ^clojure.lang.IRef state/app-db)
+                                          ::state/context-session))
+                         (reset! db {:session {:id "s1"}})
+                         (swap! db assoc :title "same session")
+                         (reset! db {:session {:id "s2"}})
+                         (reset! db {:session nil})
+                         (expect (= ["s1" "s2" nil] @seen))))))))
+
 (defn- await-enqueue!
   "Gateway queue effects post on the FIFO gateway-queue thread and hand back that
    Future. Tests await the round-trip the TUI deliberately does not."

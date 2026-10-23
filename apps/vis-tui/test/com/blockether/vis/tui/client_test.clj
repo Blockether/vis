@@ -272,6 +272,56 @@
                                  (doseq [f (reverse (file-seq dir))]
                                    (.delete ^java.io.File f)))))))
 
+(defdescribe
+  provider-requests-carry-the-open-session
+  ;; #410: the gateway resolves a provider that several projects register through this session.
+  (it
+    "adds context_session_id to provider routes and probes the bare route"
+    (let [sent
+          (atom [])
+
+          probed
+          (atom [])]
+
+      (with-redefs-fn {#'client/context-session* (atom nil)
+                       #'client/router-cache* (atom {:at 1 :rows []})
+                       #'client/ensure-gateway-serving! (fn [path]
+                                                          (swap! probed conj path)
+                                                          {})
+                       #'client/ensure-client! (fn [_]
+                                                 nil)
+                       #'client/send-json-with-entry! (fn [_ verb path & _]
+                                                        (swap! sent conj [verb path])
+                                                        {})
+                       #'client/send-json! (fn [verb path & _]
+                                             (swap! sent conj [verb path])
+                                             {})}
+        (fn []
+          (client/router)
+          (expect (= [["GET" "/v1/router"]] @sent) "Without a session the route stays machine-wide")
+          (reset! sent [])
+          (client/set-context-session! "s 1")
+          (expect (nil? (:at @@#'client/router-cache*))
+                  "A session change refreshes the router rows")
+          (client/router)
+          (client/provider-status :acme)
+          (client/provider-limits :acme)
+          (client/provider-models :acme true)
+          (client/provider-auth-start! :acme)
+          (client/provider-logout! :acme)
+          (expect (= [["GET" "/v1/router?context_session_id=s+1"]
+                      ["GET" "/v1/providers/acme/status?context_session_id=s+1"]
+                      ["GET" "/v1/providers/acme/limits?context_session_id=s+1"]
+                      ["GET" "/v1/providers/acme/models?show_all=true&context_session_id=s+1"]
+                      ["POST" "/v1/providers/acme/auth/start?context_session_id=s+1"]
+                      ["POST" "/v1/providers/acme/logout?context_session_id=s+1"]]
+                     @sent))
+          (expect (not-any? #(re-find #"context_session_id" %) @probed))
+          (client/set-context-session! nil)
+          (reset! sent [])
+          (client/provider-status :acme)
+          (expect (= [["GET" "/v1/providers/acme/status"]] @sent)))))))
+
 (defn- with-router-cache
   "Run a cache scenario with a controllable clock and queued background work."
   [cached f]

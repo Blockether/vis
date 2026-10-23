@@ -28,6 +28,14 @@
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 (defonce app-db (atom nil))
 
+;; Provider requests carry the open session, so project providers resolve (#410).
+(add-watch app-db
+           ::context-session
+           (fn [_ _ before after]
+             (let [session-id (get-in after [:session :id])]
+               (when (not= (get-in before [:session :id]) session-id)
+                 (vis/set-context-session! session-id)))))
+
 (defn band-anchor
   "WHERE a MAIN-SCREEN transient sits: `{:content-top :prompt-h :chat-left}`,
    read off the layout the renderer published for the live frame.

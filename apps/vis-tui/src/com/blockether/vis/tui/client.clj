@@ -158,6 +158,16 @@
 
 (defn- enc [x] (URLEncoder/encode (str x) StandardCharsets/UTF_8))
 
+;; The open session's ID. Provider routes resolve project providers through it (#410).
+(defonce ^:private context-session* (atom nil))
+
+(defn- with-context-session
+  "Add `context_session_id` for the open session, so the gateway finds its project providers."
+  [path]
+  (if-let [session-id @context-session*]
+    (str path (if (str/includes? path "?") "&" "?") "context_session_id=" (enc session-id))
+    path))
+
 (defn- connection-failure
   [entry ^java.io.IOException cause]
   (let [endpoint
@@ -1275,7 +1285,8 @@
    (`flow_id`, `kind`, `url`, `user_code`, `verification_uri`, `interval_ms`,
    `instructions`) or nil when the daemon refused."
   [provider-id]
-  (send-json! "POST" (str "/v1/providers/" (enc (name provider-id)) "/auth/start")))
+  (send-json! "POST"
+              (with-context-session (str "/v1/providers/" (enc (name provider-id)) "/auth/start"))))
 
 (defn provider-auth-complete!
   "Finish a `pkce` flow with the redirect URL the user pasted back."
@@ -1310,7 +1321,8 @@
 (defn provider-logout!
   "Clear `provider-id`'s persisted credentials IN THE DAEMON."
   [provider-id]
-  (send-json! "POST" (str "/v1/providers/" (enc (name provider-id)) "/logout")))
+  (send-json! "POST"
+              (with-context-session (str "/v1/providers/" (enc (name provider-id)) "/logout"))))
 
 (defn provider-remove!
   "DELETE /v1/providers/:id — drop `provider-id` from the fleet IN THE DAEMON,
@@ -1615,7 +1627,7 @@
     ;; Canonical wire shape: the status map keeps its snake_case STRING keys
     ;; (`is_authenticated`, `source`, …) exactly as it crossed the wire — NO
     ;; keyword restoration. Consumers read `(get status "is_authenticated")`.
-    (get (send-json-with-entry! entry "GET" path) "status")))
+    (get (send-json-with-entry! entry "GET" (with-context-session path)) "status")))
 
 (defn- wire-enum [x] (if (string? x) (keyword x) x))
 
@@ -1745,7 +1757,8 @@
         (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
-    (provider-limits<-wire (get (send-json-with-entry! entry "GET" path) "report"))))
+    (provider-limits<-wire (get (send-json-with-entry! entry "GET" (with-context-session path))
+                                "report"))))
 
 (defn provider-models
   "GET /v1/providers/:id/models — the LIVE model catalog resolved DAEMON-side,
@@ -1761,7 +1774,7 @@
         (ensure-gateway-serving! path)
 
         resp
-        (do (ensure-client! entry) (send-json-with-entry! entry "GET" path))]
+        (do (ensure-client! entry) (send-json-with-entry! entry "GET" (with-context-session path)))]
 
     {:models (vec (get resp "models")) :hidden-count (long (or (get resp "hidden_count") 0))}))
 
@@ -1779,7 +1792,7 @@
         (ensure-gateway-serving! path)]
 
     (ensure-client! entry)
-    (get (send-json-with-entry! entry "GET" path) "providers")))
+    (get (send-json-with-entry! entry "GET" (with-context-session path)) "providers")))
 
 (defn router-diagnostics
   "The WHOLE provider dialog in ONE gateway call.
@@ -2718,6 +2731,19 @@
   []
   ;; Keep the displayed rows, but revoke any in-flight refresh's publication rights.
   (swap! router-cache* dissoc :at))
+
+(defn set-context-session!
+  "Send `session-id` with provider requests. Nil sends none. A change refreshes the router cache."
+  [session-id]
+  (let [session-id
+        (some-> session-id
+                str
+                not-empty)
+
+        [before _]
+        (reset-vals! context-session* session-id)]
+
+    (when (not= before session-id) (invalidate-router-cache!))))
 
 (defonce ^:private reset-inflight* (atom {}))
 
