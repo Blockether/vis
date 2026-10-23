@@ -280,7 +280,7 @@
         (expect (= {} (:ret capture)))
         (expect (str/includes? frame "No MCP servers"))
         (expect (str/includes? frame "Add a server to start."))))
-  (it "draws the MCP servers header without a rule and an empty section without a hint"
+  (it "draws the MCP servers header with a rule and an empty section without a hint"
       (let [inventory
             (var-get #'dlg/mcp-inventory)
 
@@ -301,7 +301,7 @@
                                   lines))]
 
                (expect (some? header))
-               (expect (not (str/includes? header "─")))
+               (expect (str/includes? header "─"))
                (expect (some #(str/includes? % "── Response") lines))
                (expect (not-any? #(str/includes? % "No MCP servers") lines)))
              (finally (reset! inventory before)))))
