@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.loop.turn :as turn]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.session.agents :as agents]
@@ -272,13 +273,17 @@
                      (str/join "\n" (map message-text (nth @calls 2)))
 
                      rules
-                     (get-in child [:security-policy :process-jail :write-rules])]
+                     (get-in child [:security-policy :process-jail :write-rules])
+
+                     ;; The child reads its grant without the home path; the jail keeps it absolute.
+                     shown
+                     (pr-str (paths/abbreviate-home (str root "/out/**")))]
 
                  ;; The rule names a file that did not exist before the grant.
                  (expect (= "ok" (slurp (str root "/out/new.txt"))))
                  (expect (not (.exists (java.io.File. (str root "/other.txt")))))
                  (expect (str/includes? output "other refused PermissionError"))
-                 (expect (str/includes? output (str root "/out/**")))
+                 (expect (str/includes? output shown))
                  (expect (= [(str root "/out/**")] rules))
                  ;; Host tools ask the same policy: deny closes reads, write rules close the rest.
                  (expect (nil? (pj/deny-refusal child "file-write" (str root "/out/later/a.clj"))))

@@ -691,6 +691,26 @@
           (expect (= :invalid-request (outcome #(agents/ask-files child-env {} "Empty"))))
           (expect (= :not-owner
                      (outcome #(agents/grant-files child-env child {"write" ["/w/x"]}))))))))
+  ;; Subagent records and the child context showed whole absolute grant rules. They now show
+  ;; rules under the workspace root as relative and other rules under home as `~/…`.
+  (it "shows grant rules relative to the workspace root, or under ~"
+      (let [home
+            (System/getProperty "user.home")
+
+            env
+            {:workspace/root "/w/"}
+
+            shown
+            (#'agents/shown-files
+             env
+             {:write ["/w/src/a/**" "/w"]
+              :read_only [(str home "/other/b.md")]
+              :deny ["/etc/hosts"]})]
+
+        (expect (= {:write ["src/a/**" "."] :read_only ["~/other/b.md"] :deny ["/etc/hosts"]}
+                   shown))
+        (expect (nil? (#'agents/shown-files env nil)))
+        (expect (= "~/other/b.md" (#'agents/shown-rule nil (str home "/other/b.md"))))))
   ;; Review of #388: a budget request in the handoff iteration used that iteration. After a
   ;; refusal, the child stopped without a report.
   (it "gives one more handoff iteration once after a refused request in the handoff"

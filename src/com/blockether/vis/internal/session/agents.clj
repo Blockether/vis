@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
@@ -147,6 +148,34 @@
               "for more. Before the budget ends, report the done work, the changed files and the "
               "next step.")))))
 
+(defn- shown-rule
+  "The address of the resolved rule `rule` that the model reads. A rule under the workspace
+   `root` is relative, another rule under home starts with `~`, and all others stay absolute.
+   Each form resolves to the same rule again."
+  [root rule]
+  (let [rule
+        (str rule)
+
+        root
+        (some-> root
+                str
+                not-empty
+                (str/replace #"/+$" ""))]
+
+    (cond (and root (= rule root)) "."
+          (and root (str/starts-with? rule (str root "/"))) (subs rule (inc (count root)))
+          :else (paths/abbreviate-home rule))))
+
+(defn- shown-files
+  "The file grant `files` as the model reads it, with each rule in its `shown-rule` form. The
+   stored grant keeps absolute rules for the jail."
+  [env files]
+  (when files
+    (into {}
+          (map (fn [[k rules]]
+                 [k (mapv #(shown-rule (:workspace/root env) %) rules)]))
+          files)))
+
 (defn context
   [env]
   (let [sid
@@ -162,7 +191,8 @@
                                  :interactive (not= :cli (:channel env))}
                                 (select-keys child
                                              [:parent_id :leader_id :team_id :task :iteration_budget
-                                              :iterations_used :status :allowed_models :files])
+                                              :iterations_used :status :allowed_models])
+                                (when (:files child) {:files (shown-files env (:files child))})
                                 {:routing_locked (ps/db-routing-locked? (:db-info env) sid)})
                    (budget-notice child)
                    (assoc :budget_notice (budget-notice child))))))
@@ -655,6 +685,13 @@
         failure :alternatives
         (route-alternatives router)))))
 
+(defn- shown-record
+  "The wait record `rec` with its file grant in the form that the model reads."
+  [env rec]
+  (cond-> rec
+    (:files rec)
+    (update :files #(shown-files env %))))
+
 (defn- wait-records
   "Poll until every child ends, one child asks or is held, or the timeout ends. A completed
    child gets 5 s to store its answer."
@@ -709,7 +746,7 @@
                        (util/now-ms)
 
                        recs
-                       (mapv #(record db (:router env) live? held? now %) (pick))
+                       (mapv #(shown-record env (record db (:router env) live? held? now %)) (pick))
 
                        done?
                        (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
@@ -988,8 +1025,8 @@
      (result :council.ask_files
              ;; A deny leaves the grant as it was, also when nothing is missing.
              {:granted (and (some? reply) (not= before after) (empty? missing))
-              :files after
-              :missing missing
+              :files (shown-files env after)
+              :missing (mapv #(shown-rule (:workspace/root env) %) missing)
               :reply reply}))))
 
 (defn- answer-request!
@@ -1005,12 +1042,13 @@
 (defn- current-record
   "A list with the one current record of child `sid`."
   [env sid]
-  [(record (:db-info env)
-           (:router env)
-           (runtime-fn :live?)
-           (held-fn)
-           (util/now-ms)
-           (info (:db-info env) sid))])
+  [(shown-record env
+                 (record (:db-info env)
+                         (:router env)
+                         (runtime-fn :live?)
+                         (held-fn)
+                         (util/now-ms)
+                         (info (:db-info env) sid)))])
 
 (defn- extend-records
   "Add iterations to the budget of a subagent and answer its record."
