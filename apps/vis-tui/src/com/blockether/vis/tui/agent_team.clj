@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.agent-team
   "Managed team inspection through the same gateway as the conversation."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.dialogs :as dlg])
@@ -12,6 +13,29 @@
   (str "/v1/sessions/" (URLEncoder/encode (str sid) StandardCharsets/UTF_8) "/agents" suffix))
 
 (defonce ^:private snapshots (atom {}))
+
+(defn- roles
+  "The subagent roles of the agents contract, in its order. Each `x-vis-mark` is a glyph that the
+   Companion draws as its Lucide twin."
+  []
+  (get-in (document/schema-document "agents") ["$defs" "role" "oneOf"]))
+
+(defn role-mark
+  "The contract glyph of the role of `agent`, or nil for no role or an unknown role."
+  [agent]
+  (some #(when (= (get % "const") (get agent "role")) (get % "x-vis-mark")) (roles)))
+
+(defn numbered
+  "`[n agent]` pairs. `n` is the start order from 1. Rows of one role stand together in contract
+   order, and a row without a role comes last."
+  [agents]
+  (let [rank (fn [[_ agent]]
+               (or (first (keep-indexed #(when (= (get %2 "const") (get agent "role")) %1) (roles)))
+                   (count (roles))))]
+    (sort-by rank
+             (map-indexed (fn [index agent]
+                            [(inc (long index)) agent])
+                          agents))))
 
 (defn summary
   "Cached team snapshot; never performs network work during painting."
@@ -105,9 +129,12 @@
                 agents)
       (str "Agents: "
            (str/join " · "
-                     (map-indexed (fn [index agent]
-                                    (str "A" (inc (long index)) " " (agent-state agent)))
-                                  agents))))))
+                     (map (fn [[n agent]]
+                            (str (some-> (role-mark agent)
+                                         (str " "))
+                                 "A" n
+                                 " " (agent-state agent)))
+                          (numbered agents)))))))
 
 (defn start-refresh!
   "One screen-owned worker refreshes only the active session, at most every 5s.
@@ -154,7 +181,9 @@
 
 (defn- row-label
   [row]
-  (str (get row "task")
+  (str (some-> (role-mark row)
+               (str " " (get row "role") " · "))
+       (get row "task")
        " · "
        (if (get row "pending_input") "Needs input" (str/replace (get row "status") "_" " "))
        " · "
@@ -174,7 +203,7 @@
                {:label (str/replace (row-label row) #"\s+" " ")
                 :search-text (get row "task")
                 :agent row})
-             (sort-by (juxt #(get % "parent_id" "") #(get % "task")) rows))))
+             (sort-by #(get % "parent_id" "") (map second (numbered rows))))))
 
 (defn component
   "Production list component. Snapshot is read off-thread; the modal remains dismissible."

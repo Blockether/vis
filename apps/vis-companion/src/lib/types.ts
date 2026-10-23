@@ -59,6 +59,8 @@ export interface Subagent {
   leader_id: string;
   team_id: string;
   task: string;
+  /** A label from the agents contract, such as `research`. It sets no limit. */
+  role?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'budget_limited';
   iteration_budget: number;
   iterations_used: number;

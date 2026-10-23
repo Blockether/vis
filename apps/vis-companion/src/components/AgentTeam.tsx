@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import type { GatewayClient } from '../lib/gateway';
 import type { Subagent } from '../lib/types';
 import {
@@ -9,7 +10,17 @@ import {
   ChevronIcon,
   CircleXIcon,
   MARK_NUDGE,
+  RoleIcon,
 } from './icons';
+
+/** The roles of the agents contract, in its order. A role is a label: it sets no limit. */
+export const ROLES: readonly { const: string; title: string }[] = agentsSchema.$defs.role.oneOf;
+
+// Rows of one role stand together in contract order; a row without a role comes last.
+const roleRank = (agent: Subagent) => {
+  const rank = ROLES.findIndex((role) => role.const === agent.role);
+  return rank < 0 ? ROLES.length : rank;
+};
 
 // Each state is a SHAPE, with colour that agrees, like the live-view rail.
 // Colour alone is not a state for every reader.
@@ -59,10 +70,14 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel }: {
   if (agents.length === 0) return null;
   // The state column is as wide as its longest shown state, so tasks start near the left.
   const stateWidth = Math.max(0, ...agents.filter((agent) => !quiet(agent)).map((agent) => agentMark(agent).text.length));
+  // A-numbers keep the start order, so A2 is still the second agent after the sort.
+  const rows = agents.map((agent, index) => ({ agent, index })).sort((a, b) => roleRank(a.agent) - roleRank(b.agent));
+  const roles = agents.some((agent) => agent.role);
   return (
     <ul aria-label="Subagents" className="my-3 space-y-1 font-mono text-ui text-white" data-transcript-part>
-      {agents.map((agent, index) => {
+      {rows.map(({ agent, index }) => {
         const { Mark, ink, text } = agentMark(agent);
+        const role = ROLES.find((known) => known.const === agent.role);
         const shown = open === agent.session_id;
         const route = `${agent.provider ? `${agent.provider} / ` : ''}${agent.model ?? 'Router default'}`;
         return (
@@ -76,6 +91,12 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel }: {
               <ChevronIcon open={shown} className={`size-3 shrink-0 ${MARK_NUDGE} text-dialog-hint`} />
               <Mark className={`size-3 shrink-0 ${MARK_NUDGE} ${ink}`} />
               <span className="w-[3ch] shrink-0 font-bold">A{index + 1}</span>
+              {roles && (
+                <span className="flex w-3 shrink-0 text-dialog-hint" title={role && `${role.const}: ${role.title}`}>
+                  {agent.role && <RoleIcon role={agent.role} className={`size-3 ${MARK_NUDGE}`} />}
+                  {agent.role && <span className="sr-only">{agent.role}</span>}
+                </span>
+              )}
               {/* The green check already says done; the word stays for screen readers only. */}
               {stateWidth > 0 ? (
                 <span
@@ -93,6 +114,7 @@ export function TurnAgents({ agents, pending, error, onOpen, onCancel }: {
                 {agent.question && <p className="break-words text-warn">{agent.question}</p>}
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                   <span className="min-w-0 truncate text-dialog-hint" title={route}>
+                    {agent.role && `${agent.role} · `}
                     {agent.model ?? 'Router default'}
                     {agent.routing_locked && ' · Human model lock'}
                     {` · ${agent.iterations_used} / ${agent.iteration_budget} iterations`}

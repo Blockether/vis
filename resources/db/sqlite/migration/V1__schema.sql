@@ -173,6 +173,8 @@ CREATE TABLE session_agent (
   leader_id        TEXT NOT NULL REFERENCES session_soul(id) ON DELETE CASCADE,
   team_id          TEXT NOT NULL,
   task             TEXT NOT NULL CHECK (trim(task) <> ''),
+  -- A label for people from the agents contract, for example research. It sets no limit.
+  role             TEXT,
   status           TEXT NOT NULL DEFAULT 'queued'
                    CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'budget_limited')),
   depth            INTEGER NOT NULL CHECK (depth BETWEEN 1 AND 2),

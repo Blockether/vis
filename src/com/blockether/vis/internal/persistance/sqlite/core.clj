@@ -5334,7 +5334,7 @@
                :do-update-set [:locked]})))
 
 (def ^:private agent-columns
-  [:session_id :parent_id :leader_id :team_id :task :status :iteration_budget :iterations_used
+  [:session_id :parent_id :leader_id :team_id :task :role :status :iteration_budget :iterations_used
    :inherited_turns :allowed_models :files :spawn_key :spawn_fingerprint :created_at :resumed_turns
    :resumed_at])
 
@@ -5344,13 +5344,16 @@
     (let [files (some-> (:files row)
                         <-json
                         (update-keys keyword))]
-      ;; A child without a file grant has no files key: the agent contract allows only an object.
+      ;; A child without a file grant or role has no such key: the agent contract allows no null.
       (cond-> (-> row
                   (dissoc :files)
                   (update :allowed_models
                           (fn [value]
                             (some->> (<-json value)
                                      (mapv #(update-keys % keyword))))))
+        (nil? (:role row))
+        (dissoc :role)
+
         files
         (assoc :files files)))))
 

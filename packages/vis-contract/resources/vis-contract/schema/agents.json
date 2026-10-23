@@ -15,6 +15,9 @@
           "maxLength": 8192,
           "pattern": "\\S"
         },
+        "role": {
+          "$ref": "#/$defs/role"
+        },
         "model": {
           "type": "string",
           "minLength": 1
@@ -76,6 +79,9 @@
                 "properties": {
                   "task": {
                     "$ref": "#/$defs/spawn/properties/task"
+                  },
+                  "role": {
+                    "$ref": "#/$defs/spawn/properties/role"
                   },
                   "model": {
                     "$ref": "#/$defs/spawn/properties/model"
@@ -274,6 +280,36 @@
       ],
       "additionalProperties": false
     },
+    "role": {
+      "description": "Choose the role by the result that you need: facts, changed files, a pass or fail, or findings.",
+      "$comment": "A role is a label for people and the leader. It sets no tool, file or model limit. Each x-vis-mark is the glyph that the TUI draws. The Companion draws its Lucide twin.",
+      "oneOf": [
+        {
+          "const": "research",
+          "title": "Finds facts",
+          "x-vis-mark": "⊙",
+          "description": "Finds facts. Reads code, docs, logs and history, and answers one question with evidence. Use it before you decide or plan."
+        },
+        {
+          "const": "implement",
+          "title": "Changes files",
+          "x-vis-mark": "⚙",
+          "description": "Changes files. Writes code, tests, docs or configuration and runs the checks for its change. Use it for one bounded change."
+        },
+        {
+          "const": "verify",
+          "title": "Proves it works",
+          "x-vis-mark": "▣",
+          "description": "Proves that something works. Runs tests, reproduces a bug or checks the app, and reports pass or fail with evidence."
+        },
+        {
+          "const": "audit",
+          "title": "Judges the work",
+          "x-vis-mark": "◈",
+          "description": "Judges finished work. Reviews a change, plan or release for risks and mistakes, and reports findings. Give it the work, not your conclusion."
+        }
+      ]
+    },
     "model_pair": {
       "type": "object",
       "properties": {
@@ -341,6 +377,9 @@
         "task": {
           "type": "string",
           "minLength": 1
+        },
+        "role": {
+          "$ref": "#/$defs/role"
         },
         "status": {
           "enum": [

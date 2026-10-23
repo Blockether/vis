@@ -12,6 +12,7 @@ CHILD = {
     "leader_id": "leader",
     "team_id": "task",
     "task": "Check the contract",
+    "role": "verify",
     "status": "running",
     "iteration_budget": 4,
     "iterations_used": 1,
@@ -69,6 +70,7 @@ def test_managed_team_transport():
         assert isinstance(team, Council)
         child = team.spawn(
             "Check the contract",
+            role="verify",
             provider="p",
             model="small",
             iteration_budget=4,
@@ -77,7 +79,7 @@ def test_managed_team_transport():
             key="contract",
         )
         assert isinstance(child, Subagent)
-        assert child.parent_id == "leader"
+        assert child.parent_id == "leader" and child.role == "verify"
         assert child.pending_input and child.usage == {"cost_usd": 0.02}
         assert team.subagents() == (child,)
         team.route("small", provider="p", session_id=child.session_id)
@@ -93,6 +95,7 @@ def test_managed_team_transport():
                 "/v1/sessions/leader/agents",
                 {
                     "task": "Check the contract",
+                    "role": "verify",
                     "iteration_budget": 4,
                     "provider": "p",
                     "model": "small",

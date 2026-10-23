@@ -101,7 +101,10 @@
                    (expect (str/includes? label "4/4"))
                    (expect (str/includes? label "$0.025"))
                    (expect (str/includes? label "locked"))
-                   (expect (= :inspect (:action (second (team/items [] "parent"))))))))
+                   (expect (= :inspect (:action (second (team/items [] "parent")))))
+                   (expect (str/starts-with? (:label (last (team/items [(assoc row "role" "audit")]
+                                                                       nil)))
+                                             "◈ audit · ")))))
 
 (def review-agent
   {"session_id" "child"
@@ -348,17 +351,22 @@
                    (with-redefs [team/summary (constantly snapshot)]
                      (expect (= label (team/header-label "leader" false)))))))
 
-(defdescribe footer-team-chip-test
-             (it "names each agent with its state and leaves while no agent works or waits"
-                 (doseq [[agents label]
-                         [[nil nil] [[{"status" "completed"}] nil]
-                          [[{"status" "completed"}
-                            {"status" "running" "iterations_used" 3 "iteration_budget" 20}
-                            {"status" "running" "pending_input" true "pending_input_count" 2}
-                            {"status" "queued"}]
-                           "Agents: A1 done · A2 3/20 · A3 needs you (2) · A4 queued"]]]
-                   (with-redefs [team/summary (constantly {:agents agents})]
-                     (expect (= label (team/footer-label "leader")))))))
+(defdescribe
+  footer-team-chip-test
+  (it "names each agent with its state and leaves while no agent works or waits"
+      (doseq [[agents label]
+              [[nil nil] [[{"status" "completed"}] nil]
+               [[{"status" "completed"}
+                 {"status" "running" "iterations_used" 3 "iteration_budget" 20}
+                 {"status" "running" "pending_input" true "pending_input_count" 2}
+                 {"status" "queued"}] "Agents: A1 done · A2 3/20 · A3 needs you (2) · A4 queued"]
+               [[{"status" "running" "role" "verify" "iterations_used" 1 "iteration_budget" 9}
+                 {"status" "queued"}
+                 {"status" "running" "role" "research" "iterations_used" 2 "iteration_budget" 9}
+                 {"status" "completed" "role" "implement"}]
+                "Agents: ⊙ A3 2/9 · ⚙ A4 done · ▣ A1 1/9 · A2 queued"]]]
+        (with-redefs [team/summary (constantly {:agents agents})]
+          (expect (= label (team/footer-label "leader")))))))
 
 (defdescribe old-tab-response-does-not-repaint-new-tab-test
              (it "old tab response does not repaint new tab"

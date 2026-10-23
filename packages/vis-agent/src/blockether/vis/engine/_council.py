@@ -231,6 +231,7 @@ class Council:
         self,
         task: str,
         *,
+        role: str | None = None,
         provider: str | None = None,
         model: str | None = None,
         iteration_budget: int | None = None,
@@ -247,12 +248,15 @@ class Council:
         it with different input is rejected. This is not an ordinary independent fork,
         and it does not grant broader permissions. ``files`` narrows file access with
         ``write``, ``read_only`` and ``deny`` rules: paths or globs, also for future files.
+        ``role`` is ``research``, ``implement``, ``verify`` or ``audit``: a label for people
+        that sets no limit.
         """
         body = {"task": task}
         body.update(
             {
                 name: value
                 for name, value in {
+                    "role": role,
                     "provider": provider,
                     "iteration_budget": iteration_budget,
                     "model": model,
@@ -291,8 +295,8 @@ class Council:
     ) -> tuple[SubagentRecord, ...]:
         """Spawn one subagent for each task, wait for all of them and return their records.
 
-        A task is a string, or a dict with ``task`` and optional ``model``, ``provider``,
-        ``iteration_budget`` and ``files``. The wait ends when every child answers, asks
+        A task is a string, or a dict with ``task`` and optional ``role``, ``model``,
+        ``provider``, ``iteration_budget`` and ``files``. The wait ends when every child answers, asks
         or stops, or after ``timeout_secs`` (at most 1800). A running child stays running.
         """
         body = {"tasks": tasks, "timeout_secs": timeout_secs}

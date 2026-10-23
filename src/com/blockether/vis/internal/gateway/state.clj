@@ -6482,22 +6482,24 @@
                        (or (:repo-root current) (:root current) (workspace/trunk-root))))
 
                 child-id
-                (str (persistance/db-fork-session-at-turn!
-                       db
-                       sid
-                       {:workspace-id ws
-                        :through-turn-id through
-                        :title (subs (:task opts) 0 (min 80 (count (:task opts))))
-                        :agent {:parent_id sid
-                                :leader_id sid
-                                :team_id through
-                                :task (:task opts)
-                                :iteration_budget budget
-                                :allowed_models allowed
-                                :files (not-empty files)
-                                :spawn_key key
-                                :spawn_fingerprint fingerprint
-                                :checkpoint checkpoint}}))]
+                (str
+                  (persistance/db-fork-session-at-turn!
+                    db
+                    sid
+                    {:workspace-id ws
+                     :through-turn-id through
+                     :title (subs (:task opts) 0 (min 80 (count (:task opts))))
+                     :agent {:parent_id sid
+                             :leader_id sid
+                             :team_id through
+                             :task (:task opts)
+                             :role (:role opts)
+                             :iteration_budget budget
+                             :allowed_models allowed
+                             :files (not-empty files)
+                             :spawn_key key
+                             :spawn_fingerprint fingerprint
+                             :checkpoint checkpoint}}))]
 
             (when-let [project-id (:project-id (persistance/db-get-session db sid))]
               (persistance/db-set-session-project! db child-id project-id))

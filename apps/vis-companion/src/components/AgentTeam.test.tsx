@@ -3,7 +3,9 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { GatewayClient } from '../lib/gateway';
 import type { Subagent } from '../lib/types';
-import { TurnAgents, agentsByTurn, useAgentTeam } from './AgentTeam';
+import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
+import { ROLES, TurnAgents, agentsByTurn, useAgentTeam } from './AgentTeam';
+import { ROLE_ICONS } from './icons';
 
 const child: Subagent = { session_id: 'child', parent_id: 'leader', leader_id: 'leader', team_id: 'turn-1',
   task: 'Verify the contract', status: 'running', iteration_budget: 4, iterations_used: 2,
@@ -29,6 +31,32 @@ describe('turn agents', () => {
     fireEvent.click(row);
     expect(row).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(/small · Human model lock · 2 \/ 4 iterations · \$0.0123/)).toBeInTheDocument();
+  });
+
+  it('marks each contract role with its own Lucide twin of the TUI glyph', () => {
+    expect(ROLES.map((role) => role.const)).toEqual(['research', 'implement', 'verify', 'audit']);
+    expect(Object.keys(ROLE_ICONS)).toEqual(ROLES.map((role) => role.const));
+    expect(new Set(Object.values(ROLE_ICONS)).size).toBe(ROLES.length);
+    expect(agentsSchema.$defs.role.oneOf.every((role) => role['x-vis-mark'].length === 1)).toBe(true);
+  });
+
+  it('keeps one role together and the A-numbers in start order', () => {
+    render(<TurnAgents {...props} agents={[
+      { ...child, session_id: 'check', task: 'Run the tests', role: 'verify' },
+      { ...child, session_id: 'plain', task: 'No role' },
+      { ...child, session_id: 'read', task: 'Read the logs', role: 'research' },
+      { ...child, session_id: 'fix', task: 'Fix the bug', role: 'implement' },
+    ]} />);
+    const rows = screen.getAllByRole('button', { expanded: false });
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/^A3research.*Read the logs$/),
+      expect.stringMatching(/^A4implement.*Fix the bug$/),
+      expect.stringMatching(/^A1verify.*Run the tests$/),
+      expect.stringMatching(/^A2.*No role$/),
+    ]);
+    expect(screen.getByTitle('research: Finds facts').querySelector('svg')).toHaveClass('lucide-search');
+    fireEvent.click(rows[0]);
+    expect(screen.getByText(/research · small/)).toBeInTheDocument();
   });
 
   it('inspects an agent and confirms a stop', () => {

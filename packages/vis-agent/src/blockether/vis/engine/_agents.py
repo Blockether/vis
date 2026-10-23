@@ -18,6 +18,7 @@ class Subagent:
     status: str
     iteration_budget: int
     iterations_used: int
+    role: str | None = None
     provider: str | None = None
     model: str | None = None
     routing_locked: bool = False

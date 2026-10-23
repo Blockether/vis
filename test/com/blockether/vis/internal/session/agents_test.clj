@@ -102,6 +102,47 @@
                 "A general verify rule made the leader redo the delegated work"))))
 
 (defdescribe
+  subagent-role-test
+  (it "offers each contract role to the leader as a label with a mark"
+      (let [text
+            (agents/prompt {})
+
+            run-doc
+            (:doc (meta #'agents/run))
+
+            marks
+            (map #(get % "x-vis-mark") agents/roles)]
+
+        (expect (= ["research" "implement" "verify" "audit"] (mapv #(get % "const") agents/roles)))
+        (expect (str/includes? text "Choose the role by the result that you need"))
+        (doseq [role agents/roles]
+          (expect (str/includes? text (str (get role "const") ": " (get role "description"))))
+          (expect (str/includes? run-doc (get role "const")))
+          (expect (= 1 (count (get role "x-vis-mark")))))
+        (expect (= 4 (count (set marks))) "Each role has its own mark")))
+  (it "accepts a contract role and refuses another one"
+      (expect (document/valid-json? "agents" "spawn" {"task" "Fix" "role" "implement"}))
+      (expect (document/valid-json? "agents" "run" {"tasks" [{"task" "Read" "role" "research"}]}))
+      (expect (not (document/valid-json? "agents" "spawn" {"task" "Fix" "role" "boss"})))
+      (expect (not (document/valid-json? "agents" "run" {"tasks" [{"task" "Fix" "role" "boss"}]}))))
+  (it "stores the role with the child, and a child without a role has no role key"
+      (let [db
+            (h/store)
+
+            leader
+            (str (h/store-session! db {:channel :api}))
+
+            child
+            (child! db leader {:role "verify"})
+
+            plain
+            (child! db leader {})]
+
+        (expect (= "verify" (:role (agents/info db child))))
+        (expect (not (contains? (agents/info db plain) :role)))
+        (expect (= ["verify"] (keep :role (ps/db-agent-list db leader)))))))
+
+(defdescribe
   managed-lineage-and-context-test
   (it
     "managed lineage and context"

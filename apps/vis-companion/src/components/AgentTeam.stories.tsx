@@ -21,10 +21,11 @@ type Story = StoryObj<typeof meta>;
 export const Live: Story = {
   args: {
     agents: [
-      { ...child, session_id: 'done', status: 'completed', iterations_used: 3 },
-      { ...child, session_id: 'working', task: 'List the components that render the team' },
-      { ...child, session_id: 'asking', task: 'Count the Clojure sources', question: 'Should I count tests in test/ or only sources in src/?' },
-      { ...child, session_id: 'blocked', task: 'Release the bundle', pending_input: true, pending_input_count: 2 },
+      { ...child, session_id: 'done', status: 'completed', iterations_used: 3, role: 'audit' },
+      { ...child, session_id: 'working', task: 'List the components that render the team', role: 'research' },
+      { ...child, session_id: 'asking', task: 'Count the Clojure sources', question: 'Should I count tests in test/ or only sources in src/?', role: 'research' },
+      { ...child, session_id: 'blocked', task: 'Release the bundle', pending_input: true, pending_input_count: 2, role: 'implement' },
+      { ...child, session_id: 'check', task: 'Run the gateway tests', role: 'verify' },
     ],
   },
   play: async ({ canvasElement }) => {
