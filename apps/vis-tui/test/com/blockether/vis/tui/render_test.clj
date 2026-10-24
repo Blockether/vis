@@ -6302,7 +6302,7 @@
             (try (render/format-answer-markdown-data (vis/markdown->ast text) 100 opts)
                  (finally (render/invalidate-cache!)))))]
 
-    (it "two pictures sit side by side in one card"
+    (it "two pictures sit side by side, without a frame or a title"
         (let [{:keys [line-meta]}
               (data :kitty (md [[1600 900] [1600 900]]))
 
@@ -6312,7 +6312,9 @@
               cells
               (:imgs (first rows))]
 
-          (expect (= ["2 images"] (keep :card-title line-meta)))
+          (expect (empty? (keep :card-title line-meta)))
+          (expect (not-any? #{:top :bottom} (map :card-part line-meta)))
+          (expect (every? :card-bare? (filter :card-part line-meta)))
           (expect (= 2 (count cells)))
           (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png"] (mapv (comp :path :img) cells)))
           ;; The second tile starts right of the first one.
@@ -6345,17 +6347,16 @@
                         (count (filter :card-part line-meta)))))))
     (it "a plain terminal gets a numbered table whose rows open the pictures"
         (let [{:keys [text line-meta]} (data nil (md (repeat 3 [1200 900])))]
-          (expect (str/includes? text "3 images"))
+          (expect (not (str/includes? text "3 images")))
           (expect (str/includes? text "#  Image  Type · Size"))
           (expect (str/includes? text "2  shot-2.png  PNG · 1200x900 · 1.2 MB"))
           (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"]
                      (mapv (comp :path :doc) (filter :doc line-meta))))
           (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta))))
     ;; Regression: a card that ended the prompt lost its bottom edge to margin trimming.
-    (it "a gallery that ends the prompt keeps its bottom edge"
-        (doseq [proto [:kitty nil]]
-          (expect (= :bottom
-                     (:card-part (peek (:line-meta (data proto (md [[1200 900] [640 480]]))))))
+    (it "a gallery that ends the prompt keeps its last row"
+        (doseq [[proto part] [[:kitty :captions] [nil :bottom]]]
+          (expect (= part (:card-part (peek (:line-meta (data proto (md [[1200 900] [640 480]]))))))
                   (str proto))))
     (it "markdown-images lists every picture with a file for the viewer"
         (expect (= [{:path "/tmp/shot-1.png" :name "shot-1.png" :label "PNG · 1200x900 · 1.2 MB"}

@@ -1943,7 +1943,7 @@
 (defn- draw-gallery-captions!
   "Paint the numbered captions under one band of gallery tiles. Each caption opens the image
    viewer at its picture, the same as a click on the picture."
-  [g meta x y abs-row]
+  [g meta x y abs-row paper]
   (let [hovered (.hovered interactions/hit-map)]
     (doseq [{:keys [col width number name view]} (:captions meta)]
       (let [col (+ (long x) (long col))
@@ -1955,9 +1955,9 @@
             number-label (str number " ")
             name-w (max 0 (- width (long (p/display-width number-label))))]
 
-        (p/set-colors! g t/link-chrome-hover-fg t/code-block-bg)
+        (p/set-colors! g t/link-chrome-hover-fg paper)
         (p/styled g [p/BOLD] (p/put-str! g col y (p/truncate-cols number-label width)))
-        (p/set-colors! g (if hovered? t/text-fg t/footer-fg-muted) t/code-block-bg)
+        (p/set-colors! g (if hovered? t/text-fg t/footer-fg-muted) paper)
         (p/put-str! g
                     (+ col (long (p/display-width number-label)))
                     y
@@ -1989,13 +1989,23 @@
         (+ (long viewport-top) (long y))
 
         part
-        (:card-part meta)]
+        (:card-part meta)
+
+        ;; A gallery row has no frame and stays on the message paper.
+        bare?
+        (:card-bare? meta)
+
+        paper
+        (if bare? (.getBackgroundColor ^TextGraphics g) t/code-block-bg)]
 
     (p/clear-styles! g)
-    (p/set-bg! g t/code-block-bg)
+    (p/set-bg! g paper)
     (p/fill-rect! g x y iw 1)
-    (p/set-colors! g t/turn-separator-fg t/code-block-bg)
-    (case part
+    (p/set-colors! g t/turn-separator-fg paper)
+    (case (if bare? :bare part)
+      :bare
+      nil
+
       :top
       (p/put-str! g x y (str "┌" (repeat-str \─ inner) "┐"))
 
@@ -2018,7 +2028,7 @@
       (when-let [toggle (:card-toggle meta)]
         (.register interactions/hit-map (assoc toggle :bounds {:row abs-row :col x :width iw}))))
     (when (= :file part) (draw-attachment-file-row! g meta x y iw abs-row))
-    (when (= :captions part) (draw-gallery-captions! g meta x y abs-row))
+    (when (= :captions part) (draw-gallery-captions! g meta x y abs-row paper))
     (p/clear-styles! g)))
 
 (defn- draw-live-button!
@@ -5186,10 +5196,11 @@
     {:tile-w tile-w :per-row per-row :band-rows band-rows :tiles tiles}))
 
 (defn image-gallery-rows
-  "Rows a gallery card paints for `layout`: the frame, one padding row, and for each band
-   its picture rows, a caption row and a padding row."
+  "Rows a gallery paints for `layout`: for each band its picture rows and a caption row, and
+   one padding row between two bands."
   ^long [layout]
-  (+ 3 (long (reduce + 0 (map #(+ 2 (long %)) (:band-rows layout))))))
+  (let [band-rows (:band-rows layout)]
+    (+ (long (reduce + 0 (map #(inc (long %)) band-rows))) (max 0 (dec (count band-rows))))))
 
 (def ^:private vis-image-fence-re
   ;; One whole `vis-image` fence. Its 4th body line is the picture's intrinsic `WxH` (see
@@ -5232,7 +5243,7 @@
                       (+ acc
                          (long (cond (not-every? #(and (:width %) (:height %)) run) 0
                                      (< 1 (count run)) (image-gallery-rows
-                                                         (image-gallery-layout run box-w))
+                                                         (image-gallery-layout run content-w))
                                      :else
                                      ;; The card frame adds a separator and two padding rows
                                      ;; around the box.
@@ -5290,9 +5301,10 @@
 (defn- attachment-card-entries
   "Frame `files` as one attachment card. Each file is `{:name :label :bytes :target}`; a nil
    `:target` marks it unavailable. More than one file folds behind a title in the top border
-   and stays closed until the reader opens it. `body` rows join the card below the files."
+   and stays closed until the reader opens it; `untitled?` drops the title of a card that
+   does not fold. `body` rows join the card below the files."
   ([files fold] (attachment-card-entries files fold []))
-  ([files {:keys [node-id session-id expanded? noun head]} body]
+  ([files {:keys [node-id session-id expanded? head untitled?]} body]
    (let [n
          (count files)
 
@@ -5310,12 +5322,8 @@
          (or (not foldable?) expanded?)
 
          title
-         (when (> n 1)
-           (str (when foldable? (if open? "▾ " "▸ "))
-                n
-                " "
-                (or noun "files")
-                (when total (str " · " total))))
+         (when (and (> n 1) (not untitled?))
+           (str (when foldable? (if open? "▾ " "▸ ")) n " " "files" (when total (str " · " total))))
 
          file-rows
          (mapv (fn [{:keys [name label target]}]
@@ -5502,12 +5510,12 @@
       (attachment-card-entries [file] {}))))
 
 (defn- image-gallery-entries
-  "Render adjacent `vis-image` blocks as one gallery card, like the Companion gallery.
+  "Render adjacent `vis-image` blocks as one gallery, like the Companion gallery.
 
    On a graphical terminal, two pictures sit side by side and three or more become
-   miniatures in rows (see [[image-gallery-layout]]). Each band of tiles reserves its rows
-   like a single picture does, with one cell for each tile, and a numbered caption row names
-   the pictures below the band. A click on a tile or its caption opens the image viewer at
+   miniatures in rows (see [[image-gallery-layout]]), without a frame or a title. Each band
+   of tiles reserves its rows like a single picture does, with one cell for each tile, and a
+   numbered caption row names the pictures below the band. A click on a tile or its caption opens the image viewer at
    that picture. A terminal without inline pictures, or a picture without dimensions or a
    file, gets a numbered table of the pictures where each row opens its file."
   [nodes content-w {:keys [session-turn-id] :as opts}]
@@ -5519,9 +5527,6 @@
 
         viewable
         (filterv :path images)
-
-        n
-        (count images)
 
         first-id
         (or (some-> (re-find #"#(\d+)" (:summary (first parts)))
@@ -5540,7 +5545,7 @@
 
     (if (and (timg/graphical-terminal?) (every? #(and (:width %) (:height %) (:path %)) images))
       (let [{:keys [tile-w band-rows tiles]}
-            (image-gallery-layout images (max 1 (- (long content-w) 4)))
+            (image-gallery-layout images (max 1 (long content-w)))
 
             imgs
             (mapv (fn [{:keys [path mime width height]} {:keys [cols rows]}]
@@ -5555,7 +5560,7 @@
                   tiles)
 
             pad
-            (attachment-card-row :pad "" {})
+            (attachment-card-row :pad "" {:card-bare? true})
 
             band-entries
             (fn [band height]
@@ -5569,7 +5574,7 @@
                                                        (when (< -1 idx (long rows))
                                                          {:img (nth imgs index)
                                                           :img-idx idx
-                                                          :image-col-offset (+ 2 (long col))
+                                                          :image-col-offset (long col)
                                                           :view (view-at index)})))
                                                    in-band))]
                               (attachment-card-row
@@ -5578,28 +5583,26 @@
                                 {:kind
                                  (if (some #(zero? (long (:img-idx %))) cells) :image :image-pad)
                                  :imgs cells
-                                 :node-id node-id})))
+                                 :node-id node-id
+                                 :card-bare? true})))
                           (range height))
 
                     captions
                     (mapv (fn [{:keys [index slot-col]}]
-                            {:col (+ 2 (long slot-col))
+                            {:col (long slot-col)
                              :width tile-w
                              :number (inc (long index))
                              :name (:name (nth images index))
                              :view (view-at index)})
                           in-band)]
 
-                (-> picture-rows
-                    (conj (attachment-card-row
-                            :captions
-                            (str/join "  " (map #(str (:number %) " " (:name %)) captions))
-                            {:captions captions}))
-                    (conj pad))))]
+                (conj picture-rows
+                      (attachment-card-row
+                        :captions
+                        (str/join "  " (map #(str (:number %) " " (:name %)) captions))
+                        {:captions captions :card-bare? true}))))]
 
-        (-> [(attachment-card-row :top (str n " images") {:card-title (str n " images")}) pad]
-            (into (mapcat band-entries (range) band-rows))
-            (conj (attachment-card-row :bottom "" {}))))
+        (into [] (comp (interpose [pad]) cat) (map band-entries (range) band-rows)))
       (attachment-card-entries (mapv (fn [i {:keys [name label path] :as image}]
                                        {:name (str (inc (long i)) "  " name)
                                         :label (if path label (str label " · Unavailable"))
@@ -5611,7 +5614,7 @@
                                                          :title name}})})
                                      (range)
                                      images)
-                               {:noun "images" :head {:name "#  Image" :label "Type · Size"}}))))
+                               {:untitled? true :head {:name "#  Image" :label "Type · Size"}}))))
 
 (defn- table-block-parts
   "Parse a `vis-table` node body — the header lines `attach` writes, then the
