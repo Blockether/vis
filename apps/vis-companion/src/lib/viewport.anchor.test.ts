@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { applyScrollAnchor, applyScrollAnchorGrowth, scrollAnchorFor } from './viewport';
 
@@ -107,5 +107,67 @@ describe('a replaced anchor', () => {
     expect(applyScrollAnchorGrowth(viewport, anchor)).toBe(true);
 
     expect(viewport.scrollTop).toBe(940 + 8_623);
+  });
+});
+
+const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X)';
+const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)';
+
+// Regression, user report: on an iPhone, a short scroll up in a long turn put the
+// reader near the start of the turn. The momentum of the flick undid each correction
+// for the history that landed above the reader.
+describe('a correction during iOS momentum', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // The scene with an inline style, and the overflow that each scroll write met.
+  function styled(userAgent: string, maxTouchPoints: number) {
+    vi.stubGlobal('navigator', { ...navigator, userAgent, maxTouchPoints });
+    const { viewport, line, anchor } = scene(1_000, 1_040);
+    const style = { overflowY: '' };
+    const writes: string[] = [];
+    let top = viewport.scrollTop;
+    Object.defineProperty(viewport, 'scrollTop', {
+      get: () => top,
+      set: (value: number) => {
+        writes.push(style.overflowY);
+        top = value;
+      },
+    });
+    Object.assign(viewport, { style });
+    return { viewport, line, anchor, style, writes };
+  }
+
+  it('stops the momentum for the write on iOS and restores the overflow', () => {
+    const { viewport, line, anchor, style, writes } = styled(IPHONE, 5);
+    line.position += 4_331;
+
+    expect(applyScrollAnchor(viewport, anchor)).toBe(true);
+
+    expect(viewport.scrollTop).toBe(1_000 + 4_331);
+    expect(writes).toEqual(['hidden']);
+    expect(style.overflowY).toBe('');
+  });
+
+  it('bills growth under a hand the same way', () => {
+    const { viewport, line, anchor, writes } = styled(IPHONE, 5);
+    viewport.scrollTop = 940;
+    line.position += 4_331;
+
+    expect(applyScrollAnchorGrowth(viewport, anchor)).toBe(true);
+
+    expect(viewport.scrollTop).toBe(940 + 4_331);
+    expect(writes).toEqual(['', 'hidden']);
+  });
+
+  it('keeps the plain write on a desktop browser', () => {
+    const { viewport, line, anchor, writes } = styled(MAC, 0);
+    line.position += 4_331;
+
+    expect(applyScrollAnchor(viewport, anchor)).toBe(true);
+
+    expect(viewport.scrollTop).toBe(1_000 + 4_331);
+    expect(writes).toEqual(['']);
   });
 });

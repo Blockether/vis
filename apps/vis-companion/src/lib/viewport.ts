@@ -331,7 +331,36 @@ type AnchorElement = {
   dataset?: { anchor?: string };
   nextElementSibling?: Element | null;
 };
-type AnchorScroller = { scrollTop: number; getBoundingClientRect(): AnchorRect };
+type AnchorScroller = {
+  scrollTop: number;
+  getBoundingClientRect(): AnchorRect;
+  style?: { overflowY: string };
+  readonly offsetHeight?: number;
+};
+
+/**
+ * Sets `scrollTop` for a correction, also while iOS animates a flick.
+ *
+ * iOS WebKit runs momentum in the native scroll view. The next momentum frame
+ * overwrites a script write. Measured on an iOS 26.5 iPhone: a 4 331 px anchor
+ * correction was undone 40 ms later, and the reader landed near the start of
+ * the turn. Hidden overflow stops the momentum, so the write stays. The flick
+ * ends at the corrected line. Other platforms keep the plain write, because a
+ * classic scrollbar changes the width when the overflow changes.
+ */
+export function seatScroller(viewport: AnchorScroller, top: number): void {
+  const style = viewport.style;
+  if (!style || !isIosBrowser()) {
+    viewport.scrollTop = top;
+    return;
+  }
+  const overflowY = style.overflowY;
+  style.overflowY = 'hidden';
+  viewport.scrollTop = top;
+  // Lay out the hidden state, or the two style writes merge and the momentum continues.
+  void viewport.offsetHeight;
+  style.overflowY = overflowY;
+}
 /**
  * What the reader is looking at: the element crossing the fold and how far its
  * top sits below that fold — plus `top`, the `scrollTop` the reading was taken
@@ -427,7 +456,7 @@ export function applyScrollAnchor(viewport: AnchorScroller, anchor: ScrollAnchor
   if (!held) return false;
   const drift =
     held.el.getBoundingClientRect().top - viewport.getBoundingClientRect().top - held.offset;
-  if (Math.abs(drift) > 0.5) viewport.scrollTop = Math.max(0, viewport.scrollTop + drift);
+  if (Math.abs(drift) > 0.5) seatScroller(viewport, Math.max(0, viewport.scrollTop + drift));
   return true;
 }
 
@@ -448,7 +477,7 @@ export function applyScrollAnchorGrowth(
     held.offset +
     viewport.scrollTop -
     anchor.top;
-  if (Math.abs(growth) > 0.5) viewport.scrollTop = Math.max(0, viewport.scrollTop + growth);
+  if (Math.abs(growth) > 0.5) seatScroller(viewport, Math.max(0, viewport.scrollTop + growth));
   return true;
 }
 

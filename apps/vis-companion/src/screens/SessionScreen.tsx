@@ -181,6 +181,7 @@ import {
   onViewportRotation,
   scrollAnchorFor,
   type ScrollAnchor,
+  seatScroller,
   shellViewportHeight,
   useSafeBottomStyle,
 } from '../lib/viewport';
@@ -1881,7 +1882,7 @@ export function SessionScreen({
         const chosenTop = scrollAnchorRef.current?.top;
         if (chosenTop === undefined) captureScrollAnchor();
         else {
-          viewport.scrollTop = chosenTop;
+          seatScroller(viewport, chosenTop);
           if (Math.abs(viewport.scrollTop - chosenTop) < 1) captureScrollAnchor();
         }
       }
