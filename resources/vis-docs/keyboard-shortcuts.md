@@ -19,6 +19,7 @@ To see the most common shortcuts while you work, press **Ctrl+X h** in Vis.
   group.** Use the keys under [Sessions](#sessions) and [In Projects](#in-projects). The [Sessions guide](sessions.md)
   explains each task.
 - **You want to dictate a message, or voice recording fails.** See [Use voice input](#use-voice-input).
+- **You want to see the pictures in a message larger.** See [View pictures](#view-pictures).
 - **You want to send an earlier message again from the desktop or phone app.** See [In the
   desktop or phone app](#in-the-desktop-or-phone-app).
 - **You want to know what cancelling or quitting does to your queued messages.** Read
@@ -109,9 +110,29 @@ footer.
 | Ctrl+X f | Search in the session |
 | Ctrl+X a | Attach a file |
 | Ctrl+X i | Review your attached files and the files this session produced |
-| Ctrl+X I (Shift+I) | Show the pictures in this session one at a time. Use the arrows or 1 to 9 to select a picture, and Enter to open it |
+| Ctrl+X I (Shift+I) | Show the pictures in this session one at a time. See [View pictures](#view-pictures) |
 | Ctrl+X v | Start or stop a voice recording |
 | Ctrl+X b | Turn voice conversation on or off: Vis reads each answer aloud and sends each recording once it is transcribed |
+
+## View pictures
+
+If a message has two or more pictures, Vis shows them together, like the desktop and phone app.
+In a terminal that can show pictures, two pictures sit side by side. Three or more pictures become
+small previews with a number and a name under each. kitty, Ghostty, WezTerm, Warp and iTerm2 can
+show pictures. In other terminals, Vis shows a numbered table, and each row has an **Open** button.
+
+To see one picture larger, click it or its name. To see every picture in the session, press
+**Ctrl+X I**. The picture viewer opens and fills most of the window. In a terminal that cannot show
+pictures, the viewer is a numbered list.
+
+| Keys | What they do |
+|---|---|
+| ← or ↑ | Show the previous picture |
+| → or ↓ | Show the next picture |
+| Home or End | Show the first or the last picture |
+| 1 to 9 | Show the picture with that number |
+| Enter or o | Open the picture in the image viewer of your computer |
+| Esc or q | Close the picture viewer |
 
 ## Use voice input
 
@@ -235,6 +256,14 @@ message with more lines, they first move the cursor. The app keeps your 20 newes
 does not keep commands such as `/reload`, but it keeps `/goal`. Messages from other sessions
 through Council are not included. On a phone with no keyboard, Return starts a new line, and the
 send button sends the message.
+
+To see a picture larger in the app, click or tap it. If the message has more pictures, use these
+keys in the picture viewer. On a phone, swipe left or right instead.
+
+| Keys | What they do |
+|---|---|
+| ← or → | Show the previous or the next picture |
+| Esc | Close the picture viewer |
 
 ## See also
 
