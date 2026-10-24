@@ -218,3 +218,80 @@
           (expect (= :annotate (get-in action [:com.blockether.vis.tui.dialogs/done :action])))
           (expect (= flag
                      (get-in action [:com.blockether.vis.tui.dialogs/done :row :commentable])))))))
+
+(def ^:private pictures
+  [{:path "/tmp/a.png"
+    :mime "image/png"
+    :name "a.png"
+    :width 1600
+    :height 900
+    :label "PNG · 1600x900"}
+   {:path "/tmp/b.png"
+    :mime "image/png"
+    :name "b.png"
+    :width 900
+    :height 1600
+    :label "PNG · 900x1600"}
+   {:path "/tmp/c.png"
+    :mime "image/png"
+    :name "c.png"
+    :width 800
+    :height 800
+    :label "PNG · 800x800"}])
+
+(defdescribe
+  image-viewer-test
+  (it "arrows and digits select a picture; Enter and o open it; Esc closes"
+      (let [step
+            #(inspector/image-viewer-key {:index %1} %2 pictures)
+
+            done
+            :com.blockether.vis.tui.dialogs/done]
+
+        (expect (= 1 (:index (step 0 (KeyStroke. KeyType/ArrowRight)))))
+        (expect (= 2 (:index (step 2 (KeyStroke. KeyType/ArrowDown)))))
+        (expect (= 0 (:index (step 1 (KeyStroke. KeyType/ArrowLeft)))))
+        (expect (= 2 (:index (step 0 (KeyStroke. \3 false false)))))
+        (expect (= 0 (:index (step 0 (KeyStroke. \9 false false)))) "a digit past the end stays")
+        (expect (= "/tmp/b.png" (get-in (step 1 (KeyStroke. KeyType/Enter)) [done :image :path])))
+        (expect (= "/tmp/c.png" (get-in (step 2 (KeyStroke. \o false false)) [done :image :path])))
+        (expect (= {done nil} (step 1 (KeyStroke. KeyType/Escape))))))
+  (it
+    "a graphical terminal shows the picture enlarged inside the dialog"
+    (let [painted
+          (atom nil)
+
+          component
+          (inspector/image-viewer-component pictures
+                                            1
+                                            {:graphical? true :paint-images! #(reset! painted %)})
+
+          state
+          ((:reconcile component) (:init component) ((:measure component) (:init component) 120 40))
+
+          geom
+          ((:measure component) state 120 40)
+
+          text
+          (cap/frame-text (paint-component component))]
+
+      ((:after-refresh component) state geom)
+      (expect (str/includes? text "Image 2 of 3"))
+      (expect (str/includes? text "b.png"))
+      (let [[{:keys [row col img]}]
+            @painted
+
+            {:keys [left right top bottom]}
+            (:bounds geom)]
+
+        (expect (= "/tmp/b.png" (:path img)))
+        ;; The picture fills the dialog height and stays inside its frame.
+        (expect (< 10 (long (:rows img))))
+        (expect (< (long left) (long col) (+ (long col) (long (:cols img))) (long right)))
+        (expect (< (long top) (long row) (+ (long row) (long (:rows img))) (long bottom))))))
+  (it "any other terminal gets a numbered table of the pictures"
+      (let [text (cap/frame-text (paint-component
+                                   (inspector/image-viewer-component pictures 0 {})))]
+        (expect (str/includes? text "1  a.png  ·  PNG · 1600x900"))
+        (expect (str/includes? text "3  c.png  ·  PNG · 800x800"))
+        (expect (str/includes? text "Enter open")))))

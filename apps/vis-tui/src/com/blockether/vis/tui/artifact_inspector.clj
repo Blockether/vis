@@ -7,6 +7,7 @@
             [com.blockether.vis.tui.dialogs :as dlg]
             [com.blockether.vis.tui.paths :as paths]
             [com.blockether.vis.tui.primitives :as p]
+            [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.format :as fmt])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]
@@ -255,6 +256,179 @@
   "Open the inspector and return its selected action, or nil on close."
   [^TerminalScreen screen staged artifacts load-error]
   (dlg/run-modal! screen (inspector-modal-component staged artifacts load-error)))
+
+(defn- image-row-label
+  "One image viewer table row: the number, the file name, then its type and size."
+  [i {:keys [name label]}]
+  (str " " (inc (long i)) "  " name (when-not (str/blank? label) (str "  ·  " label))))
+
+(defn image-viewer-key
+  "The next image viewer state for `key`, or `{::dlg/done result}`. Arrows move, 1-9 jump,
+   Enter or o opens the picture in the system viewer, Esc or q closes."
+  [{:keys [index] :as state} ^KeyStroke key images]
+  (let [last-index
+        (max 0 (dec (count images)))
+
+        move
+        #(assoc state :index (p/clamp (long %) 0 last-index))
+
+        open
+        {::dlg/done {:action :open :image (nth images index nil) :index index}}]
+
+    (condp = (.getKeyType key)
+      KeyType/Escape {::dlg/done nil}
+      KeyType/ArrowLeft (move (dec (long index)))
+      KeyType/ArrowUp (move (dec (long index)))
+      KeyType/ArrowRight (move (inc (long index)))
+      KeyType/ArrowDown (move (inc (long index)))
+      KeyType/Home (move 0)
+      KeyType/End (move last-index)
+      KeyType/Enter open
+      KeyType/Character (let [ch (.getCharacter key)]
+                          (cond (#{\o \O} ch) open
+                                (#{\q \Q} ch) {::dlg/done nil}
+                                (<= (int \1) (int ch) (int \9))
+                                (let [at (- (int ch) (int \1))]
+                                  (if (<= at last-index) (move at) state))
+                                :else state))
+      state)))
+
+(defn image-viewer-component
+  "The image viewer modal over `images` (`render/markdown-images` entries), opened at `index`.
+
+   On a graphical terminal it shows one picture ENLARGED to fill the dialog, with its number,
+   name, type and size above it. `paint-images!` receives the picture region after each
+   refresh, because Lanterna does not model terminal pictures. On any other terminal it is a
+   numbered table of the pictures. In both forms the arrows and 1-9 select a picture and
+   Enter opens it in the system viewer."
+  [images index {:keys [graphical? paint-images!]}]
+  (let [images
+        (vec images)
+
+        n
+        (count images)
+
+        footer
+        [["←/→" "picture"] ["1-9" "jump"] ["Enter" "open"] ["Esc" "close"]]]
+
+    {:init {:index (p/clamp (long (or index 0)) 0 (max 0 (dec n))) :scroll 0}
+     :measure (fn [_ cols rows]
+                (let [content-w
+                      (if graphical? (max 20 (- (long cols) 10)) (dlg/default-content-width cols))
+
+                      content-h-req
+                      (if graphical? (max 6 (- (long rows) 8)) (min 18 (max 3 (inc n))))
+
+                      bounds
+                      (dlg/dialog-bounds cols rows content-w content-h-req)
+
+                      layout
+                      (dlg/dialog-layout bounds)]
+
+                  (merge layout
+                         {:cols cols
+                          :rows rows
+                          :content-w content-w
+                          :content-h-req content-h-req
+                          :bounds bounds
+                          :list-h (max 1 (long (:content-h layout)))})))
+     :reconcile (fn [{:keys [index scroll] :as state} {:keys [list-h]}]
+                  ;; The table header takes the first list row.
+                  (let [rows-h (max 1 (dec (long list-h)))]
+                    (assoc state
+                      :scroll (-> (long scroll)
+                                  (min (long index))
+                                  (max (inc (- (long index) rows-h)))
+                                  (max 0)))))
+     :paint (fn [g {:keys [index scroll]}
+                 {:keys [cols rows content-w content-h-req content-top content-h hint-row bounds
+                         list-h]}]
+              (let [{:keys [left inner-w]}
+                    bounds
+
+                    left
+                    (long left)
+
+                    inner-w
+                    (long inner-w)
+
+                    image
+                    (nth images index nil)
+
+                    title
+                    (if graphical? (str "Image " (inc (long index)) " of " n) "Images")]
+
+                (dlg/draw-dialog-chrome! g cols rows title content-w content-h-req)
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g (inc left) content-top inner-w content-h)
+                (if graphical?
+                  (when image
+                    (p/styled g
+                              [p/BOLD]
+                              (p/put-str! g
+                                          (+ left 2)
+                                          content-top
+                                          (p/ellipsize (:name image) (max 1 (- inner-w 4)))))
+                    (p/set-colors! g t/dialog-hint t/dialog-bg)
+                    (let [label
+                          (str (inc (long index))
+                               " / "
+                               n
+                               (when-not (str/blank? (:label image)) (str "  ·  " (:label image))))
+
+                          width
+                          (long (p/display-width label))]
+
+                      (when (< (+ 4 width (long (p/display-width (:name image)))) inner-w)
+                        (p/put-str! g (- (+ left inner-w) width 1) content-top label)))
+                    (when-not (and (:width image) (:height image))
+                      (p/put-str! g
+                                  (+ left 2)
+                                  (+ (long content-top) 2)
+                                  "No preview. Press Enter to open the picture.")))
+                  (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                      (p/put-str! g
+                                  (+ left 2)
+                                  content-top
+                                  (p/ellipsize "#  Image  ·  Type · Size" (max 1 (- inner-w 3))))
+                      (dotimes [i (min (max 0 (dec (long list-h))) (- n (long scroll)))]
+                        (let [at (+ (long scroll) (long i))]
+                          (dlg/draw-selectable-row! g
+                                                    left
+                                                    (+ (long content-top) 1 (long i))
+                                                    inner-w
+                                                    (= at (long index))
+                                                    (image-row-label at (nth images at)))))))
+                (dlg/draw-hint-bar! g left hint-row inner-w footer)
+                nil))
+     :after-refresh (fn [{:keys [index]} {:keys [bounds content-top content-h]}]
+                      (when (and graphical? paint-images!)
+                        (let [{:keys [path mime width height]} (nth images index nil)]
+                          (paint-images!
+                            (if (and path width height)
+                              (let [{:keys [left inner-w]} bounds
+                                    room-w (max 1 (- (long inner-w) 4))
+                                    room-h (max 1 (- (long content-h) 2))
+                                    {:keys [cols rows]}
+                                    (timg/cell-size {:w width :h height} room-w room-h)]
+
+                                [{:row (+ (long content-top) 2 (quot (- room-h (long rows)) 2))
+                                  :col (+ (long left) 1 (quot (- (long inner-w) (long cols)) 2))
+                                  :img {:id (str "image-viewer/" path)
+                                        :path path
+                                        :mime mime
+                                        :cols cols
+                                        :rows rows
+                                        :width width
+                                        :height height}}])
+                              [])))))
+     :on-key (fn [state key _]
+               (image-viewer-key state key images))}))
+
+(defn show-images!
+  "Open the image viewer and return `{:action :open :image :index}` or nil on close."
+  [^TerminalScreen screen images index opts]
+  (dlg/run-modal! screen (image-viewer-component images index opts)))
 
 (defn- artifact-link-row!
   [session-id url]

@@ -6262,6 +6262,107 @@
                  (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta)))
                (finally (render/invalidate-cache!)))))))
 
+(defdescribe
+  image-gallery-render-test
+  ;; Adjacent pictures share one gallery card, like the Companion gallery: two sit side by
+  ;; side, more become miniatures, and a plain terminal gets a numbered table of links.
+  (let [fence
+        (fn [i w h]
+          (str "````vis-image\n[Image #"
+               i
+               ": shot-"
+               i
+               ".png "
+               w
+               "×"
+               h
+               ", 1.2 MB]\n/tmp/shot-"
+               i
+               ".png\nimage/png\n"
+               w
+               "x"
+               h
+               "\n1.2 MB\n````"))
+
+        md
+        (fn [sizes]
+          (str "look\n\n"
+               (str/join "\n\n"
+                         (map-indexed (fn [i [w h]]
+                                        (fence (inc i) w h))
+                                      sizes))))
+
+        opts
+        {:session-id "s1" :session-turn-id "turn-1" :detail-expansions {} :section :user}
+
+        data
+        (fn [proto text]
+          (with-redefs [timg/images-protocol (constantly proto)]
+            (render/invalidate-cache!)
+            (try (render/format-answer-markdown-data (vis/markdown->ast text) 100 opts)
+                 (finally (render/invalidate-cache!)))))]
+
+    (it "two pictures sit side by side in one card"
+        (let [{:keys [line-meta]}
+              (data :kitty (md [[1600 900] [1600 900]]))
+
+              rows
+              (filter :imgs line-meta)
+
+              cells
+              (:imgs (first rows))]
+
+          (expect (= ["2 images"] (keep :card-title line-meta)))
+          (expect (= 2 (count cells)))
+          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png"] (mapv (comp :path :img) cells)))
+          ;; The second tile starts right of the first one.
+          (expect (< (+ (long (:image-col-offset (first cells)))
+                        (long (:cols (:img (first cells)))))
+                     (long (:image-col-offset (second cells)))))
+          ;; Each tile opens the viewer at its own picture of the pair.
+          (expect (= [0 1] (mapv (comp :index :view) cells)))
+          (expect (= 2 (count (:images (:view (first cells))))))))
+    (it "six pictures become miniatures, four in a row, with numbered captions"
+        (let [{:keys [line-meta]}
+              (data :kitty (md (repeat 6 [1200 900])))
+
+              captions
+              (keep :captions line-meta)]
+
+          (expect (= [[1 2 3 4] [5 6]] (mapv #(mapv :number %) captions)))
+          (expect (every? #(<= (long (:cols (:img %))) 30) (mapcat :imgs line-meta)))
+          ;; One placement row starts each picture.
+          (expect (= 6 (count (filter #(zero? (long (:img-idx %))) (mapcat :imgs line-meta)))))))
+    (it "the height estimate covers the painted gallery"
+        (let [text
+              (md (repeat 6 [1200 900]))
+
+              {:keys [line-meta]}
+              (data :kitty text)]
+
+          (with-redefs [timg/images-protocol (constantly :kitty)]
+            (expect (>= (render/image-fence-rows text 100)
+                        (count (filter :card-part line-meta)))))))
+    (it "a plain terminal gets a numbered table whose rows open the pictures"
+        (let [{:keys [text line-meta]} (data nil (md (repeat 3 [1200 900])))]
+          (expect (str/includes? text "3 images"))
+          (expect (str/includes? text "#  Image  Type · Size"))
+          (expect (str/includes? text "2  shot-2.png  PNG · 1200x900 · 1.2 MB"))
+          (expect (= ["/tmp/shot-1.png" "/tmp/shot-2.png" "/tmp/shot-3.png"]
+                     (mapv (comp :path :doc) (filter :doc line-meta))))
+          (expect (not-any? #(#{:image :image-pad} (:kind %)) line-meta))))
+    ;; Regression: a card that ended the prompt lost its bottom edge to margin trimming.
+    (it "a gallery that ends the prompt keeps its bottom edge"
+        (doseq [proto [:kitty nil]]
+          (expect (= :bottom
+                     (:card-part (peek (:line-meta (data proto (md [[1200 900] [640 480]]))))))
+                  (str proto))))
+    (it "markdown-images lists every picture with a file for the viewer"
+        (expect (= [{:path "/tmp/shot-1.png" :name "shot-1.png" :label "PNG · 1200x900 · 1.2 MB"}
+                    {:path "/tmp/shot-2.png" :name "shot-2.png" :label "PNG · 640x480 · 1.2 MB"}]
+                   (mapv #(select-keys % [:path :name :label])
+                         (render/markdown-images (md [[1200 900] [640 480]]))))))))
+
 (def ^:private render-iteration-entries @#'render/render-iteration-entries)
 
 (def ^:private tool-card-entries @#'render/tool-card-entries)

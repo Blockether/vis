@@ -109,6 +109,7 @@ footer.
 | Ctrl+X f | Search in the session |
 | Ctrl+X a | Attach a file |
 | Ctrl+X i | Review your attached files and the files this session produced |
+| Ctrl+X I (Shift+I) | Show the pictures in this session one at a time. Use the arrows or 1 to 9 to select a picture, and Enter to open it |
 | Ctrl+X v | Start or stop a voice recording |
 | Ctrl+X b | Turn voice conversation on or off: Vis reads each answer aloud and sends each recording once it is transcribed |
 

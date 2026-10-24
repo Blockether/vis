@@ -1199,7 +1199,8 @@
    and `:on-key` are pure functions of data, a dialog's geometry and key logic
    can be unit-tested with no live terminal."
   [^TerminalScreen screen
-   {:keys [init measure reconcile paint on-key read-key after-refresh] :or {read-key read-modal-key!}}]
+   {:keys [init measure reconcile paint on-key read-key after-refresh]
+    :or {read-key read-modal-key!}}]
   (with-modal-background
     screen
     (loop [state (if (fn? init) (init) init)]

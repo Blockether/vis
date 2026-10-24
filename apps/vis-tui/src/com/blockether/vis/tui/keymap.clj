@@ -114,7 +114,11 @@
     :key \i
     :label "inspect attachments"
     :group "Tools"
-    :show-when :never} {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
+    :show-when :never}
+   ;; C-x I (Shift+i) shows every picture of the session in the image viewer, next to
+   ;; `i` for the attachment inspector. Palette-only: the Tools band is full.
+   {:action :view-images :key \I :label "view images" :group "Tools" :show-when :never}
+   {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
    ;; `b` = the conversation MODE, next to `v` = one recording. Arming is not a
    ;; setting: it says SPEAK THE ANSWERS OF THIS CONVERSATION, and only this one.
    ;; Palette-only because the Tools pane is FULL: a fifth verb there re-packs the

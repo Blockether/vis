@@ -2709,6 +2709,60 @@
 
             nil))))))
 
+(defn- open-image-viewer!
+  "Show `images` in the image viewer at `index`: enlarged on a graphical terminal, as a
+   table on any other. Enter opens the selected picture in the system viewer."
+  [^TerminalScreen screen images index]
+  (when (seq images)
+    (when-let [{:keys [image]} (with-dialog-lock
+                                 #(try (artifact-inspector/show-images!
+                                         screen
+                                         images
+                                         index
+                                         {:graphical? (timg/graphical-terminal?)
+                                          :paint-images!
+                                          (fn [regions]
+                                            (paint-terminal-images!
+                                              (mapv (fn [region]
+                                                      (update region :col frame/screen-column))
+                                                    regions)))})
+                                       ;; The enlarged picture leaves the graphics layer with the modal.
+                                       (finally (drop-terminal-images!))))]
+      (when-let [path (:path image)]
+        (vis/worker-future "vis-tui-open-image"
+                           #(try (report-open-result! (opener/open-local! path))
+                                 (catch Throwable _ nil)))))))
+
+(defn- open-image-hit!
+  "A click on a transcript picture: the image viewer when the hit lists its gallery, else
+   the system viewer."
+  [^TerminalScreen screen hit]
+  (if (seq (:images hit))
+    (open-image-viewer! screen (:images hit) (:index hit))
+    (open-click-target! screen hit)))
+
+(defn- session-images
+  "Every picture in `messages`, oldest first, once for each file path."
+  [messages]
+  (let [texts (filter #(and (string? %) (str/includes? % "````vis-image"))
+                      (tree-seq coll? seq messages))]
+    (:images (reduce (fn [{:keys [seen] :as acc} image]
+                       (if (contains? seen (:path image))
+                         acc
+                         (-> acc
+                             (update :seen conj (:path image))
+                             (update :images conj image))))
+                     {:seen #{} :images []}
+                     (mapcat render/markdown-images texts)))))
+
+(defn- open-session-images!
+  "C-x I: the image viewer over every picture in the session, at the newest one."
+  [^TerminalScreen screen]
+  (let [images (session-images (:messages @state/app-db))]
+    (if (seq images)
+      (open-image-viewer! screen images (dec (count images)))
+      (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000))))
+
 (defn- improve-failed!
   "Say that an Improve write did NOT happen. A refused write must never read like
    a saved one."
@@ -8910,6 +8964,9 @@
                                  :artifact
                                  (open-produced-artifact! (:session-id hit) (:artifact hit))
 
+                                 :image
+                                 (open-image-hit! screen hit)
+
                                  (open-click-target! screen hit))
                                (let [point (selection/point mx my)
                                      disclosure-hit
@@ -9092,6 +9149,9 @@
 
                                  :artifact
                                  (open-produced-artifact! (:session-id hit) (:artifact hit))
+
+                                 :image
+                                 (open-image-hit! screen hit)
 
                                  ;; Default: hand any direct-open hit to
                                  ;; the OS opener on a side thread - a
@@ -9407,6 +9467,9 @@
                                      :focus-attachments
                                      (state/dispatch [:focus-attachments])
 
+                                     :view-images
+                                     (open-session-images! screen)
+
                                      :search-open
                                      (state/dispatch [:search-open])
 
@@ -9577,6 +9640,9 @@
 
                          :focus-attachments
                          (do (open-attachment-inspector! screen) (recur))
+
+                         :view-images
+                         (do (open-session-images! screen) (recur))
 
                          :improve
                          (do (open-improve! screen) (recur))
