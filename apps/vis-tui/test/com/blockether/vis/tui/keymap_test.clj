@@ -298,3 +298,11 @@
                    (expect (contains? (rows {:codex-session? true}) :toggle-codex-fast))
                    ;; The chord still resolves; its handler gives the reason.
                    (expect (= :toggle-codex-fast (keymap/prefix-action-for \q))))))
+
+(defdescribe view-images-hydra-test
+             (it "shows View images only in a session with a picture"
+                 (let [rows (fn [db]
+                              (set (map :id (mapcat :items (:groups (keymap/prefix-spec db))))))]
+                   (expect (not (contains? (rows {}) :view-images)))
+                   (expect (contains? (rows {:has-images? true}) :view-images))
+                   (expect (= :view-images (keymap/prefix-action-for \I))))))

@@ -7252,8 +7252,11 @@
   [^TerminalScreen screen db r]
   (if-not (:prefix (:state r))
     r
-    ;; The band shows Fast mode only for a Codex session (#333).
-    (let [db (assoc db :codex-session? (state/codex-session? db))]
+    ;; The band shows Fast mode only for a Codex session (#333), and View images
+    ;; only when the session has a picture to show.
+    (let [db (assoc db
+               :codex-session? (state/codex-session? db)
+               :has-images? (boolean (seq (session-images (:messages db)))))]
       (if-let [key (with-band-lock
                      (band-top-row db (keymap/prefix-spec db))
                      #(dlg/prefix-band! screen (state/band-anchor db) (keymap/prefix-spec db)))]

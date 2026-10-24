@@ -116,8 +116,8 @@
     :group "Tools"
     :show-when :never}
    ;; C-x I (Shift+i) shows every picture of the session in the image viewer, next to
-   ;; `i` for the attachment inspector. Palette-only: the Tools band is full.
-   {:action :view-images :key \I :label "view images" :group "Tools" :show-when :never}
+   ;; `i` for the attachment inspector. The hydra lists it only when the session has a picture.
+   {:action :view-images :key \I :label "view images" :group "Tools" :show-when :has-images}
    {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
    ;; `b` = the conversation MODE, next to `v` = one recording. Arming is not a
    ;; setting: it says SPEAK THE ANSWERS OF THIS CONVERSATION, and only this one.
@@ -340,7 +340,8 @@
    verbs always apply; the tagged ones surface in the hydra ONLY where they can
    act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
    fork at, `:improve` needs an Improve mode other than Off, `:codex` needs a
-   session on OpenAI Codex (the screen marks it as `:codex-session?`), and `:never`
+   session on OpenAI Codex (the screen marks it as `:codex-session?`), `:has-images`
+   needs a picture in the session (the screen marks it as `:has-images?`), and `:never`
    is palette-only. Resolving a chord does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
@@ -355,6 +356,9 @@
 
     :codex
     (true? (:codex-session? db))
+
+    :has-images
+    (true? (:has-images? db))
 
     :never
     false
