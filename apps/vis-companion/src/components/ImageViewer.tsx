@@ -496,24 +496,6 @@ export function ImageViewer({
             </span>
           )}
 
-          {/* A pointer means a keyboard is near, so the keys the viewer answers are
-              shown where the reader looks. A finger swipes instead, so a phone
-              shows no keys and no arrow buttons. */}
-          <span
-            className="hidden shrink-0 items-center gap-1.5 font-mono text-chip text-dialog-hint mouse:flex"
-            aria-hidden="true"
-          >
-            {gallery && (
-              <>
-                <kbd className="border border-dialog-edge px-1 font-mono text-chip">←</kbd>
-                <kbd className="border border-dialog-edge px-1 font-mono text-chip">→</kbd>
-                <span className="mr-1.5">picture</span>
-              </>
-            )}
-            <kbd className="border border-dialog-edge px-1 font-mono text-chip">Esc</kbd>
-            <span>close</span>
-          </span>
-
           {editable ? (
             <IconButton
               variant={onApply && hasEdits ? 'primary' : 'secondary'}

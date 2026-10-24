@@ -732,16 +732,6 @@ describe('a gallery in the viewer', () => {
     expect(shownSrc()).toBe('blob:one');
   });
 
-  // The keys are shown only under a pointer: a phone swipes and shows no keys.
-  it('names the keys it answers, only under a pointer', () => {
-    open(1);
-    const keys = [...document.querySelectorAll('kbd')];
-    expect(keys.map((key) => key.textContent)).toEqual(['←', '→', 'Esc']);
-    const legend = keys[0].parentElement;
-    expect(legend?.className).toContain('hidden');
-    expect(legend?.className).toContain('mouse:flex');
-  });
-
   // Regression, user report ("in the application we should not have the left right
   // … on iOS and android we should have swipes working"): the gallery was walked
   // only from a pair of chevrons on the toolbar, and dragging the picture — the one

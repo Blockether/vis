@@ -84,17 +84,3 @@ export const ZoomControlsPointer: Story = {
   tags: ['!test'],
   globals: { viewport: { value: 'desktop', isRotated: false } },
 };
-
-/** A gallery names the keys it answers under a pointer; a phone swipes and shows none. */
-export const Gallery: Story = {
-  args: {
-    pictures: STORY_PICTURES.map(({ src, name }) => ({ src, name })),
-    onApply: undefined,
-  },
-};
-
-export const GalleryPointer: Story = {
-  ...Gallery,
-  tags: ['!test'],
-  globals: { viewport: { value: 'desktop', isRotated: false } },
-};
