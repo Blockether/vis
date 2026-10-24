@@ -687,8 +687,8 @@ describe('the search starts on the session the reader is in', () => {
 
     await waitFor(() => expect(rowOrder('Recent sessions')).toEqual(['fresh', 'in-use']));
     expect(within(row('Recent sessions', 'fresh')).getByText('Project:')).toHaveClass('font-bold');
-    expect(row('Recent sessions', 'fresh').querySelector('[data-session-location]')).toHaveTextContent('Project: alpha · Group:');
-    expect(row('Recent sessions', 'in-use').querySelector('[data-session-location]')).toHaveTextContent('Project: zulu · Group:');
+    expect(row('Recent sessions', 'fresh').querySelector('[data-session-location]')).toHaveTextContent(/^Project: alpha$/);
+    expect(row('Recent sessions', 'in-use').querySelector('[data-session-location]')).toHaveTextContent(/^Project: zulu$/);
     expect(row('Recent sessions', 'in-use')).toHaveAttribute('aria-current', 'page');
   });
 
@@ -796,10 +796,11 @@ describe('explicit search locations and scopes', () => {
     await waitFor(() => expect(within(results).getByText('Needle one')).toBeVisible());
     const location = within(results).getByText('Needle one').closest('[data-session-id]')!
       .querySelector<HTMLElement>('[data-session-location]')!;
-    expect(location).toHaveTextContent(/^Project: Workbench · Group: Planning$/);
+    // Space, not a middle dot, separates the two parts (Hallmark: no dot-joined meta).
+    expect(location).toHaveTextContent(/^Project: Workbench Group: Planning$/);
+    expect(location).not.toHaveTextContent('·');
     expect(within(location).getByText('Project:')).toHaveClass('font-bold');
     expect(within(location).getByText('Group:')).toHaveClass('font-bold');
-    expect(within(location).getByText('·')).toHaveAttribute('aria-hidden', 'true');
     const project = await screen.findByRole('combobox', { name: 'Project' });
     // With one machine there is no machine to choose.
     expect(screen.queryByRole('combobox', { name: 'Machine' })).not.toBeInTheDocument();

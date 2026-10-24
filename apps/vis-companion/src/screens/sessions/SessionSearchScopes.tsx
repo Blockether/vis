@@ -96,7 +96,8 @@ export function useSessionSearchScope(
       ...(namesProject ? {
         project: project?.name || session.project_name || (session.project_id ? session.project_id : projectLabel([session])),
       } : {}),
-      ...(namesGroup ? { group: group?.name || (session.group_id ? session.group_id : 'No group') } : {}),
+      // A session in no group names none: "Group: No group" tells the reader nothing.
+      ...(namesGroup && session.group_id ? { group: group?.name || session.group_id } : {}),
       groupRecord: group,
     };
   };
@@ -140,7 +141,9 @@ export function SessionSearchScopes({ scope, machine = null, report = null }: {
   return (
     <div className="flex flex-col gap-2">
       {(machine || scope.isProjectChoice || scope.isGroupChoice) && (
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-x-3 gap-y-2">
+        // auto-fill keeps empty tracks, so one choice keeps a column width on a wide dialog
+        // and still fills a phone.
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,14rem),1fr))] gap-x-3 gap-y-2">
           {machine && (
             <ScopeChoice id={`${id}machine`} label="Machine">
               <Select

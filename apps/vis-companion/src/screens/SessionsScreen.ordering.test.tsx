@@ -50,8 +50,10 @@ describe('the order the reader is looking at', () => {
   it('keeps repository headers fixed across reordered poll answers and search', async () => {
     const expectProjectLocations = (region: HTMLElement) => {
       for (const name of ['a', 'b']) {
-        // The bold label and project name are separate text nodes.
-        const project = within(region).getByText((_, element) => element?.textContent === `Project: ${name}`);
+        // The bold label and project name are separate text nodes. A session in no group
+        // names only its project, so the location line has the same text: take the part.
+        const project = within(region).getByText((_, element) => element?.textContent === `Project: ${name}`
+          && !element.hasAttribute('data-session-location'));
         expect(project).toBeVisible();
         expect(within(project).getByText('Project:')).toHaveClass('font-bold');
       }

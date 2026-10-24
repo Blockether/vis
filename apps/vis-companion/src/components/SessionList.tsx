@@ -876,11 +876,12 @@ export const SessionRow = memo(function SessionRow({
                   {timeLabel(timestamp)}
                 </span>
                 {location && (location.project !== undefined || location.group !== undefined) && (
-                  <span data-session-location className="col-span-full flex min-w-0 flex-wrap gap-x-2 gap-y-1 font-mono text-meta text-dialog-hint">
+                  <span data-session-location className="col-span-full flex min-w-0 flex-wrap gap-x-4 gap-y-1 font-mono text-meta text-dialog-hint">
                     {location.project !== undefined && (
                       <span className="min-w-0 break-words"><strong className="font-bold">Project:</strong> {location.project}</span>
                     )}
-                    {location.project !== undefined && location.group !== undefined && <span aria-hidden="true"> · </span>}
+                    {/* Flex drops this space from the layout; text and screen readers keep it. */}
+                    {location.project !== undefined && location.group !== undefined && ' '}
                     {location.group !== undefined && (
                       <span className="min-w-0 break-words"><strong className="font-bold">Group:</strong> {location.group}</span>
                     )}

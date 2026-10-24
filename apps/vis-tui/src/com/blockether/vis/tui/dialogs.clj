@@ -7088,7 +7088,7 @@
 
 (defn- draw-navigator-scope-controls!
   "Paint the scope row from `x`, in the footer hint style: the name in hint ink, the
-   current value in bold text ink, then the bold key. A dim dot separates controls."
+   current value in bold text ink, then the bold key. Space alone separates controls."
   [g x row controls]
   (doseq [{:keys [name label key] :as control} controls]
     (let [cx (+ (long x) (long (:x control)))
@@ -7096,7 +7096,6 @@
           value-x (+ cx (count head))]
 
       (p/set-colors! g t/dialog-hint t/dialog-bg)
-      (when (pos? (long (:x control))) (p/put-str! g (- cx 3) row "·"))
       (p/put-str! g cx row head)
       (p/set-colors! g t/dialog-fg t/dialog-bg)
       (p/styled g [p/BOLD] (p/put-str! g value-x row label))
@@ -8375,7 +8374,10 @@
                                                body-x
                                                row
                                                body-w
-                                               (merge entry location-parts)
+                                               ;; A session in no group names none.
+                                               (cond-> (merge entry location-parts)
+                                                 (str/blank? (str (:session-group-id entry)))
+                                                 (assoc :show-group? false))
                                                (= idx @selected))
                       (recur (rest remaining) (inc (long row))))))
                 ;; The list and the selected session's messages always stay side by side.

@@ -4370,7 +4370,8 @@
                  (str/index-of line "C-p")]
 
              (expect (= 4 (str/index-of line "Project: All projects  C-p")))
-             (expect (str/includes? line "C-p  ·  Groups: 1 selected  C-g"))
+             (expect (str/includes? line "C-p     Groups: 1 selected  C-g"))
+             (expect (not (str/includes? line "·")))
              (expect (= t/dialog-hint (.getForegroundColor ^TextCharacter (cell 4))))
              (expect (not (bold? 4)))
              (expect (= t/dialog-fg (.getForegroundColor ^TextCharacter (cell value-x))))
