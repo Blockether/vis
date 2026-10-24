@@ -575,6 +575,63 @@
           "type": "integer",
           "minimum": 0
         },
+        "activity": {
+          "description": "With active orchestration: the latest Activity line of a running child.",
+          "type": "string"
+        },
+        "notes": {
+          "description": "With active orchestration: the new progress notes of a running child since the last check-in.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "messages": {
+          "description": "With active orchestration: the new Council messages of a running child since the last check-in.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "entry_id": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "kind": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "entry_id",
+              "kind",
+              "content"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "step_secs": {
+          "description": "With active orchestration: the seconds that a running child is in its current step.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "elapsed_secs": {
+          "description": "With active orchestration: the seconds since a running child started its current task.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "alerts": {
+          "description": "With active orchestration: slow_step after 300 s in one step, errors for three failed steps of the last five, budget at 80% of the iteration budget.",
+          "type": "array",
+          "items": {
+            "enum": [
+              "slow_step",
+              "errors",
+              "budget"
+            ]
+          }
+        },
         "warning": {
           "type": "string"
         },

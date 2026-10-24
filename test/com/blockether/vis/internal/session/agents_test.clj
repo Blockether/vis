@@ -1584,6 +1584,163 @@
                             (expect (= "held" (get record "status")) (pr-str record)))
                           (finally (#'gateway/drop-session! child)))))))
 
+;; Council orchestration study: a blocking wait idled on finished work and returned only status
+;; and iteration counts. Active orchestration returns at the first event with a progress digest.
+(defdescribe
+  active-orchestration-test
+  (let [now
+        #(java.util.Date.)
+
+        team
+        (fn []
+          (let [db
+                (h/store)
+
+                leader
+                (str (h/store-session! db {:channel :api}))]
+
+            {:db db
+             :leader leader
+             :env {:db-info db :session-id leader}
+             :done (child! db leader {:status "running" :iteration_budget 10})
+             :busy (child! db leader {:status "running" :iteration_budget 10})}))
+
+        answer
+        (fn [done]
+          (fn [_ sid]
+            (if (= done (str sid))
+              [{:id "t" :content [{"type" "prose" "markdown" "Done answer"}]}]
+              [])))
+
+        by-id
+        (fn [records]
+          (into {} (map (juxt #(get % "session_id") identity)) records))]
+
+    (it
+      "returns when the first child ends and shows only new progress notes"
+      (let [{:keys [db leader env done busy]}
+            (team)
+
+            live
+            (atom #{done busy})
+
+            turn
+            (str (random-uuid))]
+
+        (with-fake-runtime
+          db
+          leader
+          live
+          (fn [_]
+            (with-redefs [ps/db-list-session-turns
+                          (answer done)
+
+                          ps/db-list-session-turns-meta
+                          (fn [_ sid]
+                            (if (= busy (str sid)) [{:id turn :position 0 :created-at (now)}] []))
+
+                          ps/db-list-session-turn-iterations
+                          (fn [_ id]
+                            (if (= turn (str id))
+                              [{:position 0 :assistant-prose "Reading the parser" :created-at (now)}
+                               {:position 1
+                                :assistant-prose "The bug is in tokenize"
+                                :created-at (now)}]
+                              []))]
+
+              (binding [toggles/*overrides* {"council_orchestration" "active"}]
+                (let [started (System/currentTimeMillis)
+                      ender (future (Thread/sleep 1500)
+                                    (agents/finish! db done "completed")
+                                    (swap! live disj done))
+                      records (by-id (:result
+                                       (agents/wait-agents env [done busy] {:timeout_secs 30})))
+                      elapsed (- (System/currentTimeMillis) started)]
+
+                  @ender
+                  (expect (< elapsed 15000)
+                          (str "The wait ended at the first child: " elapsed " ms"))
+                  (expect (= ["completed" "Done answer"]
+                             [(get-in records [done "status"]) (get-in records [done "answer"])]))
+                  (expect (= "running" (get-in records [busy "status"])))
+                  (expect (= ["Reading the parser" "The bug is in tokenize"]
+                             (get-in records [busy "notes"])))
+                  (expect (integer? (get-in records [busy "step_secs"])))
+                  (expect (integer? (get-in records [busy "elapsed_secs"])))
+                  (expect (nil? (get (first (:result
+                                              (agents/wait-agents env [busy] {:timeout_secs 1})))
+                                     "notes"))
+                          "A second check-in shows only new notes"))))))))
+    (it
+      "returns when a running child publishes a Council message"
+      (let [{:keys [db leader env busy]}
+            (team)
+
+            live
+            (atom #{busy})
+
+            turn
+            (str (random-uuid))
+
+            steps
+            (atom [{:position 0 :assistant-prose "Reading the parser" :created-at (now)}])]
+
+        (with-fake-runtime
+          db
+          leader
+          live
+          (fn [_]
+            (with-redefs [ps/db-list-session-turns-meta
+                          (fn [_ sid]
+                            (if (= busy (str sid)) [{:id turn :position 0 :created-at (now)}] []))
+
+                          ps/db-list-session-turn-iterations
+                          (fn [_ id]
+                            (if (= turn (str id)) @steps []))
+
+                          ps/db-council-get
+                          (fn [_ id]
+                            (when (= 7 id)
+                              {:entry_id 7 :kind "informational" :content "tokenize drops tabs"}))]
+
+              (binding [toggles/*overrides* {"council_orchestration" "active"}]
+                (let [publisher (future (Thread/sleep 1500)
+                                        (swap! steps conj
+                                          {:position 1
+                                           :council-publications [{:entry_id 7}]
+                                           :created-at (now)})
+                                        (agents/claim-iteration! {:db-info db :session-id busy}))
+                      started (System/currentTimeMillis)
+                      record (first (:result (agents/wait-agents env [busy] {:timeout_secs 30})))]
+
+                  @publisher
+                  (expect (< (- (System/currentTimeMillis) started) 15000))
+                  (expect (= [{"entry_id" 7 "kind" "informational" "content" "tokenize drops tabs"}]
+                             (get record "messages"))
+                          (pr-str record)))))))))
+    (it "keeps the wait mode: one ended child does not end the wait"
+        (let [{:keys [db leader env done busy]}
+              (team)
+
+              live
+              (atom #{done busy})]
+
+          (with-fake-runtime
+            db
+            leader
+            live
+            (fn [_]
+              (with-redefs [ps/db-list-session-turns (answer done)]
+                (agents/finish! db done "completed")
+                (swap! live disj done)
+                (let [started (System/currentTimeMillis)
+                      records (by-id (:result
+                                       (agents/wait-agents env [done busy] {:timeout_secs 2})))]
+
+                  (expect (>= (- (System/currentTimeMillis) started) 1500))
+                  (expect (= "running" (get-in records [busy "status"])))
+                  (expect (not (contains? (get records busy) "notes")))))))))))
+
 ;; Regression for #405: only a finished child with iterations left can resume.
 (defdescribe
   resume-of-a-running-or-cancelled-child-test

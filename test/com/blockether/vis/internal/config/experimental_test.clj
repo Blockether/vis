@@ -49,12 +49,15 @@
             rows
             (filter #(get % "is_experimental") general)]
 
-        (expect (= #{"subagents" "improve" "draft_backend"} (set (map #(get % "id") rows))))
+        (expect (= #{"subagents" "improve" "draft_backend" "council_orchestration"}
+                   (set (map #(get % "id") rows))))
         ;; Experimental switches stand last in the General section.
         (expect (= rows (take-last (count rows) general)))
         (expect (every? #(true? (get % "is_experimental")) rows))
         (expect (every? #(false? (get % "enabled")) (filter #(= "boolean" (get % "type")) rows)))
-        (expect (= "off" (get (first (filter #(= "draft_backend" (get % "id")) rows)) "value"))))
+        (expect (= "off" (get (first (filter #(= "draft_backend" (get % "id")) rows)) "value")))
+        (expect (= "wait"
+                   (get (first (filter #(= "council_orchestration" (get % "id")) rows)) "value"))))
       (toggles/hydrate-from-config! {"toggles" {"subagents" true "improve" "on"}})
       (expect (every? toggles/enabled? ["subagents" "improve"]))
       (expect (some #(= "improve_mode" (:id %)) (toggles/visible-toggles)))

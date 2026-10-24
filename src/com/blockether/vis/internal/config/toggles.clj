@@ -825,6 +825,19 @@
        :owner :vis
        :group :experimental
        :persist? true})
+    (register-toggle!
+      {:id "council_orchestration"
+       :label "Council orchestration"
+       :description
+       "How a leader manages subagents: wait for their end, or check in often and steer them."
+       :type :enum
+       :choices ["wait" "active"]
+       :default "wait"
+       :experimental? true
+       :scopes toggle-contract/scopes
+       :owner :vis
+       :group :experimental
+       :persist? true})
     (register-toggle! {:id "improve"
                        :label "Improve"
                        :description
