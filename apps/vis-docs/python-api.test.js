@@ -90,7 +90,7 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
 
 test('experimental APIs stay out of generated pages, navigation and search', () => {
   const experimental =
-    /\bSubagent(?:Record)?\b|council\.spawn|subagents|council_wake|Council\.(?:spawn|run|wait|cancel|resume|extend|deny|grant|route|wake)/i;
+    /\bSubagent(?:Record)?\b|council\.spawn|subagents|council_wake|Council\.(?:spawn|run|wait|cancel|resume|extend|deny|answer|grant|route|wake)/i;
   for (const name of files) expect(experimental.test(read(prefix + name)), name).toBe(false);
   expect(experimental.test(read(prefix + 'search.js')), 'search index').toBe(false);
   const dom = new JSDOM(read(prefix + 'blockether/vis/extension.html'));
