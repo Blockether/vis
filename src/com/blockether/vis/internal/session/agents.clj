@@ -1673,7 +1673,7 @@
 (def ^:private active-guide
   "The leader rules of active orchestration."
   "- Active orchestration is on. council.run, council.wait and council.resume return at the first event: a child ends, asks or publishes a message. Without an event, they return at a check-in after 90 s.
-- A running child's record also has activity, notes (its new progress notes), messages (its new Council messages), step_secs, elapsed_secs and alerts (slow_step, errors or budget). A check-in shows only new notes and messages. Pass the session_ids of the children that still run, so that finished answers do not come again.
+- A running child's record also has activity, notes (its new progress notes), messages (its new Council messages), step_secs, elapsed_secs and alerts (slow_step, errors or budget). A check-in shows only new notes and messages. Print them for each running record: a message can already hold the result of a child. Read a whole message with council.get(entry_id). Pass the session_ids of the children that still run, so that finished answers do not come again.
 - At each check-in, read the notes and messages. Steer a child only when it works from a wrong premise, repeats the work of a sibling or misses a fact that you or a sibling found. Then send the fact or the decision with council.publish(text, kind=\"coordination\", ping=[session_id], reply_required=True). The child reads it at its next step. Send facts and decisions, not step lists.
 - When a child ends, check its result at once and give its findings to the children that need them. Do not wait for the other children first.
 - When the work of a child is no longer necessary or repeats the work of a sibling, call council.cancel(session_id).
