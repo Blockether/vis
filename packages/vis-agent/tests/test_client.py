@@ -739,6 +739,7 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         )
         council.extend("child", 5)
         council.deny("child", "Not now")
+        council.answer("child", "Use the fixture")
         council.grant("child", {"read_only": ["/tmp/x"]})
         council.route("small", provider="fixture")
         seen.update(
