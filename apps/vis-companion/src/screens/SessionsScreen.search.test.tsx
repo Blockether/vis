@@ -398,9 +398,11 @@ describe('typing does not redraw the list under the thumb', () => {
     const report = screen.getByText('1 match').closest('div');
     expect(report).toBeVisible();
     const line = report!.parentElement!;
-    // The report stands on the line under the search choices, and that line wraps.
+    // The report stands on a line of its own, and that line wraps. With one project and
+    // one machine there is nothing to choose, so no choices line stands above it.
     expect(line.className).toContain('flex-wrap');
-    expect(line.previousElementSibling).toContainElement(screen.getByRole('combobox', { name: 'Project' }));
+    expect(screen.queryByRole('combobox', { name: 'Project' })).not.toBeInTheDocument();
+    expect(line.previousElementSibling).toBeNull();
     // And it shares no box with a machine switch or the machine's own verb.
     expect(line.querySelector('[role="group"][aria-label="Machines"]')).toBeNull();
     expect(report!.querySelector('[aria-label^="Projects on"]')).toBeNull();
@@ -824,6 +826,52 @@ describe('explicit search locations and scopes', () => {
     expect(project).toHaveTextContent('All projects');
     expect(screen.queryByRole('combobox', { name: 'Groups' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /clear filters|search everything/i })).not.toBeInTheDocument();
+  });
+  // User request: one project or one group has nothing to choose, so search shows no
+  // picker for it and no row names it.
+  it('with one project offers its groups and names only the group', async () => {
+    const view = renderSessionsScreen({ machines: [{
+      label: 'alpha',
+      sessions: [
+        listSession({ id: 'one', title: 'Needle one', project_id: 'p1', project_name: 'Workbench', group_id: 'g1' }),
+        listSession({ id: 'two', title: 'Needle two', project_id: 'p1', project_name: 'Workbench', group_id: 'g2' }),
+      ],
+      routes: {
+        '/v1/projects': { projects: [{ id: 'p1', name: 'Workbench', workspace_root: '/work' }] },
+        '/v1/session-groups': { groups: [
+          { id: 'g1', name: 'Planning', project_id: 'p1', color: 'red' },
+          { id: 'g2', name: 'Review', project_id: 'p1', color: 'blue' },
+        ] },
+      },
+    }] });
+    restore = view.restore;
+    view.setQuery('needle');
+    const groups = await screen.findByRole('combobox', { name: 'Groups' });
+    expect(screen.queryByRole('combobox', { name: 'Project' })).not.toBeInTheDocument();
+    const results = screen.getByRole('region', { name: 'Matching sessions' });
+    await waitFor(() => expect(within(results).getByText('Needle one').closest('[data-session-id]')!
+      .querySelector('[data-session-location]')).toHaveTextContent(/^Group: Planning$/));
+    await userEvent.click(groups);
+    await userEvent.click(screen.getByRole('option', { name: 'Review' }));
+    await waitFor(() => expect(searchParams(view.requests, 'group_ids').at(-1)).toBe('g2'));
+    expect(searchParams(view.requests, 'project_id').at(-1)).toBeNull();
+  });
+  it('with one project and one group offers no choice and names no location', async () => {
+    const view = renderSessionsScreen({ machines: [{
+      label: 'alpha',
+      sessions: [listSession({ id: 'one', title: 'Needle one', project_id: 'p1', project_name: 'Workbench', group_id: 'g1' })],
+      routes: {
+        '/v1/projects': { projects: [{ id: 'p1', name: 'Workbench', workspace_root: '/work' }] },
+        '/v1/session-groups': { groups: [{ id: 'g1', name: 'Planning', project_id: 'p1', color: 'red' }] },
+      },
+    }] });
+    restore = view.restore;
+    view.setQuery('needle');
+    const results = await screen.findByRole('region', { name: 'Matching sessions' });
+    await waitFor(() => expect(within(results).getByText('Needle one').closest('[data-session-id]')!
+      .querySelector('[data-session-location]')).toBeNull());
+    expect(screen.queryByRole('combobox', { name: 'Project' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Groups' })).not.toBeInTheDocument();
   });
   // Regression, user report (paraphrased: the results should keep loading as the list
   // scrolls, without a button to press): the next page loads once the list's end is in view.

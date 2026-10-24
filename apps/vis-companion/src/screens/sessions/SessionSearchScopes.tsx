@@ -54,7 +54,9 @@ export function useSessionSearchScope(
     return () => controller.abort();
   }, [isOpen, conns, getClient]);
   const projects = catalog.filter((entry) => machineScope === ALL_SCOPE || machineKey(entry.conn) === machineScope);
-  const chosen = projects.find((entry) => keyFor(machineKey(entry.conn), entry.project.id) === filters.project);
+  // With one project there is no project to choose, so its groups are the choices.
+  const chosen = projects.find((entry) => keyFor(machineKey(entry.conn), entry.project.id) === filters.project)
+    ?? (projects.length === 1 ? projects[0] : undefined);
   // All projects already means all groups: only a chosen project has groups to narrow to.
   // The project picker already names the project, so a group needs only its own name.
   const options = (chosen ? [chosen] : []).flatMap((entry) => entry.groups.map((group) => ({
@@ -79,19 +81,28 @@ export function useSessionSearchScope(
     };
     return { key: JSON.stringify([machineScope, filters.project, filters.groups]), machine, accepts, request, includes };
   }, [filters, machineScope]);
+  // One project or one group has nothing to choose and nothing to tell rows apart by.
+  // Until the catalog is read, the pickers wait and rows keep the full location.
+  const isProjectChoice = projects.length > 1;
+  const isGroupChoice = options.length > 1 || filters.groups.length > 0;
+  const namesProject = projects.length !== 1;
+  const namesGroup = projects.length === 0 || projects.some((entry) => entry.unread)
+    || projects.reduce((count, entry) => count + entry.groups.length, 0) > 1;
   const location = (conn: GatewayConn, session: Session) => {
     const entries = catalog.filter((entry) => machineKey(entry.conn) === machineKey(conn));
     const group = entries.flatMap((entry) => entry.groups).find((entry) => entry.id === session.group_id) ?? null;
     const project = entries.find((entry) => entry.project.id === session.project_id)?.project;
     return {
-      project: project?.name || session.project_name || (session.project_id ? session.project_id : projectLabel([session])),
-      group: group?.name || (session.group_id ? session.group_id : 'No group'),
+      ...(namesProject ? {
+        project: project?.name || session.project_name || (session.project_id ? session.project_id : projectLabel([session])),
+      } : {}),
+      ...(namesGroup ? { group: group?.name || (session.group_id ? session.group_id : 'No group') } : {}),
       groupRecord: group,
     };
   };
   return {
     wire, location,
-    projects, options, filters, failure,
+    projects, options, filters, failure, isProjectChoice, isGroupChoice,
     setProject: (project: string) => setStored({ machineScope, project, groups: [] }),
     setGroups: (groups: string[]) => setStored({ ...filters, groups }),
   };
@@ -103,7 +114,8 @@ type Choice = { value: string; label: string; disabled?: boolean };
 
 /**
  * WHERE A SEARCH LOOKS, as one row of labelled choices: the machine (when there is more
- * than one), the project and, once a project with groups narrows the search, its groups.
+ * than one), the project (when there is more than one) and, once one project narrows the
+ * search, its groups (when there is more than one).
  * Each is the app's own picker, never the system one: the project used to be a bare
  * system select and the groups a text button that unfolded checkboxes, so on a phone the
  * band read as loose words, not as controls. All projects already means all groups, so
@@ -127,40 +139,44 @@ export function SessionSearchScopes({ scope, machine = null, report = null }: {
   ];
   return (
     <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-x-3 gap-y-2">
-        {machine && (
-          <ScopeChoice id={`${id}machine`} label="Machine">
-            <Select
-              aria-labelledby={`${id}machine`}
-              value={machine.value}
-              onValueChange={machine.onChange}
-              options={machine.options}
-              className="w-full"
-            />
-          </ScopeChoice>
-        )}
-        <ScopeChoice id={`${id}project`} label="Project">
-          <Select
-            aria-labelledby={`${id}project`}
-            value={scope.filters.project}
-            onValueChange={scope.setProject}
-            options={projects}
-            className="w-full"
-          />
-        </ScopeChoice>
-        {(scope.options.length > 0 || scope.filters.groups.length > 0) && (
-          <ScopeChoice id={`${id}groups`} label="Groups">
-            <Select
-              aria-labelledby={`${id}groups`}
-              values={scope.filters.groups}
-              onValuesChange={scope.setGroups}
-              noneLabel="All groups"
-              options={scope.options}
-              className="w-full"
-            />
-          </ScopeChoice>
-        )}
-      </div>
+      {(machine || scope.isProjectChoice || scope.isGroupChoice) && (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-x-3 gap-y-2">
+          {machine && (
+            <ScopeChoice id={`${id}machine`} label="Machine">
+              <Select
+                aria-labelledby={`${id}machine`}
+                value={machine.value}
+                onValueChange={machine.onChange}
+                options={machine.options}
+                className="w-full"
+              />
+            </ScopeChoice>
+          )}
+          {scope.isProjectChoice && (
+            <ScopeChoice id={`${id}project`} label="Project">
+              <Select
+                aria-labelledby={`${id}project`}
+                value={scope.filters.project}
+                onValueChange={scope.setProject}
+                options={projects}
+                className="w-full"
+              />
+            </ScopeChoice>
+          )}
+          {scope.isGroupChoice && (
+            <ScopeChoice id={`${id}groups`} label="Groups">
+              <Select
+                aria-labelledby={`${id}groups`}
+                values={scope.filters.groups}
+                onValuesChange={scope.setGroups}
+                noneLabel="All groups"
+                options={scope.options}
+                className="w-full"
+              />
+            </ScopeChoice>
+          )}
+        </div>
+      )}
       {(report || scope.failure) && (
         <div className="flex min-h-6 min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
           {report}

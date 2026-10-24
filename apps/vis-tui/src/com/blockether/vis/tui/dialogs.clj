@@ -1184,6 +1184,8 @@
      :paint     (fn [g state geom] -> cursor|nil)  — the only impure piece; draws to `g`
      :on-key    (fn [state key geom] -> state | {::done result})  — screen-free, TESTABLE
      :read-key  optional (fn [screen] -> key|nil), for async loading wakeups
+     :after-refresh optional (fn [state geom]) — draws what Lanterna does not model,
+                such as terminal pictures, after each refresh
 
    run-modal! owns everything the old dialogs copy-pasted: terminal sizing, the
    `TextGraphics`, wheel/close/Esc normalization (via `read-modal-key!`), the
@@ -1197,7 +1199,7 @@
    and `:on-key` are pure functions of data, a dialog's geometry and key logic
    can be unit-tested with no live terminal."
   [^TerminalScreen screen
-   {:keys [init measure reconcile paint on-key read-key] :or {read-key read-modal-key!}}]
+   {:keys [init measure reconcile paint on-key read-key after-refresh] :or {read-key read-modal-key!}}]
   (with-modal-background
     screen
     (loop [state (if (fn? init) (init) init)]
@@ -1212,6 +1214,7 @@
         ;; nil cursor hides the hardware cursor; a text field returns its cell.
         (.setCursorPosition screen cursor)
         (frame/refresh! screen)
+        (when after-refresh (after-refresh state geom))
         (let [key (read-key screen)]
           (if (nil? key)
             (recur state)
@@ -6989,23 +6992,33 @@
   (and (or (nil? project-id) (= (str project-id) (:project-id row)))
        (or (nil? group-ids) (contains? (set group-ids) (:session-group-id row)))))
 
+(defn- navigator-scope-project-id
+  "The project that the search looks in: the chosen project, else the only project. With
+   one project there is no project to choose, so its groups are the choices."
+  [scope projects]
+  (or (:project-id scope) (when (= 1 (count projects)) (str (get (first projects) "id")))))
+
 (defn- navigator-scope-group?
-  "Whether the search scope offers this group to narrow to: one of the chosen project's
-   groups. All projects offers none, because it already means all groups."
-  [scope group]
-  (and (some? (:project-id scope)) (= (:project-id scope) (str (get group "project_id")))))
+  "Whether the search scope offers this group to narrow to: one of the scope project's
+   groups. Without a scope project it offers none, because all projects means all groups."
+  [project-id group]
+  (and (some? project-id) (= (str project-id) (str (get group "project_id")))))
 
 (defn- navigator-scope-controls
   "The row below the search field says where the search looks. Each control reads
    `Name: value  key`, at its own width, so only a long project, then a long groups
-   value, gives up columns. Groups appear only while the chosen project has groups to
-   narrow to. `:label` is the value as it fits."
-  [width project group-count groups?]
+   value, gives up columns. The project appears only when there is more than one project.
+   Groups appear only while the scope project has more than one group to narrow to.
+   `:label` is the value as it fits."
+  [width project? project group-count groups?]
   (let [gap
         5
 
         controls
-        (cond-> [{:action :project :key "C-p" :name "Project" :value (str project)}]
+        (cond-> []
+          project?
+          (conj {:action :project :key "C-p" :name "Project" :value (str project)})
+
           groups?
           (conj {:action :groups
                  :key "C-g"
@@ -7659,8 +7672,10 @@
 
 (defn- draw-navigator-session!
   "Paint one session as one line: date, status and title, then ` | ` and the project
-   and group. The title gives up columns first, so the location stays readable. A
-   selected session gets ONE background; each span keeps its ink, made legible on it."
+   and group. `:show-project? false` or `:show-group? false` drops that part, and the
+   separator goes with the last part. The title gives up columns first, so the location
+   stays readable. A selected session gets ONE background; each span keeps its ink, made
+   legible on it."
   [g x row width entry selected?]
   (let [focused?
         (:focused? entry)
@@ -7684,7 +7699,18 @@
         t/dialog-hint
 
         location
-        (str "Project: " (:group entry) " / Group: " (:session-group entry))
+        (str/join " / "
+                  (cond-> []
+                    (not (false? (:show-project? entry)))
+                    (conj (str "Project: " (:group entry)))
+
+                    (not (false? (:show-group? entry)))
+                    (conj (str "Group: " (:session-group entry)))))
+
+        tail
+        (if (str/blank? location)
+          []
+          [[navigator-location-separator t/dialog-hint false] [location t/dialog-hint false]])
 
         lead
         [[(str (:modified entry)) date-color true] [" / " t/dialog-hint false]
@@ -7697,14 +7723,11 @@
         (max (min (long (p/display-width title)) (long navigator-min-title-cols))
              (- (long width)
                 (long (reduce + 0 (map #(p/display-width (first %)) lead)))
-                (long (p/display-width navigator-location-separator))
-                (long (p/display-width location))))
+                (long (reduce + 0 (map #(p/display-width (first %)) tail)))))
 
         fields
-        (conj lead
-              [(p/ellipsize title (max 1 title-w)) title-color (or selected? focused?)]
-              [navigator-location-separator t/dialog-hint false]
-              [location t/dialog-hint false])]
+        (into (conj lead [(p/ellipsize title (max 1 title-w)) title-color (or selected? focused?)])
+              tail)]
 
     (p/styled
       g
@@ -8096,7 +8119,9 @@
          (choose-groups! []
            (let [choices
                  (->> (vals @groups-index)
-                      (filter #(navigator-scope-group? @search-scope %))
+                      (filter #(navigator-scope-group? (navigator-scope-project-id @search-scope
+                                                                                   @scope-projects)
+                                                       %))
                       (sort-by (juxt #(str (get % "name")) #(str (get % "id"))))
                       (mapv (fn [group]
                               {:id (str (get group "id"))
@@ -8236,12 +8261,30 @@
                   content-w
                   (long (max 1 (- (long inner-w) 2)))
 
+                  scope-project-id
+                  (navigator-scope-project-id @search-scope @scope-projects)
+
+                  ;; One project or one group leaves nothing to choose or to name on a row.
+                  project-choice?
+                  (< 1 (count @scope-projects))
+
+                  group-choice?
+                  (boolean (or (seq (:group-ids @search-scope))
+                               (< 1
+                                  (count (filter #(navigator-scope-group? scope-project-id %)
+                                                 (vals @groups-index))))))
+
+                  ;; Until the catalog names the projects, rows keep the full location.
+                  location-parts
+                  {:show-project? (not= 1 (count @scope-projects))
+                   :show-group? (or (empty? @scope-projects) (< 1 (count @groups-index)))}
+
                   scope-controls
                   (navigator-scope-controls content-w
+                                            project-choice?
                                             @scope-project-label
                                             (count (:group-ids @search-scope))
-                                            (boolean (some #(navigator-scope-group? @search-scope %)
-                                                           (vals @groups-index))))
+                                            group-choice?)
 
                   block-heights
                   (navigator-block-heights visible-rows)
@@ -8327,7 +8370,12 @@
                          row body-top]
 
                     (when-let [{:keys [idx entry]} (first remaining)]
-                      (draw-navigator-session! g body-x row body-w entry (= idx @selected))
+                      (draw-navigator-session! g
+                                               body-x
+                                               row
+                                               body-w
+                                               (merge entry location-parts)
+                                               (= idx @selected))
                       (recur (rest remaining) (inc (long row))))))
                 ;; The list and the selected session's messages always stay side by side.
                 (draw-navigator-divider! g divider (inc (long content-top)) (dec (long content-h)))
@@ -8379,8 +8427,10 @@
                 (if-not key
                   (recur)
                   (cond
-                    (input/ctrl-char? key \p) (do (scope-action! :project) (recur))
-                    (input/ctrl-char? key \g) (do (scope-action! :groups) (recur))
+                    (input/ctrl-char? key \p) (do (when project-choice? (scope-action! :project))
+                                                  (recur))
+                    (input/ctrl-char? key \g) (do (when group-choice? (scope-action! :groups))
+                                                  (recur))
                     (and (instance? MouseAction key)
                          (= MouseActionType/CLICK_DOWN (.getActionType ^MouseAction key))
                          (= (inc (long content-top)) (.getRow (.getPosition ^MouseAction key))))

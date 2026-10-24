@@ -765,6 +765,35 @@
                (expect (str/blank? (line 7)))
                (expect (str/blank? (line 8))))
              (finally (.stopScreen screen)))))
+    (it "drops the project, the group or the whole location when the entry hides it"
+        (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
+              draw-session (var-get #'dlg/draw-navigator-session!)
+              entry {:status "Idle"
+                     :title "First session"
+                     :modified "now"
+                     :group "Workbench"
+                     :session-group "Planning"}
+              line (fn [row]
+                     (str/trimr (apply str
+                                  (for [column (range 80)]
+                                    (.getCharacterString
+                                      (.getBackCharacter screen (int column) (int row)))))))]
+
+          (try (let [g (.newTextGraphics screen)]
+                 (draw-session g 0 2 70 (assoc entry :show-project? false) false)
+                 (draw-session g 0 4 70 (assoc entry :show-group? false) false)
+                 (draw-session g
+                               0
+                               6
+                               70
+                               (assoc entry
+                                 :show-project? false
+                                 :show-group? false)
+                               false)
+                 (expect (= "now / IDLE / First session | Group: Planning" (line 2)))
+                 (expect (= "now / IDLE / First session | Project: Workbench" (line 4)))
+                 (expect (= "now / IDLE / First session" (line 6))))
+               (finally (.stopScreen screen)))))
     (it "highlight segments mark each query word where a word starts, ignoring case and accents"
         (let [segs (var-get #'dlg/navigator-highlight-segments)]
           (expect (= [["a " false] ["Search" true] [" b" false]] (segs "a Search b" "search")))
@@ -4273,20 +4302,26 @@
             unfiled
             {"id" "g2"}]
 
-        (expect (not (offers? {} filed)))
-        (expect (not (offers? {} unfiled)))
-        (expect (offers? {:project-id "p1"} filed))
-        (expect (not (offers? {:project-id "p2"} filed)))
-        (expect (not (offers? {:project-id "p1"} unfiled)))))
+        (expect (not (offers? nil filed)))
+        (expect (not (offers? nil unfiled)))
+        (expect (offers? "p1" filed))
+        (expect (not (offers? "p2" filed)))
+        (expect (not (offers? "p1" unfiled)))))
+  (it "takes the only project as the scope project when none is chosen"
+      (let [project-id (var-get #'dlg/navigator-scope-project-id)]
+        (expect (= "p1" (project-id {} [{"id" "p1"}])))
+        (expect (nil? (project-id {} [{"id" "p1"} {"id" "p2"}])))
+        (expect (= "p2" (project-id {:project-id "p2"} [{"id" "p1"} {"id" "p2"}])))
+        (expect (nil? (project-id {} [])))))
   (it "sizes each scope control to its words and shows groups only when offered"
       (let [controls
             (var-get #'dlg/navigator-scope-controls)
 
             all
-            (controls 100 "All projects" 0 false)
+            (controls 100 true "All projects" 0 false)
 
             narrow
-            (controls 50 "A very long project name indeed" 2 true)]
+            (controls 50 true "A very long project name indeed" 2 true)]
 
         (expect (= [:project] (mapv :action all)))
         (expect (= ["C-p"] (mapv :key all)))
@@ -4298,6 +4333,11 @@
         (expect (not= "A very long project name indeed" (:label (first narrow))))
         (expect (= "2 selected" (:label (last narrow))))
         (expect (<= (+ (long (:x (last narrow))) (long (:width (last narrow)))) 50))))
+  (it "drops the project control with one project and shows nothing without a choice"
+      (let [controls (var-get #'dlg/navigator-scope-controls)]
+        (expect (= [:groups] (mapv :action (controls 100 false "All projects" 0 true))))
+        (expect (zero? (long (:x (first (controls 100 false "All projects" 0 true))))))
+        (expect (= [] (controls 100 false "All projects" 0 false)))))
   ;; Regression for #320: the scope row was plain text in one style, one column left
   ;; of the list, so it did not read as a control.
   (it
@@ -4306,7 +4346,7 @@
           (term/virtual-screen)
 
           controls
-          ((var-get #'dlg/navigator-scope-controls) 60 "All projects" 1 true)
+          ((var-get #'dlg/navigator-scope-controls) 60 true "All projects" 1 true)
 
           cell
           (fn [column]
@@ -4421,6 +4461,76 @@
              (expect (= [["" {:project-id "p1"}] ["" {:project-id "p1" :group-ids #{"g1" "g2"}}]
                          ["" {}]]
                         @asked)))
+           (finally (future-cancel task)))))
+  (it
+    "with one project offers its groups and names only the group on each row"
+    (let [sessions
+          [{"id" "one" "title" "First scoped" "turn_count" 1 "project_id" "p1" "group_id" "g1"}
+           {"id" "two" "title" "Second scoped" "turn_count" 1 "project_id" "p1" "group_id" "g2"}]
+
+          asked
+          (atom [])
+
+          phase
+          (atom 0)
+
+          task
+          (future
+            (with-redefs [dlg/multi-select-dialog! (fn [_screen _title choices _initial]
+                                                     (set (take 1 (sort choices))))]
+              (capture-navigator!
+                {:sessions sessions
+                 :projects [{"id" "p1" "name" "Workbench"}]
+                 :groups {"g1" {"id" "g1" "project_id" "p1" "name" "Planning"}
+                          "g2" {"id" "g2" "project_id" "p1" "name" "Review"}}
+                 :search-sessions (fn [query scope]
+                                    (swap! asked conj [query scope])
+                                    {:sessions (filterv #(contains? (:group-ids scope #{"g1" "g2"})
+                                                                    (get % "group_id"))
+                                                 sessions)})}
+                (fn [^DefaultVirtualTerminal terminal]
+                  (let [text (str/join "\n" (terminal-lines terminal))]
+                    (cond (and (= 0 @phase) (str/includes? text "Second scoped"))
+                          (do (expect (not (str/includes? text "C-p")))
+                              (expect (not (str/includes? text "Project:")))
+                              (expect (str/includes? text "Groups: All groups  C-g"))
+                              (expect (str/includes? text "| Group: Planning"))
+                              (reset! phase 1)
+                              (.addInput terminal
+                                         (KeyStroke. (Character/valueOf \g) true false false)))
+                          (and (= 1 @phase) (= #{"g1"} (:group-ids (second (last @asked)))))
+                          (do (reset! phase 2) (.addInput terminal (cap/key-stroke :esc)))))))))]
+
+      (try (let [result (deref task 5000 ::blocked)]
+             (expect (map? result))
+             (expect (= 2 @phase))
+             (expect (= [["" {:group-ids #{"g1"}}]] @asked)))
+           (finally (future-cancel task)))))
+  (it
+    "with one project and one group offers no scope choice and names no location"
+    (let [phase
+          (atom 0)
+
+          task
+          (future
+            (capture-navigator!
+              {:sessions
+               [{"id" "one" "title" "Only scoped" "turn_count" 1 "project_id" "p1" "group_id" "g1"}]
+               :projects [{"id" "p1" "name" "Workbench"}]
+               :groups {"g1" {"id" "g1" "project_id" "p1" "name" "Planning"}}}
+              (fn [^DefaultVirtualTerminal terminal]
+                (let [text (str/join "\n" (terminal-lines terminal))]
+                  (when (and (= 0 @phase) (str/includes? text "Only scoped"))
+                    (expect (not (str/includes? text "C-p")))
+                    (expect (not (str/includes? text "C-g")))
+                    (expect (not (str/includes? text "Project:")))
+                    (expect (not (str/includes? text "Group:")))
+                    (expect (not (str/includes? text "Only scoped |")))
+                    (reset! phase 1)
+                    (.addInput terminal (cap/key-stroke :esc)))))))]
+
+      (try (expect (map? (deref task 5000 ::blocked)))
+           (expect (= 1 @phase))
            (finally (future-cancel task))))))
 
 (defdescribe session-status-text-test

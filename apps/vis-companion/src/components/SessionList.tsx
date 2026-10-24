@@ -369,8 +369,11 @@ export const SessionRow = memo(function SessionRow({
    * group owns both, so a rename or a recolour reaches every row wearing it at once.
    */
   group: SessionGroup | null;
-  /** Search names the location explicitly and does not use a group colour rail. */
-  location?: { project: string; group: string };
+  /**
+   * Search names the location explicitly and does not use a group colour rail. An absent
+   * part is not named: with one project or one group it tells no rows apart.
+   */
+  location?: { project?: string; group?: string };
   /** This device's unsent composer content for the session; EMPTY when there is none. */
   draft: DraftMessage;
   conn: GatewayConn;
@@ -872,11 +875,15 @@ export const SessionRow = memo(function SessionRow({
                 >
                   {timeLabel(timestamp)}
                 </span>
-                {location && (
+                {location && (location.project !== undefined || location.group !== undefined) && (
                   <span data-session-location className="col-span-full flex min-w-0 flex-wrap gap-x-2 gap-y-1 font-mono text-meta text-dialog-hint">
-                    <span className="min-w-0 break-words"><strong className="font-bold">Project:</strong> {location.project}</span>
-                    <span aria-hidden="true"> · </span>
-                    <span className="min-w-0 break-words"><strong className="font-bold">Group:</strong> {location.group}</span>
+                    {location.project !== undefined && (
+                      <span className="min-w-0 break-words"><strong className="font-bold">Project:</strong> {location.project}</span>
+                    )}
+                    {location.project !== undefined && location.group !== undefined && <span aria-hidden="true"> · </span>}
+                    {location.group !== undefined && (
+                      <span className="min-w-0 break-words"><strong className="font-bold">Group:</strong> {location.group}</span>
+                    )}
                   </span>
                 )}
               </span>
