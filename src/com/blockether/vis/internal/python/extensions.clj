@@ -961,6 +961,11 @@
               spec
               (toggles/target-toggle-spec root id)
 
+              ;; Only the extension that declares a secret setting reads its value.
+              hidden?
+              (and (:secret? spec)
+                   (not= (str (:owner spec)) (str (or (extension/current-extension-id) label))))
+
               ;; #399: a session or group value that the user set for this session.
               user-choice?
               (fn []
@@ -987,6 +992,8 @@
               ;; override or a value that the user set for the session still wins.
               nested
               (when (and spec
+                         ;; A project file sets only the keys that allow the project scope.
+                         (contains? (set (:scopes spec)) "project")
                          (not (str/blank? project-path))
                          (not (contains? toggles/*invocation-overrides* id))
                          (not (user-choice?)))
@@ -999,7 +1006,7 @@
 
                   (when (contains? values id) (toggles/wire-value root id (get values id)))))]
 
-          (cond (nil? spec) default
+          (cond (or (nil? spec) hidden?) default
                 nested (:value nested)
                 ;; #380: without a session snapshot, a project extension's setting
                 ;; resolves at project scope, as Settings shows it there, vis.yml included.
@@ -2502,6 +2509,9 @@
 
                                     (get setting "choices")
                                     (assoc :choices (vec (get setting "choices")))
+
+                                    (true? (get setting "is_secret"))
+                                    (assoc :secret? true)
 
                                     (fn? (get setting "on_change"))
                                     (assoc :on-change-fn
@@ -4405,13 +4415,14 @@
           ;; in `vis.yml` (e.g. `shell: false`) had no effect until a full restart —
           ;; `/reload` said "Reloaded" while the tool stayed live. Re-hydrate
           ;; from the freshly re-read raw config so YAML is the source of truth again;
-          ;; ids absent from the file keep their current in-memory value.
+          ;; ids absent from the file keep their current in-memory value. Without a
+          ;; session, the process directory is the project; its files set only the
+          ;; keys that the session rules allow, and nothing is saved.
           _toggles
           (try (if-let [values (:config/toggles extension/*current-environment*)]
                  (let [env extension/*current-environment*]
                    (reset! values (scoped/values (:db-info env) (:session-id env))))
-                 (when-not workspace/*workspace-root*
-                   (toggles/hydrate-from-config! (or (config/load-config-raw) {}))))
+                 (when-not workspace/*workspace-root* (scoped/hydrate! true)))
                (catch Throwable _ nil))
 
           cfg-changes

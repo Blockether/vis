@@ -354,15 +354,18 @@
                   metadata))
               (catch Exception _ nil)))))))
 
+(def ^:private turn-execution-keys
+  "Execution inputs and hooks of a turn record. `:engine-opts` holds the settings snapshot
+   with secret values, so no archive or wire view keeps these keys."
+  [:cancel-token :messages :engine-opts :extra-body :turn-features :reasoning-default
+   ::cancel-disposer])
+
 (defn- archive-terminal-turn!
   "Persist the gateway-only projection, then release execution inputs and hooks.
    File I/O and callback disposal must never run inside the registry CAS."
   [sid tid patch]
   (when-let [turn (turn-record sid tid)]
-    (let [projection (apply dissoc
-                       (merge (read-turn-record turn) patch)
-                       [:cancel-token :messages :engine-opts :extra-body :turn-features
-                        :reasoning-default ::cancel-disposer])
+    (let [projection (apply dissoc (merge (read-turn-record turn) patch) turn-execution-keys)
           archive (try (turn-archive/write! projection)
                        (catch Exception e
                          (tel/log!
@@ -2259,8 +2262,7 @@
           started-at
           (or (:created_at turn) (:started_at turn) (:queued_at turn))]
 
-      (-> turn
-          (dissoc :cancel-token :attachments :id ::archive ::run-key ::cancel-disposer)
+      (-> (apply dissoc turn :attachments :id ::archive ::run-key turn-execution-keys)
           ;; Inline uploads carry base64 pixels: a turn LIST must never ship
           ;; them. `:attachment_previews` is the byte-free chip payload.
           (assoc :turn_id turn-id

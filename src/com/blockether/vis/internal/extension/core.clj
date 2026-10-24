@@ -2983,13 +2983,33 @@
       (doseq [ext extensions]
         (validate-slash-collisions! ext catalog)
         (validate-project-settings! ext extensions)))
+    ;; A project setting is saved in the project's files, so a secret one stays out of
+    ;; Settings there. The extension still loads and reads the declared default.
+    (doseq [ext
+            extensions
+
+            {:keys [id secret?]}
+            (:ext/toggles ext)
+
+            :when secret?]
+
+      (tel/log! {:level :warn
+                 :id ::project-secret-setting-skipped
+                 :data {:ext (:ext/name ext) :id id}
+                 :msg (str "Project extension '"
+                           (:ext/name ext)
+                           "' declares the secret setting '"
+                           id
+                           "'. Only a machine-wide extension can save a secret setting.")}))
     (toggles/set-project-toggles! root
                                   (map :ext/name extensions)
                                   (for [ext
                                         extensions
 
                                         spec
-                                        (:ext/toggles ext)]
+                                        (:ext/toggles ext)
+
+                                        :when (not (:secret? spec))]
 
                                     (assoc spec
                                       :owner (:ext/name ext)

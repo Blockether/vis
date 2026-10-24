@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contract.blockether.com/vis/schema/toggle.json",
   "title": "Feature-toggle contract",
-  "description": "Feature-toggle contributions and the boolean tokens accepted by settings.",
+  "description": "Feature-toggle contributions, and the boolean tokens and string values that settings accept.",
   "$defs": {
     "boolean_true": {
       "type": "string",
@@ -31,6 +31,12 @@
           "$ref": "#/$defs/boolean_false"
         }
       ]
+    },
+    "string_value": {
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+      "description": "The value of a string setting: one line without control characters."
     },
     "contribution": {
       "type": "object",
@@ -83,9 +89,14 @@
         "type": {
           "enum": [
             "boolean",
-            "enum"
+            "enum",
+            "string"
           ],
           "default": "boolean"
+        },
+        "is_secret": {
+          "type": "boolean",
+          "description": "Makes a string setting write-only. Settings show only whether it is set, never its value."
         },
         "choices": {
           "type": "array",
@@ -167,6 +178,60 @@
                   "choices"
                 ]
               }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "default": {
+                "$ref": "#/$defs/string_value"
+              }
+            },
+            "not": {
+              "required": [
+                "choices"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "is_secret": {
+                "const": true
+              }
+            },
+            "required": [
+              "is_secret"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "const": "string"
+              },
+              "default": {
+                "const": ""
+              },
+              "scopes": {
+                "const": [
+                  "global"
+                ]
+              }
+            },
+            "required": [
+              "type"
             ]
           }
         }

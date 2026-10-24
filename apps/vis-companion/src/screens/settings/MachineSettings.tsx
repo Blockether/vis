@@ -176,6 +176,180 @@ export function StringSetting({
   );
 }
 
+/**
+ * Remove a secret's own text from a gateway error before it is shown. The gateway
+ * does not echo values; this keeps that true even if a refusal quotes its input.
+ */
+export function secretSafeMessage(message: string, toggle: Toggle, value?: SettingValue): string {
+  return toggle.editor === 'secret' && typeof value === 'string' && value.trim()
+    ? message.split(value).join('•••').split(value.trim()).join('•••')
+    : message;
+}
+
+/**
+ * Gateway-backed secret: the row shows only whether a value is saved. A new value
+ * is typed into a masked field, sent once, and cleared from this state at once.
+ */
+export function SecretSetting({
+  toggle,
+  busy,
+  disabled = false,
+  onSave,
+  onRemove,
+}: {
+  toggle: Toggle;
+  busy: boolean;
+  /** Locked by a more specific or a wider scope: the status shows, but cannot change. */
+  disabled?: boolean;
+  onSave: (value: string) => Promise<boolean>;
+  /** Present only when this row's own target holds the value. */
+  onRemove?: () => Promise<boolean> | void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isRemoveAsked, setIsRemoveAsked] = useState(false);
+  const [draft, setDraft] = useState('');
+  // The panel's error banner can be scrolled away, so a failed save also speaks here.
+  const [isFailed, setIsFailed] = useState(false);
+  const action = useRef<HTMLButtonElement>(null);
+  const remove = useRef<HTMLButtonElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  // A closed form or question gives focus back to the row, never to the page.
+  const refocus = useRef<'action' | 'remove' | null>(null);
+  const isSet = toggle.is_set === true;
+  useEffect(() => {
+    // A disabled button cannot take focus, so wait until the request settles.
+    if (isEditing || isRemoveAsked || busy || !refocus.current) return;
+    const target = refocus.current === 'remove' ? remove.current : null;
+    refocus.current = null;
+    (target ?? action.current)?.focus();
+  }, [isEditing, isRemoveAsked, busy]);
+  // The field is disabled while the request runs, so a failed save focuses it again after.
+  useEffect(() => {
+    if (isFailed && !busy) field.current?.focus();
+  }, [isFailed, busy]);
+  const close = () => {
+    setDraft('');
+    setIsFailed(false);
+    refocus.current = 'action';
+    setIsEditing(false);
+  };
+  if (isRemoveAsked && onRemove)
+    return (
+      <ConfirmRow
+        question={`Remove ${toggle.label}?`}
+        cost={toggle.inherited_source && toggle.inherited_source !== 'default'
+          ? `The ${toggle.inherited_source} value applies again.`
+          : undefined}
+        keepLabel="Keep"
+        confirmLabel={busy ? 'Removing…' : 'Remove'}
+        isBusy={busy}
+        onKeep={() => {
+          refocus.current = 'remove';
+          setIsRemoveAsked(false);
+        }}
+        onConfirm={() => {
+          void Promise.resolve(onRemove()).then(() => {
+            refocus.current = 'action';
+            setIsRemoveAsked(false);
+          });
+        }}
+      />
+    );
+  return (
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-3 py-2 sm:px-4">
+      <div className="min-w-0">
+        <Text as="p" variant="label" className="break-words">
+          {toggle.label}
+        </Text>
+        {toggle.description && (
+          <Text as="p" variant="description" className="mt-0.5 break-words">
+            {toggle.description}
+          </Text>
+        )}
+      </div>
+      {/* On a phone the actions take their own line, so the label keeps the width. */}
+      <div className="col-span-2 flex min-w-0 flex-wrap items-center justify-end gap-2 sm:col-span-1">
+        <Text variant="meta">{isSet ? 'Saved' : 'Not set'}</Text>
+        {!isEditing && (
+          <Button
+            ref={action}
+            type="button"
+            variant="secondary"
+            density="panel"
+            disabled={busy || disabled}
+            onClick={() => setIsEditing(true)}
+          >
+            {isSet ? 'Replace' : 'Set'}
+          </Button>
+        )}
+        {!isEditing && onRemove && (
+          <Button
+            ref={remove}
+            type="button"
+            variant="secondary"
+            density="panel"
+            disabled={busy || disabled}
+            onClick={() => setIsRemoveAsked(true)}
+          >
+            Remove
+          </Button>
+        )}
+      </div>
+      {isEditing && (
+        <form
+          className="col-span-2 flex min-w-0 flex-wrap items-center justify-end gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (busy || disabled || !draft.trim()) return;
+            const value = draft;
+            // The typed text leaves this state before the request settles.
+            setDraft('');
+            setIsFailed(false);
+            void onSave(value).then((saved) => {
+              if (saved) {
+                refocus.current = 'action';
+                setIsEditing(false);
+              } else setIsFailed(true);
+            });
+          }}
+        >
+          <div className="min-w-0 flex-1 basis-48">
+            <Input
+              ref={field}
+              type="password"
+              aria-label={toggle.label}
+              value={draft}
+              maxLength={toggle.max_length}
+              disabled={busy || disabled}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              data-1p-ignore
+              data-lpignore="true"
+              autoFocus
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="submit" density="panel" disabled={busy || disabled || !draft.trim()} aria-busy={busy}>
+              {busy ? 'Saving…' : 'Save'}
+            </Button>
+            <Button type="button" variant="secondary" density="panel" disabled={busy} onClick={close}>
+              Cancel
+            </Button>
+          </div>
+          {isFailed && (
+            <p role="alert" className="w-full font-mono text-body text-err">
+              Not saved. Enter the value again.
+            </p>
+          )}
+        </form>
+      )}
+    </div>
+  );
+}
+
 /** Values compare by content: an object's key order is not a change. */
 function sameValue(a: unknown, b: unknown): boolean {
   const canonical = (value: unknown): unknown =>
@@ -344,7 +518,7 @@ export function settingTree(
  * The same value row is used for gateway and scoped settings. Only scoped settings pass
  * `onInherit`: global settings are the root scope, so their rows show no provenance or reset.
  */
-export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit, onOpenSettings }: {
+export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit, onRemove, onOpenSettings }: {
   toggle: Toggle;
   busy: boolean;
   /** Only on the row that names an extension: the label is its heading, with its scope beside it. */
@@ -352,13 +526,22 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit, on
   onToggle: () => void;
   onPick: (value: SettingValue) => Promise<boolean>;
   onInherit?: () => void;
+  /** Removes a secret's saved value at this row's own target; scoped rows use `onInherit`. */
+  onRemove?: () => Promise<boolean> | void;
   /** Opens the settings that decide a read-only inherited row. */
   onOpenSettings?: (where: SettingDecidedIn) => void;
 }) {
   const lock = lockNote(toggle);
+  const isSecret = toggle.editor === 'secret';
+  // Only the target that holds the value can remove it.
+  const isOwnSecret = isSecret
+    && (toggle.is_override === true || (toggle.is_set === true && toggle.source === (toggle.scope ?? 'global')));
   return (
     <div>
-      {toggle.type === 'string' ? (
+      {isSecret ? (
+        <SecretSetting key={toggle.id} toggle={toggle} busy={busy} disabled={lock !== null}
+          onSave={onPick} onRemove={isOwnSecret ? (onRemove ?? onInherit) : undefined} />
+      ) : toggle.type === 'string' ? (
         <StringSetting key={`${toggle.id}:${toggle.value}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
       ) : toggle.type === 'number' || toggle.type === 'array' || toggle.type === 'object' ? (
         <ValueSetting key={`${toggle.id}:${JSON.stringify(toggle.value)}`} toggle={toggle} busy={busy} disabled={lock !== null} onSave={onPick} />
@@ -393,7 +576,8 @@ export function SettingRow({ toggle, busy, head, onToggle, onPick, onInherit, on
       {onInherit && !toggle.decided_in && (
         <div className="flex flex-wrap items-center justify-between gap-2 px-3 pb-2 sm:px-4">
           <Text variant="description">{toggle.is_override ? 'Set here' : `Inherited from ${toggle.source ?? 'default'}`}</Text>
-          {toggle.is_override && <Button variant="secondary" density="panel" disabled={busy || (lock !== null && toggle.inheritance !== 'restrict')} onClick={onInherit}>Use inherited value</Button>}
+          {/* A secret row removes its own value with a confirmed Remove instead. */}
+          {toggle.is_override && !isSecret && <Button variant="secondary" density="panel" disabled={busy || (lock !== null && toggle.inheritance !== 'restrict')} onClick={onInherit}>Use inherited value</Button>}
         </div>
       )}
     </div>
@@ -527,6 +711,21 @@ export function MachineSettings({
       patch(await client.setSetting(toggle.id, 'value', value));
       return true;
     } catch (e) {
+      setErr(secretSafeMessage((e as Error).message, toggle, value));
+      return false;
+    } finally {
+      setPending(null);
+    }
+  }
+
+  /** Deletes a secret's saved machine value; a configured value can still apply. */
+  async function remove(toggle: Toggle) {
+    setErr(null);
+    setPending(toggle.id);
+    try {
+      patch(await client.setSetting(toggle.id, 'inherit'));
+      return true;
+    } catch (e) {
       setErr((e as Error).message);
       return false;
     } finally {
@@ -547,7 +746,7 @@ export function MachineSettings({
       toggle,
       (row) => (
         <SettingRow key={row.id} toggle={row} head={row === toggle ? head : undefined} busy={pending === row.id}
-          onToggle={() => void flip(row)} onPick={(value) => pick(row, value)} />
+          onToggle={() => void flip(row)} onPick={(value) => pick(row, value)} onRemove={() => remove(row)} />
       ),
       roomsUnder,
     );

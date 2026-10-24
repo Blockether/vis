@@ -57,6 +57,38 @@ def test_enum_and_semantics():
         vis.Setting(id="test_mode", label="Test mode", default="on")
 
 
+def test_text_and_secret_settings():
+    url = vis.Setting(
+        id="test_url",
+        label="Test URL",
+        type="string",
+        default="",
+        scopes=["global", "project"],
+    )
+    assert url.value() == ""
+    assert "is_secret" not in url._spec()
+    token = vis.Setting(
+        id="test_token", label="Test token", type="string", default="", is_secret=True
+    )
+    assert token._spec()["is_secret"] is True
+    assert token.scopes == ("global",)
+    with pytest.raises(ValueError):
+        vis.Setting(id="test_url", label="Test URL", type="string", default=1)
+    with pytest.raises(ValueError):
+        vis.Setting(id="test_url", label="Test URL", type="string", default="a\nb")
+    for wrong in ({"default": "x"}, {"default": "", "scopes": ["global", "project"]}):
+        with pytest.raises(ValueError):
+            vis.Setting(
+                id="test_token",
+                label="Test token",
+                type="string",
+                is_secret=True,
+                **wrong,
+            )
+    with pytest.raises(ValueError):
+        vis.Setting(id="test_flag", label="Test flag", default=False, is_secret=True)
+
+
 def test_parent_nests_a_setting():
     parent = vis.Setting(id="test_feature", label="Test feature", default=True)
     child = vis.Setting(

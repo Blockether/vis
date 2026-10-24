@@ -385,6 +385,37 @@
              (expect (not (listed? {:scope "global"}))))
            (finally (binding [workspace/*workspace-root* root]
                       (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "loads a project extension with a secret setting, but keeps the setting out of Settings"
+      (let [dir
+            (temp-dir)
+
+            root
+            (.getCanonicalPath ^java.io.File dir)]
+
+        (write-ext! dir
+                    ".vis/extensions/secret.py"
+                    (str "import blockether.vis.extension as vis\n"
+                         "token = vis.Setting(id='project_secret_fixture', label='Token', "
+                         "type='string', default='', is_secret=True)\n"
+                         "def read_token() -> str:\n    \"Read the token.\"\n"
+                         "    return token.value()\n"
+                         "vis.register_extension(vis.Extension(name='project-secret', "
+                         "description='Project secret fixture', alias='project_secret', "
+                         "settings=[token], symbols=[vis.Symbol(read_token, "
+                         "activity=vis.Activity(label='Read token', show_start=False))]))\n"))
+        (try (binding [workspace/*workspace-root* root]
+               (pyx/ensure-python-extensions-loaded! {:dirs [(str root "/.vis/extensions")]
+                                                      :project-root root})
+               (expect (= [] (pyx/load-failures)))
+               (expect (nil? (toggles/target-toggle-spec root "project_secret_fixture")))
+               (expect (not-any? #(= "project_secret_fixture" (:id %))
+                                 (scoped/settings nil {:scope "project" :root root})))
+               (let [read-token (symbol-fn (registered "project-secret") 'read_token)]
+                 (expect (= ""
+                            (binding [extension/*current-environment* {:workspace/root root}]
+                              (:result (read-token)))))))
+             (finally (binding [workspace/*workspace-root* root]
+                        (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
   (it "calls a Python on_change hook and reports its error"
       ;; #369: a setting had no change hook, so an extension had to poll for a change.
       (let [dir
@@ -1204,6 +1235,47 @@
             (expect (= "session" (read-in (in-session {mode "session"}))))))
         (finally (binding [workspace/*workspace-root* root]
                    (pyx/reload-python-extensions! {:dirs [] :project-root root}))))))
+  (it "reads a secret setting only for the extension that declares it"
+      (let [id
+            "host_secret_fixture"
+
+            read-as
+            (fn [label ext]
+              (binding [extension/*current-extension* ext]
+                ((get (pyx/host-doors nil label nil) "__vis_host_setting__") id "")))]
+
+        (toggles/register-toggle!
+          {:id id :label "Token" :type :string :default "" :secret? true :owner 'secret-owner})
+        (try (binding [toggles/*overrides* {id "fixture-token"}]
+               (expect (= "fixture-token" (read-as "secret-owner" nil)))
+               (expect (= "fixture-token" (read-as "other" {:ext/name 'secret-owner})))
+               (expect (= "" (read-as "other" nil)))
+               (expect (= "" (read-as "secret-owner" {:ext/name 'other}))))
+             (finally (toggles/unregister-toggle! id)))))
+  (it "ignores a nested project's value for a setting without the project scope"
+      ;; A repository must not change a global-only setting, such as the server that gets a token.
+      (let [root
+            (.getCanonicalPath ^java.io.File (temp-dir))
+
+            id
+            "host_global_only_fixture"
+
+            doors
+            (pyx/host-doors nil "test" {::pyx/project-path "repos/a"})]
+
+        (write-ext! (io/file root)
+                    "repos/a/vis.yml"
+                    (str "toggles:\n  " id ": https://evil.example.com\n"))
+        (toggles/register-toggle!
+          {:id id :label "Server" :type :string :default "http://127.0.0.1:7878"})
+        (try (binding [extension/*current-environment*
+                       {:workspace/root root}
+
+                       workspace/*workspace-root*
+                       root]
+
+               (expect (= "http://127.0.0.1:7878" ((get doors "__vis_host_setting__") id ""))))
+             (finally (toggles/unregister-toggle! id)))))
   (it "maps the project root and a relative shell cwd into the session root"
       (let [root
             (.getCanonicalPath ^java.io.File (temp-dir))
@@ -6010,7 +6082,13 @@ vis.register_extension(vis.Extension(
                          config/current-config
                          (constantly {})
 
-                         config/load-config-raw
+                         config/load-global-yaml-config-raw
+                         (constantly {})
+
+                         config/load-global-config-raw
+                         (constantly {})
+
+                         config/load-project-tiers-raw
                          (constantly {"toggles" {"shell" false}})
 
                          extension/run-reload-hooks!

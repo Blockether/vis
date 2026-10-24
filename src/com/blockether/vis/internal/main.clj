@@ -78,6 +78,7 @@
     [com.blockether.vis.internal.extension.registry :as registry]
     [com.blockether.vis.internal.system-trust :as system-trust]
     [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.config.scoped :as scoped]
     [com.blockether.vis.internal.util :as util]
     [taoensso.telemere :as tel])
   (:import [com.blockether.skjema Uri]))
@@ -1691,6 +1692,7 @@
   (commandline/stdout!
     "                    registered snake_case toggle id for this run only, e.g.")
   (commandline/stdout! "                    --toggles reasoning_level=deep")
+  (commandline/stdout! "                    A VALUE cannot contain a comma.")
   (commandline/stdout! "  --full-trace-stream")
   (commandline/stdout! "                    Stream a pretty terminal trace while the run is")
   (commandline/stdout! "                    happening, then print the answer.")
@@ -1742,13 +1744,25 @@
   (commandline/stdout!
     "  vis-agent --vanilla --json-schema @city.json \"Name the capital of Poland\""))
 
+(defn- cli-string-toggle
+  "One line of text for the string toggle `k`. A secret is refused: other processes can
+   read a command line."
+  [k id spec v]
+  (when (:secret? spec)
+    (throw (ex-info (str "Secret setting " k " cannot be set on the command line. Use Settings.")
+                    {:type :vis.cli/invalid-toggle :vis/user-error true :id id})))
+  (or (:value (toggles/wire-value id v))
+      (throw (ex-info (str "Invalid value for " k)
+                      {:type :vis.cli/invalid-toggle :vis/user-error true :id id}))))
+
 (defn- parse-toggle-overrides
   "Parse a `--toggles` value like
    \"reasoning_level=deep\" into a map of {toggle-id value}. NAME must be the
    exact registered snake_case string id (e.g. `reasoning_level`,
    `openai_codex_verbosity`). VALUE is validated against the registered `:type`:
    booleans accept true/false (plus on/off, yes/no, 1/0), enums must name one of
-   the registered `:choices`. Throws `:vis/user-error` ex-info on any bad pair so
+   the registered `:choices`, and strings take one line of text. A comma separates pairs,
+   so a VALUE cannot contain one. Throws `:vis/user-error` ex-info on any bad pair so
    the CLI error path renders it as a user mistake, not a crash."
   [s]
   (reduce (fn [acc pair]
@@ -1782,6 +1796,9 @@
                                           :value value
                                           :choices (:choices spec)})))
                        value)
+
+                     :string
+                     (cli-string-toggle k id spec v)
 
                      (case (str/lower-case v)
                        ("true" "on" "yes" "1")
@@ -1977,9 +1994,10 @@
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
-  ;; Dispatch has registered extension toggles. Hydrate merged settings before
-  ;; constructing the one-shot environment; explicit --toggles still wins below.
-  (toggles/hydrate-from-config! (config/load-config-raw))
+  ;; Dispatch has registered extension toggles. Hydrate settings with the session
+  ;; scope rules before constructing the one-shot environment; explicit --toggles
+  ;; still wins below.
+  (scoped/hydrate! true)
   (let [{:keys [prompt json? code? raw? full-trace-stream? full-trace-json-stream? help? agent-name
                 db toggles json-schema trajectory]
          :as opts}

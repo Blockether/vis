@@ -79,6 +79,99 @@
       (expect (= ["global"] (:scopes (toggles/toggle-spec "scope_test_default"))))))
 
 (defdescribe
+  process-hydration
+  (it
+    "applies project YAML only to keys that the session rules let it set"
+    (let [ids
+          ["hydrate_url" "hydrate_project" "hydrate_restricted"]
+
+          events
+          (atom [])]
+
+      (toggles/register-toggle! {:id "hydrate_url"
+                                 :label "URL"
+                                 :type :string
+                                 :default ""
+                                 :scopes ["global"]
+                                 :persist? true})
+      (toggles/register-toggle! {:id "hydrate_project"
+                                 :label "Project"
+                                 :default false
+                                 :scopes contract/scopes
+                                 :persist? true})
+      (toggles/register-toggle! {:id "hydrate_restricted"
+                                 :label "Restricted"
+                                 :default true
+                                 :scopes contract/scopes
+                                 :inheritance "restrict"
+                                 :persist? true})
+      (let [detach (toggles/add-listener! #(when (some #{(:id %)} ids) (swap! events conj %)))]
+        (try (with-redefs [config/load-global-yaml-config-raw
+                           (constantly {"toggles" {"hydrate_url" "https://kb.example.com"}})
+                           config/load-global-config-raw (constantly {"toggles"
+                                                                      {"hydrate_restricted" false}})
+                           config/load-project-tiers-raw
+                           (constantly {"toggles" {"hydrate_url" "https://other.example.com"
+                                                   "hydrate_project" true
+                                                   "hydrate_restricted" true}})]
+
+               (scoped/hydrate! false)
+               (expect (= ["https://kb.example.com" false false] (mapv toggles/value-of ids)))
+               (scoped/hydrate! true)
+               (expect (= ["https://kb.example.com" true false] (mapv toggles/value-of ids)))
+               ;; Hydration only reads files; it never asks the gateway to persist.
+               (expect (seq @events))
+               (expect (every? false? (map :persist? @events))))
+             (finally (detach)
+                      (doseq [id ids]
+                        (toggles/reset-to-default! id)
+                        (toggles/unregister-toggle! id)))))))
+  (it
+    "ignores a secret value in project files for every reader"
+    (let [db
+          (h/store)
+
+          project
+          (store/db-create-project!
+            db
+            {:name "Secret"
+             :workspace-root (.getCanonicalPath (java.io.File. "/tmp/scoped-secret-project"))})
+
+          group
+          (store/db-create-session-group! db (:id project) {:name "Work"})
+
+          sid
+          (h/store-session! db {:title "Secret"})
+
+          id
+          "hydrate_secret"]
+
+      (store/db-set-session-group! db sid (:id group))
+      (toggles/register-toggle!
+        {:id id :label "Token" :type :string :default "" :secret? true :persist? true})
+      (try (with-redefs [config/load-global-yaml-config-raw
+                         (constantly {})
+
+                         config/load-global-config-raw
+                         (constantly {})
+
+                         config/load-project-tiers-raw
+                         (constantly {"toggles" {id "kb-token-from-repo"}})
+
+                         config/load-project-config-raw
+                         (constantly {})]
+
+             (let [value-at (fn [target]
+                              (:value (first (filter #(= id (:id %))
+                                                     (scoped/settings db target)))))]
+               (expect (= "" (value-at (scoped/target db "project" (:id project)))))
+               (expect (= "" (value-at (scoped/target db "session" sid))))
+               (expect (= "" (get (scoped/values db sid) id)))
+               (scoped/hydrate! true)
+               (expect (= "" (toggles/value-of id)))))
+           (finally (toggles/reset-to-default! id) (toggles/unregister-toggle! id))))))
+
+(defdescribe
   durable-scopes
   (it
     "keeps false, deletes only the selected override, and observes ancestor edits"
@@ -261,7 +354,18 @@
                                       [{"id" id "action" "value" "value" true}])]
 
             (expect (= {id message} (:change-errors result)))
-            (expect (true? (get (scoped/values db sid) id)))))))))
+            (expect (true? (get (scoped/values db sid) id))))))))
+  (it "keeps the hook message of a secret setting out of its change error"
+      (let [row {:id "hook_secret"
+                 :label "Token"
+                 :secret? true
+                 :on-change-fn (fn [_]
+                                 (throw (ex-info "Rejected kb-token-in-hook-message" {})))}]
+        (expect (= {"hook_secret" "Saved, but the change hook of Token failed."}
+                   (#'scoped/run-change-hooks!
+                    {:scope "global"}
+                    [(assoc row :value "")]
+                    [(assoc row :value "kb-token-in-hook-message")]))))))
 
 (defdescribe
   scoped-resources

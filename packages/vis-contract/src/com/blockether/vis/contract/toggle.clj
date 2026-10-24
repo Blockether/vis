@@ -40,6 +40,10 @@
   "Lower-case wire tokens that mean false."
   (set (get-in @schema ["$defs" "boolean_false" "enum"])))
 
+(def max-string-length
+  "Maximum length of one string setting value."
+  (get-in @schema ["$defs" "string_value" "maxLength"]))
+
 (def ^:private id-regex (re-pattern id-pattern))
 
 (defn toggle-id?
@@ -55,6 +59,11 @@
        (nil? (re-find #"[\r\n]" value))
        (<= (count value) (long max-description-length))))
 
+(defn string-value?
+  "True for one string setting value: one line without control characters, within the bound."
+  [value]
+  (and (string? value) (document/valid? "toggle" "string_value" value)))
+
 (defn- semantic-contribution?
   [{:keys [type choices default visible-fn on-change-fn] :as value}]
   (and (or (not (contains? value :visible-fn)) (ifn? visible-fn))
@@ -65,6 +74,9 @@
 
          :enum
          (and (sequential? choices) (some? default) (contains? (set choices) default))
+
+         :string
+         (string? default)
 
          false)))
 
@@ -125,6 +137,7 @@
         (and (contains? value :on-change-fn) (not (ifn? on-change-fn)))
         "on-change-fn must be a function."
         (= :enum (or type default-type)) "default must be one of the choices."
+        (= :string (or type default-type)) "default must be a string for a string setting."
         :else "default must be true or false for a boolean setting."))
 
 (defn contribution-problems

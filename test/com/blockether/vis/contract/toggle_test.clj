@@ -52,7 +52,7 @@
                (it "names missing fields, closed values and semantic failures"
                    (expect (= ["label is missing (required)."]
                               (toggle/contribution-problems (dissoc mode :label))))
-                   (expect (= ["type must be one of: boolean, enum (enum)."]
+                   (expect (= ["type must be one of: boolean, enum, string (enum)."]
                               (toggle/contribution-problems (assoc mode :type :list))))
                    (expect (= ["default must be one of the choices."]
                               (toggle/contribution-problems (assoc mode :default "other")))))))
@@ -65,3 +65,33 @@
                    (expect (document/valid-json? "toggle" "boolean_wire" token)))
                  (doseq [value [true false 0 1 "unknown" {"true" ["yes"]}]]
                    (expect (not (document/valid-json? "toggle" "boolean_wire" value))))))
+
+(defdescribe string-settings-follow-the-contract
+             (let [url {:id "kb_url" :label "Knowledge base URL" :type :string :default ""}]
+               (it "accepts a text setting and a global secret with an empty default"
+                   (expect (toggle/contribution-valid? url))
+                   (expect (toggle/contribution-valid? (assoc url
+                                                         :default "https://kb.example.com")))
+                   (expect (toggle/contribution-valid? (assoc url
+                                                         :secret? true
+                                                         :scopes ["global"]))))
+               (it "refuses a secret outside the global scope, with a default, or of another type"
+                   (expect (not (toggle/contribution-valid? (assoc url
+                                                              :secret? true
+                                                              :scopes ["global" "project"]))))
+                   (expect (not (toggle/contribution-valid? (assoc url
+                                                              :secret? true
+                                                              :default "x"))))
+                   (expect (not (toggle/contribution-valid?
+                                  {:id "flag" :label "Flag" :default false :secret? true}))))
+               (it "refuses choices, a non-string default and a multi-line default"
+                   (expect (not (toggle/contribution-valid? (assoc url :choices ["a" "b"]))))
+                   (expect (not (toggle/contribution-valid? (assoc url :default 1))))
+                   (expect (not (toggle/contribution-valid? (assoc url :default "a\nb")))))
+               (it "bounds a value to one line within the limit"
+                   (expect (= 4096 toggle/max-string-length))
+                   (expect (toggle/string-value? ""))
+                   (expect (toggle/string-value? (apply str (repeat 4096 "x"))))
+                   (expect (not (toggle/string-value? (apply str (repeat 4097 "x")))))
+                   (expect (not (toggle/string-value? "a\tb")))
+                   (expect (not (toggle/string-value? nil))))))

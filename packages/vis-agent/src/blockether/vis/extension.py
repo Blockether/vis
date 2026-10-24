@@ -1130,14 +1130,19 @@ _registration: dict[str, Any] = {"spec": None}
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Setting(Generic[_SettingValue]):
-    """Declare a boolean or choice setting shared by the app and TUI.
+    """Declare a boolean, choice or text setting shared by the app and TUI.
 
     `scopes` allows any non-empty combination of global, project, group and session.
     Omitting it uses the contract's global-only default. A project extension exists
     only in its project, so there `global` means the whole project. The setting shows
     in its extension's own settings section. `value()` reads the current callback's
     response snapshot. Its type follows `default`: `bool` for a boolean setting, `str`
-    for a choice setting. Outside Vis, it returns the declared default.
+    for a choice setting and for a text setting. Outside Vis, it returns the declared default.
+    A `string` setting holds one line of text. `is_secret=True` makes it write-only:
+    Settings show only whether a value is saved. A secret needs the default `""` and
+    only the global scope. Its value stays on this machine and out of trajectories.
+    Read a secret while Vis calls its own extension, for example in a tool. Elsewhere,
+    `value()` can return the default.
     `parent` names another setting of the same section. Settings shows this setting
     under that setting. Settings can nest at any depth.
     `on_change(old, new, scope)` runs once after a person changes the setting in the
@@ -1154,6 +1159,7 @@ class Setting(Generic[_SettingValue]):
     description: str | None = None
     parent: str | None = None
     on_change: Callable[[Any, Any, str], Any] | None = None
+    is_secret: bool = False
 
     def __post_init__(self):
         for name, value in (("scopes", self.scopes), ("choices", self.choices)):
@@ -1178,6 +1184,8 @@ class Setting(Generic[_SettingValue]):
             raise ValueError(
                 "A choice setting requires a default from its string choices"
             )
+        if self.type == "string" and not isinstance(self.default, str):
+            raise ValueError("A text setting requires a string default")
 
     def _spec(self):
         spec = {
@@ -1197,6 +1205,8 @@ class Setting(Generic[_SettingValue]):
             spec["parent"] = self.parent
         if self.on_change is not None:
             spec["on_change"] = self.on_change
+        if self.is_secret:
+            spec["is_secret"] = True
         return spec
 
     def value(self) -> _SettingValue:

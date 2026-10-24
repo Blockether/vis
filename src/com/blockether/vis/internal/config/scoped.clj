@@ -168,6 +168,48 @@
       (= scope "session")
       (conj {:scope "session" :values (store/db-scoped-settings db "session" target-id)}))))
 
+(defn- toggle-values
+  "The `toggles` map of one raw config tier, or nil when it is absent or not a map."
+  [raw]
+  (let [values (get raw "toggles")]
+    (when (map? values) values)))
+
+(defn- project-winners
+  "Typed project-tier `toggles` that win over the global tiers under the session rules:
+   the key allows the project scope, and a restricted global denial stands."
+  [global project]
+  (let [typed
+        #(raw-toggles nil {"toggles" %})
+
+        specs
+        (filterv #(contains? project (:id %)) (toggles/registered-toggles))]
+
+    (into {}
+          (keep (fn [{:keys [id value source]}]
+                  (when (= "project" source) [id value])))
+          (resolve-layers specs
+                          [{:scope "global" :values (typed global)}
+                           {:scope "project" :values (typed project)}]
+                          "project"
+                          {}))))
+
+(defn hydrate!
+  "Apply YAML `toggles` to the process registry without a write to `state.yml`.
+   Global tiers set any registered key. With `project?`, project tiers set only the
+   keys that the session rules allow. A repository then cannot change a global-only
+   setting, for example the server that receives a secret."
+  [project?]
+  (let [global
+        (merge (toggle-values (config/load-global-yaml-config-raw))
+               (toggle-values (config/load-global-config-raw)))
+
+        project
+        (when project? (toggle-values (config/load-project-tiers-raw)))]
+
+    (binding [toggles/*persist-writes* false]
+      (toggles/hydrate-from-config!
+        {"toggles" (merge global (when project (project-winners global project)))}))))
+
 (defn- own-values
   [db {:keys [scope target-id root]}]
   (case scope
@@ -556,22 +598,27 @@
   [target before after]
   (let [old (into {} (map (juxt :id :value)) before)]
     (into {}
-          (keep (fn [{:keys [id label value on-change-fn]}]
-                  (when (and on-change-fn (contains? old id) (not= value (get old id)))
-                    (try (on-change-fn {:id id
-                                        :old (get old id)
-                                        :new value
-                                        :scope (:scope target)
-                                        :target-id (:target-id target)})
-                         nil
-                         (catch Throwable t
-                           (tel/log! {:level :warn
-                                      :id ::change-hook-failed
-                                      :data {:id id :scope (:scope target) :error (ex-message t)}}
-                                     "A setting change hook failed")
-                           [id
-                            (str "Saved, but the change hook of " label
-                                 " failed: " (or (ex-message t) (.getName (class t))))])))))
+          (keep
+            (fn [{:keys [id label value on-change-fn secret?]}]
+              (when (and on-change-fn (contains? old id) (not= value (get old id)))
+                (try (on-change-fn {:id id
+                                    :old (get old id)
+                                    :new value
+                                    :scope (:scope target)
+                                    :target-id (:target-id target)})
+                     nil
+                     (catch Throwable t
+                       ;; The hook message of a secret setting can hold the value.
+                       (let [reason (when-not secret? (or (ex-message t) (.getName (class t))))]
+                         (tel/log! {:level :warn
+                                    :id ::change-hook-failed
+                                    :data (cond-> {:id id :scope (:scope target)}
+                                            reason
+                                            (assoc :error reason))}
+                                   "A setting change hook failed")
+                         [id
+                          (str "Saved, but the change hook of " label
+                               " failed" (if reason (str ": " reason) "."))]))))))
           after)))
 
 (defn set-setting!

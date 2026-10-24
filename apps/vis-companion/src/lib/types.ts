@@ -375,7 +375,8 @@ export type SettingEditor =
   | 'filesystem'
   | 'network'
   | 'list'
-  | 'tools';
+  | 'tools'
+  | 'secret';
 
 export type SettingsScope = 'global' | 'project' | 'group' | 'session';
 
@@ -406,7 +407,10 @@ export interface Toggle {
   description?: string;
   enabled?: boolean;
   is_experimental?: boolean;
+  /** Absent on a `secret` row: the gateway never sends a secret value. */
   value?: SettingValue;
+  /** Only on a `secret` row: whether a value is saved, never the value. */
+  is_set?: boolean;
   choices?: string[];
   choice_labels?: Record<string, string>;
   inheritance?: 'override' | 'restrict';
@@ -416,6 +420,8 @@ export interface Toggle {
   scope?: SettingsScope;
   source?: SettingsScope | 'default';
   is_override?: boolean;
+  /** The wider scope whose value applies when this target removes its own. */
+  inherited_source?: SettingsScope | 'default';
   /** Present only when the request named a session whose own scopes decide this row. */
   overridden_by?: SettingOverride;
   /** Present only when a wider scope decides this inherited row. */

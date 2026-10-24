@@ -80,7 +80,31 @@
 
           (expect (= 4 (count (filter #(= :option (:part %)) entries))))
           (expect (not-any? #(= :option-desc (:part %)) entries))
-          (expect (not (str/includes? frame "Load this extension")))))))
+          (expect (not (str/includes? frame "Load this extension")))))
+    (it "keeps a long label whole when its own value is short"
+        ;; Live check: one long URL value cut every label in the list to 16 columns.
+        (let [frame (cap/frame-text
+                      (capture-settings
+                        (#'dlg/catalog-toggle-rows
+                         [{"title" "Tools"
+                           "toggles"
+                           [{"id" "kb_url"
+                             "type" "string"
+                             "editor" "text"
+                             "label" "Knowledge base server"
+                             "value"
+                             "http://127.0.0.1:7999/knowledge-base/team/projects/archive/2026"
+                             "source" "global"}
+                            {"id" "kb_token"
+                             "type" "string"
+                             "editor" "secret"
+                             "label" "Knowledge base token"
+                             "is_set" true
+                             "source" "global"}]}])
+                        [:esc]))]
+          (expect (str/includes? frame "Knowledge base token"))
+          (expect (str/includes? frame "Saved"))
+          (expect (str/includes? frame "http://127.0.0.1:7999/knowledge-base"))))))
 
 (defdescribe
   compact-settings-navigation-test
@@ -608,6 +632,102 @@
                                                "label" "Denied executables"})
                                   [:enter :left :left :backspace :end \d :enter \e :up :home :delete
                                    :f2 :esc]))))))
+
+(defn- capture-secret
+  "Run `keys` on one secret row; answer the gateway calls, the notes and the frame texts."
+  [setting keys & {:keys [fail]}]
+  (let [calls
+        (atom [])
+
+        notes
+        (atom [])
+
+        capture
+        (with-redefs [vis/set-setting-value!
+                      (fn [id value target]
+                        (swap! calls conj [:value id value target])
+                        (when fail (throw (ex-info (fail value) {})))
+                        {"id" id "editor" "secret" "is_set" true})
+
+                      vis/inherit-setting!
+                      (fn [id target]
+                        (swap! calls conj [:inherit id target])
+                        {"id" id "editor" "secret" "is_set" false})]
+
+          (with-redefs-fn {#'dlg/load-settings-inventory! (constantly nil)
+                           #'dlg/mini-note! (fn [_ _ _ title text]
+                                              (swap! notes conj [title text]))}
+            #(capture-settings (typed-rows (merge {"id" "compact_secret"
+                                                   "type" "string"
+                                                   "editor" "secret"
+                                                   "label" "Access token"
+                                                   "max_length" 64}
+                                                  setting))
+                               keys)))]
+
+    {:calls @calls :notes @notes :frames (mapv cap/frame-text (:frames capture))}))
+
+(defdescribe
+  secret-settings-test
+  (describe
+    "rows"
+    (it
+      "shows only whether a value is saved, never a value the row carries"
+      (let [[unset]
+            (filterv #(= :secret-setting (:type %))
+              (typed-rows
+                {"id" "s" "type" "string" "editor" "secret" "is_set" false "label" "Access token"}))
+
+            [saved]
+            (filterv #(= :secret-setting (:type %))
+              (typed-rows {"id" "s"
+                           "type" "string"
+                           "editor" "secret"
+                           "is_set" true
+                           "label" "Access token"
+                           "value" "hunter2"
+                           "own_value" "hunter2"
+                           "inherited_value" "hunter2"}))]
+
+        (expect (= "Not set" (#'dlg/settings-option-value unset {})))
+        (expect (= "Saved" (#'dlg/settings-option-value saved {})))
+        (expect (not (str/includes? (pr-str saved) "hunter2")))
+        (expect (not-any? #(str/includes? % "hunter2") (#'dlg/settings-details-lines saved {}))))))
+  (describe "edits"
+            (it "sets a value through a masked input that never echoes the text"
+                (let [{:keys [calls frames]} (capture-secret {"is_set" false}
+                                                             [:enter \s \3 \c :enter :esc])]
+                  (expect (= [[:value "compact_secret" "s3c" nil]] calls))
+                  (expect (some #(str/includes? % "***") frames))
+                  (expect (not-any? #(str/includes? % "s3c") frames))))
+            (it "refuses blank text and keeps typed text out of a cancelled edit"
+                (expect (empty? (:calls (capture-secret {"is_set" false}
+                                                        [:enter \space :enter \x :esc :esc])))))
+            (it "stops the input at the row's maximum length"
+                (expect (= [[:value "compact_secret" "abc" nil]]
+                           (:calls (capture-secret {"is_set" false "max_length" 3}
+                                                   [:enter \a \b \c \d :enter :esc])))))
+            (it "replaces a saved value"
+                (expect (= [[:value "compact_secret" "new" nil]]
+                           (:calls (capture-secret {"is_set" true "source" "global"}
+                                                   [:enter \r \n \e \w :enter :esc])))))
+            (it "removes a value that this scope holds only after confirmation"
+                (expect (empty? (:calls (capture-secret {"is_set" true "source" "global"}
+                                                        [:enter \x \n :esc]))))
+                (expect (= [[:inherit "compact_secret" nil]]
+                           (:calls (capture-secret {"is_set" true "source" "global"}
+                                                   [:enter \x \y :esc])))))
+            (it "offers no Remove for a value that another scope holds"
+                (let [{:keys [calls frames]} (capture-secret {"is_set" true "source" "project"}
+                                                             [:enter \x \y :esc :esc])]
+                  (expect (empty? calls))
+                  (expect (not-any? #(str/includes? % "Remove") frames))))
+            (it "shows the gateway error without the typed value"
+                (let [{:keys [notes]} (capture-secret {"is_set" false}
+                                                      [:enter \s \3 \c \r \3 \t :enter :esc]
+                                                      :fail
+                                                      #(str "Value " % " is not valid."))]
+                  (expect (= [["Setting not saved" "Value *** is not valid."]] notes))))))
 
 (defn- scripted-structured-edit
   [row picks reads & [{:keys [lists notes menus]}]]

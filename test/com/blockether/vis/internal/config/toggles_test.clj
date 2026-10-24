@@ -503,3 +503,38 @@
            (expect (= {:value "slow"} (t/wire-value root "test_project_local" "SLOW")))
            (expect (nil? (t/wire-value "test_project_local" "slow")))
            (finally (t/set-project-toggles! root [] []) (t/unregister-owner! "test.overridden"))))))
+
+(defdescribe
+  string-toggle-test
+  (it "stores one trimmed line and refuses other values"
+      (with-clean-state (fn []
+                          (try (t/register-toggle!
+                                 {:id "test_string" :label "Text" :type :string :default ""})
+                               (expect (= :string (t/type-of "test_string")))
+                               (expect (= "" (t/value-of "test_string")))
+                               (expect (= {:value "https://kb.example.com"}
+                                          (t/wire-value "test_string" "  https://kb.example.com ")))
+                               (expect (= {:value "8080"} (t/wire-value "test_string" 8080)))
+                               (doseq [junk ["a\nb" (apply str (repeat 4097 "x")) true nil {}]]
+                                 (expect (nil? (t/wire-value "test_string" junk))))
+                               (expect (= "x" (t/set-value! "test_string" "x")))
+                               (expect (= "42" (t/coerce-config-value "test_string" 42)))
+                               (finally (t/unregister-toggle! "test_string"))))))
+  (it "lists only non-empty secret values, and an error never carries the value"
+      (with-clean-state
+        (fn []
+          (try (t/register-toggle!
+                 {:id "test_secret" :label "Token" :type :string :default "" :secret? true})
+               (t/register-toggle!
+                 {:id "test_plain" :label "URL" :type :string :default "https://kb.example.com"})
+               (expect (true? (:secret? (t/toggle-spec "test_secret"))))
+               (expect (= [] (t/secret-values)))
+               (t/set-value! "test_secret" "kb-token-12345678")
+               (expect (= ["kb-token-12345678"] (t/secret-values)))
+               (let [data (try (t/set-value! "test_secret" "bad\nvalue")
+                               nil
+                               (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                 (expect (= :vis.toggles/invalid-value (:type data)))
+                 (expect (not (contains? data :value))))
+               (finally (t/unregister-toggle! "test_secret")
+                        (t/unregister-toggle! "test_plain")))))))

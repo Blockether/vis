@@ -5,7 +5,7 @@ import type { SettingDecidedIn, SettingValue, SettingsResponse, SettingsTarget, 
 import { OpenMachineSettings, OpenScopedSettings } from '../../lib/open-settings';
 import { filterSettings, flattenSettings } from '../../lib/setting-tree';
 import { Banner, Button, CloseButton, DialogFrame, Input, Modal, Text } from '../../components/ui';
-import { McpServersPanel, SettingRow, settingTree } from './MachineSettings';
+import { McpServersPanel, SettingRow, secretSafeMessage, settingTree } from './MachineSettings';
 import { ExtensionsPanel, hasExtensionNotice, isExtensionGroup, type SettingHead } from './ExtensionSettings';
 import { SettingMachine } from './SettingField';
 import { hostOf } from '../../lib/endpoints';
@@ -70,7 +70,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
       // The value is saved, but the extension could not act on the change.
       if (saved.change_error) setError(saved.change_error);
       return true;
-    } catch (err) { setError((err as Error).message); return false; }
+    } catch (err) { setError(secretSafeMessage((err as Error).message, toggle, value)); return false; }
     finally { saving.current = false; setPending(null); }
   };
   // An explicit refresh replaces the catalog; a poll that started earlier must not.
@@ -112,6 +112,7 @@ function ScopedSettingsContent({ client, target, onClose }: ScopedSettingsProps)
   const row = (toggle: Toggle, head?: SettingHead) => settingTree(toggle, (setting) => (
     <SettingRow key={setting.id} toggle={setting} head={setting === toggle ? head : undefined} busy={pending !== null}
       onToggle={() => void save(setting, 'toggle')} onPick={(value) => save(setting, 'value', value)} onInherit={() => void save(setting, 'inherit')}
+      onRemove={() => save(setting, 'inherit')}
       onOpenSettings={setting.decided_in && canOpen(setting.decided_in) ? openSettings : undefined} />
   ));
   const rows = (group: ToggleGroup) => group.toggles.length > 0 && (

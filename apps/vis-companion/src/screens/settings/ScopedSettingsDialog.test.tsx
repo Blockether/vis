@@ -47,6 +47,42 @@ it('writes and inherits only the selected owner, without carrying form state to 
   expect(screen.getByRole('searchbox', { name: 'Search settings' })).toHaveValue('');
   await waitFor(() => expect(read).toHaveBeenLastCalledWith(expect.any(AbortSignal), { scope: 'session', target_id: 'b' }));
 });
+it('removes a session secret with a confirmation, and an inherited secret offers no Remove', async () => {
+  const user = userEvent.setup();
+  const target: SettingsTarget = { scope: 'session', target_id: 'a' };
+  const client = new GatewayClient({ url: 'http://127.0.0.1:7890' });
+  let own = true;
+  const response = (): SettingsResponse => ({
+    revision: 'scoped-secret',
+    scope: 'session', target_id: 'a',
+    groups: [{ id: 'extension:graphify', title: 'graphify', toggles: [{
+      id: 'graphify_kb_token', label: 'Knowledge base token', type: 'string', editor: 'secret',
+      is_set: true, max_length: 4096, scope: 'session', scopes: ['global', 'session'],
+      source: own ? 'session' : 'global', is_override: own, inherited_source: 'global',
+    }] }],
+  });
+  vi.spyOn(client, 'cachedSettings').mockReturnValue(null);
+  vi.spyOn(client, 'settings').mockImplementation(async () => response());
+  vi.spyOn(client, 'cachedMcpServers').mockReturnValue([]);
+  vi.spyOn(client, 'mcpServers').mockResolvedValue([]);
+  const write = vi.spyOn(client, 'setSetting').mockImplementation(async (_id, action) => {
+    own = action !== 'inherit';
+    return response().groups[0].toggles[0];
+  });
+  renderOpenBands(<ScopedSettingsDialog client={client} target={target} onClose={() => {}} />);
+  await screen.findByText('Set here');
+  expect(screen.getByText('Saved')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Use inherited value' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Remove' }));
+  const question = screen.getByRole('group', { name: 'Remove Knowledge base token?' });
+  expect(question).toHaveTextContent('The global value applies again.');
+  await user.click(within(question).getByRole('button', { name: 'Remove' }));
+  await screen.findByText('Inherited from global');
+  expect(write).toHaveBeenLastCalledWith('graphify_kb_token', 'inherit', undefined, target);
+  expect(screen.getByText('Saved')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Replace' })).toBeEnabled();
+});
 // Every settings band opens folded, so the dialog first shows only group names. A
 // search opens every band again, so a folded band cannot hide a match.
 it('opens with every band folded and opens them all for a search', async () => {

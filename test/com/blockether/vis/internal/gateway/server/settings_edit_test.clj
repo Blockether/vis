@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.persistance.core :as store]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.sandbox.scoped-policy :as policy]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe describe it expect]]))
 
 (h/use-mem-store!)
@@ -247,6 +248,54 @@
             (edit/apply! db target (:revision first-result) inherit)
             (expect (= {} (store/db-scoped-settings db "session" sid)))
             (expect (true? (get (scoped/values db sid) id))))))
+    (it "keeps a secret value out of the revision input"
+        ;; Every client reads the revision, so it must not confirm a guessed secret.
+        (let [db
+              (h/store)
+
+              target
+              (scoped/target db "global" nil)
+
+              id
+              "settings_revision_secret"
+
+              seen
+              (atom [])
+
+              digest
+              util/sha256-hex
+
+              revision-with
+              (fn [value]
+                (with-redefs [config/load-global-yaml-config-raw
+                              (constantly {})
+
+                              config/load-global-config-raw
+                              (constantly {"toggles" {id value}})
+
+                              config/load-project-tiers-raw
+                              (constantly {})
+
+                              config/load-project-root-config-raw
+                              (constantly {})
+
+                              config/load-project-config-raw
+                              (constantly {})
+
+                              util/sha256-hex
+                              (fn [x]
+                                (swap! seen conj (str x))
+                                (digest x))]
+
+                  (edit/revision db target)))]
+
+          (toggles/register-toggle! {:id id :label "Token" :type :string :default "" :secret? true})
+          (try (let [first-revision (revision-with "kb-token-first")]
+                 (expect (= first-revision (revision-with "kb-token-first")))
+                 (expect (not= first-revision (revision-with "kb-token-second")))
+                 (expect (seq @seen))
+                 (expect (not-any? #(str/includes? % "kb-token-") @seen)))
+               (finally (toggles/unregister-toggle! id)))))
     (it "accepts exactly one of two simultaneous batches from the same revision"
         (with-empty-config
           (let [{:keys [db target sid id]}

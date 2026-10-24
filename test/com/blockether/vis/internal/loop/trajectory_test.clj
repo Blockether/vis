@@ -363,6 +363,9 @@
                                                          :api-key "sk-config-12345678"
                                                          :base-url
                                                          "https://gateway.example.com"}]}))))
+  (it "takes the values of secret settings"
+      (expect (= ["kb-token-12345678"]
+                 (trajectory/known-secrets {:settings ["kb-token-12345678" "short"]}))))
   (it "ignores a credential file that is not JSON"
       (let [file (.toFile (.resolve (temp-dir) "broken-auth.json"))]
         (spit file "not json")

@@ -2986,9 +2986,11 @@
    title and the answer is typed into a real input row under it, so nothing the
    keyboard no longer owns stays advertised. Enter submits the trimmed string
    (may be empty), Esc returns nil. Opts: :initial (seed text), :mask (echo
-   char), :placeholder (dim hint while the field is empty)."
+   char), :placeholder (dim hint while the field is empty), :max-length (refuse
+   more characters), :required? (Enter waits for non-blank text) and
+   :submit-label (the Enter hint)."
   [^TerminalScreen screen g {:keys [left inner-w] :as region} label
-   {:keys [initial mask placeholder]}]
+   {:keys [initial mask placeholder max-length required? submit-label]}]
   (let [text
         (atom (vec (or initial "")))
 
@@ -2998,7 +3000,10 @@
     (loop []
 
       (let [row
-            (band-question-frame! g region label [["Enter" "submit"] ["Esc" "cancel"]])
+            (band-question-frame! g
+                                  region
+                                  label
+                                  [["Enter" (or submit-label "submit")] ["Esc" "cancel"]])
 
             txt
             (apply str @text)
@@ -3026,11 +3031,13 @@
             (recur)
             (condp = (key-type key)
               KeyType/Escape nil
-              KeyType/Enter (str/trim (apply str @text))
+              KeyType/Enter (let [answer (str/trim (apply str @text))]
+                              (if (and required? (str/blank? answer)) (recur) answer))
               KeyType/Character (let [c (key-character key)]
-                                  (swap! text #(into (subvec % 0 @cursor)
-                                                     (cons c (subvec % @cursor))))
-                                  (swap! cursor inc)
+                                  (when (or (nil? max-length) (< (count @text) (long max-length)))
+                                    (swap! text #(into (subvec % 0 @cursor)
+                                                       (cons c (subvec % @cursor))))
+                                    (swap! cursor inc))
                                   (recur))
               KeyType/Backspace (do (when (pos? (long @cursor))
                                       (swap! text #(into (subvec % 0 (dec (long @cursor)))
@@ -3506,30 +3513,38 @@
         (get row "id")
 
         override?
-        (and *settings-target* (get row "is_override"))]
+        (and *settings-target* (get row "is_override"))
 
-    {:key (keyword (str "toggle::" id))
-     :type (case type
-             "string"
-             :text-setting
+        secret?
+        (= "secret" (get row "editor"))]
 
-             "number"
-             :number-setting
+    (cond-> {:key (keyword (str "toggle::" id))
+             :type (case type
+                     "string"
+                     (if secret? :secret-setting :text-setting)
 
-             ("array" "object")
-             :structured-setting
+                     "number"
+                     :number-setting
 
-             :registry-toggle)
-     :toggle-id id
-     :toggle-type (keyword type)
-     :toggle-value (if (= "boolean" type) (boolean (get row "enabled")) (get row "value"))
-     :setting row
-     :choices (vec (get row "choices"))
-     :experimental? (boolean (get row "is_experimental"))
-     :source (get row "source")
-     :is-override? (boolean override?)
-     :label (str (get row "label"))
-     :description (str (get row "description"))}))
+                     ("array" "object")
+                     :structured-setting
+
+                     :registry-toggle)
+             :toggle-id id
+             :toggle-type (keyword type)
+             :toggle-value (if (= "boolean" type) (boolean (get row "enabled")) (get row "value"))
+             :setting row
+             :choices (vec (get row "choices"))
+             :experimental? (boolean (get row "is_experimental"))
+             :source (get row "source")
+             :is-override? (boolean override?)
+             :label (str (get row "label"))
+             :description (str (get row "description"))}
+      ;; A secret row says only whether a value is saved. Keep any value out of client state.
+      secret?
+      (merge {:toggle-value nil
+              :secret-set? (true? (get row "is_set"))
+              :setting (dissoc row "value" "own_value" "inherited_value")}))))
 
 (defn- extension-rows
   "One extension as settings rows. Its first row is the Auto/On/Off choice of the extension,
@@ -4159,7 +4174,9 @@
 
 (defn- settings-option-label
   [{:keys [label type toggle-id experimental? locked is-override?]} _values]
-  (if (contains? #{:registry-toggle :text-setting :number-setting :structured-setting} type)
+  (if (contains? #{:registry-toggle :text-setting :secret-setting :number-setting
+                   :structured-setting}
+                 type)
     (let [spec (vis/toggle-spec toggle-id)]
       (str label
            (when is-override? "  [Override]")
@@ -4170,8 +4187,11 @@
 (defn- settings-option-value
   "The current value or short service status, separate from the setting's label."
   [{:keys [key type choices toggle-id toggle-type toggle-value set-key item-id inline-description
-           description]} values]
+           description secret-set?]} values]
   (case type
+    :secret-setting
+    (if secret-set? "Saved" "Not set")
+
     :agent-name
     (or (get @agent-name-setting "value") "Unavailable")
 
@@ -4383,7 +4403,7 @@
 
 (defn- settings-selectable?
   [{:keys [type button fold]}]
-  (or (contains? #{:toggle :choice :action :agent-name :text-setting :number-setting
+  (or (contains? #{:toggle :choice :action :agent-name :text-setting :secret-setting :number-setting
                    :structured-setting :set-toggle :registry-toggle :mcp :provider}
                  type)
       ;; A section header with a button takes the selection like a setting. A folded
@@ -5052,13 +5072,55 @@
                           [:init :selected]
                           (max 0 (.indexOf ^java.util.List choices current)))))))
 
+(defn- without-secret
+  "`text` with each copy of the secret `value` masked."
+  [text value]
+  (let [text (str text)]
+    (if (str/blank? (str value)) text (str/replace text (str value) "***"))))
+
 (defn- save-setting-value!
-  "Save one value for the open owner, then show the row the gateway confirmed."
-  [screen g region id value]
-  (try (cache-setting-row! (notify-change-error!
-                             (vis/set-setting-value! id value *settings-target*)))
-       (load-settings-inventory!)
-       (catch Exception e (mini-note! screen g region "Setting not saved" (ex-message e)))))
+  "Save one value for the open owner, then show the row the gateway confirmed. A
+   secret value never appears in the error note."
+  ([screen g region id value] (save-setting-value! screen g region id value nil))
+  ([screen g region id value {:keys [secret?]}]
+   (try (cache-setting-row! (notify-change-error!
+                              (vis/set-setting-value! id value *settings-target*)))
+        (load-settings-inventory!)
+        (catch Exception e
+          (mini-note! screen
+                      g
+                      region
+                      "Setting not saved"
+                      (cond-> (str (ex-message e))
+                        secret?
+                        (without-secret value)))))))
+
+(def ^:private secret-mask "The echo character of a secret setting's input." \*)
+
+(defn- edited-scope
+  "The scope that the open Settings dialog edits: `global` for Machine settings."
+  []
+  (if *settings-target* (name (:scope *settings-target*)) "global"))
+
+(defn- secret-removable?
+  "True when the edited scope itself holds the saved secret."
+  [{:keys [setting source secret-set?]}]
+  (boolean (and secret-set? (or (true? (get setting "is_override")) (= source (edited-scope))))))
+
+(defn- secret-setting-action
+  "What Enter does on a secret row: `:set` at once when nothing is saved, else the band's
+   Replace, and Remove when the edited scope holds the value."
+  [screen g region {:keys [label secret-set?] :as row}]
+  (if secret-set?
+    (:action (embed-transient!
+               screen
+               g
+               region
+               {:title label
+                :groups [{:items (cond-> [{:key "r" :type :action :id :set :label "Replace"}]
+                                   (secret-removable? row)
+                                   (conj {:key "x" :type :action :id :remove :label "Remove"}))}]}))
+    :set))
 
 (defn- setting-number
   "The finite number `text` names, or nil. A whole number stays an integer."
@@ -5194,6 +5256,35 @@
                                  (:label row)
                                  {:initial (:toggle-value row)})]
       (save-setting-value! screen g region (:toggle-id row) value))
+
+    ;; The masked input is local to `mini-read!`, so the typed text ends with this call.
+    :secret-setting
+    (let [region (host-band-region screen region)]
+      (case (secret-setting-action screen g region row)
+        :set
+        (when-let [value (mini-read! screen
+                                     g
+                                     region
+                                     (:label row)
+                                     {:mask secret-mask
+                                      :max-length (get-in row [:setting "max_length"])
+                                      :required? true
+                                      :submit-label "save"})]
+          (save-setting-value! screen g region (:toggle-id row) value {:secret? true}))
+
+        :remove
+        (when (mini-confirm! screen
+                             g
+                             region
+                             (str "Remove " (:label row) "?")
+                             {:cost (if *settings-target*
+                                      "This scope then uses the inherited value."
+                                      "Vis forgets the saved value.")
+                              :yes-label "Yes, remove"
+                              :no-label "Keep it"})
+          (activate-unlocked-row! screen g region values callbacks (assoc row :type :inherit)))
+
+        nil))
 
     :number-setting
     (loop [text (str (:toggle-value row))]
@@ -6086,14 +6177,19 @@
                                        (or (nil? value) (pos? value-w))
                                        (<= (long (p/display-width (str option-label)))
                                            (- option-w p/STATUS_WIDTH indent value-room tag-w 2)))
+                                  ;; A row's label gives way only to its own value: values stand
+                                  ;; right-aligned, so a short value keeps the long label whole.
+                                  row-value-room
+                                  (if (and (some? value) (pos? value-w))
+                                    (+ 2 (min (long value-w) (long (p/display-width (str value)))))
+                                    0)
                                   label-w (max 1
                                                (- option-w
                                                   p/STATUS_WIDTH
                                                   indent
-                                                  (long (cond tagged? (+ value-room tag-w 2)
-                                                              (and (some? value) (pos? value-w))
-                                                              value-room
-                                                              :else 0))))
+                                                  (long (if tagged?
+                                                          (+ value-room tag-w 2)
+                                                          row-value-room))))
                                   lbl (ellipsize option-label label-w)]
 
                               (p/set-colors! g t/dialog-fg t/dialog-bg)

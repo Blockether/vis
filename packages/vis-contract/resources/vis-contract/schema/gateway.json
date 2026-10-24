@@ -3011,6 +3011,7 @@
             "switch",
             "select",
             "text",
+            "secret",
             "multiline",
             "number",
             "paths",
@@ -3019,6 +3020,10 @@
             "list",
             "tools"
           ]
+        },
+        "is_set": {
+          "type": "boolean",
+          "description": "Whether a secret row has a saved value. A secret row never carries the value itself."
         },
         "suggestions": {
           "type": "array",

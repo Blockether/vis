@@ -62,6 +62,7 @@
     [com.blockether.vis.internal.python.runtime :as python-runtime]
     [com.blockether.vis.internal.paths :as paths]
     [com.blockether.vis.internal.config.toggles :as toggles]
+    [com.blockether.vis.internal.config.scoped :as scoped]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.speech.core :as speech]
     [reitit.exception :as reitit-exception]
@@ -1805,9 +1806,7 @@
   "Hydrate gateway-global toggles and persist only the changed key, never a
    snapshot of defaults or project values. Explicit scoped writes persist first."
   []
-  (try (toggles/hydrate-from-config! {"toggles"
-                                      (merge (get (config/load-global-yaml-config-raw) "toggles")
-                                             (get (config/load-global-config-raw) "toggles"))})
+  (try (scoped/hydrate! false)
        (when (compare-and-set! toggle-persist-listener-installed? false true)
          (toggles/add-listener!
            (fn [{:keys [id new persist?]}]

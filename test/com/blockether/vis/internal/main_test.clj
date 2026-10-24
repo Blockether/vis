@@ -731,8 +731,12 @@
               (toggles/reset-to-default! "draft_backend")
               (with-redefs-fn {#'config/init-cli! (fn []
                                                     nil)
-                               #'config/load-config-raw (fn []
-                                                          merged)
+                               #'config/load-global-yaml-config-raw (fn []
+                                                                      {})
+                               #'config/load-global-config-raw (fn []
+                                                                 {})
+                               #'config/load-project-tiers-raw (fn []
+                                                                 merged)
                                #'config/save-config! (fn [& _]
                                                        (swap! writes conj :config))
                                #'config/save-toggles! (fn [& _]
@@ -1561,3 +1565,20 @@
                  (expect (= ["I" "I am" "I am" "ok" "I am" "We are" "Go" nil]
                             (rebuild-streamed-text text-frames)))
                  (expect (= "x" (get (last frames) "code"))))))
+
+(defdescribe
+  string-toggle-overrides-test
+  (it "takes one line of text for a string toggle"
+      (try (toggles/register-toggle! {:id "main_test_text" :label "Text" :type :string :default ""})
+           (expect (= {"main_test_text" "https://kb.example.com"}
+                      (#'main/parse-toggle-overrides "main_test_text=https://kb.example.com")))
+           (finally (toggles/unregister-toggle! "main_test_text"))))
+  (it "refuses a secret string, because other processes can read a command line"
+      (try (toggles/register-toggle!
+             {:id "main_test_secret" :label "Token" :type :string :default "" :secret? true})
+           (try (#'main/parse-toggle-overrides "main_test_secret=kb-token-12345678")
+                (expect false)
+                (catch clojure.lang.ExceptionInfo e
+                  (expect (= :vis.cli/invalid-toggle (:type (ex-data e))))
+                  (expect (not (re-find #"kb-token" (str (ex-message e) (pr-str (ex-data e))))))))
+           (finally (toggles/unregister-toggle! "main_test_secret")))))

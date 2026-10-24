@@ -11,15 +11,32 @@
             [com.blockether.vis.internal.sandbox.scoped-policy :as policy]
             [com.blockether.vis.internal.util :as util]))
 
+(def ^:private secret-key
+  ;; Realized on first use, so each process gets its own key.
+  (delay (util/random-bytes 32)))
+
+(defn- digest-secrets
+  "Replace the values of a secret row with a process-local HMAC.
+   A revision then shows that a secret changed, but it cannot confirm a guessed value."
+  [row]
+  (if (:secret? row)
+    (reduce (fn [row k]
+              (cond-> row
+                (string? (get row k))
+                (update k #(util/bytes->hex (util/hmac-sha256 @secret-key (util/utf8 %))))))
+            row
+            [:value :own-value :inherited-value])
+    row))
+
 (defn revision
   "Content revision includes ancestors and explicit values, not volatile service state."
   [db target]
-  (util/sha256-hex (pr-str (walk/postwalk #(if (map? %) (into (sorted-map) %) %)
-                                          {:target target
-                                           :toggles (scoped/settings db target)
-                                           :access (policy/settings db target)
-                                           :agent (when (= "global" (:scope target))
-                                                    (config/agent-name))}))))
+  (util/sha256-hex (pr-str (walk/postwalk
+                             #(if (map? %) (into (sorted-map) %) %)
+                             {:target target
+                              :toggles (mapv digest-secrets (scoped/settings db target))
+                              :access (policy/settings db target)
+                              :agent (when (= "global" (:scope target)) (config/agent-name))}))))
 
 (defn- prepare-edit
   [target {:strs [id action value]}]

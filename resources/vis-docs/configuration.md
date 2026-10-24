@@ -917,6 +917,17 @@ error. If a reload fails after an earlier load, Vis keeps using the earlier
 version. The group then says so. Your stored values do not change when an
 extension fails, goes away or loads again.
 
+Some extensions ask for a password or an access token, for example for a hosted
+service. Settings shows such a secret setting only as **Saved** or **Not set**,
+never its value:
+
+- To save or change the value, select **Set** or **Replace**, type the value and save.
+- To delete the saved value, select **Remove** and confirm.
+
+Vis keeps a secret value in `~/.vis/state.yml` on this computer and only in
+global settings. Only your user account can read that file. A project `vis.yml`
+cannot change the value. Saved trajectories show `[REDACTED]` in its place.
+
 ## Session titling
 
 A session is named from its first message immediately, then improved by one

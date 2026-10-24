@@ -182,6 +182,39 @@ load. The load error names that owner.
 `type` defaults to `"boolean"` with a boolean `default`. For a choice row, use `type="enum"`,
 string `choices` and a `default` from those choices.
 
+For one line of text, such as a server address, use `type="string"` with a string `default`. Vis
+removes spaces at the start and the end. A value has at most 4096 characters and no control
+characters, such as a line break.
+
+For a password or an access token, also set `is_secret=True`. A secret setting needs `default=""`
+and only the `global` scope. Settings then shows only **Saved** or **Not set**, never the value.
+Vis keeps the value on this computer and writes `[REDACTED]` in its place in trajectories.
+
+```python
+server_url = vis.Setting(
+    id="reports_server_url",
+    label="Report server",
+    type="string",
+    default="https://reports.example.com",
+)
+
+server_token = vis.Setting(
+    id="reports_server_token",
+    label="Report server token",
+    type="string",
+    default="",
+    is_secret=True,
+)
+```
+
+A project extension cannot save a secret setting. Settings does not show it, and `value()` returns
+the default. The `--toggles` command line option also refuses a secret, because other programs can
+read a command line.
+
+Read a secret setting while Vis calls your extension, for example in one of its tools. Another
+extension that reads it gets the default. At import time and in a thread that your extension starts,
+`value()` can also return the default.
+
 To act when a person changes a setting, give `on_change`. Vis calls `on_change(old, new, scope)`
 once after the app or the TUI saves the setting, if the effective value changed. `scope` is the
 level of the change: `global`, `project`, `group` or `session`. Use it for a side effect, such as
@@ -211,8 +244,8 @@ value at another time, call `value()` in a callback.
 `value()` reads the current value in every callback, also outside a turn, such as in a background
 thread. In a session, it uses the session's settings. Without a session, a project extension's
 setting resolves at project scope, as Settings shows it there. Project values, such as `toggles:`
-in the project's `vis.yml`, win over global values. Vis reads a `vis.yml` edit after `/reload`. A
-file edit does not call `on_change`.
+in the project's `vis.yml`, win over global values if `scopes` includes `project`. Vis reads a
+`vis.yml` edit after `/reload`. A file edit does not call `on_change`.
 
 The app and the TUI show your settings under **Extensions**, in a group with your extension's
 name. That group also holds the extension's engine choice and its packaged skills. A `project` or

@@ -58,7 +58,7 @@
 (defonce
   ^:private
   ^{:doc
-    "id -> current value (boolean). When an id is ABSENT from
+    "id -> current value (boolean, choice or text). When an id is ABSENT from
           this map the resolver falls back to the registered default.
           That distinction matters for the `reset-to-default!` op:
           dissoc'ing here is NOT the same as `(set! id false)`."}
@@ -92,16 +92,18 @@
    unknown keys so a future field added here doesn't bleed into
    listeners; missing optional fields get sane defaults.
 
-   Two kinds of toggles share the same registry:
+   Three kinds of toggles share the same registry:
      `:boolean` (default) -- simple ON/OFF.
      `:enum`              -- a closed set of named values
                              (e.g. `reasoning_level` cycles
                              `:quick -> :balanced -> :deep`).
+     `:string`            -- one line of text. `:secret? true` makes it
+                             write-only in every settings UI.
    `:type` and `:choices` ride on the normalized spec so the dialog
-   row can pick its rendering strategy (toggle vs. cycle) without
+   row can pick its rendering strategy (toggle, cycle or text) without
    re-deriving anything."
   [{:keys [id label default description owner since persist? group parent type choices visible-fn
-           on-change-fn channels settings? experimental? scopes inheritance]}]
+           on-change-fn channels settings? experimental? scopes inheritance secret?]}]
   (let [t (or type :boolean)]
     (cond-> {:id id
              :label (str label)
@@ -111,7 +113,10 @@
                         (boolean default)
 
                         :enum
-                        (->str-choice default))
+                        (->str-choice default)
+
+                        :string
+                        (str (or default "")))
              :owner (or owner :vis)
              :persist? (boolean persist?)
              :scopes (vec (or scopes toggle-contract/default-scopes))
@@ -147,6 +152,9 @@
       ;; channels' settings UIs. Absent = channel-neutral (shown everywhere).
       (seq channels)
       (assoc :channels (set channels))
+
+      secret?
+      (assoc :secret? true)
 
       (= :enum t)
       (assoc :choices (mapv ->str-choice choices)))))
@@ -306,7 +314,7 @@
      4. `nil` if the toggle isn't registered.
 
    Returns the raw value (boolean for `:boolean` toggles, any value
-   from `:choices` for `:enum` toggles). `enabled?` is the
+   from `:choices` for `:enum` toggles, text for `:string` toggles). `enabled?` is the
    boolean-cast convenience for the common boolean path.
 
    With `root`, `id` is the setting where `root` runs ([[target-toggle-spec]]). A project
@@ -334,7 +342,18 @@
   [id]
   (or (:choices (get @registry id)) []))
 
-(defn type-of "`:boolean` / `:enum` / nil for unknown." [id] (:type (get @registry id)))
+(defn type-of "`:boolean` / `:enum` / `:string` / nil for unknown." [id] (:type (get @registry id)))
+
+(defn secret-values
+  "Non-empty current values of the secret string toggles, for redaction."
+  []
+  (let [s @state]
+    (into []
+          (keep (fn [[id spec]]
+                  (when (:secret? spec)
+                    (let [v (if (contains? s id) (get s id) (:default spec))]
+                      (when (and (string? v) (seq v)) v)))))
+          @registry)))
 
 (defn set-value!
   "Set `id` to `value` and notify listeners. Returns the new value.
@@ -344,7 +363,9 @@
                   casts, `coerce-config-value` and `wire-value` parse.
      `:enum`    — must be one of `:choices`; otherwise throws
                    `:vis.toggles/invalid-value` so the bug surfaces
-                   at the call site instead of later in render."
+                   at the call site instead of later in render.
+     `:string`  — must be one line within the contract bound. The error
+                  never carries the value, because it can be a secret."
   [id value]
   (let [spec
         (get @registry id)
@@ -364,7 +385,13 @@
                 (ex-info
                   "Toggle value is not one of the registered :choices"
                   {:type :vis.toggles/invalid-value :id id :value value :choices (:choices spec)})))
-            value))
+            value)
+
+          :string
+          (if (toggle-contract/string-value? value)
+            value
+            (throw (ex-info "Toggle value is not one line of text within the bound"
+                            {:type :vis.toggles/invalid-value :id id}))))
 
         old
         (value-of id)]
@@ -456,6 +483,9 @@
                            :enum
                            v
 
+                           :string
+                           v
+
                            (boolean v))]
 
                      (assoc acc id v))
@@ -484,6 +514,7 @@
      `:enum`    — a string matches the choice whose `name` equals it,
                   case-insensitively (`reasoning_level: deep` → `:deep`); an
                   already-legal value passes through unchanged.
+     `:string`  — text is trimmed; a YAML number or boolean becomes its text.
    Unregistered / untyped ids return the value unchanged (hydrate then drops
    the orphan)."
   [id v]
@@ -506,13 +537,20 @@
                   (:choices spec))
             v))
 
+      :string
+      (cond (string? v) (str/trim v)
+            (keyword? v) (name v)
+            (or (number? v) (boolean? v)) (str v)
+            :else v)
+
       v)))
 
 (defn wire-value
   "Coerce ONE value that arrived over the wire (`POST /v1/settings`) onto the
    REGISTERED type of `id`, using the vocabulary the CLI's `--toggles` already
    accepts: `true`/`on`/`yes`/`1` and `false`/`off`/`no`/`0` for a `:boolean`, the
-   name of a registered choice (case-insensitive) for an `:enum`. With `root`, `id`
+   name of a registered choice (case-insensitive) for an `:enum`, and one trimmed line
+   of text within the contract bound for a `:string`. With `root`, `id`
    may also name a setting that project's own extensions declare.
 
    Answers `{:value v}` — a one-entry map, because the legal value `false` is
@@ -539,6 +577,11 @@
          (some (fn [c]
                  (when (and target (= target (str/lower-case (name c)))) {:value c}))
                choices))
+
+       :string
+       (let [text (cond (string? v) (str/trim v)
+                        (number? v) (str v))]
+         (when (toggle-contract/string-value? text) {:value text}))
 
        nil))))
 

@@ -1408,6 +1408,62 @@
                                                     :request "already answered"
                                                     :started_at 1000}}}})
              (expect (= [] (state/list-queued-turns sid)))
+             (finally (reset! registry saved)))))
+  (it "keeps execution inputs and the settings snapshot out of every turn view"
+      ;; A queued turn keeps its engine options. Their settings snapshot holds secret values.
+      (let [sid
+            (java.util.UUID/randomUUID)
+
+            registry
+            @#'state/registry
+
+            saved
+            @registry
+
+            secret
+            "kb-token-never-on-the-wire"
+
+            execution-keys
+            ["engine_opts" "messages" "extra_body" "turn_features" "reasoning_default"]]
+
+        (try (reset! registry {(str sid) {:next-seq 0
+                                          :turn-order ["waiting"]
+                                          :turns {"waiting"
+                                                  {:turn_id "waiting"
+                                                   :session_id (str sid)
+                                                   :status "queued"
+                                                   :request "next please"
+                                                   :queued_at 2000
+                                                   :engine-opts {:settings-snapshot
+                                                                 {"graphify_kb_token" secret}}
+                                                   :messages [{:role "user" :content "next please"}]
+                                                   :extra-body {"metadata" {"note" secret}}
+                                                   :turn-features {"plan" true}
+                                                   :reasoning-default "high"}}}})
+             (with-redefs [lp/db-info
+                           (constantly nil)
+
+                           persistance/db-list-session-turns
+                           (constantly [])
+
+                           persistance/db-read-session-turn
+                           (constantly nil)]
+
+               (let [queued
+                     (state/list-queued-turns sid)
+
+                     listed
+                     (state/list-turns sid)
+
+                     single
+                     (state/get-turn sid "waiting")]
+
+                 (expect (= ["waiting"] (mapv #(get % "turn_id") queued)))
+                 (expect (= ["waiting"] (mapv #(get % "turn_id") listed)))
+                 (expect (= "next please" (get single "request")))
+                 (expect (not (str/includes? (pr-str [queued listed single]) secret)))
+                 (doseq [view (concat queued listed [single])]
+                   (expect (not-any? #(contains? view %) execution-keys)))))
              (finally (reset! registry saved))))))
 
 (defdescribe

@@ -22,7 +22,7 @@
 (defn- toggle-json
   [{:keys [id label description type choices value experimental? scopes source scope is-override
            overridden-by inherited-value inherited-source own-value group parent inheritance
-           change-error decided-in]}]
+           change-error decided-in secret?]}]
   (cond-> {:id id
            :label label
            :type (name type)
@@ -31,9 +31,17 @@
            :source source
            :is-override is-override
            :is-experimental (boolean experimental?)
-           :editor (if (= type :boolean) "switch" "select")
-           :own-value own-value
-           :inherited-value inherited-value
+           :editor (case type
+                     :boolean
+                     "switch"
+
+                     :string
+                     (if secret? "secret" "text")
+
+                     "select")
+           ;; A secret row says only whether a value is saved, never the value.
+           :own-value (when-not secret? own-value)
+           :inherited-value (when-not secret? inherited-value)
            :inherited-source inherited-source
            :applies
            (if (or (#{:skills :mcp :engines} group) (rooms/setting? id)) "next_call" "next_turn")}
@@ -62,17 +70,24 @@
     (= type :boolean)
     (assoc :enabled (boolean value))
 
-    (not= type :boolean)
+    (and (not= type :boolean) (not secret?))
     (assoc :value value)
+
+    secret?
+    (assoc :is-set (boolean (seq value)))
+
+    (= type :string)
+    (assoc :max-length toggle-contract/max-string-length)
 
     choices
     (assoc :choices choices)
 
     overridden-by
     (assoc :overridden-by
-      (if (= type :boolean)
-        {:scope (:scope overridden-by) :enabled (boolean (:value overridden-by))}
-        {:scope (:scope overridden-by) :value (:value overridden-by)}))))
+      (cond (= type :boolean) {:scope (:scope overridden-by)
+                               :enabled (boolean (:value overridden-by))}
+            secret? {:scope (:scope overridden-by)}
+            :else {:scope (:scope overridden-by) :value (:value overridden-by)}))))
 
 (defn- nest-rows
   "Put each row in `:children` of the row that its `:parent` names, at any depth.

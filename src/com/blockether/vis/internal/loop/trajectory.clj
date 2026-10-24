@@ -30,13 +30,15 @@
 
    Before the write, each known credential value becomes `[REDACTED]`: the
    provider keys and tokens in `~/.vis/*-auth.json` and in the provider
-   configuration, and environment values whose names contain KEY, TOKEN,
-   SECRET, PASSWORD or CREDENTIAL. Vis replaces only these known values. It
-   does not find other secrets in the text. Only the owner can read the file."
+   configuration, the values of secret settings, and environment values whose
+   names contain KEY, TOKEN, SECRET, PASSWORD or CREDENTIAL. Vis replaces only
+   these known values. It does not find other secrets in the text. Only the
+   owner can read the file."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.error :as error]
             [com.blockether.vis.internal.gateway.runtime :as runtime]
@@ -632,14 +634,16 @@
                  PASSWORD or CREDENTIAL
      :files      JSON credential files: each string under a credential key
      :providers  the provider configuration: each string under a credential key
+     :settings   the values of secret settings
 
    Values with fewer than 8 characters do not count."
-  [{:keys [env files providers]}]
+  [{:keys [env files providers settings]}]
   (->> (concat (keep (fn [[k v]]
                        (when (re-find secret-env-name (str k)) v))
                      env)
                (mapcat (comp secret-leaves read-json-file) files)
-               (secret-leaves providers))
+               (secret-leaves providers)
+               settings)
        (filter #(and (string? %) (<= (long min-secret-length) (count %))))
        distinct
        (sort-by count >)
@@ -657,7 +661,8 @@
   []
   (known-secrets {:env (System/getenv)
                   :files (credential-files)
-                  :providers (try (:providers (config/current-config)) (catch Exception _ nil))}))
+                  :providers (try (:providers (config/current-config)) (catch Exception _ nil))
+                  :settings (toggles/secret-values)}))
 
 (defn redact
   "Replace each `secrets` value in each string of `data` with `[REDACTED]`."

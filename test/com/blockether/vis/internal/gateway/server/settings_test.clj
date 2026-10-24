@@ -6,6 +6,8 @@
 
 (def ^:private nest-rows #'api/nest-rows)
 
+(def ^:private toggle-json #'api/toggle-json)
+
 (defn- ids
   [rows]
   (mapv (fn [row]
@@ -70,3 +72,44 @@
                      (mapv :id
                            (one-thinking-control [{:id "reasoning_level"}
                                                   {:id "reasoning_effort"}]))))))))
+
+(defdescribe
+  string-row-test
+  (describe "text and secret rows"
+            (it "keeps the value of a secret row off the wire"
+                (let [row (toggle-json {:id "kb_token"
+                                        :label "Token"
+                                        :type :string
+                                        :secret? true
+                                        :value "kb-token-12345678"
+                                        :own-value "kb-token-12345678"
+                                        :inherited-value "kb-token-12345678"
+                                        :scopes ["global"]
+                                        :scope "global"
+                                        :source "global"
+                                        :overridden-by {:scope "session"
+                                                        :value "kb-token-12345678"}})]
+                  (expect (= "secret" (:editor row)))
+                  (expect (true? (:is-set row)))
+                  (expect (not (re-find #"kb-token" (pr-str row))))))
+            (it "says that an empty secret is not set"
+                (expect (false? (:is-set (toggle-json {:id "kb_token"
+                                                       :label "Token"
+                                                       :type :string
+                                                       :secret? true
+                                                       :value ""
+                                                       :scopes ["global"]
+                                                       :scope "global"
+                                                       :source "default"})))))
+            (it "shows a text row with its value and bound"
+                (let [row (toggle-json {:id "kb_url"
+                                        :label "URL"
+                                        :type :string
+                                        :value "https://kb.example.com"
+                                        :scopes ["global" "project"]
+                                        :scope "global"
+                                        :source "global"})]
+                  (expect (= "text" (:editor row)))
+                  (expect (= "https://kb.example.com" (:value row)))
+                  (expect (= 4096 (:max-length row)))
+                  (expect (not (contains? row :is-set)))))))
