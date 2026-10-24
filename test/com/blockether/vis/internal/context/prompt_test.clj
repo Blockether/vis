@@ -496,7 +496,9 @@
             (second (re-find #"(?s)## 4\. Edit and check\n(.*?)\n## 5\." text))]
 
         (doseq [rule ["Keep unrelated work and formatting"
-                      "Run the nearest tests first, then wider ones"
+                      "Test the changed code first"
+                      "Run the full suite once, before a commit"
+                      "Rerun checks only for new code edits"
                       "Run the applicable format and lint checks"
                       "Review the final diff and its edit boundaries"]]
           (let [pattern (re-pattern (java.util.regex.Pattern/quote rule))
@@ -1036,7 +1038,7 @@
           "or explicit permission in the project instructions" "A narrower user request wins"
           "Releases, messages, deployments and live service restarts also need an explicit request"
           "When the checks for the changed files pass, finish the authorized workflow"
-          "only for new edits, failures or a real open risk"]]
+          "only for new code edits, failures or a real open risk"]]
         (expect (str/includes? text required)))
       ;; Regression: a blanket CORE prohibition overrode repository Git opt-in.
       (expect
