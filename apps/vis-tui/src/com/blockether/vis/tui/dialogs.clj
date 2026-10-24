@@ -7006,14 +7006,14 @@
   (and (some? project-id) (= (str project-id) (str (get group "project_id")))))
 
 (defn- navigator-scope-controls
-  "The row below the search field says where the search looks. Each control reads
+  "The right part of the search row says where the search looks. Each control reads
    `Name: value  key`, at its own width, so only a long project, then a long groups
    value, gives up columns. The project appears only when there is more than one project.
    Groups appear only while the scope project has more than one group to narrow to.
    `:label` is the value as it fits."
   [width project? project group-count groups?]
   (let [gap
-        5
+        3
 
         controls
         (cond-> []
@@ -8279,12 +8279,23 @@
                   {:show-project? (not= 1 (count @scope-projects))
                    :show-group? (or (empty? @scope-projects) (< 1 (count @groups-index)))}
 
+                  ;; The scope controls share the search row with the query. They take at
+                  ;; most 40% of it, at the right edge; the query keeps the rest.
                   scope-controls
-                  (navigator-scope-controls content-w
+                  (navigator-scope-controls (quot (* 40 content-w) 100)
                                             project-choice?
                                             @scope-project-label
                                             (count (:group-ids @search-scope))
                                             group-choice?)
+
+                  scope-used
+                  (long (reduce max 0 (map #(+ (long (:x %)) (long (:width %))) scope-controls)))
+
+                  query-w
+                  (if (pos? scope-used) (max 1 (- content-w scope-used 2)) content-w)
+
+                  scope-x
+                  (- (+ (long left) 1 content-w) scope-used)
 
                   block-heights
                   (navigator-block-heights visible-rows)
@@ -8343,13 +8354,10 @@
               (let [cursor-pos (draw-text-input-field! g
                                                        (inc (long left))
                                                        query-row
-                                                       content-w
+                                                       query-w
                                                        @query
                                                        (count @query))]
-                (draw-navigator-scope-controls! g
-                                                (+ (long left) 2)
-                                                (inc (long content-top))
-                                                scope-controls)
+                (draw-navigator-scope-controls! g scope-x query-row scope-controls)
                 (p/set-colors! g t/dialog-border t/dialog-bg)
                 (p/draw-separator! g left right (+ (long content-top) 2))
                 (when (and page-status (pos? total))
@@ -8436,9 +8444,8 @@
                                                   (recur))
                     (and (instance? MouseAction key)
                          (= MouseActionType/CLICK_DOWN (.getActionType ^MouseAction key))
-                         (= (inc (long content-top)) (.getRow (.getPosition ^MouseAction key))))
-                    (do (let [column (- (.getColumn (.getPosition ^MouseAction key))
-                                        (+ (long left) 2))
+                         (= (long query-row) (.getRow (.getPosition ^MouseAction key))))
+                    (do (let [column (- (.getColumn (.getPosition ^MouseAction key)) (long scope-x))
                               control (some #(when (<= (long (:x %))
                                                        column
                                                        (dec (+ (long (:x %)) (long (:width %)))))

@@ -4370,7 +4370,7 @@
                  (str/index-of line "C-p")]
 
              (expect (= 4 (str/index-of line "Project: All projects  C-p")))
-             (expect (str/includes? line "C-p     Groups: 1 selected  C-g"))
+             (expect (str/includes? line "C-p   Groups: 1 selected  C-g"))
              (expect (not (str/includes? line "·")))
              (expect (= t/dialog-hint (.getForegroundColor ^TextCharacter (cell 4))))
              (expect (not (bold? 4)))
@@ -4407,6 +4407,7 @@
                           (fn [_screen _title choices _initial]
                             (set choices))]
 
+              ;; Both scope controls show their whole values only in a wide terminal.
               (capture-navigator!
                 {:sessions sessions
                  :projects [{"id" "p1" "name" "Workbench"} {"id" "p2" "name" "Other"}]
@@ -4440,6 +4441,9 @@
                            (str/includes? text "First scoped"))
                       (do (expect (not (str/includes? text "Other project")))
                           (expect (str/includes? text "Groups: All groups  C-g"))
+                          ;; The scope controls share the search row with the query.
+                          (expect (some #(and (str/includes? % "│ >") (str/includes? % "C-g"))
+                                        (terminal-lines terminal)))
                           (expect (not (str/includes? text "Clear filters")))
                           (reset! phase 2)
                           (.addInput terminal (KeyStroke. (Character/valueOf \g) true false false)))
@@ -4451,7 +4455,8 @@
                       (and (= 3 @phase) (= {} scope) (str/includes? text "Other project"))
                       (do (expect (not (str/includes? text "C-g")))
                           (reset! phase 4)
-                          (.addInput terminal (cap/key-stroke :esc)))))))))]
+                          (.addInput terminal (cap/key-stroke :esc))))))
+                {:cols 160})))]
 
       (try (let [result (deref task 5000 ::blocked)]
              (expect (map? result))
