@@ -120,7 +120,6 @@
             [false true]]
 
       (render/invalidate-cache!)
-      ;; A running step stays below a closed digest (c6a8ef275), so the step settles here.
       (let [payload
             (render/progress->lines-data
               (update-in review-progress

@@ -2706,9 +2706,9 @@ describe('steps between progress notes', () => {
     expect(traces(painted.container)).toHaveLength(1);
   });
 
-  // Regression, session 3f76ce62: a long shell wait ran inside a closed digest, so the
-  // phone showed neither the running step nor its code for five minutes.
-  it('keeps the running step and its code below a closed live digest', () => {
+  // Regression, user report: each running step flashed its code below the closed digest
+  // until it folded in. The digest row alone counts the running step now.
+  it('keeps the running step inside a closed live digest', () => {
     const done = { source: 'print(1)', duration_ms: 45 };
     const painted = render(
       <IterationTrace
@@ -2720,9 +2720,9 @@ describe('steps between progress notes', () => {
     );
     const digest = painted.getByRole('button', { name: /^Expand steps/ });
     expect(digest).toHaveAttribute('aria-expanded', 'false');
-    expect(painted.container.textContent).toContain('wait_for_seal()');
-    expect(painted.container.textContent).not.toContain('print(1)');
-    expect(painted.getByRole('button', { name: 'Collapse code' })).toBeInTheDocument();
+    expect(digest.textContent).toContain('running');
+    expect(painted.container.textContent).not.toContain('wait_for_seal()');
+    expect(painted.queryByRole('button', { name: /code$/ })).toBeNull();
     painted.rerender(
       <IterationTrace
         whole
