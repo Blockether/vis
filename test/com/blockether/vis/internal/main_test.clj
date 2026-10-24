@@ -737,6 +737,8 @@
                                                                  {})
                                #'config/load-project-tiers-raw (fn []
                                                                  merged)
+                               #'config/load-config-raw (fn []
+                                                          merged)
                                #'config/save-config! (fn [& _]
                                                        (swap! writes conj :config))
                                #'config/save-toggles! (fn [& _]

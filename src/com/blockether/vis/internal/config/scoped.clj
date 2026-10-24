@@ -195,20 +195,29 @@
 
 (defn hydrate!
   "Apply YAML `toggles` to the process registry without a write to `state.yml`.
-   Global tiers set any registered key. With `project?`, project tiers set only the
-   keys that the session rules allow. A repository then cannot change a global-only
+   Without `project?`, the global tiers set any registered key. With `project?`, the
+   merged configuration sets the keys. A project value that the session rules refuse
+   gives way to the global value. A repository then cannot change a global-only
    setting, for example the server that receives a secret."
   [project?]
   (let [global
         (merge (toggle-values (config/load-global-yaml-config-raw))
                (toggle-values (config/load-global-config-raw)))
 
-        project
-        (when project? (toggle-values (config/load-project-tiers-raw)))]
+        values
+        (if project?
+          (let [project
+                (toggle-values (config/load-project-tiers-raw))
+
+                refused
+                (remove (set (keys (project-winners global project))) (keys project))]
+
+            (merge (apply dissoc (toggle-values (config/load-config-raw)) refused)
+                   (select-keys global refused)))
+          global)]
 
     (binding [toggles/*persist-writes* false]
-      (toggles/hydrate-from-config!
-        {"toggles" (merge global (when project (project-winners global project)))}))))
+      (toggles/hydrate-from-config! {"toggles" values}))))
 
 (defn- own-values
   [db {:keys [scope target-id root]}]

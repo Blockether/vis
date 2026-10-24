@@ -113,6 +113,11 @@
                            config/load-project-tiers-raw
                            (constantly {"toggles" {"hydrate_url" "https://other.example.com"
                                                    "hydrate_project" true
+                                                   "hydrate_restricted" true}})
+                           ;; The merged view of the tiers above: the project tiers win.
+                           config/load-config-raw
+                           (constantly {"toggles" {"hydrate_url" "https://other.example.com"
+                                                   "hydrate_project" true
                                                    "hydrate_restricted" true}})]
 
                (scoped/hydrate! false)
@@ -159,7 +164,10 @@
                          (constantly {"toggles" {id "kb-token-from-repo"}})
 
                          config/load-project-config-raw
-                         (constantly {})]
+                         (constantly {})
+
+                         config/load-config-raw
+                         (constantly {"toggles" {id "kb-token-from-repo"}})]
 
              (let [value-at (fn [target]
                               (:value (first (filter #(= id (:id %))
@@ -169,7 +177,21 @@
                (expect (= "" (get (scoped/values db sid) id)))
                (scoped/hydrate! true)
                (expect (= "" (toggles/value-of id)))))
-           (finally (toggles/reset-to-default! id) (toggles/unregister-toggle! id))))))
+           (finally (toggles/reset-to-default! id) (toggles/unregister-toggle! id)))))
+  (it "takes values only from the merged configuration, which a test can replace"
+      ;; Regression, CI run 40043897060: a test that replaced `load-config-raw` still got
+      ;; `introspection` from the repository vis.yml, and the value stayed in the worker JVM.
+      (let [id "hydrate_isolated"]
+        (toggles/register-toggle!
+          {:id id :label "Isolated" :default false :scopes contract/scopes :persist? true})
+        (try (with-redefs [config/load-config-raw (constantly {})
+                           config/load-global-yaml-config-raw (constantly {"toggles" {id true}})
+                           config/load-global-config-raw (constantly {})
+                           config/load-project-tiers-raw (constantly {"toggles" {id true}})]
+
+               (scoped/hydrate! true)
+               (expect (false? (toggles/value-of id))))
+             (finally (toggles/reset-to-default! id) (toggles/unregister-toggle! id))))))
 
 (defdescribe
   durable-scopes

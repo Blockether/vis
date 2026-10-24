@@ -6091,6 +6091,9 @@ vis.register_extension(vis.Extension(
                          config/load-project-tiers-raw
                          (constantly {"toggles" {"shell" false}})
 
+                         config/load-config-raw
+                         (constantly {"toggles" {"shell" false}})
+
                          extension/run-reload-hooks!
                          (constantly {})
 
