@@ -714,6 +714,80 @@
                              (expect (= :workspace/not-a-directory (:type (ex-data thrown)))))))
              (finally (delete-tree! a))))))
 
+;; Regression: after `/cd` into another project's folder, a session stayed filed in the
+;; old project and its group. Clients list it under the new folder's project, which has
+;; no such group, so the session was in no list.
+(defn- filed-session!
+  "A session at `root`, filed in a project for `root` and in one of its groups.
+   Returns `[soul-id state-id]`."
+  [store root]
+  (let [project
+        (ps/db-create-project! store {:name "old" :workspace-root root})
+
+        group
+        (ps/db-create-session-group! store (:id project) {:name "band"})
+
+        soul-id
+        (str (random-uuid))
+
+        state-id
+        (pin-session! store soul-id (:id (ws/create-trunk-at! store root)))]
+
+    (ps/db-set-session-group! store soul-id (:id group))
+    [soul-id state-id]))
+
+(defdescribe change-session-root-test
+             (it "moves a filed session to the project of its new root and out of its old group"
+                 (let [a
+                       (temp-dir "vis-session-root-a")
+
+                       b
+                       (temp-dir "vis-session-root-b")]
+
+                   (try (with-store (fn [store]
+                                      (let [[soul-id state-id]
+                                            (filed-session! store a)
+
+                                            target
+                                            (ps/db-create-project! store
+                                                                   {:name "new" :workspace-root b})
+
+                                            moves
+                                            (ws/root-change-count)]
+
+                                        (ws/change-session-root! store soul-id state-id b)
+                                        (let [session (ps/db-get-session store soul-id)]
+                                          (expect (= (:id target) (:project-id session)))
+                                          (expect (nil? (:group-id session))))
+                                        (expect (< (long moves) (long (ws/root-change-count)))))))
+                        (finally (delete-tree! a) (delete-tree! b)))))
+             (it "takes a filed session out of its project when no project owns the new root"
+                 (let [a
+                       (temp-dir "vis-session-root-a")
+
+                       b
+                       (temp-dir "vis-session-root-b")]
+
+                   (try (with-store (fn [store]
+                                      (let [[soul-id state-id] (filed-session! store a)]
+                                        (ws/change-session-root! store soul-id state-id b)
+                                        (let [session (ps/db-get-session store soul-id)]
+                                          (expect (nil? (:project-id session)))
+                                          (expect (nil? (:group-id session)))))))
+                        (finally (delete-tree! a) (delete-tree! b)))))
+             (it "keeps the project and group when the root does not move"
+                 (let [a (temp-dir "vis-session-root-same")]
+                   (try (with-store (fn [store]
+                                      (let [[soul-id state-id] (filed-session! store a)
+                                            before (ps/db-get-session store soul-id)]
+
+                                        (ws/change-session-root! store soul-id state-id a)
+                                        (let [session (ps/db-get-session store soul-id)]
+                                          (expect (= (:project-id before) (:project-id session)))
+                                          (expect (some? (:group-id session)))
+                                          (expect (= (:group-id before) (:group-id session)))))))
+                        (finally (delete-tree! a))))))
+
 (defdescribe
   deleted-paths-guard-test
   (it "a positive baseline reports trunk files missing from the clone as deletions"

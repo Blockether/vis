@@ -2183,6 +2183,17 @@
   [db-info root]
   (insert-trunk! db-info nil root))
 
+(defonce ^:private root-changes
+  ;; How many times a session root moved in this process. A reader that groups
+  ;; sessions by root, such as the gateway's project overview, keys its cache on it.
+  (atom 0))
+
+(defn root-change-count
+  "How many session roots moved in this process. Include it in a cache key that
+   depends on session roots."
+  []
+  @root-changes)
+
 (defn change-root!
   "Repoint `session-state-id`'s primary workspace root to `path`. Relative paths
    resolve from the session's current root. Refuses while the session is in an
@@ -2220,7 +2231,37 @@
                         {:type :workspace/root-change-in-draft :workspace-id (:id current)})))
       (if (= canon (normalize-root (:root current)))
         current
-        (insert-trunk! db-info session-state-id canon)))))
+        (let [ws (insert-trunk! db-info session-state-id canon)]
+          (swap! root-changes inc)
+          ws)))))
+
+(defn- refile-session-project!
+  "Put session `session-id` into the project bound to the root of `ws`. A session
+   in no project stays in no project. With no project bound to the new root, the
+   session leaves its project. A move out of a project also leaves its group."
+  [db-info session-id ws]
+  (when-let [session (p/db-get-session db-info session-id)]
+    (when-let [current (:project-id session)]
+      (let [target (some->> (or (:repo-root ws) (:root ws))
+                            (p/db-get-project-by-root db-info (or (:owner-id session) "local"))
+                            :id)]
+        (when (not= (str current) (str target))
+          (p/db-set-session-project! db-info session-id target))))))
+
+(defn change-session-root!
+  "Repoint session `session-id` at `path` with `change-root!`, then keep its project
+   with its root. Clients list a session under the project of its root, so a session
+   filed in the old project and its group was in no list."
+  [db-info session-id session-state-id path]
+  (let [before
+        (for-session db-info session-state-id)
+
+        ws
+        (change-root! db-info session-state-id path)]
+
+    (when (and session-id (not= (:id before) (:id ws)))
+      (refile-session-project! db-info session-id ws))
+    ws))
 
 (defn- fork-baseline-ms
   "Advance past seeding's millisecond so edits at the returned baseline are unambiguous."

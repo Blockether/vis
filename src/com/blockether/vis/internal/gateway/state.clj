@@ -1706,23 +1706,22 @@
        (catch Throwable _ nil)))
 
 (defonce ^:private projects-overview-epoch
-  ;; Invalidation counter for the `projects-overview` cache, and the ONE fact that
-  ;; cache cannot fingerprint: a session's WORKSPACE root. The overview groups
-  ;; sessions by `session-project-root`, so moving a root re-draws a header while
-  ;; every session fact beside it - project id, recency, liveness, unread - stands
-  ;; still. It lives beside `change-root!` because that is the write.
+  ;; Invalidation counter for the `projects-overview` cache when a PROJECT moves to
+  ;; another folder. The overview groups sessions by `session-project-root`, so a
+  ;; moved project root re-draws a header while every session fact beside it stands
+  ;; still. A moved SESSION root is counted by `workspace/root-change-count`.
   (atom 0))
 
 (defn change-root!
   "Repoint the session pinned to `sid` at `path` as its PRIMARY root, then return
    the refreshed `session-workspace-info` (whose `:id` is the newly pinned
-   workspace). Server-side so the change lands in the daemon that runs the turns."
+   workspace). Server-side so the change lands in the daemon that runs the turns.
+   The session also moves to the project of its new root; see
+   `workspace/change-session-root!`."
   [sid path]
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]
-      (workspace/change-root! db state-id path)))
-  ;; The project HEADERS are grouped by this root; see `projects-overview-epoch`.
-  (swap! projects-overview-epoch inc)
+      (workspace/change-session-root! db sid state-id path)))
   (session-workspace-info sid))
 
 ;; Chunk -> event translation (§8)
@@ -7341,10 +7340,11 @@
    is not a timestamp and not a session total: it is the inputs themselves, cheap
    to build because `projects-overview` has already read all of them before it
    resolves a single workspace. The workspace grouping is the expensive part and
-   the only part the cache actually saves, and the epoch above covers the one way
-   a workspace moves while these facts stand still."
+   the only part the cache actually saves. The epoch above and
+   `workspace/root-change-count` cover the ways a workspace moves while these facts
+   stand still: a moved project and a moved session root (`/cd` included)."
   [channel unsent ranked live waiting named unread? stopped?]
-  [@projects-overview-epoch (str channel) unsent
+  [@projects-overview-epoch (workspace/root-change-count) (str channel) unsent
    (mapv (fn [row]
            [(:id row) (:project-id row) (:recency-ms row) (contains? live (:id row))
             (contains? waiting (:id row)) (boolean (unread? (:id row)))

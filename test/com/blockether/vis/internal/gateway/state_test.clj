@@ -4597,16 +4597,18 @@
 
         (expect (pos? resolutions))
         (expect (= 3 (:session_count answer)))))
-  ;; A root MOVE is the one fact the fingerprint cannot see, so `change-root!`
-  ;; invalidates the cache by hand.
+  ;; A root MOVE is a fact the fingerprint cannot see in the session rows, so the
+  ;; workspace root counter is part of it. `/cd` moves a root without this namespace.
   (it "recounts after a session's root moves under it"
       (let [[_ _]
             (counted-overview two-project-fleet)
 
+            moved
+            (inc (long (workspace/root-change-count)))
+
             [answer resolutions]
-            (with-redefs-fn {#'lp/db-info (constantly nil)}
+            (with-redefs-fn {#'workspace/root-change-count (constantly moved)}
               (fn []
-                (state/change-root! "a" "/repo/b")
                 (counted-overview (assoc-in two-project-fleet [:roots "a"] "/repo/b"))))]
 
         (expect (pos? resolutions))

@@ -8,6 +8,8 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace.core :as workspace]))
 
+(defn- ctx-session-id [ctx] (or (:session/id ctx) (:session-id ctx)))
+
 (defn- ctx-session-state-id [ctx] (:session/state-id ctx))
 
 (defn- ctx-db [ctx] (or (:db-info ctx) (:db ctx)))
@@ -59,14 +61,16 @@
                        :slash/body "/cd <path> to work in a different directory."
                        :slash/data {:root (:root current)}}
           (nil? state-id) (err "Send a message first, then /cd <path> (session not ready yet)")
-          :else (try (let [ws (sync-confinement! ctx (workspace/change-root! db state-id path))]
-                       {:slash/status :ok
-                        :slash/title (str "Root changed — now working in " (:root ws))
-                        :slash/body "Shell, file tools, and search operate here from the next turn."
-                        :slash/data {:root (:root ws) :workspace-id (:id ws)}})
-                     (catch Exception e
-                       (err (str "Can't change root to '" path
-                                 "': " (or (ex-message e) (str e)))))))))
+          :else
+          (try (let [ws (sync-confinement!
+                          ctx
+                          (workspace/change-session-root! db (ctx-session-id ctx) state-id path))]
+                 {:slash/status :ok
+                  :slash/title (str "Root changed — now working in " (:root ws))
+                  :slash/body "Shell, file tools, and search operate here from the next turn."
+                  :slash/data {:root (:root ws) :workspace-id (:id ws)}})
+               (catch Exception e
+                 (err (str "Can't change root to '" path "': " (or (ex-message e) (str e)))))))))
 
 (defn- build-specs
   "Slash specs owned by the workspace foundation."
