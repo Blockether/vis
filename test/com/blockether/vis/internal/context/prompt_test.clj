@@ -905,7 +905,10 @@
       ;; CLI-only prompt is gone. It lands at 12 448.
       ;; 12.45k → 12.6k: in a LongMemEval run, Opus kept a chat of 35 turns unfolded, because
       ;; it read folds as tool-step folds only. §6 says that chat turns fold too. It lands at 12 579.
-      (expect (< (count text) 12600))
+      ;; 12.6k → 13.25k: four §4 rules on the class of a bug, related cases, exact-case measurement
+      ;; and live systems. In a CTB screen on GPT-6.1 Sol, the same rules as a task note took solo
+      ;; Vis from 3/9 to 7/9 on the same build: fixes reached only the reported case before.
+      (expect (< (count text) 13250))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))
