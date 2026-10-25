@@ -912,7 +912,9 @@
       ;; with its own client, while the checkers used matching pairs and the running load. It
       ;; claimed 12x to 67000x and got 1.75x and 940x. With per-symptom reproduction, it lands
       ;; at 13 394.
-      (expect (< (count text) 13400))
+      ;; 13.4k → 13.45k: Vis named a listed symptom, then kept it because DESIGN.md seemed to
+      ;; require it. A reported symptom now stays a bug. It lands at 13 434.
+      (expect (< (count text) 13450))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))
