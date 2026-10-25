@@ -340,6 +340,7 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 - [Native builds for Java and Clojure extensions](jvm-native-image.md) — add Java or Clojure tools to Vis.
 - [Extension troubleshooting](extension-troubleshooting.md) — diagnose loading and call errors.
 - [Provider extensions](provider-extensions.md) — register an LLM provider from an extension.
+- [Swarm Forge](swarm-forge.md) — run role sessions that pass each task along, and approve on one board.
 
 <span id="updating-vis"></span>
 <span id="native-vs-jvm"></span>
@@ -350,3 +351,4 @@ To see the same steps as HTTP requests, select **HTTP** at the top of the page.
 - [Process jail and network policy](jail.md) — rules for child processes.
 - [Runtime distributions](distributions.md) — installation methods and updates.
 - [Logs and diagnostics](logging.md) — file locations, formats, retention and sharing.
+- [Components](components.md) — every component of forms and live views.

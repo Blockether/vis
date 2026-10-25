@@ -173,7 +173,11 @@
     {:blurb
      "Connect an LLM service to Vis with custom sign-in, model discovery and credential management."
      :page "provider-extensions"
-     :title "Provider extensions"}]
+     :title "Provider extensions"}
+    {:blurb
+     "Run a team of role sessions that pass each task along in drafts, and approve the result on one board."
+     :page "swarm-forge"
+     :title "Swarm Forge"}]
    :section "Extensions"}
   {:pages
    [{:blurb
@@ -191,7 +195,11 @@
     {:blurb
      "Find diagnostic logs, command output and hang reports, understand retention and review files before sharing."
      :page "logging"
-     :title "Logs and diagnostics"}]
+     :title "Logs and diagnostics"}
+    {:blurb
+     "Look up each component that forms and live views use: text, state, data, inputs, buttons and groups."
+     :page "components"
+     :title "Components"}]
    :section "Reference"}]
  :site {:extension-center {:section "Extensions" :title "Extension Center"}
         :repo "https://github.com/Blockether/vis"

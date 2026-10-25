@@ -119,6 +119,8 @@ request.
 | Restore a snapshot | `client.restore_session(data, ...)` | `post_sessions_import(query=..., content=...)` |
 | List live views | `session.live_views()` | `get_session_views_live(sid)` |
 | Read a page of a log node | — | `get_session_views_live_log(sid, view_id, node_id, query=...)` |
+| List the header views of this machine | `client.header_views()` | `get_views_live()` |
+| Act on a header view | `client.header_view_action(...)` | `post_view_actions(view_id, body=...)` |
 | Read one page of Activity history | — | `get_session_activity(sid, aid, query=...)` |
 | Export the full Activity history | — | `get_session_activity_export(sid, aid, query=...)` |
 
@@ -165,6 +167,8 @@ request.
 | Restore a snapshot | `POST /v1/sessions/actions/import` |
 | List live views | `GET /v1/sessions/{sid}/views/live` |
 | Read a page of a log node | `GET /v1/sessions/{sid}/views/live/{view-id}/log` |
+| List the header views of this machine | `GET /v1/views/live` |
+| Act on a header view | `POST /v1/views/{view-id}/actions` |
 | Read one page of Activity history | `GET /v1/sessions/{sid}/activity/{aid}` |
 | Export the full Activity history | `GET /v1/sessions/{sid}/activity/{aid}/export` |
 
@@ -231,6 +235,18 @@ For 10 minutes, the same key returns the session that the first request made. Th
 while that request still runs. A failed request does not keep its key, so a retry creates the
 session.
 
+To turn on [drafts](drafts.md) for this one session, add `draft_backend`:
+
+```python
+session = client.create_session(
+    **client.session_options(os.environ["VIS_PROJECT_ROOT"]),
+    draft_backend="worktree",
+)
+```
+
+`draft_backend` is `worktree`, `rift`, `auto` or `off`. It is a setting of the new session only.
+The project and global settings do not change. Another value raises an error for the 400 answer.
+
 </div>
 
 <div data-variant="http">
@@ -264,6 +280,16 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/jso
 For 10 minutes, the same key returns the session that the first request made. This is also true
 while that request still runs. A failed request does not keep its key, so a retry creates the
 session. A key must have 1 to 200 characters.
+
+To turn on [drafts](drafts.md) for this one session, add `draft_backend`:
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/json' \
+  --data '{"root": "/srv/projects/shop", "channel": "app", "draft_backend": "worktree"}'
+```
+
+`draft_backend` is `worktree`, `rift`, `auto` or `off`. It is a setting of the new session only.
+The project and global settings do not change. Another value returns 400.
 
 `sources` lists the configuration tiers that the session reads: `global`, `project`, both or none.
 `extensions` keeps the named extensions or turns off each `-name` entry. An empty list turns off
@@ -659,7 +685,7 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/$VIEW_ID/actions
   --data '{"action": "submit", "values": {"env": "staging"}}'
 ```
 
-The first answer has `requests`, one entry for each open form, with its `id`, `title` and `fields`.
+The first answer has `requests`, one entry for each open form, with its `id`, `title` and `nodes`.
 The values are keyed by the field `name`, as in [The answer](human-input.md#the-answer). To close a
 form without values, send `{"action": "cancel"}`.
 
@@ -1031,23 +1057,92 @@ A snapshot holds the whole conversation, also its private data. Keep it as safe 
 <div data-variant="python">
 
 ```python
-for view in client.session(session_id).live_views():
+for view in client.session(session_id).live_views(placement="panel"):
     print(view.id, view.title, len(view.nodes))
 ```
 
-`live_views()` returns typed `LiveView` records. `get_session_views_live(session_id)` returns the
-same views as JSON in `views`. A list is a snapshot. It does not follow later updates.
+`live_views()` returns typed `LiveView` records. `placement` keeps only the `inline`, `panel` or
+`header` views. Without it, you get every view of the session. `get_session_views_live(session_id)`
+returns the same views as JSON in `views`. A list is a snapshot. It does not follow later updates.
+
+[Live views](live-views.md#choose-a-placement) explains placements. A panel or header view has its
+`key`, its `extension` and `is_stale`. `is_stale` is true for the saved state of a view after a
+gateway restart, until its extension opens the view again.
 
 </div>
 
 <div data-variant="http">
 
 ```bash
-vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/live"
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/live?placement=panel"
 ```
 
-The answer has `views`. Each view has `id`, `title` and `nodes`. A list is a snapshot. It does not
-follow later updates.
+The answer has `views`. Each view has `id`, `title` and `nodes`. The `placement` query parameter
+keeps only the `inline`, `panel` or `header` views. Another value returns 400. A list is a snapshot.
+It does not follow later updates.
+
+A panel or header view also has `placement`, `key`, `extension` and `is_stale`. `is_stale` is true
+for the saved state of a view after a gateway restart, until its extension opens the view again.
+
+</div>
+
+### Read the header views
+
+Header views belong to the machine, not to one session.
+
+<div data-variant="python">
+
+```python
+for view in client.header_views():
+    print(view.id, view.title)
+```
+
+`header_views()` returns typed `LiveView` records. `get_views_live()` returns the same views as
+JSON in `views`. Their events come on the fleet event stream.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/views/live"
+```
+
+The answer has `views`. Their events come on `GET /v1/events?scope=fleet`.
+
+</div>
+
+### Change an input or press a button
+
+A person changes the inputs of a view in the terminal or the app. A program can send the same
+actions.
+
+<div data-variant="python">
+
+```python
+session = client.session(session_id)
+session.view_action(view_id, "change", node_id="env", value="staging")
+session.view_action(view_id, "activate", node_id="refresh")
+session.view_action(view_id, "submit", node_id="deploy", values={"env": "staging"})
+```
+
+`change` sets the `value` of one input. `activate` presses a button or a selectable card. `submit`
+presses a submit button, with the `values` of the inputs in its group. For a header view, call
+`client.header_view_action(view_id, "change", node_id="env", value="staging")`.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/$VIEW_ID/actions" \
+  -H 'content-type: application/json' --data '{"action": "change", "node_id": "env", "value": "staging"}'
+vis_api -X POST "$VIS_GATEWAY_URL/v1/views/$VIEW_ID/actions" \
+  -H 'content-type: application/json' --data '{"action": "activate", "node_id": "refresh"}'
+```
+
+`change` sets the `value` of one input. `activate` presses a button or a selectable card. `submit`
+sends `node_id` and `values`. The second request acts on a header view, which has no session.
 
 </div>
 

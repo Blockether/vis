@@ -17,7 +17,8 @@ Companion app. It waits for an answer and returns it to your Python code.
 - **The input must be valid before the tool continues.** Add
   [validation](#validation) that refuses a bad value with a message.
 
-To show progress instead of asking a question, use a [live view](live-views.md).
+To show progress instead of asking a question, use a [live view](live-views.md). A live view can
+also [collect input](live-views.md#collect-input-in-a-view) while work runs.
 
 ## Before you start
 
@@ -113,7 +114,7 @@ confirmation, whether the answer comes from a dialog or an HTTP request.
 ## Layout
 
 Use the same `row` and `column` layout vocabulary for Ask forms and
-[Live views](live-views.md#layout-and-text). A `group` arranges its `fields` in a
+[Live views](live-views.md#layout-and-text). A `group` arranges its `children` in a
 `column` (default) or `row`. Groups can nest. Each nested group uses the width
 available inside its parent, not the full screen width.
 
@@ -130,7 +131,7 @@ change Ask validation or add Live collapse and interaction behavior to a form.
 ```python
 vis.ask("Where should the pool connect?", [
     {"type": "heading", "text": "Server"},
-    {"type": "group", "direction": "row", "fields": [
+    {"type": "group", "direction": "row", "children": [
         {"name": "host", "label": "Host", "is_required": True},
         {"name": "port", "label": "Port"},
     ]},
@@ -141,7 +142,7 @@ vis.ask("Where should the pool connect?", [
 
 `answer.values` is a flat map keyed by field name. The layout does not change it. Names must be
 unique. Groups reject value keys (`default`, `options`, `validate`). Fields reject layout keys
-(`fields`, `direction`). Headings and paragraphs cannot receive focus and do not appear in the
+(`children`, `direction`). Headings and paragraphs cannot receive focus and do not appear in the
 answer.
 
 ## Builders
@@ -166,8 +167,12 @@ answer = vis.ask("Deploy", [form], submit_label="Deploy")
 
 Builders: `plaintext`, `password`, `multiline`, `select`, `multiselect`,
 `checkbox`, `slider` (the `range` field, named to avoid the builtin), `otp`,
-`option`, `row`, `column`, `heading` and `paragraph`. Keyword arguments are the
+`option`, `row`, `column`, `group`, `heading` and `paragraph`. Keyword arguments are the
 field keys above.
+
+A form takes the same [components](components.md) as a live view. So you can show a `status`, a
+`table` or a `card` above the inputs. A form has its own submit and cancel buttons, so it needs no
+`button`.
 
 ## Validation
 
@@ -205,3 +210,4 @@ answer = vis.ask("Sign up", [
 
 - [Extending Vis](extending.md) — the extension that calls `vis.ask`.
 - [Live views](live-views.md) — display progress while an extension runs.
+- [Components](components.md) — every component and its builder.

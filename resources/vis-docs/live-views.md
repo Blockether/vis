@@ -16,6 +16,10 @@ The view appears in the terminal or Companion app and can be stopped at any time
 - **The person watching needs to act or stop.** Add
   [buttons](#add-spinners-and-buttons), and handle [interruption](#interruption)
   when they stop watching.
+- **Your extension needs a view that stays open between tool calls, such as a board.** Open it
+  in the [side panel or the header](#choose-a-placement).
+- **The person must fill in values while the work runs.** [Collect input in the
+  view](#collect-input-in-a-view).
 - **Your own program must list, read or interrupt live views.** Read [Sessions
   API](sessions-api.md#watch-live-views).
 
@@ -26,8 +30,9 @@ for the answer, use a [form](human-input.md).
 
 ## Before you start
 
-Open a live view inside a registered tool or user command with a calling session,
-not during extension registration. Stopping the view stops watching, not necessarily
+Open an inline live view inside a registered tool or user command with a calling session, not
+during extension registration. A [panel or header view](#choose-a-placement) is different: open it
+from any extension callback, also at registration. Stopping the view stops watching, not necessarily
 the external job.
 
 ## In the terminal
@@ -584,6 +589,111 @@ group hierarchy and the current log window.
   artifact, so users can inspect them after the extension exits. The limit is
   500 snapshots and 1 MiB.
 
+## Choose a placement
+
+`placement` decides where a view appears and how long it stays open.
+
+| Placement | Where it appears | Lifetime |
+| --- | --- | --- |
+| `inline` (default) | In the transcript, under the step that opened it | Closes when its tool call or block ends |
+| `panel` | In the side panel of one session | Stays open until your extension closes it or unloads |
+| `header` | As a pin in the header of every session on this machine | Stays open until your extension closes it or unloads |
+
+Only extension code can open a `panel` or `header` view. The `python_execution` sandbox refuses
+both. A panel or header view needs a `key`. Your extension and the key own one view, so a second
+`vis.live` with the same key replaces the first view.
+
+```python
+import blockether.vis.extension as vis
+
+BOARD = {}
+
+
+def handle(event):
+    if event.type == "activate" and event.node_id == "refresh":
+        BOARD["view"]["state"].set("Refreshing", tone="running")
+
+
+def open_board(session_id):
+    BOARD["view"] = vis.live(
+        "Release board",
+        [vis.status("state", "Idle", tone="idle"), vis.button("refresh", "Refresh")],
+        placement="panel",
+        key="release-board",
+        session_id=session_id,
+        on_event=handle,
+    )
+    vis.live("Release", [vis.status("pin", "Idle", tone="idle")],
+             placement="header", key="release-pin")
+```
+
+- Open the view in a callback, such as a tool call, a command or registration code. After that,
+  threads of your extension can also change, read and close it.
+- `session_id` selects the session of a panel view. A header view belongs to no session.
+- A header pin shows the title and its first status or progress. Keep it to one short status.
+- Vis saves the last state of a panel or header view. After a gateway restart, the view shows that
+  state as stale until your extension opens the same key again. Open your views again when your
+  extension loads.
+
+## Collect input in a view
+
+A live view can hold the same [inputs](components.md#inputs) as a form. Each input keeps its
+`value` while the view is open, and every surface shows the same value.
+
+```python
+def choose_target() -> str | None:
+    """Show a deploy form in a live view and return the chosen target."""
+    with vis.live("Deploy", [
+        vis.group("target",
+                  vis.select("env", ["staging", "prod"], label="Target", is_required=True),
+                  vis.multiline("notes", label="Notes"),
+                  vis.button("deploy", "Deploy", action="submit")),
+        vis.status("state", "Waiting for a target", tone="idle"),
+    ]) as view:
+        while not view.is_interrupted:
+            for event in view.events(timeout=60):
+                if event.type == "submit" and event.node_id == "deploy":
+                    view["state"].set(f"Deploying to {event.values['env']}", tone="running")
+                    return event.values["env"]
+    return None
+```
+
+A person action becomes a `vis.LiveEvent`:
+
+| `type` | When | Fields |
+| --- | --- | --- |
+| `change` | A person changes an input | `node_id` and `value`. A secret input gives only `is_set`. |
+| `activate` | A person presses a button or a selectable card | `node_id` |
+| `submit` | A person presses a button with `action="submit"` | `node_id` and `values` of the inputs in the group of the button |
+
+- `view.values()` returns the current value of each input by id. Secret inputs are left out.
+- `view.events(timeout=None)` returns the events since the last call. With `timeout`, it waits up to
+  that many seconds for the first new event.
+- `view.on_event(callback)` calls `callback(event)` for each event that `events` or `sleep` reads.
+- In a panel or header view, `vis.live(..., on_event=callback)` gets each event from the host. The
+  callback runs as an extension callback with the view session bound. So it can call
+  `Session.send` or `vis.sessions.create`.
+- `view[id].value` reads one input. `view[id].set(value)` changes it.
+
+A submit checks each required input and each validator of the group first. A bad value shows an
+error at its input, and the view stays open. A `password` or `otp` value never reaches the
+transcript, the saved view or a log. The `submit` event gives a `vis-secret:` handle for it.
+
+## Side panel and header pins
+
+People find panel and header views in these places:
+
+- **Terminal.** Ctrl+X V opens the side panel, then moves the focus between the panel and the
+  transcript. Ctrl+X P lists the header pins. The panel docks at the right when the chat keeps 60
+  columns, else it opens over the chat. [Keyboard shortcuts](keyboard-shortcuts.md) lists the keys
+  of the panel.
+- **Companion app on a desktop or tablet.** The side panel docks at the right of the session, and
+  you can drag its edge to resize it.
+- **Companion app on a phone.** The panel icon next to Settings opens the panel as a full page.
+- **Pins.** The header shows up to four pins, then a `+N` count. Select a pin to open its view.
+
+When views of several extensions are in one panel, each extension gets its own tab.
+
 ## Testing a view
 
 Outside Vis, a live view writes its transcript to stderr and maintains the
@@ -609,6 +719,8 @@ output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
 ## See also
 
 - [Extending Vis](extending.md) — the extension that opens a view.
-- [Forms and user input](human-input.md) — the same layout builders, used for questions.
+- [Forms and user input](human-input.md) — the same components, used for questions.
+- [Components](components.md) — every component and its builder.
+- [Swarm Forge](swarm-forge.md) — an extension with a panel board and a header pin.
 - [Sessions API](sessions-api.md#watch-live-views) — list, read and interrupt live views from a
   program.

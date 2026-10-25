@@ -1045,12 +1045,20 @@ vis.notify("Rules reloaded", "success")  # info, success, warn, error
 
 ## Asking the human and showing live work
 
-`vis.ask(title, fields)` pauses the extension and shows a typed form in the TUI
+`vis.ask(title, nodes)` pauses the extension and shows a typed form in the TUI
 or the Companion app. `vis.live(title, nodes)` opens a view that the extension
-updates while a job runs. Both are documented on their own pages:
-[Forms and user input](human-input.md) and [Live views](live-views.md). For concurrent
-read-only polling with fail-fast, Stop and owned cleanup, use the
+updates while a job runs. Both take the same [components](components.md). Both are documented on
+their own pages: [Forms and user input](human-input.md) and [Live views](live-views.md). For
+concurrent read-only polling with fail-fast, Stop and owned cleanup, use the
 [fixed-build monitoring recipe](live-views.md#monitor-a-fixed-build-set).
+
+- `vis.live(..., placement="panel", key=...)` opens a view in the side panel of a session.
+  `placement="header"` pins it to the header of every session. [Choose a
+  placement](live-views.md#choose-a-placement) explains their lifetime.
+- `on_event=callback` gets each `vis.LiveEvent` of a panel or header view as an extension callback.
+- `view.values()`, `view.events(timeout=None)` and `view.on_event(callback)` read the inputs and
+  the actions of a person. [Collect input in a view](live-views.md#collect-input-in-a-view) shows
+  them.
 
 ## Environment
 
@@ -1244,6 +1252,7 @@ def start_review(path: str) -> str:
   `RuntimeError`.
 - `vis.sessions.create(provider=..., model=..., **options)` creates an independent session. Without
   `root`, it starts in the root of the bound session. The options are those of `create_session`.
+  For example, `draft_backend="worktree"` turns on [drafts](drafts.md) in that session only.
 - `vis.sessions.get(session_id)` returns a handle without a request. `vis.sessions.list(search=None)`
   returns the sessions of the first page, or the matches of `search`.
 - `vis.sessions.export(session_id=None)` returns a
