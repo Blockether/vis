@@ -17,9 +17,14 @@
    onnx-community. It has its own text_embed, codec_embed, talker_cache and
    residual_embed, and these graphs:
 
-     code_predictor   the logits of the 15 other codebooks, one call for each codebook
      speaker_encoder  24 kHz audio to the speaker vector of the codec prompt
      tok_encoder      one second of 24 kHz audio to 13 frames of codes
+
+   Its code predictor is the Vis export of `bin/export-qwen-code-predictor`, with
+   a KV cache, so each codebook is one step of one row:
+
+     code_predictor_step   rows and a KV cache to the logits of one codebook
+     code_predictor_embed  a code of one codebook to its input row
 
    It uses the tokenizer and the decoder of the speaker bundle.
 
@@ -44,6 +49,10 @@
 (def ^:const clone-asset-id
   "The Base model, which speaks in an imported voice."
   "qwen3-tts-12hz-1.7b-base-int4")
+
+(def ^:const predictor-asset-id
+  "The code predictor of the Base model with a KV cache."
+  "qwen3-tts-12hz-1.7b-base-code-predictor-int8")
 
 (def ^:const hidden-size 2048)
 
@@ -110,6 +119,8 @@
 
 (defn clone-asset [] (assets/entry clone-asset-id))
 
+(defn predictor-asset [] (assets/entry predictor-asset-id))
+
 (defn- imported-voice
   "The imported voice `voice-id`, or nil. An import with the name of a built-in
    speaker wins, as in pocket-tts."
@@ -141,10 +152,10 @@
 (defn- known-voice? [voice-id] (boolean (some #(= (name voice-id) (name (:id %))) (voices))))
 
 (defn- voice-assets
-  "The models that `voice-id` needs: the speaker bundle, and the Base model too for
-   an imported voice."
+  "The models that `voice-id` needs: the speaker bundle, and the Base model and its
+   code predictor too for an imported voice."
   [voice-id]
-  (if (imported-voice voice-id) [(asset) (clone-asset)] [(asset)]))
+  (if (imported-voice voice-id) [(asset) (clone-asset) (predictor-asset)] [(asset)]))
 
 ;; Language
 
@@ -228,9 +239,10 @@
 (defn- open-bundle
   "The graphs in `dir`. The two exports name their tensors differently, so a graph
    with one input and one output is fed by position. A Base bundle takes the
-   tokenizer and the decoder from the speaker bundle in `shared`."
-  ([env dir] (open-bundle env dir dir))
-  ([^OrtEnvironment env ^File dir ^File shared]
+   tokenizer and the decoder from the speaker bundle in `shared`, and the code
+   predictor from `predictor`."
+  ([env dir] (open-bundle env dir dir nil))
+  ([^OrtEnvironment env ^File dir ^File shared predictor]
    (let [f
          #(io/file dir %)
 
@@ -248,11 +260,14 @@
           :residual-embed (vv/open-session env (f "residual_embed.onnx"))
           :decoder (vv/open-session env (io/file shared "tok_decoder.onnx"))}]
 
-     (if (.isFile ^File (f "speaker_encoder.onnx"))
-       (assoc base
-         :group-predictor (vv/open-session env (f "code_predictor.onnx"))
-         :speaker-encoder (vv/open-session env (f "speaker_encoder.onnx"))
-         :audio-encoder (vv/open-session env (f "tok_encoder.onnx")))
+     (if predictor
+       (let [step (vv/open-session env (io/file predictor "code_predictor_step.onnx"))]
+         (assoc base
+           :group-step step
+           :group-past-names (subvec (input-names step) 2)
+           :group-embed (vv/open-session env (io/file predictor "code_predictor_embed.onnx"))
+           :speaker-encoder (vv/open-session env (f "speaker_encoder.onnx"))
+           :audio-encoder (vv/open-session env (f "tok_encoder.onnx"))))
        (assoc base :code-predictor (vv/open-session env (f "code_predictor_loop.onnx")))))))
 
 (defn- run-one
@@ -518,35 +533,86 @@
     (longs-of (vv/output r "codes"))))
 
 (defn- group-frame-codes
-  "All 16 codes of a frame with the Base model: its code predictor gives the logits
-   of every codebook after the codes before it, so each codebook is one call and
-   one draw from `noise`."
-  ^longs [{:keys [^OrtEnvironment env group-predictor]} ^floats hidden ^long code0 ^longs noise]
+  "All 16 codes of a frame with the Base model. The code predictor reads the talker
+   hidden state and the first code, then one code at a time with its KV cache, and
+   gives the logits of the next codebook. Each codebook is one draw from `noise`."
+  ^longs
+  [{:keys [^OrtEnvironment env codec-embed ^OrtSession group-step group-embed group-past-names]}
+   ^floats hidden ^long code0 ^longs noise]
   (let [width
         (inc (long residual-groups))
 
-        vocab
-        (long residual-vocab)
+        h
+        (long hidden-size)
 
         codes
-        (long-array width)]
+        (long-array width)
+
+        first-rows
+        (float-array (* 2 h))
+
+        empty-kv
+        (vec (repeatedly (count group-past-names)
+                         #(vv/float-tensor env (float-array 0) [1 kv-heads 0 head-dim])))
+
+        slots
+        (vv/holder)]
 
     (aset codes 0 code0)
-    (with-open [h (vv/float-tensor env hidden [1 hidden-size])]
-      (doseq [j (range 1 width)]
-        (with-open [c (vv/long-tensor env (aclone codes) [1 width])
-                    r (vv/run-session
-                        group-predictor
-                        (doto (HashMap.) (.put "talker_hidden" h) (.put "codec_ids" c)))]
+    (System/arraycopy hidden 0 first-rows 0 h)
+    (with-open [c (vv/long-tensor env (long-array [code0]) [1 1])]
+      (System/arraycopy (run-one codec-embed c) 0 first-rows h h))
+    (try
+      (loop [j
+             1
 
-          (let [logits (vv/floats-of (nth-output r 0))
-                offset (* (dec (long j)) vocab)
-                v (double-array vocab)]
+             ^floats rows
+             first-rows
 
-            (dotimes [i vocab]
-              (aset v i (double (aget logits (+ offset i)))))
-            (aset codes (long j) (draw v noise))))))
-    codes))
+             kv
+             empty-kv]
+
+        (let [n
+              (quot (alength rows) h)
+
+              r
+              (with-open [x
+                          (vv/float-tensor env rows [1 n h])
+
+                          head
+                          (vv/long-tensor env (long-array [(dec j)]) [1])]
+
+                (let [m (doto (HashMap.) (.put "inputs_embeds" x) (.put "head" head))]
+                  (doseq [[^String past-name tensor] (map vector group-past-names kv)]
+                    (.put m past-name tensor))
+                  (vv/hold! slots 0 (vv/run-session group-step m))))
+
+              logits
+              (vv/floats-of (nth-output r 0))
+
+              v
+              (double-array (alength logits))]
+
+          (dotimes [i (alength logits)]
+            (aset v i (double (aget logits i))))
+          (aset codes j (draw v noise))
+          (if (= j (long residual-groups))
+            codes
+            (recur (inc j)
+                   (with-open [c
+                               (vv/long-tensor env (long-array [(aget codes j)]) [1])
+
+                               g
+                               (vv/long-tensor env (long-array [(dec j)]) [1])]
+
+                     (with-open [e (vv/run-session
+                                     group-embed
+                                     (doto (HashMap.) (.put "codes" c) (.put "group" g)))]
+                       (vv/floats-of (nth-output e 0))))
+                   (mapv #(nth-output r %) (range 1 (inc (count group-past-names))))))))
+      (finally (vv/close-all! slots)
+               (doseq [^OnnxTensor t empty-kv]
+                 (.close t))))))
 
 (defn- next-input
   ^floats [{:keys [^OrtEnvironment env residual-embed]} ^longs codes ^floats pad]
@@ -603,7 +669,7 @@
 
           (if (or (= code0 eos) (>= (count frames) (long max-frames)))
             frames
-            (let [codes ((if (:group-predictor bundle) group-frame-codes frame-codes)
+            (let [codes ((if (:group-step bundle) group-frame-codes frame-codes)
                           bundle
                           (Arrays/copyOfRange hidden
                                               (int (* (dec rows) hidden-size))
@@ -810,9 +876,10 @@
 
          bundle
          (if imported
-           (vv/loaded :qwen-tts-clone
-                      (io/file (assets/install-dir (clone-asset)))
-                      #(open-bundle %1 %2 (io/file dir)))
+           (vv/loaded
+             :qwen-tts-clone
+             (io/file (assets/install-dir (clone-asset)))
+             #(open-bundle %1 %2 (io/file dir) (io/file (assets/install-dir (predictor-asset)))))
            (vv/loaded :qwen-tts (io/file dir) open-bundle))
 
          ref
@@ -899,7 +966,8 @@
 
           _
           (when (imported-voice voice)
-            (assets/ensure! (clone-asset) #(report (assoc % :phase :preparing))))
+            (doseq [entry [(clone-asset) (predictor-asset)]]
+              (assets/ensure! entry #(report (assoc % :phase :preparing)))))
 
           _
           (report {:phase :synthesizing :progress 0})

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Export the Qwen3-TTS-12Hz-1.7B-Base code predictor with a KV cache.
+#
+# The onnx-community Base export runs its code predictor once for each of the 15
+# codebooks of a frame, over the whole frame. That was most of the time of a
+# cloned voice. This export runs one row for each codebook with a KV cache.
+#
+# The weights are Apache-2.0, so Vis publishes the result in the assets-pack
+# release. The export reads only the code predictor tensors of the pinned
+# checkpoint and needs no Hugging Face token. The check compares the logits with
+# the fp32 onnx-community graph.
+#
+# Usage:
+#   bin/export-qwen-code-predictor [--out dist/voice-assets/qwen3-tts-code-predictor]
+#
+# Then, only when asked:
+#   gh release upload assets-pack <out>/code_predictor_step.onnx#qwen3-tts-base-code_predictor_step.onnx ...
+#
+# Requires: uv. About 3 GB of disk.
+
+set -euo pipefail
+
+PYTHON_VERSION="3.12"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+out_dir="${repo_root}/dist/voice-assets/qwen3-tts-code-predictor"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) out_dir="$2"; shift 2 ;;
+    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+command -v uv >/dev/null 2>&1 || { echo "missing required tool: uv" >&2; exit 1; }
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/vis-qwen-code-predictor.XXXXXX")"
+trap 'rm -rf "$work_dir"' EXIT
+
+uv run --quiet --python "$PYTHON_VERSION" --no-project \
+  --with torch==2.14.1 --with onnx==1.23.2 --with onnxruntime==1.31.0 \
+  --with onnxscript==0.7.2 --with onnx-ir==1.1.0 --with numpy==2.5.4 \
+  "${repo_root}/scripts/qwen3-tts-code-predictor/export.py" --out "$out_dir" --work "$work_dir"
+
+for f in code_predictor_step.onnx code_predictor_embed.onnx; do
+  printf '%s  %s bytes  %s\n' "$(shasum -a 256 "${out_dir}/${f}" | cut -d' ' -f1)" \
+    "$(wc -c < "${out_dir}/${f}" | tr -d ' ')" "$f"
+done

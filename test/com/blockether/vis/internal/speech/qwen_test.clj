@@ -72,7 +72,7 @@
   (it "needs the Base model only for an imported voice"
       (with-redefs [voices/imported-voice #(when (= "marius" %) {:id "marius" :clip "/x.wav"})]
         (expect (= [qwen/asset-id] (mapv :id (#'qwen/voice-assets :ryan))))
-        (expect (= [qwen/asset-id qwen/clone-asset-id]
+        (expect (= [qwen/asset-id qwen/clone-asset-id qwen/predictor-asset-id]
                    (mapv :id (#'qwen/voice-assets "marius")))))))
 
 (defdescribe sample-first-code-test

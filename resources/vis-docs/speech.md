@@ -57,8 +57,8 @@ recording with a name. `pocket-tts-local` learns the voice from it.
 The voice gets an ID from its name. Scripts and settings use this ID.
 
 `qwen3-tts-local` also speaks the voices that you add. For these voices, Vis downloads a second
-model of 1.6 GB on first use. This model is slower than the built-in voices. On a CPU, a sentence can
-take more than a minute. A transcript makes the voice closer to the recording.
+model of about 1.8 GB on first use. On a CPU, one second of speech takes about 1.5 to 2.5 seconds.
+A transcript makes the voice closer to the recording.
 
 ## Change or remove a voice
 

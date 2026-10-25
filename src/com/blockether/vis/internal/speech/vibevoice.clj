@@ -177,8 +177,12 @@
 (defn read-json [^File f] (json/read-json (slurp f)))
 
 (defn open-session
+  "A session that does not spin its threads after a run. Each session has its own
+   thread pool, and a spinning pool takes the cores of the next session: the Qwen3-TTS
+   clone pipeline ran two times slower with spinning."
   ^OrtSession [^OrtEnvironment env ^File file]
-  (with-open [options (OrtSession$SessionOptions.)]
+  (with-open [options (doto (OrtSession$SessionOptions.)
+                        (.addConfigEntry "session.intra_op.allow_spinning" "0"))]
     (.createSession env (.getAbsolutePath file) options)))
 
 (defn open-tokenizer

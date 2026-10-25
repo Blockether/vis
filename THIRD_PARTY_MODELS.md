@@ -16,6 +16,7 @@ This file is generated from `resources/vis-models/manifest.edn` and
 | `vibevoice-realtime-0.5b-int8` | MIT AND Apache-2.0 | yes | the Vis assets release | automatically |
 | `qwen3-tts-12hz-1.7b-customvoice-int4` | Apache-2.0 | yes | the Vis assets release | automatically |
 | `qwen3-tts-12hz-1.7b-base-int4` | Apache-2.0 | yes | the Vis assets release | automatically |
+| `qwen3-tts-12hz-1.7b-base-code-predictor-int8` | Apache-2.0 | yes | the Vis assets release | automatically |
 | `vibevoice-voice-samples` | MIT | yes | the Vis assets release | automatically |
 | `vibevoice-asr-streaming-1.5b-int8` | MIT | yes | the Vis assets release | automatically |
 | `piper-en_US-kristin-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
@@ -124,8 +125,19 @@ Qwen3-TTS-12Hz-1.7B-Base by the Qwen team, Alibaba Cloud (https://huggingface.co
 - Upstream: <https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base>
 - Installs into: `~/.vis/models/qwen3-tts-12hz-1.7b-base-int4`
 - Downloaded from, in order:
-  - the Vis assets release, 1553 MB, 8 files - <https://github.com/Blockether/vis>
-  - the publisher, 1553 MB, 8 files - <https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base>
+  - the Vis assets release, 1439 MB, 7 files - <https://github.com/Blockether/vis>
+  - the publisher, 1439 MB, 7 files - <https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base>
+
+## `qwen3-tts-12hz-1.7b-base-code-predictor-int8`
+
+Engine `:qwen-tts` - Apache-2.0 - commercial use permitted - hosted by Vis
+
+The code predictor of Qwen3-TTS-12Hz-1.7B-Base by the Qwen team, Alibaba Cloud (https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0, revision fd4b2543. Exported by Vis with a KV cache and int8 weights (bin/export-qwen-code-predictor).
+
+- Upstream: <https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base>
+- Installs into: `~/.vis/models/qwen3-tts-12hz-1.7b-base-code-predictor-int8`
+- Downloaded from, in order:
+  - the Vis assets release, 343 MB, 2 files - <https://github.com/Blockether/vis>
 
 ## `vibevoice-voice-samples`
 
