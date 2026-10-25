@@ -3715,15 +3715,6 @@
         (seq tokens)
         (update :input #(input/paste-text (or % (input/empty-input)) (str/join " " tokens)))))))
 
-;; The Improve settings the gateway answered, ALREADY normalized by
-;; `improve/settings` (the caller owns that shaping, so state keeps no opinion
-;; about the wire document). Only `:mode` is read here — it decides whether the
-;; C-x e verb and the palette entry are advertised at all — and a missing
-;; document is Off, never a half-open surface.
-(reg-event-db :set-improve-settings
-              (fn [db [_ settings]]
-                (assoc db :improve (if (map? settings) settings {:mode :off}))))
-
 ;; The slash catalog names the commands that the recall ring keeps (#360).
 (reg-event-db :saveable-slashes
               (fn [db [_ texts]]

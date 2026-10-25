@@ -1153,7 +1153,7 @@
 (defdescribe
   settings-enum-dropdown-test
   (it "marks experimental settings in the production terminal render"
-      (doseq [id ["subagents" "improve"]]
+      (doseq [id ["subagents"]]
         (expect (false? (:default (toggles/toggle-spec id))))
         (expect (true? (:experimental? (toggles/toggle-spec id))))
         (expect (str/includes?
@@ -4050,55 +4050,56 @@
             shell-note
             "Project settings turn this off for this session. Change it in Project settings."]
 
-        (try (reset! inventory
-               {:status :ok
-                :error nil
-                :groups [{"id" "tools"
-                          "title" "Tools"
-                          "toggles"
-                          [{"id" "shell"
-                            "label" "Shell commands"
-                            "type" "boolean"
-                            "enabled" true
-                            "is_override" true
-                            "overridden_by" {"scope" "project" "enabled" false}}
-                           {"id" "reasoning_effort"
-                            "label" "Reasoning"
-                            "type" "enum"
-                            "value" "high"
-                            "choices" ["low" "high"]
-                            "overridden_by" {"scope" "group" "value" "low"}}
-                           {"id" "improve" "label" "Improve" "type" "boolean" "enabled" true}]}]})
-             (let [[_ shell reasoning improve]
-                   (registry-toggle-rows)
+        (try
+          (reset! inventory
+            {:status :ok
+             :error nil
+             :groups [{"id" "tools"
+                       "title" "Tools"
+                       "toggles"
+                       [{"id" "shell"
+                         "label" "Shell commands"
+                         "type" "boolean"
+                         "enabled" true
+                         "is_override" true
+                         "overridden_by" {"scope" "project" "enabled" false}}
+                        {"id" "reasoning_effort"
+                         "label" "Reasoning"
+                         "type" "enum"
+                         "value" "high"
+                         "choices" ["low" "high"]
+                         "overridden_by" {"scope" "group" "value" "low"}}
+                        {"id" "subagents" "label" "Subagents" "type" "boolean" "enabled" true}]}]})
+          (let [[_ shell reasoning unlocked]
+                (registry-toggle-rows)
 
-                   inherit
-                   (assoc shell :type :inherit)]
+                inherit
+                (assoc shell :type :inherit)]
 
-               (expect (= shell-note (:locked shell)))
-               ;; Global settings are the root scope: an explicit value there overrides nothing.
-               (expect (false? (:is-override? shell)))
-               (expect (= "Shell commands  [Locked]" (settings-option-label shell {})))
-               (expect (= [:inherit shell-note] [(:type inherit) (:locked inherit)]))
-               (expect
-                 (= "Group settings set this to low for this session. Change it in Group settings."
-                    (:locked reasoning)))
-               (expect (= "Reasoning  [Locked]" (settings-option-label reasoning {})))
-               (expect (= "high" (#'dlg/settings-option-value reasoning {})))
-               (expect (nil? (:locked improve)))
-               (with-redefs-fn {#'dlg/mini-note! (fn [_ _ _ title line]
-                                                   (swap! events conj [title line]))
-                                #'dlg/activate-unlocked-row!
-                                (fn [& args]
-                                  (swap! events conj [:changed (:toggle-id (last args))]))}
-                 #(doseq [row [shell inherit improve]] (activate-settings-row! nil
-                                                                               nil
-                                                                               nil
-                                                                               (atom {})
-                                                                               {}
-                                                                               row))))
-             (expect (= [["Locked" shell-note] ["Locked" shell-note] [:changed "improve"]] @events))
-             (finally (reset! inventory original)))))
+            (expect (= shell-note (:locked shell)))
+            ;; Global settings are the root scope: an explicit value there overrides nothing.
+            (expect (false? (:is-override? shell)))
+            (expect (= "Shell commands  [Locked]" (settings-option-label shell {})))
+            (expect (= [:inherit shell-note] [(:type inherit) (:locked inherit)]))
+            (expect
+              (= "Group settings set this to low for this session. Change it in Group settings."
+                 (:locked reasoning)))
+            (expect (= "Reasoning  [Locked]" (settings-option-label reasoning {})))
+            (expect (= "high" (#'dlg/settings-option-value reasoning {})))
+            (expect (nil? (:locked unlocked)))
+            (with-redefs-fn {#'dlg/mini-note! (fn [_ _ _ title line]
+                                                (swap! events conj [title line]))
+                             #'dlg/activate-unlocked-row! (fn [& args]
+                                                            (swap! events conj
+                                                              [:changed (:toggle-id (last args))]))}
+              #(doseq [row [shell inherit unlocked]] (activate-settings-row! nil
+                                                                             nil
+                                                                             nil
+                                                                             (atom {})
+                                                                             {}
+                                                                             row))))
+          (expect (= [["Locked" shell-note] ["Locked" shell-note] [:changed "subagents"]] @events))
+          (finally (reset! inventory original)))))
   ;; Issue #373: a project could not change an inherited machine extension setting, and
   ;; Settings did not say which settings decide it. Both clients now name and open them.
   (it

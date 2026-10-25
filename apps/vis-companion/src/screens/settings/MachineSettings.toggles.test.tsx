@@ -221,18 +221,18 @@ describe('draft backend dropdown', () => {
 describe('experimental feature flags', () => {
   it('renders badges from metadata and refreshes dependent rows after a flip', async () => {
     const feature: Toggle = {
-      id: 'improve',
-      label: 'Improve',
+      id: 'subagents',
+      label: 'Subagents',
       type: 'boolean',
       enabled: false,
       is_experimental: true,
     };
     const mode: Toggle = {
-      id: 'improve_mode',
-      label: 'Improve mode',
+      id: 'subagents_mode',
+      label: 'Subagents mode',
       type: 'enum',
-      value: 'human',
-      choices: ['off', 'human', 'automatic'],
+      value: 'managed',
+      choices: ['managed', 'manual'],
       is_experimental: true,
     };
     let enabled = false;
@@ -255,16 +255,16 @@ describe('experimental feature flags', () => {
         onSpeechChange={async () => DEFAULT_SPEECH_PREFS}
       />,
     );
-    const toggle = await screen.findByRole('switch', { name: /^Improve:/ });
+    const toggle = await screen.findByRole('switch', { name: /^Subagents:/ });
     expect(toggle).not.toBeChecked();
     expect(screen.getAllByText('Experimental')).toHaveLength(2);
-    expect(screen.queryByRole('combobox', { name: 'Improve mode' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Subagents mode' })).toBeNull();
     await userEvent.click(toggle);
-    await screen.findByRole('combobox', { name: 'Improve mode' });
+    await screen.findByRole('combobox', { name: 'Subagents mode' });
     expect(toggle).toBeChecked();
     expect(screen.getAllByText('Experimental')).toHaveLength(3);
     await userEvent.click(toggle);
-    await waitFor(() => expect(screen.queryByRole('combobox', { name: 'Improve mode' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('combobox', { name: 'Subagents mode' })).toBeNull());
     expect(settings).toHaveBeenCalledTimes(3);
   });
 });

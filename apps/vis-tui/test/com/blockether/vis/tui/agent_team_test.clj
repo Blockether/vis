@@ -275,25 +275,16 @@
                (expect (= (.getBackCharacter vs x y) (.getBackCharacter hs x y))))
              (finally (.stopScreen vs) (.stopScreen hs) (.close vt) (.close ht)))))))
 
-(defdescribe compact-and-wide-header-omits-team-status-test
-             (it
-               "compact and wide header omits team status"
-               (doseq [compact?
-                       [true false]
+(defdescribe
+  compact-and-wide-header-omits-team-status-test
+  (it "compact and wide header omits team status"
+      (doseq [compact? [true false]]
+        (let [panel (header/header-actions-component nil false nil compact?)
+              html (HtmlTerminalView/render panel (.getPreferredSize panel) "Header actions")]
 
-                       improve?
-                       [true false]]
-
-                 (let [panel
-                       (header/header-actions-component nil false nil improve? compact?)
-
-                       html
-                       (HtmlTerminalView/render panel (.getPreferredSize panel) "Header actions")]
-
-                   (expect (not (str/includes? html "Agents")))
-                   (expect (not (str/includes? html "Subagent")))
-                   (expect (= (not compact?) (str/includes? html "help (")))
-                   (expect (= improve? (str/includes? html "improve (")))))))
+          (expect (not (str/includes? html "Agents")))
+          (expect (not (str/includes? html "Subagent")))
+          (expect (= (not compact?) (str/includes? html "help (")))))))
 
 (defdescribe
   active-header-refresh-without-inspector-test

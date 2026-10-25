@@ -1621,7 +1621,7 @@
         (expect (= 0 (user-version s)))
         (rewrite-older-store! (:datasource s))
         (let [[text] (activity-search-texts s)]
-          (expect (= 3 (user-version s)))
+          (expect (= 4 (user-version s)))
           (expect (not= old-text text))
           (expect (str/includes? text "Disk quota reached"))
           (expect (<= (count text) 4096))
@@ -1731,7 +1731,7 @@
                      ["UPDATE session_turn_iteration SET tool_calls = ?" (nippy/freeze older)])
       (jdbc/execute! (:datasource s) ["PRAGMA user_version = 1"])
       (rewrite-older-store! (:datasource s))
-      (expect (= 3 (user-version s)))
+      (expect (= 4 (user-version s)))
       (expect (= [(dissoc snapshot :rows) orphan grouped] (stored-activities s)))
       (expect (= [snapshot orphan grouped]
                  (mapv :activity
@@ -4103,8 +4103,37 @@
         (jdbc/execute! ds ["CREATE INDEX idx_log_created ON log(created_at)"])
         (jdbc/execute! ds ["PRAGMA user_version = 2"])
         (rewrite-older-store! ds)
-        (expect (= 3 (user-version s)))
+        (expect (= 4 (user-version s)))
         (expect (= [] (log-schema-names s))))))
+
+(defn- improve-schema-names
+  "Names of the removed Improve tables and their indexes in the store's schema."
+  [store]
+  (mapv :name
+        (raw-query store
+                   {:select [:name]
+                    :from :sqlite_master
+                    :where [:in :tbl_name ["improve" "improve_record"]]})))
+
+(defdescribe improve-table-drop-test
+             (it "creates no Improve tables in a new store"
+                 (expect (= [] (improve-schema-names (h/store)))))
+             (it "drops the Improve tables and their indexes that an older store kept"
+                 (let [s
+                       (h/store)
+
+                       ds
+                       (:datasource s)]
+
+                   (jdbc/execute! ds ["CREATE TABLE improve (entry_id INTEGER PRIMARY KEY)"])
+                   (jdbc/execute! ds ["CREATE INDEX idx_improve_entry ON improve(entry_id)"])
+                   (jdbc/execute! ds
+                                  [(str "CREATE TABLE improve_record (id INTEGER PRIMARY KEY,"
+                                        " entry_id INTEGER REFERENCES improve(entry_id))")])
+                   (jdbc/execute! ds ["PRAGMA user_version = 3"])
+                   (rewrite-older-store! ds)
+                   (expect (= 4 (user-version s)))
+                   (expect (= [] (improve-schema-names s))))))
 
 ;; ─── projects (cross-channel) + movable project sessions + ownership (V6/V7) ───
 

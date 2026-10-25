@@ -37,7 +37,6 @@ import {
   Globe,
   Image,
   LoaderCircle,
-  Lightbulb,
   type LucideIcon,
   MessageSquare,
   MessageSquareMore,
@@ -135,11 +134,6 @@ export function ClearIcon({ className }: { className?: string }) {
  */
 export function SearchIcon({ className }: { className?: string }) {
   return <Mark icon={Search} className={className} />;
-}
-
-/** Reports, ideas and reviewed improvements. */
-export function ImproveIcon({ className }: { className?: string }) {
-  return <Mark icon={Lightbulb} className={className} />;
 }
 
 /** Prompts that run on a schedule or a webhook. */

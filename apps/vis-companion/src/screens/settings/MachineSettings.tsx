@@ -61,7 +61,6 @@ import { SettingField, SettingMachine } from './SettingField';
 import { machineLabel } from '../../lib/fleet';
 import { CouncilRooms } from './CouncilRooms';
 import { AutomationsPanel } from './AutomationsPanel';
-import { IMPROVE_MODE_LABELS, type ImproveMode } from '../../lib/improve';
 
 /** Closed-choice setting: one shared picker, with saving disabling input. */
 export function EnumSetting({
@@ -86,9 +85,7 @@ export function EnumSetting({
       onValueChange={onPick}
       options={(toggle.choices ?? []).map((choice) => ({
         value: choice,
-        label: toggle.id === 'improve_mode'
-          ? (IMPROVE_MODE_LABELS[choice as ImproveMode] ?? choice)
-          : (toggle.choice_labels?.[choice] ?? choice),
+        label: toggle.choice_labels?.[choice] ?? choice,
       }))}
     />
   );

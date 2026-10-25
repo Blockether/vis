@@ -27,41 +27,38 @@
                  (expect (nil? (keymap/action-for \r)))
                  (expect (nil? (keymap/action-for \x)))
                  (expect (nil? (keymap/action-for \g))))
-             (it
-               "the C-x prefix resolves the vis commands, case-insensitively"
-               (expect (= :cycle-model (keymap/prefix-action-for \m)))
-               (expect (= :cycle-model (keymap/prefix-action-for \M)))
-               (expect (= :pick-reasoning (keymap/prefix-action-for \r)))
-               (expect (= :toggle-codex-fast (keymap/prefix-action-for \q)))
-               (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
-               (expect (= :toggle-thinking-summary (keymap/prefix-action-for \x)))
-               ;; `d` files a session under one of its project's groups (BLO-167).
-               (expect (= :session-group (keymap/prefix-action-for \d)))
-               ;; `p` opens the palette in `input`, so it binds no verb.
-               (expect (nil? (keymap/prefix-action-for \p)))
-               ;; `e` is the Improve register; it only ACTS when a mode is chosen.
-               (expect (= :improve (keymap/prefix-action-for \e)))
-               (expect (= :pick-model (keymap/prefix-action-for \c)))
-               (expect (= :show-sessions (keymap/prefix-action-for \s)))
-               (expect (= :fork-session (keymap/prefix-action-for \y)))
-               ;; `b` = the voice conversation MODE, one letter from `v` = one recording.
-               (expect (= :toggle-voice-conversation (keymap/prefix-action-for \b)))
-               ;; C-x C-f search · C-x C-a attach · C-x C-v voice · C-x C-h help — the
-               ;; second key resolves the same with or without its own Ctrl.
-               (expect (= :search-open (keymap/prefix-action-for \f)))
-               (expect (= :pick-file (keymap/prefix-action-for \a)))
-               (expect (= :toggle-voice-recording (keymap/prefix-action-for \v)))
-               (expect (= :toggle-help (keymap/prefix-action-for \h)))
-               ;; C-x j → jump to bottom (the discoverable keymap for the `↓ latest` chip).
-               (expect (= :recenter (keymap/prefix-action-for \j)))
-               ;; C-x t → fork the session AT a chosen turn; C-x z → vim-style jump labels.
-               (expect (= :fork-at-turn (keymap/prefix-action-for \t)))
-               (expect (= :toggle-detail-labels (keymap/prefix-action-for \z)))
-               (expect (= :focus-attachments (keymap/prefix-action-for \i)))
-               ;; C-x I (Shift+i) opens the image viewer over every session picture.
-               (expect (= :view-images (keymap/prefix-action-for \I)))
-               (expect (= "C-x I" (keymap/label-for :view-images)))
-               (expect (= \x keymap/prefix-key)))
+             (it "the C-x prefix resolves the vis commands, case-insensitively"
+                 (expect (= :cycle-model (keymap/prefix-action-for \m)))
+                 (expect (= :cycle-model (keymap/prefix-action-for \M)))
+                 (expect (= :pick-reasoning (keymap/prefix-action-for \r)))
+                 (expect (= :toggle-codex-fast (keymap/prefix-action-for \q)))
+                 (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
+                 (expect (= :toggle-thinking-summary (keymap/prefix-action-for \x)))
+                 ;; `d` files a session under one of its project's groups (BLO-167).
+                 (expect (= :session-group (keymap/prefix-action-for \d)))
+                 ;; `p` opens the palette in `input`, so it binds no verb.
+                 (expect (nil? (keymap/prefix-action-for \p)))
+                 (expect (= :pick-model (keymap/prefix-action-for \c)))
+                 (expect (= :show-sessions (keymap/prefix-action-for \s)))
+                 (expect (= :fork-session (keymap/prefix-action-for \y)))
+                 ;; `b` = the voice conversation MODE, one letter from `v` = one recording.
+                 (expect (= :toggle-voice-conversation (keymap/prefix-action-for \b)))
+                 ;; C-x C-f search · C-x C-a attach · C-x C-v voice · C-x C-h help — the
+                 ;; second key resolves the same with or without its own Ctrl.
+                 (expect (= :search-open (keymap/prefix-action-for \f)))
+                 (expect (= :pick-file (keymap/prefix-action-for \a)))
+                 (expect (= :toggle-voice-recording (keymap/prefix-action-for \v)))
+                 (expect (= :toggle-help (keymap/prefix-action-for \h)))
+                 ;; C-x j → jump to bottom (the discoverable keymap for the `↓ latest` chip).
+                 (expect (= :recenter (keymap/prefix-action-for \j)))
+                 ;; C-x t → fork the session AT a chosen turn; C-x z → vim-style jump labels.
+                 (expect (= :fork-at-turn (keymap/prefix-action-for \t)))
+                 (expect (= :toggle-detail-labels (keymap/prefix-action-for \z)))
+                 (expect (= :focus-attachments (keymap/prefix-action-for \i)))
+                 ;; C-x I (Shift+i) opens the image viewer over every session picture.
+                 (expect (= :view-images (keymap/prefix-action-for \I)))
+                 (expect (= "C-x I" (keymap/label-for :view-images)))
+                 (expect (= \x keymap/prefix-key)))
              (it "no emacs editing key is a direct app verb (action-for returns nil)"
                  ;; The C-x prefix's second-keys (m/r/v/s) live behind C-x — a different
                  ;; keyspace — so they don't shadow the editing chords.
@@ -272,13 +269,11 @@
                         (map (comp first second)))
                   (re-seq #"(?m)^\|([^|\n]*)\|" (or page "")))
 
-            ;; Improve and subagents are experimental, and the published manual leaves
+            ;; Subagents are experimental, and the published manual leaves
             ;; experimental features out (docs core-test, experimental-feature-docs-test).
             published
             (conj (into #{}
-                        (comp (remove #(or (= :improve (:show-when %))
-                                           (= :agent-questions (:action %))))
-                              (map :key))
+                        (comp (remove #(= :agent-questions (:action %))) (map :key))
                         keymap/prefix-commands)
                   keymap/prefix-palette-key)]
 

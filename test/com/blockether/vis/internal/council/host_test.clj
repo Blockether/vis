@@ -215,10 +215,10 @@
                        "read_session"]]
           (expect (str/includes? manual field)))
         (doseq [text [tool-doc prompt]]
-          (doseq [field ["entry_id" "thread_id" "kind" "reply_to" "reply_required" "improve"
-                         "autocomplain" "source_ref" "turn/iteration" "reproduction steps"
-                         "expected" "actual" "environment" "version" "diagnostics" "frequency"
-                         "impact" "workaround" "unknown" "secrets" "read_session"]]
+          (doseq [field ["entry_id" "thread_id" "kind" "reply_to" "reply_required" "source_ref"
+                         "turn/iteration" "reproduction steps" "expected" "actual" "environment"
+                         "version" "diagnostics" "frequency" "impact" "workaround" "unknown"
+                         "secrets" "read_session"]]
             (expect (str/includes? (str/lower-case text) field)))
           (expect (not (str/includes? text "potential_issue")))
           (expect (not (str/includes? text "Entries: `{id,")))

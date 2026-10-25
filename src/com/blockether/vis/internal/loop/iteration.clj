@@ -1050,10 +1050,7 @@
                     ;; Carry parinfer's whole-source rebalance flag into the execution
                     ;; record. `execute-code` may also set `:repaired?` through the
                     ;; extension rescue hook; both paths converge on the same channel flag.
-                    execution (cond-> (council/record-failure!
-                                        environment
-                                        entry
-                                        (update raw-execution :error loop-errors/op-error))
+                    execution (cond-> (update raw-execution :error loop-errors/op-error)
                                 form-repaired?
                                 (assoc :repaired? true)
 

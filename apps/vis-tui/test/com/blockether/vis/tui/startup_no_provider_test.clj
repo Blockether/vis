@@ -71,7 +71,6 @@
                    #'screen/ensure-launch-project-id! #'screen/latest-project-session-id
                    #'screen/session-db-title #'screen/persist-tabs!
                    #'screen/release-workspace-sessions! #'screen/start-deferred-gateway-slash-load!
-                   #'screen/start-deferred-improve-settings-load!
                    #'client/gateway-reconcile-running-turns! #'client/reload-config!
                    #'client/toggles-hydrate-from-config! #'client/save-toggles!
                    #'client/watch-notifications! #'client/unwatch-notifications!

@@ -631,25 +631,4 @@
        :owner :vis
        :group :experimental
        :persist? true})
-    (register-toggle! {:id "improve"
-                       :label "Improve"
-                       :description
-                       "Collect improvement reports and enable human or automatic review."
-                       :default false
-                       :experimental? true
-                       :owner :vis
-                       :group :experimental
-                       :persist? true})
-    (register-toggle! {:id "improve_mode"
-                       :label "Improve mode"
-                       :description
-                       "Off, governed by human, or automatic periodic analysis and grouping."
-                       :type :enum
-                       :choices ["off" "human" "automatic"]
-                       :default "human"
-                       :experimental? true
-                       :visible-fn #(enabled? "improve")
-                       :owner :vis
-                       :group :experimental
-                       :persist? true})
     true))

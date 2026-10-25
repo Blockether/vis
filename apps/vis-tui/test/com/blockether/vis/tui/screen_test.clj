@@ -4488,8 +4488,6 @@ therapy line 2"
                                     #'state/dispatch (fn [event]
                                                        (swap! events conj event))
                                     #'dlg/settings-dialog! (fn [& _]
-                                                             nil)
-                                    #'screen/refresh-improve-settings! (fn []
-                                                                         nil)}
+                                                             nil)}
                      #(#'screen/open-settings-modal! nil))
                    (expect (= [[:refresh-session-settings "s1"]] @events)))))

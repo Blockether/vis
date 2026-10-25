@@ -54,9 +54,8 @@
 
 (defn publish
   "Publish a Council entry. `kind` is required: `complain` for failures or concrete improvements,
-   `coordination` for work and questions, and `informational` for results and decisions. When
-   Improve is enabled, complaints enter the persistent improve register. `kind` never selects
-   recipients. Choose individual pings, all, or none.
+   `coordination` for work and questions, and `informational` for results and decisions. `kind` never
+   selects recipients. Choose individual pings, all, or none.
 
    `title` is optional for a new thread. With `thread_id` or `reply_to`, Council ignores `title`.
    Validation and idempotency checks use the request without this field. The existing thread title
@@ -69,10 +68,7 @@
    identifies this publication, not another execution.
 
    Use `read_session(session_id)` to inspect the original evidence. Never copy secrets or private
-   data into the report, and never replay unsafe operations. With Improve enabled, a failed
-   python_execution is already recorded as an autocomplain without pings. That record has the
-   failure or timeout, the duration and a source-session lookup. Add to its thread with an
-   informational continuation instead of a duplicate.
+   data into the report, and never replay unsafe operations.
 
    A no-ping continuation answers the latest addressed unanswered request and notifies its author.
    `reply_to` selects an unanswered request explicitly, once per recipient. `reply_required=True`

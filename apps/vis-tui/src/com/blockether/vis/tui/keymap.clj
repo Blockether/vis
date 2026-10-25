@@ -154,10 +154,7 @@
    {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}
-   {:action :providers :key \o :label "providers" :group "Tools"}
-   ;; Improve is advertised only while its mode is on. The chord still resolves
-   ;; to this action, but the handler rechecks the gateway before opening a view.
-   {:action :improve :key \e :label "improve" :group "Tools" :show-when :improve}])
+   {:action :providers :key \o :label "providers" :group "Tools"}])
 
 (def prefix-groups
   "Heading order of the C-x hydra. A band taller than the terminal loses its LAST
@@ -339,10 +336,10 @@
   "Does a prefix-command's `:show-when` tag hold for the current `db`? Untagged
    verbs always apply; the tagged ones surface in the hydra ONLY where they can
    act — `:multi-tab` needs a second tab to close, `:has-turns` needs a turn to
-   fork at, `:improve` needs an Improve mode other than Off, `:codex` needs a
-   session on OpenAI Codex (the screen marks it as `:codex-session?`), `:has-images`
-   needs a picture in the session (the screen marks it as `:has-images?`), and `:never`
-   is palette-only. Resolving a chord does not bypass its handler's feature gate."
+   fork at, `:codex` needs a session on OpenAI Codex (the screen marks it as
+   `:codex-session?`), `:has-images` needs a picture in the session (the screen
+   marks it as `:has-images?`), and `:never` is palette-only. Resolving a chord
+   does not bypass its handler's feature gate."
   [db {:keys [show-when]}]
   (case show-when
     :multi-tab
@@ -350,9 +347,6 @@
 
     :has-turns
     (boolean (seq (:messages db)))
-
-    :improve
-    (not= :off (or (get-in db [:improve :mode]) :off))
 
     :codex
     (true? (:codex-session? db))

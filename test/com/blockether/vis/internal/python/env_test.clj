@@ -1841,7 +1841,7 @@ Follow every fixture step without truncation."}]))
 
                       (expect (nil? (:error answer)))
                       (doseq [text ["pattern=None" "limit=20" "offset=0" "details=False"
-                                    "case-sensitive" "SHA-256" "liveness unknown" "Improve"
+                                    "case-sensitive" "SHA-256" "liveness unknown"
                                     "replaces its saved copy" "`del name` removes it"
                                     "frees its memory" "(restored)"]]
                         (expect (str/includes? out text) text))))))

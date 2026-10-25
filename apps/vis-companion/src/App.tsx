@@ -72,7 +72,6 @@ import { applyTheme, resolveTheme } from './lib/theme';
 import { getThemePref } from './lib/storage';
 import { IconButton } from './components/ui';
 import { SearchIcon, SettingsIcon } from './components/icons';
-import { ImproveLauncher } from './components/ImproveLauncher';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
@@ -1422,13 +1421,6 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
               // There is nothing to search until a session list stands behind the dialog.
               onSearch={sessionsMounted ? openSearch : null}
               onAppSettings={openSettings}
-              improve={
-                <ImproveLauncher
-                  gateways={conns}
-                  primaryUrl={primary?.url}
-                  refreshKey={!!settingsDestination}
-                />
-              }
             />
           )}
 
@@ -1570,12 +1562,10 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
 export function Header({
   onSearch,
   onAppSettings,
-  improve,
 }: {
   /** Open the search dialog. `null` while there is no session list to search. */
   onSearch: (() => void) | null;
   onAppSettings: () => void;
-  improve?: ReactNode;
 }) {
   // `/` opens the search from anywhere on the shell except a field, where it is a
   // character someone is typing. `Ctrl+/` is never a character, so it opens the search
@@ -1651,7 +1641,6 @@ export function Header({
               <SearchIcon className="size-4" />
             </IconButton>
           )}
-          {improve}
           <IconButton
             type="button"
             label="Open preferences"

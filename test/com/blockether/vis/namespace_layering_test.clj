@@ -86,8 +86,8 @@
       foundation.mpl-capture foundation.shell-log]]
     ;; Built-in extensions over the services.
     [extensions [foundation python.extensions python.test-runner]]
-    ;; The agent loop and its improvement workflow.
-    [loop [loop improve]]
+    ;; The agent loop.
+    [loop [loop]]
     ;; The gateway daemon, including the wiring that fills upward slots.
     [gateway [gateway]]
     ;; Process entrypoints.

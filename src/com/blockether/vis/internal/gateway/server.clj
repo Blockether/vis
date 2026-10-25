@@ -22,7 +22,6 @@
     [com.blockether.vis.contract.openapi :as openapi-contract]
     [com.blockether.vis.internal.config.core :as config]
     [com.blockether.vis.internal.gateway.wiring :as wiring]
-    [com.blockether.vis.internal.improve.review :as improve-review]
     [com.blockether.vis.internal.docs.core :as docs]
     [com.blockether.vis.internal.extension.core :as extension]
     [com.blockether.vis.internal.extension.client :as client-extensions]
@@ -2146,7 +2145,6 @@
           (catch Throwable t
             (tel/log! :warn ["gateway: registry self-registration failed" (ex-message t)])))
      (swap! instance/server-state assoc
-       :stop-improve! (improve-review/start! db)
        :stop-rooms! (rooms/start! db)
        :stop-automations! (automation-runner/start! db))
      (when managed? (ensure-idle-reaper!))
@@ -2180,11 +2178,9 @@
 (defn stop!
   "Stop the gateway server if running. Idempotent."
   []
-  (when-let [{:keys [^Server server db stop-improve! stop-rooms! stop-automations!]}
-             @instance/server-state]
+  (when-let [{:keys [^Server server db stop-rooms! stop-automations!]} @instance/server-state]
     (when stop-automations! (stop-automations!))
     (when stop-rooms! (stop-rooms!))
-    (when stop-improve! (stop-improve!))
     ;; Release the listening socket FIRST so a successor daemon racing this
     ;; close-then-reopen handoff can bind the port immediately. The slow reap
     ;; below (killing every session's background `shell` children + REPLs) can eat

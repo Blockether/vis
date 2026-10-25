@@ -13,7 +13,6 @@
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.attachment.vision-describe :as vision-describe]
             [com.blockether.vis.internal.channel.form :as form]
-            [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.context.engine :as ctx-engine]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
@@ -2146,10 +2145,6 @@
      "what the answer needs. Batch, filter and chain work in the block; `await gather(...)` runs "
      "independent calls together. Project packages need a project REPL. "
      "Errors always show, also when the block printed nothing. "
-     (when (toggles/enabled? "improve")
-       (str
-         "Improve saves each failed python_execution as a complaint from autocomplain, with its session "
-         "and turn/iteration/form. It never pings peers. The failure shows those coordinates and its entry ID. "))
      "Each capability is a plain Python name, so a result is a normal value that you keep in a variable. "
      "Only what you print goes into the transcript. Watch a shell: `sh = await shell(...)`, then a bounded "
      "loop that calls `sh.logs()` on that handle and stops on what it reads (an error line, a parsed port). "

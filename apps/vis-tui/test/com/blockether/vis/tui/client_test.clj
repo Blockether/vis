@@ -554,60 +554,6 @@
                               (catch clojure.lang.ExceptionInfo _ :failed))))))))))
 
 (defdescribe
-  improve-reads-and-writes-use-the-improve-routes
-  (it "improve reads and writes use the improve routes"
-      ;; The Improve surface is the only TUI caller of these routes: a read asks for
-      ;; the filtered path the contract names, a write carries its own body, and a
-      ;; gateway that cannot answer arrives as nil so the register can say
-      ;; UNAVAILABLE instead of painting an empty project list.
-      (let [asked
-            (atom [])
-
-            answer
-            (atom {:status 200 :body "{\"records\":[]}"})]
-
-        (with-redefs-fn {#'client/request! (fn [method path opts]
-                                             (swap! asked conj [method path (:body opts)])
-                                             @answer)}
-          (fn []
-            ;; a read carries only the filters the caller asked for
-            (expect (= {"records" []} (client/improve-records nil)))
-            (expect (= {"records" []}
-                       (client/improve-records
-                         {:project-id "p 1" :status "open" :after 40 :limit 200})))
-            (expect (= {"records" []} (client/improve-records {:project-id ""})))
-            (expect (= {"records" []} (client/improve-record 7)))
-            (expect (= {"records" []} (client/improve-settings)))
-            (expect (= [[:get "/v1/improve" nil]
-                        [:get "/v1/improve?project_id=p+1&status=open&after=40&limit=200" nil]
-                        [:get "/v1/improve?project_id=" nil] [:get "/v1/improve/7" nil]
-                        [:get "/v1/improve/settings" nil]]
-                       @asked))
-            ;; a write reaches the route that owns it, body included
-            (reset! asked [])
-            (reset! answer {:status 201 :body "{\"id\":9}"})
-            (expect (= {"id" 9} (client/improve-create! {:title "Slow startup"})))
-            (reset! answer {:status 200 :body "{\"id\":9}"})
-            (expect (= {"id" 9} (client/improve-update! 9 {:status "closed" :expected_version 3})))
-            (expect (= {"id" 9} (client/improve-settings! {:mode "automatic"})))
-            (expect (= {"id" 9} (client/improve-review!)))
-            (expect (= [[:post "/v1/improve" {:title "Slow startup"}]
-                        [:patch "/v1/improve/9" {:status "closed" :expected_version 3}]
-                        [:patch "/v1/improve/settings" {:mode "automatic"}]
-                        [:post "/v1/improve/review" {}]]
-                       @asked))
-            ;; a refusal or an unreachable daemon is nil, never an empty register
-            (doseq [refusal [{:status 404 :body ""} {:status 500 :body ""}]]
-              (reset! answer refusal)
-              (expect (nil? (client/improve-records nil)))
-              (expect (nil? (client/improve-record 7)))
-              (expect (nil? (client/improve-settings)))
-              (expect (nil? (client/improve-create! {"title" "x"})))
-              (expect (nil? (client/improve-update! 9 {"status" "open"})))
-              (expect (nil? (client/improve-settings! {"mode" "off"})))
-              (expect (nil? (client/improve-review!)))))))))
-
-(defdescribe
   saved-session-page-query-omits-absent-filters-test
   (it "saved session page query omits absent filters"
       ;; A nil cursor or filter must not become the literal string "nil" on the wire.

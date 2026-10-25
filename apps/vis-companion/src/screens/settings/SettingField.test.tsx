@@ -194,21 +194,21 @@ it('adds a workspace root from a folder chosen on the machine', async () => {
 it('limits numbers by the setting schema and keeps invalid text local', () => {
   const { onChange, onRawChange } = renderField(
     {
-      id: 'interval_minutes',
-      label: 'Review interval',
+      id: 'inbound_port',
+      label: 'Inbound port',
       type: 'number',
       editor: 'number',
-      schema: 'config.json#/$defs/config/properties/improve/properties/interval_minutes',
+      schema: 'config.json#/$defs/network/properties/inbound_ports/items',
     },
-    60,
+    8080,
   );
-  const input = screen.getByRole('spinbutton', { name: 'Review interval' });
+  const input = screen.getByRole('spinbutton', { name: 'Inbound port' });
   expect(input.getAttribute('min')).toBe('1');
-  expect(input.getAttribute('max')).toBe('1440');
+  expect(input.getAttribute('max')).toBe('65535');
   expect(input.getAttribute('step')).toBe('1');
   for (const [text, error] of [
     ['0', 'Use at least 1.'],
-    ['1441', 'Use at most 1440.'],
+    ['65536', 'Use at most 65535.'],
     ['1.5', 'Enter a whole number.'],
     ['', 'Enter a number.'],
   ]) {
@@ -216,9 +216,9 @@ it('limits numbers by the setting schema and keeps invalid text local', () => {
     expect(onRawChange).toHaveBeenLastCalledWith(text, error);
   }
   expect(onChange).not.toHaveBeenCalled();
-  fireEvent.change(input, { target: { value: '90' } });
-  expect(onRawChange).toHaveBeenLastCalledWith('90', undefined);
-  expect(onChange).toHaveBeenCalledExactlyOnceWith(90, true);
+  fireEvent.change(input, { target: { value: '8443' } });
+  expect(onRawChange).toHaveBeenLastCalledWith('8443', undefined);
+  expect(onChange).toHaveBeenCalledExactlyOnceWith(8443, true);
 });
 
 it.each([

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- The experimental Improve feature is gone. This includes the Improve register and its review, the `improve` and `improve_mode` settings, the `/v1/improve` routes and their SDK calls.
+- The TUI and the Companion no longer have Improve screens or the C-x e command.
+- A failed `python_execution` no longer creates an automatic Council complaint.
+- At its first start, Vis drops the Improve tables of an older store. If your configuration still has an `improve` section, delete it.
+
 ## [v0.3.3] - 2026-10-23
 
 ### Added

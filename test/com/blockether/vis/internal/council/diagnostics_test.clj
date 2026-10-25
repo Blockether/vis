@@ -112,7 +112,6 @@
                              "Permissions stay as the user set them" "Held queues and cancellation"
                              "Each recipient answers a request once"
                              "latest addressed unanswered request" "wake an idle peer of this group"
-                             "not attempted, not confirmed" "Build on it" "source-session lookup"
                              "the incident lives in the source session"
                              "reproduction stays within safe, authorized operations"
                              "positive store-local integer"]]

@@ -5341,9 +5341,9 @@
       (when (or (not enum?) (and value (not= value current)))
         (->> (swap! values apply-settings-option (assoc row :value value))
              (notify-settings-change! callbacks))
-        ;; A feature flag can reveal or hide dependent rows — Improve mode shows
-        ;; only while Improve is on — exactly as it does in the app, so re-read
-        ;; the catalog it just changed instead of waiting for the next open.
+        ;; A feature flag can reveal or hide dependent rows, exactly as it does
+        ;; in the app, so re-read the catalog it just changed instead of waiting
+        ;; for the next open.
         (when (and (:experimental? row) (seq (:groups @(settings-inventory-atom))))
           (load-settings-inventory!))))
 
@@ -8750,11 +8750,7 @@
    {:id :toggle-thinking-summary :label "Thinking Summary" :show-when :thinking-summary}
    {:id :toggle-all-details :label "Fold / Unfold All"}
    {:id :toggle-detail-labels :label "Label Folds — jump to one"}
-   {:id :toggle-help :label "Keyboard Shortcuts"}
-   ;; Both views stay hidden while Improve is off. Settings → Experimental
-   ;; keeps the opt-in flag and, when enabled, its mode control available.
-   {:id :improve :label "Improve — Projects and Issues" :show-when :improve}
-   {:id :improve-settings :label "Improve Mode…" :show-when :improve}])
+   {:id :toggle-help :label "Keyboard Shortcuts"}])
 
 (defn fork-turn-items
   "Rows for the fork-at-turn palette (`searchable-select!`), one per turn of the
@@ -8811,17 +8807,14 @@
    Fork Session verbs) is DROPPED in a session with no turns — forking a
    turnless session is prohibited, so it must not even be discoverable.
 
-   `ctx` is `{:has-turns? bool :improve? bool :thinking-summary? bool}`; a
-   missing/nil ctx is the conservative case — turnless, with Improve off and no
-   thinking summary. Untagged entries always survive."
-  [{:keys [has-turns? improve? thinking-summary?]}]
+   `ctx` is `{:has-turns? bool :thinking-summary? bool}`; a missing/nil ctx is
+   the conservative case — turnless and with no thinking summary. Untagged
+   entries always survive."
+  [{:keys [has-turns? thinking-summary?]}]
   (filterv (fn [{:keys [show-when]}]
              (case show-when
                :has-turns
                (boolean has-turns?)
-
-               :improve
-               (boolean improve?)
 
                :thinking-summary
                (boolean thinking-summary?)

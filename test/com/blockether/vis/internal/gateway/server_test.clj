@@ -247,31 +247,31 @@
                  (expect (= {"contract_error" true} (wire/parse-json (:body response))))
                  (expect (= [:example/problem "cannot continue" {:detail 7}] @seen)))))
 
-(defdescribe
-  gateway-router-reaches-every-contract-route
-  (it "gateway router reaches every contract route"
-      (let [match-by-path
-            (requiring-resolve 'reitit.core/match-by-path)
+(defdescribe gateway-router-reaches-every-contract-route
+             (it "gateway router reaches every contract route"
+                 (let [match-by-path
+                       (requiring-resolve 'reitit.core/match-by-path)
 
-            router
-            ((rv 'router) "test-token" [])]
+                       router
+                       ((rv 'router) "test-token" [])]
 
-        ;; each contract route answers its own path with a handler for every method
-        (doseq [{:keys [path operations]}
-                gateway-contract/route-table
+                   ;; each contract route answers its own path with a handler for every method
+                   (doseq [{:keys [path operations]}
+                           gateway-contract/route-table
 
-                :let [match
-                      (match-by-path router
-                                     (-> path
-                                         (str/replace #"/:[^/]+" "/value-1")
-                                         (str/replace #"/\*[^/]+" "/nested/value")))]]
+                           :let [match
+                                 (match-by-path router
+                                                (-> path
+                                                    (str/replace #"/:[^/]+" "/value-1")
+                                                    (str/replace #"/\*[^/]+" "/nested/value")))]]
 
-          (expect (= path (:template match)) path)
-          (doseq [method (keys operations)]
-            (expect (some? (get-in match [:data method :handler])) (str (name method) " " path))))
-        ;; a fixed segment wins over the path parameter it conflicts with
-        (doseq [path ["/v1/improve/review" "/v1/improve/settings" "/v1/projects/overview"]]
-          (expect (= path (:template (match-by-path router path))))))))
+                     (expect (= path (:template match)) path)
+                     (doseq [method (keys operations)]
+                       (expect (some? (get-in match [:data method :handler]))
+                               (str (name method) " " path))))
+                   ;; a fixed segment wins over the path parameter it conflicts with
+                   (doseq [path ["/v1/automations/runs" "/v1/projects/overview"]]
+                     (expect (= path (:template (match-by-path router path))))))))
 
 (defdescribe
   built-in-routes-refuse-to-drift-from-the-contract

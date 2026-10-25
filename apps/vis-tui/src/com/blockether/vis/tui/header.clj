@@ -44,32 +44,24 @@
   3)
 
 (defn- header-action-chips
-  ;; The Improve chip appears only while that mode is not Off: a register nobody
-  ;; turned on must not take a permanent seat in the header.
-  ([improve? compact?]
-   (cond-> []
-     (not compact?)
-     (conj [:header-help (str " help (" (keymap/label-for :toggle-help) ") ")])
-
-     improve?
-     (conj [:header-improve (str " improve (" (keymap/label-for :improve) ") ")]))))
+  [compact?]
+  (cond-> []
+    (not compact?)
+    (conj [:header-help (str " help (" (keymap/label-for :toggle-help) ") ")])))
 
 (defn header-actions-component
   "Build the real interactive GUI2 grid used by the header action cluster. With
    no arguments it is a portable component for `HtmlTerminalView`; `on-action`
    receives the action kind when its button is activated. The full-screen form
-   also bridges absolute Vis click regions without changing the component tree,
-   and carries the Improve chip when that mode is not Off."
+   also bridges absolute Vis click regions without changing the component tree."
   ([] (header-actions-component nil false nil))
   ([on-action] (header-actions-component nil false on-action))
   ([root-graphics register?] (header-actions-component root-graphics register? nil))
   ([root-graphics register? on-action]
    (header-actions-component root-graphics register? on-action false))
-  ([root-graphics register? on-action improve?]
-   (header-actions-component root-graphics register? on-action improve? false))
-  ([root-graphics register? on-action improve? compact?]
+  ([root-graphics register? on-action compact?]
    (let [chips
-         (header-action-chips improve? compact?)
+         (header-action-chips compact?)
 
          gap
          1
@@ -294,11 +286,7 @@
         ;; that positions and paints the action components. Its right margin is
         ;; the one-cell separation from the id badge.
         actions-component
-        (header-actions-component g
-                                  *register-click-regions?*
-                                  nil
-                                  (not= :off (or (get-in db [:improve :mode]) :off))
-                                  (<= (long cols) 120))
+        (header-actions-component g *register-click-regions?* nil (<= (long cols) 120))
 
         cluster-w
         (long (.getColumns (.getPreferredSize ^Panel actions-component)))

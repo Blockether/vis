@@ -100,13 +100,6 @@ import { inputViewsFromWire, type HumanInputRequest } from './human-input';
 import type { ViewAction, ViewActionOutcome } from './view';
 import { liveViewsFromWire, type LiveLogPage, type LiveView } from './live-view';
 import type {
-  ImproveCreate,
-  ImprovePage,
-  ImproveRecord,
-  ImproveSettings,
-  ImproveUpdate,
-} from './improve';
-import type {
   Automation,
   AutomationInput,
   AutomationList,
@@ -2637,45 +2630,6 @@ export class GatewayClient {
 
   deleteRoom(roomId: string): Promise<unknown> {
     return this.request('DELETE', `/v1/council/rooms/${encodeURIComponent(roomId)}`);
-  }
-
-  // ── Improve: project issues and governed review ─────────────────
-
-  improveSettings(signal?: AbortSignal): Promise<ImproveSettings> {
-    return this.request('GET', '/v1/improve/settings', undefined, signal);
-  }
-
-  setImproveSettings(settings: Partial<ImproveSettings>): Promise<ImproveSettings> {
-    return this.request('PATCH', '/v1/improve/settings', settings);
-  }
-
-  improveProjects(signal?: AbortSignal): Promise<GatewayOverview> {
-    return this.request('GET', '/v1/projects/overview', undefined, signal);
-  }
-
-  improveRecords(projectId: string | null, after = 0, signal?: AbortSignal): Promise<ImprovePage> {
-    const query = new URLSearchParams({
-      project_id: projectId ?? '',
-      after: String(after),
-      limit: '200',
-    });
-    return this.request('GET', `/v1/improve?${query}`, undefined, signal);
-  }
-
-  improveRecord(id: number, signal?: AbortSignal): Promise<ImproveRecord> {
-    return this.request('GET', `/v1/improve/${id}`, undefined, signal);
-  }
-
-  createImproveRecord(record: ImproveCreate): Promise<ImproveRecord> {
-    return this.request('POST', '/v1/improve', record);
-  }
-
-  updateImproveRecord(id: number, changes: ImproveUpdate): Promise<ImproveRecord> {
-    return this.request('PATCH', `/v1/improve/${id}`, changes);
-  }
-
-  reviewImprove(): Promise<unknown> {
-    return this.request('POST', '/v1/improve/review', {});
   }
 
   // ── Automations: prompts that run on a schedule or a webhook ────

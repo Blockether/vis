@@ -25,8 +25,6 @@
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.diff :as diff]
-            [com.blockether.vis.contract.improve :as improve-contract]
-            [com.blockether.vis.internal.config.toggles :as toggles]
             [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
@@ -221,15 +219,6 @@
 ;; from V1__schema.sql); it never recreates the DB.
 
 (def ^:private MIGRATIONS "classpath:db/sqlite/migration")
-
-(def ^:private improve-intake-sql
-  "INSERT INTO improve_record (entry_id, project_id, title, created_at, updated_at)
-   SELECT i.entry_id, s.project_id,
-          substr('Complaint #' || i.entry_id || COALESCE(': ' || c.title, ''), 1, 256),
-          c.created_at, c.created_at
-   FROM improve i JOIN council_entry c ON c.id = i.entry_id
-   LEFT JOIN session_soul s ON s.id = i.session_soul_id
-   WHERE NOT EXISTS (SELECT 1 FROM improve_record r WHERE r.entry_id = i.entry_id)")
 
 (def ^:private project-folder-name-sql
   "Name each project that carries its whole folder path as its name by the last
@@ -477,10 +466,18 @@
     (jdbc/execute! ds [(str "DROP INDEX IF EXISTS \"" name "\"")]))
   (jdbc/execute! ds ["DROP TABLE IF EXISTS log"]))
 
+(defn- drop-improve-tables!
+  "Drop the `improve_record` and `improve` tables of older stores. The Improve workflow
+   is removed. Each table is dropped in its own statement, so that no one write holds
+   the database lock for long."
+  [^DataSource ds]
+  (jdbc/execute! ds ["DROP TABLE IF EXISTS improve_record"])
+  (jdbc/execute! ds ["DROP TABLE IF EXISTS improve"]))
+
 (def ^:private store-rewrites
   "One-time data rewrites of older stores, in order. `PRAGMA user_version` counts the
    rewrites that a store has already done. Append new rewrites; never reorder them."
-  [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table!])
+  [rewrite-activity-search-text! drop-stored-activity-rows! drop-log-table! drop-improve-tables!])
 
 (defn- rewrite-older-store!
   "Run each store rewrite that this store has not done yet, and record each one.
@@ -498,8 +495,6 @@
 (defn- install-schema!
   [^DataSource ds]
   (migration/migrate! ds MIGRATIONS)
-  ;; Backfill only missing workflow rows. Reopening never overwrites human analysis or state.
-  (when (toggles/enabled? "improve") (jdbc/execute! ds [improve-intake-sql]))
   ;; Projects show their name, never their path: rename the path-named ones once.
   (jdbc/execute! ds [project-folder-name-sql]))
 
@@ -4895,30 +4890,11 @@
         (:id turn) :session_turn_state_id
         (:id turn-state)))))
 
-(defn- insert-improve!
-  "The register is part of the publication transaction, including idempotent replays."
-  [db id row]
-  (when (and (toggles/enabled? "improve") (= "complain" (:kind row)))
-    (let [{:keys [scope] :as source} (:source_ref row)]
-      (execute! db
-                {:insert-into :improve
-                 :values [(merge (select-keys source
-                                              [:session_state_id :session_turn_soul_id
-                                               :session_turn_state_id :session_turn_iteration_id
-                                               :tool_call_id])
-                                 {:entry_id id
-                                  :session_soul_id (:author_sid row)
-                                  :turn (:turn scope)
-                                  :iteration (:iter scope)
-                                  :form (:next_form scope)})]})
-      (jdbc/execute! (ds db) [(str improve-intake-sql " AND i.entry_id = ?") id]))))
-
 (defn- link-council-iteration!
   "Attach the final iteration identity to publications made during its execution."
   [db opts tid turn-state-id iteration-id]
   (doseq [id
-          (distinct (concat (map :entry_id (:council-publications opts))
-                            (keep #(get-in % [:error :complain_entry_id]) (:forms opts))))
+          (distinct (map :entry_id (:council-publications opts)))
 
           :let [row
                 (query-one! db {:select [:source_ref] :from [:council_entry] :where [:= :id id]})
@@ -4931,10 +4907,7 @@
     (execute! db
               {:update :council_entry
                :set {:source_ref (->blob (assoc source :session_turn_iteration_id iteration-id))}
-               :where [:= :id id]})
-    (execute!
-      db
-      {:update :improve :set {:session_turn_iteration_id iteration-id} :where [:= :entry_id id]})))
+               :where [:= :id id]})))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 
@@ -7141,7 +7114,6 @@
                          :set {:state "replied" :reply_entry_id id}
                          :where [:and [:= :entry_id reply-to]
                                  [:= :recipient_sid (:author_sid row)]]}))
-            (insert-improve! tx id row)
             {:fingerprint (:fingerprint row) :entry (db-council-get tx id) :inserted? true}))))))
 
 (defn db-council-bind-wake!
@@ -7410,242 +7382,6 @@
                                                       :where [:and [:= :id (str aid)]
                                                               [:= :session_soul_id (str sid)]]})]
                         (activity-history-page db history opts)))))
-
-;; Improve workflow: mutable analysis/hierarchy over immutable Council intake.
-
-(defn- improve-error!
-  [type message]
-  (throw (ex-info message
-                  {:type type
-                   :status (case type
-                             :improve/not-found
-                             404
-
-                             :improve/conflict
-                             409
-
-                             400)})))
-
-(def ^:private improve-select
-  {:select [:r.* [:c.content :source_content] [:c.source_ref :source_ref]
-            [:i.session_soul_id :session_id]]
-   :from [[:improve_record :r]]
-   :left-join [[:improve :i] [:= :i.entry_id :r.entry_id] [:council_entry :c]
-               [:= :c.id :i.entry_id]]})
-
-(defn- improve-rows
-  [db q]
-  (mapv #(update % :source_ref <-blob) (query! db (merge improve-select q))))
-
-(defn db-improve-get
-  [db id]
-  (when-not (and (integer? id) (pos? (long id)))
-    (improve-error! :improve/invalid "Improve id must be a positive integer"))
-  (first (improve-rows db {:where [:= :r.id id]})))
-
-(defn db-improve-list
-  [db opts]
-  (improve-contract/validate! :list opts)
-  (improve-rows db
-                {:where (cond-> [:and [:> :r.id (:after opts 0)]]
-                          (contains? opts :project_id)
-                          (conj [:= :r.project_id (:project_id opts)])
-
-                          (:status opts)
-                          (conj [:= :r.status (:status opts)]))
-                 :order-by [:r.id]
-                 :limit (:limit opts 100)}))
-
-(defn db-improve-project-ids
-  [db]
-  (mapv :project_id
-        (query! db
-                {:select-distinct [:project_id]
-                 :from [:improve_record]
-                 :where [:= :status "open"]
-                 :order-by [:project_id]})))
-
-(defn- require-improve
-  [db id]
-  (or (db-improve-get db id) (improve-error! :improve/not-found "Improve record not found")))
-
-(defn- improve-family
-  "Return the root and its descendants/ancestors. UNION bounds traversal even in a damaged store."
-  [db id ancestors?]
-  (query-sql!
-    db
-    [(str
-       "WITH RECURSIVE family(id, parent_id) AS (
-                        SELECT id, parent_id FROM improve_record WHERE id = ? UNION
-                        SELECT r.id, r.parent_id FROM improve_record r JOIN family f ON "
-       (if ancestors? "r.id = f.parent_id" "r.parent_id = f.id")
-       ") SELECT id FROM family") id]))
-
-(defn- improve-family-ids [db id ancestors?] (mapv :id (improve-family db id ancestors?)))
-
-(defn- improve-project!
-  [db project-id]
-  (when (and project-id
-             (not (query-one! db {:select [:id] :from [:project] :where [:= :id project-id]})))
-    (improve-error! :improve/invalid "Improve project does not exist")))
-
-(defn- improve-parent!
-  [db record descendant-ids]
-  (when-let [parent-id (:parent_id record)]
-    (let [parent (require-improve db parent-id)]
-      (when (some #{parent-id} descendant-ids)
-        (improve-error! :improve/invalid "Improve grouping cannot contain a cycle"))
-      (when-not (= (:project_id record) (:project_id parent))
-        (improve-error! :improve/invalid "Improve grouping must stay in one project"))
-      (when (and (= "open" (:status record)) (= "closed" (:status parent)))
-        (improve-error! :improve/invalid
-                        "An open Improve record cannot be grouped under a closed parent")))))
-
-(defn- improve-change!
-  [db ids attrs]
-  (when (seq ids)
-    (execute! db
-              {:update :improve_record
-               :set (assoc attrs
-                      :updated_at (now-ms)
-                      :version [:+ :version 1])
-               :where [:in :id ids]})))
-
-(defn db-improve-create!
-  [db attrs]
-  (improve-contract/validate! :create attrs)
-  (sqlite-write-tx! db
-                    (fn [tx]
-                      (let [now
-                            (now-ms)
-
-                            record
-                            (merge {:entry_id nil
-                                    :project_id nil
-                                    :content ""
-                                    :status "open"
-                                    :parent_id nil
-                                    :version 1
-                                    :created_at now
-                                    :updated_at now}
-                                   attrs)]
-
-                        (improve-project! tx (:project_id record))
-                        (improve-parent! tx record [])
-                        (let [id (:id (query-one! tx
-                                                  {:insert-into :improve_record
-                                                   :values [record]
-                                                   :returning [:id]}))]
-                          (db-improve-get tx id))))))
-
-(defn db-improve-update!
-  [db id attrs]
-  (improve-contract/validate! :update attrs)
-  (sqlite-write-tx!
-    db
-    (fn [tx]
-      (let [old
-            (require-improve tx id)
-
-            _
-            (when (and (:expected_version attrs) (not= (:expected_version attrs) (:version old)))
-              (improve-error! :improve/conflict "Improve record changed; reload before editing"))
-
-            changes
-            (dissoc attrs :expected_version)
-
-            record
-            (merge old changes)
-
-            descendants
-            (improve-family-ids tx id false)]
-
-        (improve-project! tx (:project_id record))
-        ;; Reopening an existing child opens its ancestors. A new parent must already be open.
-        (when (and (= "open" (:status attrs)) (= (:parent_id old) (:parent_id record)))
-          (let [ancestors (remove #{id} (improve-family-ids tx id true))]
-            (when (seq ancestors)
-              (let [closed (mapv :id
-                                 (query! tx
-                                         {:select [:id]
-                                          :from [:improve_record]
-                                          :where [:and [:in :id ancestors]
-                                                  [:= :status "closed"]]}))]
-                (improve-change! tx closed {:status "open"})))))
-        (improve-parent! tx record descendants)
-        (when (not= (:project_id old) (:project_id record))
-          (improve-change! tx (vec (remove #{id} descendants)) {:project_id (:project_id record)}))
-        (when (= "closed" (:status attrs))
-          (improve-change! tx (vec (remove #{id} descendants)) {:status "closed"}))
-        (when (seq changes) (improve-change! tx [id] changes))
-        (db-improve-get tx id)))))
-
-(defn- improve-review-current!
-  [still-current?]
-  (when-not (still-current?)
-    (improve-error! :improve/conflict "Improve review settings changed; proposal discarded")))
-
-(defn db-improve-apply-review!
-  [db {:keys [expected updates groups] :as proposal} still-current?]
-  (when-not (and (map? proposal)
-                 (every? #{:expected :updates :groups} (keys proposal))
-                 (map? expected)
-                 (every?
-                   (fn [[id version]]
-                     (and (integer? id) (pos? (long id)) (integer? version) (pos? (long version))))
-                   expected)
-                 (or (nil? updates) (vector? updates))
-                 (or (nil? groups) (vector? groups))
-                 (<= (count expected) 200)
-                 (<= (count updates) 200)
-                 (<= (count groups) 200)
-                 (ifn? still-current?))
-    (improve-error! :improve/invalid "Invalid Improve review proposal"))
-  (doseq [row updates]
-    (when-not (and (map? row) (= #{:id :content} (set (keys row))) (contains? expected (:id row)))
-      (improve-error! :improve/invalid
-                      "Automatic Improve updates may only edit snapshotted analysis"))
-    (improve-contract/validate! :update (dissoc row :id)))
-  (doseq [group groups]
-    (when-not (and (map? group)
-                   (every? #{:title :content :project_id :children} (keys group))
-                   (vector? (:children group))
-                   (seq (:children group))
-                   (= (count (:children group)) (count (distinct (:children group)))))
-      (improve-error! :improve/invalid "Invalid Improve review group"))
-    (improve-contract/validate! :create (dissoc group :children)))
-  (sqlite-write-tx!
-    db
-    (fn [tx]
-      (improve-review-current! still-current?)
-      (doseq [[id version] expected]
-        (when-not (= version (:version (require-improve tx id)))
-          (improve-error! :improve/conflict "Improve record changed; review proposal discarded")))
-      (let [children (mapcat :children groups)]
-        (when-not (= (count children) (count (distinct children)))
-          (improve-error! :improve/invalid "A record may appear in only one review group"))
-        (doseq [id children]
-          (when-not (contains? expected id)
-            (improve-error! :improve/invalid "Review group children require an expected version"))
-          (let [record (require-improve tx id)]
-            (when-not (and (= "open" (:status record)) (nil? (:parent_id record)))
-              (improve-error! :improve/conflict
-                              "Only open root records may be automatically grouped")))))
-      (doseq [{:keys [id] :as row} updates]
-        (db-improve-update! tx id (dissoc row :id)))
-      (let [created
-            (mapv (fn [{:keys [children] :as group}]
-                    (let [parent (db-improve-create! tx (dissoc group :children))]
-                      (doseq [id children]
-                        (db-improve-update! tx id {:parent_id (:id parent)}))
-                      (:id parent)))
-                  groups)
-
-            changed
-            (distinct (concat (map :id updates) (mapcat :children groups) created))]
-
-        (improve-review-current! still-current?)
-        {:records (mapv #(db-improve-get tx %) changed)}))))
 
 ;; Automations
 

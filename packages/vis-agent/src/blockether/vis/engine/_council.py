@@ -174,9 +174,8 @@ class Council:
             content: Message text. Keep secrets and private data out of messages.
             kind: `coordination` for work and questions, `informational` for
                 findings, or `complain` for failures and concrete improvements.
-                Complaints enter the persistent improve register, not an external
-                issue tracker. Include sanitized evidence, expected versus actual
-                behavior, impact and a workaround. Keep facts apart from guesses.
+                Include sanitized evidence, expected versus actual behavior, impact
+                and a workaround. Keep facts apart from guesses.
             thread_id: Existing thread to continue. Omit it to start a new thread.
             title: Optional readable title for the message.
             ping: Session IDs, `"all"` for active peers, or no recipients. Explicit
@@ -196,9 +195,8 @@ class Council:
 
         Each message owns its kind and host-generated `source_ref`. That reference
         identifies this publication, not a reported incident. When you report an
-        incident, include the original session and turn/iteration/form. Failed Python
-        tool executions already have an autocomplain entry. Add to its thread instead of
-        duplicating it. Follow-ups and acknowledgements do not grant wake rights.
+        incident, include the original session and turn/iteration/form. Follow-ups and
+        acknowledgements do not grant wake rights.
         """
         body = {
             "content": content,

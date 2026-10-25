@@ -216,13 +216,6 @@
   (db-list-extension-aggregates [db-info opts])
   (db-delete-extension-aggregates! [db-info opts])
   (db-swap-extension-aggregate! [db-info opts f args])
-  ;; --- Improve register ---
-  (db-improve-list [db-info opts])
-  (db-improve-get [db-info id])
-  (db-improve-create! [db-info attrs])
-  (db-improve-update! [db-info id attrs])
-  (db-improve-project-ids [db-info])
-  (db-improve-apply-review! [db-info proposal still-current?])
   ;; --- Council ---
   (db-council-source [db-info sid source])
   (db-council-get [db-info id])

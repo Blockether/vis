@@ -10,7 +10,6 @@
             [com.blockether.vis.tui.client :as client]
             [com.blockether.vis.tui.frame :as frame]
             [com.blockether.vis.tui.header :as header]
-            [com.blockether.vis.tui.improve :as improve]
             [com.blockether.vis.tui.input :as input]
             [com.blockether.vis.tui.screen :as screen]
             [com.blockether.vis.tui.scroll :as scroll]
@@ -1266,94 +1265,6 @@
                           (str "duplicated " (pr-str phrase) " on one row at " cols " columns")))
                 (expect (= (cell-grid html cols 60) (cell-grid terminal cols 60)))
                 (expect (str/includes? (.renderHtml html) "ACTIVITY")))))))))
-
-(def ^:private improve-payload
-  {"records" [{"id" 1 "title" "Slow startup" "status" "open" "project_id" "p1"}
-              {"id" 2 "title" "Cold cache" "status" "open" "project_id" "p1" "parent_id" 1}
-              {"id" 3 "title" "Stale index" "status" "closed" "project_id" "p1" "parent_id" 2}]
-   "projects" [{"id" "p1" "name" "Editor"}]})
-
-(defn- paint-improve-modal!
-  "Paint one pure Improve component through a real screen, the way the dialog
-   loop does it: measure, reconcile, then draw on the screen's own graphics. A
-   component that answers a cursor position — the analysis editor — has it SET on
-   the screen and handed back, so the caret is part of what the two backends have
-   to agree on."
-  ^TerminalPosition [^TerminalScreen screen component cols rows]
-  (.doResizeIfNecessary screen)
-  (.clear screen)
-  (let [g
-        (.newTextGraphics screen)
-
-        geom
-        ((:measure component) (:init component) cols rows)
-
-        state
-        ((:reconcile component) (:init component) geom)]
-
-    (.setForegroundColor g theme/text-fg)
-    (.setBackgroundColor g theme/terminal-bg)
-    (.fill g \space)
-    (let [caret ((:paint component) g state geom)]
-      (when (instance? TerminalPosition caret) (.setCursorPosition screen ^TerminalPosition caret))
-      (.refresh screen)
-      (when (instance? TerminalPosition caret) caret))))
-
-(defdescribe
-  improve-register-and-mode-chooser-html-native-parity-test
-  (it "improve register and mode chooser html native parity"
-      ;; The Improve register and its mode chooser are ONE pure paint: the HTML view
-      ;; a reviewer opens has to carry the same cells and the same words the
-      ;; terminal shows, at a wide and at a narrow width.
-      (doseq [cols
-              [96 60]
-
-              [component phrase]
-              [[(improve/browser-modal-component (improve/records improve-payload)
-                                                 (improve/project-names improve-payload)
-                                                 nil
-                                                 {:mode :human}) "Editor · 2 open of 3"]
-               [(improve/settings-modal-component
-                  {:mode :automatic :provider "anthropic" :model "claude" :interval-minutes 30})
-                "Reviews every 30 minutes"]
-               [(improve/analysis-editor-component "Analysis" "Wolny start\n\nDruga linia")
-                "Druga linia"]]]
-
-        (with-open [html
-                    (activity-review-terminal cols 24)
-
-                    terminal
-                    (DefaultVirtualTerminal. (TerminalSize. cols 24))
-
-                    hs
-                    (doto (TerminalScreen. html) (.startScreen))
-
-                    ts
-                    (doto (TerminalScreen. terminal) (.startScreen))]
-
-          (let [caret
-                (paint-improve-modal! hs component cols 24)
-
-                native-caret
-                (paint-improve-modal! ts component cols 24)
-
-                text
-                (str/join "\n"
-                          (map (fn [row]
-                                 (apply str
-                                   (map #(.getCharacterString ^com.googlecode.lanterna.TextCharacter
-                                                              %)
-                                        row)))
-                               (cell-grid terminal cols 24)))]
-
-            (expect (str/includes? text phrase)
-                    (str "missing " (pr-str phrase) " at " cols " columns"))
-            (expect (= (cell-grid html cols 24) (cell-grid terminal cols 24)))
-            (expect (= caret native-caret)
-                    (str "the caret lands in a different cell at " cols " columns"))
-            (when caret
-              (expect (= caret (.getCursorPosition hs)))
-              (expect (= caret (.getCursorPosition ts)))))))))
 
 (defn activity-live-records
   "Owned live receipt fixture for the production Activity renderer (#222)."

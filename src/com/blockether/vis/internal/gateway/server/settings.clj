@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.server.settings
-  "Settings routes, including the Improve register and its settings."
+  "Settings routes."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.toggle :as toggle-contract]
@@ -635,53 +635,10 @@
                 (toggle-json
                   (scoped/set-setting! (lp/db-info) target id action (get body "value")))))))))
 
-(defn- improve-handler
-  [operation]
-  (fn [request]
-    (try (let [raw
-               (if (contains? #{:create :update :save-settings} operation)
-                 (try (http/body-json request) (catch Exception _ nil))
-                 (or (:query-params request) {}))
-
-               _
-               (when-not (map? raw)
-                 (throw (ex-info "Expected an Improve JSON object"
-                                 {:status 400 :type :improve/invalid})))
-
-               opts
-               (into {}
-                     (map (fn [[k v]]
-                            [(keyword k)
-                             (cond (and (= operation :list) (#{"after" "limit"} k) (string? v))
-                                   (Long/parseLong v)
-                                   (and (= k "project_id") (= v "")) nil
-                                   :else v)]))
-                     raw)
-
-               opts
-               (cond-> opts
-                 (#{:get :update} operation)
-                 (assoc :id (Long/parseLong (get-in request [:path-params :id]))))]
-
-           (http/json-response (state/improve-operation! operation opts)))
-         (catch NumberFormatException _
-           (http/error-response 400 :improve/invalid "Improve ids and cursors must be integers"))
-         (catch clojure.lang.ExceptionInfo e
-           (if-let [status (:status (ex-data e))]
-             (http/error-response status (:type (ex-data e)) (ex-message e))
-             (throw e))))))
-
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:get "/v1/settings"] list-settings-handler
    [:post "/v1/settings"] set-setting-handler
    [:patch "/v1/settings"] apply-settings-handler
    [:post "/v1/extensions/reload"] reload-extensions-handler
-   [:get "/v1/improve"] (improve-handler :list)
-   [:post "/v1/improve"] (improve-handler :create)
-   [:get "/v1/improve/settings"] (improve-handler :settings)
-   [:patch "/v1/improve/settings"] (improve-handler :save-settings)
-   [:post "/v1/improve/review"] (improve-handler :review)
-   [:get "/v1/improve/:id"] (improve-handler :get)
-   [:patch "/v1/improve/:id"] (improve-handler :update)
    [:get "/v1/settings/:id"] get-setting-handler})

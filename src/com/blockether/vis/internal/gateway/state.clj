@@ -16,11 +16,8 @@
     [clojure.string :as str]
     [com.blockether.svar.core :as svar]
     [com.blockether.vis.internal.config.core :as config]
-    [com.blockether.vis.internal.config.improve :as improve-settings]
     [com.blockether.vis.internal.config.toggles :as toggles]
     [com.blockether.vis.internal.config.scoped :as scoped]
-    [com.blockether.vis.internal.improve.core :as improve]
-    [com.blockether.vis.internal.improve.review :as improve-review]
     [com.blockether.vis.contract.gateway :as gateway-contract]
     [com.blockether.vis.internal.attachment.storage :as attachment-storage]
     [com.blockether.vis.internal.attachment.core :as attachments]
@@ -8103,44 +8100,6 @@
   (try (lp/db-info)
        true
        (catch Throwable t (tel/log! :warn ["gateway: db warmup failed" (ex-message t)]) false)))
-
-(defn improve-operation!
-  "Machine-level Improve workflow; record payload keys retain canonical snake_case."
-  [operation opts]
-  (when (and (not= :settings operation) (not (toggles/enabled? "improve")))
-    (throw (ex-info "Improve is disabled. Enable Improve in Experimental settings."
-                    {:type :improve/disabled :status 409})))
-  (let [db (lp/db-info)]
-    (case operation
-      :settings
-      (improve-settings/settings)
-
-      :save-settings
-      (improve-settings/update-settings! opts)
-
-      :review
-      (improve-review/run! db)
-
-      :list
-      (let [records (improve/list-records db opts)
-            after (or (:id (last records)) (:after opts) 0)]
-
-        {:records records
-         :after after
-         :has_more (boolean (seq (improve/list-records db
-                                                       (assoc opts
-                                                         :after after
-                                                         :limit 1))))})
-
-      :create
-      (improve/create! db opts)
-
-      :get
-      (or (improve/get-record db (:id opts))
-          (throw (ex-info "Improve record not found" {:type :improve/not-found :status 404})))
-
-      :update
-      (improve/update! db (:id opts) (dissoc opts :id)))))
 
 (defn council-operation!
   "Transport adapter. Derive publication identity from the owning runtime; idle pings may dispatch a turn."

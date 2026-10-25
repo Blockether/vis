@@ -20,7 +20,6 @@
     [com.blockether.vis.tui.header :as header]
     [com.blockether.vis.tui.agent-team :as agent-team]
     [com.blockether.vis.tui.human-input :as hi]
-    [com.blockether.vis.tui.improve :as improve]
     [com.blockether.vis.tui.input :as input]
     [com.blockether.vis.tui.live-view :as lv]
     [com.blockether.vis.tui.keymap :as keymap]
@@ -1250,7 +1249,6 @@
   (let [base
         (vec (concat (dlg/palette-commands-for
                        {:has-turns? (boolean (seq (:messages @state/app-db)))
-                        :improve? (improve/enabled? (:improve @state/app-db))
                         :thinking-summary? (state/thinking-summary-configurable? @state/app-db)})
                      (registry-slash-commands)))
 
@@ -2763,270 +2761,6 @@
       (open-image-viewer! screen images (dec (count images)))
       (vis/notify! "No pictures in this session" :level :info :ttl-ms 2000))))
 
-(defn- improve-failed!
-  "Say that an Improve write did NOT happen. A refused write must never read like
-   a saved one."
-  [message]
-  (vis/notify! message :level :error :ttl-ms status-error-ttl-ms))
-
-(defn- improve-count-label [n noun] (str (long n) " " noun (when (not= 1 (long n)) "s")))
-
-(defn- refresh-improve-settings!
-  "Re-read the Improve settings and publish them, so the C-x e verb, the palette
-   entry and the header chip advertise exactly what the gateway holds. Returns the
-   normalized settings."
-  []
-  (let [settings (improve/fetch-settings!)]
-    (state/dispatch [:set-improve-settings settings])
-    settings))
-
-(defn- start-deferred-improve-settings-load!
-  "Read the Improve settings ONCE the first frame is up, off the startup path. The
-   mode decides whether the header chip and the C-x e verb exist at all, so a TUI
-   that only ever asked on demand would hide a register the gateway is keeping."
-  []
-  (vis/worker-future "tui-improve-settings-load"
-                     (fn []
-                       (try (refresh-improve-settings!)
-                            (catch Throwable t
-                              (tel/log! {:level :warn
-                                         :id ::improve-settings-load-failed
-                                         :data {:error (ex-message t)}}
-                                        "Improve settings loading failed."))))))
-
-(defn- write-improve-settings!
-  "Write ONE settings change and answer what the gateway wrote back. A refusal
-   keeps the settings the TUI already had — the chooser never paints a mode that
-   was not stored."
-  [patch settings failure]
-  (if-let [document (vis/improve-settings! patch)]
-    (let [next-settings (improve/settings document)]
-      (state/dispatch [:set-improve-settings next-settings])
-      next-settings)
-    (do (improve-failed! failure) settings)))
-
-(defn- improve-pick-model!
-  "Choose the provider and model Automatic reviews with, through the SAME picker
-   the session model uses."
-  [^TerminalScreen screen settings]
-  (if-let [choice (with-dialog-lock #(dlg/model-picker! screen
-                                                        (select-keys settings [:provider :model])))]
-    (write-improve-settings! (if (:reset? choice)
-                               {:provider nil :model nil}
-                               {:provider (:provider choice) :model (:model choice)})
-                             settings
-                             "Could not change the review model — it is unchanged")
-    settings))
-
-(defn- improve-set-interval!
-  "How often Automatic reviews. A non-number is refused before anything is sent."
-  [^TerminalScreen screen settings]
-  (if-let [answer (with-dialog-lock #(dlg/text-input-dialog!
-                                       screen
-                                       "Improve schedule" "Minutes between reviews"
-                                       :initial (str (or (:interval-minutes settings) 60))))]
-    (if-let [minutes (parse-long (str/trim answer))]
-      (write-improve-settings! {:interval_minutes minutes}
-                               settings
-                               "Could not change the review schedule — it is unchanged")
-      (do (improve-failed! "The review schedule is a whole number of minutes") settings))
-    settings))
-
-(defn- open-improve-settings!
-  "The Improve mode chooser, available only while its experimental flag is on.
-   Provider, model, schedule and on-demand review exist only in Automatic, the
-   mode that spends model calls. Returns the settings the gateway holds when
-   the chooser closes, so a caller can react to a mode that just changed."
-  [^TerminalScreen screen]
-  (when (true? (get (vis/setting "improve") "enabled"))
-    (loop [settings (refresh-improve-settings!)]
-      (if-let [{:keys [action mode]} (with-dialog-lock #(improve/show-settings! screen settings))]
-        (case action
-          :set-mode
-          (recur (write-improve-settings! {:mode (name mode)}
-                                          settings
-                                          "Could not change the Improve mode — it is unchanged"))
-
-          :pick-model
-          (recur (improve-pick-model! screen settings))
-
-          :set-interval
-          (recur (improve-set-interval! screen settings))
-
-          :review
-          (do (if-let [result (vis/improve-review!)]
-                (if (improve/review-failed? result)
-                  (improve-failed! (improve/review-summary result))
-                  (vis/notify! (improve/review-summary result)))
-                (improve-failed! "Could not ask for a review — nothing was started"))
-              (recur settings))
-
-          settings)
-        settings))))
-
-(defn- improve-write-attrs
-  "One record write, guarded by the version the human actually saw. The gateway
-   refuses a stale write instead of letting a scheduled review and a human edit
-   quietly overwrite each other."
-  [row attrs]
-  (cond-> attrs
-    (:version row)
-    (assoc :expected_version (:version row))))
-
-(defn- improve-analysis-prompt!
-  "Edit the Markdown analysis of one improvement in the register's own multiline
-   editor: Enter adds a line, ^S or F2 saves, Esc writes nothing at all. Markdown
-   that already spans several lines arrives and leaves WHOLE — nothing here
-   flattens a paragraph into a single line."
-  [^TerminalScreen screen title content]
-  (with-dialog-lock #(improve/edit-analysis! screen title (str content))))
-
-(defn- edit-improve-record!
-  "Edit one record's title and Markdown analysis in ONE write. Esc at either
-   prompt writes nothing at all, and a refused write — a stale version, a daemon
-   that cannot answer — re-opens the prompts holding the words that were typed,
-   so a conflict never costs the human their analysis."
-  [^TerminalScreen screen row]
-  (loop [title
-         (:title row)
-
-         content
-         (:content row)]
-
-    (when-let [next-title (with-dialog-lock #(dlg/text-input-dialog! screen
-                                                                     "Improve — title" "Title"
-                                                                     :initial title))]
-      (if (str/blank? next-title)
-        (improve-failed! "An improvement needs a title")
-        (when-let [next-content (improve-analysis-prompt! screen "Improve — analysis" content)]
-          (if (vis/improve-update!
-                (:id row)
-                (improve-write-attrs row {:title (str/trim next-title) :content next-content}))
-            (vis/notify! "Improvement saved")
-            (do
-              (improve-failed!
-                "Could not save it — the improvement changed since you opened it. Your words are still here")
-              (recur next-title next-content))))))))
-
-(defn- new-improve-record!
-  "Record a new improvement in a project the human picks. The register only lists
-   projects that HAVE issues, so the gateway's own project list is what keeps a
-   project with none — a brand new one, or one whose issues are all closed —
-   reachable at all. Esc at any prompt writes nothing."
-  [^TerminalScreen screen projects]
-  (when-let [project (with-dialog-lock #(dlg/searchable-select!
-                                          screen
-                                          "New improvement — project"
-                                          (improve/project-choices projects
-                                                                   (try (vis/list-projects)
-                                                                        (catch Throwable _ nil)))
-                                          {:placeholder "Type to filter projects…"
-                                           :enter-label "file here"}))]
-    (when-let [title (with-dialog-lock #(dlg/text-input-dialog! screen "New improvement" "Title"))]
-      (if (str/blank? title)
-        (improve-failed! "An improvement needs a title")
-        (when-let [content (improve-analysis-prompt! screen "New improvement — analysis" "")]
-          (if (vis/improve-create! (cond-> {:title (str/trim title) :content content}
-                                     (:project-id project)
-                                     (assoc :project_id (:project-id project))))
-            (vis/notify! (str "Improvement recorded in " (:label project)))
-            (improve-failed! "Could not record the improvement — nothing was written")))))))
-
-(defn- group-improve-record!
-  "Group one issue under another in the SAME project, or lift it back to the top
-   of that project. The chooser only ever offers records that keep the tree a tree."
-  [^TerminalScreen screen records row]
-  (when-let [choice (with-dialog-lock #(dlg/searchable-select! screen
-                                                               (str "Group " (:title row) " under")
-                                                               (improve/parent-items records row)
-                                                               {:placeholder
-                                                                "Type to filter issues…"
-                                                                :enter-label "group"}))]
-    (if (vis/improve-update! (:id row) (improve-write-attrs row {:parent_id (:parent-id choice)}))
-      (vis/notify!
-        (if (:parent-id choice) "Grouped under its parent" "Moved to the top of its project"))
-      (improve-failed! "Could not group the improvement — it is unchanged"))))
-
-(defn- close-improve-record!
-  "Close one issue AND everything grouped under it. The GATEWAY closes the whole
-   cascade in one write, so the confirmation says the cascade also reaches issues
-   this register never loaded: the count it can show is a floor, not a promise.
-   A refused confirmation writes nothing."
-  [^TerminalScreen screen records row]
-  (let [{:keys [descendant-count]}
-        (improve/close-plan records (:id row))
-
-        message
-        [(str "Close " (:title row) "?")
-         (if (pos? (long descendant-count))
-           (str "This also closes the "
-                (improve-count-label descendant-count "issue")
-                " grouped under it, and any further ones not shown here.")
-           "This also closes every issue grouped under it, including any not shown here.")]]
-
-    (when (with-dialog-lock #(dlg/confirm-dialog! screen "Close improvement" message))
-      (if (vis/improve-update! (:id row) (improve-write-attrs row {:status "closed"}))
-        (vis/notify! "Closed, with everything grouped under it")
-        (improve-failed! "Could not close the improvement — nothing was closed")))))
-
-(defn- reopen-improve-record!
-  "Reopen one issue in ONE write. SAFE by design: the gateway also opens the closed
-   parents that would otherwise keep it hidden, and never reopens a descendant
-   that was closed on its own merits."
-  [records row]
-  (let [{:keys [parent-count]} (improve/reopen-plan records (:id row))]
-    (if (vis/improve-update! (:id row) (improve-write-attrs row {:status "open"}))
-      (vis/notify! (if (pos? (long parent-count))
-                     (str "Reopened, with " (improve-count-label parent-count "parent"))
-                     "Reopened"))
-      (improve-failed! "Could not reopen the improvement — it is still closed"))))
-
-(defn- open-improve!
-  "Open the Improve register: every project, the issues inside it, and what the
-   human can do to the selected one. Each action re-reads the register, so a
-   grouping or a cascade is visible the moment it is written. Off opens no
-   view; enable Improve in Settings → Experimental before using this command."
-  [^TerminalScreen screen]
-  (let [settings (refresh-improve-settings!)]
-    (when (improve/enabled? settings)
-      (loop [settings settings]
-        (let [{:keys [records projects error]} (improve/fetch-register!)]
-          (when-let [{:keys [action row]}
-                     (with-dialog-lock
-                       #(improve/show-browser! screen records projects error settings))]
-            (case action
-              :read
-              (do (with-dialog-lock #(dlg/markdown-viewer-dialog!
-                                       screen
-                                       (improve/detail-title row)
-                                       (improve/detail-markdown
-                                         row
-                                         (improve/project-label projects (:project-id row)))))
-                  (recur settings))
-
-              :edit
-              (do (edit-improve-record! screen row) (recur settings))
-
-              :new
-              (do (new-improve-record! screen projects) (recur settings))
-
-              :group
-              (do (group-improve-record! screen records row) (recur settings))
-
-              :close
-              (do (close-improve-record! screen records row) (recur settings))
-
-              :reopen
-              (do (reopen-improve-record! records row) (recur settings))
-
-              :settings
-              ;; Switching Improve Off takes the register with it: rows left on
-              ;; screen would advertise a surface the mode has just withdrawn.
-              (let [next-settings (open-improve-settings! screen)]
-                (when (improve/enabled? next-settings) (recur next-settings)))
-
-              nil)))))))
-
 (defn- open-automations!
   "Open the Automations view: run one now, pause or resume it, read its runs, create a
    one-time secret or delete it."
@@ -3813,7 +3547,6 @@
                                                (state/dispatch [:update-settings settings])
                                                (repaint-chat-frame! screen))}))]
              (state/dispatch [:update-settings s]))
-           (refresh-improve-settings!)
            ;; Settings can change a gateway default that the open session inherits, such as
            ;; `simplified_thinking_modes`. Read the session rows again so its footer agrees.
            (when-let [sid (get-in @state/app-db [:session :id])]
@@ -8190,7 +7923,6 @@
                              (vreset! startup-task ::settled)
                              (when-not (contains? @launch-member-ids* (str id)) (persist-tabs!))
                              (vreset! gateway-slash-load (start-deferred-gateway-slash-load! id))
-                             (start-deferred-improve-settings-load!)
                              (when (and (:resume opts) (not (:dialog-open? @state/app-db)))
                                (show-sessions!)))
                            (and error (vis-config/no-provider-ex error))
@@ -8581,9 +8313,6 @@
                                      :header-help
                                      (state/dispatch [:toggle-help])
 
-                                     :header-improve
-                                     (open-improve! screen)
-
                                      :footer-agents
                                      (show-agent-team!)
 
@@ -8894,9 +8623,6 @@
                                  :header-help
                                  (state/dispatch [:toggle-help])
 
-                                 :header-improve
-                                 (open-improve! screen)
-
                                  :footer-agents
                                  (show-agent-team!)
 
@@ -9064,9 +8790,6 @@
 
                                  :header-help
                                  (state/dispatch [:toggle-help])
-
-                                 :header-improve
-                                 (open-improve! screen)
 
                                  :footer-agents
                                  (show-agent-team!)
@@ -9458,12 +9181,6 @@
                                      :agent-questions
                                      (focus-agent-questions!)
 
-                                     :improve
-                                     (open-improve! screen)
-
-                                     :improve-settings
-                                     (open-improve-settings! screen)
-
                                      :automations
                                      (open-automations! screen)
 
@@ -9622,8 +9339,6 @@
                                                    (command-palette-extra-commands)
                                                    {:has-turns? (boolean (seq (:messages
                                                                                 @state/app-db)))
-                                                    :improve? (improve/enabled? (:improve
-                                                                                  @state/app-db))
                                                     :thinking-summary?
                                                     (state/thinking-summary-configurable?
                                                       @state/app-db)}))]
@@ -9646,9 +9361,6 @@
 
                          :view-images
                          (do (open-session-images! screen) (recur))
-
-                         :improve
-                         (do (open-improve! screen) (recur))
 
                          :toggle-tasks
                          (do (state/dispatch [:toggle-tasks]) (recur))
