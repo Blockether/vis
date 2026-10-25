@@ -130,7 +130,7 @@
       (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
       (expect (= ["vibevoice-realtime-0.5b-int8"] (mapv :id (assets/for-engine :vibevoice-tts))))
       (expect (= ["qwen3-tts-12hz-1.7b-customvoice-int4" "qwen3-tts-12hz-1.7b-base-int4"
-                  "qwen3-tts-12hz-1.7b-base-code-predictor-int8"]
+                  "qwen3-tts-12hz-1.7b-base-vis-export"]
                  (mapv :id (assets/for-engine :qwen-tts))))
       (expect (= ["vibevoice-asr-streaming-1.5b-int8"]
                  (mapv :id (assets/for-engine :vibevoice-asr))))
@@ -302,12 +302,14 @@
       (let [entry (assets/entry "qwen3-tts-12hz-1.7b-base-int4")]
         (expect (empty? (:voices entry)))
         (expect (every? (set (:requires entry)) ["speaker_encoder.onnx" "tok_encoder.onnx"]))
-        (expect (not-any? #{"code_predictor.onnx"} (:requires entry)))
+        (expect (not-any? #{"code_predictor.onnx" "talker_cache.onnx"} (:requires entry)))
         (expect (some? (:notice entry)))))
-  (it "ships the cached Qwen3-TTS Base code predictor that Vis exports"
-      (let [entry (assets/entry "qwen3-tts-12hz-1.7b-base-code-predictor-int8")]
+  (it "ships the Qwen3-TTS Base graphs that Vis exports"
+      (let [entry (assets/entry "qwen3-tts-12hz-1.7b-base-vis-export")]
         (expect (= :qwen-tts (:engine entry)))
-        (expect (= ["code_predictor_step.onnx" "code_predictor_embed.onnx"] (:requires entry)))
+        (expect (= ["code_predictor_step.onnx" "code_predictor_embed.onnx" "talker_cache.onnx"
+                    "text_embed.onnx"]
+                   (:requires entry)))
         (expect (empty? (:voices entry))))))
 
 (defn- repo-document

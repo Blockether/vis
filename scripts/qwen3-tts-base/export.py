@@ -1,4 +1,4 @@
-"""Export the Qwen3-TTS-12Hz-1.7B-Base code predictor with a KV cache.
+"""Export the Qwen3-TTS-12Hz-1.7B-Base graphs that Vis publishes.
 
 The onnx-community export runs the whole code predictor once for each of the 15
 codebooks of a frame. These graphs run it one row at a time with a KV cache:
@@ -6,7 +6,14 @@ codebooks of a frame. These graphs run it one row at a time with a KV cache:
   code_predictor_step.onnx   rows and a KV cache to the logits of one codebook (int8)
   code_predictor_embed.onnx  a code of one codebook to its input row (float16 table)
 
-The check compares the logits with the fp32 onnx-community export.
+The int4 talker and text embedding of onnx-community compute with float32
+activations. These copies set accuracy_level 4 (int8 activations), which is
+several times faster on a CPU:
+
+  talker_cache.onnx  the talker with a KV cache
+  text_embed.onnx    text token ids to projected embeddings
+
+The checks compare the logits with the onnx-community graphs.
 """
 
 import argparse
@@ -29,7 +36,18 @@ WEIGHTS = "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base/resolve/fd4b2543
 ONNX_COMMUNITY = "https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base/resolve/16ec6f3335d919e0e007d825a6f47fdd2cd77594"
 PREFIX = "talker.code_predictor."
 
-H, LAYERS, NQ, NKV, D, INTER, THETA, EPS, GROUPS, VOCAB = 1024, 5, 16, 8, 128, 3072, 1e6, 1e-6, 15, 2048
+H, LAYERS, NQ, NKV, D, INTER, THETA, EPS, GROUPS, VOCAB = (
+    1024,
+    5,
+    16,
+    8,
+    128,
+    3072,
+    1e6,
+    1e-6,
+    15,
+    2048,
+)
 
 
 def fetch(url, start, end):
@@ -49,8 +67,10 @@ def code_predictor_weights():
         start, end = meta["data_offsets"]
         raw = fetch(WEIGHTS, 8 + size + start, 8 + size + end - 1)
         assert meta["dtype"] == "BF16" and len(raw) == end - start, name
-        tensor = torch.frombuffer(bytearray(raw), dtype=torch.bfloat16).reshape(meta["shape"])
-        weights[name[len(PREFIX):]] = tensor.float()
+        tensor = torch.frombuffer(bytearray(raw), dtype=torch.bfloat16).reshape(
+            meta["shape"]
+        )
+        weights[name[len(PREFIX) :]] = tensor.float()
     return weights
 
 
@@ -90,7 +110,10 @@ class Layer(nn.Module):
         q = q * cos + rotate(q) * sin
         k = torch.cat([past_k, k * cos + rotate(k) * sin], 2)
         v = torch.cat([past_v, v], 2)
-        scores = q @ k.repeat_interleave(NQ // NKV, 1).transpose(-1, -2) / math.sqrt(D) + mask
+        scores = (
+            q @ k.repeat_interleave(NQ // NKV, 1).transpose(-1, -2) / math.sqrt(D)
+            + mask
+        )
         a = torch.softmax(scores, -1) @ v.repeat_interleave(NQ // NKV, 1)
         x = x + self.o(a.transpose(1, 2).reshape(b, t, NQ * D))
         y = self.ln2(x)
@@ -103,10 +126,20 @@ class Step(nn.Module):
     def __init__(self, w):
         super().__init__()
         self.proj = nn.Linear(2048, H)
-        self.proj.weight.data, self.proj.bias.data = w["small_to_mtp_projection.weight"], w["small_to_mtp_projection.bias"]
+        self.proj.weight.data, self.proj.bias.data = (
+            w["small_to_mtp_projection.weight"],
+            w["small_to_mtp_projection.bias"],
+        )
         self.layers = nn.ModuleList(Layer() for _ in range(LAYERS))
-        names = {"q": "self_attn.q_proj", "k": "self_attn.k_proj", "v": "self_attn.v_proj", "o": "self_attn.o_proj",
-                 "gate": "mlp.gate_proj", "up": "mlp.up_proj", "down": "mlp.down_proj"}
+        names = {
+            "q": "self_attn.q_proj",
+            "k": "self_attn.k_proj",
+            "v": "self_attn.v_proj",
+            "o": "self_attn.o_proj",
+            "gate": "mlp.gate_proj",
+            "up": "mlp.up_proj",
+            "down": "mlp.down_proj",
+        }
         for i, layer in enumerate(self.layers):
             p = f"model.layers.{i}."
             for attr, name in names.items():
@@ -117,8 +150,16 @@ class Step(nn.Module):
             layer.ln2.weight.data = w[p + "post_attention_layernorm.weight"]
         self.norm = RMSNorm(H)
         self.norm.weight.data = w["model.norm.weight"]
-        self.heads = nn.Parameter(torch.stack([w[f"lm_head.{j}.weight"].T for j in range(GROUPS)]).contiguous())
-        self.register_buffer("inv_freq", 1.0 / (THETA ** (torch.arange(0, D, 2).float() / D)), persistent=False)
+        self.heads = nn.Parameter(
+            torch.stack(
+                [w[f"lm_head.{j}.weight"].T for j in range(GROUPS)]
+            ).contiguous()
+        )
+        self.register_buffer(
+            "inv_freq",
+            1.0 / (THETA ** (torch.arange(0, D, 2).float() / D)),
+            persistent=False,
+        )
 
     def forward(self, inputs_embeds, head, past):
         t, p = inputs_embeds.shape[1], past[0].shape[2]
@@ -132,7 +173,9 @@ class Step(nn.Module):
         for i, layer in enumerate(self.layers):
             x, k, v = layer(x, cos, sin, past[2 * i], past[2 * i + 1], mask)
             present += [k, v]
-        logits = self.norm(x)[:, -1] @ torch.index_select(self.heads, 0, head).squeeze(0)
+        logits = self.norm(x)[:, -1] @ torch.index_select(self.heads, 0, head).squeeze(
+            0
+        )
         return (logits, *present)
 
 
@@ -141,11 +184,17 @@ class Embed(nn.Module):
 
     def __init__(self, w):
         super().__init__()
-        table = torch.stack([w[f"model.codec_embedding.{j}.weight"] for j in range(GROUPS)])
+        table = torch.stack(
+            [w[f"model.codec_embedding.{j}.weight"] for j in range(GROUPS)]
+        )
         self.table = nn.Parameter(table.reshape(GROUPS * VOCAB, 2048).half())
 
     def forward(self, codes, group):
-        return torch.index_select(self.table, 0, group * VOCAB + codes).float().unsqueeze(0)
+        return (
+            torch.index_select(self.table, 0, group * VOCAB + codes)
+            .float()
+            .unsqueeze(0)
+        )
 
 
 PAST = [f"past_{kind}_{i}" for i in range(LAYERS) for kind in ("key", "value")]
@@ -158,19 +207,103 @@ def export(w, out):
     past = tuple(torch.zeros(1, NKV, 3, D) for _ in PAST)
     cur, prior = Dim("cur", min=1, max=64), Dim("past", min=0, max=64)
     with torch.no_grad():
-        program = torch.onnx.export(step, (rows, torch.tensor([0]), past), input_names=["inputs_embeds", "head", *PAST],
-                                    output_names=["logits", *PRESENT], opset_version=18, dynamo=True, optimize=True,
-                                    external_data=False,
-                                    dynamic_shapes=({1: cur}, None, tuple({2: prior} for _ in PAST)))
+        program = torch.onnx.export(
+            step,
+            (rows, torch.tensor([0]), past),
+            input_names=["inputs_embeds", "head", *PAST],
+            output_names=["logits", *PRESENT],
+            opset_version=18,
+            dynamo=True,
+            optimize=True,
+            external_data=False,
+            dynamic_shapes=({1: cur}, None, tuple({2: prior} for _ in PAST)),
+        )
         program.save(str(out / "code_predictor_step_fp32.onnx"))
-        torch.onnx.export(embed, (torch.tensor([5]), torch.tensor([2])), str(out / "code_predictor_embed.onnx"),
-                          input_names=["codes", "group"], output_names=["embeds"], opset_version=17, dynamo=False,
-                          dynamic_axes={"codes": {0: "n"}, "group": {0: "n"}, "embeds": {1: "n"}})
-    quantizer = MatMulNBitsQuantizer(onnx.load(str(out / "code_predictor_step_fp32.onnx")), block_size=32,
-                                     is_symmetric=True, bits=8, accuracy_level=4)
+        torch.onnx.export(
+            embed,
+            (torch.tensor([5]), torch.tensor([2])),
+            str(out / "code_predictor_embed.onnx"),
+            input_names=["codes", "group"],
+            output_names=["embeds"],
+            opset_version=17,
+            dynamo=False,
+            dynamic_axes={"codes": {0: "n"}, "group": {0: "n"}, "embeds": {1: "n"}},
+        )
+    quantizer = MatMulNBitsQuantizer(
+        onnx.load(str(out / "code_predictor_step_fp32.onnx")),
+        block_size=32,
+        is_symmetric=True,
+        bits=8,
+        accuracy_level=4,
+    )
     quantizer.process()
-    quantizer.model.save_model_to_file(str(out / "code_predictor_step.onnx"), use_external_data_format=False)
+    quantizer.model.save_model_to_file(
+        str(out / "code_predictor_step.onnx"), use_external_data_format=False
+    )
     (out / "code_predictor_step_fp32.onnx").unlink()
+
+
+def int8_activations(work, out):
+    """The int4 graphs of onnx-community with accuracy_level 4 on each MatMulNBits node."""
+    for name in ("talker_cache.onnx", "text_embed.onnx"):
+        source = work / f"int4_{name}"
+        if not source.exists():
+            urllib.request.urlretrieve(f"{ONNX_COMMUNITY}/cpu_int4/{name}", source)
+        model = onnx.load(str(source))
+        for node in model.graph.node:
+            if node.op_type == "MatMulNBits":
+                kept = [a for a in node.attribute if a.name != "accuracy_level"]
+                del node.attribute[:]
+                node.attribute.extend(
+                    kept + [onnx.helper.make_attribute("accuracy_level", 4)]
+                )
+        onnx.save(model, str(out / name))
+
+
+def check_talker(out, work):
+    """Compare a prefill of the int8-activation talker with the onnx-community talker."""
+    urllib.request.urlretrieve(
+        f"{ONNX_COMMUNITY}/cpu_int4/codec_embed.onnx", work / "int4_codec_embed.onnx"
+    )
+    text = ort.InferenceSession(str(work / "int4_text_embed.onnx"))
+    codec = ort.InferenceSession(str(work / "int4_codec_embed.onnx"))
+    rng = np.random.default_rng(0)
+    rows = text.run(
+        None, {"text_ids": rng.integers(1000, 20000, (1, 12)).astype(np.int64)}
+    )[0]
+    rows = (
+        rows
+        + codec.run(
+            None, {"codec_ids": rng.integers(0, VOCAB, (1, 12)).astype(np.int64)}
+        )[0]
+    )
+    n = rows.shape[1]
+    outputs = []
+    for path in (work / "int4_talker_cache.onnx", out / "talker_cache.onnx"):
+        session = ort.InferenceSession(str(path))
+        feed = {
+            "inputs_embeds": rows.astype(np.float32),
+            "position_ids": np.tile(np.arange(n), (3, 1, 1)),
+            "attention_mask": np.ones((1, n), np.int64),
+        }
+        feed.update(
+            {
+                i.name: np.zeros((1, NKV, 0, D), np.float32)
+                for i in session.get_inputs()[3:]
+            }
+        )
+        outputs.append(session.run(None, feed)[0].reshape(n, -1))
+    want, got = outputs
+    cosines = (
+        (want * got).sum(-1)
+        / np.linalg.norm(want, axis=-1)
+        / np.linalg.norm(got, axis=-1)
+    )
+    agree = int((want.argmax(-1) == got.argmax(-1)).sum())
+    print(f"talker logit cosine min {cosines.min():.4f}, same argmax {agree}/{n}")
+    assert cosines.min() > 0.99 and agree >= 0.75 * n, (
+        "the talker does not match the reference"
+    )
 
 
 def check(out, work):
@@ -187,20 +320,39 @@ def check(out, work):
     for _ in range(8):
         hidden = (rng.standard_normal((1, 2048)) * 0.5).astype(np.float32)
         codes = rng.integers(0, VOCAB, (1, 16)).astype(np.int64)
-        expected = reference.run(None, {"talker_hidden": hidden, "codec_ids": codes})[0][0]
-        first = codec.run(None, {codec.get_inputs()[0].name: codes[:, :1]})[0].reshape(1, 1, 2048)
-        feed = {"inputs_embeds": np.concatenate([hidden.reshape(1, 1, 2048), first], 1), "head": np.array([0])}
+        expected = reference.run(None, {"talker_hidden": hidden, "codec_ids": codes})[
+            0
+        ][0]
+        first = codec.run(None, {codec.get_inputs()[0].name: codes[:, :1]})[0].reshape(
+            1, 1, 2048
+        )
+        feed = {
+            "inputs_embeds": np.concatenate([hidden.reshape(1, 1, 2048), first], 1),
+            "head": np.array([0]),
+        }
         feed.update({name: np.zeros((1, NKV, 0, D), np.float32) for name in PAST})
         for j in range(GROUPS):
             result = step.run(None, feed)
             got, want = result[0][0], expected[j]
-            cosines.append(float(got @ want / np.linalg.norm(got) / np.linalg.norm(want)))
+            cosines.append(
+                float(got @ want / np.linalg.norm(got) / np.linalg.norm(want))
+            )
             agree += int(got.argmax() == want.argmax())
             if j + 1 < GROUPS:
-                rows = embed.run(None, {"codes": codes[0, j + 1:j + 2], "group": np.array([j])})[0]
-                feed = {"inputs_embeds": rows, "head": np.array([j + 1]), **dict(zip(PAST, result[1:]))}
-    print(f"logit cosine min {min(cosines):.4f} mean {np.mean(cosines):.4f}, same argmax {agree}/{len(cosines)}")
-    assert min(cosines) > 0.97 and agree >= 0.85 * len(cosines), "the export does not match the reference"
+                rows = embed.run(
+                    None, {"codes": codes[0, j + 1 : j + 2], "group": np.array([j])}
+                )[0]
+                feed = {
+                    "inputs_embeds": rows,
+                    "head": np.array([j + 1]),
+                    **dict(zip(PAST, result[1:], strict=True)),
+                }
+    print(
+        f"logit cosine min {min(cosines):.4f} mean {np.mean(cosines):.4f}, same argmax {agree}/{len(cosines)}"
+    )
+    assert min(cosines) > 0.97 and agree >= 0.85 * len(cosines), (
+        "the export does not match the reference"
+    )
 
 
 def main():
@@ -212,6 +364,8 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
     export(code_predictor_weights(), args.out)
     check(args.out, args.work)
+    int8_activations(args.work, args.out)
+    check_talker(args.out, args.work)
 
 
 if __name__ == "__main__":

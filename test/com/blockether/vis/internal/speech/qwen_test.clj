@@ -16,6 +16,13 @@
       (aset out (+ (long offset) (long token)) (float score)))
     out))
 
+(defdescribe frame-limit-test
+             (it "lets a chunk speak slowly but ends a clone that never stops"
+                 ;; An expressive cloned voice ran 80 characters to 163 seconds of audio.
+                 (expect (= 555 (qwen/frame-limit (apply str (repeat 80 "a")))))
+                 (expect (= qwen/max-frames (qwen/frame-limit (apply str (repeat 5000 "a")))))
+                 (expect (<= (* 3 100) (qwen/frame-limit (apply str (repeat 100 "天")))))))
+
 (defdescribe
   text-language-test
   (describe "the script"
@@ -72,7 +79,7 @@
   (it "needs the Base model only for an imported voice"
       (with-redefs [voices/imported-voice #(when (= "marius" %) {:id "marius" :clip "/x.wav"})]
         (expect (= [qwen/asset-id] (mapv :id (#'qwen/voice-assets :ryan))))
-        (expect (= [qwen/asset-id qwen/clone-asset-id qwen/predictor-asset-id]
+        (expect (= [qwen/asset-id qwen/clone-asset-id qwen/export-asset-id]
                    (mapv :id (#'qwen/voice-assets "marius")))))))
 
 (defdescribe sample-first-code-test

@@ -16,7 +16,7 @@ This file is generated from `resources/vis-models/manifest.edn` and
 | `vibevoice-realtime-0.5b-int8` | MIT AND Apache-2.0 | yes | the Vis assets release | automatically |
 | `qwen3-tts-12hz-1.7b-customvoice-int4` | Apache-2.0 | yes | the Vis assets release | automatically |
 | `qwen3-tts-12hz-1.7b-base-int4` | Apache-2.0 | yes | the Vis assets release | automatically |
-| `qwen3-tts-12hz-1.7b-base-code-predictor-int8` | Apache-2.0 | yes | the Vis assets release | automatically |
+| `qwen3-tts-12hz-1.7b-base-vis-export` | Apache-2.0 | yes | the Vis assets release | automatically |
 | `vibevoice-voice-samples` | MIT | yes | the Vis assets release | automatically |
 | `vibevoice-asr-streaming-1.5b-int8` | MIT | yes | the Vis assets release | automatically |
 | `piper-en_US-kristin-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
@@ -118,26 +118,26 @@ Qwen3-TTS-12Hz-1.7B-CustomVoice by the Qwen team, Alibaba Cloud (https://hugging
 
 Engine `:qwen-tts` - Apache-2.0 - commercial use permitted - hosted by Vis
 
-Qwen3-TTS-12Hz-1.7B-Base by the Qwen team, Alibaba Cloud (https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0. ONNX export by onnx-community (https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0, revision 16ec6f33. Speaks in voices that you import from a recording.
+Qwen3-TTS-12Hz-1.7B-Base by the Qwen team, Alibaba Cloud (https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0. ONNX export by onnx-community (https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0, revision 16ec6f33. Speaks in voices that you import from a recording, with the talker and the code predictor of qwen3-tts-12hz-1.7b-base-vis-export.
 
 > Tell listeners that the audio is synthetic, and clone only your own voice or a voice whose owner gave consent.
 
 - Upstream: <https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base>
 - Installs into: `~/.vis/models/qwen3-tts-12hz-1.7b-base-int4`
 - Downloaded from, in order:
-  - the Vis assets release, 1439 MB, 7 files - <https://github.com/Blockether/vis>
-  - the publisher, 1439 MB, 7 files - <https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base>
+  - the Vis assets release, 323 MB, 5 files - <https://github.com/Blockether/vis>
+  - the publisher, 323 MB, 5 files - <https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base>
 
-## `qwen3-tts-12hz-1.7b-base-code-predictor-int8`
+## `qwen3-tts-12hz-1.7b-base-vis-export`
 
 Engine `:qwen-tts` - Apache-2.0 - commercial use permitted - hosted by Vis
 
-The code predictor of Qwen3-TTS-12Hz-1.7B-Base by the Qwen team, Alibaba Cloud (https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0, revision fd4b2543. Exported by Vis with a KV cache and int8 weights (bin/export-qwen-code-predictor).
+Qwen3-TTS-12Hz-1.7B-Base by the Qwen team, Alibaba Cloud (https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0, revision fd4b2543. Vis exports its code predictor with a KV cache and int8 weights. The talker and text embedding are the int4 graphs of onnx-community (https://huggingface.co/onnx-community/Qwen3-TTS-12Hz-1.7B-Base), Apache-2.0, revision 16ec6f33, with int8 activations (bin/export-qwen-base).
 
 - Upstream: <https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base>
-- Installs into: `~/.vis/models/qwen3-tts-12hz-1.7b-base-code-predictor-int8`
+- Installs into: `~/.vis/models/qwen3-tts-12hz-1.7b-base-vis-export`
 - Downloaded from, in order:
-  - the Vis assets release, 343 MB, 2 files - <https://github.com/Blockether/vis>
+  - the Vis assets release, 1459 MB, 4 files - <https://github.com/Blockether/vis>
 
 ## `vibevoice-voice-samples`
 

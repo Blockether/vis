@@ -14,14 +14,14 @@
      tok_decoder          frames to 24 kHz audio, 1920 samples for each frame
 
    A voice imported from a recording uses the Base model, the `cpu_int4` export of
-   onnx-community. It has its own text_embed, codec_embed, talker_cache and
-   residual_embed, and these graphs:
+   onnx-community. It has its own codec_embed and residual_embed, and these graphs:
 
      speaker_encoder  24 kHz audio to the speaker vector of the codec prompt
      tok_encoder      one second of 24 kHz audio to 13 frames of codes
 
-   Its code predictor is the Vis export of `bin/export-qwen-code-predictor`, with
-   a KV cache, so each codebook is one step of one row:
+   `bin/export-qwen-base` makes its other graphs. Its text_embed and talker_cache
+   are the onnx-community graphs with int8 activations, which are several times faster
+   on a CPU. Its code predictor has a KV cache, so each codebook is one step of one row:
 
      code_predictor_step   rows and a KV cache to the logits of one codebook
      code_predictor_embed  a code of one codebook to its input row
@@ -50,9 +50,9 @@
   "The Base model, which speaks in an imported voice."
   "qwen3-tts-12hz-1.7b-base-int4")
 
-(def ^:const predictor-asset-id
-  "The code predictor of the Base model with a KV cache."
-  "qwen3-tts-12hz-1.7b-base-code-predictor-int8")
+(def ^:const export-asset-id
+  "The Vis export of the Base model: its code predictor, talker and text_embed."
+  "qwen3-tts-12hz-1.7b-base-vis-export")
 
 (def ^:const hidden-size 2048)
 
@@ -78,6 +78,13 @@
   "The most frames of one text chunk, about 160 seconds. Generation stops here even
    without an end-of-speech token."
   2048)
+
+(defn frame-limit
+  "The most frames for the text `piece`. One character takes about one frame, and a
+   Chinese character about three. A clone that never ends its speech stops here,
+   not at [[max-frames]]."
+  ^long [piece]
+  (min (long max-frames) (+ 75 (* 6 (count (str piece))))))
 
 (def ^:const temperature "The sampling temperature of the reference generation." 0.9)
 
@@ -119,7 +126,7 @@
 
 (defn clone-asset [] (assets/entry clone-asset-id))
 
-(defn predictor-asset [] (assets/entry predictor-asset-id))
+(defn export-asset [] (assets/entry export-asset-id))
 
 (defn- imported-voice
   "The imported voice `voice-id`, or nil. An import with the name of a built-in
@@ -153,9 +160,9 @@
 
 (defn- voice-assets
   "The models that `voice-id` needs: the speaker bundle, and the Base model and its
-   code predictor too for an imported voice."
+   Vis export too for an imported voice."
   [voice-id]
-  (if (imported-voice voice-id) [(asset) (clone-asset) (predictor-asset)] [(asset)]))
+  (if (imported-voice voice-id) [(asset) (clone-asset) (export-asset)] [(asset)]))
 
 ;; Language
 
@@ -240,32 +247,35 @@
   "The graphs in `dir`. The two exports name their tensors differently, so a graph
    with one input and one output is fed by position. A Base bundle takes the
    tokenizer and the decoder from the speaker bundle in `shared`, and the code
-   predictor from `predictor`."
+   predictor, the talker and text_embed from `exported`."
   ([env dir] (open-bundle env dir dir nil))
-  ([^OrtEnvironment env ^File dir ^File shared predictor]
+  ([^OrtEnvironment env ^File dir ^File shared exported]
    (let [f
          #(io/file dir %)
 
+         g
+         #(io/file (or exported dir) %)
+
          talker
-         (vv/open-session env (f "talker_cache.onnx"))
+         (vv/open-session env (g "talker_cache.onnx"))
 
          base
          {:env env
           :config (vv/read-json (f "config.json"))
           :tokenizer (vv/open-tokenizer (io/file shared "tokenizer.json"))
-          :text-embed (vv/open-session env (f "text_embed.onnx"))
+          :text-embed (vv/open-session env (g "text_embed.onnx"))
           :codec-embed (vv/open-session env (f "codec_embed.onnx"))
           :talker talker
           :past-names (subvec (input-names talker) 3)
           :residual-embed (vv/open-session env (f "residual_embed.onnx"))
           :decoder (vv/open-session env (io/file shared "tok_decoder.onnx"))}]
 
-     (if predictor
-       (let [step (vv/open-session env (io/file predictor "code_predictor_step.onnx"))]
+     (if exported
+       (let [step (vv/open-session env (g "code_predictor_step.onnx"))]
          (assoc base
            :group-step step
            :group-past-names (subvec (input-names step) 2)
-           :group-embed (vv/open-session env (io/file predictor "code_predictor_embed.onnx"))
+           :group-embed (vv/open-session env (g "code_predictor_embed.onnx"))
            :speaker-encoder (vv/open-session env (f "speaker_encoder.onnx"))
            :audio-encoder (vv/open-session env (f "tok_encoder.onnx"))))
        (assoc base :code-predictor (vv/open-session env (f "code_predictor_loop.onnx")))))))
@@ -624,8 +634,10 @@
 
 (defn generate-frames
   "Every frame of one text chunk as 16-code arrays, until the end-of-speech token
-   or [[max-frames]]. `report` gets the frame count now and then."
-  [{:keys [^OrtEnvironment env] :as bundle} {:keys [embeds rows pad]} ^longs noise report]
+   or `limit` frames, [[max-frames]] by default. `report` gets the frame count now
+   and then."
+  [{:keys [^OrtEnvironment env] :as bundle} {:keys [embeds rows pad limit] :or {limit max-frames}}
+   ^longs noise report]
   (let [eos
         (long (get-in bundle [:config "talker_config" "codec_eos_token_id"]))
 
@@ -667,7 +679,7 @@
               code0
               (sample-first-code logits (* (dec rows) codec-vocab) history eos noise)]
 
-          (if (or (= code0 eos) (>= (count frames) (long max-frames)))
+          (if (or (= code0 eos) (>= (count frames) (long limit)))
             frames
             (let [codes ((if (:group-step bundle) group-frame-codes frame-codes)
                           bundle
@@ -879,7 +891,7 @@
            (vv/loaded
              :qwen-tts-clone
              (io/file (assets/install-dir (clone-asset)))
-             #(open-bundle %1 %2 (io/file dir) (io/file (assets/install-dir (predictor-asset)))))
+             #(open-bundle %1 %2 (io/file dir) (io/file (assets/install-dir (export-asset)))))
            (vv/loaded :qwen-tts (io/file dir) open-bundle))
 
          ref
@@ -907,7 +919,8 @@
                   (let [{:keys [ids codec]} (chunk-prompt bundle voice (:speaker ref) piece)]
                     (decode-frames bundle
                                    (generate-frames bundle
-                                                    (prefill-embeddings bundle ids codec ref)
+                                                    (assoc (prefill-embeddings bundle ids codec ref)
+                                                      :limit (frame-limit piece))
                                                     noise
                                                     #(progress i piece %))
                                    (:frames ref))))
@@ -966,7 +979,7 @@
 
           _
           (when (imported-voice voice)
-            (doseq [entry [(clone-asset) (predictor-asset)]]
+            (doseq [entry [(clone-asset) (export-asset)]]
               (assets/ensure! entry #(report (assoc % :phase :preparing)))))
 
           _
