@@ -737,9 +737,9 @@
       (assoc (lv/panel-geometry cols) :panes (vec panes)))))
 
 (defn- live-pane
-  "The mounted view `view-id`: a view of this session, or a header view of this machine."
+  "The mounted view `view-id` of this session."
   [db view-id]
-  (first (filter #(= view-id (lv/view-id %)) (concat (:live-views db) (:header-views db)))))
+  (first (filter #(= view-id (lv/view-id %)) (:live-views db))))
 
 (defn- viewer-panes
   "Project the selected transient view without modifying its transcript state."
@@ -950,12 +950,6 @@
 
     :live-panel-tab
     (do (state/dispatch [:live-panel-tab (:tab hit)]) (state/dispatch [:bump-render-version]) true)
-
-    ;; A header pin opens its view in the viewer.
-    :header-pin
-    (do (state/dispatch [:live-view-reopen (:view-id hit)])
-        (state/dispatch [:bump-render-version])
-        true)
 
     false))
 
@@ -2427,20 +2421,6 @@
   (if (seq (lv/panel-panes (:live-views @state/app-db)))
     (do (state/dispatch [:live-panel-focus]) (state/dispatch [:bump-render-version]))
     (vis/notify! "No view uses the side panel in this session." :level :info)))
-
-(defn- show-header-pins!
-  "C-x P: list the header pins of this machine; the chosen pin opens in the viewer."
-  [screen]
-  (if-let [chips (seq (map lv/pin-chip (:header-views @state/app-db)))]
-    (when-let [choice (with-dialog-lock #(dlg/list-dialog! screen
-                                                           "Header pins"
-                                                           (mapv (fn [{:keys [text view-id]}]
-                                                                   {:label text :view-id view-id})
-                                                                 chips)
-                                                           {:enter-label "open" :height :content}))]
-      (state/dispatch [:live-view-reopen (:view-id choice)])
-      (state/dispatch [:bump-render-version]))
-    (vis/notify! "This machine has no header pins." :level :info)))
 
 (defn- live-panel-key!
   "Keys of the focused side panel. ↑ and ↓ select a view, ← folds it, → unfolds it,
@@ -6234,33 +6214,6 @@
 
             (load-project-page! pid true)))))))
 
-(defn- header-view-event!
-  "Fold one fleet `view.*` frame of a header view into the header pins."
-  [event]
-  (when (= "live" (get event "kind"))
-    (case (get event "type")
-      "view.open"
-      (when-let [view (hi/live-view<-wire (get event "view"))]
-        (state/dispatch [:header-view-open view]))
-
-      "view.patch"
-      (when-let [patch (hi/live-patch<-wire (get event "patch"))]
-        (state/dispatch [:header-view-patch patch]))
-
-      "view.close"
-      (when-let [view-id (some-> (get event "view_id")
-                                 str)]
-        (state/dispatch [:header-view-close view-id]))
-
-      nil)))
-
-(defn- load-header-views!
-  "Read the machine's header views once; the fleet stream keeps them current."
-  []
-  (try (state/dispatch [:header-views-set
-                        (into [] (keep hi/live-view<-wire) (vis/gateway-header-views))])
-       (catch Throwable _ nil)))
-
 (defn- start-projects-refresh!
   "Follow fleet status/title deltas and periodically catch arrivals outside this TUI.
    A created or forked session reads only its own project. The same deltas keep the
@@ -6281,20 +6234,16 @@
         (atom false)
 
         stop
-        (try (vis/gateway-fleet-subscribe! (fn [event]
-                                             (case (get event "type")
-                                               "session.created"
-                                               (do (swap! created conj event)
-                                                   (reset! picker-stale? true))
+        (try (vis/gateway-fleet-subscribe!
+               (fn [event]
+                 (case (get event "type")
+                   "session.created"
+                   (do (swap! created conj event) (reset! picker-stale? true))
 
-                                               ("session.status" "session.title_updated")
-                                               (do (reset! dirty? true) (reset! picker-stale? true))
+                   ("session.status" "session.title_updated")
+                   (do (reset! dirty? true) (reset! picker-stale? true))
 
-                                               ;; Header views belong to the machine, so their events ride this stream.
-                                               ("view.open" "view.patch" "view.close")
-                                               (header-view-event! event)
-
-                                               nil)))
+                   nil)))
              (catch Throwable _
                (fn [])))
 
@@ -6302,7 +6251,6 @@
         (Thread.
           ^Runnable
           (fn []
-            (load-header-views!)
             (loop [last-read
                    0
 
@@ -8933,11 +8881,8 @@
                                  :live-select
                                  (activate-live-region! db hit)
 
-                                 (:live-panel-toggle :live-panel-tab :header-pin)
+                                 (:live-panel-toggle :live-panel-tab)
                                  (activate-live-region! db hit)
-
-                                 :header-pins-list
-                                 (show-header-pins! screen)
 
                                  :live-edit
                                  (edit-live-input! screen db hit)
@@ -9125,11 +9070,8 @@
                                  :live-select
                                  (activate-live-region! db hit)
 
-                                 (:live-panel-toggle :live-panel-tab :header-pin)
+                                 (:live-panel-toggle :live-panel-tab)
                                  (activate-live-region! db hit)
-
-                                 :header-pins-list
-                                 (show-header-pins! screen)
 
                                  :live-edit
                                  (edit-live-input! screen db hit)
@@ -9445,9 +9387,6 @@
                                      :live-panel
                                      (open-live-panel!)
 
-                                     :header-pins
-                                     (show-header-pins! screen)
-
                                      :automations
                                      (open-automations! screen)
 
@@ -9691,12 +9630,9 @@
                          :agent-questions
                          (do (focus-agent-questions!) (recur))
 
-                         ;; C-x V — open the side panel or move the focus; C-x P — header pins.
+                         ;; C-x V — open the side panel or move the focus.
                          :live-panel
                          (do (open-live-panel!) (recur))
-
-                         :header-pins
-                         (do (show-header-pins! screen) (recur))
 
                          ;; C-x k — mark the whole queue for the running turn's
                          ;; next step (the header's `→ Send now`).

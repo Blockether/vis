@@ -1314,10 +1314,10 @@
 
 (defdescribe
   owned-views-reach-the-app-over-http-test
-  "A panel view lists under its session with the placement filter. A header view
-   belongs to the machine and has its own list and action routes."
+  "A panel view lists under its session with the placement filter. No route
+   lists or drives a view outside a session."
   (it
-    "lists panel and header views and acts on a header view"
+    "lists panel views by placement and has no machine view routes"
     (recorded
       (fn []
         (let [sid
@@ -1330,17 +1330,13 @@
               (fn [path]
                 ((requiring-resolve 'reitit.core/match-by-path) router path))
 
-              [panel header]
+              panel
               (binding [hi/*live-owner* {:extension "forge" :context (Object.)}]
-                [(hi/open-live! {:title "Agents"
-                                 :session-id sid
-                                 :placement "panel"
-                                 :key "agents"
-                                 :nodes [{:id "count" :type :stat :label "Agents" :value 2}]})
-                 (hi/open-live! {:title "Build"
-                                 :placement "header"
-                                 :key "build"
-                                 :nodes [{:id "go" :type :button :label "Rerun"}]})])
+                (hi/open-live! {:title "Agents"
+                                :session-id sid
+                                :placement "panel"
+                                :key "agents"
+                                :nodes [{:id "count" :type :stat :label "Agents" :value 2}]}))
 
               listed
               (fn [placement]
@@ -1353,26 +1349,8 @@
 
           (try (expect (= [(:id panel)] (ids (listed "panel"))))
                (expect (= [] (ids (listed "inline"))))
-               (expect (= 400 (:status (listed "side"))))
-               (expect (= [(:id header)]
-                          (filterv #{(:id header) (:id panel)}
-                            (ids (#'views-api/list-header-views-handler {})))))
-               (expect (= @#'views-api/list-header-views-handler
-                          (get-in (match "/v1/views/live") [:data :get :handler])))
-               (expect (= @#'views-api/header-view-action-handler
-                          (get-in (match (str "/v1/views/" (:id header) "/actions"))
-                                  [:data :post :handler])))
-               (let [response (#'views-api/header-view-action-handler
-                               {:path-params {:view-id (:id header)}
-                                :body (body-stream {:action "activate" :node_id "go"})})]
-                 (expect (= 200 (:status response)))
-                 (expect (true? (get (json-body response) "is_accepted")))
-                 (expect (= 1
-                            (get-in (gw-hi/header-view-of (:id header)) [:view :nodes 0 :clicks]))))
-               (expect (= 404
-                          (:status (#'views-api/header-view-action-handler
-                                    {:path-params {:view-id (:id panel)}
-                                     :body (body-stream {:action "activate" :node_id "count"})}))))
-               (finally (hi/close-live! (:id panel))
-                        (hi/close-live! (:id header))
-                        (hi/flush-owned!))))))))
+               (expect (= 400 (:status (listed "header"))))
+               (expect (nil? (get-in (match "/v1/views/live") [:data :get :handler])))
+               (expect (nil? (get-in (match (str "/v1/views/" (:id panel) "/actions"))
+                                     [:data :post :handler])))
+               (finally (hi/close-live! (:id panel)) (hi/flush-owned!))))))))

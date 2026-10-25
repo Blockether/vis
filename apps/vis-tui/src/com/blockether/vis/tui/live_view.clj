@@ -2774,12 +2774,12 @@
      (paint-generic! g cols rows panes content-top prompt-h now-ms))))
 
 (defn placement
-  "Where a view shows: `:inline` (the default), `:panel` or `:header`."
+  "Where a view shows: `:inline` (the default) or `:panel`."
   [pane]
   (or (get-in pane [:view :placement]) :inline))
 
 (defn- owner
-  "The extension that owns a panel or header view, or an empty string."
+  "The extension that owns a panel view, or an empty string."
   [pane]
   (flat-text (get-in pane [:view :extension])))
 
@@ -2827,22 +2827,6 @@
      :width width
      :is-docked docked?
      :chat-cols (if docked? (- cols width) cols)}))
-
-(defn pin-chip
-  "One header pin: the view title and its first status or progress, with that tone."
-  [pane]
-  (let [title
-        (flat-text (get-in pane [:view :title]))
-
-        {:keys [text tone]}
-        (status-summary pane)]
-
-    {:view-id (view-id pane)
-     :tone tone
-     :glyph (or (tone-glyph tone) "▸")
-     :title title
-     :status (when (not= text title) text)
-     :text (str/join " · " (remove str/blank? [title (when (not= text title) text)]))}))
 
 (defn- panel-rows
   "The panel body: one title row for each shown view, then the plan rows of an open view."

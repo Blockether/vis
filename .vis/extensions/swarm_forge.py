@@ -5,8 +5,8 @@ own `worktree` draft. A task goes through the roles in order. Each role merges t
 previous role, does its own work and commits it. The last role stops at an approval. Approve lands
 its draft on the default branch. Reject sends the task back with a comment.
 
-The board is a `panel` view in the session that started the swarm. A `header` pin shows the state
-of the swarm in other sessions. `vis.state` keeps each swarm, so `/reload` opens the board again.
+The board is a `panel` view in the session that started the swarm. `vis.state` keeps each swarm, so
+`/reload` opens the board again.
 Packs are YAML files in `swarm_forge/packs/`.
 """
 
@@ -647,9 +647,9 @@ def teardown(swarm_id, reason="Teardown"):
         swarm["status"] = "stopped"
         forget(swarm_id)
         board = _BOARDS.pop(swarm_id, None) or {}
-        for view in (board.get("panel"), board.get("pin")):
+        if board.get("panel"):
             try:
-                view.close(reason="completed", summary=reason)
+                board["panel"].close(reason="completed", summary=reason)
             except Exception:  # noqa: BLE001
                 pass
         _WORKERS.pop(swarm_id, None)
@@ -771,21 +771,6 @@ def summary_stats(swarm):
         }
         for key, label, tone in shown
     ]
-
-
-def pin_text(swarm):
-    """Say in one short line what the swarm needs or does now."""
-    found = counts(swarm)
-    parts = [
-        f"{found[key]} {word}"
-        for key, word in (("attention", "need you"), ("working", "working"))
-        if found[key]
-    ]
-    if parts:
-        return ", ".join(parts)
-    if found["open"]:
-        return f"{found['open']} open"
-    return f"{found['landed']} landed" if found["landed"] else "No tasks"
 
 
 def _prefix(job_id, index):
@@ -1038,14 +1023,8 @@ def board_nodes(swarm):
     return nodes + [_new_task(), sections["roles"], sections["end"]]
 
 
-def pin_nodes(swarm):
-    found = counts(swarm)
-    tone = "warn" if found["attention"] else ("running" if found["working"] else "idle")
-    return [vis.status("pin", pin_text(swarm), tone=tone)]
-
-
 def open_board(swarm):
-    """Open or replace the panel and the header pin of `swarm`."""
+    """Open or replace the panel board of `swarm`."""
     swarm_id = swarm["id"]
     panel = vis.live(
         "Swarm Forge",
@@ -1055,14 +1034,7 @@ def open_board(swarm):
         session_id=swarm_id,
         on_event=lambda event: on_event(swarm_id, event),
     )
-    pin = vis.live(
-        "Swarm Forge",
-        pin_nodes(swarm),
-        placement="header",
-        key=f"swarm-pin-{swarm_id[:8]}",
-        on_event=lambda event: None,
-    )
-    _BOARDS[swarm_id] = {"panel": panel, "pin": pin, "painted": board_sections(swarm)}
+    _BOARDS[swarm_id] = {"panel": panel, "painted": board_sections(swarm)}
     return panel
 
 
@@ -1087,10 +1059,6 @@ def paint(swarm):
                 if fresh[name] != old.get(name):
                     panel.drop(name)
                     panel.add(fresh[name], after=order[order.index(name) - 1])
-        if fresh["summary"] != old.get("summary"):
-            line = pin_nodes(swarm)[0]
-            board["pin"]["pin"].set(line["text"], tone=line["tone"])
-            board["pin"].flush()
         board["painted"] = fresh
     except vis.Interrupted:
         _BOARDS.pop(swarm["id"], None)

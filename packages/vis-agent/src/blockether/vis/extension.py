@@ -129,7 +129,7 @@ class Host(Protocol):
     def live(self, envelope_json: str, listener: Any = None) -> str:
         """Open, patch, read or close a live view.
 
-        On `open`, `listener(event)` gets each human event of a panel or header view.
+        On `open`, `listener(event)` gets each human event of a panel view.
 
         `state` accepts timeout_ms (0..86400000) and after_seq (nonnegative).
         A positive timeout blocks until the sequence differs or the view closes.
@@ -4692,7 +4692,7 @@ class LiveView:
         self._seq = 0
         self._cursor = 0
         self._listeners = []
-        # A panel or header view gets its events from the host, as callbacks.
+        # A panel view gets its events from the host, as callbacks.
         self._is_pushed = False
         if on_event is not None:
             self.on_event(on_event)
@@ -4986,7 +4986,7 @@ class LiveView:
     def on_event(self, callback):
         """Call `callback(event)` for each event that `events` or `sleep` reads.
 
-        A panel or header view opened with `vis.live(..., on_event=...)` gets its
+        A panel view opened with `vis.live(..., on_event=...)` gets its
         events from the host instead. Each one runs as an extension callback with
         the view session bound, also when no extension code waits on the view.
         Returns the callback, so you can use this method as a decorator.
@@ -5183,10 +5183,10 @@ def live(title, nodes, placement=None, key=None, on_event=None, **options):
     `vis.ask` documents. There is no cancellable flag: a human can always stop
     watching, and the verdict says they did (`is_from_human`) and why (`note`).
 
-    `placement` is `inline` (the default), `panel` (one session) or `header`
-    (this machine). Only extension code opens a panel or header view, and it
-    needs a `key`: the extension and the key own one view, so opening the same
-    key again replaces it. Such a view stays open after the call returns. It
+    `placement` is `inline` (the default) or `panel` (the side panel of one
+    session). Only extension code opens a panel view, and it needs a `key`:
+    the extension and the key own one view, so opening the same key again
+    replaces it. Such a view stays open after the call returns. It
     closes on `close()` or when the extension unloads. `on_event(event)` then
     runs for each human change, submit or activate, with the view session bound.
 
@@ -5504,7 +5504,7 @@ class _LiveRecorder:
     def live(self, envelope_json, listener=None):
         """Record and apply one envelope emitted by the extension.
 
-        A `listener` gets each simulated event of a panel or header view, as the
+        A `listener` gets each simulated event of a panel view, as the
         host gives it to `on_event` callbacks.
         """
         import json

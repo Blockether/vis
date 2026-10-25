@@ -493,7 +493,7 @@ def test_a_panel_view_pushes_events_to_its_open_callback(monkeypatch):
     seen = []
     nodes = [vis.button("go", "Rerun")]
     with vis.live(
-        "Build", nodes, placement="header", key="build", on_event=seen.append
+        "Build", nodes, placement="panel", key="build", on_event=seen.append
     ) as view:
         recorder.activate("go")
         assert [(e.type, e.node_id) for e in seen] == [("activate", "go")]

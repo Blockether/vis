@@ -1666,8 +1666,7 @@
       "type": "string",
       "enum": [
         "inline",
-        "panel",
-        "header"
+        "panel"
       ],
       "default": "inline"
     },
@@ -1702,12 +1701,12 @@
           "$ref": "common.json#/$defs/non_blank_string"
         },
         "extension": {
-          "description": "The extension that owns this panel or header view.",
+          "description": "The extension that owns this panel view.",
           "$ref": "common.json#/$defs/non_blank_string",
           "readOnly": true
         },
         "is_stale": {
-          "description": "True for the saved picture of an owned view after a gateway restart, until its extension opens the same key again.",
+          "description": "True for the saved picture of an owned view after a gateway restart, until its extension loads again.",
           "type": "boolean",
           "readOnly": true
         },

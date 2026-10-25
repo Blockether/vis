@@ -418,26 +418,6 @@ class ExecutionLayer(ABC):
         """
         return Session(self, sid)
 
-    def header_views(self) -> list[LiveView]:
-        """Read the header views of this machine as typed `LiveView` records.
-
-        A header view belongs to no session. Its events come on the fleet stream.
-        """
-        data = _field(self.get_views_live(), "views", list)
-        try:
-            return [LiveView.from_wire(item) for item in data]
-        except ValueError:
-            raise ProtocolError("invalid live View response") from None
-
-    def header_view_action(self, view_id: str, action: str, **values):
-        """Send an operator action to a header view and return the JSON response.
-
-        `values` supplies the action-specific fields of the operator action schema.
-        """
-        body = {**values, "action": action}
-        validate("view", "operator_action", body)
-        return self.post_view_actions(view_id, body=body)
-
     def create_session(
         self,
         *,
@@ -3002,34 +2982,6 @@ class ExecutionLayer(ABC):
         )
         return response.json()
 
-    def get_views_live(
-        self, *, query: Query | None = None, timeout: float | None = None
-    ) -> JSONValue:
-        """GET /v1/views/live — json response."""
-        response = self._request(
-            "GET", "/v1/views/live", path={}, query=query, timeout=timeout
-        )
-        return response.json()
-
-    def post_view_actions(
-        self,
-        view_id: str,
-        *,
-        query: Query | None = None,
-        timeout: float | None = None,
-        body: JSONValue = None,
-    ) -> JSONValue:
-        """POST /v1/views/:view-id/actions — json response."""
-        response = self._request(
-            "POST",
-            "/v1/views/:view-id/actions",
-            path={"view-id": view_id},
-            query=query,
-            timeout=timeout,
-            body=body,
-        )
-        return response.json()
-
     def post_voice(
         self,
         *,
@@ -3658,8 +3610,8 @@ class Session:
         """Read current live views as typed `blockether.vis.views.LiveView` records.
 
         This fetches a snapshot and does not subscribe to future updates. Use
-        `events` to follow view events. A `placement` (`inline`, `panel` or
-        `header`) keeps only those views. Malformed view data raises
+        `events` to follow view events. A `placement` (`inline` or `panel`)
+        keeps only those views. Malformed view data raises
         `ProtocolError`.
         """
         query = None if placement is None else {"placement": str(placement)}

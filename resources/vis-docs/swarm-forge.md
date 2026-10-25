@@ -69,8 +69,7 @@ work and commits it in its draft. Then the task moves to the next role.
 ## Follow the board
 
 The board opens in the side panel of the session that started the swarm. In the terminal, press
-Ctrl+X V. In the Companion app, select the panel icon next to Settings. A pin in the header shows
-the state of the swarm from every session, for example `2 need you, 1 working`.
+Ctrl+X V. In the Companion app, select the panel icon next to Settings.
 
 | Section | What it shows |
 | --- | --- |

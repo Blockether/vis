@@ -1435,12 +1435,6 @@
   [sid]
   (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live")) "views")))
 
-(defn header-views
-  "The header views of this gateway's machine, oldest first, in canonical wire shape.
-   Their `view.*` events arrive on the fleet stream."
-  []
-  (vec (get (send-json! "GET" "/v1/views/live") "views")))
-
 (defn live-view-log
   "One page of a retained log, searched literally without case sensitivity.
    `from` counts matches; the wire response includes original line numbers.
@@ -1456,8 +1450,7 @@
                    "&query=" (enc query))))
 
 (defn view-action!
-  "Apply one operator action to the DAEMON-side View `view-id` of `sid`. A nil
-   `sid` names a header view of the machine.
+  "Apply one operator action to the DAEMON-side View `view-id` of `sid`.
 
    `action` is the closed View map: `{:action :submit :values …}`,
    `{:action :cancel}`, `{:action :select :node-id … :item-ids …}`, or
@@ -1474,12 +1467,9 @@
         (when-not action-name
           (throw (ex-info "View action needs :action" {:type :vis/view-invalid-action})))
 
-        ;; A header view belongs to the machine, not a session, so it has its own route.
         res
         (send-json! "POST"
-                    (if sid
-                      (str "/v1/sessions/" (enc sid) "/views/" (enc view-id) "/actions")
-                      (str "/v1/views/" (enc view-id) "/actions"))
+                    (str "/v1/sessions/" (enc sid) "/views/" (enc view-id) "/actions")
                     (assoc action :action action-name))]
 
     (cond-> {:action (keyword (get res "action" action-name))
@@ -2503,8 +2493,6 @@
 (def gateway-ensure-project-for-root! ensure-project-for-root!)
 
 (def gateway-fleet-subscribe! fleet-subscribe!)
-
-(def gateway-header-views header-views)
 
 (def gateway-input-views input-views)
 

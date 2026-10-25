@@ -2154,8 +2154,8 @@ export function LiveView({
 }: {
   views: LiveViewModel[];
   client: GatewayClient;
-  /** The session that shows the views, or `null` for the header views of the machine. */
-  sid: string | null;
+  /** The session that shows the views. */
+  sid: string;
   /** Paint each view without a frame or a title, inside the side panel. */
   inPanel?: boolean;
   /** Show the views already opened in the session's dialog, and call this when it closes. */
@@ -2166,8 +2166,7 @@ export function LiveView({
 
   if (views.length === 0) return null;
 
-  const send = (viewId: string, action: ViewAction) =>
-    sid === null ? client.headerViewAction(viewId, action) : client.viewAction(sid, viewId, action);
+  const send = (viewId: string, action: ViewAction) => client.viewAction(sid, viewId, action);
 
   // The note the human typed rides WITH the stop: one call, so the run never
   // resumes on an interrupt whose reason is still in flight behind it.
@@ -2228,11 +2227,8 @@ export function LiveView({
     }
   };
 
-  const readLog = (viewId: string) =>
-    sid === null
-      ? undefined
-      : (nodeId: string, from: number, limit: number, query?: string) =>
-          client.liveViewLog(sid, viewId, nodeId, from, limit, query);
+  const readLog = (viewId: string) => (nodeId: string, from: number, limit: number, query?: string) =>
+    client.liveViewLog(sid, viewId, nodeId, from, limit, query);
 
   const panels = views.map((view) => {
     const panel = {

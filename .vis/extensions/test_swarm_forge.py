@@ -169,9 +169,7 @@ def test_the_pipeline_moves_a_task_through_each_role_and_lands_it(world):
     assert cleaner.options["draft_backend"] == "worktree"
     board = world.host.board
     assert board.said[0]["view"]["placement"] == "panel"
-    assert (
-        world.host.by_key["swarm-pin-LEADER"].said[0]["view"]["placement"] == "header"
-    )
+    assert set(world.host.by_key) == {"swarm-board"}
     _add(world)
     assert "## Task T1: Add greet()" in coder.sent[0]
     assert board.node("task-title").get("value") is None, "the form clears after a task"
@@ -191,8 +189,6 @@ def test_the_pipeline_moves_a_task_through_each_role_and_lands_it(world):
     world.sf.tick("LEADER")
     assert _task(world)["state"] == "landed"
     assert _task(world)["commit"] == "0aa1234"
-    pin = world.host.by_key["swarm-pin-LEADER"].node("pin")
-    assert pin["text"] == "1 landed"
     stats = {item["id"]: item for item in board.node("summary")["stats"]}
     assert (stats["landed"]["value_text"], stats["landed"]["tone"]) == ("1", "ok")
 

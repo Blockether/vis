@@ -2912,10 +2912,11 @@
                   :key-fn
                   identity))
 
-(defn- header-view
+(defn- panel-view
   [key]
   {"title" "Build"
-   "placement" "header"
+   "placement" "panel"
+   "session_id" "forge-session"
    "key" key
    "nodes" [{"id" "state" "type" "status" "text" "Build passed" "tone" "ok"}
             {"id" "go" "type" "button" "label" "Rerun" "action" "activate"}]})
@@ -2928,15 +2929,15 @@
 
 (defdescribe
   owned-live-view-test
-  "A panel or header view belongs to the extension that opened it. One key holds
-   one view, the last picture comes back stale after a restart, and an unload
-   closes the views of the extension."
-  (it "refuses a panel or header view outside extension code, and one without a key"
+  "A panel view belongs to the extension that opened it. One key holds one view,
+   the last picture comes back stale after a restart, and an unload closes the
+   views of the extension."
+  (it "refuses a panel view outside extension code, and one without a key"
       (owned (fn []
-               (expect (str/includes? (live-refusal #(owned-open! nil (header-view "build")))
+               (expect (str/includes? (live-refusal #(owned-open! nil (panel-view "build")))
                                       "only extension code"))
                (expect (str/includes? (live-refusal #(owned-open! {:extension "forge"}
-                                                                  (dissoc (header-view "build")
+                                                                  (dissoc (panel-view "build")
                                                                     "key")))
                                       "needs a :key")))))
   (it
@@ -2956,13 +2957,13 @@
                            (swap! events conj event))}
 
               first-id
-              (get (owned-open! owner (header-view "build")) "view_id")
+              (get (owned-open! owner (panel-view "build")) "view_id")
 
               second-id
-              (get (owned-open! owner (header-view "build")) "view_id")
+              (get (owned-open! owner (panel-view "build")) "view_id")
 
               other-id
-              (get (owned-open! owner (header-view "deploy")) "view_id")
+              (get (owned-open! owner (panel-view "deploy")) "view_id")
 
               view
               (hi/live-view second-id)]
@@ -2971,7 +2972,7 @@
           (expect (= "superseded"
                      (get-in (hi/live-dispatch {"op" "state" "view_id" first-id})
                              [:result :reason])))
-          (expect (= [:header "forge" "build" nil]
+          (expect (= [:panel "forge" "build" "forge-session"]
                      [(:placement view) (:extension view) (:key view) (:session-id view)]))
           (expect (not (contains? view :owner)))
           (expect (str/includes? (live-refusal #(hi/live-json! (json/write-json-str
@@ -2993,7 +2994,7 @@
                 {:extension "forge" :context (Object.)}
 
                 view-id
-                (get (owned-open! owner (header-view "build")) "view_id")
+                (get (owned-open! owner (panel-view "build")) "view_id")
 
                 picture
                 (hi/live-view view-id)]
@@ -3009,4 +3010,22 @@
             (expect (true? (hi/dismiss-stale! view-id)))
             (expect (not-any? #(= view-id (:id %)) (hi/live-views)))
             (hi/flush-owned!)
-            (expect (empty? (live-sink/load-owned)) "a dismiss saves the pictures again"))))))
+            (expect (empty? (live-sink/load-owned)) "a dismiss saves the pictures again")))))
+  (it "closes a stale view when its extension loads again without its key"
+      (owned (fn []
+               (let [owner
+                     {:extension "forge" :context (Object.)}
+
+                     view-id
+                     (get (owned-open! owner (panel-view "build")) "view_id")]
+
+                 (live-sink/save-owned! [(hi/live-view view-id)])
+                 (hi/close-live! view-id)
+                 (reset! @#'hi/save-due false)
+                 (expect (= 1 (hi/restore-owned!)))
+                 (expect (= [] (hi/close-unclaimed-stale! "other")) "another extension keeps it")
+                 (expect (= [view-id] (hi/close-unclaimed-stale! "forge")))
+                 (expect (not-any? #(= view-id (:id %)) (hi/live-views)))
+                 (hi/flush-owned!)
+                 (expect (empty? (live-sink/load-owned))
+                         "the closed stale view is not saved again"))))))

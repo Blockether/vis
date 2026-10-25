@@ -63,9 +63,9 @@ import { TranscriptOutline } from '../components/TranscriptOutline';
 import { PasteEditor } from '../components/PasteEditor';
 import { QueuedTurnsTray } from '../components/QueuedTurnsTray';
 import { useLiveViews } from '../components/LiveView';
-import { HeaderPins, LivePanel, ResizablePanel } from '../components/LivePanel';
+import { LivePanel, ResizablePanel } from '../components/LivePanel';
 import { useMediaMatch } from '../lib/fit-rows';
-import { livePlacement, type LiveView as LiveViewModel } from '../lib/live-view';
+import { livePlacement } from '../lib/live-view';
 import { reduceRunningTurnEvent, type RunningTurn } from '../lib/running-turn';
 import { eventString, sessionEventBatch } from '../lib/session-stream';
 import { speechOutput } from '../lib/speech';
@@ -740,8 +740,6 @@ function reasoningChoices(
   };
 }
 
-const NO_HEADER_VIEWS: LiveViewModel[] = [];
-
 export function SessionScreen({
   client,
   subscriptions,
@@ -752,7 +750,6 @@ export function SessionScreen({
   fresh = false,
   talk,
   sidebar,
-  headerViews = NO_HEADER_VIEWS,
 }: {
   client: GatewayClient;
   subscriptions: SessionSubscriptionHub;
@@ -761,8 +758,6 @@ export function SessionScreen({
   onOpenSession: (sid: string, fresh?: boolean) => void;
   /** Open this gateway's settings, where provider accounts and OAuth live; an id focuses one provider. */
   onManageProviders?: (providerId?: string) => void;
-  /** The header views of this session's machine, shown as pins in the header. */
-  headerViews?: LiveViewModel[];
   fresh?: boolean;
   /** The nonce of a Talk link (the Action Button). A new value arms voice conversation once. */
   talk?: string;
@@ -5308,7 +5303,6 @@ export function SessionScreen({
             model={headerModel}
             commands={headerCommands}
             sidebar={sidebar}
-            pins={<HeaderPins views={headerViews} client={client} />}
             panel={
               panelViews.length > 0
                 ? { isOpen: isPanelOpen, onToggle: () => setPanelChoice(!isPanelOpen) }

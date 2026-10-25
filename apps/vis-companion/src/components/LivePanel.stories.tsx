@@ -3,14 +3,14 @@ import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { SWARM_FORGE_BOARD } from '../dev/live-swarm-data';
 import { STORY_INERT_CLIENT, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
-import { HeaderPins, LivePanel } from './LivePanel';
+import { LivePanel } from './LivePanel';
 import { LiveViewPanel } from './LiveView';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 
 /**
  * Live views outside the transcript. An extension puts a view in the side panel of a
- * session, or pins it to the header of the machine. The panel shows one tab for each
- * extension when two or more extensions own its views.
+ * session. The panel shows one tab for each extension when two or more extensions own
+ * its views.
  */
 
 function wired(wire: Record<string, unknown>): LiveView {
@@ -18,15 +18,6 @@ function wired(wire: Record<string, unknown>): LiveView {
   if (!view) throw new Error('the story view must be paintable');
   return view;
 }
-
-const status = (id: string, title: string, extension: string, text: string, tone: string) =>
-  wired({
-    id,
-    title,
-    extension,
-    placement: id.startsWith('h') ? 'header' : 'panel',
-    nodes: [{ id: 's', type: 'status', text, tone }],
-  });
 
 const FORGE = wired({
   id: 'forge',
@@ -56,7 +47,6 @@ const accepted = { action: 'activate' as const, view_id: 'v', is_accepted: true 
 
 const client = {
   viewAction: fn(async () => accepted),
-  headerViewAction: fn(async () => accepted),
   liveViewLog: fn(async () => ({ lines: [], from: 0, total_lines: 0 })),
 } as unknown as typeof STORY_INERT_CLIENT;
 
@@ -132,31 +122,5 @@ export const SwarmForgeBoard: Story = {
     await expect(canvas.getByRole('button', { name: 'Approve' })).toBeVisible();
     await expect(canvas.getByRole('textbox', { name: 'Answer, required' })).toBeInTheDocument();
     await expect(canvas.queryByText(/ · /)).toBeNull();
-  },
-};
-
-/** Four pins on the header, then one chip for the rest. */
-export const HeaderPinsRow: StoryObj<typeof HeaderPins> = {
-  render: (args) => (
-    <div className="flex min-h-13 items-center justify-end gap-2 border-b border-dialog-edge bg-panel-2 px-4">
-      <HeaderPins {...args} />
-    </div>
-  ),
-  args: {
-    client,
-    views: [
-      status('h1', 'Deploys', 'swarm', 'Waiting for the next job', 'running'),
-      status('h2', 'Builds', 'forge', 'All green', 'ok'),
-      status('h3', 'Backups', 'swarm', 'Last run failed', 'error'),
-      status('h4', 'Certificates', 'swarm', 'One expires soon', 'warn'),
-      status('h5', 'Mirrors', 'forge', 'Idle', 'idle'),
-      status('h6', 'Queues', 'forge', 'Idle', 'idle'),
-    ],
-  },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    const list = canvas.getByRole('list', { name: 'Pinned views' });
-    await expect(within(list).getAllByRole('listitem')).toHaveLength(5);
-    await expect(canvas.getByRole('button', { name: 'Show all 6 pinned views' })).toHaveTextContent('+2');
   },
 };

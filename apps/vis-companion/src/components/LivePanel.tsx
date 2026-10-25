@@ -1,7 +1,6 @@
 /**
- * Live views outside the transcript: the side panel of a session and the header pins
- * of the machine. A panel view belongs to an extension and stays while the session is
- * open. A header view belongs to the machine and comes from the fleet stream.
+ * Live views outside the transcript: the side panel of a session. A panel view belongs
+ * to an extension and stays while the session is open.
  */
 
 import {
@@ -11,13 +10,10 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
-import { Chip, CloseButton, Disclosure, TextButton } from './ui';
-import { LiveView, RunDialog, ToneMark, runSummary, runTone } from './LiveView';
+import { Chip, CloseButton, Disclosure } from './ui';
+import { LiveView, ToneMark, runSummary, runTone } from './LiveView';
 import type { GatewayClient } from '../lib/gateway';
 import type { LiveView as LiveViewModel } from '../lib/live-view';
-
-/** The header shows this many pins, then one `+N` chip. */
-export const HEADER_PIN_LIMIT = 4;
 
 /** The side panel width in CSS pixels, and the step of one arrow key. */
 export const LIVE_PANEL_WIDTH = { min: 280, initial: 384, max: 720, step: 16 } as const;
@@ -50,8 +46,8 @@ export function LiveViewList({
 }: {
   views: LiveViewModel[];
   client: GatewayClient;
-  /** The session of the views, or `null` for the header views of the machine. */
-  sid: string | null;
+  /** The session of the views. */
+  sid: string;
 }) {
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = (id: string) =>
@@ -110,7 +106,7 @@ export function LivePanel({
 }: {
   views: LiveViewModel[];
   client: GatewayClient;
-  sid: string | null;
+  sid: string;
   onClose: () => void;
 }) {
   const owners = [...new Set(views.map(liveViewOwner))];
@@ -213,59 +209,5 @@ export function ResizablePanel({ children }: { children: ReactNode }) {
       />
       <div className="min-h-0 min-w-0 flex-1">{children}</div>
     </div>
-  );
-}
-
-/**
- * The header views as pins: a state mark and a title for each of the first four,
- * then `+N`. A pin opens its view. `+N` opens every pinned view.
- */
-export function HeaderPins({ views, client }: { views: LiveViewModel[]; client: GatewayClient }) {
-  const [opened, setOpened] = useState<string | null>(null);
-  const [isListOpen, setListOpen] = useState(false);
-  if (views.length === 0) return null;
-  const shown = views.slice(0, HEADER_PIN_LIMIT);
-  const more = views.length - shown.length;
-  const openedView = views.find((view) => view.id === opened);
-  return (
-    <>
-      <ul aria-label="Pinned views" className="flex min-w-0 shrink items-center gap-1 overflow-hidden">
-        {shown.map((view) => (
-          <li key={view.id} className="min-w-0 shrink">
-            <TextButton
-              type="button"
-              title={view.title}
-              aria-label={`${view.title}${runSummary(view.nodes) ? `, ${runSummary(view.nodes)}` : ''}`}
-              className="flex min-w-0 max-w-44 items-center gap-1.5"
-              onClick={() => setOpened(view.id)}
-            >
-              <ToneMark tone={runTone(view.nodes)} />
-              <span className="hidden min-w-0 truncate sm:inline">{view.title}</span>
-            </TextButton>
-          </li>
-        ))}
-        {more > 0 && (
-          <li className="shrink-0">
-            <TextButton
-              type="button"
-              aria-label={`Show all ${views.length} pinned views`}
-              onClick={() => setListOpen(true)}
-            >
-              +{more}
-            </TextButton>
-          </li>
-        )}
-      </ul>
-      {openedView && (
-        <LiveView views={[openedView]} client={client} sid={null} onClose={() => setOpened(null)} />
-      )}
-      {isListOpen && (
-        <RunDialog title="Pinned views" onClose={() => setListOpen(false)}>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <LiveViewList views={views} client={client} sid={null} />
-          </div>
-        </RunDialog>
-      )}
-    </>
   );
 }

@@ -4123,42 +4123,6 @@
               (fn [db _]
                 (dissoc db :live-viewer-id :live-viewer-search)))
 
-(defn- header-pane
-  "The pane for header `view`; a mounted pane keeps its local fold and scroll."
-  [panes view]
-  (if-let [pane (first (filter #(= (:id view) (lv/view-id %)) panes))]
-    (assoc pane :view view)
-    (lv/opened view)))
-
-(reg-event-db :header-views-set
-              ;; The machine's header views from a cold read, oldest first.
-              (fn [db [_ views]]
-                (assoc db :header-views (mapv #(header-pane (:header-views db) %) views))))
-
-(reg-event-db :header-view-open
-              (fn [db [_ view]]
-                (if (some #(= (:id view) (lv/view-id %)) (:header-views db))
-                  db
-                  (update db :header-views (fnil conj []) (lv/opened view)))))
-
-(reg-event-db :header-view-patch
-              (fn [db [_ patch]]
-                (update db
-                        :header-views
-                        (fn [panes]
-                          (mapv #(if (= (:view-id patch) (lv/view-id %)) (lv/patched % patch) %)
-                                panes)))))
-
-(reg-event-db :header-view-close
-              ;; A closed header view leaves the header, and the viewer that showed it closes.
-              (fn [db [_ view-id]]
-                (cond-> (update db
-                                :header-views
-                                (fn [panes]
-                                  (filterv #(not= view-id (lv/view-id %)) panes)))
-                  (= view-id (:live-viewer-id db))
-                  (dissoc :live-viewer-id :live-viewer-search))))
-
 (reg-event-db :live-panel-focus
               ;; C-x V: open the panel with the focus, then move the focus between the
               ;; panel and the transcript.

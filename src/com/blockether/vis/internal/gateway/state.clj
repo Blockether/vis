@@ -1082,13 +1082,6 @@
                (tel/log! :debug
                          ["gateway: dropped dead fleet subscriber" sub-id (ex-message err)])))))))
 
-(defn publish-fleet-view!
-  "Offer one View event of a header view to every fleet watcher. A header view
-   belongs to the machine, so its `view.open`, `view.patch` and `view.close`
-   events go on the fleet stream, not into a session journal."
-  [event-type payload]
-  (publish-fleet! [(merge {"schema" 1 "type" (str event-type)} (wire/->wire payload))]))
-
 (defn- fleet-title-tap
   "Forward a session's OWN rename to fleet watchers. `broadcast-title-event!` also
    copies that event into every other session (the copy carries

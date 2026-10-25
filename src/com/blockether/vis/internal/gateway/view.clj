@@ -231,21 +231,13 @@
           (assoc ops at (update prior k into (get op k)))
           :else (conj ops op))))
 
-(defn- publish-view-event!
-  "Append one View event to session `sid`, or offer it to the fleet stream when
-   `sid` is nil: a header view belongs to the machine."
-  [sid event-type payload]
-  (if sid
-    (state/append-event! sid event-type payload)
-    (state/publish-fleet-view! event-type payload)))
-
 (defn- publish-patches!
   "Publish one coalesced frame. `first_seq`..`seq` is the range of engine
    patches it carries, so a client can tell a COALESCED jump from a real gap: a
    frame that does not continue the one before it is a resync, not loss."
   [frame]
-  (when (seq (:ops frame))
-    (publish-view-event! (:session-id frame)
+  (when (and (:session-id frame) (seq (:ops frame)))
+    (state/append-event! (:session-id frame)
                          gateway-contract/view-patch-event
                          {:kind :live
                           :view-id (:view-id frame)
@@ -294,7 +286,7 @@
 (defn live-views
   "The live views open in session `sid` right now, oldest first — the resync a
    client reads after joining late, waking up or losing its stream. A
-   `placement` (`inline`, `panel` or `header`) keeps only the views it names."
+   `placement` (`inline` or `panel`) keeps only the views it names."
   ([sid] (live-views sid nil))
   ([sid placement]
    (let [sid
@@ -307,17 +299,6 @@
 
      (filterv #(and (= sid (session-of %)) (or (nil? placement) (= placement (:placement %))))
        (view/live-views)))))
-
-(defn header-views
-  "The header views of this machine right now, oldest first. They belong to no session."
-  []
-  (filterv #(= :header (:placement %)) (view/live-views)))
-
-(defn header-view-of
-  "Header view `view-id` as a kind/document descriptor, or nil."
-  [view-id]
-  (when-let [{:keys [view] :as descriptor} (view/open-view (str view-id))]
-    (when (= :header (:placement view)) descriptor)))
 
 (defn live-view-of
   "Live view `view-id` when it belongs to `sid`, else nil. Every REST answer goes
@@ -356,11 +337,10 @@
                            :view (assoc (:view event) :origin (origin-of sid))}]
               (doseq [target (input-sessions sid)]
                 (state/append-event! target gateway-contract/view-open-event payload)))
-            (or sid (= :live (:kind event))) (publish-view-event! sid
-                                                                  gateway-contract/view-open-event
-                                                                  {:kind (:kind event)
-                                                                   :view-id (:view-id event)
-                                                                   :view (:view event)})))
+            sid (state/append-event!
+                  sid
+                  gateway-contract/view-open-event
+                  {:kind (:kind event) :view-id (:view-id event) :view (:view event)})))
 
     :view/patch
     (when (= :live (:kind event))
@@ -371,9 +351,9 @@
       ;; An ending never overtakes buffered live work.
       (when (= :live (:kind event)) (flush-view! (:view-id event)))
       (doseq [target (cond (and sid (= :input (:kind event))) (input-sessions sid)
-                           (or sid (= :live (:kind event))) [sid]
+                           sid [sid]
                            :else [])]
-        (publish-view-event!
+        (state/append-event!
           target
           gateway-contract/view-close-event
           {:kind (:kind event) :view-id (:view-id event) :result (:result event)})))

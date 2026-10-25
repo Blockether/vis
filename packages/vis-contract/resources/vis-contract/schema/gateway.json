@@ -1303,26 +1303,6 @@
     {
       "audience": "sdk",
       "operations": {
-        "get": {
-          "request": "none",
-          "response": "json"
-        }
-      },
-      "path": "/v1/views/live"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
-        "post": {
-          "request": "json",
-          "response": "json"
-        }
-      },
-      "path": "/v1/views/:view-id/actions"
-    },
-    {
-      "audience": "sdk",
-      "operations": {
         "post": {
           "request": "binary",
           "response": "json"

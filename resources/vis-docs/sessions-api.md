@@ -119,8 +119,6 @@ request.
 | Restore a snapshot | `client.restore_session(data, ...)` | `post_sessions_import(query=..., content=...)` |
 | List live views | `session.live_views()` | `get_session_views_live(sid)` |
 | Read a page of a log node | — | `get_session_views_live_log(sid, view_id, node_id, query=...)` |
-| List the header views of this machine | `client.header_views()` | `get_views_live()` |
-| Act on a header view | `client.header_view_action(...)` | `post_view_actions(view_id, body=...)` |
 | Read one page of Activity history | — | `get_session_activity(sid, aid, query=...)` |
 | Export the full Activity history | — | `get_session_activity_export(sid, aid, query=...)` |
 
@@ -167,8 +165,6 @@ request.
 | Restore a snapshot | `POST /v1/sessions/actions/import` |
 | List live views | `GET /v1/sessions/{sid}/views/live` |
 | Read a page of a log node | `GET /v1/sessions/{sid}/views/live/{view-id}/log` |
-| List the header views of this machine | `GET /v1/views/live` |
-| Act on a header view | `POST /v1/views/{view-id}/actions` |
 | Read one page of Activity history | `GET /v1/sessions/{sid}/activity/{aid}` |
 | Export the full Activity history | `GET /v1/sessions/{sid}/activity/{aid}/export` |
 
@@ -1061,13 +1057,13 @@ for view in client.session(session_id).live_views(placement="panel"):
     print(view.id, view.title, len(view.nodes))
 ```
 
-`live_views()` returns typed `LiveView` records. `placement` keeps only the `inline`, `panel` or
-`header` views. Without it, you get every view of the session. `get_session_views_live(session_id)`
+`live_views()` returns typed `LiveView` records. `placement` keeps only the `inline` or `panel`
+views. Without it, you get every view of the session. `get_session_views_live(session_id)`
 returns the same views as JSON in `views`. A list is a snapshot. It does not follow later updates.
 
-[Live views](live-views.md#choose-a-placement) explains placements. A panel or header view has its
-`key`, its `extension` and `is_stale`. `is_stale` is true for the saved state of a view after a
-gateway restart, until its extension opens the view again.
+[Live views](live-views.md#choose-a-placement) explains placements. A panel view has its `key`,
+its `extension` and `is_stale`. `is_stale` is true for the saved state of a view after a gateway
+restart, until its extension loads again.
 
 </div>
 
@@ -1078,37 +1074,11 @@ vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/live?placement=panel"
 ```
 
 The answer has `views`. Each view has `id`, `title` and `nodes`. The `placement` query parameter
-keeps only the `inline`, `panel` or `header` views. Another value returns 400. A list is a snapshot.
+keeps only the `inline` or `panel` views. Another value returns 400. A list is a snapshot.
 It does not follow later updates.
 
-A panel or header view also has `placement`, `key`, `extension` and `is_stale`. `is_stale` is true
-for the saved state of a view after a gateway restart, until its extension opens the view again.
-
-</div>
-
-### Read the header views
-
-Header views belong to the machine, not to one session.
-
-<div data-variant="python">
-
-```python
-for view in client.header_views():
-    print(view.id, view.title)
-```
-
-`header_views()` returns typed `LiveView` records. `get_views_live()` returns the same views as
-JSON in `views`. Their events come on the fleet event stream.
-
-</div>
-
-<div data-variant="http">
-
-```bash
-vis_api "$VIS_GATEWAY_URL/v1/views/live"
-```
-
-The answer has `views`. Their events come on `GET /v1/events?scope=fleet`.
+A panel view also has `placement`, `key`, `extension` and `is_stale`. `is_stale` is true for the
+saved state of a view after a gateway restart, until its extension loads again.
 
 </div>
 
@@ -1127,8 +1097,7 @@ session.view_action(view_id, "submit", node_id="deploy", values={"env": "staging
 ```
 
 `change` sets the `value` of one input. `activate` presses a button or a selectable card. `submit`
-presses a submit button, with the `values` of the inputs in its group. For a header view, call
-`client.header_view_action(view_id, "change", node_id="env", value="staging")`.
+presses a submit button, with the `values` of the inputs in its group.
 
 </div>
 
@@ -1137,12 +1106,12 @@ presses a submit button, with the `values` of the inputs in its group. For a hea
 ```bash
 vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/$VIEW_ID/actions" \
   -H 'content-type: application/json' --data '{"action": "change", "node_id": "env", "value": "staging"}'
-vis_api -X POST "$VIS_GATEWAY_URL/v1/views/$VIEW_ID/actions" \
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/views/$VIEW_ID/actions" \
   -H 'content-type: application/json' --data '{"action": "activate", "node_id": "refresh"}'
 ```
 
 `change` sets the `value` of one input. `activate` presses a button or a selectable card. `submit`
-sends `node_id` and `values`. The second request acts on a header view, which has no session.
+sends `node_id` and `values`.
 
 </div>
 

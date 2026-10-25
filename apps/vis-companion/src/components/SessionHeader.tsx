@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
@@ -80,13 +80,10 @@ export function SessionHeader({
   model,
   commands,
   sidebar,
-  pins,
   panel,
 }: {
   model: SessionHeaderModel;
   commands: SessionHeaderCommands;
-  /** The header views of the machine, as pins before the session menu. */
-  pins?: ReactNode;
   /** The live view panel of this session, when the session has panel views. */
   panel?: { isOpen: boolean; onToggle: () => void };
   /**
@@ -190,7 +187,6 @@ export function SessionHeader({
         </div>
       </div>
       <div className="flex min-w-0 shrink items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))]">
-        {pins}
         {panel && (
           <IconButton
             label={panel.isOpen ? 'Hide live views' : 'Show live views'}

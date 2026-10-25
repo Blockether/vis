@@ -29,7 +29,6 @@
             [com.blockether.vis.tui.components :as components]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
-            [com.blockether.vis.tui.live-view :as lv]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.header-model :as vh])
@@ -196,51 +195,6 @@
   [id-short]
   (id-copy-block-text id-short))
 
-(def ^:const max-pins "Header pins shown before the `+N` overflow chip." 4)
-
-(defn- draw-header-pins!
-  "Paint the machine's header pins on the header's bottom rule: up to `max-pins`
-   chips with a title and the first status or progress, then a `+N` chip. A chip
-   opens its view; `+N` lists every pin."
-  [g db row cols]
-  (when-let [chips (seq (map lv/pin-chip (:header-views db)))]
-    (let [shown (vec (take max-pins chips))
-          extra (- (count chips) (count shown))
-          more (when (pos? extra) (str " +" extra " "))
-          more-w (long (if more (p/display-width more) 0))
-          room (- (long cols) 4 more-w (count shown))
-          chip-w (max 8 (min 32 (quot room (count shown))))
-          register! (fn [col w kind view-id]
-                      (when *register-click-regions?*
-                        (.register interactions/hit-map
-                                   {:bounds {:row row :col col :width w}
-                                    :kind kind
-                                    :view-id view-id
-                                    :label (if view-id "Open header pin" "List header pins")
-                                    :enabled? true})))
-          end (reduce (fn [^long col {:keys [glyph title text view-id]}]
-                        ;; The title stays whole as long as it fits; the status gives way first.
-                        (let [room (max 1 (- chip-w 5))
-                              body (if (< (+ 3 (long (p/display-width (str title)))) room)
-                                     (p/ellipsize (str text) room)
-                                     (p/ellipsize (str title) room))
-                              w (+ 5 (long (p/display-width body)))]
-
-                          (p/set-colors! g t/header-active-tab-accent t/terminal-bg)
-                          (p/put-str! g col row (str " " glyph " "))
-                          (p/set-colors! g t/header-fg t/terminal-bg)
-                          (p/put-str! g (+ col 3) row (str body " "))
-                          (register! col (dec w) :header-pin view-id)
-                          (+ col w)))
-                      2
-                      shown)]
-
-      (when more
-        (p/set-colors! g t/header-active-tab-accent t/terminal-bg)
-        (p/styled g [p/BOLD] (p/put-str! g end row more))
-        (register! end more-w :header-pins-list nil))
-      (p/clear-styles! g))))
-
 (defn draw-header!
   "Paint the header band: notifications on the left, the active session title
    centered in the available middle slot, and help and ID controls on the right."
@@ -391,6 +345,5 @@
     ;; only the absolute hit-region bridge is specific to the immediate-mode host.
     (draw-header-actions! g actions-component cluster-start content-row)
     (components/band-rule! g bottom-row cols)
-    (draw-header-pins! g db bottom-row cols)
     (p/clear-styles! g)
     (p/set-colors! g t/footer-fg t/terminal-bg)))

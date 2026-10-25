@@ -131,40 +131,11 @@
    what a client that connected later reads to recover the current picture."
   [request]
   (let [placement (get-in request [:query-params "placement"])]
-    (cond (not (or (nil? placement) (#{"inline" "panel" "header"} placement)))
-          (http/error-response 400 :invalid-request "placement must be inline, panel or header")
+    (cond (not (or (nil? placement) (#{"inline" "panel"} placement)))
+          (http/error-response 400 :invalid-request "placement must be inline or panel")
           (http/path-sid request) (http/json-response
                                     {:views (gw-view/live-views (http/path-sid request) placement)})
           :else (http/session-404 (get-in request [:path-params :sid])))))
-
-(defn- list-header-views-handler
-  "GET /v1/views/live — the header views of this machine, oldest first. A header
-   view belongs to no session; its events go on the fleet stream."
-  [_request]
-  (http/json-response {:views (gw-view/header-views)}))
-
-(defn- header-view-action-handler
-  "POST /v1/views/:view-id/actions — apply one operator action to a header view.
-   The body is the same closed action as on the session route."
-  [request]
-  (let [view-id (some-> (get-in request [:path-params :view-id])
-                        str
-                        not-empty)]
-    (if-not (and view-id (gw-view/header-view-of view-id))
-      (view-404 view-id)
-      (try (let [{:keys [is-accepted reason] :as outcome}
-                 (gw-view/action! view-id (http/body-json request))]
-             (if (and (false? is-accepted) (= "unknown" reason))
-               (view-404 view-id)
-               (http/json-response outcome)))
-           (catch clojure.lang.ExceptionInfo e
-             (let [{:keys [type action]} (ex-data e)]
-               (http/error-response (if (= :vis/view-action-not-supported type) 409 400)
-                                    (or type :vis/view-action-refused)
-                                    (ex-message e)
-                                    :view_id view-id
-                                    :action (some-> action
-                                                    name))))))))
 
 (defn- live-view-log-handler
   "GET /v1/sessions/:sid/views/live/:view-id/log?node=… — one bounded page.
@@ -334,6 +305,4 @@
    [:get "/v1/sessions/:sid/views/input"] list-input-views-handler
    [:get "/v1/sessions/:sid/views/live"] list-live-views-handler
    [:get "/v1/sessions/:sid/views/live/:view-id/log"] live-view-log-handler
-   [:post "/v1/sessions/:sid/views/:view-id/actions"] view-action-handler
-   [:get "/v1/views/live"] list-header-views-handler
-   [:post "/v1/views/:view-id/actions"] header-view-action-handler})
+   [:post "/v1/sessions/:sid/views/:view-id/actions"] view-action-handler})

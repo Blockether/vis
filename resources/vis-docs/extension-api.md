@@ -1052,10 +1052,9 @@ their own pages: [Forms and user input](human-input.md) and [Live views](live-vi
 concurrent read-only polling with fail-fast, Stop and owned cleanup, use the
 [fixed-build monitoring recipe](live-views.md#monitor-a-fixed-build-set).
 
-- `vis.live(..., placement="panel", key=...)` opens a view in the side panel of a session.
-  `placement="header"` pins it to the header of every session. [Choose a
-  placement](live-views.md#choose-a-placement) explains their lifetime.
-- `on_event=callback` gets each `vis.LiveEvent` of a panel or header view as an extension callback.
+- `vis.live(..., placement="panel", key=...)` opens a view in the side panel of a session. [Choose
+  a placement](live-views.md#choose-a-placement) explains its lifetime.
+- `on_event=callback` gets each `vis.LiveEvent` of a panel view as an extension callback.
 - `view.values()`, `view.events(timeout=None)` and `view.on_event(callback)` read the inputs and
   the actions of a person. [Collect input in a view](live-views.md#collect-input-in-a-view) shows
   them.
@@ -1278,7 +1277,7 @@ Vis checks each call against the thread that makes it:
 | `Session.send()` and `Turn.cancel()` | In a callback. A thread of your extension can use them only in sessions that your extension created. |
 | Other changes: `create`, `restore`, `run`, `fork`, `set_model` and `publish` | Only in an active callback, such as a tool call or a command. |
 | `vis.state` and `vis.log` | In a callback and in a thread that your extension created. |
-| Patch, read and close a panel or header view that your extension opened | In a callback and in a thread that your extension created. Open the view in a callback. |
+| Patch, read and close a panel view that your extension opened | In a callback and in a thread that your extension created. Open the view in a callback. |
 
 A change also needs a bound session. It can change only that session and the sessions that your
 extension created. A refused call raises `GatewayError` with the status 403:

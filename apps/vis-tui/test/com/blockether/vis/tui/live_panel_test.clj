@@ -1,11 +1,10 @@
 (ns com.blockether.vis.tui.live-panel-test
-  "The panel and header placements: the side panel beside the chat and the header pins."
+  "The panel placement: the side panel beside the chat."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.tui.capture :as cap]
             [com.blockether.vis.tui.client :as client]
-            [com.blockether.vis.tui.header :as header]
             [com.blockether.vis.tui.human-input :as hi]
             [com.blockether.vis.tui.interactions :as interactions]
             [com.blockether.vis.tui.keymap :as keymap]
@@ -123,58 +122,19 @@
                  (state/dispatch [:live-panel-fold "a" true])
                  (expect (= #{"a"} (get-in @state/app-db [:live-panel :folded])))
                  (state/dispatch [:live-panel-close])
-                 (expect (false? (get-in @state/app-db [:live-panel :open?]))))))
-  (it "keeps header views per machine and closes the viewer of a closed one"
-      (with-db (fn []
-                 (state/dispatch [:header-views-set [(view "h1" "Deploys" "swarm" :header)]])
-                 (state/dispatch [:header-view-open (view "h2" "Builds" "forge" :header)])
-                 (state/dispatch [:header-view-open (view "h2" "Builds" "forge" :header)])
-                 (expect (= ["h1" "h2"] (mapv lv/view-id (:header-views @state/app-db))))
-                 (expect (keymap/verb-available? @state/app-db {:show-when :has-pins}))
-                 (state/dispatch [:live-view-reopen "h2"])
-                 (state/dispatch [:header-view-close "h2"])
-                 (expect (= ["h1"] (mapv lv/view-id (:header-views @state/app-db))))
-                 (expect (nil? (:live-viewer-id @state/app-db)))))))
+                 (expect (false? (get-in @state/app-db [:live-panel :open?])))))))
 
-(defdescribe header-pins-test
-             (it "shows four pins on the header rule, then a +N chip"
-                 (let [panes
-                       (mapv #(lv/opened (view (str "h" %) (str "Pin " %) "swarm" :header))
-                             (range 6))
-
-                       capture
-                       (cap/capture! {:cols 140
-                                      :rows 4
-                                      :paint! (fn [{:keys [screen]}]
-                                                (binding [header/*register-click-regions?* true]
-                                                  (.beginFrame interactions/hit-map)
-                                                  (header/draw-header! (.newTextGraphics
-                                                                         ^TerminalScreen screen)
-                                                                       {:header-views panes}
-                                                                       0
-                                                                       140)
-                                                  (.commitFrame interactions/hit-map)
-                                                  (.refresh ^TerminalScreen screen)))})
-
-                       rule
-                       (nth (str/split-lines (cap/frame-text capture)) 2)]
-
-                   (expect (str/includes? rule "Pin 0"))
-                   (expect (str/includes? rule "Pin 3"))
-                   (expect (not (str/includes? rule "Pin 4")))
-                   (expect (str/includes? rule "+2")))))
-
-(defdescribe header-view-action-route-test
-             (it "sends an action on a header view to the machine route"
-                 (let [called (atom nil)]
-                   (with-redefs-fn {#'client/send-json! (fn [method path body]
-                                                          (reset! called [method path body])
-                                                          {"action" "activate" "is_accepted" true})}
-                     (fn []
-                       (expect (:is-accepted
-                                 (client/view-action! nil "h1" {:action :activate :node-id "go"})))
-                       (expect (= ["POST" "/v1/views/h1/actions" {:action "activate" :node-id "go"}]
-                                  @called)))))))
+(defdescribe
+  view-action-route-test
+  (it "sends an action to the route of the view's session"
+      (let [called (atom nil)]
+        (with-redefs-fn {#'client/send-json! (fn [method path body]
+                                               (reset! called [method path body])
+                                               {"action" "activate" "is_accepted" true})}
+          (fn []
+            (expect (:is-accepted (client/view-action! "s1" "a" {:action :activate :node-id "go"})))
+            (expect (= ["POST" "/v1/sessions/s1/views/a/actions" {:action "activate" :node-id "go"}]
+                       @called)))))))
 
 (defn- frame-db
   []
@@ -184,7 +144,6 @@
    :scroll scroll/follow
    :settings {}
    :live-views [(lv/opened (view "a" "Swarm board" "swarm" :panel))]
-   :header-views [(lv/opened (view "h1" "Deploys" "swarm" :header))]
    :live-panel {:open? true :focused? true}
    :pending-sends []
    :channel-status {}
@@ -226,7 +185,6 @@
                        (expect (= 96 (:cols layout)))
                        (expect (every? #(= \│ (nth % 96)) lines))
                        (expect (some #(str/includes? % "▾ Swarm board") lines))
-                       (expect (some #(str/includes? % "Deploys") (take 3 lines)))
                        (let [toggle (first (filter #(= :live-panel-toggle (:kind %))
                                                    (.current interactions/hit-map)))]
                          (expect (= "a" (:view-id toggle)))

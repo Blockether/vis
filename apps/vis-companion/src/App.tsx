@@ -72,7 +72,6 @@ import { applyTheme, resolveTheme } from './lib/theme';
 import { getThemePref } from './lib/storage';
 import { IconButton } from './components/ui';
 import { SearchIcon, SettingsIcon } from './components/icons';
-import { useHeaderViews } from './lib/header-views';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { SessionsScreen } from './screens/SessionsScreen';
 import { IncompatibleScreen } from './screens/IncompatibleScreen';
@@ -461,9 +460,6 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
     () => (client ? new SessionSubscriptionHub(client) : null),
     [client],
   );
-  // The header views of the open session's machine. Only an open session shows them.
-  const headerViews = useHeaderViews(openTarget ? client : null, openTarget ? subscriptions : null);
-
   const refresh = useCallback(async () => {
     const [connections, primaryConnection] = await Promise.all([
       loadConnections(),
@@ -1514,7 +1510,6 @@ export function App({ launch = null }: { launch?: WebLaunch | null } = {}) {
                   sidebar={canSplit ? { isShown: isSidebarShown, onToggle: toggleSidebar } : undefined}
                   onOpenSession={(sid, fresh) => void openGatewaySession(openTarget.conn, sid, fresh)}
                   onManageProviders={openProviderSettings}
-                  headerViews={headerViews}
                 />
               )}
             </SessionPane>

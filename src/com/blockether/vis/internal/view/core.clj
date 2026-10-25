@@ -70,8 +70,7 @@
 
 (def ^:dynamic *live-owner*
   "The extension whose host door opens or drives a live view, as `{:extension name
-   :context ctx :listener f}`, or nil. Only an owner opens a `panel` or `header`
-   view. The `python_execution` sandbox has no owner, so it never opens one.
+   :context ctx :listener f}`, or nil. Only an owner opens a `panel` view. The `python_execution` sandbox has no owner, so it never opens one.
 
    `:listener` receives each human event as `(listener event session-id)` on a
    thread of its own. The door that made it binds that session for the callback."
@@ -1310,9 +1309,8 @@
         (when (and owned? (not (trimmed (:key view))))
           (invalid-live-view! (str "a " (name placement) " view needs a :key that names it")))
 
-        ;; A header view belongs to the machine, not to a session.
         session-id
-        (when-not (= :header placement) (or (trimmed (:session-id view)) (ambient-session-id)))]
+        (or (trimmed (:session-id view)) (ambient-session-id))]
 
     (checked-live-view
       (cond-> {:id (str (random-uuid))
@@ -1937,12 +1935,12 @@
           :view
           deref))
 
-;; Owned views — a panel or header view that its extension keeps open
+;; Owned views — a panel view that its extension keeps open
 ;;
 ;; An extension and a key own one view. It outlives the call that opened it and
 ;; closes on an explicit close or when its extension unloads. The store keeps the
 ;; last picture, so after a gateway restart the view shows as stale until its
-;; extension opens the same key again.
+;; extension loads again. A load that does not open the same key closes it.
 
 (defonce ^:private stale-views
   ;; View id -> the saved picture of an owned view that no extension opened again
@@ -2019,13 +2017,17 @@
   []
   (let [open-keys (set (keep :owned-key (vals @pending)))]
     (doseq [saved (sink/load-owned)
-            :let [view (assoc (live<-wire saved) :is-stale true)]
-            :when (and (string? (:id view))
-                       (owned-key view)
-                       (not (open-keys (owned-key view)))
-                       (nil? (view-spec/live-view-error view)))]
+            :let [view (assoc (live<-wire saved) :is-stale true)
+                  why (view-spec/live-view-error view)]
+            :when (and (string? (:id view)) (owned-key view) (not (open-keys (owned-key view))))]
 
-      (swap! stale-views assoc (:id view) view))
+      (if why
+        ;; An old picture, such as a removed placement, does not come back.
+        (tel/log! {:level :warn
+                   :id ::owned-restore-dropped
+                   :data {:view-id (:id view) :extension (:extension view) :error why}
+                   :msg "Vis dropped a saved owned live view that is no longer valid"})
+        (swap! stale-views assoc (:id view) view)))
     (count @stale-views)))
 
 (defn open-live!
@@ -2060,7 +2062,7 @@
         (owned-key record)
 
         _
-        (when-not (or (trimmed (:session-id record)) (= :header (:placement record)))
+        (when-not (trimmed (:session-id record))
           (invalid-live-view! (str "view " view-id
                                    " names no session — set :session-id, or open it "
                                    "from an extension environment that carries one")))
@@ -2523,6 +2525,19 @@
   [view-id]
   (when-let [view (get @stale-views (str view-id))]
     (when (stale-close! view :interrupted) (save-owned-soon!) true)))
+
+(defn close-unclaimed-stale!
+  "Close each stale view of `extension` after the extension loaded again. The load
+   opens every key that the extension still uses, so a stale view that is left has
+   no owner. Answers the closed view ids."
+  [extension]
+  (let [closed (->> (vals @stale-views)
+                    (filter #(= (str extension) (:extension %)))
+                    (sort-by :created-at)
+                    (keep #(when (stale-close! % :completed) (:id %)))
+                    vec)]
+    (when (seq closed) (save-owned-soon!))
+    closed))
 
 (defn close-owned-by!
   "Close each owned view that extension context `ctx` opened, because the

@@ -65,7 +65,7 @@ export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
 export const LIVE_OPS = ['set', 'append', 'remove', 'clear', 'add-node', 'remove-node'] as const;
 
 /** Where a view stands (`view.spec/placements`). CLOSED. */
-export const LIVE_PLACEMENTS = ['inline', 'panel', 'header'] as const;
+export const LIVE_PLACEMENTS = ['inline', 'panel'] as const;
 
 /** What a link POINTS AT (`live-link-targets`). CLOSED. */
 export const LIVE_LINK_TARGETS = ['attachment', 'path', 'url'] as const;
@@ -347,11 +347,11 @@ export interface LiveView {
   created_at?: number;
   source?: string;
   owner?: LiveViewOwner;
-  /** `inline` in the transcript, `panel` beside it, or `header` on the machine. */
+  /** `inline` in the transcript, or `panel` beside it. */
   placement?: LivePlacement;
-  /** The session that shows a panel view. A header view belongs to the machine. */
+  /** The session that shows the view. */
   session_id?: string;
-  /** The extension that owns a panel or header view. */
+  /** The extension that owns a panel view. */
   extension?: string;
   /** The owner's own stable name for the view. */
   key?: string;

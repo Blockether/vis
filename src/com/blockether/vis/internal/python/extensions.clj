@@ -1151,8 +1151,8 @@
     (put! g
           "__vis_host_live__"
           ;; Pushes return immediately; a timed state read waits for change or close.
-          ;; This door makes the extension the owner of the panel and header views
-          ;; it opens. `listener` is the optional sealed `on_event` callable: each
+          ;; This door makes the extension the owner of the panel views it opens.
+          ;; `listener` is the optional sealed `on_event` callable: each
           ;; human event runs it as an extension callback with the view session bound.
           (fn [envelope & [listener]]
             (when (and python-host/*guest-thread?*
@@ -1428,7 +1428,10 @@
                  "        del __vis_pathsys__.modules[__vis_name__]\n"))
           (exec-in! ctx bootstrap-python)
           (exec-in! ctx (postponed-annotations-python source)))))
-    (run-in ctx "__vis_registration__()")))
+    (let [sealed (run-in ctx "__vis_registration__()")]
+      ;; The load opened every view key that the extension still uses.
+      (view/close-unclaimed-stale! label)
+      sealed)))
 
 (defn- initialize-extension-context!
   "Evaluate admitted extension `source` in a new trusted namespace of `worker`.
