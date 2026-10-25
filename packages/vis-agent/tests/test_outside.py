@@ -524,9 +524,9 @@ def test_a_handle_op_names_the_handle_it_cannot_find(op):
 
 
 FORM = [
-    vis.heading("Target"),
-    vis.select("env", ["staging", "prod"], label="Where", is_required=True),
-    vis.password("token", label="Deploy token"),
+    vis.ui.heading("Target"),
+    vis.ui.select("env", ["staging", "prod"], label="Where", is_required=True),
+    vis.ui.password("token", label="Deploy token"),
 ]
 
 
@@ -561,7 +561,7 @@ def test_the_extensions_own_validators_run_out_here_too(monkeypatch):
     answer = vis.ask(
         "Ports",
         [
-            vis.plaintext(
+            vis.ui.plaintext(
                 "port", validate=lambda v: None if v.isdigit() else "must be digits"
             )
         ],
@@ -571,7 +571,7 @@ def test_the_extensions_own_validators_run_out_here_too(monkeypatch):
 
     vis.outside.answer_with({"port": "80"})
     assert (
-        vis.ask("Ports", [vis.plaintext("port", validate=lambda v: None)])["port"]
+        vis.ask("Ports", [vis.ui.plaintext("port", validate=lambda v: None)])["port"]
         == "80"
     )
 
@@ -602,12 +602,12 @@ def test_ask_takes_a_well_formed_request_without_a_word(monkeypatch):
 @pytest.mark.parametrize(
     "form",
     [
-        [vis.select("env", [])],
+        [vis.ui.select("env", [])],
         [{"name": "env", "type": "dropdown"}],
-        [vis.plaintext("env"), vis.plaintext("env")],
-        [vis.otp("code", max_length=99)],
-        [vis.slider("canary", min=100, max=0)],
-        [vis.heading("nothing to answer")],
+        [vis.ui.plaintext("env"), vis.ui.plaintext("env")],
+        [vis.ui.otp("code", max_length=99)],
+        [vis.ui.slider("canary", min=100, max=0)],
+        [vis.ui.heading("nothing to answer")],
     ],
 )
 def test_ask_names_what_is_wrong_with_a_form(form):
@@ -649,26 +649,26 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
     with vis.live(
         "Deploy",
         [
-            vis.status("now", "Starting", tone="running"),
+            vis.ui.status("now", "Starting", tone="running"),
             # Layout is the FORM's own row, not a second vocabulary — and out
             # here, where nothing paints, it still travels with the view.
-            vis.row(
+            vis.ui.row(
                 "reading",
-                vis.table(
+                vis.ui.table(
                     "jobs",
                     columns=[
-                        vis.table_column("job", "Job"),
-                        vis.table_column("state", "State"),
+                        vis.ui.table_column("job", "Job"),
+                        vis.ui.table_column("state", "State"),
                     ],
                     is_selectable=True,
                     selected_ids=[],
                 ),
-                vis.stat(
+                vis.ui.stat(
                     "why",
                     stats=[{"id": "queued", "label": "Queued", "value_text": "1"}],
                 ),
             ),
-            vis.output("tail", label="Output"),
+            vis.ui.output("tail", label="Output"),
         ],
         description="staging",
     ) as view:
@@ -726,11 +726,11 @@ def test_a_live_table_declares_the_groups_its_rows_hang_under():
     with vis.live(
         "Checks",
         [
-            vis.table(
+            vis.ui.table(
                 "checks",
-                columns=[vis.table_column("job", "Job")],
-                groups=[vis.table_group("build", label="Build", order=0)],
-                rows=[vis.table_row("compile", ["compile"], parent="build")],
+                columns=[vis.ui.table_column("job", "Job")],
+                groups=[vis.ui.table_group("build", label="Build", order=0)],
+                rows=[vis.ui.table_row("compile", ["compile"], parent="build")],
             )
         ],
     ) as view:
@@ -758,11 +758,11 @@ def test_a_live_table_declares_the_groups_its_rows_hang_under():
 @pytest.mark.parametrize(
     "view",
     [
-        ("", [vis.status("now", "waiting")]),
+        ("", [vis.ui.status("now", "waiting")]),
         ("Deploy", []),
         ("Deploy", [{"id": "now", "type": "sparkline"}]),
-        ("Deploy", [vis.status("now", "waiting"), vis.status("now", "again")]),
-        ("Deploy", [vis.status("", "waiting")]),
+        ("Deploy", [vis.ui.status("now", "waiting"), vis.ui.status("now", "again")]),
+        ("Deploy", [vis.ui.status("", "waiting")]),
     ],
 )
 def test_a_live_view_names_what_is_wrong_with_it(view):
@@ -779,7 +779,7 @@ def test_a_live_handle_op_names_the_view_it_cannot_find(op):
 
 
 def test_a_push_at_a_node_the_view_never_declared_is_refused():
-    view = vis.live("Deploy", [vis.status("now", "waiting")])
+    view = vis.live("Deploy", [vis.ui.status("now", "waiting")])
     envelope = {
         "op": "patch",
         "view_id": view.view_id,
@@ -791,7 +791,7 @@ def test_a_push_at_a_node_the_view_never_declared_is_refused():
 
 
 def test_a_view_may_answer_the_model_with_an_optimized_string():
-    view = vis.live("Scan", [vis.status("now", "reading")])
+    view = vis.live("Scan", [vis.ui.status("now", "reading")])
     result = view.close(
         summary="the durable human-facing ending",
         model_result="Scan complete: 12 files checked, no findings.",
@@ -802,7 +802,7 @@ def test_a_view_may_answer_the_model_with_an_optimized_string():
 
 
 def test_a_view_that_ended_answers_its_verdict_rather_than_vanishing():
-    view = vis.live("Scan", [vis.status("now", "reading")])
+    view = vis.live("Scan", [vis.ui.status("now", "reading")])
     verdict = view.close(reason="interrupted", summary="the human stopped watching")
 
     assert verdict["is_completed"] is False
@@ -830,7 +830,7 @@ def test_a_burst_of_pushes_crosses_the_boundary_once_per_window(monkeypatch):
         return serve(envelope_json)
 
     monkeypatch.setattr(vis._host, "live", counted)
-    view = vis.live("Scan", [vis.output("tail")], flush_ms=60_000)
+    view = vis.live("Scan", [vis.ui.output("tail")], flush_ms=60_000)
     view.write("starting")
     # Leading edge: the first sign of life does not wait for a window.
     assert crossed == ["open", "patch"]
@@ -860,8 +860,8 @@ def test_an_explicit_batch_crosses_as_one_complete_patch(monkeypatch):
     view = vis.live(
         "CI",
         [
-            vis.status("run", "Job A"),
-            vis.steps("steps", steps=[{"id": "a", "label": "Old"}]),
+            vis.ui.status("run", "Job A"),
+            vis.ui.steps("steps", steps=[{"id": "a", "label": "Old"}]),
         ],
         flush_ms=60_000,
     )
@@ -870,7 +870,7 @@ def test_an_explicit_batch_crosses_as_one_complete_patch(monkeypatch):
         view["run"].set("Job B")
         view["steps"].clear()
         view["steps"].set("b", label="New")
-        view.add(vis.output("output", label="Job B"), after="run")
+        view.add(vis.ui.output("output", label="Job B"), after="run")
         view["output"].write("ready")
         assert [one["op"] for one in crossed] == ["open"]
 
@@ -901,7 +901,7 @@ def test_the_first_op_crosses_on_a_freshly_booted_machine(monkeypatch):
         return serve(envelope_json)
 
     monkeypatch.setattr(vis._host, "live", counted)
-    view = vis.live("Scan", [vis.output("tail")], flush_ms=60_000)
+    view = vis.live("Scan", [vis.ui.output("tail")], flush_ms=60_000)
     view.write("starting")
 
     assert crossed == ["open", "patch"]
@@ -922,10 +922,10 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
     view = vis.live(
         "CI",
         [
-            vis.table(
+            vis.ui.table(
                 "jobs",
-                columns=[vis.table_column("job", "Job")],
-                rows=[vis.table_row("a", ["one"]), vis.table_row("b", ["two"])],
+                columns=[vis.ui.table_column("job", "Job")],
+                rows=[vis.ui.table_row("a", ["one"]), vis.ui.table_row("b", ["two"])],
                 is_selectable=True,
                 selected_ids=["a"],
             )

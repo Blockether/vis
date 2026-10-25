@@ -24,7 +24,7 @@ def test_idle_wait_is_one_small_host_response(monkeypatch, host_kind):
 
     monkeypatch.setattr(host, "live", live)
     monkeypatch.setattr(vis, "_host", host)
-    with vis.live("Idle", [vis.status("now", "Ready")]) as view:
+    with vis.live("Idle", [vis.ui.status("now", "Ready")]) as view:
         calls.clear()
         assert view.sleep(0) is False
         assert calls == []
@@ -52,7 +52,7 @@ def test_wait_wakes_on_change_or_stop(monkeypatch, action, host_kind):
         return original(envelope)
 
     monkeypatch.setattr(recorder, "live", live)
-    with vis.live("Waiting", [vis.status("now", "Ready")]) as view:
+    with vis.live("Waiting", [vis.ui.status("now", "Ready")]) as view:
         with ThreadPoolExecutor(max_workers=1) as pool:
             waiter = pool.submit(view.sleep, 1)
             assert entered.wait(0.5)
@@ -87,7 +87,7 @@ def test_wait_wakes_on_change_or_stop(monkeypatch, action, host_kind):
 def test_own_patch_does_not_wake_but_interleaved_human_change_does(monkeypatch):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
-    with vis.live("Changes", [vis.status("now", "Ready")], flush_ms=0) as view:
+    with vis.live("Changes", [vis.ui.status("now", "Ready")], flush_ms=0) as view:
         view["now"].set(text="Running")
         assert view.sleep(0.01) is False
         recorder.host_live(
@@ -108,7 +108,7 @@ def test_own_patch_does_not_wake_but_interleaved_human_change_does(monkeypatch):
 def test_invalid_wait_duration_is_refused_before_host_call(monkeypatch, seconds):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
-    with vis.live("Invalid", [vis.status("now", "Ready")]) as view:
+    with vis.live("Invalid", [vis.ui.status("now", "Ready")]) as view:
         before = len(recorder.said)
         with pytest.raises(ValueError, match="duration"):
             view.sleep(seconds)

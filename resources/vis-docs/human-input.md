@@ -155,16 +155,16 @@ answer.
 Each node type has a builder that validates its arguments:
 
 ```python
-form = vis.column(
-    vis.heading("Target"),
-    vis.paragraph("Staging does not send on-call alerts."),
-    vis.row(
-        vis.select("env", [vis.option("staging", "Staging"), vis.option("prod")],
+form = vis.ui.column(
+    vis.ui.heading("Target"),
+    vis.ui.paragraph("Staging does not send on-call alerts."),
+    vis.ui.row(
+        vis.ui.select("env", [vis.ui.option("staging", "Staging"), vis.ui.option("prod")],
                    is_required=True),
-        vis.slider("canary", label="Canary %", min=0, max=100, step=5, default=10),
+        vis.ui.slider("canary", label="Canary %", min=0, max=100, step=5, default=10),
     ),
-    vis.checkbox("ack", label="I read the runbook", is_required=True),
-    vis.password("token", label="Deploy token", is_required=True),
+    vis.ui.checkbox("ack", label="I read the runbook", is_required=True),
+    vis.ui.password("token", label="Deploy token", is_required=True),
 )
 
 answer = vis.ask("Deploy", [form], submit_label="Deploy")
@@ -194,10 +194,10 @@ def a_slug(text):
 
 
 answer = vis.ask("Sign up", [
-    vis.plaintext("slug", label="Project", validate=[a_slug, is_free]),
-    vis.password("pass", label="Password",
+    vis.ui.plaintext("slug", label="Project", validate=[a_slug, is_free]),
+    vis.ui.password("pass", label="Password",
                  validate=lambda text: "at least 12 characters" if len(text) < 12 else None),
-    vis.password("again", label="Repeat it",
+    vis.ui.password("again", label="Repeat it",
                  validate=lambda text, values:
                      None if text == values["pass"] else "the two do not match"),
 ])

@@ -720,30 +720,30 @@ def declared_nodes(shape):
     read. So an empty pane never takes the space above the jobs.
     """
     return [
-        vis.status(
+        vis.ui.status(
             "run", shape["headline"], tone=shape["tone"], detail=shape["detail"]
         ),
         # GitHub can report a run before its jobs. No total means indeterminate.
-        vis.progress(
+        vis.ui.progress(
             "progress",
             done=shape["done"],
             total=shape["total"] or None,
             label="Jobs finished",
         ),
-        vis.stat("score", stats=[dict(one) for one in shape["score"]]),
-        vis.table(
+        vis.ui.stat("score", stats=[dict(one) for one in shape["score"]]),
+        vis.ui.table(
             "jobs",
             columns=[
-                vis.table_column("job", "Job"),
-                vis.table_column("state", "Now"),
-                vis.table_column("took", "Took"),
+                vis.ui.table_column("job", "Job"),
+                vis.ui.table_column("state", "Now"),
+                vis.ui.table_column("took", "Took"),
             ],
             groups=[
-                vis.table_group(one["id"], tone=one.get("tone"), order=one["order"])
+                vis.ui.table_group(one["id"], tone=one.get("tone"), order=one["order"])
                 for one in shape["groups"]
             ],
             rows=[
-                vis.table_row(
+                vis.ui.table_row(
                     row["id"], row["cells"], tone=row["tone"], parent=row.get("parent")
                 )
                 for row in shape["rows"]
@@ -751,12 +751,12 @@ def declared_nodes(shape):
             is_selectable=True,
             selected_ids=shape["selected_ids"],
         ),
-        vis.steps(
+        vis.ui.steps(
             "steps",
             steps=[dict(one) for one in shape["steps"]],
             label="Timeline",
         ),
-        vis.link("links", links=[dict(one) for one in shape["links"]]),
+        vis.ui.link("links", links=[dict(one) for one in shape["links"]]),
     ]
 
 
@@ -982,14 +982,14 @@ def _login(hostname="github.com") -> Account:
         answer = vis.ask(
             "Sign in to GitHub",
             [
-                vis.heading("Authorize GitHub CLI"),
-                vis.paragraph(f"Open this address in a browser: {url}"),
-                vis.paragraph(f"Enter this one-time code: {code}"),
-                vis.paragraph(
+                vis.ui.heading("Authorize GitHub CLI"),
+                vis.ui.paragraph(f"Open this address in a browser: {url}"),
+                vis.ui.paragraph(f"Enter this one-time code: {code}"),
+                vis.ui.paragraph(
                     "GitHub will show the requested CLI permissions. Approve them there, then "
                     "return here. The code and resulting credential are never sent to the model."
                 ),
-                vis.checkbox(
+                vis.ui.checkbox(
                     "authorized",
                     label="I completed authorization in GitHub",
                     is_required=True,
@@ -1475,7 +1475,7 @@ def _show_selection_logs(view, shape, log_of, cache, lines):
             view.drop("output")
         if not written:
             return
-        view.add(vis.output("output", label=_log_label(shape)), after="run")
+        view.add(vis.ui.output("output", label=_log_label(shape)), after="run")
         view["output"].write(*written)
 
 
@@ -1505,7 +1505,7 @@ def _archive_selection_snapshots(view, payload, log_of, cache):
         lines = _selection_log_lines(shape, log_of, cache, LOG_TAIL_LINES)
         # A snapshot is materialized by nobody: it must carry every key a live log node
         # has, or the engine refuses the whole ending the moment no pane was live.
-        log = vis.output(
+        log = vis.ui.output(
             "output",
             label=_log_label(shape),
             lines=lines,

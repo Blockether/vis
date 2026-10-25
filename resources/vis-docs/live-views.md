@@ -78,11 +78,11 @@ def watch_run(run_id: int) -> dict:
     with vis.live(
         f"CI · run {run_id} · {len(run['jobs'])} jobs",
         [
-            vis.status("run", "Watching", tone="running"),
-            vis.progress("progress"),
-            vis.table("jobs", columns=[vis.table_column("job", "Job"),
-                                       vis.table_column("state", "Status")]),
-            vis.link("links", links=[{"id": "run", "label": "This run", "target": run["url"]}]),
+            vis.ui.status("run", "Watching", tone="running"),
+            vis.ui.progress("progress"),
+            vis.ui.table("jobs", columns=[vis.ui.table_column("job", "Job"),
+                                       vis.ui.table_column("state", "Status")]),
+            vis.ui.link("links", links=[{"id": "run", "label": "This run", "target": run["url"]}]),
         ],
     ) as view:
         seen = {}
@@ -175,10 +175,10 @@ def watch_builds(builds, read_once, *, timeout_s=600.0, poll_s=5.0):
     deadline = time.monotonic() + timeout_s
     outcome = "completed"
     with vis.live("Watch builds", [
-        vis.status("status", "Watching pinned builds", tone="running"),
-        vis.table("builds", columns=[vis.table_column("environment", "Environment"),
-                                    vis.table_column("build", "Build"),
-                                    vis.table_column("state", "Last observation")]),
+        vis.ui.status("status", "Watching pinned builds", tone="running"),
+        vis.ui.table("builds", columns=[vis.ui.table_column("environment", "Environment"),
+                                    vis.ui.table_column("build", "Build"),
+                                    vis.ui.table_column("state", "Last observation")]),
     ]) as view:
         pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ci-reader")
         try:
@@ -315,22 +315,22 @@ A view declares its nodes once, each with an id, and addresses them by id.
 
 | Builder | Shows | Verbs on `view[id]` |
 | --- | --- | --- |
-| `vis.status(id, text, tone=…, detail=…)` | status text with an optional detail line | `.set(text, tone=, detail=, label=)` |
-| `vis.progress(id, total=…)` | a bar | `.set(value=, done=, total=)` |
-| `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label, tone=)`, `.remove(*ids)`, `.clear()` |
-| `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, label, tone=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
-| `vis.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines, tone=)`, `.clear()` |
-| `vis.table(id, columns=[vis.table_column(…)], groups=[vis.table_group(…)])` | rows keyed by id, optionally folded into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
-| `vis.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
-| `vis.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
-| `vis.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
-| `vis.divider(id)` | a horizontal rule between sections | none (use `view.add(...)` or `view.drop(id)`) |
-| `vis.code(id, text, language=None)` | literal, whitespace-preserving code | `.set(text, language=)` |
-| `vis.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
-| `vis.button(id, label, is_disabled=False)` | an operator action | `.set(label=, is_disabled=)` |
-| `vis.disclosure(id, label, *nodes, default_expanded=False)` | a collapsible column | children update by their own ids |
+| `vis.ui.status(id, text, tone=…, detail=…)` | status text with an optional detail line | `.set(text, tone=, detail=, label=)` |
+| `vis.ui.progress(id, total=…)` | a bar | `.set(value=, done=, total=)` |
+| `vis.ui.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label, tone=)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.steps(id, steps=[…])` | a checklist | `.set(step_id, label, tone=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.output(id, label=…, default_expanded=False)` | independently collapsible retained lines | `.write(*lines, tone=)`, `.clear()` |
+| `vis.ui.table(id, columns=[vis.ui.table_column(…)], groups=[vis.ui.table_group(…)])` | rows keyed by id, optionally folded into groups | `.upsert(row_id, cells, tone=, parent=)`, `.group(group_id, label=, tone=, order=, is_open=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
+| `vis.ui.link(id, links=[…])` | links a person can open | `.add(link_id, label, target, target_kind=, tone=)` |
+| `vis.ui.paragraph(id, text)` | a paragraph with inline formatting | `.set(text)` |
+| `vis.ui.heading(id, text, level=2)` | a heading at level 1–6 | `.set(text, level=)` |
+| `vis.ui.divider(id)` | a horizontal rule between sections | none (use `view.add(...)` or `view.drop(id)`) |
+| `vis.ui.code(id, text, language=None)` | literal, whitespace-preserving code | `.set(text, language=)` |
+| `vis.ui.spinner(id, text="Working", variant="braille")` | an explicit activity indicator | `.set(text=, variant=, is_active=)` |
+| `vis.ui.button(id, label, is_disabled=False)` | an operator action | `.set(label=, is_disabled=)` |
+| `vis.ui.disclosure(id, label, *nodes, default_expanded=False)` | a collapsible column | children update by their own ids |
 
-`vis.output(...)` builds a `log` node. It is named `output` so it never shadows
+`vis.ui.output(...)` builds a `log` node. It is named `output` so it never shadows
 `vis.log`, the engine log line.
 
 To update a status without changing its detail, omit `detail`. To remove the
@@ -385,7 +385,7 @@ and `"error"`. Omitting `tone` keeps the plain-text default. A tone applies to a
 lines in that call, not to later calls.
 
 ```python
-with vis.live("Build output", [vis.output("log", label="Build log")]) as view:
+with vis.live("Build output", [vis.ui.output("log", label="Build log")]) as view:
     view["log"].write("10:42:00 INFO $ npm test")
     view["log"].write("10:42:01 WARN cache unavailable", tone="warn")
     view["log"].write("10:42:02 ERROR compiler failed", tone="error")
@@ -412,7 +412,7 @@ output. Do not clear and replace snapshots.
 
 Successive batches keep their own tones, even when updates are coalesced. Styling does not change
 `window_lines`, retention or search pagination. The earlier pages that a surface reads back keep the
-tones they were written with. Use `vis.code(..., language=...)` for a separate snippet in a known
+tones they were written with. Use `vis.ui.code(..., language=...)` for a separate snippet in a known
 language, not to reinterpret the mixed log.
 
 For raw wire clients, an `append` operation can carry `tone` only for a log node. Log snapshots can
@@ -434,15 +434,15 @@ request as uncertain: check state before retrying a consequential action.
 
 ```python
 with vis.live("Review", [
-    vis.heading("title", "Build review", level=1),
-    vis.paragraph("intro", "Read the output before continuing."),
-    vis.code("example", "print('ready')", language="python"),
-    vis.spinner("waiting", "Waiting for review", variant="dots"),
-    vis.disclosure("details", "Build details",
-                   vis.output("tests", label="Test output"),
-                   vis.output("build", label="Build output")),
-    vis.divider("review-actions"),
-    vis.button("continue", "Continue"),
+    vis.ui.heading("title", "Build review", level=1),
+    vis.ui.paragraph("intro", "Read the output before continuing."),
+    vis.ui.code("example", "print('ready')", language="python"),
+    vis.ui.spinner("waiting", "Waiting for review", variant="dots"),
+    vis.ui.disclosure("details", "Build details",
+                   vis.ui.output("tests", label="Test output"),
+                   vis.ui.output("build", label="Build output")),
+    vis.ui.divider("review-actions"),
+    vis.ui.button("continue", "Continue"),
 ]) as view:
     view["tests"].write("Tests passed")
     while not view.is_interrupted:
@@ -457,7 +457,7 @@ with vis.live("Review", [
         view.sleep(60)
 ```
 
-With one argument, `vis.heading(text)` and `vis.paragraph(text)` remain form
+With one argument, `vis.ui.heading(text)` and `vis.ui.paragraph(text)` remain form
 decorations. Two positional arguments declare addressed live nodes.
 
 Tables support `order="insertion"` (default), `"newest-first"` or
@@ -470,7 +470,7 @@ A group that you never declare gets its id as its name. It sorts after the decla
 order its first row arrived.
 
 Declare a group when you want to name, color or order it. When you build the table, use
-`vis.table_group("tests", label="Tests", tone="error", order=0)`. While the run moves, use
+`vis.ui.table_group("tests", label="Tests", tone="error", order=0)`. While the run moves, use
 `view["jobs"].group("tests", tone="error")`.
 
 Declarations merge by id, so a later call changes only the keys it passes. Renaming a group keeps
@@ -487,8 +487,8 @@ itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,
 
 ## Layout and text
 
-Use `vis.row(id, *nodes)`, `vis.column(id, *nodes)`, `vis.grid(id, *nodes)` and
-`vis.wrap(id, *nodes)` to arrange nodes with the same layout vocabulary as
+Use `vis.ui.row(id, *nodes)`, `vis.ui.column(id, *nodes)`, `vis.ui.grid(id, *nodes)` and
+`vis.ui.wrap(id, *nodes)` to arrange nodes with the same layout vocabulary as
 [Ask forms](human-input.md#layout).
 Every Live group has an id. Groups can nest. Each nested group uses the width
 available inside its parent, not the full screen width.
@@ -500,7 +500,7 @@ rows use equal-width columns when each child has at least 24 terminal text cells
 after spacing. Otherwise the entire row stacks vertically. Columns always stack.
 
 Use a grid for many nodes of the same kind, such as cards. It shows equal columns
-and continues on new rows. `vis.grid(id, *nodes, max_columns=3)` limits the
+and continues on new rows. `vis.ui.grid(id, *nodes, max_columns=3)` limits the
 columns. A narrow panel shows fewer columns, and a very narrow panel stacks them.
 In the TUI, each grid column also needs 24 terminal text cells.
 
@@ -509,15 +509,15 @@ statuses. They stand side by side and continue on a new line when the next one
 does not fit. Buttons in a grid or a wrap stay interactive on both surfaces.
 
 ```python
-vis.column("board",
-           vis.grid("services", *cards, max_columns=3),
-           vis.wrap("actions",
-                    vis.button("approve", "Approve release"),
-                    vis.button("rerun", "Run checks again")))
+vis.ui.column("board",
+           vis.ui.grid("services", *cards, max_columns=3),
+           vis.ui.wrap("actions",
+                    vis.ui.button("approve", "Approve release"),
+                    vis.ui.button("rerun", "Run checks again")))
 ```
 
-Declare at least one child in every `vis.row`, `vis.column`, `vis.grid`,
-`vis.wrap` and `vis.disclosure`. These Python builders raise `ValueError` immediately when
+Declare at least one child in every `vis.ui.row`, `vis.ui.column`, `vis.ui.grid`,
+`vis.ui.wrap` and `vis.ui.disclosure`. These Python builders raise `ValueError` immediately when
 called without children. If you do not have any nodes yet, wait to add the
 group until its first child is available.
 
@@ -525,9 +525,9 @@ Use `view.add(node)` to append a top-level node. With `after=`, the new node
 becomes the named node’s next sibling in the same container:
 
 ```python
-view.add(vis.column("builds", vis.status("linux", "Queued")))
-view.add(vis.status("macos", "Queued"), after="linux")  # Inside builds.
-view.add(vis.status("summary", "Watching"), after="builds")  # After the group.
+view.add(vis.ui.column("builds", vis.ui.status("linux", "Queued")))
+view.add(vis.ui.status("macos", "Queued"), after="linux")  # Inside builds.
+view.add(vis.ui.status("summary", "Watching"), after="builds")  # After the group.
 ```
 
 To grow a group, name one of its children in `after=`, not the group itself.
@@ -535,7 +535,7 @@ Remove a node with `view.drop(id)`. Removing a group also removes its children.
 Groups preserve their children’s live interactions and do not produce form
 answer values.
 
-Use `vis.divider("section-break")` between sections, like an HTML `<hr>`. It fills
+Use `vis.ui.divider("section-break")` between sections, like an HTML `<hr>`. It fills
 its current container’s width in the terminal and Companion, including inside
 columns and disclosures, and remains visible in completed receipts. A divider
 has only an id: it has no label, content, style options or update verbs. Use a
@@ -634,7 +634,7 @@ def handle(event):
 def open_board(session_id):
     BOARD["view"] = vis.live(
         "Release board",
-        [vis.status("state", "Idle", tone="idle"), vis.button("refresh", "Refresh")],
+        [vis.ui.status("state", "Idle", tone="idle"), vis.ui.button("refresh", "Refresh")],
         placement="panel",
         key="release-board",
         session_id=session_id,
@@ -658,11 +658,11 @@ A live view can hold the same [inputs](components.md#inputs) as a form. Each inp
 def choose_target() -> str | None:
     """Show a deploy form in a live view and return the chosen target."""
     with vis.live("Deploy", [
-        vis.group("target",
-                  vis.select("env", ["staging", "prod"], label="Target", is_required=True),
-                  vis.multiline("notes", label="Notes"),
-                  vis.button("deploy", "Deploy", action="submit")),
-        vis.status("state", "Waiting for a target", tone="idle"),
+        vis.ui.group("target",
+                  vis.ui.select("env", ["staging", "prod"], label="Target", is_required=True),
+                  vis.ui.multiline("notes", label="Notes"),
+                  vis.ui.button("deploy", "Deploy", action="submit")),
+        vis.ui.status("state", "Waiting for a target", tone="idle"),
     ]) as view:
         while not view.is_interrupted:
             for event in view.events(timeout=60):

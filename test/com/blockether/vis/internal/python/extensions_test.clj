@@ -7476,36 +7476,36 @@ def _refusal(title, fields, **options):
 
 def forms_report():
     '''await forms_report() -> {'kind', ...} - build a form, let the engine judge it.'''
-    good = vis.column(
-        vis.heading('Target'),
-        vis.paragraph('Staging pages nobody.'),
-        vis.row(
-            vis.select(
+    good = vis.ui.column(
+        vis.ui.heading('Target'),
+        vis.ui.paragraph('Staging pages nobody.'),
+        vis.ui.row(
+            vis.ui.select(
                 'env',
-                [vis.option('staging', 'Staging'), vis.option('prod')],
+                [vis.ui.option('staging', 'Staging'), vis.ui.option('prod')],
                 is_required=True,
                 default='prod',
             ),
-            vis.slider('canary', min=0, max=100, step=5, default=10),
+            vis.ui.slider('canary', min=0, max=100, step=5, default=10),
         ),
-        vis.plaintext('who', label='Deployer'),
-        vis.multiline('note'),
-        vis.multiselect('regions', ['eu', 'us']),
-        vis.otp('code', min_length=6, max_length=6),
-        vis.checkbox('ack', is_required=True),
-        vis.password('token'),
+        vis.ui.plaintext('who', label='Deployer'),
+        vis.ui.multiline('note'),
+        vis.ui.multiselect('regions', ['eu', 'us']),
+        vis.ui.otp('code', min_length=6, max_length=6),
+        vis.ui.checkbox('ack', is_required=True),
+        vis.ui.password('token'),
     )
     return {
         'kind': good['type'] + ':' + good['direction'],
         'ink': good['children'][0],
         'slider_type': good['children'][2]['children'][1]['type'],
-        'bad_option': _refusal('Deploy', [vis.select('env', [])]),
-        'bad_track': _refusal('Deploy', [vis.slider('canary', min=5, max=2)]),
-        'bad_names': _refusal('Deploy', [vis.plaintext('who'), vis.password('who')]),
-        'bad_title': _refusal('', [vis.plaintext('who')]),
-        'bad_key': _refusal('Deploy', [vis.plaintext('who', required=True)]),
-        'bad_validator': _refusal('Deploy', [vis.plaintext('who', validate=lambda: None)]),
-        'not_a_validator': _refusal('Deploy', [vis.plaintext('who', validate='nope')]),
+        'bad_option': _refusal('Deploy', [vis.ui.select('env', [])]),
+        'bad_track': _refusal('Deploy', [vis.ui.slider('canary', min=5, max=2)]),
+        'bad_names': _refusal('Deploy', [vis.ui.plaintext('who'), vis.ui.password('who')]),
+        'bad_title': _refusal('', [vis.ui.plaintext('who')]),
+        'bad_key': _refusal('Deploy', [vis.ui.plaintext('who', required=True)]),
+        'bad_validator': _refusal('Deploy', [vis.ui.plaintext('who', validate=lambda: None)]),
+        'not_a_validator': _refusal('Deploy', [vis.ui.plaintext('who', validate='nope')]),
     }
 
 

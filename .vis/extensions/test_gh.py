@@ -1378,7 +1378,7 @@ def test_cli_terminal_results_keep_the_exit_status(
 
     monkeypatch.setattr(vis, "shell", lambda _: vis.Shell({"id": "gh"}, operation))
     if watching:
-        with vis.live("CLI test", [vis.status("state", "Running")]) as view:
+        with vis.live("CLI test", [vis.ui.status("state", "Running")]) as view:
             with gh._watch_commands(view):
                 result = gh._shell("gh run view 42")
     else:
@@ -1408,7 +1408,7 @@ def test_cli_deadline_is_not_extended_by_view_events(recorder, monkeypatch):
     monkeypatch.setattr(gh.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(recorder, "live", live)
     monkeypatch.setattr(vis, "shell", lambda _: vis.Shell({"id": "gh"}, operation))
-    with vis.live("CLI test", [vis.status("state", "Running")]) as view:
+    with vis.live("CLI test", [vis.ui.status("state", "Running")]) as view:
         with gh._watch_commands(view):
             exit_code, text = gh._capture("gh run view 42", seconds=0.3)
     assert exit_code == 124

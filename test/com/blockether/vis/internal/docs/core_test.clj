@@ -919,20 +919,20 @@
                    (expect (str/includes? md "editable = true")))))
 
 ;; A live view is the one primitive an author cannot infer from the field builders:
-;; its verbs differ per node type, and `vis.output` deliberately does not match the
+;; its verbs differ per node type, and `vis.ui.output` deliberately does not match the
 ;; `log` node it builds (`vis.log` is the engine log line). When that Python surface
 ;; is renamed, this test names the page that has to be renamed with it.
 (defdescribe
   live-views-page-teaches-the-live-view-test
   (it "names the opener, the log builder that could not be called `log`, and what a loop reads"
       (let [md (page-md "live-views")]
-        (doseq [needle ["vis.live(" "vis.output(" "upsert(" "is_interrupted" "vis.Interrupted"
+        (doseq [needle ["vis.live(" "vis.ui.output(" "upsert(" "is_interrupted" "vis.Interrupted"
                         "flush_ms" "view.is_from_human" "view.note"]]
           (expect (str/includes? md needle) (str "live-views.md never mentions " needle)))))
   ;; #209: document visible terminal-control escapes, not unsafe verbatim output.
   (it "documents layout, text formatting, and interruption"
       (let [md (page-md "live-views")]
-        (doseq [needle ["vis.row(" "vis.column(" "inline Markdown" "wraps and is justified"
+        (doseq [needle ["vis.ui.row(" "vis.ui.column(" "inline Markdown" "wraps and is justified"
                         "Terminal controls in logs show as visible escapes"
                         "Other text stays literal" "`Escape` or `Enter` confirms"]]
           (expect (str/includes? md needle) (str "live-views.md never mentions " needle))))))

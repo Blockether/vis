@@ -38,8 +38,8 @@ def sdk_activity(phase, **_):
 def sdk_flow(mode):
     "Run a deterministic tool, live View, form and state update."
     vis.publish_activity(vis.ActivityPresentation("SDK flow", "Awaiting answer", (vis.ActivityProgress("Waiting"),)))
-    with vis.live("SDK flow", [vis.status("now", "Waiting", tone="running")], flush_ms=0) as view:
-        answer = vis.ask("SDK " + mode, [vis.plaintext("name", label="Name", is_required=True)], timeout_ms=60000)
+    with vis.live("SDK flow", [vis.ui.status("now", "Waiting", tone="running")], flush_ms=0) as view:
+        answer = vis.ask("SDK " + mode, [vis.ui.plaintext("name", label="Name", is_required=True)], timeout_ms=60000)
         if not answer:
             return {"reason": answer.reason}
         view.status("Answered", tone="ok")

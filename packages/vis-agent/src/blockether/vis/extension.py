@@ -3914,12 +3914,12 @@ def ask(title, nodes, **options):
 # documents.
 #
 #   answer = vis.ask('Deploy', [
-#       vis.heading('Target'),
-#       vis.paragraph('Staging pages nobody.'),
-#       vis.row(vis.select('env', ['staging', 'prod'], label='Where',
+#       vis.ui.heading('Target'),
+#       vis.ui.paragraph('Staging pages nobody.'),
+#       vis.ui.row(vis.ui.select('env', ['staging', 'prod'], label='Where',
 #                          is_required=True),
-#               vis.slider('canary', min=0, max=100, step=5)),
-#       vis.password('token', label='Deploy token', is_required=True),
+#               vis.ui.slider('canary', min=0, max=100, step=5)),
+#       vis.ui.password('token', label='Deploy token', is_required=True),
 #   ])
 #
 # A builder is a plain dict, so a form stays printable and can be assembled in a
@@ -3934,56 +3934,56 @@ def _node(type_name, name, spec):
     return node
 
 
-def plaintext(name, **spec):
+def _ui_plaintext(name, **spec):
     # One typed line, answered as a string.
     return _node("plaintext", name, spec)
 
 
-def password(name, **spec):
+def _ui_password(name, **spec):
     # A masked line, answered as an opaque 'vis-secret:' handle: `reveal` it on
     # the trusted side, never log it.
     return _node("password", name, spec)
 
 
-def multiline(name, **spec):
+def _ui_multiline(name, **spec):
     # A text box, answered as a string that keeps its newlines.
     return _node("multiline", name, spec)
 
 
-def select(name, options, **spec):
-    # Choose exactly ONE of `options` (plain strings, or `vis.option(...)`
+def _ui_select(name, options, **spec):
+    # Choose exactly ONE of `options` (plain strings, or `vis.ui.option(...)`
     # pairs); answered as the chosen value.
     spec["options"] = list(options)
     return _node("select", name, spec)
 
 
-def multiselect(name, options, **spec):
+def _ui_multiselect(name, options, **spec):
     # Choose ANY of `options`; answered as a list, empty when nothing is ticked.
     spec["options"] = list(options)
     return _node("multiselect", name, spec)
 
 
-def checkbox(name, **spec):
+def _ui_checkbox(name, **spec):
     # One box, answered as a bool. `is_required=True` means it must end up
     # TICKED, not merely present.
     return _node("checkbox", name, spec)
 
 
-def slider(name, **spec):
+def _ui_slider(name, **spec):
     # A number on a track: min / max / step, 0 / 100 / 1 by default, answered as
     # a NUMBER. It is `range` on the wire; the builder is `slider` so it never
     # shadows the builtin.
     return _node("range", name, spec)
 
 
-def otp(name, **spec):
+def _ui_otp(name, **spec):
     # A one-time code in digit boxes: min_length / max_length say how many
     # (6 by default, 12 at most), digits only, paste fills the boxes. A code is a
     # credential, so it answers with a `vis-secret:` handle like a password.
     return _node("otp", name, spec)
 
 
-def option(value, label=None):
+def _ui_option(value, label=None):
     # One entry of a select / multiselect: the value that is ANSWERED and the
     # words shown for it. Given no label, the value shows itself.
     return {"value": value} if label is None else {"value": value, "label": label}
@@ -4016,20 +4016,20 @@ def _group(direction, fields):
     return group
 
 
-def row(*fields):
-    # Lay these nodes out side by side: `vis.row(vis.text("host"), vis.text("port"))`
-    # on a form, `vis.row("reading", vis.table("hosts", ...), vis.status("why"))`
+def _ui_row(*fields):
+    # Lay these nodes out side by side: `vis.ui.row(vis.text("host"), vis.text("port"))`
+    # on a form, `vis.ui.row("reading", vis.ui.table("hosts", ...), vis.ui.status("why"))`
     # in a live view.
     return _group("row", fields)
 
 
-def column(*fields):
+def _ui_column(*fields):
     # Stack these nodes, the default arrangement: worth saying out loud inside a
     # `row`.
     return _group("column", fields)
 
 
-def grid(*fields, max_columns=None):
+def _ui_grid(*fields, max_columns=None):
     """Lay ``fields`` out in equal columns that wrap into aligned rows.
 
     ``max_columns`` (1 to 12) caps the columns. A narrow surface shows fewer
@@ -4041,7 +4041,7 @@ def grid(*fields, max_columns=None):
     return node
 
 
-def wrap(*fields):
+def _ui_wrap(*fields):
     """Put ``fields`` side by side at their own width, wrapping onto new lines.
 
     Use it for buttons, stats, statuses and links that keep a natural width.
@@ -4049,7 +4049,7 @@ def wrap(*fields):
     return _group("wrap", fields)
 
 
-def group(*children, direction="column", **spec):
+def _ui_group(*children, direction="column", **spec):
     """Group ``children`` with optional ``label``, ``description`` and folding.
 
     A leading string is the group id. A submit button inside a group collects
@@ -4060,7 +4060,7 @@ def group(*children, direction="column", **spec):
     return node
 
 
-def card(node_id, title, **spec):
+def _ui_card(node_id, title, **spec):
     """A titled card with optional ``text``, ``tone`` and ``meta`` lines.
 
     With ``is_selectable=True`` the human can activate it like a button, and
@@ -4069,7 +4069,7 @@ def card(node_id, title, **spec):
     return _live_node("card", node_id, dict(spec, title=str(title)))
 
 
-def heading(text, live_text=None, **spec):
+def _ui_heading(text, live_text=None, **spec):
     """Form heading, or live ``heading(id, text, level=1..6)``."""
     if live_text is not None:
         return _live_node(
@@ -4080,7 +4080,7 @@ def heading(text, live_text=None, **spec):
     return {"type": "heading", "text": str(text)}
 
 
-def paragraph(text, live_text=None, **spec):
+def _ui_paragraph(text, live_text=None, **spec):
     """Form Markdown prose, or live ``paragraph(id, text)`` with inline Markdown."""
     if live_text is not None:
         return _live_node("paragraph", text, dict(spec, text=str(live_text)))
@@ -4280,9 +4280,9 @@ def list_sessions(search=None):
 # surface repaints, and the extension carries straight on. The human watches it
 # move and may stop it; the model reads the finished picture as DATA.
 #
-#   with vis.live('CI', [vis.status('now', 'Polling'),
-#                        vis.table('jobs', columns=[vis.table_column('job', 'Job'),
-#                                                   vis.table_column('state', 'State')])]) as view:
+#   with vis.live('CI', [vis.ui.status('now', 'Polling'),
+#                        vis.ui.table('jobs', columns=[vis.ui.table_column('job', 'Job'),
+#                                                   vis.ui.table_column('state', 'State')])]) as view:
 #       for job in poll():
 #           view['jobs'].upsert(job.id, [job.name, job.state], tone=job.tone)
 #       view['now'].set('Finished', tone='ok')
@@ -5193,7 +5193,7 @@ def live(title, nodes, placement=None, key=None, on_event=None, **options):
     The view is mounted at once and nothing blocks — use it as a context
     manager so it closes itself:
 
-        with vis.live('Deploy', [vis.steps('plan', steps=[...])]) as view:
+        with vis.live('Deploy', [vis.ui.steps('plan', steps=[...])]) as view:
             view['plan'].set('build', tone='running')
 
     Closing answers the verdict: `is_completed`, `reason`, the finished picture
@@ -5801,8 +5801,8 @@ testing = _Testing()
 # here talks to the host, and `vis.live` is what carries it to the engine that
 # judges it.
 #
-# Layout is the FORM's own vocabulary, not a second one: `vis.row("reading",
-# table, status)` stands its nodes side by side and `vis.column(...)` stacks them,
+# Layout is the FORM's own vocabulary, not a second one: `vis.ui.row("reading",
+# table, status)` stands its nodes side by side and `vis.ui.column(...)` stacks them,
 # with a live group taking the id every op addresses. It is DECLARED once and no
 # op carries it, so a layout never rearranges itself while a human is reading it.
 
@@ -5814,7 +5814,7 @@ def _live_node(type_name, node_id, spec):
     return node
 
 
-def disclosure(node_id, label, *nodes, default_expanded=False):
+def _ui_disclosure(node_id, label, *nodes, default_expanded=False):
     """A collapsible column.
 
     Local choices survive updates, and receipts start collapsed.
@@ -5832,17 +5832,17 @@ def disclosure(node_id, label, *nodes, default_expanded=False):
     )
 
 
-def divider(node_id):
+def _ui_divider(node_id):
     """A static horizontal rule across its live container. Add or drop it by id."""
     return _live_node("divider", node_id, {})
 
 
-def code(node_id, text, *, language=None, **spec):
+def _ui_code(node_id, text, *, language=None, **spec):
     """Literal code. Whitespace is kept, and content is never executed."""
     return _live_node("code", node_id, dict(spec, text=str(text), language=language))
 
 
-def spinner(node_id, text="Working", *, variant="braille", is_active=True, **spec):
+def _ui_spinner(node_id, text="Working", *, variant="braille", is_active=True, **spec):
     """A braille, dots, line or pulse indicator. Receipts never animate."""
     return _live_node(
         "spinner",
@@ -5851,7 +5851,7 @@ def spinner(node_id, text="Working", *, variant="braille", is_active=True, **spe
     )
 
 
-def button(node_id, label, *, is_disabled=False, **spec):
+def _ui_button(node_id, label, *, is_disabled=False, **spec):
     """An operator action. Accepted presses increment ``clicks`` in ``view.state()``.
 
     No callback or code crosses the wire. The producer decides how to respond.
@@ -5862,27 +5862,27 @@ def button(node_id, label, *, is_disabled=False, **spec):
     )
 
 
-def status(node_id, text=None, **spec):
+def _ui_status(node_id, text=None, **spec):
     # One line saying what is happening right now: text, tone, detail, label.
     return _live_node("status", node_id, dict(spec, text=text))
 
 
-def progress(node_id, **spec):
+def _ui_progress(node_id, **spec):
     # A bar: value (0..1), or done/total. Neither is indeterminate.
     return _live_node("progress", node_id, spec)
 
 
-def stat(node_id, stats=None, **spec):
+def _ui_stat(node_id, stats=None, **spec):
     # A strip of counters, each `{'id': ..., 'label': ..., 'value_text': ...}`.
     return _live_node("stat", node_id, dict(spec, stats=stats))
 
 
-def steps(node_id, steps=None, **spec):
+def _ui_steps(node_id, steps=None, **spec):
     # A checklist, each `{'id': ..., 'label': ..., 'tone': ...}`.
     return _live_node("steps", node_id, dict(spec, steps=steps))
 
 
-def output(node_id, **spec):
+def _ui_output(node_id, **spec):
     """Durable output with an independent disclosure, collapsed by default.
 
     ``default_expanded=True`` opens an active log initially. Updates preserve the local
@@ -5896,7 +5896,7 @@ def output(node_id, **spec):
     return _live_node("log", node_id, spec)
 
 
-def table(node_id, columns=None, **spec):
+def _ui_table(node_id, columns=None, **spec):
     # Rows keyed by id. `order` declares how they paint — 'insertion' (the
     # default), 'newest-first', or {'by': 'duration', 'dir': 'desc'}.
     # `is_selectable=True` makes rows controls; `selected_ids` is shared state.
@@ -5905,17 +5905,17 @@ def table(node_id, columns=None, **spec):
     return _live_node("table", node_id, dict(spec, columns=columns))
 
 
-def table_column(column_id, label=None, **spec):
+def _ui_table_column(column_id, label=None, **spec):
     # One declared column: the id a cell sits under, its header, its align.
     return _live_item(column_id, dict(spec, label=label))
 
 
-def table_row(row_id, cells, **spec):
+def _ui_table_row(row_id, cells, **spec):
     # One declared row: the id every later upsert addresses, and its cells.
     return _live_item(row_id, dict(spec, cells=[_cell(c) for c in cells]))
 
 
-def table_group(group_id, label=None, **spec):
+def _ui_table_group(group_id, label=None, **spec):
     # One declared group of a table: the id a row's `parent` names, the `label`
     # painted over it instead of that id, and optionally `tone`, `order` and
     # `is_open`. Renaming the label never moves the group, because rows point at
@@ -5923,6 +5923,57 @@ def table_group(group_id, label=None, **spec):
     return _live_item(group_id, dict(spec, label=label))
 
 
-def link(node_id, links=None, **spec):
+def _ui_link(node_id, links=None, **spec):
     # Pointers a human can open: url, path or attachment.
     return _live_node("link", node_id, dict(spec, links=links))
+
+
+class _UI:
+    """Components for live views and forms.
+
+    `vis.live` and `vis.ask` take the same components, so one input or layout
+    works in both. Each builder returns plain data and talks to no host.
+    """
+
+    # Inputs
+    plaintext = staticmethod(_ui_plaintext)
+    password = staticmethod(_ui_password)
+    multiline = staticmethod(_ui_multiline)
+    select = staticmethod(_ui_select)
+    multiselect = staticmethod(_ui_multiselect)
+    checkbox = staticmethod(_ui_checkbox)
+    slider = staticmethod(_ui_slider)
+    otp = staticmethod(_ui_otp)
+    option = staticmethod(_ui_option)
+
+    # Layout
+    row = staticmethod(_ui_row)
+    column = staticmethod(_ui_column)
+    grid = staticmethod(_ui_grid)
+    wrap = staticmethod(_ui_wrap)
+    group = staticmethod(_ui_group)
+    card = staticmethod(_ui_card)
+    disclosure = staticmethod(_ui_disclosure)
+
+    # Text and links
+    heading = staticmethod(_ui_heading)
+    paragraph = staticmethod(_ui_paragraph)
+    divider = staticmethod(_ui_divider)
+    code = staticmethod(_ui_code)
+    link = staticmethod(_ui_link)
+
+    # Live state
+    spinner = staticmethod(_ui_spinner)
+    button = staticmethod(_ui_button)
+    status = staticmethod(_ui_status)
+    progress = staticmethod(_ui_progress)
+    stat = staticmethod(_ui_stat)
+    steps = staticmethod(_ui_steps)
+    output = staticmethod(_ui_output)
+    table = staticmethod(_ui_table)
+    table_column = staticmethod(_ui_table_column)
+    table_row = staticmethod(_ui_table_row)
+    table_group = staticmethod(_ui_table_group)
+
+
+ui = _UI()

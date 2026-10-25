@@ -812,71 +812,71 @@ def _attention(swarm):
         jid = job["id"]
         if job["state"] == "review":
             items.append(
-                vis.group(
+                vis.ui.group(
                     f"att:{jid}",
-                    vis.card(
+                    vis.ui.card(
                         f"att-card:{jid}",
                         name,
                         text=job["summary"] or "",
                         tone="warn",
                         meta=(tasks[0]["commit"] or "")[:7] or role["title"],
                     ),
-                    vis.row(
+                    vis.ui.row(
                         f"att-actions:{jid}",
-                        vis.button(f"approve:{jid}", "Approve"),
-                        vis.button(f"drop:{jid}", "Drop"),
+                        vis.ui.button(f"approve:{jid}", "Approve"),
+                        vis.ui.button(f"drop:{jid}", "Drop"),
                     ),
                     # A submit button collects the inputs of its nearest group.
-                    vis.group(
+                    vis.ui.group(
                         f"att-reject:{jid}",
-                        vis.multiline(f"comment:{jid}", label="Comment"),
-                        vis.button(f"reject:{jid}", "Reject", action="submit"),
+                        vis.ui.multiline(f"comment:{jid}", label="Comment"),
+                        vis.ui.button(f"reject:{jid}", "Reject", action="submit"),
                     ),
                 )
             )
         elif job["state"] == "question":
             items.append(
-                vis.group(
+                vis.ui.group(
                     f"att:{jid}",
-                    vis.card(
+                    vis.ui.card(
                         f"att-card:{jid}",
                         name,
                         text=job["question"] or "",
                         tone="warn",
                         meta=role["title"],
                     ),
-                    vis.multiline(f"answer:{jid}", label="Answer", is_required=True),
-                    vis.button(f"reply:{jid}", "Send answer", action="submit"),
-                    vis.button(f"drop:{jid}", "Drop"),
+                    vis.ui.multiline(f"answer:{jid}", label="Answer", is_required=True),
+                    vis.ui.button(f"reply:{jid}", "Send answer", action="submit"),
+                    vis.ui.button(f"drop:{jid}", "Drop"),
                 )
             )
         elif job["state"] == "blocked":
             items.append(
-                vis.group(
+                vis.ui.group(
                     f"att:{jid}",
-                    vis.card(
+                    vis.ui.card(
                         f"att-card:{jid}",
                         name,
                         text=job["summary"] or "",
                         tone="error",
                         meta=role["title"],
                     ),
-                    vis.row(
+                    vis.ui.row(
                         f"att-actions:{jid}",
-                        vis.button(f"retry:{jid}", "Retry"),
-                        vis.button(f"drop:{jid}", "Drop"),
+                        vis.ui.button(f"retry:{jid}", "Retry"),
+                        vis.ui.button(f"drop:{jid}", "Drop"),
                     ),
                 )
             )
         for index, view in enumerate(job["views"]):
             prefix = _prefix(jid, index)
             body = _renamed(view["nodes"], prefix) or [
-                vis.paragraph(f"{prefix}empty", "The form has no fields.")
+                vis.ui.paragraph(f"{prefix}empty", "The form has no fields.")
             ]
             items.append(
-                vis.group(
+                vis.ui.group(
                     f"att:{jid}:{index}",
-                    vis.card(
+                    vis.ui.card(
                         f"att-card:{jid}:{index}",
                         view["title"],
                         text=view.get("description") or "",
@@ -884,7 +884,7 @@ def _attention(swarm):
                         meta=name,
                     ),
                     *body,
-                    vis.button(
+                    vis.ui.button(
                         f"form:{jid}:{index}",
                         view.get("submit_label") or "Send",
                         action="submit",
@@ -892,8 +892,8 @@ def _attention(swarm):
                 )
             )
     if not items:
-        items = [vis.paragraph("att-none", "Nothing needs you now.")]
-    return vis.group("attention", *items, label="Attention")
+        items = [vis.ui.paragraph("att-none", "Nothing needs you now.")]
+    return vis.ui.group("attention", *items, label="Attention")
 
 
 def _lanes(swarm):
@@ -908,7 +908,7 @@ def _lanes(swarm):
             and (task["state"] != "landed" or index == last)
         ][-MAX_CARDS:]
         cards = [
-            vis.card(
+            vis.ui.card(
                 f"card:{role['name']}:{task['id']}",
                 f"{task['id']} {task['title']}",
                 text=LABELS[task["state"]],
@@ -916,25 +916,25 @@ def _lanes(swarm):
                 **({"meta": task["commit"][:7]} if task["commit"] else {}),
             )
             for task in here
-        ] or [vis.paragraph(f"lane-empty:{role['name']}", "No tasks.")]
-        lanes.append(vis.group(f"lane:{role['name']}", *cards, label=role["title"]))
-    return vis.group("lanes", *lanes, direction="row", label="Lanes")
+        ] or [vis.ui.paragraph(f"lane-empty:{role['name']}", "No tasks.")]
+        lanes.append(vis.ui.group(f"lane:{role['name']}", *cards, label=role["title"]))
+    return vis.ui.group("lanes", *lanes, direction="row", label="Lanes")
 
 
 def _queue(swarm):
     rows = [
-        vis.table_row(
+        vis.ui.table_row(
             task["id"],
             [f"{task['id']} {task['title']}", LABELS[task["state"]]],
             tone=TONES[task["state"]],
         )
         for task in swarm["tasks"]
     ]
-    return vis.table(
+    return vis.ui.table(
         "queue",
         columns=[
-            vis.table_column("task", "Task"),
-            vis.table_column("state", "State"),
+            vis.ui.table_column("task", "Task"),
+            vis.ui.table_column("state", "State"),
         ],
         rows=rows,
         label="Work queue",
@@ -945,23 +945,23 @@ def _roles(swarm):
     models = swarm.get("models") or {}
     rows = []
     for role in swarm["roles"]:
-        providers = [vis.option(DEFAULT, "Session default")] + [
-            vis.option(name) for name in models
+        providers = [vis.ui.option(DEFAULT, "Session default")] + [
+            vis.ui.option(name) for name in models
         ]
         names = models.get(role["provider"]) or []
-        choices = [vis.option(DEFAULT, "Session default")] + [
-            vis.option(n, label) for n, label in names
+        choices = [vis.ui.option(DEFAULT, "Session default")] + [
+            vis.ui.option(n, label) for n, label in names
         ]
         rows.append(
-            vis.group(
+            vis.ui.group(
                 f"role:{role['name']}",
-                vis.select(
+                vis.ui.select(
                     f"provider:{role['name']}",
                     providers,
                     label="Provider",
                     value=role["provider"] or DEFAULT,
                 ),
-                vis.select(
+                vis.ui.select(
                     f"model:{role['name']}",
                     choices,
                     label="Model",
@@ -971,36 +971,36 @@ def _roles(swarm):
                 label=role["title"],
             )
         )
-    return vis.group("roles", *rows, label="Roles")
+    return vis.ui.group("roles", *rows, label="Roles")
 
 
 def _new_task():
-    return vis.group(
+    return vis.ui.group(
         "new-task",
-        vis.plaintext("task-title", label="Title", is_required=True),
-        vis.multiline("task-text", label="Details"),
-        vis.button("add-task", "Add task", action="submit"),
+        vis.ui.plaintext("task-title", label="Title", is_required=True),
+        vis.ui.multiline("task-text", label="Details"),
+        vis.ui.button("add-task", "Add task", action="submit"),
         label="New task",
     )
 
 
 def _teardown(swarm):
     if swarm.get("is_confirming"):
-        return vis.group(
+        return vis.ui.group(
             "end",
-            vis.paragraph(
+            vis.ui.paragraph(
                 "end-text",
                 "Teardown cancels running turns and closes the board. "
                 "The role sessions and their drafts stay.",
             ),
-            vis.row(
+            vis.ui.row(
                 "end-actions",
-                vis.button("teardown-confirm", "Confirm teardown"),
-                vis.button("teardown-cancel", "Keep swarm"),
+                vis.ui.button("teardown-confirm", "Confirm teardown"),
+                vis.ui.button("teardown-cancel", "Keep swarm"),
             ),
             label="Teardown",
         )
-    return vis.group("end", vis.button("teardown", "Teardown"))
+    return vis.ui.group("end", vis.ui.button("teardown", "Teardown"))
 
 
 SECTIONS = ("summary", "attention", "lanes", "queue", "roles", "end")
@@ -1008,7 +1008,7 @@ SECTIONS = ("summary", "attention", "lanes", "queue", "roles", "end")
 
 def board_sections(swarm):
     return {
-        "summary": vis.stat("summary", stats=summary_stats(swarm)),
+        "summary": vis.ui.stat("summary", stats=summary_stats(swarm)),
         "attention": _attention(swarm),
         "lanes": _lanes(swarm),
         "queue": _queue(swarm),

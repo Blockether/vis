@@ -25,6 +25,12 @@ Build custom Vis UIs from one static component catalog, then rebuild Swarm Forge
   tasks, in the TUI and the Companion.
 - Each new surface passes a Hallmark audit.
 
+### Scope change
+
+- The `header` placement is removed (`109a169c0`). Views use `inline` and `panel` only.
+- Swarm Forge gets no more development. The TUI and the Companion show no Forge items in the header.
+- The component builders are in the `vis.ui` namespace, for example `vis.ui.card(...)`.
+
 ### Current paths
 
 | Area | Path |
@@ -187,7 +193,7 @@ TUI mockups render through Lanterna HtmlTerminal and Spel screenshots.
 
 **Data:**
 
-- Builders for each component, for example `vis.plaintext(...)`, `vis.select(...)`, `vis.card(...)`, `vis.group(...)`.
+- Builders for each component in `vis.ui`, for example `vis.ui.plaintext(...)`, `vis.ui.select(...)`, `vis.ui.card(...)`, `vis.ui.group(...)`.
 - `vis.ask(title, nodes)` and `vis.live(title, nodes, placement=..., key=...)` take the same builders.
 - `LiveView.values()`, `LiveView.events(timeout=None)` and `LiveView.on_event(callback)`.
 - Typed handles for `card` and the input components.
@@ -340,3 +346,4 @@ TUI mockups render through Lanterna HtmlTerminal and Spel screenshots.
 | 7 Swarm Forge | Done: panel lifetime fix (`5b4e6c3e8`), TUI label fix (`e16ee72af`), extension, packs, board story (`e73e16bea`), live two-pack run landed one task |
 | 8 Documentation | Done: Components and Swarm Forge pages, placements and inputs in Live views, new calls and routes (`05708e2a2`) |
 | 9 Verification | Done: full suite 7275 cases (clock fix `6e0d0ef83`; one unrelated failure), TUI 3028, Companion, tsc, lint, native build and 49 native tests |
+| 10 Scope change | Done: header placement removed (`109a169c0`), Swarm Forge frozen, builders moved to `vis.ui` |

@@ -12,21 +12,21 @@ from blockether.vis import _outside
 def presentation():
     return [
         *[
-            vis.heading(f"h{level}", f"Heading {level}", level=level)
+            vis.ui.heading(f"h{level}", f"Heading {level}", level=level)
             for level in range(1, 7)
         ],
-        vis.paragraph("prose", "A **paragraph**"),
-        vis.code("code", "  <button>\n", language="html"),
+        vis.ui.paragraph("prose", "A **paragraph**"),
+        vis.ui.code("code", "  <button>\n", language="html"),
         *[
-            vis.spinner(variant, variant, variant=variant)
+            vis.ui.spinner(variant, variant, variant=variant)
             for variant in ("braille", "dots", "line", "pulse")
         ],
-        vis.disclosure(
+        vis.ui.disclosure(
             "details",
             "Details",
-            vis.button("go", "Go"),
-            vis.output("a", lines=["retained"]),
-            vis.output("b", lines=["independent"], default_expanded=True),
+            vis.ui.button("go", "Go"),
+            vis.ui.output("a", lines=["retained"]),
+            vis.ui.output("b", lines=["independent"], default_expanded=True),
         ),
     ]
 
@@ -37,8 +37,8 @@ def test_builders_and_mutations(monkeypatch, host_kind):
         _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
     )
     monkeypatch.setattr(vis, "_host", host)
-    assert vis.heading("Form title") == {"type": "heading", "text": "Form title"}
-    assert vis.paragraph("Form prose") == {"type": "paragraph", "text": "Form prose"}
+    assert vis.ui.heading("Form title") == {"type": "heading", "text": "Form title"}
+    assert vis.ui.paragraph("Form prose") == {"type": "paragraph", "text": "Form prose"}
     with vis.live("Presentation", presentation(), flush_ms=0) as view:
         view["h1"].set("Updated", level=2)
         view["prose"].set("Changed paragraph")
@@ -60,7 +60,7 @@ def test_builders_and_mutations(monkeypatch, host_kind):
 def test_operator_presses_wake_the_producer_and_are_counted(monkeypatch):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
-    with vis.live("Actions", [vis.button("go", "Go")], flush_ms=0) as view:
+    with vis.live("Actions", [vis.ui.button("go", "Go")], flush_ms=0) as view:
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(lambda _: recorder.activate("go"), range(20)))
         assert view.sleep(0.1) is True
@@ -203,7 +203,7 @@ def test_outside_refuses_invalid_primitive_declarations(monkeypatch, invalid):
     monkeypatch.setattr(vis, "_host", _outside.host)
     with pytest.raises(_outside.Refused):
         with vis.live(
-            "Invalid", [vis.disclosure("section", "Section", invalid)], flush_ms=0
+            "Invalid", [vis.ui.disclosure("section", "Section", invalid)], flush_ms=0
         ):
             pass
 
@@ -218,7 +218,7 @@ def test_styled_output_appends_preserve_plain_text_and_chunk_tones(
     )
     monkeypatch.setattr(vis, "_host", host)
     with vis.live(
-        "Styled output", [vis.output("log", window_lines=3)], flush_ms=10000
+        "Styled output", [vis.ui.output("log", window_lines=3)], flush_ms=10000
     ) as view:
         view.write("first")
         with view.batch():
@@ -239,7 +239,7 @@ def test_styled_output_appends_preserve_plain_text_and_chunk_tones(
 
 def test_log_controls_are_visible_and_styles_are_closed(monkeypatch, capsys):
     monkeypatch.setattr(vis, "_host", _outside.host)
-    with vis.live("Safe output", [vis.output("log")], flush_ms=0) as view:
+    with vis.live("Safe output", [vis.ui.output("log")], flush_ms=0) as view:
         view.write("error\x1b[2J\x1b]8;;javascript:alert(1)\x07", tone="error")
         line = view.state()["nodes"][0]["lines"][0]
         assert line == r"error\u001b[2J\u001b]8;;javascript:alert(1)\u0007"
@@ -259,10 +259,10 @@ def test_divider_is_static_and_retained(monkeypatch, host_kind):
         _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
     )
     monkeypatch.setattr(vis, "_host", host)
-    divider = vis.divider("section-break")
+    divider = vis.ui.divider("section-break")
     assert divider == {"id": "section-break", "type": "divider"}
     with vis.live(
-        "Build sections", [vis.paragraph("before", "Build finished")], flush_ms=0
+        "Build sections", [vis.ui.paragraph("before", "Build finished")], flush_ms=0
     ) as view:
         view.add(divider, after="before")
         assert view["section-break"].type == "divider"
@@ -272,7 +272,9 @@ def test_divider_is_static_and_retained(monkeypatch, host_kind):
         view.drop("section-break")
         assert len(view.state()["nodes"]) == 1
         view.add(
-            vis.column("results", divider, vis.paragraph("after", "Review results"))
+            vis.ui.column(
+                "results", divider, vis.ui.paragraph("after", "Review results")
+            )
         )
         assert view.state()["nodes"][1]["children"][0] == divider
         receipt = view.close()
@@ -348,7 +350,7 @@ def test_a_blank_detail_clears_the_status_line(monkeypatch, host_kind):
     )
     monkeypatch.setattr(vis, "_host", host)
     with vis.live(
-        "Poll", [vis.status("state", "Polling", detail="attempt 1")], flush_ms=0
+        "Poll", [vis.ui.status("state", "Polling", detail="attempt 1")], flush_ms=0
     ) as view:
         assert view.state()["nodes"][0]["detail"] == "attempt 1"
         view["state"].set("Polling", detail="")
@@ -356,16 +358,18 @@ def test_a_blank_detail_clears_the_status_line(monkeypatch, host_kind):
 
 
 def test_grid_and_wrap_build_the_layout_directions_of_the_contract():
-    grid = vis.grid(
-        "board", vis.paragraph("a", "A"), vis.paragraph("b", "B"), max_columns=3
+    grid = vis.ui.grid(
+        "board", vis.ui.paragraph("a", "A"), vis.ui.paragraph("b", "B"), max_columns=3
     )
     assert grid["direction"] == "grid"
     assert grid["max_columns"] == 3
     assert [child["id"] for child in grid["children"]] == ["a", "b"]
-    actions = vis.wrap("actions", vis.button("go", "Go"), vis.button("stop", "Stop"))
+    actions = vis.ui.wrap(
+        "actions", vis.ui.button("go", "Go"), vis.ui.button("stop", "Stop")
+    )
     assert actions["direction"] == "wrap"
     assert "max_columns" not in actions
-    assert "max_columns" not in vis.grid(vis.plaintext("host"))
+    assert "max_columns" not in vis.ui.grid(vis.ui.plaintext("host"))
     with vis.live("Layout", [grid, actions], flush_ms=0) as view:
         nodes = view.state()["nodes"]
         assert [node["direction"] for node in nodes] == ["grid", "wrap"]
@@ -374,11 +378,11 @@ def test_grid_and_wrap_build_the_layout_directions_of_the_contract():
 def test_a_group_arranging_nothing_is_refused_where_it_was_written():
     # Issue #255: an empty layout group used to reach the host as an invalid view.
     for build in (
-        lambda: vis.column("targets"),
-        lambda: vis.row(),
-        lambda: vis.grid(),
-        lambda: vis.wrap("actions"),
-        lambda: vis.disclosure("targets", "Targets"),
+        lambda: vis.ui.column("targets"),
+        lambda: vis.ui.row(),
+        lambda: vis.ui.grid(),
+        lambda: vis.ui.wrap("actions"),
+        lambda: vis.ui.disclosure("targets", "Targets"),
     ):
         with pytest.raises(ValueError, match="at least one node"):
             build()
@@ -395,8 +399,10 @@ def test_stat_and_step_updates_carry_the_label_the_schema_requires(
     )
     monkeypatch.setattr(vis, "_host", host)
     nodes = [
-        vis.stat("counts", stats=[{"id": "ok", "label": "Passed", "value_text": "0"}]),
-        vis.steps("plan", steps=[{"id": "build", "label": "Build"}]),
+        vis.ui.stat(
+            "counts", stats=[{"id": "ok", "label": "Passed", "value_text": "0"}]
+        ),
+        vis.ui.steps("plan", steps=[{"id": "build", "label": "Build"}]),
     ]
     with vis.live("Counts", nodes, flush_ms=0) as view:
         with pytest.raises((ValueError, _outside.Refused), match="label"):
@@ -411,16 +417,18 @@ def test_stat_and_step_updates_carry_the_label_the_schema_requires(
 
 def _form_nodes():
     return [
-        vis.heading("title", "Deploy", level=2),
-        vis.group(
+        vis.ui.heading("title", "Deploy", level=2),
+        vis.ui.group(
             "deploy-form",
-            vis.plaintext("target", label="Target", is_required=True),
-            vis.password("token", label="Token"),
-            vis.slider("pct", min=0, max=10),
-            vis.button("apply", "Apply", action="submit"),
+            vis.ui.plaintext("target", label="Target", is_required=True),
+            vis.ui.password("token", label="Token"),
+            vis.ui.slider("pct", min=0, max=10),
+            vis.ui.button("apply", "Apply", action="submit"),
             label="Target",
         ),
-        vis.card("plan-small", "Small", text="2 CPU", meta=["$5"], is_selectable=True),
+        vis.ui.card(
+            "plan-small", "Small", text="2 CPU", meta=["$5"], is_selectable=True
+        ),
     ]
 
 
@@ -465,8 +473,8 @@ def test_a_full_form_runs_inside_a_live_view(monkeypatch):
 def test_a_live_form_outside_vis_has_values_and_no_events(monkeypatch):
     monkeypatch.setattr(vis, "_host", _outside.host)
     nodes = [
-        vis.plaintext("target", label="Target", value="db-2"),
-        vis.button("apply", "Apply", action="submit"),
+        vis.ui.plaintext("target", label="Target", value="db-2"),
+        vis.ui.button("apply", "Apply", action="submit"),
     ]
     with vis.live("Deploy", nodes, placement="inline") as view:
         assert view.values() == {"target": "db-2"}
@@ -479,7 +487,10 @@ def test_ask_sends_one_component_tree():
     validators = {}
     request = vis._request_spec(
         "Deploy",
-        [vis.group("g", vis.plaintext("a"), label="Group"), vis.card("c", "Card")],
+        [
+            vis.ui.group("g", vis.ui.plaintext("a"), label="Group"),
+            vis.ui.card("c", "Card"),
+        ],
         {},
         validators,
     )
@@ -491,7 +502,7 @@ def test_a_panel_view_pushes_events_to_its_open_callback(monkeypatch):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
     seen = []
-    nodes = [vis.button("go", "Rerun")]
+    nodes = [vis.ui.button("go", "Rerun")]
     with vis.live(
         "Build", nodes, placement="panel", key="build", on_event=seen.append
     ) as view:
