@@ -149,6 +149,12 @@
         },
         "candidate_name": {
           "type": "string"
+        },
+        "margin_points": {
+          "description": "The smallest change in points that matters. It splits a result without a clear change into equivalent, not worse, not better or inconclusive.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
         }
       },
       "required": [
@@ -649,7 +655,16 @@
           "maxItems": 2
         },
         "verdict": {
-          "type": "string"
+          "type": "string",
+          "enum": [
+            "better",
+            "worse",
+            "no measurable difference",
+            "equivalent",
+            "not worse",
+            "not better",
+            "inconclusive"
+          ]
         },
         "detectable_change_points": {
           "type": "number"
@@ -683,6 +698,12 @@
           "items": {
             "type": "string"
           }
+        },
+        "margin_points": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -698,7 +719,8 @@
         "worse",
         "better",
         "unpaired",
-        "caveats"
+        "caveats",
+        "margin_points"
       ],
       "additionalProperties": false
     },

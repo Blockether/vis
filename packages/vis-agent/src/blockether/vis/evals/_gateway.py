@@ -68,6 +68,15 @@ def _required_text(body: Mapping, key: str) -> str:
     return value
 
 
+def _number(body: Mapping, key: str) -> float | None:
+    value = body.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"`{key}` must be a number.")
+    return float(value)
+
+
 def _cases(body: Mapping, key: str) -> dict[tuple[str, ...], tuple[int, int]]:
     rows = body.get(key)
     if not isinstance(rows, list):
@@ -114,6 +123,7 @@ def _compare(body: Mapping):
         _cases(body, "candidate"),
         baseline_name=_word(body, "baseline_name", "baseline"),
         candidate_name=_word(body, "candidate_name", "candidate"),
+        margin_points=_number(body, "margin_points"),
     )
 
 

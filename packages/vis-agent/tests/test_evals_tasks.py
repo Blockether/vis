@@ -448,7 +448,8 @@ def test_the_python_examples_of_the_api_page_run(tmp_path, monkeypatch):
     assert namespace["labels"].keys() == {
         trial.trial for trial in read_trials(namespace["job"])
     }
-    assert namespace["comparison"].verdict == "no measurable difference"
+    # One paired task cannot show that a change stays inside a 5-point margin.
+    assert namespace["comparison"].verdict == "inconclusive"
 
 
 def test_the_http_bodies_of_the_api_page_are_valid():

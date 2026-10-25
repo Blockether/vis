@@ -50,6 +50,10 @@ def test_compare_pairs_the_cases():
     )["result"]
     assert result["paired_cases"] == 20
     assert result["verdict"] == "better"
+    same = side([1] * 60)
+    body = {"baseline": same, "candidate": same, "margin_points": 5}
+    result = roundtrip("compare", body)["result"]
+    assert (result["verdict"], result["margin_points"]) == ("equivalent", 5.0)
 
 
 def test_agreement_gives_the_kappa_advice():
@@ -83,6 +87,7 @@ def test_leaderboard_reads_every_page(monkeypatch):
         ("report", [], "must be a JSON object"),
         ("report", {}, "`summary` must be an object"),
         ("compare", {"baseline": [{}], "candidate": []}, "needs task, agent"),
+        ("compare", {"baseline": [], "candidate": [], "margin_points": "5"}, "number"),
         ("agreement", {"items": [{"name": "x"}]}, "needs name, automatic"),
         ("leaderboard", {"name": "1-0-0"}, "`package` is required"),
         ("leaderboard", {"package": "org/bench"}, "`name` is required"),

@@ -94,8 +94,10 @@ def detectable_change(units: Sequence[tuple[int, int]]) -> float | None:
     """Return the smallest change of the pass rate that a second run of this size detects.
 
     The test compares two independent runs of the same size, two-sided at the 5% level,
-    with 80% power. The change has steps of 0.001. None means that there are no runs, or
-    that no change from 0 to 1 is detectable.
+    with 80% power. The change holds for a rise and for a fall, so the larger of the two
+    applies. A direction without a detectable change before 0 or 1 does not count. The
+    change has steps of 0.001. None means that there are no runs, or that no change
+    from 0 to 1 is detectable.
     """
     total = sum(runs for _, runs in units)
     if not total:
@@ -109,16 +111,16 @@ def detectable_change(units: Sequence[tuple[int, int]]) -> float | None:
         power = Z_POWER * math.sqrt((rate * (1 - rate) + other * (1 - other)) / size)
         return abs(other - rate) >= noise + power
 
-    smallest = None
+    steps = []
     for sign in (1, -1):
         for step in range(1, 1001):
             other = rate + sign * step / 1000
             if not 0 <= other <= 1:
                 break
             if detects(other):
-                smallest = step if smallest is None else min(smallest, step)
+                steps.append(step)
                 break
-    return smallest / 1000 if smallest is not None else None
+    return max(steps) / 1000 if steps else None
 
 
 def paired_change(changes: Sequence[float]) -> tuple[tuple[float, float], float]:

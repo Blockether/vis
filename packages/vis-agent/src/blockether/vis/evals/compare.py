@@ -3,7 +3,9 @@
 A case is a key such as `(task, agent, model)` from `case_results`, with its
 `(passed, runs)` count. A route is the agent with the model of a case. Call
 `compare_cases` with the cases of a baseline and a candidate. It pairs the cases,
-gives the paired difference with its 95% interval and tests each route.
+gives the paired difference with its 95% interval and tests each route. Give
+`margin_points`, the smallest change that matters to you, to tell an equivalent
+result from a result that needs more cases.
 """
 
 from __future__ import annotations
@@ -51,13 +53,21 @@ class CaseComparison:
 
     The rates are the mean pass rates of the paired cases, in percent.
     `difference_ci95` is the Agresti-Min 95% interval of the paired difference, in
-    points. `verdict` is `better` or `worse` only when that interval excludes zero,
-    else `no measurable difference`. At this case count, a true change of
-    `detectable_change_points` or more shows with 80% power. `p_value` is the two-sided
-    exact McNemar p-value of the changed cases. With repeats, it is the exact sign test
-    of the case changes. `routes` holds this test for each route. `worse` and `better`
-    list the changed cases, largest change first. `unpaired` counts cases on one side
-    only; the comparison leaves them out.
+    points. `verdict` is `better` or `worse` only when that interval excludes zero.
+    Without `margin_points`, every other result is `no measurable difference`. With
+    it, the position of the interval against the margin gives the verdict:
+
+    - `equivalent`: the interval is inside the margin on both sides.
+    - `not worse`: the interval is above the negative margin.
+    - `not better`: the interval is below the margin, but reaches the negative margin.
+    - `inconclusive`: the interval reaches both sides of the margin.
+
+    At this case count, a true change of `detectable_change_points` or more shows with
+    80% power. `p_value` is the two-sided exact McNemar p-value of the changed cases.
+    With repeats, it is the exact sign test of the case changes. `routes` holds this
+    test for each route. `worse` and `better` list the changed cases, largest change
+    first. `unpaired` counts cases on one side only; the comparison leaves them out. A
+    caveat names a verdict that the exact test does not confirm.
     """
 
     paired_cases: int
@@ -73,6 +83,7 @@ class CaseComparison:
     better: tuple[CaseChange, ...]
     unpaired: int
     caveats: tuple[str, ...]
+    margin_points: float | None = None
 
 
 def _route(key: tuple[str, ...]) -> str:
@@ -85,6 +96,23 @@ def _case_name(key: tuple[str, ...]) -> str:
 
 def _points(change: float) -> float:
     return round(change * 100, 1)
+
+
+def _verdict(interval: tuple[float, float], margin: float | None) -> str:
+    low, high = interval
+    if low > 0:
+        return "better"
+    if high < 0:
+        return "worse"
+    if not margin:
+        return "no measurable difference"
+    if -margin < low and high < margin:
+        return "equivalent"
+    if low > -margin:
+        return "not worse"
+    if high < margin:
+        return "not better"
+    return "inconclusive"
 
 
 def _route_tests(
@@ -117,13 +145,18 @@ def compare_cases(
     *,
     baseline_name: str = "baseline",
     candidate_name: str = "candidate",
+    margin_points: float | None = None,
 ) -> CaseComparison:
     """Compare the `(passed, runs)` cases of a baseline and a candidate.
 
     Each key is `(task, agent, model)`. When the sides share no key and each side has
     one route, the comparison pairs the cases by task and adds a caveat. The names
-    appear in error messages. Raise ValueError when no case pairs.
+    appear in error messages. `margin_points` is the smallest change in points that
+    matters, from 0 to 100. Raise ValueError when no case pairs, or for a margin
+    outside 0 to 100.
     """
+    if margin_points is not None and not 0 <= margin_points <= 100:
+        raise ValueError("margin_points must be from 0 to 100")
     caveats = []
     crossed = None
     if not baseline.keys() & candidate.keys():
@@ -157,19 +190,21 @@ def compare_cases(
             changed.append((change, row))
     (low, high), floor = paired_change(list(changes.values()))
     interval = (_points(low), _points(high))
-    verdict = (
-        "better"
-        if interval[0] > 0
-        else "worse"
-        if interval[1] < 0
-        else "no measurable difference"
-    )
+    verdict = _verdict(interval, margin_points)
     unpaired = len(baseline.keys() ^ candidate.keys())
     if unpaired:
         cases = "1 case" if unpaired == 1 else f"{unpaired} cases"
         caveats.append(f"{cases} ran on one side only. The comparison leaves them out.")
     count = len(paired)
     values = list(changes.values())
+    p_value = mcnemar_exact(
+        sum(value < 0 for value in values), sum(value > 0 for value in values)
+    )
+    if verdict in ("better", "worse") and p_value >= 0.05:
+        caveats.append(
+            f"The interval says {verdict}, but the exact test gives p = "
+            f"{p_value:.3f}. Confirm the change with more cases."
+        )
 
     def rate(cases: Cases) -> float:
         return round(
@@ -184,9 +219,7 @@ def compare_cases(
         difference_ci95=interval,
         verdict=verdict,
         detectable_change_points=_points(floor),
-        p_value=mcnemar_exact(
-            sum(value < 0 for value in values), sum(value > 0 for value in values)
-        ),
+        p_value=p_value,
         routes=_route_tests(changes, crossed),
         worse=tuple(
             row for change, row in sorted(changed, key=lambda i: i[0]) if change < 0
@@ -196,4 +229,5 @@ def compare_cases(
         ),
         unpaired=unpaired,
         caveats=tuple(caveats),
+        margin_points=margin_points,
     )

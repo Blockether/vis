@@ -2,8 +2,13 @@
 
 The reference values come from SciPy `binomtest`, statsmodels `multipletests`,
 scikit-learn `cohen_kappa_score`, the PyPI `krippendorff` package, the worked example of
-Krippendorff (2011) and the pass@k formula of Chen et al. (2021).
+Krippendorff (2011) and the pass@k formula of Chen et al. (2021). The calibration
+tests prove the claims of the evaluation guide: exact sums over the binomial
+distribution, and seeded simulations where no exact sum exists.
 """
+
+import math
+import random
 
 import pytest
 from blockether.vis.evals import (
@@ -47,6 +52,8 @@ def test_clustered_repeats_count_between_the_cases_and_the_runs():
 def test_power_gives_the_smallest_detectable_change():
     # 100 independent runs at 50% detect a change of about 20 points with 80% power.
     assert detectable_change([(1, 1)] * 50 + [(0, 1)] * 50) == pytest.approx(0.194)
+    # At 75%, a fall needs a larger change than a rise. The larger change applies.
+    assert detectable_change([(1, 1)] * 45 + [(0, 1)] * 15) == pytest.approx(0.245)
     assert detectable_change([]) is None
 
 
@@ -186,3 +193,97 @@ def test_pass_at_k_rejects_impossible_counts(runs, passed, k):
         pass_at_k(runs, passed, k)
     with pytest.raises(ValueError):
         pass_all_k(runs, passed, k)
+
+
+def _pmf(runs, passed, rate):
+    return math.comb(runs, passed) * rate**passed * (1 - rate) ** (runs - passed)
+
+
+def _wilson_coverage(runs, rate):
+    return sum(
+        _pmf(runs, passed, rate)
+        for passed in range(runs + 1)
+        if wilson_interval(passed, runs)[0] <= rate <= wilson_interval(passed, runs)[1]
+    )
+
+
+@pytest.mark.parametrize("runs", [10, 30, 100])
+def test_wilson_interval_covers_the_true_rate_95_percent_of_the_time(runs):
+    coverages = [_wilson_coverage(runs, percent / 100) for percent in range(5, 96, 5)]
+    assert 0.94 <= sum(coverages) / len(coverages) <= 0.96
+    assert min(coverages) >= 0.91
+
+
+def test_mcnemar_exact_keeps_false_alarms_at_most_5_percent():
+    # Without a true change, each changed case is a fair coin.
+    for changed in range(1, 81):
+        alarms = sum(
+            _pmf(changed, better, 0.5)
+            for better in range(changed + 1)
+            if mcnemar_exact(changed - better, better) < 0.05
+        )
+        assert alarms <= 0.05
+
+
+@pytest.mark.parametrize(
+    ("runs", "k", "rate"), [(5, 2, 0.3), (10, 5, 0.2), (8, 8, 0.6)]
+)
+def test_pass_at_k_and_pass_all_k_have_no_bias(runs, k, rate):
+    def mean(estimate):
+        return sum(
+            _pmf(runs, passed, rate) * estimate(runs, passed, k)
+            for passed in range(runs + 1)
+        )
+
+    assert mean(pass_at_k) == pytest.approx(1 - (1 - rate) ** k)
+    assert mean(pass_all_k) == pytest.approx(rate**k)
+
+
+def _z_test_power(runs, rate, other):
+    total = 0.0
+    for first in range(runs + 1):
+        for second in range(runs + 1):
+            pooled = (first + second) / (2 * runs)
+            if not 0 < pooled < 1:
+                continue
+            error = math.sqrt(2 * pooled * (1 - pooled) / runs)
+            if abs(first - second) / runs / error >= 1.959964:
+                total += _pmf(runs, first, rate) * _pmf(runs, second, other)
+    return total
+
+
+@pytest.mark.parametrize(("runs", "passed"), [(20, 10), (60, 45), (100, 80)])
+def test_detectable_change_has_80_percent_power_for_a_rise_and_a_fall(runs, passed):
+    rate = passed / runs
+    change = detectable_change([(1, 1)] * passed + [(0, 1)] * (runs - passed))
+    for other in (rate - change, rate + change):
+        if 0 <= other <= 1:
+            assert _z_test_power(runs, rate, other) >= 0.79
+
+
+def test_cluster_interval_covers_repeated_attempts_where_wilson_fails():
+    # 30 tasks with 3 attempts each. Tasks are mostly easy or hard, so the attempts of
+    # one task agree. A Wilson interval over all attempts then covers too rarely.
+    rng = random.Random(7)
+    cluster = plain = 0
+    trials = 600
+    for _ in range(trials):
+        rates = [rng.betavariate(0.5, 0.5) for _ in range(30)]
+        units = [(sum(rng.random() < rate for _ in range(3)), 3) for rate in rates]
+        low, high = cluster_interval(units)
+        cluster += low <= 0.5 <= high
+        low, high = wilson_interval(sum(passed for passed, _ in units), 90)
+        plain += low <= 0.5 <= high
+    assert cluster / trials >= 0.93
+    assert plain / trials <= 0.88
+
+
+def test_benjamini_hochberg_keeps_the_false_discovery_rate():
+    rng = random.Random(11)
+    rates = []
+    for _ in range(500):
+        p_values = [rng.random() for _ in range(80)]
+        p_values += [rng.random() ** 8 / 50 for _ in range(20)]
+        found = [i for i, q in enumerate(benjamini_hochberg(p_values)) if q <= 0.1]
+        rates.append(sum(index < 80 for index in found) / max(1, len(found)))
+    assert sum(rates) / len(rates) <= 0.1

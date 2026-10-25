@@ -10,6 +10,10 @@ compare two runs. This page shows each step from an empty folder to a score.
   task](#step-2-write-a-task), then [run it](#step-4-run-the-tasks).
 - **You changed a prompt, a tool or a model and want proof that it helps.** Run the same tasks
   before and after the change, then [compare the two runs](#compare-two-runs).
+- **You must decide if a change goes in, and you are not sure which number to trust.** Read
+  [Decide from the results](#decide-from-the-results).
+- **An agent must improve Vis with evaluations, without a person at each step.** Give it [Improve
+  an agent with evaluations](#improve-an-agent-with-evaluations).
 - **You ran a benchmark, for example Terminal-Bench, and want the score with its uncertainty.**
   Read [Scores and intervals](#scores-and-intervals).
 - **You want all numbers of a run at once.** [Report the round](#report-the-round) with one
@@ -734,8 +738,11 @@ The report gives three pass rates:
 | Attempt pass rate | Solved attempts out of all scored attempts. The attempts of one task form one cluster. |
 
 Each rate has a 95% interval. A small round has a wide interval. The report also gives
-`detectable_change_points`: a second round of the same size cannot detect a smaller change. The
-attempts of one task are not independent, so the attempt interval uses clustered standard
+`detectable_change_points`. A second round of the same size, on other tasks, detects a rise or a
+fall of this size with 80% power. A smaller change can stay hidden. A comparison on the same tasks
+needs a smaller change, see [Plan the number of tasks](#plan-the-number-of-tasks).
+
+The attempts of one task are not independent, so the attempt interval uses clustered standard
 errors. More attempts make each task result less noisy. They do not replace more tasks.
 
 ### Repeated attempts
@@ -855,15 +862,190 @@ model. The comparison gives the difference in points with a 95% interval and a v
 - `better` or `worse` when the interval excludes zero.
 - `no measurable difference` in all other cases.
 
-It also gives an exact McNemar test for each route, and lists the cases that became better or
-worse. When the two runs share no case but each run used one route, Vis pairs the cases by task.
-It then adds a caveat, because the model and the harness changed together.
+A result without a clear change can mean two things. The runs can be the same, or the round can
+be too small to show a change. To tell them apart, give `margin_points`, the smallest change that
+matters to you. The verdict then compares the interval with the margin:
+
+| Verdict | The 95% interval | What it means |
+|---|---|---|
+| `better` | Is above zero. | The candidate is better. |
+| `worse` | Is below zero. | The candidate is worse. |
+| `equivalent` | Is inside the margin on both sides. | No change that matters exists in either direction. |
+| `not worse` | Starts above the negative margin. | The candidate loses less than the margin. It can be better. |
+| `not better` | Ends below the margin and reaches the negative margin. | The candidate gains less than the margin. It can be worse. |
+| `inconclusive` | Reaches both sides of the margin. | The round is too small for a decision. |
+
+The comparison also gives an exact McNemar test for each route, and lists the cases that became
+better or worse. The interval decides the verdict. The exact test is stricter. When the verdict is
+`better` or `worse` and the exact test gives p = 0.05 or more, a caveat says so. Treat that
+verdict as likely, not as proved, and add cases.
+
+When the two runs share no case but each run used one route, Vis pairs the cases by task. It then
+adds a caveat, because the model and the harness changed together.
 
 ## Leaderboard position
 
 Vis reads a public board from Harbor Hub, for example Terminal-Bench 4.0.0. It places your round
 on the board by its pass rate and its strict pass rate, each with a range of possible ranks. The
 position also lists caveats, for example when the board rows ran more trials for each task.
+
+## Decide from the results
+
+A round gives many numbers, and each number answers a different question. This section tells
+you which number to use, when to ignore a number and how to decide on a change.
+
+### Choose the number for your question
+
+| Your question | Use | Do not use |
+|---|---|---|
+| How good is the agent on these tasks? | The pass rate and its 95% interval. | The rate without its interval. |
+| How good is it on the full benchmark? | The strict pass rate. | The pass rate. It leaves out the unscored tasks. |
+| Is the agent consistent? | pass^k and `unstable_tasks`. | pass@k. A second attempt hides the first failure. |
+| Can a person pick the best of k results? | pass@k. | pass^k. |
+| Must each run of an automation succeed? | pass^k. | pass@k. |
+| Did my change help? | The verdict of a paired comparison on the same tasks. | Two separate pass rates. Their intervals can overlap when a paired comparison shows a change. |
+| Is the change worth its cost? | The verdict with `margin_points`, and the cost for each solved task. | The verdict alone. |
+| Where must I improve the agent? | The largest failure cause, the near misses and the unstable tasks. | One failed trial. |
+| Are the failure causes correct? | Cohen's kappa over at least 30 labels. | The causes without labels. |
+| Is a judge reliable? | Krippendorff's alpha of its samples, then of its stage labels. | One judge sample. |
+| Where does the agent rank on a public board? | The leaderboard position with its rank range. | One rank. |
+
+### Ignore a number in these cases
+
+- **The interval is wider than the change that you look for.** A round of 16 tasks cannot show a
+  10-point change. Add tasks first.
+- **A caveat says that the routes differ.** The model and the harness changed together. You cannot
+  tell which change made the difference.
+- **A caveat says that the exact test does not confirm the verdict.** Treat the verdict as likely,
+  and run more cases before you depend on it.
+- **Cases ran on one side only.** The comparison leaves them out. Make sure that they are not the
+  hard tasks.
+- **Many tasks are unscored.** The pass rate then counts fewer tasks than you think. Use the strict
+  pass rate, and find why the attempts were not scored.
+- **The kappa is below 0.6, or fewer than 30 labels exist.** Do not choose a fix from the failure
+  causes.
+- **You changed the agent while you read the failures of the same tasks.** The tasks then measure
+  your fixes, not the agent. Confirm the change on tasks that you did not read.
+- **You compared many candidates and kept the best one.** By chance, about 1 of 20 candidates
+  without a real change passes the 5% level. Run the best candidate again on new tasks.
+- **The two rounds used a different checkout, model version or task version.** Pin these before
+  both rounds.
+- **You compare cost with a subscription.** The cost uses metered API prices.
+
+### Decide on a change
+
+Choose the margin before the rounds run, not after you see the result. Use the smallest change
+in points that changes your decision, for example 5 points. Then find the verdict and the cost of
+the candidate in this table:
+
+| Verdict | The candidate costs less | It costs the same | It costs more |
+|---|---|---|---|
+| `better` | Adopt it. | Adopt it. | Adopt it when the gain is worth the cost. |
+| `equivalent` | Adopt it. | Keep either. Prefer the simpler one. | Keep the baseline. |
+| `not worse` | Adopt it. | Adopt it when it has other benefits. | Add cases. |
+| `not better` | Adopt it only when you accept a loss down to the low end of the interval. | Keep the baseline. | Keep the baseline. |
+| `inconclusive` or `no measurable difference` | Add cases. | Add cases. | Add cases. |
+| `worse` | Keep the baseline. | Keep the baseline. | Keep the baseline. |
+
+To add cases, run more tasks on both sides. [Plan the number of tasks](#plan-the-number-of-tasks)
+shows how many you need. Before you adopt a `better` verdict with a caveat, run the candidate
+again on new tasks.
+
+Get the cost for each solved task from the report: divide the estimated cost of the round by its
+solved tasks.
+
+### Plan the number of tasks
+
+Choose the number of tasks before the rounds, from the smallest change that you want to see. The
+table gives the change in points that shows with 80% power, with one attempt for each task:
+
+| Tasks | Same tasks, 20% of results change | Same tasks, 40% of results change | Other tasks, at a 50% pass rate |
+|---|---|---|---|
+| 12 | 34.7 | 44.7 | 47.9 |
+| 20 | 28.5 | 38.2 | 39.6 |
+| 30 | 23.2 | 31.6 | 33.5 |
+| 50 | 17.9 | 24.7 | 26.7 |
+| 100 | 12.6 | 17.6 | 19.4 |
+| 200 | 8.9 | 12.5 | 13.9 |
+| 400 | 6.3 | 8.8 | 9.9 |
+
+The share of results that change is the share of tasks with a different result in the two
+rounds. A small, targeted change moves few tasks, so the first column applies. In a comparison,
+`detectable_change_points` gives this value for your own cases.
+
+- More attempts for each task make the change smaller. With 30 tasks, 3 attempts show about 20
+  points, and 1 attempt about 30 points.
+- A 5-point change needs more than 600 tasks.
+- With a small task set, look only for large changes. Or use `margin_points` to show that a
+  cheaper change does no harm.
+
+### How Vis checks these statistics
+
+Vis tests each statistic against published reference values. It also tests the claims of this
+page, with exact sums over the binomial distribution or with seeded simulations. The tests are
+in `packages/vis-agent/tests/test_evals_stats.py` and `test_evals_compare.py`.
+
+| Claim | Measured result |
+|---|---|
+| A 95% Wilson interval covers the true pass rate 95% of the time. | The mean coverage is 94.6% to 95.4% for 10, 30 and 100 runs. It is never below 91%. |
+| The cluster interval stays correct with repeated attempts. | About 95% for 16 to 100 tasks with 2 to 5 attempts. A Wilson interval over all attempts covers only 69% to 90%. |
+| Without a true change, a comparison rarely gives `better` or `worse`. | 2% to 6% of comparisons for 16 to 80 tasks, and up to 7.7% for 12 tasks. |
+| The exact McNemar test gives a false alarm at most 5% of the time. | At most 5.0% for 1 to 80 changed cases, usually 0% to 3%. It is strict, so it misses some real changes. |
+| A true change of `detectable_change_points` shows with 80% power. | 80% to 82% in a comparison. In the report, at least 80% for a rise and for a fall. |
+| pass@k and pass^k have no bias. | Their mean over all possible results is equal to the true value. |
+| A candidate that is worse by the margin is rarely `not worse`. | 2% to 3% of comparisons with 60 to 200 tasks. |
+| Benjamini-Hochberg q-values control the false discoveries. | 8% false discoveries at q ≤ 0.1. |
+
+These checks found one error, which is now corrected. The report used the smaller change of a
+rise and a fall as `detectable_change_points`. At a pass rate of 75%, a fall of that size showed
+with only 58% power. The report now gives the larger change.
+
+The failure causes, the near-miss limit and the judge rubric are rules, not statistics. No
+simulation proves them. Check them on your own tasks with [labels](#check-the-causes-with-labels).
+
+### Example: decide on 12 tasks
+
+Two harnesses ran the same 12 tasks with the same model. Harness A solved 3 tasks and harness B
+solved 8. Harness B also cost less for each solved task. The comparison gives:
+
+```text
+Baseline 25.0%, candidate 66.7%, difference 41.7 points, 95% CI 7.0 to 64.5 points
+Verdict better, exact test p = 0.062, detectable change 41.1 points
+Caveat: The interval says better, but the exact test gives p = 0.062. Confirm the change with more cases.
+```
+
+1. The interval excludes zero, so the verdict is `better`.
+2. The caveat says that the exact test does not confirm it.
+3. Harness B costs less, so the table says to adopt it. The caveat says to confirm it first.
+4. Only a change of 41 points or more shows reliably on 12 tasks. A second, larger round must
+   confirm the result before you report it as proved.
+
+## Improve an agent with evaluations
+
+You, or an agent that reads this page, can improve Vis in a loop. Each loop tests one change.
+These steps keep the result honest:
+
+1. **Freeze the code.** Run from a copy of one commit, for example a `git archive` export. A
+   shared checkout can change while the rounds run.
+2. **Split the tasks.** Read failures only in a development set. Keep a held-out set that you
+   never read.
+3. **Run the baseline.** Run the development set with a pinned model and the same limits for each
+   task. [Report the round](#report-the-round).
+4. **Find the largest cause.** Read the failure causes, the near misses and `unstable_tasks`.
+   [Check the causes with labels](#check-the-causes-with-labels) before you trust them.
+5. **Make one change.** Change one prompt rule, tool or default. Write down the expected effect
+   and the margin before you run.
+6. **Run the candidate.** Use the same tasks, model, attempts and limits as the baseline.
+7. **Compare with the margin.** Choose the action from the [decision
+   table](#decide-on-a-change).
+8. **Confirm on the held-out set.** Run both versions on the held-out tasks and compare again.
+   Keep the change only when this verdict agrees.
+9. **Record the result.** Keep the round names, the commit, the verdict, the interval and the
+   cost. Record a rejected change too.
+
+Set a stop rule before the first loop. For example, stop after five loops or at the first
+`worse` verdict. Do not run the same comparison again until it gives `better`. Each new run is
+another chance of a false verdict.
 
 ## References
 
@@ -876,6 +1058,11 @@ position also lists caveats, for example when the board rows ran more trials for
 - Evan Miller, [Adding error bars to evals](https://www.anthropic.com/research/statistical-approach-to-model-evals)
   ([arXiv:2411.00640](https://arxiv.org/abs/2411.00640)): intervals, clustered errors, paired
   comparisons and power.
+- Donald Schuirmann, "A comparison of the two one-sided tests procedure and the power approach
+  for assessing the equivalence of average bioavailability", *Journal of Pharmacokinetics and
+  Biopharmaceutics* 15, 1987: equivalence and non-inferiority margins.
+- Alan Agresti and Yongyi Min, "Simple improved confidence intervals for comparing matched
+  proportions", *Statistics in Medicine* 24, 2005: the paired interval.
 - Mark Chen and others, [Evaluating large language models trained on
   code](https://arxiv.org/abs/2107.03374), 2021: the unbiased pass@k estimator.
 - Shunyu Yao and others, [τ-bench](https://arxiv.org/abs/2406.12045), 2024: the pass^k metric.
