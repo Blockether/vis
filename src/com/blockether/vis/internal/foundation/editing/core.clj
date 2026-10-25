@@ -292,14 +292,14 @@
    matches; widening only costs time, which `rg-search-budget-ms` bounds.
 
    Returns `{:files [File …] :degraded? BOOL}`."
-  [^File root needles is-regex? overlay]
+  [^File root needles is-regex? is-ignored? overlay]
   (case (search-root-kind root)
     :file
     {:files [root] :degraded? false}
 
     :dir
     (fff-index/with-index
-      [idx (fff-index/lease root true overlay)]
+      [idx (fff-index/lease root (not is-ignored?) overlay)]
       (let [base
             (.getCanonicalFile root)
 
@@ -326,7 +326,7 @@
 (defn- rg-fff-candidate-files
   "Files under `roots` that MIGHT contain a needle, via fff — the fast, nested-
    `.gitignore`-aware universe rg then RE-VALIDATES with the literal `make-line-matcher`.
-   fff-first: NO raw filesystem walk, so a `.gitignored` subtree is never descended.
+   fff owns discovery. `is-ignored?` permits searches inside ignored subtrees.
 
    Normal needles → fff's native-GREP content hits (paged to exhaustion) plus the
    fff fuzzy-PATH hits whose path LITERALLY contains the needle. The path side is
@@ -349,9 +349,9 @@
    vec carries `{:prefilter-degraded? true}` as METADATA, so the caller can say so
    in a `hint`. The JVM matcher runs the pattern either way.
    Returns a File vec, deduped by canonical path."
-  [roots needles is-regex? overlay]
+  [roots needles is-regex? is-ignored? overlay]
   (let [per-root
-        (mapv #(rg-fff-root-files % needles is-regex? overlay) roots)
+        (mapv #(rg-fff-root-files % needles is-regex? is-ignored? overlay) roots)
 
         files
         (->> per-root
@@ -1290,8 +1290,8 @@
 (def ^:private find-spec-canonical-keys
   "grep's WHOLE key vocabulary — one canonical name per idea, the names
    `doc(\"grep\")` declares and the only ones the search itself reads."
-  #{"query" "paths" "limit" "offset" "include" "exclude" "context" "is_hidden" "is_regex"
-    "is_files_only"})
+  #{"query" "paths" "limit" "offset" "include" "exclude" "context" "is_hidden" "is_ignored"
+    "is_regex" "is_files_only"})
 
 (def ^:private find-spec-aliases
   "Accepted aliases for canonical grep options. Supplying multiple names for
@@ -1431,6 +1431,7 @@
        :limit limit
        :offset offset
        :is_hidden (boolean (get spec "is_hidden"))
+       :is_ignored (boolean (get spec "is_ignored"))
        ;; REGEX mode is a CONTENT dialect: it changes what a hit IS, so it rides
        ;; the same spec as `context`/`include` rather than a second call shape.
        :is_regex (boolean (get spec "is_regex"))
@@ -1464,7 +1465,8 @@
         score
         (find-relevance query rel)]
 
-    (when (and (>= (double score) (double find-min-score)) (or is_hidden (not (.isHidden f))))
+    (when (and (>= (double score) (double find-min-score))
+               (or is_hidden (not (hidden-relative-path? base relative-path))))
       {:path rel
        :file-name (or file-name (.getName f))
        :size size
@@ -1478,7 +1480,7 @@
   "`find-scan` for ONE root: a FILE root contributes itself, a directory root leases one
    fff index and scores its page of hits inside the lease, and a root that is neither is
    skipped."
-  [^File root query is_hidden candidate-page overlay]
+  [^File root query is_hidden is-ignored? candidate-page overlay]
   (case (search-root-kind root)
     :file
     (let [item
@@ -1490,7 +1492,7 @@
       (when (>= (double score) (double find-min-score)) [(assoc item :score score)]))
 
     :dir
-    (fff-index/with-index [idx (fff-index/lease root true overlay)]
+    (fff-index/with-index [idx (fff-index/lease root (not is-ignored?) overlay)]
                           (let [base (.getCanonicalFile root)]
                             ;; doall: realize hits INSIDE with-open, before the fresh instance is closed.
                             (doall (->> (:items
@@ -1508,10 +1510,10 @@
 
    Directory roots ALWAYS go through fff (fast, frecency-ranked), including
    `.rgignore` / `:grep` overlay projects, which fff honors natively via
-   `overlay`. `.gitignore` is always respected; vis walks no tree here."
-  [roots query is_hidden candidate-page overlay]
+   `overlay`, unless `is-ignored?` disables ignore rules. Vis does not walk the tree."
+  [roots query is_hidden is-ignored? candidate-page overlay]
   (->> roots
-       (mapcat #(find-scan-root % query is_hidden candidate-page overlay))
+       (mapcat #(find-scan-root % query is_hidden is-ignored? candidate-page overlay))
        (into {} (map (juxt :path identity)))
        vals
        vec))
@@ -1544,7 +1546,7 @@
         rel
         (rel-path f)]
 
-    (when (or is_hidden (not (.isHidden f)))
+    (when (or is_hidden (not (hidden-relative-path? base relative-path)))
       {:path rel
        :file-name (or file-name (.getName f))
        :size size
@@ -1557,14 +1559,14 @@
 (defn- find-ls-root
   "`find-ls` for ONE root: a FILE root lists itself, a directory root enumerates its fff
    index with a blank query inside the lease, and a root that is neither is skipped."
-  [^File root limit is_hidden overlay]
+  [^File root limit is_hidden is-ignored? overlay]
   (case (search-root-kind root)
     :file
     [(find-direct-file-item root)]
 
     :dir
     (fff-index/with-index
-      [idx (fff-index/lease root true overlay)]
+      [idx (fff-index/lease root (not is-ignored?) overlay)]
       (let [base (.getCanonicalFile root)]
         (doall (->> (:items (fff/search idx {:query "" :page-size (max (long limit) 300)}))
                     (keep #(find-ls-item base is_hidden %))))))
@@ -1582,9 +1584,9 @@
    `limit`. There is no pattern to match, so this is `ls`, not a fuzzy search —
    it skips the whole query-scoring path. Honors `is_hidden` and the same fff
    ignore `overlay` as the scored path."
-  [roots limit is_hidden overlay]
+  [roots limit is_hidden is-ignored? overlay]
   (->> roots
-       (mapcat #(find-ls-root % limit is_hidden overlay))
+       (mapcat #(find-ls-root % limit is_hidden is-ignored? overlay))
        (into {} (map (juxt :path identity)))
        vals
        (sort-by find-ls-rank)
@@ -1593,7 +1595,7 @@
 
 (defn- find-search
   [args]
-  (let [{:keys [query paths limit offset is_hidden is_ls is_regex]}
+  (let [{:keys [query paths limit offset is_hidden is_ignored is_ls is_regex]}
         (coerce-find-spec args)
 
         {roots :roots searched-paths :searched-paths}
@@ -1610,11 +1612,11 @@
         ;; `.rgignore` + the `:grep` config overlay (issue #23), handed to fff
         ;; itself — see `fff-ignore-overlay`.
         search-overlay
-        (fff-ignore-overlay)
+        (when-not is_ignored (fff-ignore-overlay))
 
         scan
         (fn [q]
-          (find-scan roots q is_hidden candidate-page search-overlay))
+          (find-scan roots q is_hidden is_ignored candidate-page search-overlay))
 
         strict
         (if (or is_ls is_regex) [] (scan query))
@@ -1638,7 +1640,8 @@
           ;; characters and ranks unrelated paths above nothing at all — so in
           ;; regex mode there is no name axis and `paths` stays empty.
           is_regex [[] false]
-          is_ls [(find-ls roots (+ (long limit) (long offset)) is_hidden search-overlay) false]
+          is_ls [(find-ls roots (+ (long limit) (long offset)) is_hidden is_ignored search-overlay)
+                 false]
           (or (seq strict) (< (count tokens) 2)) [strict false]
           :else (let [stem
                       (fn [it]
@@ -1782,6 +1785,9 @@
 
       (contains? spec "is_hidden")
       (assoc "is_hidden" (get spec "is_hidden"))
+
+      (contains? spec "is_ignored")
+      (assoc "is_ignored" (get spec "is_ignored"))
 
       (contains? spec "is_regex")
       (assoc "is_regex" (get spec "is_regex"))
@@ -2887,6 +2893,7 @@
      :include (or include [])
      :exclude (or exclude [])
      :is_hidden (boolean (get spec "is_hidden"))
+     :is_ignored (boolean (get spec "is_ignored"))
      :is_regex is_regex
      :limit (let [l (get spec "limit")]
               (cond (and (integer? l) (pos? (long l))) (long l)
@@ -3075,7 +3082,7 @@
    `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
-  (let [{:keys [needles paths include exclude is_hidden is_regex limit offset context
+  (let [{:keys [needles paths include exclude is_hidden is_ignored is_regex limit offset context
                 is_files_only]}
         (coerce-rg-spec spec)
 
@@ -3147,17 +3154,12 @@
         ;; `.rgignore` + the `:grep` config overlay (issue #23) — handed to fff
         ;; itself, see `fff-ignore-overlay`.
         search-overlay
-        (fff-ignore-overlay)
+        (when-not is_ignored (fff-ignore-overlay))
 
-        ;; fff-first, ALWAYS: fff OWNS discovery. It enumerates the correct universe (nested
-        ;; `.gitignore`-aware — NEVER descends node_modules/target/…) and needle-narrows via
-        ;; native grep, ~280× faster than a raw walk. `.gitignore` is ALWAYS respected by
-        ;; fff's walker, and `.rgignore` / the `:grep` overlay ride along as fff's own
-        ;; ignore overlay — so there is no raw-walk fallback left (that bypass cost 120s on
-        ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
-        ;; include/exclude globs + hidden-below-root guard here.
+        ;; fff owns discovery and native content filtering under the selected ignore policy.
+        ;; Explicit globs and the hidden-path filter apply independently below.
         raw-candidates
-        (rg-fff-candidate-files roots needles is_regex search-overlay)
+        (rg-fff-candidate-files roots needles is_regex is_ignored search-overlay)
 
         ;; Set when Rust's `regex` could not narrow with the pattern, so
         ;; `raw-candidates` is the whole ignore-aware scope rather than a needle-
@@ -4632,6 +4634,9 @@
        "stray literal, such as the `(` of `(defn foo`, is escaped, and `hint` shows the pattern that "
        "ran. `include` and `exclude` globs limit which files the content search reads, and `exclude` "
        "wins. `query: \"\"` lists files.\n\n"
+       "`is_hidden: True` includes hidden files and directories. "
+       "`is_ignored: True` disables ignore rules and search overlays. Both default to false and work independently. "
+       "Explicit `include` and `exclude` filters still apply. Ignored trees can make searches slower.\n\n"
        "`limit` caps the total results per page, not per file: a positive integer, default 50. "
        "`is_files_only: True` gives one row per matching file with its match count instead of the "
        "lines. Use it when a query matches too much to page through, and `limit` then counts files "
@@ -4645,7 +4650,7 @@
      :params [{:name "query"} {:name "paths" :note "or `path`"} {:name "include" :note "or `glob`"}
               {:name "exclude"} {:name "is_regex"} {:name "context" :note "or `context_lines`"}
               {:name "limit" :note "or `max_results` / `max_count` / `max_matches`"}
-              {:name "offset"} {:name "is_hidden"}
+              {:name "offset"} {:name "is_hidden"} {:name "is_ignored"}
               {:name "is_files_only" :note "one row per matching file"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)

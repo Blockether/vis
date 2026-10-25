@@ -3398,6 +3398,88 @@
         (expect (nil? (:error result)))
         (expect (= (str (apply str (repeat 4 "2\n1\n2\n1\n")) "True\n") (:stdout result)))))))
 
+(defdescribe
+  grep-hidden-and-ignored-test
+  ;; Regression: grep rejected is_ignored instead of searching ignored files.
+  (it
+    "keeps hidden and ignored flags independent across search modes"
+    (let [dir
+          "grep-hidden-ignored"
+
+          files
+          ["marker-visible.txt" ".marker-hidden.txt" ".hidden/marker-child.txt"
+           "ignored/marker-ignored.txt" "ignored/.marker-both.txt" "target/marker-cache.txt"
+           "overlay/marker-overlay.txt"]
+
+          search
+          (grep-data-fn)]
+
+      (write-temp! (str dir "/.gitignore") "ignored/\n")
+      (write-temp! (str dir "/.rgignore") "overlay/\n")
+      (doseq [file files]
+        (write-temp! (str dir "/" file) "marker\n"))
+      (doseq [hidden?
+              [false true]
+
+              ignored?
+              [false true]
+
+              query
+              ["marker" "" "^marker$"]]
+
+        (let [spec
+              {"query" query
+               "paths" [(temp-dir-path dir)]
+               "is_hidden" hidden?
+               "is_ignored" ignored?
+               "is_regex" (= query "^marker$")}
+
+              expected
+              (cond-> #{"marker-visible.txt"}
+                hidden?
+                (into #{".marker-hidden.txt" ".hidden/marker-child.txt"})
+
+                ignored?
+                (into #{"ignored/marker-ignored.txt" "target/marker-cache.txt"
+                        "overlay/marker-overlay.txt"})
+
+                (and hidden? ignored?)
+                (conj "ignored/.marker-both.txt"))
+
+              relative
+              (fn [paths]
+                (set (map #(subs % (inc (count (str (temp-root) "/" dir)))) paths)))
+
+              result
+              (:result (search spec))]
+
+          (when-not (= query "^marker$")
+            (expect (= (cond-> expected
+                         (and hidden? (= query ""))
+                         (into #{".gitignore" ".rgignore"}))
+                       (relative (get result "paths")))))
+          (when-not (= query "")
+            (expect (= expected (relative (keys (get result "matches")))))
+            (expect (= expected
+                       (relative (keys (get (:result (search (assoc spec "is_files_only" true)))
+                                            "file_counts"))))))))))
+  (it "preserves both flags through Python maps, kwargs and pagination"
+      (write-temp! "grep-ignored-python/.gitignore" "ignored/\n")
+      (write-temp! "grep-ignored-python/ignored/.hidden.txt" "marker first\nmarker second\n")
+      (tpc/with-own
+        [ctx (extension/builtin-sandbox-bindings (constantly nil))]
+        (let [result (ep/run-python-block
+                       ctx
+                       (str "spec = {'query': 'marker', 'paths': ["
+                            (pr-str (temp-dir-path "grep-ignored-python"))
+                            "], 'is_hidden': True, 'is_ignored': True, 'limit': 1, 'context': 0}\n"
+                            "for page in (await grep(spec), await grep(**spec)):\n"
+                            "    print('marker first' in str(page))\n"
+                            "    print('marker second' in str(next(page)))")
+                       "t1/i1")]
+          (expect (nil? (:error result)))
+          (expect (= "True\nTrue\nTrue\nTrue\n" (:stdout result)))))))
+
 ;; Regression: a near-miss key used to cost the WHOLE search — `grep({"query" "x" "glob"
 ;; "*.clj"})` died on "find spec has unknown keys: glob" over a word nobody could have
 ;; guessed differently. Each near-miss now folds onto the canonical key it means, and
@@ -3436,8 +3518,8 @@
           (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
           (expect (= "grep: unknown keys: reggex. See doc(\"grep\")." (ex-message e)))
           (expect (= ["reggex"] (:unknown (ex-data e))))
-          (expect (= ["context" "exclude" "include" "is_files_only" "is_hidden" "is_regex" "limit"
-                      "offset" "paths" "query"]
+          (expect (= ["context" "exclude" "include" "is_files_only" "is_hidden" "is_ignored"
+                      "is_regex" "limit" "offset" "paths" "query"]
                      (:allowed (ex-data e))))))
     (it "a glob grep filters exactly like include, and excludes folds onto exclude"
         (write-temp! "aliasglob/a.clj" "needle here\n")
@@ -4236,11 +4318,9 @@
                (finally (Thread/interrupted)))))))
 
 (defdescribe
-  gitignore-always-respected-test
-  ;; `.gitignore` is ALWAYS honored: there is no per-call opt-out any more. The
-  ;; former `is_respect_gitignore` parameter is GONE — the find spec rejects it as
-  ;; an unknown key, and `vis.yml`'s `:grep` overlay is the only way to widen what
-  ;; search sees. Everything stays on the native fff index; no raw filesystem walk.
+  gitignore-default-policy-test
+  ;; Search respects gitignore by default and rejects the removed is_respect_gitignore key.
+  ;; The is_ignored flag and configured overlays can widen the native index.
   (let [grep
         (private-fn "rg-search")
 
@@ -4369,8 +4449,7 @@
   ;; excluded dir (which a `.gitignore` `!` negation can never do: git never
   ;; descends an excluded directory, so a negation on a child is dead code),
   ;; while `:always-exclude` (defaults: `.git/`, `node_modules/`, `target/`, …)
-  ;; keeps pruning INSIDE the rescued subtree. Config is the ONLY lever: there
-  ;; is no per-call gitignore opt-out.
+  ;; keeps pruning inside the rescued subtree when is_ignored is false.
   (let [grep
         (private-fn "rg-search")
 
@@ -4463,7 +4542,7 @@
           (overlay! {:include-gitignored-paths ["repositories/**"]}
                     (fn []
                       (expect (has? (rg-files path) "repositories/corp/secret.txt"))))))
-    (it "the overlay is the ONLY lever — no per-call gitignore opt-out exists"
+    (it "the configured overlay applies when is_ignored is absent"
         (let [path (fixture! "search-overlay-explicit")]
           ;; without config the gitignored subtree stays hidden …
           (expect (not (has? (rg-files path) "repositories/corp/secret.txt")))
