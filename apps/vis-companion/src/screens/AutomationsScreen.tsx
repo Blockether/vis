@@ -202,7 +202,7 @@ export function AutomationsWorkspace({
             </p>
           )}
           {list?.automations.map((automation) => (
-            // The row opens the details, so it ends in a chevron. Edit opens the form at once.
+            // The row opens the details. Edit opens the form at once.
             <div key={automation.id} className="flex items-center border-b border-dialog-edge pr-2">
               <ListRow
                 className="min-w-0 flex-1"
@@ -218,7 +218,6 @@ export function AutomationsWorkspace({
                     {automationSummary(automation)}
                   </span>
                 </span>
-                <ChevronIcon className="size-3 shrink-0 text-dialog-hint" />
               </ListRow>
               <IconButton
                 label={`Edit ${automation.name}`}
