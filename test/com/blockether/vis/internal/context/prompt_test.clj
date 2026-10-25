@@ -914,7 +914,9 @@
       ;; at 13 394.
       ;; 13.4k → 13.45k: Vis named a listed symptom, then kept it because DESIGN.md seemed to
       ;; require it. A reported symptom now stays a bug. It lands at 13 434.
-      (expect (< (count text) 13450))
+      ;; 13.45k → 13.5k: Vis still timed only non-isomorphic graph pairs, which fail fast, and
+      ;; the checker timed isomorphic pairs. Each reading is now measured. It lands at 13 490.
+      (expect (< (count text) 13500))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
         (expect (every? some? steps))

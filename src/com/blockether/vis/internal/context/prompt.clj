@@ -404,7 +404,7 @@
     "- Before you finish, test related cases: repeated, interleaved, partial, empty and boundary inputs. Compare "
     "with a simple reference model when you can.\n"
     "- Measure a stated target on the exact stated case in a fresh process, with varied input order. If the case is "
-    "ambiguous, measure its slowest reading. Measure the baseline and the result the same way, under any existing "
+    "ambiguous, measure each reading, such as matching and non-matching inputs, and use the slowest. Measure the baseline and the result the same way, under any existing "
     "load. Keep a wide margin.\n"
     "- On a live system, rehearse each change on a copy and keep the service healthy. Do each explicit completion "
     "step, such as a signal or a wait, before the final answer.\n"
