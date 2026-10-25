@@ -30,6 +30,10 @@ const FRAME_MEDIA = new Set(['application/pdf', 'text/html', 'application/xhtml+
 
 const TABLE_MEDIA = new Set(['text/csv', 'text/tab-separated-values']);
 
+// Subtitles are read as a timed transcript, not as plain text.
+const SUBTITLE_MEDIA = new Set(['text/vtt', 'application/x-subrip', 'text/srt', 'application/x-srt']);
+const SUBTITLE_EXTENSIONS = new Set(['vtt', 'srt']);
+
 // Markdown and plain text are documents the app READS ITSELF. An iframe would
 // paint a `.md` artifact as its own source — hashes, pipes and all — so these
 // media types are routed to `TextArtifact` instead of to a sandboxed frame.
@@ -108,8 +112,17 @@ export function isTableMedia(mime: string | undefined, filename?: string): boole
   return new Set(['csv', 'tsv']).has(extensionOf(filename));
 }
 
+/** Subtitles (WebVTT or SRT): the app shows them as a timed transcript. */
+export function isSubtitleMedia(mime: string | undefined, filename?: string): boolean {
+  const media = baseMedia(mime);
+  if (SUBTITLE_MEDIA.has(media)) return true;
+  if (media && media !== 'application/octet-stream' && media !== 'text/plain') return false;
+  return SUBTITLE_EXTENSIONS.has(extensionOf(filename));
+}
+
 /** Text the app renders itself — markdown as prose, anything else verbatim. */
 export function isTextMedia(mime: string | undefined, filename?: string): boolean {
+  if (isSubtitleMedia(mime, filename)) return false;
   if (TEXT_MEDIA.has(baseMedia(mime))) return true;
   if (isMarkdownMedia(mime, filename)) return true;
   const media = baseMedia(mime);
@@ -123,6 +136,7 @@ export function isDocMedia(mime: string | undefined, filename?: string): boolean
     isDiffMedia(mime) ||
     FRAME_MEDIA.has(baseMedia(mime)) ||
     isTableMedia(mime, filename) ||
+    isSubtitleMedia(mime, filename) ||
     isTextMedia(mime, filename)
   );
 }
@@ -151,6 +165,8 @@ export function docKindLabel(mime: string | undefined, filename?: string): strin
     return extensionOf(filename) === 'tsv' || baseMedia(mime) === 'text/tab-separated-values'
       ? 'TSV'
       : 'CSV';
+  if (isSubtitleMedia(mime, filename))
+    return extensionOf(filename) === 'srt' || /srt|subrip/.test(baseMedia(mime)) ? 'SRT' : 'VTT';
   if (isMarkdownMedia(mime, filename)) return 'MD';
   if (isTextMedia(mime, filename)) return 'TXT';
   if (isDocMedia(mime, filename)) return 'HTML';

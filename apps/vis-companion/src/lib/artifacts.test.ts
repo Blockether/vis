@@ -28,6 +28,7 @@ import {
   RAIL_PAGE,
   SHEET_PAGE,
   isPdfMedia,
+  isSubtitleMedia,
 } from './artifacts';
 import type { SessionArtifact } from './artifacts';
 import type { IterationAttachment, TranscriptTurn } from './types';
@@ -97,6 +98,18 @@ describe('written artifacts', () => {
     expect(docKindLabel('text/plain', 'build.log')).toBe('TXT');
     expect(docKindLabel('application/pdf')).toBe('PDF');
     expect(docKindLabel('text/html')).toBe('HTML');
+  });
+
+  it('reads subtitles as a document of their own, not as plain text', () => {
+    expect(isSubtitleMedia('text/vtt')).toBe(true);
+    expect(isSubtitleMedia('application/octet-stream', 'episode.srt')).toBe(true);
+    expect(isSubtitleMedia('text/plain', 'episode.vtt')).toBe(true);
+    expect(isSubtitleMedia('text/html', 'episode.vtt')).toBe(false);
+    expect(isDocMedia('text/vtt', 'episode.vtt')).toBe(true);
+    expect(isTextMedia('text/vtt', 'episode.vtt')).toBe(false);
+    expect(attachmentIsDoc({ filename: 'episode.vtt', media_type: 'text/vtt' } as IterationAttachment)).toBe(true);
+    expect(docKindLabel('text/vtt', 'episode.vtt')).toBe('VTT');
+    expect(docKindLabel('application/x-subrip', 'episode.srt')).toBe('SRT');
   });
 });
 

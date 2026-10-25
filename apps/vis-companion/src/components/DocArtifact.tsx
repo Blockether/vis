@@ -9,6 +9,7 @@ import {
   isMarkdownMedia,
   isMarkupMedia,
   isPdfMedia,
+  isSubtitleMedia,
   isTextMedia,
   isDiffMedia,
 } from '../lib/artifacts';
@@ -385,7 +386,7 @@ function DocBody({
   if (!url) return <p className="px-2 py-3 text-meta text-footer-muted">Loading…</p>;
   // Markdown and plain text are read by the APP: an iframe would paint
   // `# Heading` as `# Heading`, the source instead of the document.
-  return isTextMedia(mime, name) ? (
+  return isTextMedia(mime, name) || isSubtitleMedia(mime, name) ? (
     <TextFrame url={url} mime={mime} name={name} fill />
   ) : (
     <DocFrame url={url} mime={mime} name={name} />

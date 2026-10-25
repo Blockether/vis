@@ -63,6 +63,7 @@ import {
   pageBySize,
   RAIL_PAGE,
 } from '../lib/artifacts';
+import { captionsFor, parseSubtitles, subtitleSegments } from '../lib/subtitles';
 import {
   BandLabel,
   BandTally,
@@ -104,6 +105,7 @@ import type {
   TranscriptForm,
   TranscriptIteration,
   TranscriptTurn,
+  TranscriptionSegment,
   RequestKind,
   CouncilRequest,
 } from '../lib/types';
@@ -2122,6 +2124,7 @@ const AttachmentTile = memo(function AttachmentTile({
   attachment,
   layout,
   galleryAt,
+  captions,
 }: {
   client: GatewayClient;
   sid: string;
@@ -2132,8 +2135,12 @@ const AttachmentTile = memo(function AttachmentTile({
   // Where this picture sits in the rail's gallery, so the viewer it opens can
   // step to the ones beside it.
   galleryAt?: number;
+  // The subtitle file of a recording, from the same step. Its cues become the
+  // player's timed lines when the gateway gave the recording none of its own.
+  captions?: IterationAttachment;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [captionLines, setCaptionLines] = useState<TranscriptionSegment[] | null>(null);
   const placeholderRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
   // Bumped when the browser refuses the URL we handed it — the client's object
@@ -2186,6 +2193,26 @@ const AttachmentTile = memo(function AttachmentTile({
     };
   }, [client, sid, iterationId, index, isPlayable, attempt, visible]);
 
+  const captionsIteration = captions?.iteration_id ?? '';
+  const captionsIndex = captions?.index ?? 0;
+  const hasOwnLines = (attachment.transcription_segments ?? []).length > 0;
+  useEffect(() => {
+    if (!visible || !captionsIteration || !sid || hasOwnLines) return;
+    let alive = true;
+    client
+      .attachmentBlob(sid, captionsIteration, captionsIndex)
+      .then((blob) => blob.text())
+      .then((text) => {
+        if (alive) setCaptionLines(subtitleSegments(parseSubtitles(text)));
+      })
+      .catch(() => {
+        // Without readable subtitles the recording keeps its own transcription.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [client, sid, captionsIteration, captionsIndex, hasOwnLines, visible]);
+
   // A non-visual artifact reaching a tile is the failure path only — the rail
   // below routes files into the collapsed recorded-files row. Decided at mount
   // and never revisited, so this branch cannot resize anything.
@@ -2207,7 +2234,7 @@ const AttachmentTile = memo(function AttachmentTile({
         name={name}
         meta={mediaMeta(attachment)}
         transcription={attachment.transcription}
-        transcriptionSegments={attachment.transcription_segments}
+        transcriptionSegments={hasOwnLines ? attachment.transcription_segments : (captionLines ?? undefined)}
         transcriptionStatus={attachment.transcription_status}
         action={
           failed ? null : (
@@ -2492,6 +2519,7 @@ export const AttachmentRail = memo(function AttachmentRail({
           sid={sid}
           attachment={attachment}
           layout="plate"
+          captions={captionsFor(attachment, media)}
         />
       ))}
       {clips.map((attachment) => (

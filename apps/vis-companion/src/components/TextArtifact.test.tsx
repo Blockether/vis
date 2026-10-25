@@ -13,6 +13,21 @@ afterEach(() => {
 // note — and the app has exactly one markdown renderer that already knows
 // better.
 describe('a written artifact', () => {
+  it('renders subtitles as a timed transcript with one name per turn', () => {
+    const markup = html(
+      <TextBody
+        text={'WEBVTT\n\n00:00:00.300 --> 00:00:02.000\n<v Maya>Welcome.\n\n00:00:02.000 --> 00:00:03.000\n<v Maya>Again.\n\n00:01:05.000 --> 00:01:06.000\n<v Daniel>Hi.\n'}
+        mime="text/vtt"
+        name="episode.vtt"
+      />,
+    );
+    expect(markup).toContain('<ol');
+    expect(markup).toContain('1:05');
+    expect(markup.match(/>Maya</g)).toHaveLength(1);
+    expect(markup).toContain('>Daniel<');
+    expect(markup).not.toContain('--&gt;');
+  });
+
   it('renders markdown as prose, not as its own source', () => {
     const markup = html(
       <TextBody

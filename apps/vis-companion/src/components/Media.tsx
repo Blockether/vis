@@ -328,7 +328,7 @@ const RecordingTimelineContext = createContext<RecordingTimeline>({
  * `mm:ss`, or `h:mm:ss` once a recording passes the hour — a meeting is measured
  * in hours, and `72:14` is not a time anybody reads.
  */
-function clockTime(seconds: number): string {
+export function clockTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0:00';
   const whole = Math.floor(seconds);
   const secs = String(whole % 60).padStart(2, '0');

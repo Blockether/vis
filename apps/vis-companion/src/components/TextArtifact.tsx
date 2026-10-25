@@ -1,6 +1,9 @@
 import { memo, useEffect, useState } from 'react';
-import { isMarkdownMedia } from '../lib/artifacts';
+import { isMarkdownMedia, isSubtitleMedia } from '../lib/artifacts';
+import { parseSubtitles, type SubtitleCue } from '../lib/subtitles';
 import { Markdown } from './ChatContent';
+import { clockTime } from './Media';
+import { PROSE } from './ui';
 
 /**
  * A WRITTEN artifact — a note, a comment, a log — read by the app itself.
@@ -54,6 +57,8 @@ export const TextBody = memo(function TextBody({
    */
   raw?: boolean;
 }) {
+  const cues = !raw && isSubtitleMedia(mime, name) ? parseSubtitles(text) : [];
+  if (cues.length > 0) return <SubtitleBody cues={cues} name={name} />;
   if (!raw && isMarkdownMedia(mime, name)) {
     return (
       <article className="min-w-0 bg-panel px-3 py-3 font-sans text-body text-foreground sm:px-4">
@@ -70,6 +75,47 @@ export const TextBody = memo(function TextBody({
     >
       {text}
     </pre>
+  );
+});
+
+/**
+ * Subtitles as a transcript: the start time of each cue, then its words. A speaker
+ * name shows once, at the first cue of each turn, so a dialogue reads as a script.
+ */
+export const SubtitleBody = memo(function SubtitleBody({
+  cues,
+  name,
+}: {
+  cues: SubtitleCue[];
+  name?: string;
+}) {
+  return (
+    <ol
+      aria-label={name ?? 'Subtitles'}
+      className="min-w-0 list-none bg-panel px-3 py-2 font-sans text-body text-foreground sm:px-4"
+    >
+      {cues.map((cue, index) => {
+        const isTurn = Boolean(cue.speaker) && cue.speaker !== cues[index - 1]?.speaker;
+        return (
+          <li
+            key={`${cue.start}-${index}`}
+            className={`flex min-w-0 gap-3 ${isTurn && index > 0 ? 'mt-3' : 'mt-1'} first:mt-0`}
+          >
+            <span className="w-14 shrink-0 pt-0.5 font-mono text-chip tabular-nums text-dialog-hint">
+              {clockTime(cue.start)}
+            </span>
+            <div className="min-w-0 flex-1">
+              {isTurn ? (
+                <span className="block font-mono text-chip font-bold uppercase tracking-wider text-accent-ink">
+                  {cue.speaker}
+                </span>
+              ) : null}
+              <p className={`min-w-0 whitespace-pre-wrap break-words ${PROSE}`}>{cue.text}</p>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 });
 

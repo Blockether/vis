@@ -33,6 +33,7 @@ import {
   isMarkdownMedia,
   isDiffMedia,
   isPdfMedia,
+  isSubtitleMedia,
   isTableMedia,
   isTextMedia,
   isXlsxMedia,
@@ -52,9 +53,10 @@ import { DocFrame } from './DocArtifact';
 import { ImageViewer } from './ImageViewer';
 import { MarkdownArtifact } from './MarkdownArtifact';
 import { DiffArtifact } from './DiffArtifact';
-import { ClipVideo, MediaRecording, RecordingPlayer, useArtifactShare } from './Media';
+import { ClipVideo, clockTime, MediaRecording, RecordingPlayer, useArtifactShare } from './Media';
 import { PdfAnnotator } from './PdfArtifact';
-import { readArtifactText } from './TextArtifact';
+import { parseSubtitles } from '../lib/subtitles';
+import { readArtifactText, TextFrame } from './TextArtifact';
 import { AlertIcon, DotsIcon, MicIcon, PlayIcon } from './icons';
 import { ZipArchive } from './ZipArchive';
 import { Chip, DialogHeader, IconButton, ListRow, LoadMore, overlayLayer } from './ui';
@@ -392,9 +394,10 @@ function Thumb({
 }) {
   const box = 'h-24 sm:h-28 shrink-0 border-b border-dialog-edge';
   const table = isTableMedia(artifact.mediaType, artifact.name);
+  const subtitles = isSubtitleMedia(artifact.mediaType, artifact.name);
   const previewable =
     artifact.kind === 'doc' &&
-    (table || isTextMedia(artifact.mediaType, artifact.name)) &&
+    (table || subtitles || isTextMedia(artifact.mediaType, artifact.name)) &&
     typeof artifact.size === 'number' &&
     artifact.size <= PREVIEW_LIMIT;
   const { url, blob, failed } = useArtifactSource(
@@ -407,9 +410,17 @@ function Thumb({
   // verbatim — the same split the reader makes on the same two files.
   const head = useArtifactPreview(blob, previewable);
   const plain = !isMarkdownMedia(artifact.mediaType, artifact.name);
-  const preview: PreviewLine[] = plain
-    ? previewLines(head).map((text): PreviewLine => ({ kind: 'code', text }))
-    : previewBlocks(head);
+  // Subtitles peek as their cues, `0:05 Maya: Welcome…`, not as timing lines.
+  const preview: PreviewLine[] = subtitles
+    ? parseSubtitles(head)
+        .slice(0, PREVIEW_LINES)
+        .map((cue): PreviewLine => ({
+          kind: 'code',
+          text: `${clockTime(cue.start)} ${cue.speaker ? `${cue.speaker}: ` : ''}${cue.text}`,
+        }))
+    : plain
+      ? previewLines(head).map((text): PreviewLine => ({ kind: 'code', text }))
+      : previewBlocks(head);
 
   if (artifact.kind === 'image') {
     return (
@@ -946,6 +957,18 @@ function ArtifactDetail({
     return (
       <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
         <TableDetail url={url} artifact={artifact} />
+      </DetailOverlay>
+    );
+  }
+
+  if (isSubtitleMedia(artifact.mediaType, artifact.name)) {
+    return (
+      <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
+        {url ? (
+          <TextFrame url={url} mime={artifact.mediaType} name={artifact.name} fill />
+        ) : (
+          <p className="p-4 font-mono text-meta text-dialog-hint">Loading…</p>
+        )}
       </DetailOverlay>
     );
   }
