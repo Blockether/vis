@@ -127,12 +127,19 @@ To see one picture larger, click it or its name. To see every picture in the ses
 **Ctrl+X I**. The picture viewer opens and fills most of the window. In a terminal that cannot show
 pictures, the viewer is a numbered list.
 
+To see a detail, zoom in. Turn the mouse wheel over the picture to zoom at the pointer, or press
+**+** and **-**. The header shows the zoom, for example `250%`. Then drag the picture with the mouse
+or use the arrow keys to move it. Press **0** to see the whole picture again.
+
 | Keys | What they do |
 |---|---|
-| ← or ↑ | Show the previous picture |
-| → or ↓ | Show the next picture |
+| ← or ↑ | Show the previous picture. On a zoomed picture, move it |
+| → or ↓ | Show the next picture. On a zoomed picture, move it |
+| PgUp or PgDn | Show the previous or the next picture |
 | Home or End | Show the first or the last picture |
 | 1 to 9 | Show the picture with that number |
+| + or - | Zoom in or out |
+| 0 | Show the whole picture |
 | Enter or o | Open the picture in the image viewer of your computer |
 | Esc or q | Close the picture viewer |
 

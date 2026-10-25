@@ -10,7 +10,8 @@
             [com.blockether.vis.tui.terminal-image :as timg]
             [com.blockether.vis.tui.theme :as t]
             [com.blockether.vis.tui.format :as fmt])
-  (:import [com.googlecode.lanterna.input KeyStroke KeyType]
+  (:import [com.googlecode.lanterna.gui2 ScrollBar]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [java.io File FileOutputStream]))
 
@@ -262,45 +263,322 @@
   [i {:keys [name label]}]
   (str " " (inc (long i)) "  " name (when-not (str/blank? label) (str "  ·  " label))))
 
+(def ^:private image-zoom-max
+  "Largest zoom of the image viewer, as a multiple of the fitted picture."
+  8.0)
+
+(def ^:private image-zoom-key-step "Zoom factor of one + or - key press." 1.5)
+
+(def ^:private image-zoom-wheel-step "Zoom factor of one mouse wheel step." 1.25)
+
+(def ^:private image-view-fit {:zoom 1.0 :cx 0.5 :cy 0.5})
+
+(defn- clamp-double ^double [^double v ^double lo ^double hi] (max lo (min hi v)))
+
+(defn image-view-frame
+  "Where the viewer draws `image` for `state` in `geom`, or nil without its dimensions.
+
+   At zoom 1 the whole picture fits the dialog. A larger zoom grows the box up to the dialog
+   and shows the part of the picture around the center `:cx`/`:cy` (0 to 1 of the width and
+   height). Returns `{:row :col :cols :rows :view {:x :y :w :h} :zoom :cx :cy :scale}`:
+   `:view` is the shown source rectangle in pixels, `:scale` the source pixels per screen
+   pixel, and `:cx`/`:cy` the center after the clamp that keeps the view on the picture."
+  [{:keys [width height]} {:keys [zoom cx cy]} {:keys [bounds content-top content-h cell-px]}]
+  (when (and width height (pos? (long width)) (pos? (long height)))
+    (let [iw
+          (double width)
+
+          ih
+          (double height)
+
+          [cw ch]
+          cell-px
+
+          cw
+          (double (max 1 (long (or cw 1))))
+
+          ch
+          (double (max 1 (long (or ch 1))))
+
+          inner-w
+          (long (:inner-w bounds))
+
+          room-w
+          (max 1 (- inner-w 4))
+
+          room-h
+          (max 1 (- (long content-h) 2))
+
+          {fit-cols :cols fit-rows :rows}
+          (timg/cell-size {:w width :h height} room-w room-h)
+
+          base
+          (max (/ iw (* (double fit-cols) cw)) (/ ih (* (double fit-rows) ch)))
+
+          z
+          (clamp-double (double (or zoom 1.0)) 1.0 image-zoom-max)
+
+          s
+          (/ base z)
+
+          cols
+          (if (= 1.0 z) (long fit-cols) (min room-w (max 1 (long (Math/ceil (/ iw (* s cw)))))))
+
+          rows
+          (if (= 1.0 z) (long fit-rows) (min room-h (max 1 (long (Math/ceil (/ ih (* s ch)))))))
+
+          w
+          (min iw (* (double cols) cw s))
+
+          h
+          (min ih (* (double rows) ch s))
+
+          center-x
+          (clamp-double (* iw (double (or cx 0.5))) (/ w 2.0) (- iw (/ w 2.0)))
+
+          center-y
+          (clamp-double (* ih (double (or cy 0.5))) (/ h 2.0) (- ih (/ h 2.0)))
+
+          vw
+          (max 1 (min (long width) (Math/round w)))
+
+          vh
+          (max 1 (min (long height) (Math/round h)))
+
+          x
+          (max 0 (min (- (long width) vw) (Math/round (- center-x (/ w 2.0)))))
+
+          y
+          (max 0 (min (- (long height) vh) (Math/round (- center-y (/ h 2.0)))))]
+
+      {:row (+ (long content-top) 2 (quot (- room-h rows) 2))
+       :col (+ (long (:left bounds)) 1 (quot (- inner-w cols) 2))
+       :cols cols
+       :rows rows
+       :view {:x x :y y :w vw :h vh}
+       :zoom z
+       :cx (/ center-x iw)
+       :cy (/ center-y ih)
+       :scale s})))
+
+(defn- settle-view
+  "Store the clamped center of `state`, so a pan never drifts past an edge."
+  [state image geom]
+  (if-let [{:keys [cx cy]} (image-view-frame image state geom)]
+    (assoc state
+      :cx cx
+      :cy cy)
+    state))
+
+(defn- zoom-view
+  "Zoom `state` by `factor`. With an `anchor` cell `[col row]` on the picture, the picture
+   point under it stays in place; else the view keeps its center."
+  [state image geom factor anchor]
+  (let [before
+        (image-view-frame image state geom)
+
+        zoom
+        (clamp-double (* (double (:zoom state 1.0)) (double factor)) 1.0 image-zoom-max)]
+
+    (cond (nil? before) state
+          (<= zoom 1.0) (merge (dissoc state :drag) image-view-fit)
+          :else
+          (let [zoomed
+                (assoc state :zoom zoom)
+
+                after
+                (image-view-frame image zoomed geom)
+
+                [pc pr]
+                anchor
+
+                on-picture?
+                (and anchor
+                     (<= (long (:col before)) (long pc))
+                     (< (long pc) (+ (long (:col before)) (long (:cols before))))
+                     (<= (long (:row before)) (long pr))
+                     (< (long pr) (+ (long (:row before)) (long (:rows before)))))]
+
+            (if-not on-picture?
+              (settle-view zoomed image geom)
+              (let [[cw ch]
+                    (:cell-px geom)
+
+                    cw
+                    (double (max 1 (long (or cw 1))))
+
+                    ch
+                    (double (max 1 (long (or ch 1))))
+
+                    dx
+                    (+ 0.5 (double (- (long pc) (long (:col before)))))
+
+                    dy
+                    (+ 0.5 (double (- (long pr) (long (:row before)))))
+
+                    ;; The source pixel under the pointer before the zoom.
+                    px
+                    (+ (double (get-in before [:view :x])) (* dx cw (double (:scale before))))
+
+                    py
+                    (+ (double (get-in before [:view :y])) (* dy ch (double (:scale before))))
+
+                    ;; The pointer offset inside the new box, in screen pixels.
+                    ax
+                    (* cw (+ 0.5 (double (- (long pc) (long (:col after))))))
+
+                    ay
+                    (* ch (+ 0.5 (double (- (long pr) (long (:row after))))))
+
+                    s
+                    (double (:scale after))
+
+                    w
+                    (double (get-in after [:view :w]))
+
+                    h
+                    (double (get-in after [:view :h]))]
+
+                (settle-view (assoc zoomed
+                               :cx (/ (+ (- px (* ax s)) (/ w 2.0)) (double (:width image)))
+                               :cy (/ (+ (- py (* ay s)) (/ h 2.0)) (double (:height image))))
+                             image
+                             geom)))))))
+
+(defn- pan-view
+  "Move the view of a zoomed picture by `dx` and `dy` source pixels."
+  [state image geom dx dy]
+  (settle-view (assoc state
+                 :cx (+ (double (:cx state 0.5)) (/ (double dx) (double (:width image))))
+                 :cy (+ (double (:cy state 0.5)) (/ (double dy) (double (:height image)))))
+               image
+               geom))
+
+(defn- zoomed? [state] (< 1.0 (double (:zoom state 1.0))))
+
+(defn- image-viewer-pointer
+  "The next viewer state for a pointer event: the wheel zooms around the pointer, and a drag
+   with the primary button moves a zoomed picture."
+  [state ^MouseAction key image geom]
+  (let [pos
+        (.getPosition key)
+
+        col
+        (.getColumn pos)
+
+        row
+        (.getRow pos)
+
+        action
+        (.getActionType key)
+
+        wheel
+        (ScrollBar/wheelStep key)
+
+        frame
+        (image-view-frame image state geom)]
+
+    (cond (nil? frame) state
+          wheel (zoom-view state
+                           image
+                           geom
+                           (if (neg? (long wheel))
+                             image-zoom-wheel-step
+                             (/ 1.0 (double image-zoom-wheel-step)))
+                           [col row])
+          (and (= MouseActionType/CLICK_DOWN action) (zoomed? state))
+          (assoc state :drag {:col col :row row :cx (:cx frame) :cy (:cy frame)})
+          (and (= MouseActionType/DRAG action) (:drag state))
+          (let [{start-col :col start-row :row start-cx :cx start-cy :cy}
+                (:drag state)
+
+                [cw ch]
+                (:cell-px geom)
+
+                s
+                (double (:scale frame))]
+
+            (pan-view (assoc state
+                        :cx start-cx
+                        :cy start-cy)
+                      image
+                      geom
+                      (* -1.0 s (double (or cw 1)) (double (- (long col) (long start-col))))
+                      (* -1.0 s (double (or ch 1)) (double (- (long row) (long start-row))))))
+          (= MouseActionType/CLICK_RELEASE action) (dissoc state :drag)
+          :else state)))
+
 (defn image-viewer-key
-  "The next image viewer state for `key`, or `{::dlg/done result}`. Arrows move, 1-9 jump,
-   Enter or o opens the picture in the system viewer, Esc or q closes."
-  [{:keys [index] :as state} ^KeyStroke key images]
-  (let [last-index
-        (max 0 (dec (count images)))
+  "The next image viewer state for `key`, or `{::dlg/done result}`.
 
-        move
-        #(assoc state :index (p/clamp (long %) 0 last-index))
+   + and - zoom, 0 fits the picture again. On a zoomed picture the arrows move the view;
+   else they select a picture. PgUp, PgDn, Home, End and 1-9 always select a picture. Enter
+   or o opens the picture in the system viewer, Esc or q closes. With `geom`, the mouse wheel
+   zooms around the pointer and a drag moves a zoomed picture."
+  ([state key images] (image-viewer-key state key images nil))
+  ([{:keys [index] :as state} key images geom]
+   (let [last-index
+         (max 0 (dec (count images)))
 
-        open
-        {::dlg/done {:action :open :image (nth images index nil) :index index}}]
+         image
+         (nth images index nil)
 
-    (condp = (.getKeyType key)
-      KeyType/Escape {::dlg/done nil}
-      KeyType/ArrowLeft (move (dec (long index)))
-      KeyType/ArrowUp (move (dec (long index)))
-      KeyType/ArrowRight (move (inc (long index)))
-      KeyType/ArrowDown (move (inc (long index)))
-      KeyType/Home (move 0)
-      KeyType/End (move last-index)
-      KeyType/Enter open
-      KeyType/Character (let [ch (.getCharacter key)]
-                          (cond (#{\o \O} ch) open
-                                (#{\q \Q} ch) {::dlg/done nil}
-                                (<= (int \1) (int ch) (int \9))
-                                (let [at (- (int ch) (int \1))]
-                                  (if (<= at last-index) (move at) state))
-                                :else state))
-      state)))
+         move
+         #(merge (assoc state :index (p/clamp (long %) 0 last-index)) image-view-fit)
+
+         open
+         {::dlg/done {:action :open :image image :index index}}
+
+         zoom
+         #(if geom (zoom-view state image geom % nil) state)
+
+         pan
+         (fn [fx fy]
+           (if-let [{:keys [view]} (and geom (image-view-frame image state geom))]
+             (pan-view state
+                       image
+                       geom
+                       (* (double fx) 0.25 (double (:w view)))
+                       (* (double fy) 0.25 (double (:h view))))
+             state))
+
+         panning?
+         (and geom (zoomed? state))]
+
+     (if (instance? MouseAction key)
+       (if geom (image-viewer-pointer state key image geom) state)
+       (condp = (.getKeyType ^KeyStroke key)
+         KeyType/Escape {::dlg/done nil}
+         KeyType/ArrowLeft (if panning? (pan -1 0) (move (dec (long index))))
+         KeyType/ArrowUp (if panning? (pan 0 -1) (move (dec (long index))))
+         KeyType/ArrowRight (if panning? (pan 1 0) (move (inc (long index))))
+         KeyType/ArrowDown (if panning? (pan 0 1) (move (inc (long index))))
+         KeyType/PageUp (move (dec (long index)))
+         KeyType/PageDown (move (inc (long index)))
+         KeyType/Home (move 0)
+         KeyType/End (move last-index)
+         KeyType/Enter open
+         KeyType/Character (let [ch (.getCharacter ^KeyStroke key)]
+                             (cond (#{\o \O} ch) open
+                                   (#{\q \Q} ch) {::dlg/done nil}
+                                   (#{\+ \=} ch) (zoom image-zoom-key-step)
+                                   (#{\- \_} ch) (zoom (/ 1.0 (double image-zoom-key-step)))
+                                   (= \0 ch) (merge (dissoc state :drag) image-view-fit)
+                                   (<= (int \1) (int ch) (int \9))
+                                   (let [at (- (int ch) (int \1))]
+                                     (if (<= at last-index) (move at) state))
+                                   :else state))
+         state)))))
 
 (defn image-viewer-component
   "The image viewer modal over `images` (`render/markdown-images` entries), opened at `index`.
 
    On a graphical terminal it shows one picture ENLARGED to fill the dialog, with its number,
-   name, type and size above it. `paint-images!` receives the picture region after each
-   refresh, because Lanterna does not model terminal pictures. On any other terminal it is a
-   numbered table of the pictures. In both forms the arrows and 1-9 select a picture and
-   Enter opens it in the system viewer."
+   name, type and size above it. The keys and the mouse wheel zoom it, and the arrows or a
+   drag move a zoomed picture (see [[image-viewer-key]]). `paint-images!` receives the picture
+   region after each refresh, because Lanterna does not model terminal pictures. On any other
+   terminal it is a numbered table of the pictures. In both forms Enter opens the selected
+   picture in the system viewer."
   [images index {:keys [graphical? paint-images!]}]
   (let [images
         (vec images)
@@ -308,10 +586,16 @@
         n
         (count images)
 
-        footer
-        [["←/→" "picture"] ["1-9" "jump"] ["Enter" "open"] ["Esc" "close"]]]
+        table-footer
+        [["←/→" "picture"] ["1-9" "jump"] ["Enter" "open"] ["Esc" "close"]]
 
-    {:init {:index (p/clamp (long (or index 0)) 0 (max 0 (dec n))) :scroll 0}
+        fit-footer
+        [["←/→" "picture"] ["+/-" "zoom"] ["Enter" "open"] ["Esc" "close"]]
+
+        zoomed-footer
+        [["Arrows/drag" "move"] ["+/-" "zoom"] ["0" "fit"] ["Esc" "close"]]]
+
+    {:init (merge {:index (p/clamp (long (or index 0)) 0 (max 0 (dec n))) :scroll 0} image-view-fit)
      :measure (fn [_ cols rows]
                 (let [content-w
                       (if graphical? (max 20 (- (long cols) 10)) (dlg/default-content-width cols))
@@ -331,6 +615,7 @@
                           :content-w content-w
                           :content-h-req content-h-req
                           :bounds bounds
+                          :cell-px (timg/cell-pixels)
                           :list-h (max 1 (long (:content-h layout)))})))
      :reconcile (fn [{:keys [index scroll] :as state} {:keys [list-h]}]
                   ;; The table header takes the first list row.
@@ -340,7 +625,7 @@
                                   (min (long index))
                                   (max (inc (- (long index) rows-h)))
                                   (max 0)))))
-     :paint (fn [g {:keys [index scroll]}
+     :paint (fn [g {:keys [index scroll] :as state}
                  {:keys [cols rows content-w content-h-req content-top content-h hint-row bounds
                          list-h]}]
               (let [{:keys [left inner-w]}
@@ -354,6 +639,9 @@
 
                     image
                     (nth images index nil)
+
+                    zoomed
+                    (zoomed? state)
 
                     title
                     (if graphical? (str "Image " (inc (long index)) " of " n) "Images")]
@@ -374,7 +662,9 @@
                           (str (inc (long index))
                                " / "
                                n
-                               (when-not (str/blank? (:label image)) (str "  ·  " (:label image))))
+                               (when-not (str/blank? (:label image)) (str "  ·  " (:label image)))
+                               (when zoomed
+                                 (str "  ·  " (Math/round (* 100.0 (double (:zoom state)))) "%")))
 
                           width
                           (long (p/display-width label))]
@@ -399,31 +689,41 @@
                                                     inner-w
                                                     (= at (long index))
                                                     (image-row-label at (nth images at)))))))
-                (dlg/draw-hint-bar! g left hint-row inner-w footer)
+                (dlg/draw-hint-bar! g
+                                    left
+                                    hint-row
+                                    inner-w
+                                    (cond (not graphical?) table-footer
+                                          zoomed zoomed-footer
+                                          :else fit-footer))
                 nil))
-     :after-refresh (fn [{:keys [index]} {:keys [bounds content-top content-h]}]
+     :after-refresh (fn [{:keys [index] :as state} geom]
                       (when (and graphical? paint-images!)
-                        (let [{:keys [path mime width height]} (nth images index nil)]
+                        (let [{:keys [path mime] :as image} (nth images index nil)]
                           (paint-images!
-                            (if (and path width height)
-                              (let [{:keys [left inner-w]} bounds
-                                    room-w (max 1 (- (long inner-w) 4))
-                                    room-h (max 1 (- (long content-h) 2))
-                                    {:keys [cols rows]}
-                                    (timg/cell-size {:w width :h height} room-w room-h)]
+                            (if-let [{:keys [row col cols rows view] :as frame}
+                                     (when path (image-view-frame image state geom))]
+                              (let [zoomed (< 1.0 (double (:zoom frame)))
+                                    {:keys [x y w h]} view]
 
-                                [{:row (+ (long content-top) 2 (quot (- room-h (long rows)) 2))
-                                  :col (+ (long left) 1 (quot (- (long inner-w) (long cols)) 2))
-                                  :img {:id (str "image-viewer/" path)
-                                        :path path
-                                        :mime mime
-                                        :cols cols
-                                        :rows rows
-                                        :width width
-                                        :height height}}])
+                                [{:row row
+                                  :col col
+                                  ;; Each zoomed view is its own upload: the id names its part.
+                                  :img (cond-> {:id (str "image-viewer/"
+                                                         path
+                                                         (when zoomed
+                                                           (str "#" x "," y "," w "," h)))
+                                                :path path
+                                                :mime mime
+                                                :cols cols
+                                                :rows rows
+                                                :width (if zoomed w (:width image))
+                                                :height (if zoomed h (:height image))}
+                                         zoomed
+                                         (assoc :view view))}])
                               [])))))
-     :on-key (fn [state key _]
-               (image-viewer-key state key images))}))
+     :on-key (fn [state key geom]
+               (image-viewer-key state key images geom))}))
 
 (defn show-images!
   "Open the image viewer and return `{:action :open :image :index}` or nil on close."

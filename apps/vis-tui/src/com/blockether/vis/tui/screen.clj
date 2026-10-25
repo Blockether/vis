@@ -2108,7 +2108,8 @@
                                              :crop-top (:crop-top img)
                                              :crop-bottom (:crop-bottom img)
                                              :width (:width img)
-                                             :height (:height img)})]
+                                             :height (:height img)
+                                             :view (:view img)})]
       (.append sb (format "\u001b[%d;%dH" (inc (long row)) (inc (long col))))
       (.append sb seqstr))))
 
@@ -2136,7 +2137,8 @@
                                                             {:cols (:cols img)
                                                              :rows (:rows img)
                                                              :width (:width img)
-                                                             :height (:height img)})]
+                                                             :height (:height img)
+                                                             :view (:view img)})]
                   (let [id next-id
                         e {:id id :img-w w :img-h h}]
 
@@ -2184,7 +2186,9 @@
              builder
              (if (timg/video-source? path (:mime img))
                (HtmlMedia/video (.toPath (java.io.File. path)))
-               (when-let [data (timg/html-png-data path {:cols (:cols img) :rows (:rows img)})]
+               (when-let [data (timg/html-png-data
+                                 path
+                                 {:cols (:cols img) :rows (:rows img) :view (:view img)})]
                  (HtmlMedia/builder HtmlMedia$Kind/IMAGE "image/png" ^bytes data)))]
 
          (when builder

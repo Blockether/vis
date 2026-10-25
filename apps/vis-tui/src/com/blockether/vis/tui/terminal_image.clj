@@ -144,6 +144,11 @@
   [cols rows]
   (TerminalImage/boxPixels (int (or cols 0)) (int (or rows 0))))
 
+(defn cell-pixels
+  "The live pixel size of one terminal cell, as `[width height]`."
+  []
+  [(long (TerminalImage/cellWidth)) (long (TerminalImage/cellHeight))])
+
 ;; Escape encoding
 
 (defn encode-kitty
@@ -201,25 +206,52 @@
    `:data` being the raw PNG bytes."
   (atom {}))
 
+(defn- fit->png
+  "Encode `src` as PNG `{:data :w :h}`, scaled down to fit `target-w`x`target-h` px."
+  [src ^long target-w ^long target-h]
+  (let [iw
+        (img/width src)
+
+        ih
+        (img/height src)
+
+        scale
+        (min 1.0 (/ (double target-w) iw) (/ (double target-h) ih))]
+
+    (if (< scale 1.0)
+      (let [sw
+            (max 1 (Math/round (* iw scale)))
+
+            sh
+            (max 1 (Math/round (* ih scale)))]
+
+        (with-open [scaled (img/resize src sw sh :lanczos3)]
+          {:data (img/encode scaled :png) :w (int sw) :h (int sh)}))
+      {:data (img/encode src :png) :w (int iw) :h (int ih)})))
+
 (defn- still->png
   "Box-fitted PNG `{:data :w :h}` for a STILL image file, or nil. `:data` is the
    RAW PNG bytes: the escape encoders base64 them as they chunk, so encoding one
-   here would only build a 1.33x String for someone else to re-slice."
-  [^java.io.File f {:keys [cols rows]}]
+   here would only build a 1.33x String for someone else to re-slice.
+
+   A `view` (`{:x :y :w :h}` in source pixels) crops the picture first, so a zoomed
+   image viewer sends only the part that it shows."
+  [^java.io.File f {:keys [cols rows view]}]
   (try (with-open [src (img/decode f)]
          (let [target-w (* (long cols) (long (TerminalImage/cellWidth)))
-               target-h (* (long rows) (long (TerminalImage/cellHeight)))
-               iw (img/width src)
-               ih (img/height src)
-               scale (min 1.0 (/ (double target-w) iw) (/ (double target-h) ih))]
+               target-h (* (long rows) (long (TerminalImage/cellHeight)))]
 
-           (if (< scale 1.0)
-             (let [sw (max 1 (Math/round (* iw scale)))
-                   sh (max 1 (Math/round (* ih scale)))]
+           (if view
+             (let [iw (long (img/width src))
+                   ih (long (img/height src))
+                   x (max 0 (min (dec iw) (long (:x view))))
+                   y (max 0 (min (dec ih) (long (:y view))))
+                   w (max 1 (min (- iw x) (long (:w view))))
+                   h (max 1 (min (- ih y) (long (:h view))))]
 
-               (with-open [scaled (img/resize src sw sh :lanczos3)]
-                 {:data (img/encode scaled :png) :w (int sw) :h (int sh)}))
-             {:data (img/encode src :png) :w (int iw) :h (int ih)})))
+               (with-open [part (img/crop src x y w h)]
+                 (fit->png part target-w target-h)))
+             (fit->png src target-w target-h))))
        (catch Throwable _ nil)))
 
 (defn- video->png
@@ -241,18 +273,24 @@
 
    Decoding and re-encoding a multi-megapixel JPEG (or pulling a frame out of an
    MP4) is expensive, so the box-sized PNG is cached by path+mtime+size+box: a
-   scroll that re-emits the image never re-decodes."
-  [path {:keys [cols rows] :as box}]
+   scroll that re-emits the image never re-decodes. A cropped `:view` is not
+   cached: each zoom or pan step of the image viewer shows a new part once."
+  [path {:keys [cols rows view] :as box}]
   (let [f
         (io/file (str path))
 
         key
         [(.getAbsolutePath f) (.lastModified f) (.length f) cols rows]]
 
-    (or (get @png-transcode-cache key)
-        (when-let [r (if (video-source? f nil) (video->png f box) (still->png f box))]
-          (swap! png-transcode-cache assoc key r)
-          r))))
+    (cond (video-source? f nil) (or (get @png-transcode-cache key)
+                                    (when-let [r (video->png f box)]
+                                      (swap! png-transcode-cache assoc key r)
+                                      r))
+          view (still->png f box)
+          :else (or (get @png-transcode-cache key)
+                    (when-let [r (still->png f box)]
+                      (swap! png-transcode-cache assoc key r)
+                      r)))))
 
 (defn html-png-data
   "Box-fitted PNG bytes for an HTML media node, or nil when decoding fails."
@@ -282,8 +320,8 @@
 
    `:data` is base64 text for the verbatim path (the fork caches that read) and
    RAW PNG bytes for a transcode; every encoder here takes either."
-  [path mime {:keys [width height] :as box}]
-  (if (= mime "image/png")
+  [path mime {:keys [width height view] :as box}]
+  (if (and (= mime "image/png") (nil? view))
     (when-let [data (read-base64 path)]
       {:data data :w width :h height})
     (transcode->png path box)))
@@ -310,9 +348,10 @@
       ;; iTerm2 accepts any container format as-is (no source-crop; the fitting
       ;; pass shrinks a bottom-overflowing box instead).
       :iterm2
-      (when-let [data (if (video-source? path mime)
+      (when-let [data (if (or (video-source? path mime) (:view box))
                         ;; A clip's own bytes are not an image: iTerm2 would draw a
-                        ;; broken download card. Send the poster frame instead.
+                        ;; broken download card. Send the poster frame instead. A
+                        ;; zoomed view sends its cropped part.
                         (:data (transcode->png path box))
                         (read-base64 path))]
         (encode-iterm2 data box))
