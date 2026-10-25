@@ -257,7 +257,8 @@ function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolea
   if (!isSettled) return null;
   const failed = view.nodes.some((node) => node.type === 'status' && node.tone === 'error');
   return (
-    <span className="shrink-0">
+    // The box is one line of the title beside it, so the word stands on the title's line.
+    <span className="flex h-[1lh] shrink-0 items-center font-mono text-title">
       <ToneWord tone={failed ? 'error' : 'ok'} word={failed ? 'Failed' : 'Done'} />
     </span>
   );

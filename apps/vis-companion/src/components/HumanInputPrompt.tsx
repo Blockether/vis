@@ -34,13 +34,16 @@ import {
   type HumanInputValues,
 } from '../lib/human-input';
 
-/** The range field's square track and thumb, with a finger-sized target. */
+/**
+ * The range field's square track and thumb, with a finger-sized target. The input fills
+ * its row, so the whole row takes a press; only the track paints the 4px line.
+ */
 function RangeSlider({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <span className={`flex min-h-11 min-w-0 items-center mouse:min-h-7 ${className}`}>
       <input
         type="range"
-        className="h-1 w-full min-w-0 cursor-pointer appearance-none rounded-none bg-edge accent-accent disabled:cursor-not-allowed [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-none [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-accent [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-none [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-accent"
+        className="w-full min-w-0 cursor-pointer appearance-none self-stretch rounded-none bg-transparent accent-accent disabled:cursor-not-allowed [&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:bg-edge [&::-moz-range-track]:h-1 [&::-moz-range-track]:bg-edge [&::-webkit-slider-thumb]:-mt-1.5 [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-none [&::-webkit-slider-thumb]:border-0 [&::-webkit-slider-thumb]:bg-accent [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-none [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-accent"
         {...props}
       />
     </span>
@@ -663,11 +666,11 @@ export function HumanInputFieldRow({
               onChange(field.id, clampHumanInputRange(field, event.target.valueAsNumber))
             }
           />
-          <span className="shrink-0 font-mono text-meta tabular-nums text-white sm:text-ui">
+          <span className="shrink-0 font-mono text-ui tabular-nums text-white">
             {current}
           </span>
         </div>
-        <p className="font-mono text-chip text-dialog-hint">
+        <p className="font-mono text-meta text-dialog-hint">
           {min} to {max}
         </p>
       </FieldShell>
@@ -706,7 +709,7 @@ export function HumanInputFieldRow({
           aria-required={field.is_required}
           {...(field.max_length ? { maxLength: field.max_length } : {})}
           {...(field.placeholder ? { placeholder: field.placeholder } : {})}
-          className="w-full resize-y border border-edge bg-input px-2.5 py-1 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted sm:text-ui"
+          className="w-full resize-y border border-edge bg-input px-2.5 py-1 font-mono text-ui text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted"
           onChange={(event) => onChange(field.id, event.target.value)}
         />
       </FieldShell>
@@ -841,7 +844,7 @@ function OtpBoxes({
           onBlur={() => setFocused(false)}
         />
       </div>
-      <p className="font-mono text-chip text-dialog-hint">
+      <p className="font-mono text-meta text-dialog-hint">
         {min === max ? `${max} digits` : `${min}–${max} digits`}
       </p>
     </div>

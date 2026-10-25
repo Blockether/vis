@@ -1007,14 +1007,14 @@ export function Checkbox({
       className={className}
       mark={
         <span
-          className={`grid size-5 shrink-0 place-items-center border transition-colors duration-150 motion-reduce:transition-none ${
+          className={`grid size-4 shrink-0 place-items-center border transition-colors duration-150 motion-reduce:transition-none ${
             isOn
               ? 'border-accent bg-accent text-accent-foreground'
               : 'border-edge-strong bg-transparent text-transparent'
           }`}
         >
           <CheckIcon
-            className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${
+            className={`size-3 transition-transform duration-150 motion-reduce:transition-none ${
               isOn ? 'scale-100' : 'scale-75'
             }`}
           />
@@ -1031,6 +1031,7 @@ export function Checkbox({
  *
  * The caller owns selection and ARIA semantics. The shared face keeps a 44px
  * touch target (28px with a mouse); long labels grow the row rather than truncate.
+ * The mark box is one line of the label, so the mark stands on the first line.
  */
 export function ChoiceRow({
   isOn,
@@ -1053,10 +1054,12 @@ export function ChoiceRow({
       } ${className}`}
       {...props}
     >
-      <span aria-hidden="true" className="shrink-0">
-        {mark}
+      <span className="flex min-w-0 items-start gap-2">
+        <span aria-hidden="true" className="flex h-[1lh] shrink-0 items-center">
+          {mark}
+        </span>
+        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
       </span>
-      <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
     </button>
   );
 }
