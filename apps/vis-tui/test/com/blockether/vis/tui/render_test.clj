@@ -7358,6 +7358,40 @@ h = 8"
         (expect (= 1 (count (picture-rows (render-step entry :kitty {:show-python-code? false}))))))
     (it "paints the picture below a closed digest"
         (expect (= 1 (count (picture-rows (render-step entry :kitty {:digest-closed? true}))))))
+    ;; Regression: the gallery captions under a step lost their card marker in the RESULT
+    ;; band. They painted as one plain line, without the number color, away from the pictures.
+    (it "names each printed picture of a gallery under the picture"
+        (let [fence
+              (fn [i]
+                (str "````vis-image\n[Image #"
+                     i
+                     ": tall-"
+                     i
+                     ".png 400×1600, 1 MB]\n/tmp/tall-"
+                     i
+                     ".png\nimage/png\n400x1600\n1 MB\n````\n"))
+
+              entries
+              (render-step {:iteration-id "iteration-1"
+                            :forms [{:code "attach(a, b)"
+                                     :stdout (str (fence 1) "\n" (fence 2))
+                                     :success? true
+                                     :duration-ms 25}]}
+                           :kitty
+                           {})
+
+              caption-row
+              (first (filter #(= :captions (get-in % [:meta :card-part])) entries))
+
+              cells
+              (some #(get-in % [:meta :imgs]) entries)]
+
+          (expect (str/starts-with? (:line caption-row) p/MARKER_ATTACHMENT_CARD))
+          (expect (= [1 2] (mapv :number (get-in caption-row [:meta :captions]))))
+          (doseq [[{:keys [col width]} {:keys [image-col-offset img]}]
+                  (map vector (get-in caption-row [:meta :captions]) cells)]
+            (let [center (+ (long image-col-offset) (quot (long (:cols img)) 2))]
+              (expect (<= (long col) center (+ (long col) (long width))))))))
     (it "keeps the other output in RESULT and paints the picture once"
         (let [entries
               (render-step entry

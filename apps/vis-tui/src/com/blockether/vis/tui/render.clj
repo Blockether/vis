@@ -5587,13 +5587,28 @@
                                  :card-bare? true})))
                           (range height))
 
+                    ;; Each caption sits centered under its own picture, inside its tile.
                     captions
-                    (mapv (fn [{:keys [index slot-col]}]
-                            {:col (long slot-col)
-                             :width tile-w
-                             :number (inc (long index))
-                             :name (:name (nth images index))
-                             :view (view-at index)})
+                    (mapv (fn [{:keys [index slot-col col cols]}]
+                            (let [number
+                                  (inc (long index))
+
+                                  name
+                                  (:name (nth images index))
+
+                                  width
+                                  (min (long tile-w) (long (p/display-width (str number " " name))))
+
+                                  centered
+                                  (- (+ (long col) (quot (long cols) 2)) (quot width 2))]
+
+                              {:col (p/clamp centered
+                                             (long slot-col)
+                                             (- (+ (long slot-col) (long tile-w)) width))
+                               :width width
+                               :number number
+                               :name name
+                               :view (view-at index)}))
                           in-band)]
 
                 (conj picture-rows
@@ -6174,7 +6189,9 @@
         ;; cell box and must survive, or the box collapses and the image overpaints
         ;; the rows below it. Treat only genuine (meta-less) blank rows as padding.
         #(and (str/blank? (strip-paint-markers-line (:line %)))
-              (not (#{:image :image-pad} (:kind (:meta %)))))
+              (not (#{:image :image-pad} (:kind (:meta %))))
+              ;; Attachment card rows (frame, padding, gallery gap) are layout too.
+              (not (:card-part (:meta %))))
 
         pad
         (or (first (filter blank? entries)) {:line (str result-marker "") :meta nil})
@@ -6219,17 +6236,20 @@
           (conj pad)))))
 
 (defn- result-body-entry
-  "Move one body row into the RESULT band, under the body indent."
+  "Move one body row into the RESULT band, under the body indent. An attachment card row
+   keeps its own marker, so its painter draws the frame, the file rows and the captions."
   [e]
-  (let [l
-        (str (:line e))
+  (if (:card-part (:meta e))
+    e
+    (let [l
+          (str (:line e))
 
-        stripped
-        (or (second (split-structural-line-marker l)) l)]
+          stripped
+          (or (second (split-structural-line-marker l)) l)]
 
-    (assoc e
-      :line (str result-marker
-                 (if (str/blank? stripped) stripped (str result-body-indent stripped))))))
+      (assoc e
+        :line (str result-marker
+                   (if (str/blank? stripped) stripped (str result-body-indent stripped)))))))
 
 (defn- tool-card-entries
   "Render one stdout card (`vis/result-card` descriptor) into TUI line entries.
