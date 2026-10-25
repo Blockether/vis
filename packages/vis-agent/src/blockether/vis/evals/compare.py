@@ -122,18 +122,19 @@ def _crossed_caveat(base: tuple[str, ...], other: tuple[str, ...]) -> str:
 def _margin_caveat(
     verdict: str, interval: tuple[float, float], margin: float | None
 ) -> str | None:
-    if not margin or verdict not in ("better", "worse"):
+    if margin is None or verdict not in ("better", "worse"):
         return None
     low, high = interval if verdict == "better" else (-interval[1], -interval[0])
     change = "gain" if verdict == "better" else "loss"
     if high < margin:
         return (
-            f"The {change} is real, but smaller than the margin of {margin:g} points."
+            f"The {change} is real, but smaller than the margin of {margin:.12g} "
+            "points."
         )
     if low < margin:
         return (
             f"The {change} is real, but it can be smaller than the margin of "
-            f"{margin:g} points."
+            f"{margin:.12g} points."
         )
     return None
 
@@ -144,7 +145,7 @@ def _verdict(interval: tuple[float, float], margin: float | None) -> str:
         return "better"
     if high < 0:
         return "worse"
-    if not margin:
+    if margin is None:
         return "no measurable difference"
     if -margin < low and high < margin:
         return "equivalent"

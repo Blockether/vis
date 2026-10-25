@@ -4,6 +4,7 @@ The calibration tests run seeded simulations. They prove the claims of the
 evaluation guide on false verdicts and power.
 """
 
+import math
 import random
 
 import pytest
@@ -161,17 +162,37 @@ def _simulate(rng, tasks, change, margin=None, runs=1):
     return compare_cases(side(0.0), side(change), margin_points=margin)
 
 
-@pytest.mark.parametrize(
-    ("tasks", "runs"), [(12, 1), (16, 1), (30, 1), (30, 3), (80, 1)]
-)
-def test_without_a_change_a_verdict_is_rare(tasks, runs):
-    rng = random.Random(tasks * runs)
+def _verdict_chance(tasks, chance):
+    # The exact chance of a verdict without a true change. Each case becomes better or
+    # worse with `chance`, so the changed cases follow a trinomial distribution.
+    total = 0.0
+    for up in range(tasks + 1):
+        for down in range(tasks - up + 1):
+            same = tasks - up - down
+            changes = [1] * up + [-1] * down + [0] * same
+            if compare_cases(*_changes(changes)).verdict != "no measurable difference":
+                ways = math.factorial(tasks) // (
+                    math.factorial(up) * math.factorial(down) * math.factorial(same)
+                )
+                total += ways * chance ** (up + down) * (1 - 2 * chance) ** same
+    return total
+
+
+@pytest.mark.parametrize("tasks", [12, 16, 20, 30, 80])
+def test_without_a_change_a_verdict_is_rare(tasks):
+    # Pass rates from 30% to 70%: a case changes in each direction with chance
+    # E[p(1 - p)] = 0.25 - 0.4**2 / 12.
+    assert 0.05 <= _verdict_chance(tasks, 0.25 - 0.4**2 / 12) <= 0.07
+
+
+def test_without_a_change_a_verdict_is_rarer_with_repeats():
+    rng = random.Random(90)
     trials = 1000
     verdicts = sum(
-        _simulate(rng, tasks, 0.0, runs=runs).verdict != "no measurable difference"
+        _simulate(rng, 30, 0.0, runs=3).verdict != "no measurable difference"
         for _ in range(trials)
     )
-    assert verdicts / trials <= 0.06
+    assert verdicts / trials <= 0.04
 
 
 def test_the_detectable_change_shows_with_80_percent_power():

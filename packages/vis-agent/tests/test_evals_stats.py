@@ -211,15 +211,14 @@ def _wilson_coverage(runs, rate):
 def test_wilson_interval_covers_the_true_rate_95_percent_of_the_time(runs):
     coverages = [_wilson_coverage(runs, percent / 100) for percent in range(5, 96, 5)]
     assert 0.94 <= sum(coverages) / len(coverages) <= 0.96
-    assert min(coverages) >= 0.91
+    dense = [_wilson_coverage(runs, permille / 1000) for permille in range(50, 951)]
+    assert min(dense) >= 0.89
 
 
 @pytest.mark.parametrize("runs", [10, 30, 100])
 def test_wilson_interval_covers_less_near_zero(runs):
-    coverages = [
-        _wilson_coverage(runs, permille / 1000) for permille in range(5, 50, 5)
-    ]
-    assert 0.85 <= min(coverages) < 0.92
+    coverages = [_wilson_coverage(runs, rate / 10000) for rate in range(10, 500)]
+    assert 0.83 <= min(coverages) < 0.85
 
 
 def test_mcnemar_exact_keeps_false_alarms_at_most_5_percent():

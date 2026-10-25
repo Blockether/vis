@@ -471,8 +471,8 @@ and at most 100. Without it, a result without a clear change is `no measurable d
 it, the verdict is `equivalent`, `not worse`, `not better` or `inconclusive`. The answer repeats
 the margin in `margin_points`.
 
-A `better` or `worse` verdict inside the margin gets a caveat. Read [Decide on a change](evals.md#decide-on-a-change) to choose an
-action from the verdict.
+A `better` or `worse` change that is, or can be, smaller than the margin gets a caveat. Read
+[Decide on a change](evals.md#decide-on-a-change) to choose an action from the verdict.
 
 ## Read the leaderboard position
 

@@ -877,7 +877,7 @@ matters to you. The verdict then compares the interval with the margin:
 
 The margin must be above 0 and at most 100. For no margin, leave out `margin_points`. The verdict
 uses the 95% two-sided interval before rounding. A classic equivalence test (TOST) uses a 90%
-interval. The 95% interval is wider, so `equivalent` and `not worse` need slightly more cases.
+interval. The 95% interval is wider, so `equivalent` and `not worse` need about 27% more cases.
 
 A `better` or `worse` verdict does not depend on the margin. When the change is, or can be,
 smaller than the margin, a caveat says so:
@@ -930,7 +930,8 @@ you which number to use, when to ignore a number and how to decide on a change.
 - **The interval is wider than the change that you look for.** A round of 16 tasks cannot show a
   10-point change. Add tasks first.
 - **A caveat says that the agents and the models differ.** You cannot tell which part made the
-  difference. Change one part at a time. A caveat that names only one part is safe to use.
+  difference. Change one part at a time. A caveat that names one part points to that part only
+  when all other settings are the same.
 - **A caveat says that the exact test does not confirm the verdict.** Treat the verdict as likely,
   and run more cases before you depend on it.
 - **Cases ran on one side only.** The comparison leaves them out. Make sure that they are not the
@@ -962,12 +963,13 @@ the candidate in this table:
 | `not worse` | Adopt it. | Adopt it when it has other benefits. | Add cases. |
 | `not better` | Adopt it only when you accept a loss down to the low end of the interval. | Keep the baseline. | Keep the baseline. |
 | `inconclusive` or `no measurable difference` | Add cases. | Add cases. | Add cases. |
+| `worse`, and the loss can be smaller than the margin | Add cases. | Keep the baseline. | Keep the baseline. |
 | `worse`, and the loss is smaller than the margin | Adopt it only when you accept that loss. | Keep the baseline. | Keep the baseline. |
 | `worse` | Keep the baseline. | Keep the baseline. | Keep the baseline. |
 
 To add cases, run more tasks on both sides. [Plan the number of tasks](#plan-the-number-of-tasks)
-shows how many you need. Before you adopt a `better` verdict with a caveat, run the candidate
-again on new tasks.
+shows how many you need. Before you adopt a `better` verdict that the exact test does not
+confirm, run the candidate again on new tasks.
 
 Compare the total cost of both rounds on the paired tasks. Do not use the cost for each solved
 task. A candidate that solves more tasks gets a lower cost for each solved task, also when it
@@ -1008,10 +1010,10 @@ in `packages/vis-agent/tests/test_evals_stats.py` and `test_evals_compare.py`.
 
 | Claim | Measured result |
 |---|---|
-| A 95% Wilson interval covers the true pass rate 95% of the time. | The mean coverage is 94.6% to 95.4% for 10, 30 and 100 runs. For true rates from 5% to 95%, it is never below 91%. Near 0% or 100%, it can fall to 86%. |
-| The cluster interval stays correct with repeated attempts. | 93% to 95% for 16 to 100 tasks with 2 to 5 attempts. A Wilson interval over all attempts covers only 70% to 88%. |
-| Without a true change, a comparison rarely gives `better` or `worse`. | 4% to 6% of comparisons for 12 to 80 tasks with one attempt. About 3% with 3 attempts. |
-| The exact McNemar test gives a false alarm at most 5% of the time. | At most 5.0% for 1 to 80 changed cases, usually 0% to 3%. It is strict, so it misses some real changes. |
+| A 95% Wilson interval covers the true pass rate 95% of the time. | The mean coverage is 94.6% to 95.4% for 10, 30 and 100 runs. For true rates from 5% to 95%, it is never below 89%. Near 0% or 100%, it can fall to about 84%. |
+| The cluster interval stays correct with repeated attempts. | 93% to 96% for 16 to 100 tasks with 2 to 5 attempts. A Wilson interval over all attempts covers only 70% to 89%. |
+| Without a true change, a comparison rarely gives `better` or `worse`. | 5% to 7% of comparisons for 12 to 80 tasks with one attempt. About 3% with 3 attempts. |
+| The exact McNemar test gives a false alarm at most 5% of the time. | At most 5.0% for 1 to 80 changed cases, and 2% to 5% for 68 of them. It is strict, so it misses some real changes. |
 | A true change of `detectable_change_points` shows with about 80% power. | 83% in a comparison of 40 tasks. In the report, 80% to 83% for a rise and for a fall. |
 | pass@k and pass^k have no bias. | Their mean over all possible results is equal to the true value. |
 | A candidate that is worse by the margin is rarely `not worse`. | 2% to 4% of comparisons with 60 and 200 tasks. |
@@ -1048,13 +1050,14 @@ It also returns three caveats:
 - The interval says better, but the exact test gives p = 0.062. Confirm the change with more cases.
 - The gain is real, but it can be smaller than the margin of 10 points.
 
-1. Only the agent differs, so the agent explains the change.
+1. Only the agent differs as a route part. Other settings, such as the output budget, were not
+   identical. So the result points to the agent setup, not to the agent alone.
 2. The interval excludes zero, so the verdict is `better`. The exact test does not confirm it.
 3. The gain can be as small as 7 points, which is below the margin.
 4. codex costs 1.9 times more on the same tasks. The table says to adopt it only when a 7-point
-   gain is worth 2.64 USD more for each 12 tasks. Else add cases.
-5. Only a change of 41 points or more shows reliably on 12 tasks. A second, larger round must
-   confirm the result before you report it as proved.
+   gain is worth 2.64 USD more for each 12 tasks.
+5. The exact test does not confirm the verdict, and only a change of 41 points or more shows
+   reliably on 12 tasks. Run a second, larger round before you adopt codex.
 
 ## Improve an agent with evaluations
 
@@ -1072,8 +1075,9 @@ These steps keep the result honest:
    [Check the causes with labels](#check-the-causes-with-labels) before you trust them. Without
    labels, treat each cause as a hypothesis, not as a fact.
 5. **Make one change.** Change one prompt rule, tool or default. Write down the expected effect
-   and the margin before you run. Use a margin at least as large as `detectable_change_points` of
-   the development set.
+   and the margin before you run. Choose the margin from your decision, not from the task count.
+   When the margin is smaller than the change that your task count can show in
+   [Plan the number of tasks](#plan-the-number-of-tasks), add tasks first.
 6. **Run the candidate.** Use the same tasks, model, attempts and limits as the baseline.
 7. **Compare with the margin.** Use `compare_cases` or the [comparison
    API](evals-api.md#compare-two-runs). Choose the action from the [decision
@@ -1081,8 +1085,9 @@ These steps keep the result honest:
 8. **Repeat steps 4 to 7** until the stop rule ends the loop. A rejected change is a normal
    result. Record it and try the next cause.
 9. **Confirm on the held-out set once.** Run the first baseline and the final candidate on the
-   held-out tasks. The result agrees when the low end of its interval is above the negative
-   margin. Keep the changes only when it agrees.
+   held-out tasks. The result agrees when the verdict is `better`. A change that only needs to do
+   no harm, such as a cheaper default, also agrees at `not worse`. Keep the changes only when the
+   result agrees.
 10. **Record the result.** Keep the round names, the commit, the verdict, the interval and the
     cost. Record a rejected change too.
 
