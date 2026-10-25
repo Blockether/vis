@@ -99,6 +99,8 @@ own explicit request. Report every commit, push and release in the final reply.
 
 ### Code
 
+- Log every caught error with its cause and useful context.
+- Never discard an error silently, including in best-effort code.
 - Do not add compatibility layers or migrations for obsolete APIs. Update the consumers and remove the old paths.
 - Keep one engine and package, organized by domain under `src/com/blockether/vis/internal/`, with tests mirrored under `test/`.
 - Add code to an existing owner, not to a new flat namespace or extension jar.

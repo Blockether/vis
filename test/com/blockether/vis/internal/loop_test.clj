@@ -7013,6 +7013,33 @@
                     (.destroyForcibly launcher)
                     (.waitFor launcher 2 java.util.concurrent.TimeUnit/SECONDS))))))
 
+(defdescribe python-cpu-failure-logging-test
+             ;; Regression: caught CPU sampling errors returned nil without a log.
+             (doseq [[label sample failed-var event-id]
+                     [["logs a Java CPU sampling failure" #'python-exec/process-cpu-ms
+                       #'python-exec/handle-cpu-ms ::python-exec/cpu-sample-failed]
+                      ["logs a ps CPU sampling failure" #'python-exec/ps-cpu-ms #'clojure.core/slurp
+                       ::python-exec/ps-cpu-sample-failed]]]
+               (it label
+                   (let [pid (.pid (java.lang.ProcessHandle/current))
+                         failure (ex-info "CPU sampling failed" {:source label})
+                         result (atom ::not-called)
+                         {:keys [signals]}
+                         (tel/with-signals
+                           (with-redefs-fn {failed-var (fn [source]
+                                                         (when (instance? java.io.InputStream
+                                                                          source)
+                                                           (.close ^java.io.InputStream source))
+                                                         (throw failure))}
+                             #(reset! result (sample pid))))
+                         signal (first signals)]
+
+                     (expect (nil? @result))
+                     (expect (= [event-id] (mapv :id signals)))
+                     (expect (= :warn (:level signal)))
+                     (expect (identical? failure (:error signal)))
+                     (expect (= {:pid pid} (:data signal)))))))
+
 (defdescribe final-answer-gate-test
              ;; `final-answer-gate-error` itself carries ONLY extension
              ;; :turn.answer/validate vetoes. The structural "done() shared its fence with

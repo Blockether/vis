@@ -354,7 +354,10 @@
                          parts)]
 
              (Math/round (* 1000.0 (+ secs (* 86400.0 (Double/parseDouble days))))))))
-       (catch Throwable _ nil)))
+       (catch Throwable t
+         (tel/log! {:level :warn :id ::ps-cpu-sample-failed :data {:pid pid} :error t}
+                   "Could not read process CPU time with ps.")
+         nil)))
 
 (defn- handle-cpu-ms
   [^java.lang.ProcessHandle handle]
@@ -379,7 +382,10 @@
                             tree)]
 
              (when (every? some? cpus) (reduce + cpus))))
-         (catch Throwable _ nil))))
+         (catch Throwable t
+           (tel/log! {:level :warn :id ::cpu-sample-failed :data {:pid pid} :error t}
+                     "Could not read CPU time for the Python process tree.")
+           nil))))
 
 (defn- busy-notice
   "Busy notice for one block, or nil while the block is not busy.
