@@ -2688,14 +2688,14 @@
    `timeout-ms` for a new one. Returns `{:events [...] :cursor n :is-open b}`;
    `:is-open` is false once the view is closed, so a reader can stop."
   [view-id after timeout-ms]
-  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+  (let [deadline (+ (util/now-ms) (long timeout-ms))]
     (loop []
 
       (if-let [entry (live-entry (str view-id))]
         (let [cell (:view entry)
               {:keys [cursor items]} @(:events entry)
               fresh (filterv #(> (long (:seq %)) (long after)) items)
-              left (- deadline (System/currentTimeMillis))]
+              left (- deadline (util/now-ms))]
 
           (if (or (seq fresh) (<= left 0))
             {:events fresh :cursor cursor :is-open true}
