@@ -63,6 +63,9 @@ import { TranscriptOutline } from '../components/TranscriptOutline';
 import { PasteEditor } from '../components/PasteEditor';
 import { QueuedTurnsTray } from '../components/QueuedTurnsTray';
 import { useLiveViews } from '../components/LiveView';
+import { HeaderPins, LivePanel, ResizablePanel } from '../components/LivePanel';
+import { useMediaMatch } from '../lib/fit-rows';
+import { livePlacement, type LiveView as LiveViewModel } from '../lib/live-view';
 import { reduceRunningTurnEvent, type RunningTurn } from '../lib/running-turn';
 import { eventString, sessionEventBatch } from '../lib/session-stream';
 import { speechOutput } from '../lib/speech';
@@ -737,6 +740,8 @@ function reasoningChoices(
   };
 }
 
+const NO_HEADER_VIEWS: LiveViewModel[] = [];
+
 export function SessionScreen({
   client,
   subscriptions,
@@ -747,6 +752,7 @@ export function SessionScreen({
   fresh = false,
   talk,
   sidebar,
+  headerViews = NO_HEADER_VIEWS,
 }: {
   client: GatewayClient;
   subscriptions: SessionSubscriptionHub;
@@ -755,6 +761,8 @@ export function SessionScreen({
   onOpenSession: (sid: string, fresh?: boolean) => void;
   /** Open this gateway's settings, where provider accounts and OAuth live; an id focuses one provider. */
   onManageProviders?: (providerId?: string) => void;
+  /** The header views of this session's machine, shown as pins in the header. */
+  headerViews?: LiveViewModel[];
   fresh?: boolean;
   /** The nonce of a Talk link (the Action Button). A new value arms voice conversation once. */
   talk?: string;
@@ -4585,7 +4593,20 @@ export function SessionScreen({
   const revealFiledLiveRecord = useCallback(() => {
     void loadTranscript();
   }, [loadTranscript]);
-  const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
+  const sessionLiveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
+  // An inline view stands in its turn. A panel view stands beside the transcript.
+  const liveViews = useMemo(
+    () => sessionLiveViews.filter((view) => livePlacement(view) === 'inline'),
+    [sessionLiveViews],
+  );
+  const panelViews = useMemo(
+    () => sessionLiveViews.filter((view) => livePlacement(view) === 'panel'),
+    [sessionLiveViews],
+  );
+  // A tablet or a desk docks the panel beside the transcript. A phone opens it as a sheet.
+  const docksPanel = useMediaMatch('(min-width: 48rem)');
+  const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
+  const isPanelOpen = panelViews.length > 0 && (panelChoice ?? docksPanel);
   const watching = liveViews.at(-1)?.title ?? null;
   // The sender's own copy of a recording has its bytes but not the local transcript
   // the gateway started at upload. Revalidate while that transcript is pending; the
@@ -5268,12 +5289,13 @@ export function SessionScreen({
   const screen = (
     <AttachImageContext.Provider value={attachCapturedImage}>
       <WorkspaceRootsContext.Provider value={workspaceRoots}>
+        <div className="flex h-full min-h-0 w-full">
         <section
           // Every layer that belongs to THIS session — an opened run, the paste editor —
           // stands in here, so it covers the pane and never the desk beside it. The pane
           // has no entry fade: every switch remounts it, and a fade from blank is a flicker.
           data-session-surface
-          className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink"
+          className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-ink"
         >
           {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
            is answered. Its overlay stands in THIS pane, so a waiting question
@@ -5286,7 +5308,23 @@ export function SessionScreen({
             model={headerModel}
             commands={headerCommands}
             sidebar={sidebar}
+            pins={<HeaderPins views={headerViews} client={client} />}
+            panel={
+              panelViews.length > 0
+                ? { isOpen: isPanelOpen, onToggle: () => setPanelChoice(!isPanelOpen) }
+                : undefined
+            }
           />
+          {isPanelOpen && !docksPanel && (
+            <div className="absolute inset-0 z-30 flex flex-col bg-panel pt-[env(safe-area-inset-top)]">
+              <LivePanel
+                views={panelViews}
+                client={client}
+                sid={sid}
+                onClose={() => setPanelChoice(false)}
+              />
+            </div>
+          )}
           {session?.agent?.role === 'subagent' && session.agent.parent_id && (
             <AgentCrumb sid={sid} parentId={session.agent.parent_id} agents={team.agents} onOpen={onOpenSession} />
           )}
@@ -5830,6 +5868,17 @@ export function SessionScreen({
             <ComposerResponseControls controls={responseControls} />
           </footer>
         </section>
+          {isPanelOpen && docksPanel && (
+            <ResizablePanel>
+              <LivePanel
+                views={panelViews}
+                client={client}
+                sid={sid}
+                onClose={() => setPanelChoice(false)}
+              />
+            </ResizablePanel>
+          )}
+        </div>
       </WorkspaceRootsContext.Provider>
     </AttachImageContext.Provider>
   );

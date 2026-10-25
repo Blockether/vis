@@ -12,6 +12,7 @@ import {
 import {
   BandLabel,
   Button,
+  ChoiceRow,
   CopyChip,
   DialogFrame,
   Disclosure,
@@ -27,6 +28,8 @@ import {
   ViewParagraph,
 } from './ui';
 import { InlineMarkdown } from './ChatContent';
+import { HumanInputFieldRow } from './HumanInputPrompt';
+import { humanInputDefaultValue, type HumanInputValue } from '../lib/human-input';
 import {
   ArrowOutIcon,
   CircleAlertIcon,
@@ -39,14 +42,18 @@ import {
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
-import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT } from '../lib/view';
+import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, type ViewAction } from '../lib/view';
 import {
   applyLiveViewEvent,
   LIVE_NOTE_CHARS,
+  isLiveInputNode,
   isLiveViewEvent,
+  liveInputNodes,
   liveFraction,
   livePercent,
   orderedRows,
+  type LiveCardNode,
+  type LiveInputNode,
   type LiveLinkNode,
   type LiveLogNode,
   type LiveLogPage,
@@ -202,7 +209,7 @@ const TONE_MARK: Record<LiveTone, typeof CircleDotIcon> = {
   error: CircleXIcon,
 };
 
-function ToneMark({ tone, className = 'size-3' }: { tone: LiveTone; className?: string }) {
+export function ToneMark({ tone, className = 'size-3' }: { tone: LiveTone; className?: string }) {
   const Drawn = TONE_MARK[tone];
   return <Drawn className={`${className} shrink-0 ${MARK_NUDGE} ${MARK_INK[tone]}`} />;
 }
@@ -1174,7 +1181,114 @@ type NodePresentation = {
   expanded: Record<string, boolean>;
   toggle: (id: string, value: boolean) => void;
   onActivate?: (id: string) => Promise<void> | void;
+  /** The values the operator typed and the view has not echoed yet. */
+  values: Record<string, HumanInputValue>;
+  onChange?: (id: string, value: HumanInputValue) => void;
+  /** Send a typed value now: the input lost focus or its own Enter fired. */
+  onCommit?: (id: string) => void;
+  /** Send every input of the view with the submit button `id`. */
+  onSubmit?: (id: string) => Promise<void> | void;
 };
+
+/** Wait this long after the last keystroke before a `change` goes out. */
+export const LIVE_CHANGE_DEBOUNCE_MS = 400;
+
+/** What an input shows: the typed value, the view's value, or the field's default. */
+function liveInputValue(node: LiveInputNode, typed: Record<string, HumanInputValue>): HumanInputValue {
+  if (Object.hasOwn(typed, node.id)) return typed[node.id];
+  const value = node.value;
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    (Array.isArray(value) && value.every((item) => typeof item === 'string'))
+  ) {
+    return value as HumanInputValue;
+  }
+  return humanInputDefaultValue(node.field);
+}
+
+/** Every input value a submit sends. A secret the host already holds stays there. */
+function liveSubmitValues(
+  nodes: readonly LiveNode[],
+  typed: Record<string, HumanInputValue>,
+): Record<string, HumanInputValue> {
+  return Object.fromEntries(
+    liveInputNodes(nodes)
+      .filter((node) => Object.hasOwn(typed, node.id) || !node.is_set)
+      .map((node) => [node.id, liveInputValue(node, typed)]),
+  );
+}
+
+/** A form input inside a live view: the same control a question uses. */
+function LiveInput({ node, presentation }: { node: LiveInputNode; presentation: NodePresentation }) {
+  const { onChange, onCommit } = presentation;
+  return (
+    <div className="min-w-0" onBlur={() => onCommit?.(node.id)}>
+      <HumanInputFieldRow
+        field={node.field}
+        values={{ [node.field.id]: liveInputValue(node, presentation.values) }}
+        errors={{}}
+        disabled={presentation.isSettled || !onChange}
+        onChange={(_, value) => onChange?.(node.id, value)}
+        onSubmit={() => onCommit?.(node.id)}
+      />
+    </div>
+  );
+}
+
+/** A choice tile. A selectable card sends one click, like a button. */
+function CardTile({
+  node,
+  onActivate,
+  isSettled,
+}: {
+  node: LiveCardNode;
+  onActivate?: NodePresentation['onActivate'];
+  isSettled: boolean;
+}) {
+  const [pending, setPending] = useState(false);
+  const tone = node.tone ?? 'idle';
+  const body = (
+    <>
+      <span className="flex min-w-0 items-center gap-2">
+        {node.tone && <ToneMark tone={tone} />}
+        <span className="min-w-0 truncate text-body font-semibold text-white">{node.title}</span>
+      </span>
+      {node.text && (
+        <span className="block text-ui text-dialog-foreground [overflow-wrap:anywhere]">
+          <InlineMarkdown>{node.text}</InlineMarkdown>
+        </span>
+      )}
+      {node.meta && (
+        <span className="block font-mono text-meta text-dialog-hint [overflow-wrap:anywhere]">
+          {node.meta}
+        </span>
+      )}
+    </>
+  );
+  const frame = 'block w-full min-w-0 space-y-1 border border-dialog-edge bg-panel-2 px-3 py-2.5 text-left';
+  if (!node.is_selectable) return <div className={frame}>{body}</div>;
+  return (
+    <ChoiceRow
+      isOn={false}
+      mark={null}
+      disabled={isSettled || pending || !onActivate}
+      aria-busy={pending}
+      onClick={async () => {
+        if (!onActivate || pending) return;
+        setPending(true);
+        try {
+          await onActivate(node.id);
+        } finally {
+          setPending(false);
+        }
+      }}
+    >
+      <span className="block space-y-1">{body}</span>
+    </ChoiceRow>
+  );
+}
 
 /** An operator button waits for acknowledgement and is inert in receipts. */
 function ActionButton({
@@ -1228,7 +1342,9 @@ function NodeCell({
   const label = node.label || (node.type === 'log' ? 'Output' : node.id);
   return (
     <div className="min-w-0 space-y-2">
-      {isDisclosure ? (
+      {isLiveInputNode(node) ? (
+        <LiveInput node={node} presentation={presentation} />
+      ) : isDisclosure ? (
         // The name starts on the column of every other section name, and the chevron
         // follows it: a chevron in front pushed `Output` 20px in from `Services`.
         // The press face stops at its words, so its focus ring frames `Output 200 lines`
@@ -1253,12 +1369,14 @@ function NodeCell({
           <NodeLabel>{label}</NodeLabel>
         </Disclosure>
       ) : (
-        node.label && node.type !== 'button' && <NodeLabel>{node.label}</NodeLabel>
+        node.label &&
+        node.type !== 'button' &&
+        node.type !== 'card' && <NodeLabel>{node.label}</NodeLabel>
       )}
       {node.type === 'log' && !isOpen && <LogErrors node={node} label={label} />}
       {/* A log's output starts at the column of the view, not under its name: an
           indent there only took width from the lines. */}
-      {(!isDisclosure || isOpen) && (
+      {!isLiveInputNode(node) && (!isDisclosure || isOpen) && (
         <div
           id={contentId}
           className={`min-w-0 ${isDisclosure && node.type !== 'log' ? 'pl-5' : ''}`}
@@ -1315,6 +1433,13 @@ function NodeCell({
             <ActionButton
               node={node}
               isSettled={presentation.isSettled}
+              onActivate={node.action === 'submit' ? presentation.onSubmit : presentation.onActivate}
+            />
+          )}
+          {node.type === 'card' && (
+            <CardTile
+              node={node}
+              isSettled={presentation.isSettled}
               onActivate={presentation.onActivate}
             />
           )}
@@ -1348,7 +1473,7 @@ function NodeCell({
  * same way (`live-view/status-summary`), so a run says the same thing on both
  * surfaces.
  */
-function runSummary(nodes: LiveNode[]): string {
+export function runSummary(nodes: LiveNode[]): string {
   const status = findNode(
     nodes,
     (node): node is LiveStatusNode => node.type === 'status' && node.text.trim() !== '',
@@ -1357,6 +1482,11 @@ function runSummary(nodes: LiveNode[]): string {
   const progress = findNode(nodes, (node): node is LiveProgressNode => node.type === 'progress');
   const fraction = progress ? liveFraction(progress) : null;
   return fraction === null ? '' : `${livePercent(fraction)}%`;
+}
+
+/** The tone of the newest status, the state a pin or a folded row shows. */
+export function runTone(nodes: LiveNode[]): LiveTone {
+  return findNode(nodes, (node): node is LiveStatusNode => node.type === 'status')?.tone ?? 'idle';
 }
 
 /** Depth first, because a status inside a group still says what the run is doing. */
@@ -1383,6 +1513,8 @@ export function LiveViewPanel({
   onInterrupt,
   onSelect,
   onActivate,
+  onChange,
+  onSubmit,
   isInterrupting = false,
   error,
   load,
@@ -1396,6 +1528,10 @@ export function LiveViewPanel({
   /** Live selection, or local snapshot browsing in a receipt; omit when unavailable. */
   onSelect?: (nodeId: string, itemIds: string[]) => void;
   onActivate?: (nodeId: string) => Promise<void> | void;
+  /** Send one input's new value. The panel waits for a pause in the typing. */
+  onChange?: (nodeId: string, value: HumanInputValue) => Promise<void> | void;
+  /** Send every input value with the submit button `nodeId`. */
+  onSubmit?: (nodeId: string, values: Record<string, HumanInputValue>) => Promise<void> | void;
   isInterrupting?: boolean;
   error?: string | null;
   load?: (nodeId: string, from: number, limit: number, query?: string) => Promise<LiveLogPage>;
@@ -1422,9 +1558,52 @@ export function LiveViewPanel({
     phase: string;
     values: Record<string, boolean>;
   }>({ phase, values: {} });
+  const [typed, setTyped] = useState<Record<string, HumanInputValue>>({});
+  const unsent = useRef(new Map<string, { value: HumanInputValue; timer: ReturnType<typeof setTimeout> }>());
+  const sendRef = useRef(onChange);
+  useEffect(() => {
+    sendRef.current = onChange;
+  });
+  const sendChange = (id: string) => {
+    const held = unsent.current.get(id);
+    if (!held) return;
+    clearTimeout(held.timer);
+    unsent.current.delete(id);
+    void sendRef.current?.(id, held.value);
+  };
+  useEffect(() => {
+    const held = unsent.current;
+    return () => {
+      for (const id of [...held.keys()]) {
+        const entry = held.get(id);
+        if (entry) clearTimeout(entry.timer);
+        held.delete(id);
+        if (entry) void sendRef.current?.(id, entry.value);
+      }
+    };
+  }, []);
   const presentation: NodePresentation = {
     isSettled,
     onActivate,
+    values: typed,
+    onChange: onChange
+      ? (id, value) => {
+          setTyped((held) => ({ ...held, [id]: value }));
+          const held = unsent.current.get(id);
+          if (held) clearTimeout(held.timer);
+          unsent.current.set(id, {
+            value,
+            timer: setTimeout(() => sendChange(id), LIVE_CHANGE_DEBOUNCE_MS),
+          });
+        }
+      : undefined,
+    onCommit: sendChange,
+    onSubmit: onSubmit
+      ? async (id) => {
+          for (const held of [...unsent.current.keys()]) sendChange(held);
+          await onSubmit(id, liveSubmitValues(view.nodes, typed));
+        }
+      : undefined,
     expanded: disclosures.phase === phase ? disclosures.values : {},
     toggle: (id, value) =>
       setDisclosures((held) => ({
@@ -1437,12 +1616,12 @@ export function LiveViewPanel({
   const summary = embedded ? runSummary(view.nodes) : '';
   const [note, setNote] = useState<string | null>(null);
   const isArmed = note !== null;
-  const typed = note ?? '';
+  const noteText = note ?? '';
   // One armed stop, however it is sent: the comment travels trimmed, and an
   // empty line is no comment at all rather than an empty one.
   const sendStop = (send: (note: string | null) => void) => {
     setNote(null);
-    send(typed.trim() === '' ? null : typed.trim());
+    send(noteText.trim() === '' ? null : noteText.trim());
   };
   const canInterrupt = !isSettled && Boolean(onInterrupt) && !isArmed;
   const isCard = !embedded && !inDialog;
@@ -1567,7 +1746,7 @@ export function LiveViewPanel({
             <Input
               autoFocus
               className="min-w-40 flex-1"
-              value={typed}
+              value={noteText}
               maxLength={LIVE_NOTE_CHARS}
               onChange={(event) => setNote(event.target.value)}
               placeholder="why stop it? (optional)"
@@ -1620,6 +1799,8 @@ export function LiveViewPanel({
           onInterrupt={onInterrupt}
           onSelect={onSelect}
           onActivate={onActivate}
+          onChange={onChange}
+          onSubmit={onSubmit}
           error={error}
           isInterrupting={isInterrupting}
           load={load}
@@ -1837,10 +2018,14 @@ export function LiveView({
   client,
   sid,
   onClose,
+  inPanel = false,
 }: {
   views: LiveViewModel[];
   client: GatewayClient;
-  sid: string;
+  /** The session that shows the views, or `null` for the header views of the machine. */
+  sid: string | null;
+  /** Paint each view without a frame or a title, inside the side panel. */
+  inPanel?: boolean;
   /** Show the views already opened in the session's dialog, and call this when it closes. */
   onClose?: () => void;
 }) {
@@ -1849,13 +2034,15 @@ export function LiveView({
 
   if (views.length === 0) return null;
 
+  const send = (viewId: string, action: ViewAction) =>
+    sid === null ? client.headerViewAction(viewId, action) : client.viewAction(sid, viewId, action);
+
   // The note the human typed rides WITH the stop: one call, so the run never
   // resumes on an interrupt whose reason is still in flight behind it.
   const interrupt = (viewId: string, note: string | null) => {
     setStopping(viewId);
     setError(null);
-    client
-      .viewAction(sid, viewId, {
+    send(viewId, {
         action: 'interrupt',
         ...(note ? { note } : {}),
       })
@@ -1865,8 +2052,7 @@ export function LiveView({
 
   const select = (viewId: string, nodeId: string, itemIds: string[]) => {
     setError(null);
-    client
-      .viewAction(sid, viewId, {
+    send(viewId, {
         action: 'select',
         node_id: nodeId,
         item_ids: itemIds,
@@ -1877,7 +2063,7 @@ export function LiveView({
   const activate = async (viewId: string, nodeId: string) => {
     setError(null);
     try {
-      const outcome = await client.viewAction(sid, viewId, {
+      const outcome = await send(viewId, {
         action: 'activate',
         node_id: nodeId,
       });
@@ -1888,9 +2074,33 @@ export function LiveView({
     }
   };
 
-  const readLog =
-    (viewId: string) => (nodeId: string, from: number, limit: number, query?: string) =>
-      client.liveViewLog(sid, viewId, nodeId, from, limit, query);
+  const change = async (viewId: string, nodeId: string, value: HumanInputValue) => {
+    try {
+      const outcome = await send(viewId, { action: 'change', node_id: nodeId, value });
+      if (!outcome.is_accepted) setError('That value was refused, or the view has ended.');
+    } catch {
+      setError('That value could not be sent. Check the connection and try again.');
+    }
+  };
+
+  const submit = async (viewId: string, nodeId: string, values: Record<string, HumanInputValue>) => {
+    setError(null);
+    try {
+      const outcome = await send(viewId, { action: 'submit', node_id: nodeId, values });
+      if (!outcome.is_accepted) {
+        const named = Object.values(outcome.errors ?? {});
+        setError(named[0] ?? outcome.reason ?? 'The view did not accept these values.');
+      }
+    } catch {
+      setError('These values could not be sent. Check the connection and try again.');
+    }
+  };
+
+  const readLog = (viewId: string) =>
+    sid === null
+      ? undefined
+      : (nodeId: string, from: number, limit: number, query?: string) =>
+          client.liveViewLog(sid, viewId, nodeId, from, limit, query);
 
   const panels = views.map((view) => {
     const panel = {
@@ -1900,8 +2110,12 @@ export function LiveView({
       onInterrupt: (note: string | null) => interrupt(view.id, note),
       onSelect: (nodeId: string, itemIds: string[]) => select(view.id, nodeId, itemIds),
       onActivate: (nodeId: string) => activate(view.id, nodeId),
+      onChange: (nodeId: string, value: HumanInputValue) => change(view.id, nodeId, value),
+      onSubmit: (nodeId: string, values: Record<string, HumanInputValue>) =>
+        submit(view.id, nodeId, values),
       load: readLog(view.id),
     };
+    if (inPanel) return <LiveViewPanel key={view.id} {...panel} inDialog />;
     return onClose ? (
       <OpenedRun key={view.id} {...panel} onClose={onClose} />
     ) : (

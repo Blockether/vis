@@ -502,7 +502,7 @@ function FieldShell({
  * A field row uses a drawn checkbox for inclusive choices and circular marks for
  * exclusive choices, while keeping the values and validation supplied by the engine.
  */
-function HumanInputFieldRow({
+export function HumanInputFieldRow({
   field,
   values,
   errors,

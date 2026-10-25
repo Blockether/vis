@@ -10,10 +10,11 @@ export const VIEW_EVENT_TYPES = [VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, VIEW_CLOSE_E
 
 export type ViewKind = (typeof VIEW_KINDS)[number];
 
-export const VIEW_ACTIONS = ['activate', 'cancel', 'interrupt', 'select', 'submit'] as const;
+export const VIEW_ACTIONS = ['activate', 'cancel', 'change', 'interrupt', 'select', 'submit'] as const;
 export type ViewActionName = (typeof VIEW_ACTIONS)[number];
 export type ViewAction =
-  | { action: 'submit'; values: Record<string, unknown> }
+  | { action: 'submit'; values: Record<string, unknown>; node_id?: string }
+  | { action: 'change'; node_id: string; value: unknown }
   | { action: 'cancel' }
   | { action: 'activate'; node_id: string }
   | { action: 'select'; node_id: string; item_ids: string[] }

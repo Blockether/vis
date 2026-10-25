@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type { SessionGoal } from '../lib/types';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
@@ -6,7 +6,16 @@ import { useDeskRail } from '../lib/fit-rows';
 import { isIosNativeApp } from '../lib/host';
 import { markSessionId } from '../lib/session-id';
 import { Menu, MenuItem, MENU_WIDTH } from './Menu';
-import { AlertIcon, CheckIcon, ChevronIcon, ClipIcon, CopyIcon, DotsIcon, SettingsIcon } from './icons';
+import {
+  AlertIcon,
+  CheckIcon,
+  ChevronIcon,
+  ClipIcon,
+  CopyIcon,
+  DotsIcon,
+  LivePanelIcon,
+  SettingsIcon,
+} from './icons';
 import { BAND_EDGE_CLASS, Button, DialogFrame, IconButton, Modal, SidebarToggle } from './ui';
 
 const GOAL_STATUS = Object.fromEntries(
@@ -71,9 +80,15 @@ export function SessionHeader({
   model,
   commands,
   sidebar,
+  pins,
+  panel,
 }: {
   model: SessionHeaderModel;
   commands: SessionHeaderCommands;
+  /** The header views of the machine, as pins before the session menu. */
+  pins?: ReactNode;
+  /** The live view panel of this session, when the session has panel views. */
+  panel?: { isOpen: boolean; onToggle: () => void };
   /**
    * The desk's list toggle, when the shell has a list beside this transcript to
    * put away: it stands on the band's leading edge, where the phone's arrow does.
@@ -174,7 +189,18 @@ export function SessionHeader({
           )}
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))]">
+      <div className="flex min-w-0 shrink items-center gap-2 self-center pl-1 pr-[max(1rem,env(safe-area-inset-right))]">
+        {pins}
+        {panel && (
+          <IconButton
+            label={panel.isOpen ? 'Hide live views' : 'Show live views'}
+            variant={panel.isOpen ? 'primary' : 'quiet'}
+            aria-pressed={panel.isOpen}
+            onClick={panel.onToggle}
+          >
+            <LivePanelIcon className="size-3.5" />
+          </IconButton>
+        )}
         <IconButton
           label={menuLabel}
           variant="quiet"

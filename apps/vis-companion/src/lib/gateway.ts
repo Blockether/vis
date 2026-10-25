@@ -5495,6 +5495,26 @@ export class GatewayClient {
     return liveViewsFromWire(response.views);
   }
 
+  /** The header views of this machine. They belong to no session. */
+  async headerViews(signal?: AbortSignal): Promise<LiveView[]> {
+    const response = await this.request<{ views: unknown[] }>(
+      'GET',
+      '/v1/views/live',
+      undefined,
+      signal,
+    );
+    return liveViewsFromWire(response.views);
+  }
+
+  /** Apply one operator action to a header view of this machine. */
+  headerViewAction(viewId: string, action: ViewAction): Promise<ViewActionOutcome> {
+    return this.request<ViewActionOutcome>(
+      'POST',
+      `/v1/views/${encodeURIComponent(viewId)}/actions`,
+      action,
+    );
+  }
+
   /**
    * One page of a log node's RECORD — what scrolled off the window it shows.
    *

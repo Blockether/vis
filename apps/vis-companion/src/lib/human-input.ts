@@ -419,7 +419,8 @@ export function humanInputFormRefused(
   return { ...form, errors };
 }
 
-function defaultValue(field: HumanInputField): HumanInputValue {
+/** The value a field starts with: its own default, or the empty value of its type. */
+export function humanInputDefaultValue(field: HumanInputField): HumanInputValue {
   const fallback = field.default;
   switch (field.type) {
     case 'checkbox':
@@ -449,7 +450,7 @@ export function initialHumanInputValues(request: HumanInputRequest): HumanInputV
   // prototype setter and silently drops the field — the form could never be
   // answered from the app while the TUI happily edits it.
   return Object.fromEntries(
-    humanInputInputFields(request.nodes).map((field) => [field.id, defaultValue(field)]),
+    humanInputInputFields(request.nodes).map((field) => [field.id, humanInputDefaultValue(field)]),
   );
 }
 

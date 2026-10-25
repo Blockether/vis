@@ -56,6 +56,9 @@ export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
  */
 export const LIVE_OPS = ['set', 'append', 'remove', 'clear', 'add-node', 'remove-node'] as const;
 
+/** Where a view stands (`view.spec/placements`). CLOSED. */
+export const LIVE_PLACEMENTS = ['inline', 'panel', 'header'] as const;
+
 /** What a link POINTS AT (`live-link-targets`). CLOSED. */
 export const LIVE_LINK_TARGETS = ['attachment', 'path', 'url'] as const;
 
@@ -84,6 +87,7 @@ export const LIVE_NOTE_CHARS = 500;
 export type LiveNodeType = (typeof LIVE_NODE_TYPES)[number];
 export type LiveInputType = (typeof LIVE_INPUT_TYPES)[number];
 export type LiveTone = (typeof LIVE_TONES)[number];
+export type LivePlacement = (typeof LIVE_PLACEMENTS)[number];
 export type LiveLinkTarget = (typeof LIVE_LINK_TARGETS)[number];
 export type LiveAlign = (typeof LIVE_ALIGNS)[number];
 export type LiveSortDir = (typeof LIVE_SORT_DIRS)[number];
@@ -333,6 +337,14 @@ export interface LiveView {
   created_at?: number;
   source?: string;
   owner?: LiveViewOwner;
+  /** `inline` in the transcript, `panel` beside it, or `header` on the machine. */
+  placement?: LivePlacement;
+  /** The session that shows a panel view. A header view belongs to the machine. */
+  session_id?: string;
+  /** The extension that owns a panel or header view. */
+  extension?: string;
+  /** The owner's own stable name for the view. */
+  key?: string;
   /** Local reconnect marker, never sent on the wire. */
   is_stale?: boolean;
 }
@@ -678,6 +690,12 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     created_at: optionalNumber(view.created_at),
     source: optionalText(view.source),
     owner: liveOwnerFromWire(view.owner),
+    placement: (LIVE_PLACEMENTS as readonly unknown[]).includes(view.placement)
+      ? (view.placement as LivePlacement)
+      : 'inline',
+    session_id: optionalText(view.session_id),
+    extension: optionalText(view.extension),
+    key: optionalText(view.key),
   };
 }
 
@@ -1045,6 +1063,23 @@ export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
   const ops = Array.isArray(patch.ops) ? patch.ops : [];
   const patched = ops.reduce(applyOp, view);
   return { ...patched, seq };
+}
+
+/** Where `view` stands. A view without a placement is inline. */
+export function livePlacement(view: Pick<LiveView, 'placement'>): LivePlacement {
+  return view.placement ?? 'inline';
+}
+
+/** True when `node` is a form input inside a live view. */
+export function isLiveInputNode(node: LiveNode): node is LiveInputNode {
+  return (LIVE_INPUT_TYPES as readonly string[]).includes(node.type);
+}
+
+/** Every input of `nodes` in reading order, groups included. */
+export function liveInputNodes(nodes: readonly LiveNode[]): LiveInputNode[] {
+  return nodes.flatMap((node) =>
+    node.type === 'group' ? liveInputNodes(node.children) : isLiveInputNode(node) ? [node] : [],
+  );
 }
 
 /** True for lifecycle events owned by the live capability. */

@@ -44,6 +44,7 @@ import {
   MicVocal,
   Minus,
   PanelLeft,
+  PanelRight,
   Paperclip,
   Pause,
   Pencil,
@@ -392,6 +393,11 @@ export function SettingsIcon({ className }: { className?: string }) {
 /** The desk's sidebar, as the one glyph every desktop app uses for putting it away. */
 export function SidebarIcon({ className }: { className?: string }) {
   return <Mark icon={PanelLeft} className={className} />;
+}
+
+/** The side panel of live views, on the edge where it opens. */
+export function LivePanelIcon({ className }: { className?: string }) {
+  return <Mark icon={PanelRight} className={className} />;
 }
 
 /**
