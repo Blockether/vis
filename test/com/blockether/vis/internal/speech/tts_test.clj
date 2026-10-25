@@ -6,7 +6,8 @@
             [com.blockether.vis.internal.speech.tts :as tts]
             [com.blockether.vis.internal.speech.voices :as voices]
             [lazytest.core :refer [defdescribe it expect]]
-            [taoensso.telemere :as tel]))
+            [taoensso.telemere :as tel])
+  (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn- ex-data-of [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
@@ -498,3 +499,39 @@
           (expect (nil? (tts/pocket-sample "own")))
           (expect (= :speech-tts/sample-unavailable
                      (:type (ex-data-of #(tts/prepare-pocket-sample! "own")))))))))
+
+;; One model slot used to serve every family under one monitor. A pocket call waited
+;; for a Piper load, and the two families then reloaded each other on every switch.
+(defdescribe
+  model-cache-test
+  (it "answers a loaded family while another family loads, and forgets a failed load"
+      (let [cache
+            @#'tts/loaded*
+
+            saved
+            @cache
+
+            loading
+            (CountDownLatch. 1)
+
+            finish
+            (CountDownLatch. 1)]
+
+        (try (reset! cache {:pocket-tts {:key [:pocket-tts "/pocket"] :tts (delay :pocket-model)}})
+             (let [piper (future (try (#'tts/loaded-tts
+                                       [:piper "/piper"]
+                                       (fn []
+                                         (.countDown loading)
+                                         (.await finish 10 TimeUnit/SECONDS)
+                                         (throw (ex-info "broken model" {}))))
+                                      (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+               (.await loading 10 TimeUnit/SECONDS)
+               (expect (= :pocket-model
+                          (#'tts/loaded-tts
+                           [:pocket-tts "/pocket"]
+                           (fn []
+                             (throw (ex-info "must not reload" {}))))))
+               (.countDown finish)
+               (expect (= "broken model" (deref piper 10000 nil)))
+               (expect (= #{:pocket-tts} (set (keys @cache)))))
+             (finally (.countDown finish) (reset! cache saved))))))

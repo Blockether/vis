@@ -7,6 +7,7 @@
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.k2fsa.sherpa.onnx VersionInfo WaveReader]
            [java.io ByteArrayInputStream File FileOutputStream]
+           [java.util.concurrent CountDownLatch CyclicBarrier TimeUnit TimeoutException]
            [javax.sound.sampled AudioFileFormat$Type AudioFormat AudioInputStream AudioSystem]
            [org.apache.commons.compress.archivers.tar TarArchiveEntry TarArchiveOutputStream]
            [org.apache.commons.compress.compressors.bzip2 BZip2CompressorOutputStream]))
@@ -338,7 +339,105 @@
                  (expect (= {:text "one" :words []} (asr/transcribe-file! (str dir) (str wav))))
                  (expect (= {:text "one" :words []} (asr/transcribe-file! (str dir) (str wav))))
                  (expect (= 1 @built))
-                 (finally (asr/release!) (.delete wav) (files/delete-dir! dir))))))))
+                 (finally (asr/release!) (.delete wav) (files/delete-dir! dir)))))))
+  ;; Two transcriptions used to queue on one monitor: the second clip waited for the
+  ;; whole first decode. Both decodes must now run at the same time.
+  (it
+    "decodes two clips at the same time on the one recognizer"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-speech-asr-parallel-test"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          wav
+          (java.io.File/createTempFile "vis-speech-asr-parallel" ".wav")
+
+          meet
+          (CyclicBarrier. 2)
+
+          built
+          (atom 0)]
+
+      (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
+        (spit (io/file dir name) "x"))
+      (write-silence-wav! wav 1.5)
+      (with-redefs-fn {#'asr/ensure-model! (fn [dir _report]
+                                             dir)
+                       #'asr/recognizer (fn [_files]
+                                          (swap! built inc)
+                                          (Object.))
+                       #'asr/release-native! (fn [_r]
+                                               nil)
+                       #'asr/decode-chunk! (fn [_r _samples _sample-rate _start _end]
+                                             ;; each decode waits for the other one
+                                             (try (.await meet 10 TimeUnit/SECONDS)
+                                                  {:text "together" :words []}
+                                                  (catch TimeoutException _
+                                                    {:text "alone" :words []})))}
+        (fn []
+          (try (asr/release!)
+               (let [a
+                     (future (asr/transcribe-file! (str dir) (str wav)))
+
+                     b
+                     (future (asr/transcribe-file! (str dir) (str wav)))]
+
+                 (expect (= "together" (:text (deref a 20000 nil))))
+                 (expect (= "together" (:text (deref b 20000 nil))))
+                 (expect (= 1 @built)))
+               (finally (asr/release!) (.delete wav) (files/delete-dir! dir)))))))
+  (it
+    "release! waits for a decode in flight before it frees the model"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-speech-asr-release-test"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          wav
+          (java.io.File/createTempFile "vis-speech-asr-release" ".wav")
+
+          decoding
+          (CountDownLatch. 1)
+
+          finish
+          (CountDownLatch. 1)
+
+          events
+          (atom [])]
+
+      (doseq [name ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]]
+        (spit (io/file dir name) "x"))
+      (write-silence-wav! wav 1.5)
+      (with-redefs-fn {#'asr/ensure-model! (fn [dir _report]
+                                             dir)
+                       #'asr/recognizer (fn [_files]
+                                          :model)
+                       #'asr/release-native! (fn [r]
+                                               (when r (swap! events conj :released)))
+                       #'asr/decode-chunk! (fn [_r _samples _sample-rate _start _end]
+                                             (.countDown decoding)
+                                             (.await finish 10 TimeUnit/SECONDS)
+                                             (swap! events conj :decoded)
+                                             {:text "one" :words []})}
+        (fn []
+          (try
+            (asr/release!)
+            (let [decode
+                  (future (asr/transcribe-file! (str dir) (str wav)))
+
+                  _
+                  (.await decoding 10 TimeUnit/SECONDS)
+
+                  release
+                  (future (asr/release!))]
+
+              (Thread/sleep 200)
+              (expect (= [] @events))
+              (.countDown finish)
+              (deref decode 10000 nil)
+              (deref release 10000 nil)
+              (expect (= [:decoded :released] @events)))
+            (finally (.countDown finish) (asr/release!) (.delete wav) (files/delete-dir! dir))))))))
 
 (defdescribe chunk-plan-test
              ;; Progress used to be impossible to report at all: the whole recording went

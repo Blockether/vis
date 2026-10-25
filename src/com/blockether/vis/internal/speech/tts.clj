@@ -345,35 +345,60 @@
 
     (.. (OfflineTtsConfig/builder) (setModel model) build)))
 
-;; ONE loaded model at a time: loading costs seconds and hundreds of megabytes, so
-;; the same voice must not pay it twice and a switch of voice must not retain the
-;; old model. sherpa frees the dropped instance in its own finalizer.
-(defonce ^:private loaded* (atom nil))
+;; ONE loaded model per family (`:piper`, `:pocket-tts`): loading costs seconds and
+;; hundreds of megabytes, so the same voice must not pay it twice and a switch of
+;; voice must not retain the old model. A slot per family lets two families speak
+;; at the same time without reloading each other. Each slot holds a `delay`: a load
+;; waits only for its own model, never for another family. sherpa frees a dropped
+;; instance in its own finalizer, after its last synthesis lets it go.
+(defonce ^:private loaded* (atom {}))
 
 (def ^:dynamic *synthesis-id* nil)
 
 (defn- loaded-tts
   ^OfflineTts [cache-key build-config]
-  (locking loaded*
-    (let [current @loaded*]
-      (tel/log! {:level :info
-                 :id ::model-cache
-                 :data {:synthesis-id *synthesis-id*
-                        :family (first cache-key)
-                        :previous-family (first (:key current))
-                        :hit (= cache-key (:key current))}})
-      (if (= cache-key (:key current))
-        (:tts current)
-        (let [started (System/nanoTime)
-              tts (OfflineTts. ^OfflineTtsConfig (build-config))]
+  (let [family
+        (first cache-key)
 
-          (reset! loaded* {:key cache-key :tts tts})
-          (tel/log! {:level :info
-                     :id ::model-loaded
-                     :data {:synthesis-id *synthesis-id*
-                            :family (first cache-key)
-                            :elapsed-ms (/ (- (System/nanoTime) started) 1e6)}})
-          tts)))))
+        current
+        (get @loaded* family)
+
+        synthesis-id
+        *synthesis-id*
+
+        fresh
+        {:key cache-key
+         :tts (delay (let [started
+                           (System/nanoTime)
+
+                           tts
+                           (OfflineTts. ^OfflineTtsConfig (build-config))]
+
+                       (tel/log! {:level :info
+                                  :id ::model-loaded
+                                  :data {:synthesis-id synthesis-id
+                                         :family family
+                                         :elapsed-ms (/ (- (System/nanoTime) started) 1e6)}})
+                       tts))}
+
+        slot
+        (get (swap! loaded* (fn [slots]
+                              (if (= cache-key (:key (get slots family)))
+                                slots
+                                (assoc slots family fresh))))
+             family)]
+
+    (tel/log! {:level :info
+               :id ::model-cache
+               :data {:synthesis-id synthesis-id
+                      :family family
+                      :hit (= cache-key (:key current))}})
+    (try @(:tts slot)
+         (catch Throwable t
+           ;; a failed load must not stay cached: the next request tries again
+           (swap! loaded* (fn [slots]
+                            (if (identical? slot (get slots family)) (dissoc slots family) slots)))
+           (throw t)))))
 
 (def ^:const chars-per-second
   "Speech is roughly this many characters a second, and that is the only estimate

@@ -10,7 +10,8 @@
             [taoensso.telemere :as tel])
   (:import [com.k2fsa.sherpa.onnx OfflineModelConfig OfflineRecognizer OfflineRecognizerConfig
             OfflineRecognizerResult OfflineStream OfflineTransducerModelConfig WaveReader]
-           [java.io File]))
+           [java.io File]
+           [java.util.concurrent.locks Lock ReentrantReadWriteLock]))
 
 ;; Reflective interop is FATAL in the native image (needs metadata per call
 ;; site) — keep this ns reflection-free at compile time. An untyped
@@ -161,6 +162,11 @@
 ;; nobody asked for.
 (defonce ^:private loaded* (atom nil))
 
+;; Decodes share the READ lock, so any number run at once on the one recognizer.
+;; A model swap and [[release!]] take the WRITE lock: it waits for the decodes in
+;; flight, so no decode ever runs on a freed model.
+(defonce ^:private model-lock (ReentrantReadWriteLock.))
+
 (defn- release-native!
   "Free one recognizer's NATIVE memory. Total: a release that throws has released
    either way, and no caller could act on the difference."
@@ -172,31 +178,53 @@
    and for a reconfiguration that must not keep a model in memory. The next
    transcription loads one again. Safe when nothing is cached."
   []
-  (locking loaded*
-    (let [current @loaded*]
-      (reset! loaded* nil)
-      (release-native! (:recognizer current)))))
+  (let [^Lock write (.writeLock ^ReentrantReadWriteLock model-lock)]
+    (.lock write)
+    (try (let [current @loaded*]
+           (reset! loaded* nil)
+           (release-native! (:recognizer current)))
+         (finally (.unlock write)))))
 
 (defn- cached-recognizer
-  "The recognizer for `files`, built ONCE and answered to every later clip. The
-   caller holds the same monitor while it decodes ([[transcribe-file!]]), so the
-   instance answered here is never released under a decode still running."
+  "The recognizer for `files`, built ONCE and answered to every later clip. A cache
+   hit takes no lock. A load takes the write lock, so it waits for the decodes in
+   flight before it frees the old model. Decode only through [[with-recognizer]]:
+   it holds the read lock that keeps the instance alive."
   ^OfflineRecognizer [files]
-  (locking loaded*
-    (let [current @loaded*]
-      (if (= files (:key current))
-        (:recognizer current)
-        (let [started (System/nanoTime)
-              r (recognizer files)]
+  (let [current @loaded*]
+    (if (= files (:key current))
+      (:recognizer current)
+      (let [^Lock write (.writeLock ^ReentrantReadWriteLock model-lock)]
+        (.lock write)
+        (try (let [current @loaded*]
+               (if (= files (:key current))
+                 (:recognizer current)
+                 (let [started (System/nanoTime)
+                       r (recognizer files)]
 
-          (release-native! (:recognizer current))
-          (reset! loaded* {:key files :recognizer r})
-          (tel/log! {:level :info
-                     :id ::recognizer-loaded
-                     :data {:elapsed-ms (/ (- (System/nanoTime) started) 1e6)
-                            :encoder (:encoder files)}
-                     :msg "loaded the Parakeet recognizer"})
-          r)))))
+                   (release-native! (:recognizer current))
+                   (reset! loaded* {:key files :recognizer r})
+                   (tel/log! {:level :info
+                              :id ::recognizer-loaded
+                              :data {:elapsed-ms (/ (- (System/nanoTime) started) 1e6)
+                                     :encoder (:encoder files)}
+                              :msg "loaded the Parakeet recognizer"})
+                   r)))
+             (finally (.unlock write)))))))
+
+(defn- with-recognizer
+  "Call `f` with the recognizer for `files` under the shared read lock, and return
+   its result. Other decodes run at the same time. [[release!]] and a model swap
+   wait until `f` returns."
+  [files f]
+  (let [^Lock read (.readLock ^ReentrantReadWriteLock model-lock)]
+    (loop []
+
+      (.lock read)
+      (let [current @loaded*]
+        (if (= files (:key current))
+          (try (f (:recognizer current)) (finally (.unlock read)))
+          (do (.unlock read) (cached-recognizer files) (recur)))))))
 
 (defn warm!
   "Load the recognizer NOW, so the FIRST recording decodes instead of waiting for
@@ -518,38 +546,38 @@
            plan
            (chunk-plan total sample-rate (double (or chunk-seconds default-chunk-seconds)))]
 
-       ;; DECODE UNDER THE CACHE'S OWN MONITOR: one native recognizer serves every
+       ;; DECODE UNDER A SHARED READ LOCK: one native recognizer serves every
        ;; surface that transcribes — a voice job and an attached memo meet here —
-       ;; sherpa promises nothing about decoding on one from two threads, and the
-       ;; monitor is also what keeps [[release!]] from freeing a model out from
-       ;; under a decode.
-       (locking loaded*
-         (let [^OfflineRecognizer r
-               (cached-recognizer files)
+       ;; and sherpa's `DecodeStreams` is thread-safe (its own websocket server
+       ;; decodes from several work threads), so decodes never wait for each other.
+       ;; Only a model swap and [[release!]] take the write lock, which waits for
+       ;; the decodes in flight before it frees their model.
+       (with-recognizer
+         files
+         (fn [^OfflineRecognizer r]
+           (let [_
+                 (report {:phase :transcribing :progress 0})
 
-               _
-               (report {:phase :transcribing :progress 0})
+                 started
+                 (System/nanoTime)
 
-               started
-               (System/nanoTime)
+                 decoded
+                 (mapv (fn [[start end]]
+                         (let [chunk (decode-chunk! r samples sample-rate start end)]
+                           (report {:phase :transcribing
+                                    :progress (min 100 (/ (* 100.0 (long end)) (max 1 total)))})
+                           chunk))
+                       plan)]
 
-               decoded
-               (mapv (fn [[start end]]
-                       (let [chunk (decode-chunk! r samples sample-rate start end)]
-                         (report {:phase :transcribing
-                                  :progress (min 100 (/ (* 100.0 (long end)) (max 1 total)))})
-                         chunk))
-                     plan)]
-
-           (tel/log! {:level :info
-                      :id ::decoded
-                      :data {:audio-seconds (/ total (double (max 1 sample-rate)))
-                             :chunks (count plan)
-                             :elapsed-ms (/ (- (System/nanoTime) started) 1e6)}
-                      :msg "decoded a recording"})
-           {:text (->> decoded
-                       (map :text)
-                       (remove str/blank?)
-                       (str/join " ")
-                       str/trim)
-            :words (into [] (mapcat :words) decoded)}))))))
+             (tel/log! {:level :info
+                        :id ::decoded
+                        :data {:audio-seconds (/ total (double (max 1 sample-rate)))
+                               :chunks (count plan)
+                               :elapsed-ms (/ (- (System/nanoTime) started) 1e6)}
+                        :msg "decoded a recording"})
+             {:text (->> decoded
+                         (map :text)
+                         (remove str/blank?)
+                         (str/join " ")
+                         str/trim)
+              :words (into [] (mapcat :words) decoded)})))))))
