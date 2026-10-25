@@ -3,7 +3,6 @@ import { isMarkdownMedia, isSubtitleMedia } from '../lib/artifacts';
 import { parseSubtitles, type SubtitleCue } from '../lib/subtitles';
 import { Markdown } from './ChatContent';
 import { clockTime } from './Media';
-import { PROSE } from './ui';
 
 /**
  * A WRITTEN artifact — a note, a comment, a log — read by the app itself.
@@ -101,7 +100,7 @@ export const SubtitleBody = memo(function SubtitleBody({
             key={`${cue.start}-${index}`}
             className={`flex min-w-0 gap-3 ${isTurn && index > 0 ? 'mt-3' : 'mt-1'} first:mt-0`}
           >
-            <span className="w-14 shrink-0 pt-0.5 font-mono text-chip tabular-nums text-dialog-hint">
+            <span className="w-10 shrink-0 pt-0.5 font-mono text-chip tabular-nums text-dialog-hint">
               {clockTime(cue.start)}
             </span>
             <div className="min-w-0 flex-1">
@@ -110,7 +109,10 @@ export const SubtitleBody = memo(function SubtitleBody({
                   {cue.speaker}
                 </span>
               ) : null}
-              <p className={`min-w-0 whitespace-pre-wrap break-words ${PROSE}`}>{cue.text}</p>
+              {/* Ragged right: a short cue in a phone column opens wide gaps when justified. */}
+              <p className="min-w-0 whitespace-pre-wrap break-words text-left text-pretty hyphens-auto [hyphenate-limit-chars:6_3_3]">
+                {cue.text}
+              </p>
             </div>
           </li>
         );

@@ -1,7 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
-import { STORY_ARTIFACT_HISTORY, STORY_ARTIFACTS, STORY_INERT_CLIENT } from '../dev/story-data';
+import {
+  PODCAST_VTT,
+  STORY_ARTIFACT_HISTORY,
+  STORY_ARTIFACTS,
+  STORY_INERT_CLIENT,
+} from '../dev/story-data';
 import type { SessionArtifact } from '../lib/artifacts';
 import { ArtifactsSheet } from './ArtifactsSheet';
 
@@ -70,5 +75,40 @@ export const OpenedDocument: Story = {
 
     await userEvent.click(page.getByRole('button', { name: 'Close plan.md' }));
     await expect(page.queryByRole('dialog', { name: 'plan.md' })).toBeNull();
+  },
+};
+
+const episode: SessionArtifact = {
+  key: 'i2:0',
+  kind: 'doc',
+  name: 'episode.vtt',
+  media: 'VTT',
+  mediaType: 'text/vtt',
+  size: PODCAST_VTT.length,
+  sizeLabel: '1KB',
+  turn: 2,
+  iterationId: 'i2',
+  index: 0,
+  version: 1,
+};
+
+/** The subtitle file's bytes, served the way the gateway client serves them. */
+const subtitleClient = {
+  attachmentUrl: async () => `data:text/vtt;charset=utf-8,${encodeURIComponent(PODCAST_VTT)}`,
+  attachmentBlob: async () => new Blob([PODCAST_VTT], { type: 'text/vtt' }),
+  retainAttachment: () => () => {},
+} as unknown as typeof STORY_INERT_CLIENT;
+
+/** A subtitle tile peeks at its first cues, `0:00 Maya: …`, not at timing lines. */
+export const SubtitleTile: Story = {
+  args: { client: subtitleClient, artifacts: [episode, ...STORY_ARTIFACTS] },
+};
+
+/** Opened subtitles read as a timed script, one turn for each speaker. */
+export const OpenedSubtitles: Story = {
+  args: { client: subtitleClient, artifacts: [episode], initialArtifact: episode },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await page.findByRole('list', { name: 'episode.vtt' });
   },
 };

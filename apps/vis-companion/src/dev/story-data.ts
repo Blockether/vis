@@ -788,6 +788,50 @@ export const RECORDING_SEGMENTS: { start: number; end: number; text: string }[] 
   { start: 4.1, end: 8.6, text: 'and keep the data beside it so the frames stop disagreeing.' },
 ];
 
+/** A two-voice podcast's WebVTT subtitles: the speaker of each cue is its `<v>` tag. */
+export const PODCAST_VTT = [
+  'WEBVTT',
+  '',
+  '00:00:00.000 --> 00:00:05.200',
+  '<v Maya>Welcome back. Today we walk along the Great Wall of China.',
+  '',
+  '00:00:05.200 --> 00:00:11.800',
+  '<v Maya>It is not one wall. It is many walls, built over two thousand years.',
+  '',
+  '00:00:11.800 --> 00:00:17.400',
+  '<v Leo>Right. The first parts were earth walls from the Warring States period.',
+  '',
+  '00:00:17.400 --> 00:00:24.100',
+  '<v Leo>Qin Shi Huang joined some of them after he unified China in 221 BC.',
+  '',
+  '00:00:24.100 --> 00:00:30.600',
+  '<v Maya>And the stone and brick wall that most photos show is much newer?',
+  '',
+  '00:00:30.600 --> 00:00:37.900',
+  '<v Leo>Yes. The Ming dynasty built most of it, from the late fourteenth century.',
+  '',
+  '00:00:37.900 --> 00:00:44.300',
+  '<v Maya>People often say you can see it from space. Is that true?',
+  '',
+  '00:00:44.300 --> 00:00:52.000',
+  '<v Leo>No. It is long, but it is narrow, and its color is close to the land around it.',
+].join('\n');
+
+/** The first cues of the same episode as SubRip: numbered blocks, comma decimals, no speakers. */
+export const PODCAST_SRT = [
+  '1',
+  '00:00:00,000 --> 00:00:05,200',
+  'Welcome back. Today we walk along the Great Wall of China.',
+  '',
+  '2',
+  '00:00:05,200 --> 00:00:11,800',
+  'It is not one wall. It is many walls, built over two thousand years.',
+  '',
+  '3',
+  '00:00:11,800 --> 00:00:17,400',
+  'Right. The first parts were earth walls from the Warring States period.',
+].join('\n');
+
 /** A picture with no bytes to fetch: the plate is what the story is about. */
 function picture(fill: string, label: string, width = 240, height = 240): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="${fill}"/><text x="${width / 2}" y="${height / 2 + 8}" font-family="monospace" font-size="20" fill="#f7f7f7" text-anchor="middle">${label}</text></svg>`;

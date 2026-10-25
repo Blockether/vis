@@ -1,12 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import {
   PICTURE_SUMMARY,
+  PODCAST_VTT,
   RECORDING_SEGMENTS,
   RECORDING_TRANSCRIPT,
   STORY_PICTURES,
   STORY_WIDE_PICTURE,
 } from '../dev/story-data';
 import { mediaContentClass, mediaTileContentClass } from '../lib/media-frame';
+import { parseSubtitles, subtitleSegments } from '../lib/subtitles';
 import { MediaGrid, MediaPlate, MediaRecording, MediaTile, RecordingPlayer } from './Media';
 
 /**
@@ -94,6 +96,19 @@ export const RecordingTimed: Story = {
       meta="M4A · 412KB"
       transcription={RECORDING_TRANSCRIPT}
       transcriptionSegments={RECORDING_SEGMENTS}
+    >
+      <RecordingPlayer />
+    </MediaRecording>
+  ),
+};
+
+/** A podcast with its subtitle file: the cues become the timed lines, each led by its speaker. */
+export const RecordingSubtitled: Story = {
+  render: () => (
+    <MediaRecording
+      name="episode.mp3"
+      meta="MP3 · 812KB"
+      transcriptionSegments={subtitleSegments(parseSubtitles(PODCAST_VTT))}
     >
       <RecordingPlayer />
     </MediaRecording>

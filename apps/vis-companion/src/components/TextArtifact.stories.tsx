@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { LOG_TEXT, NOTE_MARKDOWN } from '../dev/story-data';
+import { LOG_TEXT, NOTE_MARKDOWN, PODCAST_SRT, PODCAST_VTT } from '../dev/story-data';
 import { TextBody } from './TextArtifact';
 
 /**
@@ -37,6 +37,16 @@ export const NoteSource: Story = {
 /** Machine output stays machine-faced, and long lines wrap rather than scroll away. */
 export const Log: Story = {
   args: { text: LOG_TEXT, name: 'gateway.log', mime: 'text/plain' },
+};
+
+/** Subtitles read as a script: the start time, the speaker once per turn, then the words. */
+export const Subtitles: Story = {
+  args: { text: PODCAST_VTT, name: 'episode.vtt', mime: 'text/vtt' },
+};
+
+/** SubRip has no speakers, so each cue is its time and its words. */
+export const SubtitlesSrt: Story = {
+  args: { text: PODCAST_SRT, name: 'episode.srt', mime: 'application/x-subrip' },
 };
 
 /** An empty artifact is still a frame: the paper is what says "nothing here yet". */
