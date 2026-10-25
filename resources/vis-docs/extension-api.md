@@ -1251,7 +1251,6 @@ def start_review(path: str) -> str:
   `RuntimeError`.
 - `vis.sessions.create(provider=..., model=..., **options)` creates an independent session. Without
   `root`, it starts in the root of the bound session. The options are those of `create_session`.
-  For example, `draft_backend="worktree"` turns on [drafts](drafts.md) in that session only.
 - `vis.sessions.get(session_id)` returns a handle without a request. `vis.sessions.list(search=None)`
   returns the sessions of the first page, or the matches of `search`.
 - `vis.sessions.export(session_id=None)` returns a

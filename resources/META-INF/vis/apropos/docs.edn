@@ -42,6 +42,5 @@
  {:kind "doc" :name "human-input" :resource "vis-docs/human-input.md"}
  {:kind "doc" :name "live-views" :resource "vis-docs/live-views.md"}
  {:kind "doc" :name "components" :resource "vis-docs/components.md"}
- {:kind "doc" :name "swarm-forge" :resource "vis-docs/swarm-forge.md"}
  {:kind "doc" :name "speech" :resource "vis-docs/speech.md"}
  {:kind "doc" :name "provider-extensions" :resource "vis-docs/provider-extensions.md"}]

@@ -231,18 +231,6 @@ For 10 minutes, the same key returns the session that the first request made. Th
 while that request still runs. A failed request does not keep its key, so a retry creates the
 session.
 
-To turn on [drafts](drafts.md) for this one session, add `draft_backend`:
-
-```python
-session = client.create_session(
-    **client.session_options(os.environ["VIS_PROJECT_ROOT"]),
-    draft_backend="worktree",
-)
-```
-
-`draft_backend` is `worktree`, `rift`, `auto` or `off`. It is a setting of the new session only.
-The project and global settings do not change. Another value raises an error for the 400 answer.
-
 </div>
 
 <div data-variant="http">
@@ -276,16 +264,6 @@ vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/jso
 For 10 minutes, the same key returns the session that the first request made. This is also true
 while that request still runs. A failed request does not keep its key, so a retry creates the
 session. A key must have 1 to 200 characters.
-
-To turn on [drafts](drafts.md) for this one session, add `draft_backend`:
-
-```bash
-vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions" -H 'content-type: application/json' \
-  --data '{"root": "/srv/projects/shop", "channel": "app", "draft_backend": "worktree"}'
-```
-
-`draft_backend` is `worktree`, `rift`, `auto` or `off`. It is a setting of the new session only.
-The project and global settings do not change. Another value returns 400.
 
 `sources` lists the configuration tiers that the session reads: `global`, `project`, both or none.
 `extensions` keeps the named extensions or turns off each `-name` entry. An empty list turns off

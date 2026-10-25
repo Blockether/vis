@@ -1386,7 +1386,7 @@
                (expect (some? (:context (get @@#'pyx/session-contexts [ctx "slashroot"]))))
                (finally (ep/dispose-python-context! ctx)))))))
   (it "lets an extension thread drive its views but not open one"
-      ;; A Swarm Forge worker thread repaints its board between callbacks (Phase 7).
+      ;; A worker thread of an extension repaints its board between callbacks.
       (let [live
             (get (pyx/host-doors nil "test" nil) "__vis_host_live__")
 

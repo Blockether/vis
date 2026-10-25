@@ -9942,7 +9942,7 @@
                (expect (contains? @env-cache k))
                (finally (swap! env-cache dissoc k)))))
     (it "keeps an idle entry whose extension drives an open owned view"
-        ;; A Swarm Forge board closed after five idle minutes: the reaper disposed the
+        ;; A panel board closed after five idle minutes: the reaper disposed the
         ;; session sandbox and with it the extension context that drove the panel.
         (let [k
               "reaper-test/panel"

@@ -608,7 +608,7 @@ print(worker_value)"))))
               [[true "" "__vis_host_request__" "{\"session\":\"owned\"}" true true]
                [false "" "__vis_host_request__" "{\"session\":\"owned\"}" true false]
                [true "" "__vis_host_shell__" "{\"session\":\"owned\"}" true false]
-               ;; A Swarm Forge worker thread drives its board and its state (Phase 7).
+               ;; A worker thread of an extension drives its board and its state.
                [true "" "__vis_host_live__" "{\"session\":\"owned\"}" true true]
                [true "" "__vis_host_state_put__" "{\"session\":\"owned\"}" true true]
                [true "" "__vis_host_call_tool__" "{\"session\":\"owned\"}" true false]

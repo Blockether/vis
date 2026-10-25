@@ -1,7 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
-import { SWARM_FORGE_BOARD } from '../dev/live-swarm-data';
 import { STORY_INERT_CLIENT, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
 import { LivePanel } from './LivePanel';
 import { LiveViewPanel } from './LiveView';
@@ -19,10 +18,10 @@ function wired(wire: Record<string, unknown>): LiveView {
   return view;
 }
 
-const FORGE = wired({
-  id: 'forge',
-  title: 'Forge queue',
-  extension: 'forge',
+const JOBS = wired({
+  id: 'jobs',
+  title: 'Job queue',
+  extension: 'jobs',
   placement: 'panel',
   nodes: [
     { id: 's', type: 'status', text: 'Two jobs wait for a lane', tone: 'running' },
@@ -41,7 +40,7 @@ const FORGE = wired({
   ],
 });
 
-const SWARM = { ...STORY_LIVE_PRIMITIVES, id: 'swarm', title: 'Swarm board', extension: 'swarm', placement: 'panel' as const };
+const DEPLOY = { ...STORY_LIVE_PRIMITIVES, id: 'deploy', title: 'Deploy board', extension: 'deploy', placement: 'panel' as const };
 
 const accepted = { action: 'activate' as const, view_id: 'v', is_accepted: true };
 
@@ -54,7 +53,7 @@ const meta = {
   title: 'Live View/Side panel',
   component: LivePanel,
   parameters: { layout: 'fullscreen' },
-  args: { views: [SWARM, FORGE], client, sid: 's1', onClose: fn() },
+  args: { views: [DEPLOY, JOBS], client, sid: 's1', onClose: fn() },
   decorators: [
     (Story) => (
       <div className="flex h-[40rem] justify-end bg-ink">
@@ -74,9 +73,9 @@ type Story = StoryObj<typeof meta>;
 export const TwoOwners: Story = {
   play: async ({ canvas }) => {
     const tabs = canvas.getAllByRole('tab');
-    await expect(tabs.map((tab) => tab.textContent)).toEqual(['swarm', 'forge']);
+    await expect(tabs.map((tab) => tab.textContent)).toEqual(['deploy', 'jobs']);
     await userEvent.click(tabs[1]);
-    const row = canvas.getByRole('button', { name: 'Forge queue' });
+    const row = canvas.getByRole('button', { name: 'Job queue' });
     await expect(row).toHaveAttribute('aria-expanded', 'true');
     await expect(canvas.getByRole('button', { name: /Fast lane/ })).toBeVisible();
     await userEvent.click(row);
@@ -87,17 +86,17 @@ export const TwoOwners: Story = {
 
 /** One extension owns every view: its name heads the panel, without tabs. */
 export const OneOwner: Story = {
-  args: { views: [FORGE] },
+  args: { views: [JOBS] },
   play: async ({ canvas }) => {
     await expect(canvas.queryByRole('tablist')).toBeNull();
-    await expect(canvas.getByRole('heading', { name: 'forge' })).toBeVisible();
+    await expect(canvas.getByRole('heading', { name: 'jobs' })).toBeVisible();
   },
 };
 
 /** The inputs and cards of a view: a value goes out after a pause, a submit sends all. */
 export const InputsAndCards: StoryObj<typeof LiveViewPanel> = {
   render: (args) => <LiveViewPanel {...args} />,
-  args: { view: FORGE, inDialog: true, onChange: fn(), onSubmit: fn(), onActivate: fn() },
+  args: { view: JOBS, inDialog: true, onChange: fn(), onSubmit: fn(), onActivate: fn() },
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
     const name = canvas.getByLabelText('Job name');
@@ -108,19 +107,5 @@ export const InputsAndCards: StoryObj<typeof LiveViewPanel> = {
     await userEvent.click(canvas.getByRole('button', { name: 'Queue job' }));
     await expect(args.onChange).toHaveBeenCalledWith('name', 'release');
     await expect(args.onSubmit).toHaveBeenCalledWith('queue', { name: 'release', notes: '' });
-  },
-};
-
-/**
- * The Swarm Forge board as its extension paints it: counters first, then the work that
- * needs you, the lanes, the queue and the controls. No line joins facts with dots.
- */
-export const SwarmForgeBoard: Story = {
-  args: { views: [wired(SWARM_FORGE_BOARD)] },
-  play: async ({ canvas }) => {
-    await expect(canvas.getByText('Need you')).toBeVisible();
-    await expect(canvas.getByRole('button', { name: 'Approve' })).toBeVisible();
-    await expect(canvas.getByRole('textbox', { name: 'Answer, required' })).toBeInTheDocument();
-    await expect(canvas.queryByText(/ · /)).toBeNull();
   },
 };

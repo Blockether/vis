@@ -22,7 +22,7 @@ const form = () =>
   view({
     id: 'form',
     placement: 'panel',
-    extension: 'swarm',
+    extension: 'deploy',
     nodes: [
       { id: 'name', type: 'plaintext', label: 'Name', value: 'Ada' },
       { id: 'token', type: 'password', label: 'Token', is_set: true },
@@ -52,7 +52,7 @@ describe('live view placements', () => {
   it('reads the placement and the owner, and a view without one is inline', () => {
     const panel = form();
     expect(livePlacement(panel)).toBe('panel');
-    expect(panel.extension).toBe('swarm');
+    expect(panel.extension).toBe('deploy');
     expect(livePlacement(view({ id: 'x', nodes: [{ id: 'p', type: 'paragraph', text: 'Hi' }] }))).toBe('inline');
     expect(liveInputNodes(panel.nodes).map((node) => node.id)).toEqual(['name', 'token']);
   });
@@ -109,34 +109,34 @@ const client = () =>
 
 describe('the side panel', () => {
   it('folds a view to its fold row and opens it again', () => {
-    render(<LiveViewList views={[status('a', 'Swarm board', 'swarm')]} client={client()} sid="s1" />);
-    const row = screen.getByRole('button', { name: /Swarm board/ });
+    render(<LiveViewList views={[status('a', 'Deploy board', 'deploy')]} client={client()} sid="s1" />);
+    const row = screen.getByRole('button', { name: /Deploy board/ });
     expect(row).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('Swarm board is waiting')).toBeVisible();
+    expect(screen.getByText('Deploy board is waiting')).toBeVisible();
     fireEvent.click(row);
     expect(row).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByText('Swarm board is waiting')).toBeVisible();
+    expect(screen.getByText('Deploy board is waiting')).toBeVisible();
     fireEvent.click(row);
     expect(row).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('shows one tab for each owner when views come from two extensions', () => {
-    const views = [status('a', 'Swarm board', 'swarm'), status('b', 'Forge queue', 'forge')];
+    const views = [status('a', 'Deploy board', 'deploy'), status('b', 'Job queue', 'jobs')];
     render(<LivePanel views={views} client={client()} sid="s1" onClose={() => {}} />);
     const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['swarm', 'forge']);
-    expect(screen.getByText('Swarm board')).toBeVisible();
-    expect(screen.queryByText('Forge queue')).toBeNull();
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['deploy', 'jobs']);
+    expect(screen.getByText('Deploy board')).toBeVisible();
+    expect(screen.queryByText('Job queue')).toBeNull();
     fireEvent.click(tabs[1]);
-    expect(screen.getByText('Forge queue')).toBeVisible();
-    expect(screen.queryByText('Swarm board')).toBeNull();
+    expect(screen.getByText('Job queue')).toBeVisible();
+    expect(screen.queryByText('Deploy board')).toBeNull();
   });
 
   it('names the one owner and closes', () => {
     const onClose = vi.fn();
-    render(<LivePanel views={[status('a', 'Swarm board', 'swarm')]} client={client()} sid="s1" onClose={onClose} />);
+    render(<LivePanel views={[status('a', 'Deploy board', 'deploy')]} client={client()} sid="s1" onClose={onClose} />);
     expect(screen.queryByRole('tablist')).toBeNull();
-    expect(screen.getByRole('heading', { name: 'swarm' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'deploy' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Close live views' }));
     expect(onClose).toHaveBeenCalled();
   });

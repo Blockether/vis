@@ -733,6 +733,5 @@ output. `vis.testing.assert_tree(actual, expected)` reports nested differences.
 - [Extending Vis](extending.md) — the extension that opens a view.
 - [Forms and user input](human-input.md) — the same components, used for questions.
 - [Components](components.md) — every component and its builder.
-- [Swarm Forge](swarm-forge.md) — an extension with a panel board.
 - [Sessions API](sessions-api.md#watch-live-views) — list, read and interrupt live views from a
   program.

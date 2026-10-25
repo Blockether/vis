@@ -62,36 +62,36 @@
 (defdescribe panel-paint-test
              (describe "a panel with views from two owners"
                        (let [panes (mapv lv/opened
-                                         [(view "a" "Swarm board" "swarm" :panel)
-                                          (view "b" "Forge queue" "forge" :panel)])]
+                                         [(view "a" "Deploy board" "deploy" :panel)
+                                          (view "b" "Job queue" "jobs" :panel)])]
                          (it "shows tabs and only the views of the selected owner"
                              (let [{:keys [geometry lines]} (panel-lines panes {} 48 24)]
-                               (expect (str/includes? (first lines) "swarm"))
-                               (expect (str/includes? (first lines) "forge"))
-                               (expect (some #(str/includes? % "▾ Swarm board") lines))
-                               (expect (not-any? #(str/includes? % "Forge queue") lines))
-                               (expect (= {:selected "a" :shown ["a"] :tab "swarm"} geometry))
+                               (expect (str/includes? (first lines) "deploy"))
+                               (expect (str/includes? (first lines) "jobs"))
+                               (expect (some #(str/includes? % "▾ Deploy board") lines))
+                               (expect (not-any? #(str/includes? % "Job queue") lines))
+                               (expect (= {:selected "a" :shown ["a"] :tab "deploy"} geometry))
                                (expect (every? #(str/starts-with? % "│") lines))))
                          (it "shows the other owner's views on its tab"
-                             (let [{:keys [lines]} (panel-lines panes {:tab "forge"} 48 24)]
-                               (expect (some #(str/includes? % "▾ Forge queue") lines))
-                               (expect (not-any? #(str/includes? % "Swarm board") lines))))))
+                             (let [{:keys [lines]} (panel-lines panes {:tab "jobs"} 48 24)]
+                               (expect (some #(str/includes? % "▾ Job queue") lines))
+                               (expect (not-any? #(str/includes? % "Deploy board") lines))))))
              (describe "a folded view"
                        (it "keeps only its title row"
                            (let [pane
-                                 (lv/opened (view "a" "Swarm board" "swarm" :panel))
+                                 (lv/opened (view "a" "Deploy board" "deploy" :panel))
 
                                  {:keys [lines]}
                                  (panel-lines [pane] {:folded #{"a"}} 48 12)]
 
-                             (expect (str/includes? (first lines) "▸ Swarm board"))
+                             (expect (str/includes? (first lines) "▸ Deploy board"))
                              (expect (every? #(= "│" (str/trim %)) (rest lines))))))
              (describe
                "a view with input fields"
                ;; Regression: the node label and the field renderer both drew the label.
                (it "draws each field label once"
                    (let [pane
-                         (lv/opened (assoc (view "a" "Swarm board" "swarm" :panel)
+                         (lv/opened (assoc (view "a" "Deploy board" "deploy" :panel)
                                       :nodes [{:id "comment" :type :multiline :label "Comment"}
                                               {:id "title" :type :plaintext :label "Title"}]))
 
@@ -105,7 +105,7 @@
   panel-state-test
   (it "files no transcript receipt for a panel view, and its close removes it"
       (with-db (fn []
-                 (state/dispatch [:live-view-open (view "a" "Swarm board" "swarm" :panel)])
+                 (state/dispatch [:live-view-open (view "a" "Deploy board" "deploy" :panel)])
                  (expect (= ["a"] (mapv lv/view-id (lv/panel-panes (:live-views @state/app-db)))))
                  (expect (empty? (:messages @state/app-db)))
                  (expect (keymap/verb-available? @state/app-db {:show-when :has-panel}))
@@ -139,11 +139,11 @@
 (defn- frame-db
   []
   {:session {:id "s1"}
-   :messages [{:role :assistant :text "The swarm is working."}]
+   :messages [{:role :assistant :text "The deploy is running."}]
    :input (input/empty-input)
    :scroll scroll/follow
    :settings {}
-   :live-views [(lv/opened (view "a" "Swarm board" "swarm" :panel))]
+   :live-views [(lv/opened (view "a" "Deploy board" "deploy" :panel))]
    :live-panel {:open? true :focused? true}
    :pending-sends []
    :channel-status {}
@@ -184,7 +184,7 @@
                      (let [{:keys [layout lines]} (paint-frame! 160 @state/app-db)]
                        (expect (= 96 (:cols layout)))
                        (expect (every? #(= \│ (nth % 96)) lines))
-                       (expect (some #(str/includes? % "▾ Swarm board") lines))
+                       (expect (some #(str/includes? % "▾ Deploy board") lines))
                        (let [toggle (first (filter #(= :live-panel-toggle (:kind %))
                                                    (.current interactions/hit-map)))]
                          (expect (= "a" (:view-id toggle)))

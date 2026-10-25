@@ -173,11 +173,7 @@
     {:blurb
      "Connect an LLM service to Vis with custom sign-in, model discovery and credential management."
      :page "provider-extensions"
-     :title "Provider extensions"}
-    {:blurb
-     "Run a team of role sessions that pass each task along in drafts, and approve the result on one board."
-     :page "swarm-forge"
-     :title "Swarm Forge"}]
+      :title "Provider extensions"}]
    :section "Extensions"}
   {:pages
    [{:blurb
