@@ -129,6 +129,7 @@
                  (mapv :id (assets/for-engine :piper))))
       (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
       (expect (= ["vibevoice-realtime-0.5b-int8"] (mapv :id (assets/for-engine :vibevoice-tts))))
+      (expect (= ["qwen3-tts-12hz-1.7b-customvoice-int4"] (mapv :id (assets/for-engine :qwen-tts))))
       (expect (= ["vibevoice-asr-streaming-1.5b-int8"]
                  (mapv :id (assets/for-engine :vibevoice-asr))))
       (let [data (ex-data-of #(assets/entry "no-such-model"))]
@@ -271,7 +272,7 @@
       ;; with no voice at all: the install reports itself ready and the
       ;; first synthesis is what discovers the clip was never there.
       (doseq [entry
-              (remove #(= :vibevoice-tts (:engine %)) (assets/manifest))
+              (remove #(#{:vibevoice-tts :qwen-tts} (:engine %)) (assets/manifest))
 
               voice
               (:voices entry)]
@@ -287,6 +288,13 @@
       (let [entry (assets/entry "vibevoice-realtime-0.5b-int8")]
         (expect (seq (:voices entry)))
         (expect (every? (set (:requires entry)) ["voices.bin" "voices.json"]))
+        (expect (not-any? :clip (:voices entry)))))
+  (it "lists the speakers that the Qwen3-TTS model has built in"
+      ;; A Qwen3-TTS speaker is a token of the model, so the entry carries no clip.
+      (let [entry (assets/entry "qwen3-tts-12hz-1.7b-customvoice-int4")]
+        (expect (= 9 (count (:voices entry))))
+        (expect (every? (set (:requires entry))
+                        ["talker_cache.onnx" "config.json" "tokenizer.json"]))
         (expect (not-any? :clip (:voices entry))))))
 
 (defn- repo-document

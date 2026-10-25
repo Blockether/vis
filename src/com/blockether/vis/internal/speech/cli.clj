@@ -40,10 +40,11 @@
    {:direction :synthesize :engine-id "pocket-tts-local" :label "pocket-tts speech voice"}
    :vibevoice {:direction :synthesize :engine-id "vibevoice-local" :label "VibeVoice speech model"}
    :vibevoice-asr
-   {:direction :transcribe :engine-id "vibevoice-asr-local" :label "VibeVoice ASR model"}})
+   {:direction :transcribe :engine-id "vibevoice-asr-local" :label "VibeVoice ASR model"}
+   :qwen {:direction :synthesize :engine-id "qwen3-tts-local" :label "Qwen3-TTS speech model"}})
 
 (def ^:private automatic-families
-  "The families a download without names fetches. VibeVoice (3.9 GB) comes only by name."
+  "The families a download without names fetches. VibeVoice (3.9 GB) and Qwen3-TTS (3.7 GB) come only by name."
   [:parakeet :piper :pocket-tts])
 
 (defn- model-path
@@ -123,7 +124,7 @@
 (defn- download-families
   [parsed]
   (let [named (filterv #(get parsed (name %))
-                [:parakeet :piper :pocket-tts :vibevoice :vibevoice-asr])]
+                [:parakeet :piper :pocket-tts :vibevoice :vibevoice-asr :qwen])]
     (cond (get parsed "all") (into automatic-families (remove (set automatic-families)) named)
           (empty? named) automatic-families
           :else named)))
@@ -215,6 +216,7 @@
 
         engine-id
         (cond (get parsed "vibevoice") "vibevoice-local"
+              (get parsed "qwen") "qwen3-tts-local"
               (get parsed "pocket-tts") "pocket-tts-local"
               :else "piper-local")
 
@@ -255,13 +257,14 @@
       {:cmd/name "download"
        :cmd/doc "Prepare gateway speech models."
        :cmd/usage
-       "vis-agent speech models download [--parakeet|--piper|--pocket-tts|--vibevoice|--vibevoice-asr|--all] [--voice ID]"
+       "vis-agent speech models download [--parakeet|--piper|--pocket-tts|--vibevoice|--vibevoice-asr|--qwen|--all] [--voice ID]"
        :cmd/args
        [{:name "parakeet" :kind :flag :type :boolean :doc "Prepare Parakeet ASR."}
         {:name "piper" :kind :flag :type :boolean :doc "Prepare Piper speech."}
         {:name "pocket-tts" :kind :flag :type :boolean :doc "Prepare pocket-tts speech."}
         {:name "vibevoice" :kind :flag :type :boolean :doc "Prepare VibeVoice speech (1.2 GB)."}
         {:name "vibevoice-asr" :kind :flag :type :boolean :doc "Prepare VibeVoice ASR (2.7 GB)."}
+        {:name "qwen" :kind :flag :type :boolean :doc "Prepare Qwen3-TTS speech (3.7 GB)."}
         {:name "all"
          :kind :flag
          :type :boolean
@@ -297,11 +300,12 @@
     {:cmd/name "say"
      :cmd/doc "Synthesize a line in the gateway."
      :cmd/usage
-     "vis-agent speech say <text> [--voice ID] [--pocket-tts|--vibevoice] [--out FILE.wav]"
+     "vis-agent speech say <text> [--voice ID] [--pocket-tts|--vibevoice|--qwen] [--out FILE.wav]"
      :cmd/args [{:name "text" :kind :positional :type :string :required true :doc "What to say."}
                 {:name "voice" :kind :flag :type :string :doc "Voice id."}
                 {:name "pocket-tts" :kind :flag :type :boolean :doc "Use pocket-tts."}
                 {:name "vibevoice" :kind :flag :type :boolean :doc "Use VibeVoice."}
+                {:name "qwen" :kind :flag :type :boolean :doc "Use Qwen3-TTS."}
                 {:name "out" :kind :flag :type :string :doc "Output WAV path."}]
      :cmd/run-fn #'speech-say-command}
     {:cmd/name "transcribe"

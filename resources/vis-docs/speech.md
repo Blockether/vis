@@ -24,6 +24,7 @@ The download can take some minutes.
 | Engine | Use | Voices |
 |---|---|---|
 | `vibevoice-local` | Natural speech for long text, with a seed for each take | Built-in voices, such as `emma` and `carter` |
+| `qwen3-tts-local` | Expressive speech in ten languages | Built-in voices, such as `ryan` and `serena` |
 | `pocket-tts-local` | Fast speech with your own voices | Built-in voices and voices that you add |
 | `piper-local` | Small and fast speech | Built-in voices |
 | `parakeet-local` | Fast transcription of short recordings | — |
@@ -31,13 +32,16 @@ The download can take some minutes.
 
 The **Voice** section of the Companion settings selects the default engines.
 
+The `qwen3-tts-local` model is 3.7 GB, and Vis downloads it on first use. On a CPU, it speaks at about
+the speed of playback.
+
 ## Speak text
 
 A request sends the text, an optional voice and an optional engine. Short text comes back at once.
 Long text runs as a job, and the client waits for its audio. The answer is usually a 24 kHz mono WAV
 file.
 
-Engines such as `vibevoice-local` sample noise. Give a `seed` to get the same take again. Give
+Engines such as `vibevoice-local` and `qwen3-tts-local` sample noise. Give a `seed` to get the same take again. Give
 another seed to get a different take of the same text.
 
 ## Add your own voice

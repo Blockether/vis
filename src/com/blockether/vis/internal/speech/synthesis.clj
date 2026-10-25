@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.speech.synthesis
-  "The gateway's built-in local Piper, pocket-tts and VibeVoice speaking engines."
-  (:require [com.blockether.vis.internal.speech.sherpa :as sherpa]
+  "The gateway's built-in local Piper, pocket-tts, VibeVoice and Qwen3-TTS speaking engines."
+  (:require [com.blockether.vis.internal.speech.qwen :as qwen]
+            [com.blockether.vis.internal.speech.sherpa :as sherpa]
             [com.blockether.vis.internal.speech.tts :as tts]
             [com.blockether.vis.internal.speech.vibevoice :as vibevoice]
             [com.blockether.vis.internal.speech.voices :as voices]))
@@ -41,4 +42,4 @@
     :prepare-voice-sample (fn [voice-id]
                             (sherpa/call-native (fn []
                                                   (tts/prepare-pocket-sample! voice-id))))}
-   vibevoice/tts-descriptor])
+   vibevoice/tts-descriptor qwen/descriptor])

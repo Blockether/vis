@@ -217,9 +217,9 @@ class Speech:
         """Speak `text` and return the audio, usually 24 kHz mono WAV.
 
         `seed` selects another take of the same text on engines that sample noise,
-        such as `vibevoice-local`. The gateway speaks at most 20000 characters at once.
-        Raises `GatewayError` 425 while the engine model is not ready and `VisTimeout`
-        when the job takes longer than `timeout` seconds.
+        such as `vibevoice-local` and `qwen3-tts-local`. The gateway speaks at most
+        20000 characters at once. Raises `GatewayError` 425 while the engine model is
+        not ready and `VisTimeout` when the job takes longer than `timeout` seconds.
         """
         if not text or not text.strip():
             raise ValueError("text must not be blank")

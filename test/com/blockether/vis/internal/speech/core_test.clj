@@ -45,7 +45,7 @@
   the-gateway-has-one-fixed-engine-set
   (it "the gateway has one fixed engine set"
       (expect (= [:parakeet-local :vibevoice-asr-local] (mapv :id (speech/engines :transcribe))))
-      (expect (= [:piper-local :pocket-tts-local :vibevoice-local]
+      (expect (= [:piper-local :pocket-tts-local :vibevoice-local :qwen3-tts-local]
                  (mapv :id (speech/engines :synthesize))))
       (expect (= [:uploading :queued :preparing :transcribing :done :failed]
                  (speech/direction-phases :transcribe)))

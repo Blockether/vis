@@ -231,6 +231,68 @@
       :path "voices.json"
       :sha256 "e135c22117e3d747f0dd37d7b481e427e81d8031a684c34034043af3b6839f66"
       :url "https://github.com/Blockether/vis/releases/download/assets-pack/vibevoice-tts-voices.json"}]}]}
+ ;; The cpu_int4 ONNX export of Qwen3-TTS-12Hz-1.7B-CustomVoice by speed-brain-ai
+ ;; (Apache-2.0), served from Hugging Face at a pinned revision. Vis does not host it.
+ ;; The nine speakers are built into the model, so this catalogue is the whole catalogue.
+ ;; About 3.7 GB, so it comes down only when the Qwen3-TTS engine is used or named.
+ {:id "qwen3-tts-12hz-1.7b-customvoice-int4"
+  :engine :qwen-tts
+  :install-dir "qwen3-tts-12hz-1.7b-customvoice-int4"
+  :requires ["text_embed.onnx" "codec_embed.onnx" "talker_cache.onnx" "code_predictor_loop.onnx" "residual_embed.onnx" "tok_decoder.onnx" "config.json" "tokenizer.json"]
+  :voices
+  [{:gender :male :id "ryan" :label "Ryan (lively man, English)" :language "en"}
+   {:gender :male :id "aiden" :label "Aiden (American man)" :language "en"}
+   {:gender :female :id "serena" :label "Serena (warm woman, Chinese)" :language "zh"}
+   {:gender :female :id "vivian" :label "Vivian (bright woman, Chinese)" :language "zh"}
+   {:gender :male :id "uncle_fu" :label "Uncle Fu (deep man, Chinese)" :language "zh"}
+   {:gender :male :id "dylan" :label "Dylan (Beijing man)" :language "zh"}
+   {:gender :male :id "eric" :label "Eric (Sichuan man)" :language "zh"}
+   {:gender :female :id "ono_anna" :label "Ono Anna (Japanese woman)" :language "ja"}
+   {:gender :female :id "sohee" :label "Sohee (Korean woman)" :language "ko"}]
+  :license "Apache-2.0"
+  :attribution
+  "Qwen3-TTS-12Hz-1.7B-CustomVoice by the Qwen team, Alibaba Cloud (https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice), Apache-2.0. ONNX export by speed-brain-ai (https://huggingface.co/speed-brain-ai/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX), Apache-2.0, revision 2e4a8340. Tokenizer from Qwen2.5-0.5B by Alibaba Cloud (https://huggingface.co/Qwen/Qwen2.5-0.5B), Apache-2.0."
+  :source-url "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+  :notice
+  "Tell listeners that the audio is synthetic, and do not use it to imitate a real person without consent."
+  :is-commercial-ok true
+  :is-redistributed false
+  :sources
+  [{:host :upstream
+    :kind :files
+    :files
+    [{:bytes 1278241408
+      :path "text_embed.onnx"
+      :sha256 "acb3609ae40457f51b3bc3592116f9108bd3d4060482b8321a6d142157e1007e"
+      :url "https://huggingface.co/speed-brain-ai/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX/resolve/2e4a83409d0485aacd525c3c4406ef4391216ebd/cpu_int4/text_embed.onnx"}
+     {:bytes 25167636
+      :path "codec_embed.onnx"
+      :sha256 "0c2872083c9942ad9994d7490972acfc9b9403a19850cc15f9c9fffd91ff5809"
+      :url "https://huggingface.co/speed-brain-ai/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX/resolve/2e4a83409d0485aacd525c3c4406ef4391216ebd/cpu_int4/codec_embed.onnx"}
+     {:bytes 908835802
+      :path "talker_cache.onnx"
+      :sha256 "d206dabba3bc2f849d937b91044fa1ce0ecb197ed0ae259121ebc3d6d7c0ebf5"
+      :url "https://huggingface.co/speed-brain-ai/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX/resolve/2e4a83409d0485aacd525c3c4406ef4391216ebd/cpu_int4/talker_cache.onnx"}
+     {:bytes 715419266
+      :path "code_predictor_loop.onnx"
+      :sha256 "081b0704b0dd528e771db5a51fa6cb99bd4a8ce484f2e36fd3001d2f8a7a3802"
+      :url "https://huggingface.co/speed-brain-ai/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX/resolve/2e4a83409d0485aacd525c3c4406ef4391216ebd/cpu_int4/code_predictor_loop.onnx"}
+     {:bytes 276867775
+      :path "residual_embed.onnx"
+      :sha256 "e62fbfc7a0258eda6e6bba5375eee1b179fea3ace72ed56d9ffa046cc17166b7"
+      :url "https://huggingface.co/speed-brain-ai/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX/resolve/2e4a83409d0485aacd525c3c4406ef4391216ebd/cpu_int4/residual_embed.onnx"}
+     {:bytes 457908449
+      :path "tok_decoder.onnx"
+      :sha256 "ba41e417651ccb5896c854fed480dee5d89b8fa4459164de4ef9ff259861d011"
+      :url "https://huggingface.co/speed-brain-ai/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX/resolve/2e4a83409d0485aacd525c3c4406ef4391216ebd/cpu_int4/tok_decoder.onnx"}
+     {:bytes 4908
+      :path "config.json"
+      :sha256 "17a07f527a1c25ea30b4e023a184482a23d3e279d697b1dc81b1bde498d29cf9"
+      :url "https://huggingface.co/speed-brain-ai/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX/resolve/2e4a83409d0485aacd525c3c4406ef4391216ebd/config.json"}
+     {:bytes 7031645
+      :path "tokenizer.json"
+      :sha256 "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
+      :url "https://huggingface.co/Qwen/Qwen2.5-0.5B/resolve/060db6499f32faf8b98477b0a26969ef7d8b9987/tokenizer.json"}]}]}
  ;; WHAT A VIBEVOICE VOICE SOUNDS LIKE, before the 1.2 GB model is here: the Piper
  ;; sample sentence in all 25 voices, levelled like the Piper samples. Made by
  ;; `bin/make-vibevoice-samples` with the model above. A machine that has the model

@@ -76,7 +76,7 @@
 
     (bit-xor z (unsigned-bit-shift-right z 31))))
 
-(defn- uniform
+(defn uniform
   ^double [^longs state]
   (* (double (unsigned-bit-shift-right (next-u64 state) 11)) (/ 1.0 9007199254740992.0)))
 
@@ -97,23 +97,23 @@
 
 ;; ONNX Runtime
 
-(defn- environment ^OrtEnvironment [] (runtime/ensure-ort!) (OrtEnvironment/getEnvironment))
+(defn environment ^OrtEnvironment [] (runtime/ensure-ort!) (OrtEnvironment/getEnvironment))
 
-(defn- float-tensor
+(defn float-tensor
   ^OnnxTensor [^OrtEnvironment env ^floats data shape]
   (OnnxTensor/createTensor env (FloatBuffer/wrap data) (long-array shape)))
 
-(defn- long-tensor
+(defn long-tensor
   ^OnnxTensor [^OrtEnvironment env ^longs data shape]
   (OnnxTensor/createTensor env (LongBuffer/wrap data) (long-array shape)))
 
-(defn- output
+(defn output
   ^OnnxTensor [^OrtSession$Result result ^String output-name]
   (.get ^Optional (.get result output-name)))
 
 (defn- tensor-shape ^longs [^OnnxTensor tensor] (.getShape ^TensorInfo (.getInfo tensor)))
 
-(defn- floats-of
+(defn floats-of
   ^floats [^OnnxTensor tensor]
   (let [b
         (.getFloatBuffer tensor)
@@ -124,7 +124,7 @@
     (.get b a)
     a))
 
-(defn- run-session ^OrtSession$Result [^OrtSession session ^Map inputs] (.run session inputs))
+(defn run-session ^OrtSession$Result [^OrtSession session ^Map inputs] (.run session inputs))
 
 (defn- kv-names
   "`past_key_0 past_value_0 …` (or `present_…`) for `layers` layers, in feed order."
@@ -150,20 +150,20 @@
   [^OrtSession$Result result layers]
   (mapv #(output result %) (kv-names "present" layers)))
 
-(defn- holder
+(defn holder
   "Three result slots: storing a result closes the one it replaces, and
    `close-all!` closes what is left."
   []
   (object-array 3))
 
-(defn- hold!
+(defn hold!
   ^OrtSession$Result [^objects slots ^long i ^OrtSession$Result result]
   (when-let [old (aget slots i)]
     (.close ^OrtSession$Result old))
   (aset slots i result)
   result)
 
-(defn- close-all!
+(defn close-all!
   [^objects slots]
   (dotimes [i (alength slots)]
     (when-let [r (aget slots i)]
@@ -174,18 +174,18 @@
 
 (defonce ^:private loaded* (atom {}))
 
-(defn- read-json [^File f] (json/read-json (slurp f)))
+(defn read-json [^File f] (json/read-json (slurp f)))
 
-(defn- open-session
+(defn open-session
   ^OrtSession [^OrtEnvironment env ^File file]
   (with-open [options (OrtSession$SessionOptions.)]
     (.createSession env (.getAbsolutePath file) options)))
 
-(defn- open-tokenizer
+(defn open-tokenizer
   ^HuggingFaceTokenizer [^File file]
   (HuggingFaceTokenizer/newInstance (.toPath file) {"truncation" "false" "padding" "false"}))
 
-(defn- loaded
+(defn loaded
   "The bundle in `dir`, opened by `open` once and shared."
   [kind ^File dir open]
   (let [k [kind (.getAbsolutePath dir)]]
@@ -211,7 +211,7 @@
       (.close ^OrtSession v))
     (reset! loaded* {})))
 
-(defn- token-ids
+(defn token-ids
   "Token ids of `text` without special tokens. DJL `Encoding` requests character
    spans that fail in native-image, so this reads the ids straight from the library."
   [^HuggingFaceTokenizer tokenizer ^String text]

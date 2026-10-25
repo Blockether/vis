@@ -240,7 +240,7 @@
 (defn- speech-handler
   "POST /v1/sessions/:sid/speech — body is JSON `{\"text\": …, \"voice\": …, \"seed\": …}`
    and `?engine=` names the engine. The optional integer `seed` selects another take of
-   the same line on an engine that samples noise (VibeVoice); others ignore it. Answers the AUDIO for a short line and **202 with a job**
+   the same line on an engine that samples noise (VibeVoice, Qwen3-TTS); others ignore it. Answers the AUDIO for a short line and **202 with a job**
    for a long one.
 
    That split is the whole point: a spoken acknowledgement must land in one round trip,
