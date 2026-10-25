@@ -435,6 +435,8 @@ def test_extension_sessions_create_list_and_run_through_the_host(monkeypatch):
             return _host_reply(200, {"sessions": [session], "next_cursor": None})
         if frame["route"] == "/v1/sessions/actions/search":
             return _host_reply(200, {"sessions": []})
+        if frame["route"] == "/v1/models":
+            return _host_reply(200, {"models": []})
         raise AssertionError(frame)
 
     monkeypatch.setattr(vis._host, "request", request)
@@ -443,10 +445,12 @@ def test_extension_sessions_create_list_and_run_through_the_host(monkeypatch):
     assert vis.sessions.get("N").id == "N"
     assert [row["id"] for row in vis.sessions.list()] == ["N"]
     assert vis.sessions.list(search="deploy") == []
+    assert vis.sessions.models(is_available=True) == ()
     assert frames == [
         ("POST", "/v1/sessions", None),
         ("GET", "/v1/sessions", None),
         ("GET", "/v1/sessions/actions/search", "q=deploy"),
+        ("GET", "/v1/models", None),
     ]
 
 

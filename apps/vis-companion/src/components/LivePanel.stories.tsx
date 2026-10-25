@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
+import { SWARM_FORGE_BOARD } from '../dev/live-swarm-data';
 import { STORY_INERT_CLIENT, STORY_LIVE_PRIMITIVES } from '../dev/story-data';
 import { HeaderPins, LivePanel } from './LivePanel';
 import { LiveViewPanel } from './LiveView';
@@ -117,6 +118,20 @@ export const InputsAndCards: StoryObj<typeof LiveViewPanel> = {
     await userEvent.click(canvas.getByRole('button', { name: 'Queue job' }));
     await expect(args.onChange).toHaveBeenCalledWith('name', 'release');
     await expect(args.onSubmit).toHaveBeenCalledWith('queue', { name: 'release', notes: '' });
+  },
+};
+
+/**
+ * The Swarm Forge board as its extension paints it: counters first, then the work that
+ * needs you, the lanes, the queue and the controls. No line joins facts with dots.
+ */
+export const SwarmForgeBoard: Story = {
+  args: { views: [wired(SWARM_FORGE_BOARD)] },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText('Need you')).toBeVisible();
+    await expect(canvas.getByRole('button', { name: 'Approve' })).toBeVisible();
+    await expect(canvas.getByRole('textbox', { name: 'Answer, required' })).toBeInTheDocument();
+    await expect(canvas.queryByText(/ · /)).toBeNull();
   },
 };
 

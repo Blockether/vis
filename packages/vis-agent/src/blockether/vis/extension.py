@@ -238,6 +238,16 @@ class Sessions:
         """Return the `Session` handle of `session_id` without a request."""
         return _host_layer().session(session_id)
 
+    def models(
+        self, *, provider: str | None = None, is_available: bool | None = None
+    ) -> tuple[Any, ...]:
+        """Return the `Model` records that the model pickers show, in picker order.
+
+        The filters are those of `ExecutionLayer.models`. A thread of your extension
+        can also call it.
+        """
+        return _host_layer().models(provider=provider, is_available=is_available)
+
     def list(self, search: str | None = None) -> list[dict[str, Any]]:
         """Return the session records of the first page, or the matches of `search`."""
         layer = _host_layer()
@@ -5499,8 +5509,9 @@ class _LiveRecorder:
                     "only an enabled button or a selectable card in an open view "
                     "can be activated"
                 )
-            self._event("activate", node_id)
-            return json.loads(
+            # The host counts the press before a callback sees it: the callback can
+            # repaint the view and remove this button.
+            answer = json.loads(
                 self.host_live(
                     json.dumps(
                         {
@@ -5518,6 +5529,8 @@ class _LiveRecorder:
                     )
                 )
             )
+            self._event("activate", node_id)
+            return answer
 
     def _event(self, kind, node_id, **payload):
         self._cursor += 1
