@@ -396,7 +396,7 @@
     "  - lines: `{\"from\": a, \"to\": b, \"replace\": text}` with `patch(path, edits, version)`. `version` is "
     "the `@` value of the `cat` or `grep` header that showed the lines. Use it for long spans.\n"
     "- `to` defaults to `from`. A `replace` of `\"\"` deletes. `replace` is new file text without `N│ ` gutters.\n"
-    "- Reproduce a bug before you edit and again after the fix.\n" "\n"
+    "- Reproduce each reported symptom before you edit. After the fix, show that each one is gone.\n" "\n"
     "## 4. Edit and check\n" "- Make small in-scope changes. Keep unrelated work and formatting.\n"
     "- Treat a reported symptom as one case of a class. Find every root cause and fix the whole class through the "
     "existing interfaces. If a symptom conflicts with a design document, remove the symptom.\n"

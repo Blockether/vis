@@ -910,7 +910,8 @@
       ;; Vis from 3/9 to 7/9 on the same build: fixes reached only the reported case before.
       ;; 13.25k → 13.4k: in CTB, Vis measured a speedup on mismatched graph pairs and a baseline
       ;; with its own client, while the checkers used matching pairs and the running load. It
-      ;; claimed 12x to 67000x and got 1.75x and 940x. It lands at 13 359.
+      ;; claimed 12x to 67000x and got 1.75x and 940x. With per-symptom reproduction, it lands
+      ;; at 13 394.
       (expect (< (count text) 13400))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "`N│ text` rows" "`patch(path, edits)`"])]
@@ -983,7 +984,8 @@
                ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
                ;; "print only what the answer needs" a contract instead of cost advice.
                "`print()` is the one channel back" "you get only what you print"
-               "For an unknown shape" "Reproduce a bug before you edit and again after the fix"
+               "For an unknown shape" "Reproduce each reported symptom before you edit"
+               "show that each one is gone"
                "never in a project without tests" "Name unrelated failures; do not fix them"
                "Write only the files that the task needs" "Commit and push"
                "Treat context as a budget"
