@@ -113,7 +113,8 @@
                      ["_contracts.py" "_wire.py" "activity.py" "views.py" "engine/__init__.py"
                       "engine/_agent.py" "engine/_agents.py" "engine/_client.py"
                       "engine/_council.py" "engine/_extensions.py" "engine/_host.py"
-                      "engine/_install.py" "engine/_local.py" "engine/_models.py"])
+                      "engine/_install.py" "engine/_local.py" "engine/_models.py"
+                      "engine/_speech.py"])
                 (map (fn [schema]
                        [(str "vis_engine/blockether/vis/_data/schema/" schema ".json")
                         (str "vis-contract/schema/" schema ".json")])

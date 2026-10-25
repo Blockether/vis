@@ -1437,7 +1437,8 @@
       "operations": {
         "post": {
           "request": "json",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/speech"
@@ -1447,11 +1448,13 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/speech/jobs/:job-id"
@@ -1461,7 +1464,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "binary"
+          "response": "binary",
+          "extension": "background"
         }
       },
       "path": "/v1/speech/jobs/:job-id/audio"
@@ -1481,11 +1485,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/speech/model"
@@ -1495,11 +1501,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "post": {
           "request": "binary",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/speech/voices"
@@ -1509,7 +1517,13 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
+        },
+        "patch": {
+          "request": "json",
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/speech/voices/:voice-id"
@@ -1519,7 +1533,8 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "binary"
+          "response": "binary",
+          "extension": "background"
         }
       },
       "path": "/v1/speech/voices/:voice-id/sample"
@@ -1601,7 +1616,8 @@
       "operations": {
         "post": {
           "request": "binary",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/voice"
@@ -1611,11 +1627,13 @@
       "operations": {
         "delete": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         }
       },
       "path": "/v1/voice/jobs/:job-id"
@@ -1635,11 +1653,13 @@
       "operations": {
         "get": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "background"
         },
         "post": {
           "request": "none",
-          "response": "json"
+          "response": "json",
+          "extension": "callback"
         }
       },
       "path": "/v1/voice/model"

@@ -36,6 +36,7 @@ from ._council import (
 from ._install import InstallError, ensure_installed, install
 from ._local import LocalEngine
 from ._models import Model, SessionModel
+from ._speech import Speech, SpeechAudio, Transcript, Voice
 
 __all__ = [
     "Agent",
@@ -65,10 +66,14 @@ __all__ = [
     "Response",
     "Session",
     "SessionModel",
+    "Speech",
+    "SpeechAudio",
     "StructuredOutputError",
+    "Transcript",
     "TransportError",
     "Turn",
     "VisTimeout",
+    "Voice",
     "ensure_installed",
     "final_answer",
     "install",

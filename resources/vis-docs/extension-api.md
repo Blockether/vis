@@ -1252,6 +1252,8 @@ def start_review(path: str) -> str:
 - `vis.run(request, ...)` creates an independent session and runs one turn in it. It takes the
   arguments of `Agent.run`, also `response_model`. Without `response_model`, check the `status` of
   the turn.
+- `vis.speech` speaks text, transcribes audio and adds, changes or removes voices. It has the
+  methods of `client.speech` in the [Speech API](speech-api.md#use-speech-in-an-extension).
 
 The host records your extension as the origin of each session that it creates. Such a session has no
 parent. [Choose the model of a session](sessions-api.md#choose-the-model-of-a-session) shows the

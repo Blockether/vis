@@ -5563,7 +5563,11 @@
                     body (wire/parse-json (:body response))]
 
                 (expect (= 201 (:status response)))
-                (expect (= {"id" "my-own" "label" "My Own" "language" "en-GB" "is_imported" true}
+                (expect (= {"id" "my-own"
+                            "label" "My Own"
+                            "language" "en-GB"
+                            "clip_text" "what the clip says"
+                            "is_imported" true}
                            (get body "voice")))
                 ;; the engine was handed the RECORDING, not merely a name for it
                 (expect (= "RIFFclip" (:heard (get @store "my-own"))))
@@ -6245,6 +6249,8 @@
                  (get-in (match-by-path router "/v1/speech/voices") [:data :post :handler])))
       (expect (= @#'speech-api/speech-voice-handler
                  (get-in (match-by-path router "/v1/speech/voices/mine") [:data :delete :handler])))
+      (expect (= @#'speech-api/speech-voice-handler
+                 (get-in (match-by-path router "/v1/speech/voices/mine") [:data :patch :handler])))
       (expect (= @#'speech-api/speech-voice-sample-handler
                  (get-in (match-by-path router "/v1/speech/voices/mine/sample")
                          [:data :get :handler])))

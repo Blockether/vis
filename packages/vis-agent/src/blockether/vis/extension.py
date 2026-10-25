@@ -308,8 +308,14 @@ def __getattr__(name: str) -> Any:
     """Create the API of the bound session through the host on first use.
 
     `session` is the `Session` of the bound Vis session, and `council` is its
-    `Council`. Without a bound session, both raise `RuntimeError`.
+    `Council`. Without a bound session, both raise `RuntimeError`. `speech` is the
+    `blockether.vis.engine.Speech` API of the gateway: voices, synthesis and
+    transcription. A voice change needs an extension callback.
     """
+    if name == "speech":
+        from blockether.vis.engine._speech import Speech
+
+        return Speech(_host_layer())
     if name in ("session", "council"):
         sid = _host.bound_session()
         if not sid:

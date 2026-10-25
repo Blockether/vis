@@ -63,6 +63,10 @@
      "Show progress and controls while an extension watches a build or other ongoing work."
      :page "live-views"
      :title "Live views"}
+     {:blurb
+      "Speak text, transcribe recordings and add your own voices from a short recording."
+      :page "speech"
+      :title "Speech and voices"}
     {:blurb
      "Understand where the agent runs Python, which packages it uses and what it can access."
      :page "python-sandbox"
@@ -130,6 +134,11 @@
         :label "Evaluations"
         :page "evals-api"
         :title "Evaluations API"}
+       {:blurb
+        "Speak text, transcribe audio and add, change or remove your own voices from Python or with HTTP requests."
+        :label "Speech"
+        :page "speech-api"
+        :title "Speech API"}
       {:blurb
        "Read and change settings for the gateway, a project, a group or a session from Python or with HTTP requests."
        :label "Configuration"

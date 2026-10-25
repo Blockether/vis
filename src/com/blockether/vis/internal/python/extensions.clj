@@ -781,6 +781,15 @@
    [:patch "/v1/sessions/:sid/model"] [:vis.session.set-model "Set session model" false]
    [:post "/v1/sessions/:sid/turns"] [:vis.session.run "Run session" false]
    [:patch "/v1/sessions/:sid/turns/:tid"] [:vis.turn.update "Update turn" false]
+   [:post "/v1/speech"] [:vis.speech.speak "Speak text" true]
+   [:delete "/v1/speech/jobs/:job-id"] [:vis.speech.cancel "Cancel speech" false]
+   [:post "/v1/speech/model"] [:vis.speech.prepare "Prepare speech model" true]
+   [:post "/v1/speech/voices"] [:vis.speech.add-voice "Add voice" false]
+   [:patch "/v1/speech/voices/:voice-id"] [:vis.speech.update-voice "Update voice" false]
+   [:delete "/v1/speech/voices/:voice-id"] [:vis.speech.remove-voice "Remove voice" false]
+   [:post "/v1/voice"] [:vis.voice.transcribe "Transcribe audio" true]
+   [:delete "/v1/voice/jobs/:job-id"] [:vis.voice.cancel "Cancel transcription" false]
+   [:post "/v1/voice/model"] [:vis.voice.prepare "Prepare transcription model" true]
    [:delete "/v1/sessions/:sid/turns/:tid"] [:vis.turn.delete "Delete turn" false]
    [:post "/v1/sessions/:sid/turns/:tid/cancel"] [:vis.turn.cancel "Cancel turn" false]})
 

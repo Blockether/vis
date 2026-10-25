@@ -208,6 +208,9 @@
     (:is-opt-in voice)
     (assoc :is-opt-in true)
 
+    (:clip-text voice)
+    (assoc :clip-text (:clip-text voice))
+
     (:is-imported voice)
     (assoc :is-imported true)))
 
@@ -260,6 +263,18 @@
     (public-voice (f clip))
     (throw (ex-info (str (or (:label engine) (name (:id engine)))
                          " cannot learn a voice from a recording")
+                    {:type :vis/voice-import-unsupported :engine (name (:id engine))}))))
+
+(defn update-voice!
+  "Change the label, language or transcript of an imported voice. `changes` is
+   `{:voice-name :language :text}`, where an absent key keeps its value. Returns the
+   voice in the shape every surface reports, or nil when the engine has no such voice."
+  [engine id changes]
+  (if-let [f (:update-voice engine)]
+    (some-> (f id changes)
+            public-voice)
+    (throw (ex-info (str (or (:label engine) (name (:id engine)))
+                         " does not keep voices of its own")
                     {:type :vis/voice-import-unsupported :engine (name (:id engine))}))))
 
 (defn forget-voice!
@@ -330,7 +345,7 @@
 (defn- call-engine
   "Run one piece of work on THIS thread and answer the keys a job carries: a transcript
    for `:transcribe`, the audio file and its facts for `:synthesize`."
-  [direction engine {:keys [audio-path text voice-id]} report job-id]
+  [direction engine {:keys [audio-path text voice-id seed]} report job-id]
   (let [request
         (cond-> (case direction
                   :transcribe
@@ -339,7 +354,10 @@
                   :synthesize
                   (cond-> {:text (str text) :on-progress report}
                     voice-id
-                    (assoc :voice-id voice-id)))
+                    (assoc :voice-id voice-id)
+
+                    seed
+                    (assoc :seed seed)))
           job-id
           (assoc :job-id job-id))
 

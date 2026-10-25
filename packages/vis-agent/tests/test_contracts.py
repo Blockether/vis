@@ -56,10 +56,10 @@ def test_gateway_routes_and_lease_policy_are_shared():
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
     assert len(routes) == 169
-    assert len(operations) == 205
+    assert len(operations) == 206
     assert Counter(operation["request"] for operation in operations) == {
         "none": 123,
-        "json": 76,
+        "json": 77,
         "binary": 6,
     }
     assert by_path["/v1/decisions/models"]["operations"]["get"] == {
@@ -93,6 +93,12 @@ def test_gateway_routes_and_lease_policy_are_shared():
     assert by_path["/v1/speech/voices"]["operations"]["post"] == {
         "request": "binary",
         "response": "json",
+        "extension": "callback",
+    }
+    assert by_path["/v1/speech/voices/:voice-id"]["operations"]["patch"] == {
+        "request": "json",
+        "response": "json",
+        "extension": "callback",
     }
     assert by_path["/v1/settings"]["operations"]["patch"] == {
         "request": "json",

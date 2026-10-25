@@ -33,6 +33,7 @@
                                        (tts/synthesize! :pocket-tts %)))
     :voices tts/pocket-voices
     :import-voice voices/import!
+    :update-voice voices/update!
     :forget-voice voices/forget!
     :model-state #(tts/model-state :pocket-tts)
     :start-download #(tts/start-download! :pocket-tts)

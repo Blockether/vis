@@ -520,6 +520,9 @@
                                  :is-imported true}]
                       (swap! store assoc (:id voice) voice)
                       voice))
+    :update-voice (fn [id {:keys [voice-name]}]
+                    (when (contains? @store id)
+                      (get (swap! store assoc-in [id :label] voice-name) id)))
     :forget-voice (fn [id]
                     (let [had? (contains? @store id)]
                       (swap! store dissoc id)
@@ -543,14 +546,26 @@
               (expect (true? (:is-voice-import (first (:engines (speech/engines-info
                                                                   :synthesize))))))
               ;; the recording becomes a voice in the catalogue a caller picks from
-              (expect (= {:id "my-own" :label "My Own" :language "en-GB" :is-imported true}
+              (expect (= {:id "my-own"
+                          :label "My Own"
+                          :language "en-GB"
+                          :clip-text "what the clip says"
+                          :is-imported true}
                          (speech/import-voice! engine
                                                {:path "/tmp/clip.wav"
                                                 :voice-name "My Own"
                                                 :language "en-GB"
                                                 :text "what the clip says"})))
-              (expect (= [{:id "my-own" :label "My Own" :language "en-GB" :is-imported true}]
+              (expect (= [{:id "my-own"
+                           :label "My Own"
+                           :language "en-GB"
+                           :clip-text "what the clip says"
+                           :is-imported true}]
                          (speech/voices engine)))
+              ;; a voice can be renamed in place; its id stays
+              (expect (= "Mine Now"
+                         (:label (speech/update-voice! engine "my-own" {:voice-name "Mine Now"}))))
+              (expect (nil? (speech/update-voice! engine "nobody" {:voice-name "X"})))
               ;; which file backs a voice stays the engine's business
               (expect (not-any? :clip (speech/voices engine)))
               ;; forgetting twice is the same outcome, never an error
@@ -564,7 +579,9 @@
                    (refusal #(speech/import-voice! plain
                                                    {:path "/tmp/clip.wav" :voice-name "Mine"}))))
         (expect (= "pocket-tts does not keep voices of its own"
-                   (refusal #(speech/forget-voice! plain "mine")))))))
+                   (refusal #(speech/forget-voice! plain "mine"))))
+        (expect (= "pocket-tts does not keep voices of its own"
+                   (refusal #(speech/update-voice! plain "mine" {:voice-name "X"})))))))
 
 ;; A voice is a NAME until you hear it
 

@@ -340,6 +340,32 @@
           :clip (str (clip-file id))
           :is-imported true)))))
 
+(defn update!
+  "Change what Vis records about the imported voice `id` and return the voice, or nil
+   when there is no such voice. `:voice-name` sets the label, `:language` the language
+   and `:text` the clip's transcript; an absent key keeps its value and a blank one
+   removes it. The id never changes, because scripts and settings refer to it. Import
+   the recording again under the same name to replace the audio itself."
+  [id {:keys [voice-name language text] :as changes}]
+  (when-let [voice (imported-voice id)]
+    (let [id (:id voice)
+          stored (dissoc voice :clip :is-imported)
+          change (fn [m k field value]
+                   (cond (not (contains? changes field)) m
+                         (str/blank? (str value)) (dissoc m k)
+                         :else (assoc m k (str/trim (str value)))))
+          updated (-> stored
+                      (change :label :voice-name voice-name)
+                      (change :language :language language)
+                      (change :clip-text :text text)
+                      (update :label #(or (not-empty %) id))
+                      (assoc :updated-at (str (java.time.Instant/now))))]
+
+      (spit (meta-file id) (pr-str updated))
+      (assoc updated
+        :clip (str (clip-file id))
+        :is-imported true))))
+
 (defn forget!
   "Delete an imported voice. True when there was one to delete: the clip is the
    voice, so removing the file removes it from every catalogue at once."

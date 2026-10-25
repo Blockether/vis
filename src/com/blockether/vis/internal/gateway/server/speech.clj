@@ -238,8 +238,9 @@
          (finally (.delete f)))))
 
 (defn- speech-handler
-  "POST /v1/sessions/:sid/speech — body is JSON `{\"text\": …, \"voice\": …}` and
-   `?engine=` names the engine. Answers the AUDIO for a short line and **202 with a job**
+  "POST /v1/sessions/:sid/speech — body is JSON `{\"text\": …, \"voice\": …, \"seed\": …}`
+   and `?engine=` names the engine. The optional integer `seed` selects another take of
+   the same line on an engine that samples noise (VibeVoice); others ignore it. Answers the AUDIO for a short line and **202 with a job**
    for a long one.
 
    That split is the whole point: a spoken acknowledgement must land in one round trip,
@@ -270,14 +271,24 @@
                     not-empty
                     keyword)
 
+            seed
+            (get body "seed")
+
             work
             (cond-> {:text text :engine-id (:id engine)}
               voice-id
-              (assoc :voice-id voice-id))]
+              (assoc :voice-id voice-id)
+
+              (integer? seed)
+              (assoc :seed (long seed)))]
 
         (cond (str/blank? text) (http/error-response 400
                                                      :invalid-request
                                                      "body must be JSON with a non-empty \"text\"")
+              (and (some? seed) (not (and (integer? seed) (<= 0 (long seed) 2147483647))))
+              (http/error-response 400
+                                   :invalid-request
+                                   "\"seed\" must be an integer from 0 to 2147483647")
               (> (count text) (long speech-max-chars))
               (http/error-response 413
                                    :text-too-long
@@ -415,19 +426,51 @@
                           (catch Throwable t (voice-import-failure t))
                           (finally (.delete tmp))))))))
 
+(defn- voice-changes
+  "The `{:voice-name :language :text}` changes of a PATCH body, or nil when the body is
+   not a JSON object of strings. Only the keys that the body names are present."
+  [body]
+  (when (and (map? body)
+             (seq body)
+             (every? #{"name" "language" "text"} (keys body))
+             (every? #(or (nil? %) (string? %)) (vals body)))
+    (cond-> {}
+      (contains? body "name")
+      (assoc :voice-name (get body "name"))
+
+      (contains? body "language")
+      (assoc :language (get body "language"))
+
+      (contains? body "text")
+      (assoc :text (get body "text")))))
+
 (defn- speech-voice-handler
   "DELETE /v1/speech/voices/:voice-id - forget an imported voice.
+   PATCH  the same path - JSON `{\"name\": …, \"language\": …, \"text\": …}` changes the
+          label, language or clip transcript. An absent key keeps its value; the id stays.
 
-   404 when the engine has no such imported voice: a client that deleted a voice it
+   404 when the engine has no such imported voice: a client that changed a voice it
    could still see is looking at a stale catalogue, and that is worth being told."
   [request]
-  (with-engine :synthesize
-               request
-               (fn [engine]
-                 (try (if (speech/forget-voice! engine (get-in request [:path-params :voice-id]))
-                        (http/json-response 200 {:is-forgotten true})
-                        (http/error-response 404 :voice-not-found "no imported voice with that id"))
-                      (catch Throwable t (voice-import-failure t))))))
+  (with-engine
+    :synthesize
+    request
+    (fn [engine]
+      (let [voice-id (get-in request [:path-params :voice-id])]
+        (try (if (= :patch (:request-method request))
+               (if-let [changes (voice-changes (try (http/body-json request)
+                                                    (catch Throwable _ nil)))]
+                 (if-let [voice (speech/update-voice! engine voice-id changes)]
+                   (http/json-response 200 {:voice voice})
+                   (http/error-response 404 :voice-not-found "no imported voice with that id"))
+                 (http/error-response
+                   400
+                   :invalid-request
+                   "body must be a JSON object with string \"name\", \"language\" or \"text\""))
+               (if (speech/forget-voice! engine voice-id)
+                 (http/json-response 200 {:is-forgotten true})
+                 (http/error-response 404 :voice-not-found "no imported voice with that id")))
+             (catch Throwable t (voice-import-failure t)))))))
 
 (defn- speech-voice-sample-handler
   "GET /v1/speech/voices/:voice-id/sample - what this voice SOUNDS like, as audio.
@@ -558,6 +601,7 @@
    [:get "/v1/speech/voices"] speech-voices-handler
    [:post "/v1/speech/voices"] speech-voices-handler
    [:delete "/v1/speech/voices/:voice-id"] speech-voice-handler
+   [:patch "/v1/speech/voices/:voice-id"] speech-voice-handler
    [:get "/v1/speech/voices/:voice-id/sample"] speech-voice-sample-handler
    [:get "/v1/voice/model"] voice-model-handler
    [:post "/v1/voice/model"] voice-model-handler

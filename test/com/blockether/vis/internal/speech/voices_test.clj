@@ -97,6 +97,31 @@
             ;; deleting a voice twice is not an error, it is the same outcome
             (expect (false? (voices/forget! "studio-take-1")))
             (expect (empty? (seq (.list (io/file dir)))))))))
+  (it "changes the label, language and transcript but keeps the id and the clip"
+      (with-voices-dir
+        (fn [_dir]
+          (let [voice
+                (voices/import! {:path (str (wav! 2 24000 1))
+                                 :voice-name "Anna"
+                                 :language "en"
+                                 :text "first words"})
+
+                changed
+                (voices/update! "anna" {:voice-name "Anna Kowalska" :text "new words"})]
+
+            (expect (= "anna" (:id changed)))
+            (expect (= "Anna Kowalska" (:label changed)))
+            (expect (= "en" (:language changed)))
+            (expect (= "new words" (:clip-text changed)))
+            (expect (= (:clip voice) (:clip changed)))
+            (expect (= (dissoc changed :clip :is-imported)
+                       (dissoc (voices/imported-voice "anna") :clip :is-imported)))
+            ;; a blank value removes the field; the label falls back to the id
+            (let [cleared (voices/update! "anna" {:voice-name "" :language nil})]
+              (expect (= "anna" (:label cleared)))
+              (expect (not (contains? cleared :language)))
+              (expect (= "new words" (:clip-text cleared))))
+            (expect (nil? (voices/update! "nobody" {:voice-name "X"})))))))
   (it "names the voice after the file when nobody named it"
       (with-voices-dir (fn [_dir]
                          (let [file

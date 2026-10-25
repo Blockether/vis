@@ -29,6 +29,7 @@ from blockether.vis.views import InputView, LiveView, ViewEvent
 
 if TYPE_CHECKING:
     from ._agent import ResponseModel
+    from ._speech import Speech
 
 JSONValue: TypeAlias = (
     str | int | float | bool | None | list["JSONValue"] | dict[str, "JSONValue"]
@@ -400,6 +401,13 @@ class ExecutionLayer(ABC):
             raise VisTimeout("gateway response timed out") from None
         except OSError:
             raise TransportError("gateway response interrupted") from None
+
+    @property
+    def speech(self) -> Speech:
+        """Return the `Speech` API: voices, synthesis and transcription."""
+        from ._speech import Speech
+
+        return Speech(self)
 
     def session(self, sid: str) -> Session:
         """Return a lightweight handle for an existing session ID.
@@ -2854,6 +2862,25 @@ class ExecutionLayer(ABC):
             path={"voice-id": voice_id},
             query=query,
             timeout=timeout,
+        )
+        return response.json()
+
+    def patch_speech_voice(
+        self,
+        voice_id: str,
+        *,
+        query: Query | None = None,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> JSONValue:
+        """PATCH /v1/speech/voices/:voice-id — json response."""
+        response = self._request(
+            "PATCH",
+            "/v1/speech/voices/:voice-id",
+            path={"voice-id": voice_id},
+            query=query,
+            timeout=timeout,
+            body=body,
         )
         return response.json()
 
