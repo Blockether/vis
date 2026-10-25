@@ -39,7 +39,6 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   CircleXIcon,
-  MARK_NUDGE,
 } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -202,6 +201,9 @@ function Empty({ children }: { children: string }) {
  * The tone, as a SHAPE. One ring with five interiors says WHICH state, and the
  * colour agrees: colour alone is not a state for the readers who cannot separate
  * green from the amber beside it.
+ *
+ * Each row that holds the mark centres it on the line. Do not add `MARK_NUDGE`: it
+ * moves a centred mark 2px under the caps.
  */
 const TONE_MARK: Record<LiveTone, typeof CircleDotIcon> = {
   idle: CircleDashedIcon,
@@ -213,7 +215,7 @@ const TONE_MARK: Record<LiveTone, typeof CircleDotIcon> = {
 
 export function ToneMark({ tone, className = 'size-3' }: { tone: LiveTone; className?: string }) {
   const Drawn = TONE_MARK[tone];
-  return <Drawn className={`${className} shrink-0 ${MARK_NUDGE} ${MARK_INK[tone]}`} />;
+  return <Drawn className={`${className} shrink-0 ${MARK_INK[tone]}`} />;
 }
 
 /**
