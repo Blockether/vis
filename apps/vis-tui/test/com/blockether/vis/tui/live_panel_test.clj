@@ -86,7 +86,21 @@
                                  (panel-lines [pane] {:folded #{"a"}} 48 12)]
 
                              (expect (str/includes? (first lines) "▸ Swarm board"))
-                             (expect (every? #(= "│" (str/trim %)) (rest lines)))))))
+                             (expect (every? #(= "│" (str/trim %)) (rest lines))))))
+             (describe
+               "a view with input fields"
+               ;; Regression: the node label and the field renderer both drew the label.
+               (it "draws each field label once"
+                   (let [pane
+                         (lv/opened (assoc (view "a" "Swarm board" "swarm" :panel)
+                                      :nodes [{:id "comment" :type :multiline :label "Comment"}
+                                              {:id "title" :type :plaintext :label "Title"}]))
+
+                         {:keys [lines]}
+                         (panel-lines [pane] {} 48 16)]
+
+                     (expect (= 1 (count (filter #(= "Comment" (str/trim (subs % 1))) lines))))
+                     (expect (= 1 (count (filter #(= "Title" (str/trim (subs % 1))) lines))))))))
 
 (defdescribe
   panel-state-test

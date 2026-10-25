@@ -1398,7 +1398,9 @@
           (str (if is-open "▾ " "▸ ")
                (or (:label node) "Output")
                (when (= :log (:type node)) (str " · " (long (or (:total-lines node) 0)) " lines")))
-          (when-not (= :button (:type node)) (flat-text (:label node))))]
+          ;; A button names itself, and the field renderer draws a field's label.
+          (when-not (or (= :button (:type node)) (contains? input-node-types (:type node)))
+            (flat-text (:label node))))]
 
     (with-meta (cond-> []
                  (seq label)
