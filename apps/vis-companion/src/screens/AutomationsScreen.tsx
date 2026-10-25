@@ -202,8 +202,13 @@ export function AutomationsWorkspace({
             </p>
           )}
           {list?.automations.map((automation) => (
-            <div key={automation.id} className="border-b border-dialog-edge">
-              <ListRow disabled={busy} onClick={() => open(automation.id)}>
+            // The row opens the details, so it ends in a chevron. Edit opens the form at once.
+            <div key={automation.id} className="flex items-center border-b border-dialog-edge pr-2">
+              <ListRow
+                className="min-w-0 flex-1"
+                disabled={busy}
+                onClick={() => open(automation.id)}
+              >
                 {automation.enabled ? <AutomationsIcon /> : <PauseIcon />}
                 <span className="min-w-0 flex-1">
                   <span className="block break-words font-mono text-body font-bold text-white">
@@ -213,7 +218,16 @@ export function AutomationsWorkspace({
                     {automationSummary(automation)}
                   </span>
                 </span>
+                <ChevronIcon className="size-3 shrink-0 text-dialog-hint" />
               </ListRow>
+              <IconButton
+                label={`Edit ${automation.name}`}
+                title="Edit"
+                disabled={busy}
+                onClick={() => edit(automation.id)}
+              >
+                <PencilIcon />
+              </IconButton>
             </div>
           ))}
           {!list && error && (

@@ -29,6 +29,16 @@ describe('Automations workspace', () => {
     expect(screen.queryByText(/Automations are off/)).toBeNull();
   });
 
+  it('edits an automation straight from its row and goes back to the list', async () => {
+    renderBand();
+    expect(await screen.findByText('Morning summary')).toBeVisible();
+    click('Edit Morning summary');
+    expect(screen.getByRole('heading', { name: 'Edit Morning summary' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Back to automations' })).toBeNull();
+    click('Cancel');
+    expect(await screen.findByText('Review new pull requests')).toBeVisible();
+  });
+
   it('shows how to create the first automation without a feature switch', async () => {
     renderBand(storyAutomationsClient({ empty: true }));
     expect(await screen.findByText('No automations on this machine.')).toBeVisible();
