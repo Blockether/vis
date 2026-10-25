@@ -48,7 +48,9 @@ class SubagentRecord:
     human holds the queue of the child; only a person can release it. ``unknown`` names a
     session that is not a subagent of the caller. ``warning`` reports a file overlap. A child
     that a 429 stopped is ``failed`` with ``error`` (code ``rate_limited``) and ``alternatives``:
-    the working provider and model routes for a new child.
+    the working provider and model routes for a new child. A running child also has
+    ``activity``, ``notes``, ``messages``, ``step_secs``, ``elapsed_secs`` and ``alerts``: its
+    progress since the last wait.
     """
 
     session_id: str
@@ -64,6 +66,12 @@ class SubagentRecord:
     warning: str | None = None
     error: dict[str, Any] | None = None
     alternatives: list[dict[str, str]] | None = None
+    activity: str | None = None
+    notes: list[str] | None = None
+    messages: list[dict[str, Any]] | None = None
+    step_secs: int | None = None
+    elapsed_secs: int | None = None
+    alerts: list[str] | None = None
 
     @classmethod
     def from_wire(cls, value: dict[str, Any]) -> SubagentRecord:

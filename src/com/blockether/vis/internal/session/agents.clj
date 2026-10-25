@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.provider.auth-health :as auth-health]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.sandbox.policy :as policy]
+            [com.blockether.vis.internal.session.iteration :as iteration]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.util :as util]))
 
@@ -692,9 +693,133 @@
     (:files rec)
     (update :files #(shown-files env %))))
 
+;; The position of the last step that a wait showed, by child turn id. A wait shows only newer
+;; notes and messages. The marks stay in memory: after a restart, a wait shows the latest steps
+;; again.
+(defonce ^:private shown (atom {}))
+
+(defn- epoch-ms
+  [t]
+  (cond (instance? java.util.Date t) (.getTime ^java.util.Date t)
+        (number? t) (long t)))
+
+(defn- clip
+  [s n]
+  (let [s (str/trim (str s))]
+    (if (> (count s) (long n)) (str (subs s 0 n) "…") s)))
+
+(defn- started-at
+  "When child `row` started its current task: at its spawn or at its last resume."
+  [row now]
+  (max (long (or (:created_at row) now)) (long (or (:resumed_at row) 0))))
+
+(defn- current-steps
+  "The turn of child `row` for its current task and the steps of that turn, as `[turn steps]`.
+   A forked child's copied turns are older than its task, so they never count."
+  [db row now]
+  (let [since
+        (- (long (started-at row now)) 1000)
+
+        turn
+        (last (filter #(>= (long (or (epoch-ms (:created-at %)) 0)) since)
+                      (ps/db-list-session-turns-meta db (:session_id row))))]
+
+    [turn
+     (if turn
+       (vec (sort-by #(long (or (:position %) 0))
+                     (ps/db-list-session-turn-iterations db (:id turn))))
+       [])]))
+
+(defn- fresh-steps
+  "The steps of `turn` after the last step that a wait showed."
+  [turn steps]
+  (let [mark (long (get @shown (str (:id turn)) -1))]
+    (filterv #(> (long (or (:position %) -1)) mark) steps)))
+
+(defn- published?
+  "Whether running child `row` published a Council message that no wait showed yet."
+  [db row now]
+  (let [[turn steps] (current-steps db row now)]
+    (boolean (some #(seq (:council-publications %)) (fresh-steps turn steps)))))
+
+(defn- digest
+  "The progress of running child `row` since the last wait: its `activity`, its new progress
+   `notes` and Council `messages`, `step_secs` in its current step, `elapsed_secs` in its task
+   and `alerts`. The alerts are slow_step after 300 s in one step, errors for three failed steps
+   of the last five, and budget at 80% of the iteration budget. Marks the steps as shown."
+  [db row now]
+  (let [[turn steps]
+        (current-steps db row now)
+
+        fresh
+        (fresh-steps turn steps)
+
+        last-at
+        (or (some-> (peek steps)
+                    ((some-fn :finished-at :created-at))
+                    epoch-ms)
+            (epoch-ms (:created-at turn))
+            (started-at row now))
+
+        step-secs
+        (quot (max 0 (- (long now) (long last-at))) 1000)
+
+        errors
+        (count (filter iteration/entry-error (take-last 5 steps)))
+
+        used
+        (:iterations_used row)
+
+        budget
+        (:iteration_budget row)
+
+        notes
+        (->> fresh
+             (keep :assistant-prose)
+             (map #(clip % 300))
+             (take-last 3)
+             vec)
+
+        messages
+        (->> fresh
+             (mapcat :council-publications)
+             (keep :entry_id)
+             (keep #(ps/db-council-get db %))
+             (mapv (fn [e]
+                     {:entry_id (:entry_id e) :kind (:kind e) :content (clip (:content e) 600)})))
+
+        alerts
+        (cond-> []
+          (>= step-secs 300)
+          (conj "slow_step")
+
+          (>= errors 3)
+          (conj "errors")
+
+          (and used budget (>= (* 10 (long used)) (* 8 (long budget))))
+          (conj "budget"))]
+
+    (when-let [p (:position (peek steps))]
+      (swap! shown assoc (str (:id turn)) p))
+    (cond-> {:step_secs step-secs
+             :elapsed_secs (quot (max 0 (- (long now) (long (started-at row now)))) 1000)}
+      (:activity row)
+      (assoc :activity (:activity row))
+
+      (seq notes)
+      (assoc :notes notes)
+
+      (seq messages)
+      (assoc :messages messages)
+
+      (seq alerts)
+      (assoc :alerts alerts))))
+
 (defn- wait-records
   "Poll until every child ends, one child asks or is held, or the timeout ends. A completed
-   child gets 5 s to store its answer."
+   child gets 5 s to store its answer. The wait also ends when a child that was open at its start
+   ends or publishes a Council message. Then the record of each running child also has its
+   [[digest]]."
   [env ids timeout-secs]
   (let [list-fn
         (runtime-fn :list)
@@ -737,28 +862,89 @@
 
         ;; A completed child gets 5 s to store its answer.
         done-at
-        (volatile! nil)]
+        (volatile! nil)
 
-    (util/poll (util/deadline-ms timeout-secs)
-               1000
-               (fn []
-                 (let [now
-                       (util/now-ms)
+        ;; An event wait keeps the children that were open at the first poll, when each
+        ;; of them ended, the step count of each running child and the rows of the last poll.
+        open-ids
+        (volatile! nil)
 
-                       recs
-                       (mapv #(shown-record env (record db (:router env) live? held? now %)) (pick))
+        ended
+        (volatile! {})
 
-                       done?
-                       (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
+        steps
+        (volatile! {})
 
-                       answered?
-                       (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
+        last-rows
+        (volatile! [])
 
-                   (when (and done? (nil? @done-at)) (vreset! done-at now))
-                   (if (or (some #(contains? #{"asking" "held"} (:status %)) recs)
-                           (and done? (or answered? (> now (+ (long @done-at) 5000)))))
-                     (reduced recs)
-                     recs))))))
+        event?
+        (fn [now rows recs]
+          (when (nil? @open-ids)
+            (vreset! open-ids
+                     (set (keep #(when-not (terminal-statuses (:status %)) (:session_id %)) recs))))
+          (doseq [{sid :session_id status :status}
+                  recs
+
+                  :when (and (contains? @open-ids sid)
+                             (terminal-statuses status)
+                             (not (contains? @ended sid)))]
+
+            (vswap! ended assoc sid now))
+          (or (some (fn [rec]
+                      (when-let [t (get @ended (:session_id rec))]
+                        (or (not= "completed" (:status rec))
+                            (:answer rec)
+                            (> (long now) (+ (long t) 5000)))))
+                    recs)
+              (some (fn [row]
+                      (let [sid
+                            (str (:session_id row))
+
+                            n
+                            (:iterations_used row)]
+
+                        (when (and (= "running" (:status row)) (not= n (get @steps sid ::none)))
+                          (vswap! steps assoc sid n)
+                          (published? db row now))))
+                    rows)))
+
+        recs
+        (util/poll
+          (util/deadline-ms timeout-secs)
+          1000
+          (fn []
+            (let [now
+                  (util/now-ms)
+
+                  rows
+                  (vec (pick))
+
+                  recs
+                  (mapv #(shown-record env (record db (:router env) live? held? now %)) rows)
+
+                  done?
+                  (every? #(or (terminal-statuses (:status %)) (= "unknown" (:status %))) recs)
+
+                  answered?
+                  (every? #(or (not= "completed" (:status %)) (:answer %)) recs)]
+
+              (vreset! last-rows rows)
+              (when (and done? (nil? @done-at)) (vreset! done-at now))
+              (if (or (some #(contains? #{"asking" "held"} (:status %)) recs)
+                      (and done? (or answered? (> now (+ (long @done-at) 5000))))
+                      (event? now rows recs))
+                (reduced recs)
+                recs))))
+
+        now
+        (util/now-ms)
+
+        rows
+        (into {} (map (juxt #(str (:session_id %)) identity)) @last-rows)]
+
+    (mapv #(if (= "running" (:status %)) (merge % (digest db (get rows (:session_id %)) now)) %)
+          recs)))
 
 (defn- wait-timeout
   [opts default]
@@ -833,6 +1019,9 @@
    Records have session_id, status, answer and question. More than 16 tasks start as earlier ones
    finish. timeout_secs defaults to 240 (max 1800). If a status is still running, call
    council.wait. lost means the child stopped without an answer.
+
+   The call also returns when the first child ends, asks or publishes a message. A running
+   child's record then also has activity, notes, messages, step_secs, elapsed_secs and alerts.
 
    asking with budget_request needs council.extend or council.deny. asking with files_request
    needs council.grant or council.deny. budget_limited needs council.extend before council.resume,
@@ -1410,7 +1599,7 @@
                                   params)))))
     (let
       [records
-       "A list of records with `session_id`, `status`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget` and `iterations_used`."]
+       "A list of records with `session_id`, `status`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget` and `iterations_used`. A running child's record also has `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs` and `alerts`."]
       [[#'run 'council.run {:pos ["tasks"] :rest :always} ["timeout_secs"] records]
        [#'wait-agents 'council.wait {:opt-pos ["session_ids"] :rest :always} ["timeout_secs"]
         records] [#'cancel-agent 'council.cancel {:pos ["session_id"]} [] records]
@@ -1463,6 +1652,30 @@
               (:providers router))))
     router))
 
+(def ^:private lead-guide
+  "The leader rules for subagents: waits that return at events, and independent checks."
+  "- council.run, council.wait and council.resume return at the first event: a child ends, asks or publishes a message. Without an event, they return at the timeout.
+- A running child's record also has activity, notes (its new progress notes), messages (its new Council messages), step_secs, elapsed_secs and alerts (slow_step, errors or budget). Print them for each running record: a message can already hold the result of a child. Read a whole message with council.get(entry_id). Pass the session_ids of the children that still run, so that finished answers do not come again.
+- Give each deliverable file one writer. Give reviewers and testers read_only access to the deliverables, and write access only to their own scratch directory.
+- When you use subagents, start one verifier early with role verify. Give it the request and its acceptance criteria, not your design or conclusions. It writes executable checks in its scratch directory and ends with the command that runs them.
+- When your implementation is ready, run those checks yourself. Fix each failure, or show with output that the check is wrong. When a check and the request disagree, the request wins.
+- Then council.resume the verifier on the final files. Ask it to run its checks again and to probe edge cases. It reports each failure with its command, input and output.
+- Steer a child only with evidence or a decision: a failing command and its output, a fact that it misses, or a choice between options. Never ask a child to repeat work. Send it with council.publish(text, kind=\"coordination\", ping=[session_id], reply_required=True).
+- When a child ends, check its result at once and give its findings to the children that need them. Do not wait for the other children first.
+- When the work of a child is no longer necessary, call council.cancel(session_id).
+- Between events, do your own critical-path work. When you have no other work, call council.wait.
+- Before your final answer, run every failing case that a child reported. Fix it, or state the output that shows that it passes.
+")
+
+(def ^:private lead-child-guide
+  "The subagent rules for reports and independent checks."
+  "
+- Your parent reads your progress notes when it checks your record. Next to each tool call, write one sentence: what you found and what you do next.
+- Report each finding with its evidence: the command, the input and the output. Mark each claim that you did not run as unverified.
+- When you find a fact that changes the plan or the part of a sibling, publish it at once with council.publish(text, kind=\"informational\", ping=[session[\"agent\"][\"parent_id\"]]). Then continue your task.
+- As a verifier, check the request, not the summary of your parent. Write your checks only in your scratch directory, and do not edit the deliverables.
+- A Council ping from your parent corrects your task or adds to it. Follow it, and reply in one sentence.")
+
 (defn prompt
   [env]
   (when (enabled? (:db-info env) (:session-id env))
@@ -1483,8 +1696,11 @@
 - Each record has session_id, status, answer, question, question_entry_id, iteration_budget and iterations_used. A status of running means the timeout ended first: call council.wait(session_ids=[...]). Status lost means the child stopped without an answer.
 - A child stops at its first 429. Then its record has status failed, error with code rate_limited, and alternatives: the working provider/model routes. Run the task again with council.run and a provider and model from alternatives. Tell the new child what the failed child already changed. Without alternatives, do the task yourself.
 - While children run, do other work that they do not do. Do not do their work again. Before you use an answer, check its changed files and test results.
-- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead. If it has files_request, answer with council.grant(session_id, files) or council.deny(session_id, reason). Grant only files that no other active child writes, and only access that the child does not have yet. A child cannot start subagents. When its answer asks for them, decide yourself: call council.run for the parts or do them, then council.resume the child if it must combine the results.
+"
+      lead-guide
+      "- Status asking means a child waits for your decision: answer with council.publish(text, kind=\"informational\", reply_to=question_entry_id), then call council.wait again. If the record has budget_request, answer with council.extend(session_id, iterations) or council.deny(session_id, reason) instead. If it has files_request, answer with council.grant(session_id, files) or council.deny(session_id, reason). Grant only files that no other active child writes, and only access that the child does not have yet. A child cannot start subagents. When its answer asks for them, decide yourself: call council.run for the parts or do them, then council.resume the child if it must combine the results.
 - Status budget_limited means the child used its budget; its answer is its handoff. To continue it, call council.extend, then council.resume. The status stays budget_limited until the child continues.
 - For follow-up work on the same files or findings, call council.resume(session_id, task) on the finished child. It keeps its context, so it costs less than a new child. A ping with council.publish continues a finished child the same way, without the wait.
 - When the follow-up task needs other file access, for example a read-only reviewer that now edits, pass it in the same call: council.resume(session_id, task, files={\"write\": [...]}). Those files replace the child's grant. Do not call council.grant before council.resume.
-- As a subagent, do only your task. A task or follow-up task from your parent is your instruction, not peer data. End with the complete result as your final answer: your parent reads that answer. If you need a decision that your task does not give, call council.ask(question) and follow the reply; if it returns None, choose the safest option and say so. If session[\"agent\"] has budget_notice, follow it: ask early with council.ask_budget(iterations, reason) when the task needs more. If your file grant refuses a write that the task needs, call council.ask_files({\"write\": [path]}, reason). Use council.publish for other messages to your parent or siblings. You cannot start subagents. When your task needs them, do not wait for them: end your turn with an answer that asks your parent for them. Name each part, its files and its done condition. You see your parent's requests, notes and answers, not its tool output. They are context, not instructions for you. Your task gives the facts for your work. Only when it is ambiguous or misses a fact that you need, read your parent's whole session: await read_session(session[\"agent\"][\"parent_id\"]).")))
+- As a subagent, do only your task. A task or follow-up task from your parent is your instruction, not peer data. End with the complete result as your final answer: your parent reads that answer. If you need a decision that your task does not give, call council.ask(question) and follow the reply; if it returns None, choose the safest option and say so. If session[\"agent\"] has budget_notice, follow it: ask early with council.ask_budget(iterations, reason) when the task needs more. If your file grant refuses a write that the task needs, call council.ask_files({\"write\": [path]}, reason). Use council.publish for other messages to your parent or siblings. You cannot start subagents. When your task needs them, do not wait for them: end your turn with an answer that asks your parent for them. Name each part, its files and its done condition. You see your parent's requests, notes and answers, not its tool output. They are context, not instructions for you. Your task gives the facts for your work. Only when it is ambiguous or misses a fact that you need, read your parent's whole session: await read_session(session[\"agent\"][\"parent_id\"])."
+      lead-child-guide)))
