@@ -306,7 +306,7 @@
                     (cons {:kind :project-set :label "Attention" :project project :action [:noop]}
                           (map session-row pinned)))
                   [{:kind :project-set
-                    :label (if groups-archived? "Groups · Archived" "Groups")
+                    :label (if groups-archived? "Archived groups" "Groups")
                     :project project
                     :archived? groups-archived?
                     :folded? (true? (get-in sidebar [:groups-folded? pid]))
@@ -354,7 +354,7 @@
                                  (zero? (long (or (get-in sidebar [:group-total pid]) 0))))
                         [{:kind :project-state :project project :label "No archived groups"}])))
                   [{:kind :project-set
-                    :label (if archived? "Sessions · Archived" "Sessions")
+                    :label (if archived? "Archived sessions" "Sessions")
                     :project project
                     :archived? archived?
                     :set :sessions
@@ -375,7 +375,7 @@
                   (when (:loading? page)
                     [{:kind :project-state :project project :label "Loading sessions…"}])
                   (when-let [error (:error page)]
-                    [{:kind :project-state :project project :label (str error " · r retry")}])
+                    [{:kind :project-state :project project :label (str error "  r retry")}])
                   (when (and (not (:loading? page))
                              (not (:error page))
                              (empty? (:sessions page))
@@ -600,118 +600,77 @@
                 updated)
           (min before (count updated))))))
 
-(defn- row-height
-  "Project headings use three lines, saved sessions two, and group headings one."
-  [entry]
-  (case (:kind entry)
-    :project-select
-    3
+(defn- list-top
+  "The screen row of the first sidebar row: under the search field while one is
+   open, else right under the header divider."
+  ^long [db]
+  (if (get-in db [:project-sidebar :search]) 4 3))
 
-    :project-session
-    2
-
-    1))
-
-(defn- fit-back
-  "Fill the visible area backwards from `end` with whole rows only."
-  [entries end capacity]
-  (loop [start
-         (long end)
-
-         remaining
-         (long capacity)]
-
-    (if (and (pos? start) (<= (long (row-height (nth entries (dec start)))) remaining))
-      (recur (dec start) (- remaining (long (row-height (nth entries (dec start))))))
-      (subvec entries start end))))
+(defn- list-capacity
+  "How many one-line rows fit between the list top and the footer divider."
+  ^long [db rows]
+  (max 0 (- (long rows) (list-top db) (if (get-in db [:project-sidebar :error]) 4 3))))
 
 (defn visible-entries
-  "Scroll whole cards into view, retaining the project above a clipped child."
+  "Scroll the cursor's row into view, retaining the project above a clipped child."
   [db rows]
   (let [entries
         (sidebar-entries db)
 
         capacity
-        (max 0 (- (long rows) (if (get-in db [:project-sidebar :error]) 8 7)))
-
-        project-height
-        (long (row-height {:kind :project-select}))
+        (list-capacity db rows)
 
         index
         (max 0 (long (or (get-in db [:project-sidebar :index]) 0)))
 
-        first-end
-        (loop [end
-               0
-
-               remaining
-               capacity]
-
-          (if (and (< end (count entries)) (<= (long (row-height (nth entries end))) remaining))
-            (recur (inc end) (- remaining (long (row-height (nth entries end)))))
-            end))
-
         end
-        (min (count entries) (max first-end index))
+        (min (count entries) (max capacity index))
 
         visible
-        (fit-back entries end capacity)]
+        (subvec entries (max 0 (- end capacity)) end)]
 
     (if (and (seq visible)
              (not (get-in db [:project-sidebar :search]))
-             (> capacity project-height)
+             (> capacity 1)
              (not= :project-select (:kind (first visible))))
       (let [tail
-            (fit-back entries end (- capacity project-height))
+            (subvec entries (max 0 (- end (dec capacity))) end)
 
             parent
             (first (filter #(and (= :project-select (:kind %))
                                  (= (:project (first tail)) (:project %)))
                            entries))]
 
-        (if (and (seq tail) parent) (if (= parent (first tail)) tail (into [parent] tail)) visible))
+        (if (and (seq tail) parent (not= parent (first tail))) (into [parent] tail) visible))
       visible)))
 
 (defn entry-row
-  "The last screen row of the visible entry at sidebar `index`, or nil when that
-   entry is scrolled away or the add field hides the list. Mirrors `paint!`: the
-   first entry starts at row 4, and a session card is three rows tall."
+  "The screen row of the visible entry at sidebar `index`, or nil when that entry
+   is scrolled away or the add field hides the list. Mirrors `paint!`: every
+   entry takes one row, from `list-top` down."
   [db rows index]
   (when-not (get-in db [:project-sidebar :adding])
-    (let [visible (visible-entries db rows)]
-      (some (fn [[entry row]]
-              (when (= index (:index entry)) (+ (long row) (dec (long (row-height entry))))))
-            (map vector visible (reductions + 4 (map row-height visible)))))))
-
-(defn- dark-selection?
-  "Use a solid accent for focused and selected rows on dark surfaces."
-  [entry active? focused?]
-  (and (= :dark (:mode t/default-theme))
-       (or focused?
-           (:selected? entry)
-           (and active? (#{:project-session :project-input :project-unread} (:kind entry))))))
+    (some (fn [[entry row]]
+            (when (= index (:index entry)) row))
+          (map vector (visible-entries db rows) (iterate inc (list-top db))))))
 
 (defn- row-bg
-  "Keep resting rows subtle; give dark selections the full theme accent."
-  [{:keys [kind set selected?] :as entry} active? focused?]
-  (cond (dark-selection? entry active? focused?) t/header-active-tab-accent
-        focused? (t/mix-color t/terminal-bg t/header-active-tab-bg 0.14)
-        selected? (t/mix-color t/terminal-bg t/header-active-tab-bg 0.16)
-        (and active? (= :project-session kind))
+  "Tint the focused, selected and current rows a little. Every other row keeps
+   the rail's paper, so its text keeps the theme's own contrast."
+  [entry focused? active?]
+  (cond focused? (t/mix-color t/terminal-bg t/header-active-tab-bg 0.14)
+        (:selected? entry) (t/mix-color t/terminal-bg t/header-active-tab-bg 0.16)
+        (and active? (= :project-session (:kind entry)))
         (t/mix-color t/terminal-bg t/header-active-tab-bg 0.10)
-        (= :project-set kind) (case set
-                                :groups
-                                (t/mix-color t/terminal-bg t/header-active-tab-bg 0.08)
-
-                                :sessions
-                                (t/mix-color t/terminal-bg t/text-fg 0.06)
-
-                                t/terminal-bg)
-        (= :project-select kind) (if active?
-                                   (t/mix-color t/terminal-bg t/header-active-tab-bg 0.10)
-                                   (t/mix-color t/terminal-bg t/text-fg 0.04))
-        active? t/input-field-bg
         :else t/terminal-bg))
+
+(defn- paint-marker!
+  "Paint the focus bar in the row's first cell. A dark theme fills the cell, as
+   a thin glyph on a dark tint is hard to find."
+  [g col row ink]
+  (if (= :dark (:mode t/default-theme))
+    (do (p/set-colors! g ink ink) (p/put-str! g col row " "))
+    (do (p/set-colors! g (t/legible-ink ink t/dialog-bg) t/dialog-bg) (p/put-str! g col row "┃"))))
 
 (defn session-time-label
   "When a session last changed, worded like the companion app: relative inside
@@ -734,121 +693,127 @@
                                 Locale/ENGLISH)
                               then)))))))
 
-(defn- session-status-label
-  "The status that a session row shows, after a star for a favorite."
+(defn- status-word
+  "The sidebar's lowercase word for a session status, or nil for an idle session."
+  [status]
+  (case (first (str/split (str/upper-case (str/trim (str status))) #"\s+"))
+    ("HITL" "WAITING")
+    "waiting"
+
+    "LIVE"
+    "running"
+
+    "STOPPED"
+    "stopped"
+
+    "NEW"
+    (if-let [[_ n] (re-find #"(?i)\sx(\d+)$" (str status))]
+      (str n " new")
+      "new")
+
+    "DIRTY"
+    "draft"
+
+    "ARCHIVED"
+    "archived"
+
+    nil))
+
+(def ^:private counted-statuses
+  "Each counted state with its word and status ink, most urgent first. A narrow
+   rail drops whole parts from the end."
+  [[:needs-input "waiting" "HITL"] [:stopped "stopped" "STOPPED"] [:running "running" "LIVE"]
+   [:unread "new" "NEW"]])
+
+(defn- count-parts
+  "The `[text ink]` parts of a project or group's counted states, most urgent first."
   [entry]
-  (str (when (:favorite? entry) "* ") (dlg/session-status-text (:status entry))))
-
-(defn- paint-session-status!
-  "Paint the session status in bold, in the companion app's colour for it."
-  [g entry col row available]
-  (p/set-colors! g (dlg/session-status-ink (:status entry)) t/dialog-bg)
-  (p/styled
-    g
-    [p/BOLD]
-    (p/put-str! g col row (p/truncate-cols (session-status-label entry) (max 0 (long available))))))
-
-(defn- paint-session-meta!
-  "Paint the second row of a session from `col`: its status when the rail is
-   narrow, then when it last changed and how many turns it has. The turns, then
-   the date, give way before the row passes `right`."
-  [g entry col row right selected-ink status?]
-  (let [col
-        (long col)
-
-        right
-        (long right)
-
-        start
-        (if status? (+ col (long (p/display-width (session-status-label entry)))) col)
-
-        turns
-        (long (or (:turns entry) 0))
-
-        changed
-        (session-time-label (:modified-at entry))
-
-        details
-        (->> [(remove nil?
-                [changed (when (pos? turns) (str turns (if (= 1 turns) " turn" " turns")))])
-              (remove nil? [changed])]
-             (map #(cond->> (str/join " · " %) (and status? (seq %)) (str " · ")))
-             (filter #(<= (+ start (long (p/display-width %))) (inc right)))
-             first)]
-
-    (when status? (paint-session-status! g entry col row (max 0 (- (inc right) col))))
-    (when (seq details)
-      (p/set-colors! g (or selected-ink (t/legible-ink t/dialog-hint t/dialog-bg)) t/dialog-bg)
-      (p/put-str! g start row details))))
-
-(defn- header-status-parts
-  [entry width]
-  (interpose [(if (< (long width) 48) "·" " · ") nil]
-    (keep (fn [[key label]]
-            (let [n (long (or (get entry key) 0))]
-              (when (pos? n) [(str n " " label) label])))
-          [[:needs-input "HITL"] [:running "LIVE"] [:stopped "STOPPED"] [:unread "NEW"]])))
+  (keep (fn [[key word status]]
+          (let [n (long (or (get entry key) 0))]
+            (when (pos? n) [(str n " " word) (dlg/session-status-ink status)])))
+        counted-statuses))
 
 (defn- row-status-parts
-  [entry sidebar width]
+  "The `[text ink]` parts at the right of a row, most important first. A nil ink
+   is the quiet hint ink."
+  [entry sidebar]
   (case (:kind entry)
     :project-group
-    (header-status-parts entry width)
+    (count-parts entry)
 
     :project-input
-    [["HITL" "HITL"]]
+    [["waiting" (dlg/session-status-ink "HITL")]]
 
     :project-unread
-    [["NEW" "New"]]
+    [["new" (dlg/session-status-ink "NEW")]]
 
-    (:project-session :project-set :project-page :project-group-page :project-state)
+    :project-session
+    (when-let [word (status-word (:status entry))]
+      [[word (dlg/session-status-ink (:status entry))]])
+
+    (:project-set :project-page :project-group-page :project-state)
     []
 
     (let [{:keys [tab-count project]}
           entry
 
-          statuses
-          (header-status-parts entry width)]
+          sessions?
+          (= :toggle-project (first (:action entry)))
 
-      (if (= (get project "id") (:removing sidebar))
-        [[(or (:progress sidebar) "Removing…") nil]]
-        (concat [[(str tab-count
-                       (if (= 1 tab-count)
-                         (if (= :toggle-project (first (:action entry))) " session" " tab")
-                         (if (= :toggle-project (first (:action entry))) " sessions" " tabs")))
-                  nil]]
-                (when (seq statuses) (cons [(if (< (long width) 48) "|" " | ") nil] statuses))
-                (when (= (get project "id") (:opening sidebar)) [[" · Loading…" nil]]))))))
+          counts
+          (count-parts entry)]
 
-(defn- row-status
-  [entry sidebar width]
-  (apply str (map first (row-status-parts entry sidebar width))))
+      (cond (= (get project "id") (:removing sidebar)) [[(or (:progress sidebar) "Removing…") nil]]
+            :else (concat (when (= (get project "id") (:opening sidebar)) [["Loading…" nil]])
+                          (if (seq counts)
+                            counts
+                            [[(str tab-count
+                                   (if (= 1 tab-count)
+                                     (if sessions? " session" " tab")
+                                     (if sessions? " sessions" " tabs"))) nil]]))))))
 
-(defn- paint-row-status!
-  "Paint each status with its own ink. Totals and separators keep neutral ink."
-  [g parts col row available neutral-ink]
+(defn- parts-width
+  "The columns that `parts` take, two spaces apart."
+  ^long [parts]
+  (+ (long (reduce + 0 (map #(long (p/display-width (first %))) parts)))
+     (* 2 (max 0 (dec (count parts))))))
+
+(defn- fit-parts
+  "The leading parts that fit `available` columns whole. A part never loses words."
+  [parts available]
   (loop [parts
          (seq parts)
 
-         col
-         (long col)
+         kept
+         []]
 
-         remaining
-         (long available)]
+    (let [more (conj kept (first parts))]
+      (if (and parts (<= (parts-width more) (long available))) (recur (next parts) more) kept))))
 
-    (when (and parts (pos? remaining))
-      (let [[text status]
-            (first parts)
+(defn- paint-parts!
+  "Paint `[text ink]` parts from `col`, two spaces apart, on the row's paper."
+  [g parts col row]
+  (reduce (fn [col [text ink]]
+            (p/set-colors! g (t/legible-ink (or ink t/dialog-hint) t/dialog-bg) t/dialog-bg)
+            (p/put-str! g col row text)
+            (+ (long col) (long (p/display-width text)) 2))
+          (long col)
+          parts))
 
-            text
-            (p/truncate-cols text remaining)
+(defn- session-meta
+  "What the focused session row adds before its status: when it last changed
+   and how many turns it has, longest first."
+  [entry]
+  (let [turns
+        (long (or (:turns entry) 0))
 
-            used
-            (long (p/display-width text))]
+        turns
+        (when (pos? turns) (str turns (if (= 1 turns) " turn" " turns")))
 
-        (p/set-colors! g (if status (dlg/session-status-ink status) neutral-ink) t/dialog-bg)
-        (p/styled g (if status [p/BOLD] []) (p/put-str! g col row text))
-        (recur (next parts) (+ col used) (- remaining used))))))
+        changed
+        (session-time-label (:modified-at entry))]
+
+    (remove str/blank? [(str/join "  " (remove nil? [changed turns])) turns changed])))
 
 (defn add-field
   "The inline add field's empty state — what `+` opens in place of a modal."
@@ -1200,7 +1165,7 @@
         (max 0 (- (long width) 4))
 
         sep
-        "  ·  "
+        "   "
 
         sep-w
         (long (p/display-width sep))
@@ -1245,14 +1210,158 @@
             (p/set-colors! g t/dialog-hint-key t/dialog-bg))
           (p/styled g [p/BOLD] (p/put-str! g col row k))
           (when-not hot? (p/set-fg! g t/dialog-hint))
-          (p/styled g [p/ITALIC] (p/put-str! g (+ col (long (p/display-width k))) row (str " " a)))
+          (p/put-str! g (+ col (long (p/display-width k))) row (str " " a))
           (p/set-colors! g t/dialog-hint t/dialog-bg)
           (when (seq more) (p/put-str! g (+ col w) row sep))
           (recur (+ col w sep-w) more))))))
 
+(defn- row-indent
+  "The columns before a row's text: projects at the edge, sections and groups
+   one step in, sessions under them."
+  ^long [entry]
+  (case (:kind entry)
+    :project-select
+    0
+
+    (:project-set :project-group :project-input :project-unread)
+    2
+
+    :project-session
+    (if (:nested? entry) 6 4)
+
+    4))
+
+(defn- row-lead
+  "The `[text ink bold?]` parts left of a row's status. The last part is the
+   name, which gives way first."
+  [entry sidebar]
+  (let [fold
+        (if (:folded? entry) "▸ " "▾ ")
+
+        hint
+        (t/legible-ink t/dialog-hint t/dialog-bg)
+
+        label
+        (str (:label entry))]
+
+    (case (:kind entry)
+      :project-select
+      [[(str (if (contains? sidebar :pages) (if (:expanded? entry) "▾ " "▸ ") "  ") label)
+        t/dialog-fg true]]
+
+      :project-set
+      [[(str (if (#{:groups :sessions} (:set entry)) fold "  ") label) hint false]]
+
+      :project-group
+      [[fold hint false] ["■ " (t/group-ink (:color entry)) false] [label t/dialog-fg false]]
+
+      (:project-page :project-group-page :project-state)
+      [[label hint false]]
+
+      [[label t/dialog-fg false]])))
+
+(defn- row-tools
+  "Paint the plain `+` and `⋯` buttons of a focused or hovered row. Return the
+   columns that they take at the row's right edge."
+  [g entry left width row]
+  (let [right (+ (long left) (long width))]
+    (case (:kind entry)
+      :project-session
+      (do (components/button! g
+                              (- right 4)
+                              row
+                              " ⋯ "
+                              :project-details
+                              {:plain? true
+                               :extra {:session (:session entry)
+                                       :action [:details (str (get-in entry [:session "id"]))]}})
+          4)
+
+      :project-set
+      (if-let [set (#{:groups :sessions} (:set entry))]
+        (let [pid (str (get-in entry [:project "id"]))]
+          (components/button! g
+                              (- right 7)
+                              row
+                              " + "
+                              (if (= :groups set) :project-group-add :project-session-add)
+                              {:plain? true :extra {:project-id pid}})
+          (components/button! g
+                              (- right 4)
+                              row
+                              " ⋯ "
+                              :project-set-menu
+                              {:plain? true :extra {:project-id pid :set set}})
+          7)
+        2)
+
+      2)))
+
+(defn- paint-row!
+  "Paint one sidebar row: a focus bar, the indented name and the statuses that
+   fit whole at the right. Only a focused or hovered row shows its buttons and
+   a session's turns."
+  [g entry sidebar {:keys [left width row focused? hot? active?]}]
+  (let [left
+        (long left)
+
+        width
+        (long width)
+
+        row
+        (long row)
+
+        start
+        (+ left 2 (row-indent entry))
+
+        session?
+        (= :project-session (:kind entry))]
+
+    (binding [t/dialog-bg (row-bg entry focused? active?)]
+      (p/clear-styles! g)
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
+      (p/fill-rect! g (inc left) row (max 0 (- width 2)) 1)
+      (cond (or focused? (and session? active? (not (:focused? sidebar))))
+            (paint-marker! g (inc left) row t/header-active-tab-accent)
+            (:selected? entry) (paint-marker! g (inc left) row t/dialog-hint))
+      (when (and session? (or active? (:favorite? entry)) (> start (+ left 3)))
+        (p/set-colors! g
+                       (t/legible-ink (if active? t/header-active-tab-accent t/dialog-hint)
+                                      t/dialog-bg)
+                       t/dialog-bg)
+        (p/put-str! g (- start 2) row (if active? "●" "*")))
+      (let [end (- (+ left width) (if hot? (long (row-tools g entry left width row)) 2))
+            lead (row-lead entry sidebar)
+            name-col
+            (+ start (long (reduce + 0 (map #(long (p/display-width (first %))) (butlast lead)))))
+            label (first (last lead))
+            room (- end name-col (min 10 (long (p/display-width label))) 1)
+            status (fit-parts (row-status-parts entry sidebar) room)
+            meta (when (and session? hot?)
+                   (first (filter #(<= (+ (long (p/display-width %))
+                                          (if (seq status) 2 0)
+                                          (parts-width status))
+                                       room)
+                                  (session-meta entry))))
+            parts (cond->> status
+                    meta
+                    (into [[meta nil]]))
+            parts-col (- end (parts-width parts))]
+
+        (reduce (fn [col [text ink bold?]]
+                  (let [text (if (= text label)
+                               (dlg/ellipsize text (max 0 (- parts-col (long col) 1)))
+                               text)]
+                    (p/set-colors! g ink t/dialog-bg)
+                    (p/styled g (if bold? [p/BOLD] []) (p/put-str! g col row text))
+                    (+ (long col) (long (p/display-width text)))))
+                start
+                lead)
+        (paint-parts! g parts parts-col row)))))
+
 (defn paint!
   "Use the main view's three-row header, bordered container and inset footer.
-   Waiting and unread sessions have filled buttons and independently focusable rows.
+   Each project, section, group and session takes one row.
    Returns the caret position of the inline add field, or nil when none is open."
   [g db cols rows]
   (binding [interactions/hit-map
@@ -1267,7 +1376,9 @@
             width (long width)
             rows (long rows)
             sidebar (:project-sidebar db)
-            visible (if (:adding sidebar) [] (visible-entries db rows))]
+            visible (if (:adding sidebar) [] (visible-entries db rows))
+            hovered (.hovered interactions/hit-map)
+            top (list-top db)]
 
         (p/clear-styles! g)
         (p/set-colors! g t/dialog-fg t/dialog-bg)
@@ -1285,12 +1396,12 @@
           (components/button! g
                               (+ left 11)
                               1 " + "
-                              :project-add {:accent? (and (:focused? sidebar)
+                              :project-add {:plain? true
+                                            :accent? (and (:focused? sidebar)
                                                           (zero? (long (or (:index sidebar) 0))))})
-          (components/button! g (- (+ left width) 5) 1 " ✕ " :project-hide))
-        (doseq [[{:keys [index project kind label] :as entry} row]
-                (map vector visible (reductions + 4 (map row-height visible)))
-                :let [child? (not= :project-select kind)
+          (components/button! g (- (+ left width) 5) 1 " ✕ " :project-hide {:plain? true}))
+        (doseq [[{:keys [index project kind] :as entry} row] (map vector visible (iterate inc top))
+                :let [row (long row)
                       active? (case kind
                                 :project-session
                                 (= (str (get-in entry [:session "id"]))
@@ -1300,123 +1411,24 @@
                                 (= (str (get project "id")) (:active-project-id db))
 
                                 (and (:tab-id entry) (= (:tab-id entry) (:active-tab-id db))))
-                      text-row (if (= :project-select kind) (inc (long row)) row)
                       focused? (and (:focused? sidebar) (= index (:index sidebar)))
-                      selected-ink (when (dark-selection? entry active? focused?) t/terminal-bg)
-                      status (p/truncate-cols (row-status entry sidebar width) (max 0 (- width 9)))
-                      status-col
-                      (- (+ left width)
-                         (cond (= :project-session kind)
-                               (if (>= width 48)
-                                 (+ 6 (long (p/display-width (session-status-label entry))))
-                                 7)
-                               (and (= :project-set kind) (#{:groups :sessions} (:set entry))) 10
-                               :else 2)
-                         (long (p/display-width status)))
-                      row-left (+ left
-                                  (if child? 1 0)
-                                  (if (#{:project-group :project-session} kind) 1 0)
-                                  (if (:nested? entry) 1 0))
-                      name-width (max 0 (- status-col row-left 1))]]
+                      hot? (or focused?
+                               (and (= row (get-in hovered [:bounds :row]))
+                                    (not= :project-rail (:kind hovered))))]]
 
-          (binding [t/dialog-bg (row-bg entry active? focused?)]
-            (p/set-colors! g
-                           (or selected-ink
-                               (if (and (= :project-group kind) (not focused?))
-                                 (t/group-ink (:color entry))
-                                 t/dialog-fg))
-                           t/dialog-bg)
-            (p/fill-rect! g (inc left) row (max 0 (- width 2)) (row-height entry))
-            (when (= :project-select kind)
-              (p/set-colors! g t/dialog-fg (t/mix-color t/terminal-bg t/text-fg 0.12))
-              (p/fill-rect! g (inc left) (+ (long row) 2) (max 0 (- width 2)) 1)
-              (p/set-colors! g (or selected-ink t/dialog-fg) t/dialog-bg))
-            (p/styled
-              g
-              (if (or (#{:project-select :project-set} kind) active? focused? selected-ink)
-                [p/BOLD]
-                [])
-              (p/put-str!
-                g
-                (inc row-left)
-                text-row
-                (dlg/ellipsize
-                  (str
-                    " "
-                    (case kind
-                      :project-select
-                      (if (contains? sidebar :pages) (if (:expanded? entry) "▾ " "▸ ") "  ")
-
-                      :project-group
-                      (if (:folded? entry) "▸ " "▾ ")
-
-                      :project-session
-                      "  "
-
-                      :project-set
-                      (if (#{:groups :sessions} (:set entry)) (if (:folded? entry) "▸ " "▾ ") "  ")
-
-                      (:project-page :project-group-page)
-                      "  "
-
-                      :project-state
-                      "  "
-
-                      "  ")
-                    label)
-                  (max 0 (- name-width (if (#{:project-select :project-group} kind) 1 2))))))
-            (paint-row-status! g
-                               (row-status-parts entry sidebar width)
-                               status-col
-                               text-row
-                               (p/display-width status)
-                               (or selected-ink t/dialog-hint-key))
-            (when (= :project-session kind)
-              (when (>= width 48) (paint-session-status! g entry status-col row 14))
-              (paint-session-meta! g
-                                   entry
-                                   (+ row-left 4)
-                                   (inc row)
-                                   (- (+ left width) 3)
-                                   selected-ink
-                                   (< width 48)))
-            (when (= :project-group kind)
-              (p/set-colors! g (or selected-ink (t/group-ink (:color entry))) t/dialog-bg)
-              (p/put-str! g (inc left) row "│")))
-          (.register
-            interactions/hit-map
-            (assoc entry
-              :bounds
-              {:col (inc left) :row row :width (max 0 (- width 2)) :height (row-height entry)}))
-          (when (and (= :project-set kind) (#{:groups :sessions} (:set entry)))
-            (let [pid (str (get project "id"))]
-              (components/button!
-                g
-                (- (+ left width) 9)
-                row
-                " + "
-                (if (= :groups (:set entry)) :project-group-add :project-session-add)
-                {:extra {:project-id pid}})
-              (components/button! g
-                                  (- (+ left width) 5)
-                                  row
-                                  " ⋯ "
-                                  :project-set-menu
-                                  {:extra {:project-id pid :set (:set entry)}})))
-          (when (= :project-session kind)
-            (components/button! g
-                                (- (+ left width) 5)
-                                row
-                                " ⋯ "
-                                :project-details
-                                {:extra {:session (:session entry)
-                                         :action [:details
-                                                  (str (get-in entry [:session "id"]))]}})))
+          (.register interactions/hit-map
+                     (assoc entry
+                       :bounds {:col (inc left) :row row :width (max 0 (- width 2)) :height 1}))
+          (paint-row!
+            g
+            entry
+            sidebar
+            {:left left :width width :row row :focused? focused? :hot? hot? :active? active?}))
         (when (and (empty? (:items sidebar)) (not (:adding sidebar)) (> rows 8))
           (p/set-colors! g t/dialog-hint t/dialog-bg)
           (p/put-str! g
                       (+ left 2)
-                      4
+                      top
                       (p/truncate-cols
                         (if (:loading? sidebar) "Loading projects…" "Add a project with +")
                         (max 0 (- width 4)))))

@@ -3,7 +3,7 @@
  *
  * The palette is CLOSED and the backend owns all of it. The gateway contract
  * (`com.blockether.vis.contract.gateway/session-group-colors`) names the tokens,
- * `theme.clj` (`session-group-swatches`) gives each one its hue, and
+ * `session-group-swatches` in the same namespace gives each one its hue, and
  * `clojure -X:companion-themes` ships both as `group-colors.generated.ts` and the
  * `--color-group-*` block of `themes.generated.css`. A group carries a TOKEN rather
  * than a colour, so the TUI inks a terminal cell and this app fills a swatch from

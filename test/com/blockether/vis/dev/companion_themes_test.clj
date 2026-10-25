@@ -33,9 +33,9 @@
       ;; Both halves now come from the backend, so a token cannot ship without a colour.
       ;; every token the gateway accepts has exactly one hue, and no hue is orphaned
       (expect (= (set gateway-contract/session-group-colors)
-                 (set (keys theme/session-group-swatches))))
-      (expect (every? theme/rgb? (vals theme/session-group-swatches)))
-      (expect (apply distinct? (vals theme/session-group-swatches)))
+                 (set (keys gateway-contract/session-group-swatches))))
+      (expect (every? theme/rgb? (vals gateway-contract/session-group-swatches)))
+      (expect (apply distinct? (vals gateway-contract/session-group-swatches)))
       (let [css
             (companion-themes/stylesheet)
 
@@ -47,7 +47,7 @@
           (expect (= [(str "  --color-group-"
                            token
                            ": "
-                           (theme/rgb->css (get theme/session-group-swatches token))
+                           (theme/rgb->css (get gateway-contract/session-group-swatches token))
                            ";")]
                      (re-seq (re-pattern (str "(?m)^  --color-group-" token ": .*$")) css))
                   token))

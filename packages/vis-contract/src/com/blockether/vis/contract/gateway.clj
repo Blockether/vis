@@ -117,6 +117,20 @@
   "Palette token a group takes when the client names none."
   (first session-group-colors))
 
+(def session-group-swatches
+  "The hue that each session-group palette token paints, as an RGB triple. A group
+   stores the TOKEN, so every channel fills it from this one table. A group keeps
+   its colour when the theme changes, so these hues belong to no theme palette.
+   `clojure -X:companion-themes` ships them to the companion."
+  {"slate" [124 135 152]
+   "blue" [27 136 232]
+   "green" [16 156 86]
+   "amber" [186 116 2]
+   "red" [217 84 69]
+   "violet" [136 111 227]
+   "cyan" [17 150 170]
+   "pink" [205 83 149]})
+
 (defn session-group-color?
   "True when `color` is one of the closed group palette tokens."
   [color]

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.tui.theme
   "Lanterna adapter for internal `com.blockether.vis.tui.shared-theme` tokens."
-  (:require [com.blockether.vis.tui.shared-theme :as theme])
+  (:require [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.tui.shared-theme :as theme])
   (:import [com.googlecode.lanterna TextColor$RGB]))
 
 (def active-theme-id (atom theme/default-theme-id))
@@ -186,38 +187,6 @@
 
 (def confidence-fg (rgb :confidence-fg))
 
-;; Session groups
-(defn group-ink
-  "Ink for a session group's palette TOKEN — the gateway contract's closed
-   `session_group_color` vocabulary (slate, blue, green, amber, red, violet, cyan,
-   pink). The token travels between channels; the ink is this channel's reading of
-   it, taken from the active theme so a group keeps its contrast. An unknown token
-   reads as the neutral slate group."
-  [color]
-  (case (str color)
-    "blue"
-    result-path-fg
-
-    "green"
-    code-success-fg
-
-    "amber"
-    warning-fg
-
-    "red"
-    status-bad
-
-    "violet"
-    result-highlight-fg
-
-    "cyan"
-    header-hover-fg
-
-    "pink"
-    close-button-hover-fg
-
-    dialog-hint-key))
-
 (def md-summary-bg (rgb :md-summary-bg))
 
 (def md-summary-fg (rgb :md-summary-fg))
@@ -344,6 +313,22 @@
         (cond (>= (contrast-ratio c bg) (double legible-contrast)) c
               (>= step 20) target
               :else (recur (inc step)))))))
+
+(defn group-ink
+  "Ink for a session group's palette TOKEN, from the gateway contract's
+   `session-group-swatches`. Every channel paints the same hue for a token, and
+   no hue borrows a status colour. `legible-ink` keeps it readable on `bg`. An
+   unknown token reads as the default group."
+  ([color] (group-ink color dialog-bg))
+  ([color bg]
+   (let [swatches
+         gateway-contract/session-group-swatches
+
+         [r g b]
+         (or (get swatches (str color))
+             (get swatches gateway-contract/default-session-group-color))]
+
+     (legible-ink (TextColor$RGB. (int r) (int g) (int b)) bg))))
 
 (defn dirty-fg
   "Ink for a session with unsent work: the companion app's ochre, mixed with the

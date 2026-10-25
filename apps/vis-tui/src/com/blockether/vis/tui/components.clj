@@ -23,9 +23,10 @@
 
    Hover is detected by matching the registered `:kind` and every `extra` key
    against `cr/hovered`, so two buttons of the same kind but different ids stay
-   independent. Warning chips retain yellow on hover and underline their label."
+   independent. Warning chips retain yellow on hover and underline their label.
+   A `:plain?` button paints only its glyph in quiet ink, accented on hover."
   ([g col row label kind] (button! g col row label kind nil))
-  ([g col row label kind {:keys [extra danger? accent? register? tint] :or {register? true}}]
+  ([g col row label kind {:keys [extra danger? accent? plain? register? tint] :or {register? true}}]
    (let [w
          (p/display-width label)
 
@@ -51,7 +52,12 @@
      ;; `contrast-ink`: Tokyo Night's pale active-tab ink measured only 1.25:1 on
      ;; the green, while the derived dark ink measures 10.6:1. On hover the cap
      ;; DARKENS to `header-hover-fg` — a clear, always-visible state change.
-     (cond (and hovered? danger?) (p/set-colors! g t/header-active-tab-fg t/close-button-hover-fg)
+     (cond plain? (p/set-colors! g
+                                 (cond (and hovered? danger?) t/close-button-hover-fg
+                                       (or hovered? accent?) t/header-active-tab-accent
+                                       :else (t/legible-ink t/dialog-hint t/dialog-bg))
+                                 t/dialog-bg)
+           (and hovered? danger?) (p/set-colors! g t/header-active-tab-fg t/close-button-hover-fg)
            (and hovered? accent?) (p/set-colors! g t/header-active-tab-fg t/header-hover-fg)
            accent? (p/set-colors! g (t/contrast-ink t/code-success-fg) t/code-success-fg)
            (and hovered? (not= :warning tint))

@@ -9,8 +9,8 @@
    the document element.
 
    Session-group colours ship the same way. A group stores a palette TOKEN on the
-   gateway; the tokens come from the gateway contract and their hues from
-   `theme/session-group-swatches`, so the app keeps no palette of its own.
+   gateway; the tokens and their hues come from the gateway contract
+   (`session-group-swatches`), so the app keeps no palette of its own.
 
      clojure -X:companion-themes
 
@@ -69,12 +69,12 @@
     (str "[data-theme='" id "']")))
 
 (defn- group-hue
-  "The CSS hue `theme.clj` gives a session-group token. A token without one fails
+  "The CSS hue the gateway contract gives a session-group token. A token without one fails
    generation instead of shipping a swatch that paints nothing."
   [token]
-  (if-let [rgb (get theme/session-group-swatches token)]
+  (if-let [rgb (get gateway-contract/session-group-swatches token)]
     (theme/rgb->css rgb)
-    (throw (ex-info "Session-group token has no hue in theme.clj" {:token token}))))
+    (throw (ex-info "Session-group token has no hue in the gateway contract" {:token token}))))
 
 (defn- group-hues
   "One Tailwind `@theme` colour per session-group token, so `bg-group-<token>`
