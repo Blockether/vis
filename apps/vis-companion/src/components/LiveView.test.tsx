@@ -498,6 +498,48 @@ describe('selecting a table row', () => {
   });
 });
 
+// The Companion paints a long table in chunks of rows: the first chunks at once, the
+// rest in transition steps. Every row still arrives, and an appended row leaves the
+// rows already on screen in place.
+describe('a long table', () => {
+  const longView = (count: number): LiveView => {
+    const view = opened();
+    const hosts = view.nodes
+      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
+      .find((node) => node.id === 'hosts');
+    if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
+    return withNode(view, {
+      ...hosts,
+      max_rows: 5000,
+      rows: Array.from({ length: count }, (_, at) => ({
+        id: `host-${at}`,
+        cells: hosts.columns.map((_, index) => (index === 0 ? `host-${at}` : `${at}`)),
+        tone: 'ok' as const,
+      })),
+    });
+  };
+
+  it('paints every row and keeps the painted rows when one more arrives', async () => {
+    const view = longView(1000);
+    const mounted = render(<LiveViewPanel view={view} />);
+    await waitFor(() => expect(document.querySelectorAll('tbody tr')).toHaveLength(1000));
+    const first = screen.getByText('host-0').closest('tr');
+
+    const table = view.nodes
+      .flatMap((node) => (node.type === 'group' ? node.children : [node]))
+      .find((node) => node.id === 'hosts');
+    if (!table || table.type !== 'table') throw new Error('the long view must hold the table');
+    const grown = withNode(view, {
+      ...table,
+      rows: [...table.rows, { id: 'host-new', cells: table.columns.map(() => 'new'), tone: 'ok' }],
+    });
+    mounted.rerender(<LiveViewPanel view={grown} />);
+
+    await waitFor(() => expect(document.querySelectorAll('tbody tr')).toHaveLength(1001));
+    expect(screen.getByText('host-0').closest('tr')).toBe(first);
+  });
+});
+
 describe('a log the panel shows whole', () => {
   const behind = (total = 500): LiveView =>
     withNode(opened(), {

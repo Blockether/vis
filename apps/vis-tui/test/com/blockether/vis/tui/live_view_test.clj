@@ -1632,6 +1632,87 @@
   (.commitFrame interactions/hit-map)
   (.current interactions/hit-map))
 
+(defn- layout-pane
+  "One group of `children` laid out in `direction`, optionally capped at `max-columns`."
+  ([direction children] (layout-pane direction nil children))
+  ([direction max-columns children]
+   (lv/opened (mounted
+                {}
+                (cond-> {:id "layout" :type :group :direction direction :children (vec children)}
+                  max-columns
+                  (assoc :max-columns max-columns))))))
+
+(defn- cards
+  [n]
+  (mapv #(hash-map :id (str "c" %) :type :card :title (str "Card " %) :text "body") (range n)))
+
+(defn- buttons
+  [n]
+  (mapv #(hash-map :id (str "b" %) :type :button :label (str "Go " %) :action "activate")
+        (range n)))
+
+(defn- split-lines-of
+  "The `:columns` rows of `pane`'s plan at `width`, as the texts of their cells."
+  [pane width]
+  (into []
+        (comp (filter #(= :columns (:kind %))) (map #(mapv :text (:cells %))))
+        (lv/plan pane width)))
+
+;; A `grid` keeps equal columns and wraps them into aligned rows; a `wrap` keeps
+;; each child at its own width and packs as many as fit on each line.
+(defdescribe
+  live-view-grid-and-wrap-test
+  (it "a grid cuts its children into rows of equal columns, the last row padded"
+      (let [lines (split-lines-of (layout-pane :grid (cards 5)) 80)]
+        (expect (= [["│ Card 0" "│ Card 1"] ["│ body" "│ body"] ["│ Card 2" "│ Card 3"]
+                    ["│ body" "│ body"] ["│ Card 4" nil] ["│ body" nil]]
+                   lines)
+                "two 37-column cells fit 80 columns, and the fifth card keeps the first column")))
+  (it "a wide grid takes more columns, never more than max-columns"
+      (expect (= 5 (count (first (split-lines-of (layout-pane :grid (cards 5)) 200)))))
+      (expect (= [2 2 2 2 2 2] (mapv count (split-lines-of (layout-pane :grid 2 (cards 5)) 200)))))
+  (it "a grid too narrow for two readable columns stacks its children"
+      (let [plan (lv/plan (layout-pane :grid (cards 5)) 40)]
+        (expect (not-any? #(= :columns (:kind %)) plan))
+        (expect (= 10 (count (filter #(= :card (:kind %)) plan))))))
+  (it "a wrap packs children at their own width and wraps the rest"
+      (let [plan
+            (lv/plan (layout-pane :wrap (buttons 6)) 60)
+
+            line
+            (first (filter #(= :columns (:kind %)) plan))]
+
+        (expect (= ["[ Go 0 ]" "[ Go 1 ]" "[ Go 2 ]" "[ Go 3 ]" "[ Go 4 ]"]
+                   (mapv :text (:cells line))))
+        (expect (= [8 8 8 8 8] (:cell-widths line)) "each cell asks for the width of its own text")
+        (expect (= "[ Go 5 ]" (:text (last plan))) "a line with one child paints it alone")))
+  (it "the terminal paints a wrap line on one screen row"
+      (let [lines (str/split-lines (painted-text [(layout-pane :wrap (buttons 6))] 70 26))]
+        (expect (some #(str/includes? % "[ Go 0 ]    [ Go 1 ]    [ Go 2 ]    [ Go 3 ]") lines))
+        (expect (some #(and (str/includes? % "[ Go 4 ]") (str/includes? % "[ Go 5 ]")) lines))))
+  (it "a button inside a grid or a wrap is still a control and a hit target"
+      (doseq [direction [:grid :wrap]]
+        (let [pane (layout-pane direction (buttons 6))
+              hits (filterv #(= :live-activate (:kind %)) (regions-of [pane]))]
+
+          (expect (= (mapv #(str "b" %) (range 6)) (mapv :node-id (lv/controls [pane]))))
+          (expect (= (mapv #(str "b" %) (range 6)) (mapv :node-id hits)))
+          (expect (= (count hits) (count (set (map #(select-keys (:bounds %) [:row :col]) hits))))
+                  "every button owns its own cell of the band"))))
+  (it "an input inside a grid is still an editable control"
+      (let [pane
+            (layout-pane :grid
+                         [{:id "host" :type :plaintext :label "Host"}
+                          {:id "port" :type :plaintext :label "Port"}
+                          {:id "user" :type :plaintext :label "User"}])
+
+            edits
+            (filterv #(= :live-edit (:kind %)) (lv/controls [pane]))]
+
+        (expect (= ["host" "port" "user"] (mapv :node-id edits)))
+        (expect (= "port" (:id (lv/input-node pane "port"))))
+        (expect (some #(= :live-edit (:kind %)) (regions-of [pane]))))))
+
 ;; Regression, vis session a64d44c2: `band-rows` measured the band as ONE display
 ;; row while `paint!` drew every row the view asked for, so the wheel owned only
 ;; the four rows above the prompt — over the rest of a tall pane the transcript

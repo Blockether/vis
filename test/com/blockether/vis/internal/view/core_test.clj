@@ -1177,6 +1177,35 @@
       (let [[outer] (normalized-fields (hi/spec<-json
                                          {"id" "when" "type" "group" "children" [{"name" "a"}]}))]
         (expect (= "when" (:id outer)))))
+  (it "takes a grid with a column cap and a wrap row"
+      (let [[grid wrap] (normalized-fields (hi/spec<-json {"type" "group"
+                                                           "direction" "grid"
+                                                           "max_columns" 3
+                                                           "children" [{"name" "a"} {"name" "b"}]})
+                                           (hi/spec<-json {"type" "group"
+                                                           "direction" "wrap"
+                                                           "children" [{"name" "c"}]}))]
+        (expect (= :grid (:direction grid)))
+        (expect (= 3 (:max-columns grid)))
+        (expect (= :wrap (:direction wrap)))
+        (expect (not (contains? wrap :max-columns)))))
+  (it "refuses a column cap outside a grid or outside its bounds"
+      (let [message (fn [spec]
+                      (try (normalized-fields (hi/spec<-json spec))
+                           nil
+                           (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+        (expect (str/includes?
+                  (message
+                    {"type" "group" "direction" "row" "max_columns" 2 "children" [{"name" "a"}]})
+                  "only applies to a group with direction \"grid\""))
+        (expect (str/includes?
+                  (message
+                    {"type" "group" "direction" "grid" "max_columns" 13 "children" [{"name" "a"}]})
+                  "from 1 to 12"))
+        (expect (str/includes?
+                  (message
+                    {"type" "group" "direction" "grid" "max_columns" 1.5 "children" [{"name" "a"}]})
+                  "whole number"))))
   (it "refuses a direction that is not a flexbox direction"
       (expect (throws? clojure.lang.ExceptionInfo
                        #(normalized-fields (hi/spec<-json {"type" "group"

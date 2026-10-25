@@ -393,8 +393,8 @@ export function HumanInputSheet({
               {/* WHO stopped the run is half the question: an answer means
                   something different to a deploy hook than to a linter. */}
               {request.source && (
-                <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                  asked by <span className="text-white">{request.source}</span>
+                <p className="font-mono text-chip text-dialog-hint">
+                  Asked by <span className="text-white">{request.source}</span>
                 </p>
               )}
               {origin && (
@@ -402,12 +402,12 @@ export function HumanInputSheet({
                 // subagent title never hides the parent. Hover shows both in full.
                 <p
                   data-testid="human-input-origin"
-                  title={`Subagent ${origin.agent} · parent ${origin.parent}`}
-                  className="flex min-w-0 items-baseline gap-[1ch] whitespace-nowrap font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint"
+                  title={`Subagent ${origin.agent}, parent ${origin.parent}`}
+                  className="flex min-w-0 items-baseline gap-[1ch] whitespace-nowrap font-mono text-chip text-dialog-hint"
                 >
-                  <span className="shrink-0">subagent</span>
+                  <span className="shrink-0">Subagent</span>
                   <span className="min-w-0 truncate text-white">{origin.agent}</span>
-                  <span className="shrink-0">· parent</span>
+                  <span className="shrink-0">Parent</span>
                   <span className="min-w-0 truncate text-white">{origin.parent}</span>
                 </p>
               )}
@@ -467,7 +467,7 @@ function FieldShell({
   labelInControl?: boolean;
   children: React.ReactNode;
 }) {
-  const labelClass = 'block font-mono text-ui uppercase tracking-[0.08em] text-dialog-hint';
+  const labelClass = 'block font-mono text-ui font-bold text-white [overflow-wrap:anywhere]';
   return (
     <div className="min-w-0 space-y-1">
       {!labelInControl &&
@@ -483,7 +483,7 @@ function FieldShell({
       {field.description && (
         <p
           id={controlId ? `${controlId}-description` : undefined}
-          className="font-mono text-ui text-dialog-hint"
+          className="font-mono text-meta text-dialog-hint"
         >
           {field.description}
         </p>
@@ -548,7 +548,7 @@ export function HumanInputFieldRow({
     return (
       <fieldset className="m-0 min-w-0 space-y-1 border-0 p-0">
         {field.label && (
-          <legend className="mb-1 block font-mono text-ui uppercase tracking-[0.08em] text-dialog-hint">
+          <legend className="mb-1 block font-mono text-body font-bold text-white [overflow-wrap:anywhere]">
             {field.label}
           </legend>
         )}
@@ -557,6 +557,7 @@ export function HumanInputFieldRow({
         )}
         <ViewLayout
           direction={field.direction}
+          maxColumns={field.max_columns}
           data-group-id={field.id}
           data-direction={field.direction ?? 'column'}
         >
@@ -667,7 +668,7 @@ export function HumanInputFieldRow({
           </span>
         </div>
         <p className="font-mono text-chip text-dialog-hint">
-          {min} – {max}
+          {min} to {max}
         </p>
       </FieldShell>
     );

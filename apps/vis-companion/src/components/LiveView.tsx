@@ -1,6 +1,8 @@
 import {
   Fragment,
+  memo,
   startTransition,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -838,18 +840,18 @@ function LogErrors({ node, label }: { node: LiveLogNode; label: string }) {
  * together, and forty boxed cells at 8px were a grid to decode before a run
  * could be read.
  */
-function tableShape(node: LiveTableNode) {
-  const last = node.columns.length - 1;
-  const valueAt = last > 0 && node.columns[last]?.align === 'right' ? last : -1;
-  const detailAt = node.columns
+function tableShape(columns: LiveTableNode['columns']) {
+  const last = columns.length - 1;
+  const valueAt = last > 0 && columns[last]?.align === 'right' ? last : -1;
+  const detailAt = columns
     .map((_, index) => index)
     .filter((index) => index > 0 && index !== valueAt);
   return { valueAt, detailAt };
 }
 
 /** The row as a phone reads it: the name, the value beside it, the rest beneath. */
-function RowFace({ node, row }: { node: LiveTableNode; row: LiveRow }) {
-  const { valueAt, detailAt } = tableShape(node);
+function RowFace({ columns, row }: { columns: LiveTableNode['columns']; row: LiveRow }) {
+  const { valueAt, detailAt } = tableShape(columns);
   const value = valueAt >= 0 ? (row.cells[valueAt] ?? '') : '';
   const detail = detailAt
     .map((index) => row.cells[index] ?? '')
@@ -878,6 +880,212 @@ function RowFace({ node, row }: { node: LiveTableNode; row: LiveRow }) {
   );
 }
 
+/**
+ * One table row, memoized by its own props. A patch that appends one row or
+ * changes one state then paints only that row, not the whole table again.
+ */
+const LiveTableRow = memo(function LiveTableRow({
+  nodeId,
+  columns,
+  row,
+  isSelected,
+  isSelectable,
+  hasState,
+  onSelect,
+}: {
+  nodeId: string;
+  columns: LiveTableNode['columns'];
+  row: LiveRow;
+  isSelected: boolean;
+  isSelectable: boolean;
+  hasState: boolean;
+  onSelect?: (nodeId: string, itemIds: string[]) => void;
+}) {
+  const { valueAt, detailAt } = tableShape(columns);
+  // A LEG moves one whole step in, mark and words together, so its mark stands
+  // under its head's name. Indenting only the words left the mark on the outer
+  // column, with a wider gap after it than any other row has.
+  const mark = row.parent ? 'ml-5' : '';
+  return (
+    <SelectableTableRow
+      isSelected={isSelected}
+      className={`${rowInk(row.tone)} ${isSelectable ? 'cursor-pointer focus-within:bg-hover' : ''}`}
+      onClick={isSelectable ? () => onSelect?.(nodeId, [row.id]) : undefined}
+    >
+      <td className="p-0 align-middle">
+        {/* A ROW IS A BAND, NOT A TOUCH CELL. The regular row stands 48px tall so a
+            thumb can land anywhere on it; on a desk that turned twenty variants into a
+            column of boxes taller than the run's own header. The compact band is 36px
+            under a thumb — its invisible slop still answers at 44px — and 32px under a
+            pointer, the height the head and the parent rows beside it already keep. */}
+        {isSelectable ? (
+          <ListRow
+            inset="live-view"
+            density="compact"
+            aria-pressed={isSelected}
+            aria-label={`Select ${row.cells[0] || row.id}`}
+          >
+            <span className={`flex min-w-0 flex-1 items-start gap-2 font-mono text-body ${mark}`}>
+              <LineMark tone={row.tone} />
+              <RowFace columns={columns} row={row} />
+            </span>
+          </ListRow>
+        ) : (
+          <span className="flex min-w-0 items-start gap-2 py-1.5 sm:pr-(--live-view-inset)">
+            <span className={`flex min-w-0 flex-1 items-start gap-2 ${mark}`}>
+              <LineMark tone={row.tone} />
+              <RowFace columns={columns} row={row} />
+            </span>
+          </span>
+        )}
+      </td>
+      {detailAt.map((index) => (
+        <td
+          key={columns[index]?.id ?? index}
+          className="hidden px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere] sm:table-cell"
+        >
+          <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
+        </td>
+      ))}
+      {valueAt >= 0 && (
+        <td className="hidden py-2 pr-(--live-view-inset) pl-2 text-right align-baseline tabular-nums text-ui text-white sm:table-cell">
+          <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
+        </td>
+      )}
+      {hasState && (
+        <td className="hidden py-2 pr-(--live-view-inset) align-baseline whitespace-nowrap sm:table-cell">
+          <ToneWord tone={row.tone} />
+        </td>
+      )}
+    </SelectableTableRow>
+  );
+});
+
+type LiveTableItem =
+  | { kind: 'group'; id: string; label: string; tone?: LiveTone; count: number; isOpen: boolean }
+  | { kind: 'row'; row: LiveRow };
+
+/**
+ * The rows one memoized chunk paints. A patch on a 5000-row table then renders
+ * the chunk that holds the change, and each other chunk costs one shallow check.
+ */
+const TABLE_CHUNK = 64;
+/** The chunks the first paint holds; the rest of a long table follows in steps. */
+const TABLE_FIRST_CHUNKS = 4;
+/** The chunks each later step adds, so no single commit lays out thousands of rows. */
+const TABLE_STEP_CHUNKS = 8;
+
+function chunked<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let at = 0; at < items.length; at += size) out.push(items.slice(at, at + size));
+  return out;
+}
+
+function sameItem(a: LiveTableItem, b: LiveTableItem): boolean {
+  if (a.kind === 'row' || b.kind === 'row')
+    return a.kind === 'row' && b.kind === 'row' && a.row === b.row;
+  return (
+    a.id === b.id &&
+    a.label === b.label &&
+    a.tone === b.tone &&
+    a.count === b.count &&
+    a.isOpen === b.isOpen
+  );
+}
+
+type LiveTableChunkProps = {
+  items: LiveTableItem[];
+  nodeId: string;
+  columns: LiveTableNode['columns'];
+  selected: Set<string>;
+  isSelectable: boolean;
+  hasState: boolean;
+  span: number;
+  onSelect?: (nodeId: string, itemIds: string[]) => void;
+  onToggleGroup: (id: string) => void;
+};
+
+function sameChunk(was: LiveTableChunkProps, now: LiveTableChunkProps): boolean {
+  return (
+    was.nodeId === now.nodeId &&
+    was.columns === now.columns &&
+    was.selected === now.selected &&
+    was.isSelectable === now.isSelectable &&
+    was.hasState === now.hasState &&
+    was.span === now.span &&
+    was.onSelect === now.onSelect &&
+    was.onToggleGroup === now.onToggleGroup &&
+    was.items.length === now.items.length &&
+    was.items.every((item, index) => sameItem(item, now.items[index]!))
+  );
+}
+
+const LiveTableChunk = memo(function LiveTableChunk({
+  items,
+  nodeId,
+  columns,
+  selected,
+  isSelectable,
+  hasState,
+  span,
+  onSelect,
+  onToggleGroup,
+}: LiveTableChunkProps) {
+  return (
+    <>
+      {items.map((item) => {
+        if (item.kind === 'group') {
+        // The head NAMES itself and then says how much its fold holds. The count is
+        // COUNTED from the rows right here: a producer DECLARES a group through the
+        // live interface and every surface renders that declaration the same way,
+        // instead of a label smuggled through the field that IDENTIFIES the group.
+        // The mark is how a head says a leg failed without being opened at all. It
+        // FOLLOWS the name: in front of it, the mark moved the name off the column
+        // of the rows, and heads with and without one started in two places.
+        const held = `${item.count} row${item.count === 1 ? '' : 's'}`;
+        return (
+          <tr key={`group:${item.id}`}>
+            <td className="px-(--live-view-inset) py-1" colSpan={span}>
+              <Disclosure
+                isOpen={item.isOpen}
+                tone="branch"
+                alignsWithMarks
+                aria-label={item.label}
+                onClick={() => onToggleGroup(item.id)}
+              >
+                <span className={`min-w-0 truncate ${rowInk(item.tone ?? 'idle')}`}>
+                  {item.label}
+                </span>
+                {item.tone ? <ToneMark tone={item.tone} /> : null}
+                {/* The count keeps a step of its own between it and the name, so a
+                    head too long for the band trims the NAME and still reads as two
+                    things instead of one run-on line. */}
+                <span className="ml-auto shrink-0 pl-2 font-normal text-meta text-dialog-hint">
+                  {held}
+                </span>
+              </Disclosure>
+            </td>
+          </tr>
+        );
+        }
+        const row = item.row;
+        return (
+          <LiveTableRow
+            key={row.id}
+            nodeId={nodeId}
+            columns={columns}
+            row={row}
+            isSelected={selected.has(row.id)}
+            isSelectable={isSelectable}
+            hasState={hasState}
+            onSelect={onSelect}
+          />
+        );
+      })}
+    </>
+  );
+}, sameChunk);
+
 function TableRows({
   node,
   onSelect,
@@ -887,7 +1095,6 @@ function TableRows({
 }) {
   const rows = orderedRows(node);
   const isSelectable = node.is_selectable && Boolean(onSelect);
-  const { valueAt, detailAt } = tableShape(node);
   const selected = useMemo(() => new Set(node.selected_ids), [node.selected_ids]);
   /**
    * A parent stays SHUT until the reader opens it, unless the producer DECLARED it
@@ -898,10 +1105,19 @@ function TableRows({
    * folds the reader TOUCHED, so their own hand always wins over the declaration.
    */
   const [toggledGroups, setToggledGroups] = useState<Set<string>>(() => new Set());
-
-  type LiveTableItem =
-    | { kind: 'group'; id: string; label: string; tone?: LiveTone; count: number; isOpen: boolean }
-    | { kind: 'row'; row: LiveRow };
+  // A long table paints its first chunks at once and the rest in transition steps,
+  // which yield to input, so 5000 rows never hold one frame of the view.
+  const [shownChunks, setShownChunks] = useState(TABLE_FIRST_CHUNKS);
+  const toggleGroup = useCallback(
+    (id: string) =>
+      setToggledGroups((was) => {
+        const next = new Set(was);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+    [],
+  );
 
   // A parent OWNS its legs wherever the producer listed them. GitHub returns a matrix
   // interleaved with the rest of the run, so walking the rows in order put the head
@@ -964,6 +1180,11 @@ function TableRows({
     rows.some((row) => row.tone !== 'idle') &&
     !node.columns.some((column) => /^(state|status)$/i.test(column.label.trim()));
   const span = Math.max(1, node.columns.length + (hasState ? 1 : 0));
+  const chunks = chunked(visible, TABLE_CHUNK);
+  useEffect(() => {
+    if (shownChunks >= chunks.length) return;
+    startTransition(() => setShownChunks((was) => was + TABLE_STEP_CHUNKS));
+  }, [shownChunks, chunks.length]);
   return (
     // Only a SELECTABLE table bleeds to the view's edges, because its rows are press
     // bands. A table that is only read keeps its rules on the column of the words, so
@@ -1007,109 +1228,20 @@ function TableRows({
               </td>
             </tr>
           )}
-          {visible.map((item) => {
-            if (item.kind === 'group') {
-              // The head NAMES itself and then says how much its fold holds. The count is
-              // COUNTED from the rows right here: a producer DECLARES a group through the
-              // live interface and every surface renders that declaration the same way,
-              // instead of a label smuggled through the field that IDENTIFIES the group.
-              // The mark is how a head says a leg failed without being opened at all. It
-              // FOLLOWS the name: in front of it, the mark moved the name off the column
-              // of the rows, and heads with and without one started in two places.
-              const held = `${item.count} row${item.count === 1 ? '' : 's'}`;
-              return (
-                <tr key={`group:${item.id}`}>
-                  <td className="px-(--live-view-inset) py-1" colSpan={span}>
-                    <Disclosure
-                      isOpen={item.isOpen}
-                      tone="branch"
-                      alignsWithMarks
-                      aria-label={item.label}
-                      onClick={() =>
-                        setToggledGroups((was) => {
-                          const next = new Set(was);
-                          if (next.has(item.id)) next.delete(item.id);
-                          else next.add(item.id);
-                          return next;
-                        })
-                      }
-                    >
-                      <span className={`min-w-0 truncate ${rowInk(item.tone ?? 'idle')}`}>
-                        {item.label}
-                      </span>
-                      {item.tone ? <ToneMark tone={item.tone} /> : null}
-                      {/* The count keeps a step of its own between it and the name, so a
-                          head too long for the band trims the NAME and still reads as two
-                          things instead of one run-on line. */}
-                      <span className="ml-auto shrink-0 pl-2 font-normal text-meta text-dialog-hint">
-                        {held}
-                      </span>
-                    </Disclosure>
-                  </td>
-                </tr>
-              );
-            }
-            const row = item.row;
-            const isSelected = selected.has(row.id);
-            // A LEG moves one whole step in, mark and words together, so its mark stands
-            // under its head's name. Indenting only the words left the mark on the outer
-            // column, with a wider gap after it than any other row has.
-            const mark = row.parent ? 'ml-5' : '';
-            return (
-              <SelectableTableRow
-                key={row.id}
-                isSelected={isSelected}
-                className={`${rowInk(row.tone)} ${isSelectable ? 'cursor-pointer focus-within:bg-hover' : ''}`}
-                onClick={isSelectable ? () => onSelect?.(node.id, [row.id]) : undefined}
-              >
-                <td className="p-0 align-middle">
-                  {/* A ROW IS A BAND, NOT A TOUCH CELL. The regular row stands 48px tall so a
-                      thumb can land anywhere on it; on a desk that turned twenty variants into a
-                      column of boxes taller than the run's own header. The compact band is 36px
-                      under a thumb — its invisible slop still answers at 44px — and 32px under a
-                      pointer, the height the head and the parent rows beside it already keep. */}
-                  {isSelectable ? (
-                    <ListRow
-                      inset="live-view"
-                      density="compact"
-                      aria-pressed={isSelected}
-                      aria-label={`Select ${row.cells[0] || row.id}`}
-                    >
-                      <span className={`flex min-w-0 flex-1 items-start gap-2 font-mono text-body ${mark}`}>
-                        <LineMark tone={row.tone} />
-                        <RowFace node={node} row={row} />
-                      </span>
-                    </ListRow>
-                  ) : (
-                    <span className="flex min-w-0 items-start gap-2 py-1.5 sm:pr-(--live-view-inset)">
-                      <span className={`flex min-w-0 flex-1 items-start gap-2 ${mark}`}>
-                        <LineMark tone={row.tone} />
-                        <RowFace node={node} row={row} />
-                      </span>
-                    </span>
-                  )}
-                </td>
-                {detailAt.map((index) => (
-                  <td
-                    key={node.columns[index]?.id ?? index}
-                    className="hidden px-(--live-view-inset) py-2 align-baseline text-meta text-dialog-hint [overflow-wrap:anywhere] sm:table-cell"
-                  >
-                    <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
-                  </td>
-                ))}
-                {valueAt >= 0 && (
-                  <td className="hidden py-2 pr-(--live-view-inset) pl-2 text-right align-baseline tabular-nums text-ui text-white sm:table-cell">
-                    <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
-                  </td>
-                )}
-                {hasState && (
-                  <td className="hidden py-2 pr-(--live-view-inset) align-baseline whitespace-nowrap sm:table-cell">
-                    <ToneWord tone={row.tone} />
-                  </td>
-                )}
-              </SelectableTableRow>
-            );
-          })}
+          {chunks.slice(0, shownChunks).map((items, index) => (
+            <LiveTableChunk
+              key={index}
+              items={items}
+              nodeId={node.id}
+              columns={node.columns}
+              selected={selected}
+              isSelectable={isSelectable}
+              hasState={hasState}
+              span={span}
+              onSelect={onSelect}
+              onToggleGroup={toggleGroup}
+            />
+          ))}
         </tbody>
       </table>
     </div>
@@ -1382,7 +1514,7 @@ function NodeCell({
           className={`min-w-0 ${isDisclosure && node.type !== 'log' ? 'pl-5' : ''}`}
         >
           {node.type === 'group' && (
-            <ViewLayout direction={node.direction}>
+            <ViewLayout direction={node.direction} maxColumns={node.max_columns}>
               {node.children.map((child) => (
                 <NodeCell
                   key={child.id}

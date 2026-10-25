@@ -934,6 +934,29 @@
   [node]
   (and (not (group-node? node)) (not (contains? view-spec/live-node-types (raw-type-name node)))))
 
+(defn- grid-columns
+  "The `:max-columns` of a grid group, a whole number inside the contract bounds.
+   Only a grid has columns to cap, so the key on another direction is refused."
+  [fail! node]
+  (let [[lo hi]
+        view-spec/grid-columns
+
+        raw
+        (:max-columns node)
+
+        n
+        (if (number? raw) raw (parse-long (str raw)))]
+
+    (when-not (= "grid"
+                 (some-> (:direction node)
+                         name
+                         str/lower-case
+                         str/trim))
+      (fail! ":max_columns only applies to a group with direction \"grid\""))
+    (when-not (and (integer? n) (<= (long lo) (long n) (long hi)))
+      (fail! (str ":max_columns must be a whole number from " lo " to " hi)))
+    (long n)))
+
 (defn- live-node
   "One declared component of a form or a live view. `fail!` is the refusal of
    whoever declares it — a view spec, a request, or the `add-node` op that
@@ -979,6 +1002,9 @@
 
                description
                (assoc :description description)
+
+               (some? (:max-columns node))
+               (assoc :max-columns (grid-columns group-fail! node))
 
                (some? (:is-collapsible node))
                (assoc :is-collapsible

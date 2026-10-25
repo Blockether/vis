@@ -18,7 +18,14 @@ import {
   type LiveView,
 } from './live-view';
 import type { SseEvent } from './types';
-import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, isViewEvent } from './view';
+import {
+  VIEW_CLOSE_EVENT,
+  VIEW_GROUP_DIRECTIONS,
+  VIEW_MAX_COLUMNS,
+  VIEW_OPEN_EVENT,
+  VIEW_PATCH_EVENT,
+  isViewEvent,
+} from './view';
 
 it('materializes the canonical SDK live View lifecycle', () => {
   const opened = liveViewFromWire(canonical.live);
@@ -103,6 +110,42 @@ describe('a live view read off the wire', () => {
   // WHERE a node stands is the run's declaration, carried by no op: a view lays
   // itself out with the FORM's own group, so both surfaces put the same sentence
   // beside the same table and neither guesses.
+  it('reads a grid with its column cap and a wrap row from the contract', () => {
+    const view = liveViewFromWire({
+      ...fixture,
+      nodes: [
+        {
+          id: 'board',
+          type: 'group',
+          direction: 'grid',
+          max_columns: 3,
+          children: [{ id: 'a', type: 'paragraph', text: 'A' }],
+        },
+        {
+          id: 'actions',
+          type: 'group',
+          direction: 'wrap',
+          max_columns: 3,
+          children: [{ id: 'go', type: 'button', title: 'Go' }],
+        },
+        {
+          id: 'unknown',
+          type: 'group',
+          direction: 'diagonal',
+          children: [{ id: 'b', type: 'paragraph', text: 'B' }],
+        },
+      ],
+    });
+    if (!view) throw new Error('the layout view must be paintable');
+    const [board, actions, unknown] = view.nodes;
+    expect(board).toMatchObject({ direction: 'grid', max_columns: 3 });
+    expect(actions).toMatchObject({ direction: 'wrap' });
+    expect(actions).not.toHaveProperty('max_columns');
+    expect(unknown).toMatchObject({ direction: 'column' });
+    expect(VIEW_GROUP_DIRECTIONS).toEqual(['column', 'row', 'grid', 'wrap']);
+    expect(VIEW_MAX_COLUMNS).toBe(12);
+  });
+
   it('reads the row that stands two nodes side by side', () => {
     const view = opened();
     const row = nodeOfType(view, 'reading', 'group');

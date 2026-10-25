@@ -55,6 +55,7 @@ import { createPortal } from 'react-dom';
 import viewSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/view.json';
 
 import { EDGE_MARGIN, menuPosition } from '../lib/anchored-menu';
+import type { ViewGroupDirection } from '../lib/view';
 import { useBackLayer, useEdgeBack } from '../lib/edge-back';
 import { isKeyboardInputElement, useKeyboardReserve } from '../lib/viewport';
 import {
@@ -790,7 +791,7 @@ export function ConfirmRow({
         <button
           type="button"
           autoFocus
-          className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-dialog-hint transition-colors duration-150 enabled:hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
+          className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-ui font-bold text-dialog-hint transition-colors duration-150 enabled:hover:text-fg enabled:active:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
           onClick={onKeep}
         >
           {keepLabel}
@@ -798,7 +799,7 @@ export function ConfirmRow({
         <button
           type="button"
           disabled={isBusy}
-          className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-meta font-bold uppercase tracking-[0.08em] text-err-ink transition-colors duration-150 active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
+          className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-ui font-bold text-err-ink transition-colors duration-150 active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
           onClick={onConfirm}
         >
           {confirmLabel}
@@ -1048,7 +1049,7 @@ export function ChoiceRow({
       className={`flex min-h-11 w-full min-w-0 items-center gap-2 border px-2.5 py-1 text-left font-mono text-ui transition-colors duration-150 focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted motion-reduce:transition-none mouse:min-h-7 ${
         isOn
           ? 'border-accent bg-hover text-accent-ink'
-          : 'border-edge bg-input text-white enabled:hover:text-accent-ink'
+          : 'border-edge bg-input text-white enabled:hover:text-accent-ink enabled:active:bg-hover'
       } ${className}`}
       {...props}
     >
@@ -1060,28 +1061,57 @@ export function ChoiceRow({
   );
 }
 
+/** A grid track: at least 12rem, or the whole width when that is narrower. */
+const VIEW_TRACK = 'min(100%, 12rem)';
+
 /**
- * Shared layout for Ask fields and Live nodes. Columns stack in source order;
- * rows fit equal-width columns of at least 12rem with a shared 12px gap, wrapping
- * when their container is too narrow. Below 12rem, one column fits the space.
+ * The grid template of one layout direction. A `grid` keeps empty tracks, so
+ * its last row aligns with the rows above; `maxColumns` makes each track at
+ * least one column's share of the width.
+ */
+function viewTemplate(direction: ViewGroupDirection, maxColumns?: number): string | undefined {
+  if (direction === 'row') return `repeat(auto-fit, minmax(${VIEW_TRACK}, 1fr))`;
+  if (direction !== 'grid') return undefined;
+  const track = maxColumns
+    ? `max(${VIEW_TRACK}, calc((100% - ${maxColumns - 1} * 0.75rem) / ${maxColumns}))`
+    : VIEW_TRACK;
+  return `repeat(auto-fill, minmax(${track}, 1fr))`;
+}
+
+/**
+ * Shared layout for Ask fields and Live nodes, with a shared 12px gap:
  *
- * Each nested layout measures its own space through CSS grid, not the viewport.
+ * - `column` stacks children in source order.
+ * - `row` fits equal-width columns of at least 12rem and wraps when too narrow.
+ * - `grid` lays equal 12rem-or-wider tracks that wrap into aligned rows;
+ *   `maxColumns` caps the tracks.
+ * - `wrap` keeps each child at its own width and wraps onto new lines.
+ *
+ * Each nested layout measures its own space through CSS, not the viewport.
  * This component owns no label, fieldset, disclosure, focus or value state.
  */
 export function ViewLayout({
   direction = 'column',
+  maxColumns,
   className = '',
+  style,
   children,
   ...props
-}: HTMLAttributes<HTMLDivElement> & { direction?: 'row' | 'column' }) {
+}: HTMLAttributes<HTMLDivElement> & {
+  direction?: ViewGroupDirection;
+  /** `grid` only: the most columns that it shows. */
+  maxColumns?: number;
+}) {
+  const template = viewTemplate(direction, maxColumns);
   return (
     <div
       {...props}
       data-view-layout={direction}
-      className={`grid min-w-0 items-start gap-3 [overflow-wrap:anywhere] [&>*]:min-w-0 ${
-        direction === 'row'
-          ? 'grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))]'
-          : 'grid-cols-1'
+      style={template ? { ...style, gridTemplateColumns: template } : style}
+      className={`min-w-0 items-start gap-3 [overflow-wrap:anywhere] [&>*]:min-w-0 ${
+        direction === 'wrap'
+          ? 'flex flex-wrap [&>*]:max-w-full'
+          : `grid ${template ? '' : 'grid-cols-1'}`
       } ${className}`}
     >
       {children}

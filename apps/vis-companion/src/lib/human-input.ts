@@ -8,7 +8,14 @@
  */
 
 import type { SseEvent } from './types';
-import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from './view';
+import {
+  VIEW_CLOSE_EVENT,
+  VIEW_OPEN_EVENT,
+  type ViewGroupDirection,
+  viewGroupDirection,
+  viewKind,
+  viewMaxColumns,
+} from './view';
 
 /** The closed set of fields that can carry an ANSWER (`view.spec/field-types`). */
 export const HUMAN_INPUT_FIELD_TYPES = [
@@ -94,7 +101,9 @@ export interface HumanInputField {
   step?: number;
   default?: unknown;
   /** `group` only — how its children are laid out. */
-  direction?: 'row' | 'column';
+  direction?: ViewGroupDirection;
+  /** `grid` group only — the most columns it shows. */
+  max_columns?: number;
   /** `group` only — the nodes it owns, which may be groups themselves. */
   children?: HumanInputField[];
   /** A DECORATION only — the words it paints. It has no name and no label. */
@@ -190,13 +199,16 @@ function fieldFromWire(raw: unknown): HumanInputField | null {
       .map(fieldFromWire)
       .filter((field): field is HumanInputField => field !== null);
     if (!children.length) return null;
+    const direction = viewGroupDirection(row.direction);
+    const maxColumns = direction === 'grid' ? viewMaxColumns(row.max_columns) : undefined;
     return {
       id,
       name: id,
       type,
       label: text(row.label),
       is_required: false,
-      direction: row.direction === 'row' ? 'row' : 'column',
+      direction,
+      ...(maxColumns === undefined ? {} : { max_columns: maxColumns }),
       children,
       ...(optionalText(row.description) ? { description: optionalText(row.description) } : {}),
     };

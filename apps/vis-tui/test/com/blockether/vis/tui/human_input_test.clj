@@ -1996,6 +1996,74 @@
         (expect (= ["dev" "prod" "free" "paid"] (into [] (keep :value) (:stops form))))
         (expect (= [["dev"] ["prod"] ["free"] ["paid"]] (mapv focused (range 4)))))))
 
+(defn- field-group
+  "`n` text fields laid out in `direction`."
+  [direction n]
+  {"type" "group"
+   "direction" direction
+   "label" "Fields"
+   "children" (mapv #(hash-map "name" (str "f" %) "label" (str "F" %)) (range n))})
+
+(defn- column-labels
+  "The label texts of every `:columns` row of `form` at `width`."
+  [form width]
+  (into []
+        (comp (filter #(and (= :columns (:kind %)) (:is-label %)))
+              (map #(mapv (fn [cell]
+                            (when (= :label (:kind cell)) (:text cell)))
+                          (:cells %))))
+        (hi/form-rows form width)))
+
+(defdescribe
+  grid-and-wrap-group-test
+  (it "a grid cuts its fields into rows of equal columns, the last row padded"
+      (let [form (hi/init-form (grouped-request (field-group "grid" 5)))]
+        (expect (= [["F0" "F1"] ["F2" "F3"] ["F4" nil]] (column-labels form 80)))
+        (expect (= [5] (mapv count (column-labels form 300)))
+                "a wide form puts all five on one row")))
+  (it "a grid never takes more than max_columns"
+      (let [form (hi/init-form (grouped-request (assoc (field-group "grid" 5) "max_columns" 2)))]
+        (expect (= [["F0" "F1"] ["F2" "F3"] ["F4" nil]] (column-labels form 300)))))
+  (it "a narrow grid stacks its fields like a column"
+      (let [rows (hi/form-rows (hi/init-form (grouped-request (field-group "grid" 5))) 40)]
+        (expect (not-any? #(= :columns (:kind %)) rows))
+        (expect (= ["Fields" "F0" "F1" "F2" "F3" "F4" "Notes"]
+                   (mapv :text (filter #(= :label (:kind %)) rows))))))
+  (it "keeps every field of a grid a stop, and types into the focused cell only"
+      (let [form
+            (hi/init-form (grouped-request (field-group "grid" 3)))
+
+            typed
+            (feed (assoc form :focus 2) (map ch "db"))]
+
+        (expect (= ["f0" "f1" "f2" "notes"] (into [] (keep :field-id) (:stops form))))
+        (expect (= "db" (get (:values typed) "f2")))
+        (expect (some #(str/includes? % "db") (ink typed)))
+        (let [[x0 y0]
+              (caret (assoc form :focus 0))
+
+              [x1 y1]
+              (caret (assoc form :focus 1))]
+
+          (expect (= y0 y1) "two grid cells share a row")
+          (expect (< (long x0) (long x1))))))
+  (it "a wrap packs short fields at their own width"
+      (let [rows
+            (hi/form-rows (hi/init-form (grouped-request
+                                          {"type" "group"
+                                           "direction" "wrap"
+                                           "children" [{"name" "ok" "type" "checkbox" "label" "Ok"}
+                                                       {"name" "go" "type" "checkbox" "label" "Go"}
+                                                       {"name" "host" "label" "Host"}]}))
+                          70)
+
+            line
+            (first (filter #(= :columns (:kind %)) rows))]
+
+        (expect (= 3 (count (:cells line))))
+        (expect (= [8 8 24] (:cell-widths line))
+                "a checkbox asks for its mark and label, a typed field for a readable cell"))))
+
 (defdescribe
   responsive-group-layout-test
   (it "stacks row groups below the same readable column width as Live"

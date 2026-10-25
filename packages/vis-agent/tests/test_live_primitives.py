@@ -355,11 +355,29 @@ def test_a_blank_detail_clears_the_status_line(monkeypatch, host_kind):
         assert "detail" not in view.state()["nodes"][0]
 
 
+def test_grid_and_wrap_build_the_layout_directions_of_the_contract():
+    grid = vis.grid(
+        "board", vis.paragraph("a", "A"), vis.paragraph("b", "B"), max_columns=3
+    )
+    assert grid["direction"] == "grid"
+    assert grid["max_columns"] == 3
+    assert [child["id"] for child in grid["children"]] == ["a", "b"]
+    actions = vis.wrap("actions", vis.button("go", "Go"), vis.button("stop", "Stop"))
+    assert actions["direction"] == "wrap"
+    assert "max_columns" not in actions
+    assert "max_columns" not in vis.grid(vis.plaintext("host"))
+    with vis.live("Layout", [grid, actions], flush_ms=0) as view:
+        nodes = view.state()["nodes"]
+        assert [node["direction"] for node in nodes] == ["grid", "wrap"]
+
+
 def test_a_group_arranging_nothing_is_refused_where_it_was_written():
     # Issue #255: an empty layout group used to reach the host as an invalid view.
     for build in (
         lambda: vis.column("targets"),
         lambda: vis.row(),
+        lambda: vis.grid(),
+        lambda: vis.wrap("actions"),
         lambda: vis.disclosure("targets", "Targets"),
     ):
         with pytest.raises(ValueError, match="at least one node"):

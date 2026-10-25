@@ -210,12 +210,17 @@ A form has its own submit and cancel buttons. Use buttons in live views.
 `vis.group(id, *children, direction="column")` arranges its children. A group has no value.
 
 - `direction="row"` puts the children side by side. They stack when the space is too narrow.
+- `direction="grid"` puts the children in equal columns that continue on new rows. Use it for many
+  cards. `max_columns` (1 to 12) sets the most columns. Only a grid accepts `max_columns`.
+- `direction="wrap"` puts the children side by side at their own width. A child that does not fit
+  starts a new line. Use it for buttons, stats and statuses.
 - `label` and `description` show a title and a short text above the children.
 - `is_collapsible=True` lets a person fold the group. `default_expanded` sets the first state.
 - A submit button collects only the inputs of its own group. So one view can hold several small
   forms.
 
-`vis.row(id, ...)` and `vis.column(id, ...)` are short forms of a group. `vis.disclosure(id, label,
+`vis.row(id, ...)`, `vis.column(id, ...)`, `vis.grid(id, ..., max_columns=3)` and
+`vis.wrap(id, ...)` are short forms of a group. `vis.disclosure(id, label,
 ...)` is a collapsible column that starts folded. In a form, a group without an id is accepted.
 
 ```python

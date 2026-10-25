@@ -487,8 +487,9 @@ itself: `view.status(...)`, `view.progress(...)`, `view.write(...)`,
 
 ## Layout and text
 
-Use `vis.row(id, *nodes)` and `vis.column(id, *nodes)` to arrange nodes with
-the same row/column layout vocabulary as [Ask forms](human-input.md#layout).
+Use `vis.row(id, *nodes)`, `vis.column(id, *nodes)`, `vis.grid(id, *nodes)` and
+`vis.wrap(id, *nodes)` to arrange nodes with the same layout vocabulary as
+[Ask forms](human-input.md#layout).
 Every Live group has an id. Groups can nest. Each nested group uses the width
 available inside its parent, not the full screen width.
 
@@ -498,8 +499,25 @@ column can shrink below that minimum to fit a very narrow panel. In the TUI,
 rows use equal-width columns when each child has at least 24 terminal text cells
 after spacing. Otherwise the entire row stacks vertically. Columns always stack.
 
-Declare at least one child in every `vis.row`, `vis.column` and
-`vis.disclosure`. These Python builders raise `ValueError` immediately when
+Use a grid for many nodes of the same kind, such as cards. It shows equal columns
+and continues on new rows. `vis.grid(id, *nodes, max_columns=3)` limits the
+columns. A narrow panel shows fewer columns, and a very narrow panel stacks them.
+In the TUI, each grid column also needs 24 terminal text cells.
+
+Use a wrap for nodes that keep their own width, such as buttons, stats and
+statuses. They stand side by side and continue on a new line when the next one
+does not fit. Buttons in a grid or a wrap stay interactive on both surfaces.
+
+```python
+vis.column("board",
+           vis.grid("services", *cards, max_columns=3),
+           vis.wrap("actions",
+                    vis.button("approve", "Approve release"),
+                    vis.button("rerun", "Run checks again")))
+```
+
+Declare at least one child in every `vis.row`, `vis.column`, `vis.grid`,
+`vis.wrap` and `vis.disclosure`. These Python builders raise `ValueError` immediately when
 called without children. If you do not have any nodes yet, wait to add the
 group until its first child is available.
 

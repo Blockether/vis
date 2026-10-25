@@ -569,7 +569,7 @@ describe('human input origin', () => {
     expect(row?.tagName).toBe('P');
     expect(row?.className).toContain('whitespace-nowrap');
     expect(row?.className).toContain('min-w-0');
-    expect(row?.getAttribute('title')).toBe(`Subagent ${longAgent} · parent ${longParent}`);
+    expect(row?.getAttribute('title')).toBe(`Subagent ${longAgent}, parent ${longParent}`);
     const titles = Array.from(row?.querySelectorAll('span.truncate') ?? []).map(
       (span) => span.textContent,
     );

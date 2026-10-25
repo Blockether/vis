@@ -113,14 +113,19 @@ confirmation, whether the answer comes from a dialog or an HTTP request.
 
 ## Layout
 
-Use the same `row` and `column` layout vocabulary for Ask forms and
+Use the same `row`, `column`, `grid` and `wrap` layout vocabulary for Ask forms and
 [Live views](live-views.md#layout-and-text). A `group` arranges its `children` in a
-`column` (default) or `row`. Groups can nest. Each nested group uses the width
+`column` (default), `row`, `grid` or `wrap`. Groups can nest. Each nested group uses the width
 available inside its parent, not the full screen width.
 
 A row shows its children side by side in equal columns. When the space is too narrow, the
 children stack: Companion stacks them one by one, and the TUI stacks the whole row. Columns
 always stack.
+
+A grid puts its children in equal columns and continues on new rows, in their order. Set
+`max_columns` (1 to 12) to limit the columns. A narrow screen shows fewer columns, and a very
+narrow screen stacks them. A wrap puts its children side by side at their own width. A child that
+does not fit starts a new line.
 
 Ask groups can have a `label` and a plain-text `description`. Layout nodes
 produce no answer values: a `heading` displays plain text and a `paragraph`

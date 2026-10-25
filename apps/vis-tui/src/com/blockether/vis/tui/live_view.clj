@@ -1346,13 +1346,63 @@
               :item-id (:item-id lead))))
         (columns/zip-columns sections)))
 
+(defn- row-text-width
+  "Columns ONE plan row puts down inside `text-w`: what a `wrap` group measures
+   its children by. A field and a progress bar fill whatever cell they get, so
+   they ask for a readable cell; a nested split row asks for the whole width."
+  ^long [text-w row]
+  (+ (long (or (:indent row) 0))
+     (long (case (:kind row)
+             :columns
+             (long text-w)
+
+             (:field :progress)
+             (max (long columns/min-cell-width) (+ 3 (long (p/display-width (str (:text row))))))
+
+             :stats
+             (reduce + 0 (map #(+ 4 (runs-width (:label %)) (runs-width (:value %))) (:items row)))
+
+             (cond (:segments row) (runs-width (:segments row))
+                   (:runs row) (runs-width (:runs row))
+                   :else (p/display-width (str (:text row))))))
+     ;; A log's Search control stands beside its title: ` Search `, its four
+     ;; columns of air to the scrollbar lane and the three before the title.
+     (if (:search-label row) 15 0)))
+
+(defn- wrap-sections
+  "A `wrap` group's rows: every child keeps its natural width and the children
+   pack left to right, a new line of cells where the next one does not fit.
+
+   `sections` are the children planned at the full `text-w`. A line that holds
+   ONE child paints that full-width plan; a line of several plans each child
+   again at its own width through `replan` (`(fn [idx w] rows)`) and carries the
+   widths as `:cell-widths` for the painter. Lines stack like sections do."
+  [text-w sections replan]
+  (let [widths (mapv (fn [rows]
+                       (columns/natural-width text-w (map #(row-text-width text-w %) rows)))
+                     sections)]
+    (stacked-rows (mapv (fn [line]
+                          (if (= 1 (count line))
+                            (nth sections (first line))
+                            (let [ws (mapv widths line)]
+                              (mapv #(assoc % :cell-widths ws)
+                                    (split-rows (mapv replan line ws))))))
+                        (columns/wrap-lines text-w widths)))))
+
 (defn- node-section
   "One node's rows, `text-w` columns wide: its label, then what the node paints.
 
-   A layout group paints its children side by side only when its direction is
-   `:row` and [[columns/row-fits?]] allows it. Otherwise children stack in source
-   order. Ask uses the same fit decision, including inside nested groups;
-   [[columns/cell-width]] supplies the text budget for each child.
+   A layout group places its children by its direction. Ask applies the same
+   rules, including inside nested groups:
+
+   - `:row` stands them side by side when [[columns/row-fits?]] allows it.
+   - `:grid` cuts them into rows of [[columns/grid-span]] equal columns, one row
+     of air between, the last row padded so its columns stay aligned.
+   - `:wrap` packs them at their natural width through [[wrap-sections]].
+   - Everything else, and a row or grid too narrow to split, stacks them in
+     source order.
+
+   [[columns/cell-width]] supplies the text budget for each equal column.
 
    Disclosed children gain two columns; wrapping and hit targets use that same inset.
    The row of air between two sections belongs to whoever stacks them, never to
@@ -1376,21 +1426,43 @@
         children
         (not-empty (:children node))
 
-        cell-w
-        (when children (columns/cell-width body-w (count children)))
+        n
+        (count children)
 
-        is-split
-        (boolean
-          (and children (= :row (:direction node)) (columns/row-fits? body-w (count children))))
+        span
+        (if (and children (= :grid (:direction node)))
+          (columns/grid-span body-w n (:max-columns node))
+          0)
+
+        layout
+        (cond (nil? children) :leaf
+              (and (= :row (:direction node)) (columns/row-fits? body-w n)) :row
+              (< 1 span) :grid
+              (and (= :wrap (:direction node)) (< 1 n)) :wrap
+              :else :stack)
+
+        cell-w
+        (case layout
+          :row
+          (columns/cell-width body-w n)
+
+          :grid
+          (columns/cell-width body-w span)
+
+          body-w)
 
         parts
-        (when (and is-open children)
-          (mapv #(node-section % ctx fresh (if is-split cell-w body-w)) children))
+        (when (and is-open children) (mapv #(node-section % ctx fresh cell-w) children))
 
         body
         (cond (not is-open) []
-              (nil? children) (node-rows node node-ctx)
-              is-split (split-rows parts)
+              (= :leaf layout) (node-rows node node-ctx)
+              (= :row layout) (split-rows parts)
+              (= :grid layout) (stacked-rows (mapv split-rows (columns/grid-chunks parts span)))
+              (= :wrap layout) (wrap-sections body-w
+                                              parts
+                                              (fn [idx w]
+                                                (node-section (nth children idx) ctx fresh w)))
               :else (stacked-rows parts))
 
         label
@@ -1419,7 +1491,8 @@
   "The pane's whole paint plan, `text-w` columns wide: one entry per painted row,
    nodes in DECLARATION order, each under its own label with a row of air above
    it. A node the run wrapped in a `row` group stands BESIDE its siblings wherever
-   the band is wide enough for all of them. Carries `{:widths …}` as metadata —
+   the band is wide enough for all of them; a `grid` or `wrap` group lays its
+   nodes out as [[node-section]] describes. Carries `{:widths …}` as metadata —
    what the tables measured this pass, on its way back into the pane through
    [[painted]]."
   [pane text-w]
@@ -2268,14 +2341,23 @@
     ;; Nodes standing SIDE BY SIDE: one plan row carries one cell per column, and
     ;; each cell is painted into its own slice of the band by THIS function — a
     ;; table beside a paragraph is painted by the code that paints them alone.
+    ;; A `wrap` line names each cell's text width; other rows divide evenly.
     :columns
-    (do (fill! g left row inner-w t/dialog-fg)
-        (reduce (fn [pos [[x width] cell]]
-                  (let [here (when cell
-                               (paint-entry! g (+ (long left) (long x)) row width view-id cell))]
-                    (or pos here)))
-                nil
-                (map vector (columns/slots inner-w (count (:cells entry))) (:cells entry))))
+    (let [cells
+          (:cells entry)
+
+          places
+          (if-let [ws (:cell-widths entry)]
+            (columns/width-slots inner-w ws)
+            (columns/slots inner-w (count cells)))]
+
+      (fill! g left row inner-w t/dialog-fg)
+      (reduce (fn [pos [[x width] cell]]
+                (let [here (when (and cell (pos? (long width)))
+                             (paint-entry! g (+ (long left) (long x)) row width view-id cell))]
+                  (or pos here)))
+              nil
+              (map vector places cells)))
 
     ;; A minimized LIVE pane is still a control: the whole status row restores its
     ;; full surface while patches continue to land behind it.

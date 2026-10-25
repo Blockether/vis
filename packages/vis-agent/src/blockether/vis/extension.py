@@ -3853,7 +3853,8 @@ def ask(title, nodes, **options):
     #       {'name': 'confirm', 'type': 'password', 'validate':
     #        lambda v, values: None if v == values['pw'] else 'must match Password'},
     # A 'group' is not a field at all — it LAYS OUT: 'children' and 'direction'
-    # ('column' stacks, the default; 'row' side by side). Groups nest and never
+    # ('column' stacks, the default; 'row' side by side; 'grid' equal columns
+    # that wrap, capped by 'max_columns'; 'wrap' natural widths). Groups nest and never
     # appear in `values`, which stays flat.
     # Layout and value keys never mix: 'default'/'is_required'/'validate' on a
     # group, or 'children'/'direction' on an answerable field, are both REFUSED.
@@ -4026,6 +4027,26 @@ def column(*fields):
     # Stack these nodes, the default arrangement: worth saying out loud inside a
     # `row`.
     return _group("column", fields)
+
+
+def grid(*fields, max_columns=None):
+    """Lay ``fields`` out in equal columns that wrap into aligned rows.
+
+    ``max_columns`` (1 to 12) caps the columns. A narrow surface shows fewer
+    columns, and the smallest surface stacks them.
+    """
+    node = _group("grid", fields)
+    if max_columns is not None:
+        node["max_columns"] = max_columns
+    return node
+
+
+def wrap(*fields):
+    """Put ``fields`` side by side at their own width, wrapping onto new lines.
+
+    Use it for buttons, stats, statuses and links that keep a natural width.
+    """
+    return _group("wrap", fields)
 
 
 def group(*children, direction="column", **spec):

@@ -162,6 +162,11 @@
    :window-lines-cap (get-in live-nodes ["log" "properties" "window_lines" "maximum"])
    :max-patch-lines (get-in patches ["append" "properties" "lines" "maxItems"])})
 
+(def grid-columns
+  "Bounds of a grid group's `max_columns`: `[minimum maximum]`."
+  (let [prop (get-in live-nodes [group-type-name "properties" "max_columns"])]
+    [(get prop "minimum") (get prop "maximum")]))
+
 (def table-defaults
   "Live table collection and patch bounds."
   {:max-rows (get-in live-nodes ["table" "properties" "max_rows" "maximum"])

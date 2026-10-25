@@ -6,7 +6,15 @@
 
 import type { SseEvent } from './types';
 import type { ActivityProjection, ActivityRow } from './activity';
-import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, viewKind } from './view';
+import {
+  VIEW_CLOSE_EVENT,
+  VIEW_GROUP_DIRECTIONS,
+  VIEW_OPEN_EVENT,
+  VIEW_PATCH_EVENT,
+  viewGroupDirection,
+  viewKind,
+  viewMaxColumns,
+} from './view';
 import {
   HUMAN_INPUT_FIELD_TYPES,
   humanInputFieldFromWire,
@@ -42,7 +50,7 @@ export const LIVE_INPUT_TYPES = HUMAN_INPUT_FIELD_TYPES;
 export const LIVE_GROUP_TYPE = 'group';
 
 /** How a group stands what it holds (`view.spec/group-directions`). CLOSED. */
-export const LIVE_GROUP_DIRECTIONS = ['row', 'column'] as const;
+export const LIVE_GROUP_DIRECTIONS = VIEW_GROUP_DIRECTIONS;
 /** How a surface COLOURS one line, row, step or stat (`live-tones`). CLOSED. */
 export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
 
@@ -262,13 +270,15 @@ export interface LiveInputNode extends LiveNodeBase {
 }
 
 /**
- * Nodes standing side by side (`row`) or one under the other (`column`). The run
+ * Nodes side by side (`row`), one under the other (`column`), in equal columns
+ * that wrap (`grid`, capped by `max_columns`) or at their own width (`wrap`). The run
  * declares an arrangement ONCE and no op carries it, so a layout never
  * rearranges itself under a reader; a narrow screen stacks a row anyway.
  */
 export interface LiveGroupNode extends LiveNodeBase {
   type: 'group';
   direction: LiveGroupDirection;
+  max_columns?: number;
   children: LiveNode[];
   is_collapsible?: boolean;
   default_expanded?: boolean;
@@ -527,10 +537,13 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
   if (type === LIVE_GROUP_TYPE) {
     const children = liveNodesFromWire(node.children);
     if (children.length === 0) return null;
+    const direction = viewGroupDirection(node.direction);
+    const maxColumns = direction === 'grid' ? viewMaxColumns(node.max_columns) : undefined;
     return {
       ...base,
       type: 'group',
-      direction: node.direction === 'row' ? 'row' : 'column',
+      direction,
+      ...(maxColumns === undefined ? {} : { max_columns: maxColumns }),
       children,
       ...(node.is_collapsible === undefined
         ? {}

@@ -731,10 +731,37 @@
                  field-id
                  (assoc! (if (contains? option-stop-kinds kind) [field-id value] field-id) i)))))))
 
+(defn- row-text-width
+  "Text columns ONE form row asks for inside `text-w`: what a `wrap` group
+   measures its children by. A typed or toggled field keeps its surface and ring,
+   so it asks for a readable cell; a nested split row asks for the whole width."
+  ^long [text-w row]
+  (let [text-w (or text-w 0)]
+    (case (:kind row)
+      :columns
+      (long text-w)
+
+      (:input :otp :range)
+      (max (long columns/min-cell-width)
+           (+ 2
+              (long (p/display-width (str (or (not-empty (str (:text row))) (:placeholder row)))))))
+
+      (:checkbox :option)
+      (+ 6 (long (p/display-width (str (:text row)))))
+
+      (long (p/display-width (str (:text row)))))))
+
 (defn- group-rows
-  "A group's optional heading and children. Row groups share columns only when
-   [[columns/row-fits?]] allows it; otherwise they stack in source order, just
-   like Live. Nested groups apply the same rule to their available text width."
+  "A group's optional heading and children, placed by the group's direction just
+   like Live. Nested groups apply the same rules to their available text width:
+
+   - `:row` shares columns when [[columns/row-fits?]] allows it.
+   - `:grid` cuts the children into rows of [[columns/grid-span]] equal columns,
+     the last row padded so its columns stay aligned.
+   - `:wrap` keeps each child at its natural width and packs the children with
+     [[columns/wrap-lines]]; the line carries the widths as `:cell-widths`.
+   - Everything else, and a row or grid too narrow to split, stacks them in
+     source order."
   [ctx text-w {:keys [direction children] :as group}]
   (let [heading
         (into (if (:label group) [{:kind :label :text (:label group)}] [])
@@ -743,11 +770,45 @@
         n
         (count children)
 
+        span
+        (if (= :grid direction) (columns/grid-span text-w n (:max-columns group)) 0)
+
+        plan
+        (fn [w child]
+          (vec (field-rows ctx w child)))
+
+        ;; Every field already ends in its own blank row, so the rows of a grid and
+        ;; the lines of a wrap stack with the air a `column` group has between fields.
+        stack
+        (fn [sections]
+          (into [] cat sections))
+
         body
-        (if (and (= :row direction) (columns/row-fits? text-w n))
-          (let [cell-w (columns/cell-width text-w n)]
-            (columns/zip-columns (mapv #(vec (field-rows ctx cell-w %)) children)))
-          (into [] (mapcat #(field-rows ctx text-w %)) children))]
+        (cond (and (= :row direction) (columns/row-fits? text-w n))
+              (let [cell-w (columns/cell-width text-w n)]
+                (columns/zip-columns (mapv #(plan cell-w %) children)))
+              (< 1 span) (let [cell-w (columns/cell-width text-w span)]
+                           (stack (mapv columns/zip-columns
+                                        (columns/grid-chunks (mapv #(plan cell-w %) children)
+                                                             span))))
+              (and (= :wrap direction) (< 1 n))
+              (let [sections
+                    (mapv #(plan text-w %) children)
+
+                    widths
+                    (mapv (fn [rows]
+                            (columns/natural-width text-w (map #(row-text-width text-w %) rows)))
+                          sections)]
+
+                (stack (mapv (fn [line]
+                               (if (= 1 (count line))
+                                 (nth sections (first line))
+                                 (let [ws (mapv widths line)]
+                                   (mapv #(assoc % :cell-widths ws)
+                                         (columns/zip-columns
+                                           (mapv #(plan %2 (nth children %1)) line ws))))))
+                             (columns/wrap-lines text-w widths))))
+              :else (into [] (mapcat #(field-rows ctx text-w %)) children))]
 
     (into (if (seq heading) (conj (vec heading) {:kind :blank}) []) body)))
 
@@ -755,7 +816,7 @@
   "Rows for ONE node of the field tree. `ctx` is the per-paint context built by
    [[form-rows]] — the form, its visible errors, the focused stop and the
    [[stop-index]] — and `text-w` is the prose budget of the column this node
-   lands in, which a `:row` group narrows for its children."
+   lands in, which a `:row`, `:grid` or `:wrap` group narrows for its children."
   [{:keys [form errors focus index] :as ctx} text-w {:keys [id type] :as field}]
   (cond
     (= :group type) (group-rows ctx text-w field)
@@ -1257,17 +1318,26 @@
                            (+ (long text-left) 1 (* (long otp-cell-w) (long (:cursor entry 0)))))
                       row)))
 
-    ;; A `row` group's line: the width is divided between the cells HERE, so the
-    ;; plan carries no geometry and every painter below — including another
-    ;; `:columns` row from a nested group — just paints into a narrower row.
+    ;; A `row` or `grid` group's line: the width is divided between the cells
+    ;; HERE, so the plan carries no geometry and every painter below — including
+    ;; another `:columns` row from a nested group — just paints into a narrower
+    ;; row. A `wrap` line names each cell's text width in `:cell-widths`.
     :columns
-    (let [cells (:cells entry)]
+    (let [cells
+          (:cells entry)
+
+          places
+          (if-let [ws (:cell-widths entry)]
+            (columns/width-slots inner-w ws)
+            (columns/slots inner-w (count cells)))]
+
       (reduce (fn [pos [[x width] cell]]
                 (let [here
-                      (paint-row! g (+ (long left) (long x)) row width (or cell {:kind :blank}))]
+                      (when (pos? (long width))
+                        (paint-row! g (+ (long left) (long x)) row width (or cell {:kind :blank})))]
                   (or pos here)))
               nil
-              (map vector (columns/slots inner-w (count cells)) cells)))
+              (map vector places cells)))
 
     :action
     (do (paint-actions! g left row inner-w (:buttons entry)) nil)

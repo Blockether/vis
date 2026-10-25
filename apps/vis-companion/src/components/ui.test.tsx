@@ -715,6 +715,32 @@ describe('the second vocabulary: chips, rows, disclosures', () => {
       expect(container.querySelector('button, input, [tabindex]')).toBeNull();
     });
 
+    it('lays a capped grid in aligned tracks and a wrap row at natural widths', () => {
+      const { container } = render(
+        <>
+          <ViewLayout direction="grid" maxColumns={3}>
+            <ViewParagraph>One</ViewParagraph>
+          </ViewLayout>
+          <ViewLayout direction="grid">
+            <ViewParagraph>Two</ViewParagraph>
+          </ViewLayout>
+          <ViewLayout direction="wrap" style={{ color: 'inherit' }}>
+            <ViewParagraph>Three</ViewParagraph>
+          </ViewLayout>
+        </>,
+      );
+      const [capped, open] = container.querySelectorAll<HTMLElement>('[data-view-layout="grid"]');
+      const wrap = container.querySelector<HTMLElement>('[data-view-layout="wrap"]');
+
+      expect(capped.className).toContain('grid');
+      expect(capped.style.gridTemplateColumns).toContain('auto-fill');
+      expect(capped.style.gridTemplateColumns).toContain('/ 3');
+      expect(open.style.gridTemplateColumns).toBe('repeat(auto-fill, minmax(min(100%, 12rem), 1fr))');
+      expect(wrap?.className).toContain('flex-wrap');
+      expect(wrap?.style.gridTemplateColumns).toBe('');
+      expect(wrap?.style.color).toBe('inherit');
+    });
+
     it('keeps native heading levels and leaves text parsing to the caller', () => {
       for (const level of [1, 2, 3, 4, 5, 6] as const) {
         const { unmount } = render(<ViewHeading level={level}>Review</ViewHeading>);
