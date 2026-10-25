@@ -1058,9 +1058,8 @@ another chance of a false verdict.
 - Evan Miller, [Adding error bars to evals](https://www.anthropic.com/research/statistical-approach-to-model-evals)
   ([arXiv:2411.00640](https://arxiv.org/abs/2411.00640)): intervals, clustered errors, paired
   comparisons and power.
-- Donald Schuirmann, "A comparison of the two one-sided tests procedure and the power approach
-  for assessing the equivalence of average bioavailability", *Journal of Pharmacokinetics and
-  Biopharmaceutics* 15, 1987: equivalence and non-inferiority margins.
+- Donald Schuirmann, *Journal of Pharmacokinetics and Biopharmaceutics* 15, 1987: the two
+  one-sided tests for equivalence and non-inferiority margins.
 - Alan Agresti and Yongyi Min, "Simple improved confidence intervals for comparing matched
   proportions", *Statistics in Medicine* 24, 2005: the paired interval.
 - Mark Chen and others, [Evaluating large language models trained on
